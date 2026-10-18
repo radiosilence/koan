@@ -888,33 +888,43 @@ pub(crate) fn recount_album_credits(conn: &Connection, album: i64) -> rusqlite::
 fn resolve_credits(conn: &Connection, list: &[super::Credit]) -> Result<Vec<i64>, DbError> {
     let mut ids = Vec::with_capacity(list.len());
     for c in list {
-        let id = credited_artist(conn, c)?;
-        if !ids.contains(&id) {
+        if let Some(id) = credited_artist(conn, c)?
+            && !ids.contains(&id)
+        {
             ids.push(id);
         }
     }
     Ok(ids)
 }
 
-/// The artist row a credit names. The row of that name, unless it belongs to
-/// another MusicBrainz id, in which case the row holding the credit's id: two
-/// artists can share a name. A row found by name learns the id.
-fn credited_artist(conn: &Connection, credit: &super::Credit) -> Result<i64, DbError> {
+/// The artist row a credit names: the one holding its MusicBrainz id, then
+/// the one of its name, which learns the id. None when that name belongs to
+/// another MusicBrainz id and no row holds this one: artists are unique by
+/// name, so the credit's artist has no row, and linking the homonym would list
+/// the record under the wrong artist.
+fn credited_artist(conn: &Connection, credit: &super::Credit) -> Result<Option<i64>, DbError> {
     let mbid = credit.mbid.as_deref().filter(|m| !m.is_empty());
     if let Some(mbid) = mbid {
+        let by_id: Option<i64> = conn
+            .prepare_cached("SELECT id FROM artists WHERE mbid = ?1 ORDER BY id LIMIT 1")?
+            .query_row(params![mbid], |r| r.get(0))
+            .optional()?;
+        if let Some(id) = by_id {
+            if let Some(rid) = credit.remote_id.as_deref() {
+                conn.prepare_cached(
+                    "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NOT ?1",
+                )?
+                .execute(params![rid, id])?;
+                super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
+            }
+            return Ok(Some(id));
+        }
         let named: Option<Option<String>> = conn
             .prepare_cached("SELECT mbid FROM artists WHERE name_key = ?1")?
             .query_row(params![fold(&credit.name)], |r| r.get(0))
             .optional()?;
-        let theirs = named.is_some_and(|stored| stored.is_none_or(|s| s == mbid));
-        if !theirs {
-            let by_id: Option<i64> = conn
-                .prepare_cached("SELECT id FROM artists WHERE mbid = ?1 ORDER BY id LIMIT 1")?
-                .query_row(params![mbid], |r| r.get(0))
-                .optional()?;
-            if let Some(id) = by_id {
-                return Ok(id);
-            }
+        if named.is_some_and(|stored| stored.is_some_and(|s| s != mbid)) {
+            return Ok(None);
         }
     }
     let id = get_or_create_artist(conn, &credit.name, credit.remote_id.as_deref())?;
@@ -922,7 +932,7 @@ fn credited_artist(conn: &Connection, credit: &super::Credit) -> Result<i64, DbE
         conn.prepare_cached("UPDATE artists SET mbid = ?1 WHERE id = ?2 AND mbid IS NULL")?
             .execute(params![mbid, id])?;
     }
-    Ok(id)
+    Ok(Some(id))
 }
 
 /// Make `table`'s artists for `owner` exactly `artists`, in order, writing

@@ -173,6 +173,10 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         ] {
             conn.execute(sql, params![keep, gone])?;
         }
+        let credited: Vec<i64> = conn
+            .prepare_cached("SELECT artist_id FROM album_credits WHERE album_id = ?1")?
+            .query_map(params![gone], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         // By hand rather than by cascade: upgrades merge albums with foreign
         // keys off.
         for sql in [
@@ -185,6 +189,9 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         }
         // The tracks it gave up count towards the album they joined.
         super::sources::recount_album_credits(conn, keep)?;
+        for artist in credited {
+            super::tracks::prune_if_empty(conn, None, Some(artist))?;
+        }
         if let Some(uid) = &server_uid {
             conn.execute(
                 "UPDATE albums SET uid = ?1 WHERE id = ?2",

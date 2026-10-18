@@ -1380,18 +1380,14 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             extras.rating.get(&track.id).map(|&r| r.into()),
         )
         .list("genres", track.genre.iter().map(|g| genre_node(g)))
-        .list("artists", {
-            let credited = credit_refs("artists", extras.credits.get(&track.id), &extras.uids);
-            if credited.is_empty() {
-                track
-                    .artist_id
-                    .map(|id| artist_ref("artists", &extras.uids.artist(id), &track.artist_name))
-                    .into_iter()
-                    .collect()
-            } else {
-                credited
-            }
-        });
+        .list(
+            "artists",
+            credited_or_filed(
+                extras.credits.get(&track.id),
+                track.artist_id.map(|id| (id, track.artist_name.as_str())),
+                &extras.uids,
+            ),
+        );
     // Only where the album credits its artists one by one: an album filed
     // under one artist names it in `artist` already.
     let album_artists = credit_refs(
@@ -1487,18 +1483,14 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
         )
         .child(item_date("releaseDate", album.date.as_deref()))
         .list("genres", genres.iter().map(|g| genre_node(g)))
-        .list("artists", {
-            let credited = credit_refs("artists", extras.credits.get(&album.id), &extras.uids);
-            if credited.is_empty() {
-                vec![artist_ref(
-                    "artists",
-                    &extras.uids.artist(album.artist_id),
-                    &album.artist_name,
-                )]
-            } else {
-                credited
-            }
-        })
+        .list(
+            "artists",
+            credited_or_filed(
+                extras.credits.get(&album.id),
+                Some((album.artist_id, album.artist_name.as_str())),
+                &extras.uids,
+            ),
+        )
         .list(
             "recordLabels",
             album
@@ -1660,8 +1652,24 @@ fn credits_of(
         .map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
-/// The `artists` or `albumArtists` of a song or album: each credited artist
-/// where its credits name them, otherwise the one it is filed under.
+/// A song's or album's `artists`: each credited artist where its credits name
+/// them, otherwise the one it is filed under.
+fn credited_or_filed(
+    credits: Option<&Vec<Credited>>,
+    filed: Option<(i64, &str)>,
+    uids: &Uids,
+) -> Vec<XmlNode> {
+    let credited = credit_refs("artists", credits, uids);
+    if !credited.is_empty() {
+        return credited;
+    }
+    filed
+        .map(|(id, name)| artist_ref("artists", &uids.artist(id), name))
+        .into_iter()
+        .collect()
+}
+
+/// Each credited artist of a song or album, as `tag` elements.
 fn credit_refs(tag: &str, credits: Option<&Vec<Credited>>, uids: &Uids) -> Vec<XmlNode> {
     credits
         .into_iter()

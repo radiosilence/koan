@@ -217,16 +217,23 @@ fn artist_body(
 ) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>), DbError> {
     // An album is under each artist its credits name, and the artist list
     // leaves out a credit string standing for artists credited one by one.
-    let mut sql = String::from(if q.without_track_counts {
-        "FROM artists a
-         INNER JOIN album_artist_links l ON l.artist_id = a.id AND l.listed
-         INNER JOIN albums al ON al.id = l.album_id"
+    // A shelf of what someone hearted or played keeps it: they chose it.
+    let listed = if q.favourites_of.is_some() || q.played.is_some() {
+        ""
     } else {
+        " AND l.listed"
+    };
+    let mut sql = format!(
         "FROM artists a
-         INNER JOIN album_artist_links l ON l.artist_id = a.id AND l.listed
-         INNER JOIN albums al ON al.id = l.album_id
+         INNER JOIN album_artist_links l ON l.artist_id = a.id{listed}
+         INNER JOIN albums al ON al.id = l.album_id{}",
+        if q.without_track_counts {
+            ""
+        } else {
+            "
          LEFT JOIN tracks t ON t.album_id = al.id"
-    });
+        }
+    );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));

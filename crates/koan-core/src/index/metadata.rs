@@ -216,7 +216,7 @@ fn read_metadata_lofty(
 
 /// Each artist the tag names one by one, with their MusicBrainz ids: the
 /// `ARTISTS` and `ALBUMARTISTS` Picard and sift write, or for a Vorbis comment
-/// without them, a repeated `ARTIST`. ID3v2.4 joins a multi-valued frame with
+/// without them, a repeated `ARTIST` or `ALBUMARTIST`. ID3v2.4 joins a multi-valued frame with
 /// NULs, which is split here whichever way lofty hands it over.
 fn credits_of(tag: &lofty::tag::Tag) -> Credits {
     let all = |key: ItemKey| -> Vec<String> {
@@ -227,17 +227,22 @@ fn credits_of(tag: &lofty::tag::Tag) -> Credits {
             .map(str::to_string)
             .collect()
     };
-    let mut artists = all(ItemKey::TrackArtists);
-    if artists.is_empty() {
-        let repeated = all(ItemKey::TrackArtist);
-        if repeated.len() > 1 {
-            artists = repeated;
+    let list = |plural: ItemKey, single: ItemKey| {
+        let named = all(plural);
+        let repeated = all(single);
+        if named.is_empty() && repeated.len() > 1 {
+            repeated
+        } else {
+            named
         }
-    }
+    };
     Credits {
-        artists: slashed(artists, all(ItemKey::MusicBrainzArtistId)),
+        artists: slashed(
+            list(ItemKey::TrackArtists, ItemKey::TrackArtist),
+            all(ItemKey::MusicBrainzArtistId),
+        ),
         album_artists: slashed(
-            all(ItemKey::AlbumArtists),
+            list(ItemKey::AlbumArtists, ItemKey::AlbumArtist),
             all(ItemKey::MusicBrainzReleaseArtistId),
         ),
     }
