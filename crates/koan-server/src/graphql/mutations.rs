@@ -13,7 +13,7 @@ use koan_core::auth::Role;
 use koan_core::remote::link::LinkCommand;
 
 use super::helpers::sync_favourite_to_remote;
-use super::jobs::{JobHandle, JobRegistry, JobState};
+use super::jobs::{JobHandle, JobRegistry};
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via, with_db};
 

@@ -107,7 +107,7 @@ pub struct UiState {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn router(
+pub(crate) fn router(
     pool: Arc<Pool>,
     auth: AuthRouteState,
     auth_enabled: bool,
