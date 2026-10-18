@@ -164,10 +164,9 @@ pub fn spawn_library_watch(
                     }))
                     .unwrap_or_else(|_| {
                         log::error!("{reason} scan panicked");
-                        ScanResult {
-                            incomplete: true,
-                            ..Default::default()
-                        }
+                        let mut stopped = ScanResult::default();
+                        stopped.incomplete = true;
+                        stopped
                     });
                 on_scan(WatchScan::Finished(&result));
                 log::info!(
