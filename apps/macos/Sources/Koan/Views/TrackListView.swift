@@ -174,7 +174,7 @@ struct TrackListView: View {
                     return chosen.isEmpty ? nil : hostedMenu(QueueActions(trackIds: chosen.map(\.id)), environment: environment)
                 },
                 primaryAction: play,
-                drag: { line, _ in line.track.map { PlayableTransfer(.track($0)) } },
+                drag: { line in line.track.map { PlayableTransfer(.track($0)) } },
                 selectAllToken: ui.selectAllToken,
                 reveal: nav.highlightedTrackId,
                 revealed: { nav.highlightedTrackId = nil },

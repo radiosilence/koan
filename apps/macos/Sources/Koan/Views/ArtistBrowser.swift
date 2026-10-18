@@ -74,7 +74,7 @@ struct ArtistBrowser: View {
                 primaryAction: { ids in
                     if ids.count == 1, let id = ids.first { nav.open(artist: id) }
                 },
-                drag: { artist, _ in PlayableTransfer(.artist(id: artist.id, name: artist.name)) },
+                drag: { artist in PlayableTransfer(.artist(id: artist.id, name: artist.name)) },
                 selectAllToken: ui.selectAllToken,
                 offset: library.artistsOffset,
                 noteOffset: { library.artistsOffset = $0 },

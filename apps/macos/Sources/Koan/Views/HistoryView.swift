@@ -115,7 +115,7 @@ struct HistoryView: View {
                 headingHeight: TrackTableRow.headingHeight,
                 menu: { ids, environment in hostedMenu(menu(for: ids), environment: environment) },
                 primaryAction: play,
-                drag: { line, _ in line.track.map { PlayableTransfer(.track($0)) } },
+                drag: { line in line.track.map { PlayableTransfer(.track($0)) } },
                 delete: { _ in forgetSelected() },
                 selectAllToken: ui.selectAllToken,
                 offset: library.historyOffset,

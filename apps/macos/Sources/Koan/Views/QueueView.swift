@@ -189,22 +189,22 @@ struct QueueView: View {
                 changed: { $0 != $1 },
                 menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
                 primaryAction: { play(rowIds: $0) },
-                // Out of the queue a row is its track, and a heading its
-                // record. The table writes one item per row, so a heading
-                // cannot carry only the tracks queued under it: dragged alone
-                // it is the whole record. Dragged with any of its tracks, it
-                // carries nothing and those tracks are what was meant.
-                drag: { line, dragged in
+                // Out of the queue a row is its track, and a heading the whole
+                // record, as its title is. Its tracks dragged with it are
+                // left out rather than added twice.
+                drag: { line in
                     switch line.kind {
                     case .track(let content, _, _, _):
-                        return content.trackId.map { PlayableTransfer(kind: .track, id: $0, name: content.title) }
+                        content.trackId.map { PlayableTransfer(kind: .track, id: $0, name: content.title) }
                     case .heading(let heading):
-                        guard let albumId = heading.albumId,
-                              case .album(_, let group) = rows.first(where: { $0.id == line.id }),
-                              !group.items.contains(where: { dragged.contains($0.queueItemId) })
-                        else { return nil }
-                        return PlayableTransfer(kind: .album, id: albumId, name: heading.title)
+                        heading.albumId.map { PlayableTransfer(kind: .album, id: $0, name: heading.title) }
                     }
+                },
+                covered: { dragged in
+                    Set(rows.filter { dragged.contains($0.id) }.flatMap { row -> [String] in
+                        guard case .album(_, let group) = row else { return [] }
+                        return group.items.map(\.queueItemId)
+                    })
                 },
                 delete: { _ in removeSelected() },
                 selectAllToken: onStage ? ui.selectAllToken : 0,

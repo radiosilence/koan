@@ -1,0 +1,1 @@
+- **⌘A selects everything in the Mac's lists.** Select All in the queue, playlists, track lists, favourites and search held only the row selected before it, so deleting or dragging afterwards acted on that one row.

@@ -237,7 +237,7 @@ struct PlaylistView: View {
                 // Carries where it came from, so dropping it back into this
                 // playlist is a move of *this* row rather than of its track —
                 // and dropping it anywhere else is just a track.
-                drag: { line, _ in
+                drag: { line in
                     guard case .entry(let entry, let at) = rows.first(where: { $0.id == line.id }) else { return nil }
                     return PlayableTransfer(
                         kind: .track, id: entry.track.id, name: entry.track.title,

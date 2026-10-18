@@ -81,8 +81,11 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     var menu: (Set<ID>, EnvironmentValues) -> NSMenu? = { _, _ in nil }
     /// Double-click or Return.
     var primaryAction: (Set<ID>) -> Void = { _ in }
-    /// What dragging this row carries, given every row in the drag.
-    var drag: (Row.Item, Set<ID>) -> PlayableTransfer? = { _, _ in nil }
+    /// What dragging this row carries.
+    var drag: (Row.Item) -> PlayableTransfer? = { _ in nil }
+    /// The rows of a drag that another row of it already carries, which the
+    /// drag leaves out: a queue record's tracks under its heading.
+    var covered: (Set<ID>) -> Set<ID> = { _ in [] }
     /// ⌫, where removing rows means something.
     var delete: ((Set<ID>) -> Void)?
     /// ⌘A. A counter, as `UIState.selectAllToken`.
@@ -178,8 +181,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var environment = EnvironmentValues()
         private var items: [Row.Item] = []
         private var ids: [ID] = []
-        /// The rows the drag in progress carries.
-        private var dragged: Set<ID> = []
+        /// The rows the drag in progress leaves out.
+        private var left: Set<ID> = []
         private var index: [ID: Int] = [:]
         private var shownKey: AnyHashable?
         private var selectAllToken: Int?
@@ -267,7 +270,12 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             applySelection(parent.selection)
 
             if let token = selectAllToken, token != parent.selectAllToken, table.window?.firstResponder === table {
-                table.selectAll(nil)
+                // After the update: selecting writes the selection binding,
+                // and a write made during the update is dropped, so the next
+                // one put the old selection back.
+                DispatchQueue.main.async { [weak table] in
+                    MainActor.assumeIsolated { table?.selectAll(nil) }
+                }
             }
             selectAllToken = parent.selectAllToken
             if let rewinds, rewinds != parent.rewinds {
@@ -505,10 +513,11 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             // the drag starts on a selected row, else that row alone.
             if !table.dragging {
                 let rows = table.selectedRowIndexes.contains(row) ? table.selectedRowIndexes : IndexSet(integer: row)
-                dragged = Set(rows.compactMap { $0 < ids.count ? ids[$0] : nil })
+                left = parent.covered(Set(rows.compactMap { $0 < ids.count ? ids[$0] : nil }))
                 table.dragging = true
             }
-            let transfer = parent.drag(items[row], dragged)?.placed(row)
+            guard !left.contains(ids[row]) else { return nil }
+            let transfer = parent.drag(items[row])?.placed(row)
             guard transfer != nil || parent.move != nil else { return nil }
             let item = transfer.flatMap(pasteboardItem) ?? NSPasteboardItem()
             // Which row, for a drop back into this list to read as a move.

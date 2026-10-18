@@ -178,8 +178,13 @@ struct MixedCollection: NSViewRepresentable {
                collection.window?.firstResponder === collection,
                let section = sections.firstIndex(of: .tracks) {
                 let all = Set((0..<parent.tracks.count).map { IndexPath(item: $0, section: section) })
-                collection.selectionIndexPaths = all
-                selectionChanged()
+                // After the update, as `KoanTable` selects all.
+                DispatchQueue.main.async { [weak self, weak collection] in
+                    MainActor.assumeIsolated {
+                        collection?.selectionIndexPaths = all
+                        self?.selectionChanged()
+                    }
+                }
             }
             selectAllToken = parent.selectAllToken
         }
