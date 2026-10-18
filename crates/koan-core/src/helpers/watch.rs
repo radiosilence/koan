@@ -1,9 +1,11 @@
 //! The library watch and auto-sync threads, and the lock that lets one process at a time run them.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::Config;
 use crate::db::connection::Database;
+use crate::index::scanner::ScanResult;
 
 use super::*;
 
@@ -38,6 +40,16 @@ fn watch_lock_file(db_path: &Path) -> std::io::Result<std::fs::File> {
         .open(db_path.with_file_name("watch.lock"))
 }
 
+/// What the library watch reports about a scan it runs.
+pub enum WatchScan<'a> {
+    /// A scan is starting, and why: `start-up`, `folder change`, `periodic`
+    /// or `new folder`. It may yet wait for another scan to leave the lane.
+    Started(&'static str),
+    /// Files whose tags were read, of those found so far to need reading.
+    Read { done: u64, total: u64 },
+    Finished(&'a ScanResult),
+}
+
 /// Index files that appear in the library folders while koan is running.
 ///
 /// One incremental scan shortly after startup — the walk is a fraction of a
@@ -60,10 +72,11 @@ fn watch_lock_file(db_path: &Path) -> std::io::Result<std::fs::File> {
 /// minute, so a folder added in settings is watched without a restart, and a
 /// volume unmounted and mounted again is watched afresh and rescanned.
 ///
-/// `on_state` reports whether a scan is running, so a UI can show it.
+/// `on_scan` is told when each scan starts, how far it has got and how it
+/// ended, so a UI can show it.
 pub fn spawn_library_watch(
     db_path: std::path::PathBuf,
-    on_state: impl Fn(bool) + Send + Sync + 'static,
+    on_scan: impl Fn(WatchScan) + Send + Sync + 'static,
 ) -> Option<std::thread::JoinHandle<()>> {
     use std::collections::BTreeSet;
     use std::time::{Duration, Instant};
@@ -84,6 +97,8 @@ pub fn spawn_library_watch(
     // asking for a rescan. Unchanged files are skipped on mtime and size, so an
     // idle one is a second's work.
     const RESCAN: Duration = Duration::from_secs(15 * 60);
+    // Files read between progress reports.
+    const REPORT_EVERY: u64 = 50;
 
     std::thread::Builder::new()
         .name("koan-library-watch".into())
@@ -111,7 +126,7 @@ pub fn spawn_library_watch(
                     None
                 }
             };
-            let scan = |reason: &str, folders: &[PathBuf], dirs: Option<&[PathBuf]>| {
+            let scan = |reason: &'static str, folders: &[PathBuf], dirs: Option<&[PathBuf]>| {
                 if folders.is_empty() {
                     return;
                 }
@@ -123,14 +138,25 @@ pub fn spawn_library_watch(
                 if crate::db::pool::understood(&db.conn).is_err() {
                     return;
                 }
-                on_state(true);
-                let result = match dirs {
-                    Some(dirs) => {
-                        scanner::scan_dirs(&db, folders, dirs, ScanOptions::default(), None)
-                    }
-                    None => scanner::full_scan(&db, folders, ScanOptions::default(), None),
+                on_scan(WatchScan::Started(reason));
+                let to_read = std::sync::Arc::new(AtomicU64::new(0));
+                let opts = ScanOptions {
+                    to_read: Some(to_read.clone()),
+                    ..Default::default()
                 };
-                on_state(false);
+                let read = AtomicU64::new(0);
+                let on_track = |_: scanner::ScanEvent| {
+                    let done = read.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done.is_multiple_of(REPORT_EVERY) {
+                        let total = to_read.load(Ordering::Relaxed);
+                        on_scan(WatchScan::Read { done, total });
+                    }
+                };
+                let result = match dirs {
+                    Some(dirs) => scanner::scan_dirs(&db, folders, dirs, opts, Some(&on_track)),
+                    None => scanner::full_scan(&db, folders, opts, Some(&on_track)),
+                };
+                on_scan(WatchScan::Finished(&result));
                 log::info!(
                     "{reason} scan: {} added, {} updated, {} removed, {} unchanged",
                     result.added,
@@ -184,7 +210,7 @@ pub fn spawn_library_watch(
             // After the first frame and the first track, not competing with them.
             std::thread::sleep(Duration::from_secs(3));
             rewatch(&mut roots);
-            scan("startup", &folders(), None);
+            scan("start-up", &folders(), None);
 
             let mut dirs = BTreeSet::new();
             let mut everything = false;
@@ -228,10 +254,10 @@ pub fn spawn_library_watch(
                     let changed =
                         scanner::minimal_dirs(std::mem::take(&mut dirs).into_iter().collect());
                     if everything || changed.len() > MAX_DIRS {
-                        scan("watched change", &folders(), None);
+                        scan("folder change", &folders(), None);
                         rescan_at = Instant::now() + RESCAN;
                     } else {
-                        scan("watched change", &folders(), Some(&changed));
+                        scan("folder change", &folders(), Some(&changed));
                     }
                     everything = false;
                     settle_at = None;
@@ -243,7 +269,7 @@ pub fn spawn_library_watch(
                 if now >= check_at {
                     let fresh = rewatch(&mut roots);
                     if !fresh.is_empty() {
-                        scan("newly watched", &fresh, None);
+                        scan("new folder", &fresh, None);
                     }
                     check_at = Instant::now() + CHECK;
                 }

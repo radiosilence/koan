@@ -5711,6 +5711,7 @@ impl KoanEngine {
             force,
             force_remove: false,
             cancel: Some(self.cancel_library_task.clone()),
+            ..Default::default()
         };
         // A cancel from a previous run must not stop this one before it starts.
         self.cancel_library_task
@@ -5844,8 +5845,10 @@ impl KoanEngine {
         let auto_scanning = Arc::new(std::sync::atomic::AtomicBool::new(false));
         {
             let flag = auto_scanning.clone();
-            koan_core::helpers::spawn_library_watch(db_path.clone(), move |running| {
-                finished(&flag, running);
+            koan_core::helpers::spawn_library_watch(db_path.clone(), move |scan| match scan {
+                koan_core::helpers::WatchScan::Started(_) => finished(&flag, true),
+                koan_core::helpers::WatchScan::Finished(_) => finished(&flag, false),
+                koan_core::helpers::WatchScan::Read { .. } => {}
             });
         }
 

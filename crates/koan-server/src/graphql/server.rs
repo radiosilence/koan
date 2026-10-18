@@ -43,10 +43,13 @@ pub fn cmd_serve(
     // A server has no one to press "scan": index at start and whenever the
     // library folders change, as the macOS app does.
     let watched = db_path.clone();
-    koan_core::helpers::spawn_library_watch(db_path, move |running| {
+    let jobs = super::jobs::JobRegistry::default();
+    let record = super::jobs::record_watch(&jobs);
+    koan_core::helpers::spawn_library_watch(db_path, move |scan| {
+        record(&scan);
         // A scan that just finished may have brought in an album someone asked
         // to have queued when it arrived.
-        if !running {
+        if let koan_core::helpers::WatchScan::Finished(_) = scan {
             crate::clients::fulfil_from(&watched);
             if let Ok(db) = koan_core::db::connection::Database::open_existing(&watched) {
                 crate::clients::changed_if_library_moved(&db.conn);
@@ -64,6 +67,7 @@ pub fn cmd_serve(
         playground,
         viz: None, // headless — no viz analyzer
         headless: true,
+        jobs,
     }) {
         eprintln!("koan: {}", e);
         std::process::exit(1);
@@ -146,6 +150,9 @@ pub struct ApiServerOpts {
     pub viz: Option<Arc<VizSnapshot>>,
     /// No TUI or app: the player here is heard by nobody.
     pub headless: bool,
+    /// Started before the server, so the library watch's scans are recorded
+    /// from the first.
+    pub(crate) jobs: super::jobs::JobRegistry,
 }
 
 /// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
@@ -164,6 +171,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         playground,
         viz,
         headless,
+        jobs,
     } = opts;
     use axum::routing::{get, post};
 
@@ -252,7 +260,6 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         headless,
         shutdown.clone(),
     );
-    let jobs = super::jobs::JobRegistry::default();
     let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
 
     if auth_enabled {
@@ -508,6 +515,7 @@ pub fn start_api_background(
         playground,
         viz: None,
         headless: false,
+        jobs: Default::default(),
     }) {
         log::error!("API server not started: {}", e);
     }

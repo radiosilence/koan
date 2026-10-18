@@ -7,10 +7,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 
 use async_graphql::Enum;
+use koan_core::helpers::WatchScan;
+use koan_core::index::scanner::{ScanEvent, ScanResult};
 use uuid::Uuid;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
@@ -30,6 +33,8 @@ pub(crate) struct Job {
     /// How far a running job has got, where it counts.
     pub done: Option<u64>,
     pub total: Option<u64>,
+    /// What started a scan the library watch ran: see [`WatchScan::Started`].
+    pub reason: Option<&'static str>,
 }
 
 /// Jobs started by this process, newest last. Bounded so a long-lived server
@@ -58,7 +63,7 @@ impl JobRegistry {
     ///
     /// Two concurrent scans of the same library fight over the same rows, so
     /// the second caller gets the first job's handle instead of a second scan.
-    pub(crate) fn start(&self, kind: &str) -> Result<Job, Job> {
+    pub(crate) fn start(&self, kind: &str, reason: Option<&'static str>) -> Result<Job, Job> {
         let mut jobs = self.inner.lock();
         if let Some(running) = jobs
             .values()
@@ -83,6 +88,7 @@ impl JobRegistry {
             message: format!("{} started", kind),
             done: None,
             total: None,
+            reason,
         };
         jobs.insert(job.id.clone(), job.clone());
         drop(jobs);
@@ -119,7 +125,7 @@ impl JobRegistry {
             + Send
             + 'static,
     {
-        let job = match self.start(kind) {
+        let job = match self.start(kind, None) {
             Ok(job) => job,
             Err(running) => return Ok(running),
         };
@@ -223,6 +229,9 @@ impl JobHandle {
 /// joining a scan that will not read every file.
 pub(crate) const SCAN: &str = "scan";
 pub(crate) const REREAD: &str = "reread";
+/// A scan the library watch started by itself: at start-up, on a change in
+/// the folders, every so often, or for a folder newly added.
+pub(crate) const WATCH: &str = "watch";
 
 /// How many files a scan reads between progress reports.
 const REPORT_EVERY: u64 = 50;
@@ -245,11 +254,12 @@ pub(crate) fn start_scan(
         move |db, progress| {
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             crate::clients::changed_if_library_moved(&db.conn);
-            let read = std::sync::atomic::AtomicU64::new(0);
-            let on_track: &dyn Fn(koan_core::index::scanner::ScanEvent) = &|_| {
-                let n = read.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if n.is_multiple_of(REPORT_EVERY) {
-                    progress.progress(n, None, format!("{n} files read"));
+            let to_read = Arc::new(AtomicU64::new(0));
+            let read = AtomicU64::new(0);
+            let on_track: &dyn Fn(ScanEvent) = &|_| {
+                let done = read.fetch_add(1, Ordering::Relaxed) + 1;
+                if done.is_multiple_of(REPORT_EVERY) {
+                    progress.read(done, to_read.load(Ordering::Relaxed));
                 }
             };
             let result = koan_core::index::scanner::full_scan(
@@ -257,27 +267,67 @@ pub(crate) fn start_scan(
                 &cfg.library.folders,
                 koan_core::index::scanner::ScanOptions {
                     force: reread,
+                    to_read: Some(to_read.clone()),
                     ..Default::default()
                 },
                 Some(on_track),
             );
             crate::clients::changed_if_library_moved(&db.conn);
-            let mut summary = format!(
-                "{} added, {} updated, {} unchanged",
-                result.added, result.updated, result.skipped
-            );
-            if !result.errors.is_empty() {
-                summary.push_str(&format!(", {} unreadable", result.errors.len()));
-            }
-            if result.cancelled {
-                Err(format!("cancelled after {summary}"))
-            } else if result.incomplete {
-                Err(format!("stopped part way, after {summary}"))
-            } else {
-                Ok(summary)
-            }
+            outcome(&result)
         },
     )
+}
+
+impl JobHandle {
+    fn read(&self, done: u64, total: u64) {
+        self.progress(done, Some(total), format!("{done} of {total} files read"));
+    }
+}
+
+/// How a scan ended, as a job's message.
+fn outcome(result: &ScanResult) -> Result<String, String> {
+    let mut summary = format!(
+        "{} added, {} updated, {} removed, {} unchanged",
+        result.added, result.updated, result.removed, result.skipped
+    );
+    if !result.errors.is_empty() {
+        summary.push_str(&format!(", {} unreadable", result.errors.len()));
+    }
+    if result.cancelled {
+        Err(format!("cancelled after {summary}"))
+    } else if result.incomplete {
+        Err(format!("stopped part way, after {summary}"))
+    } else {
+        Ok(summary)
+    }
+}
+
+/// Records the library watch's scans as [`WATCH`] jobs, so `job(id:)` and the
+/// web UI report them as they do a scan someone started.
+pub(crate) fn record_watch(registry: &JobRegistry) -> impl Fn(&WatchScan) + Send + Sync + 'static {
+    let registry = registry.clone();
+    let running: Mutex<Option<JobHandle>> = Mutex::new(None);
+    move |scan| match scan {
+        WatchScan::Started(reason) => {
+            // The watch runs one scan at a time, so none of its kind is live.
+            let (Ok(job) | Err(job)) = registry.start(WATCH, Some(reason));
+            *running.lock() = Some(registry.handle(&job.id));
+        }
+        WatchScan::Read { done, total } => {
+            if let Some(job) = running.lock().as_ref() {
+                job.read(*done, *total);
+            }
+        }
+        WatchScan::Finished(result) => {
+            if let Some(job) = running.lock().take() {
+                let (state, message) = match outcome(result) {
+                    Ok(message) => (JobState::Succeeded, message),
+                    Err(message) => (JobState::Failed, message),
+                };
+                registry.finish(&job.id, state, message);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -287,41 +337,67 @@ mod tests {
     #[test]
     fn one_job_per_kind_runs_at_a_time() {
         let reg = JobRegistry::default();
-        let first = reg.start("scan").unwrap();
-        let clash = reg.start("scan").unwrap_err();
+        let first = reg.start("scan", None).unwrap();
+        let clash = reg.start("scan", None).unwrap_err();
         assert_eq!(first.id, clash.id);
 
         reg.finish(&first.id, JobState::Succeeded, "done".into());
-        let second = reg.start("scan").unwrap();
+        let second = reg.start("scan", None).unwrap();
         assert_ne!(first.id, second.id);
     }
 
     #[test]
     fn a_panicking_job_ends_failed_and_the_kind_can_start_again() {
         let reg = JobRegistry::default();
-        let job = reg.start("scan").unwrap();
+        let job = reg.start("scan", None).unwrap();
         reg.run(&job.id, || panic!("boom"));
 
         let done = reg.get(&job.id).unwrap();
         assert_eq!(done.state, JobState::Failed);
         assert!(done.message.contains("boom"), "{}", done.message);
 
-        let next = reg.start("scan").expect("a new scan can start");
+        let next = reg.start("scan", None).expect("a new scan can start");
         assert_ne!(next.id, job.id);
+    }
+
+    #[test]
+    fn the_library_watch_s_scans_are_jobs() {
+        let reg = JobRegistry::default();
+        let record = record_watch(&reg);
+        record(&WatchScan::Started("start-up"));
+        record(&WatchScan::Read {
+            done: 50,
+            total: 1200,
+        });
+        let running = reg.current(&[WATCH]).unwrap();
+        assert_eq!(running.state, JobState::Running);
+        assert_eq!(running.reason, Some("start-up"));
+        assert_eq!((running.done, running.total), (Some(50), Some(1200)));
+        assert_eq!(running.message, "50 of 1200 files read");
+
+        let mut result = ScanResult::default();
+        result.added = 3;
+        record(&WatchScan::Finished(&result));
+        let done = reg.get(&running.id).unwrap();
+        assert_eq!(done.state, JobState::Succeeded);
+        assert_eq!(done.message, "3 added, 0 updated, 0 removed, 0 unchanged");
+
+        record(&WatchScan::Started("folder change"));
+        assert_ne!(reg.current(&[WATCH]).unwrap().id, running.id);
     }
 
     #[test]
     fn different_kinds_do_not_block_each_other() {
         let reg = JobRegistry::default();
-        reg.start("scan").unwrap();
-        assert!(reg.start("remoteSync").is_ok());
+        reg.start("scan", None).unwrap();
+        assert!(reg.start("remoteSync", None).is_ok());
         assert_eq!(reg.list().len(), 2);
     }
 
     #[test]
     fn a_running_job_reports_progress_and_a_finished_one_keeps_its_outcome() {
         let reg = JobRegistry::default();
-        let job = reg.start("remoteSync").unwrap();
+        let job = reg.start("remoteSync", None).unwrap();
         let handle = reg.handle(&job.id);
 
         handle.progress(12_400, Some(49_700), "tracks: 12400 of 49700".into());

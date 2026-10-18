@@ -1018,7 +1018,7 @@ impl From<koan_core::organize::OrganizeResult> for GqlOrganizePlan {
 pub(super) struct GqlJob {
     pub id: String,
     /// What the job is doing: `scan`, `reread` (a scan reading every file
-    /// again) or `remoteSync`.
+    /// again), `watch` (a scan the server started by itself) or `remoteSync`.
     pub kind: String,
     pub state: JobState,
     /// Human-readable progress or outcome.
@@ -1027,6 +1027,9 @@ pub(super) struct GqlJob {
     pub done: Option<u64>,
     /// Items there are in all, where known.
     pub total: Option<u64>,
+    /// Why a `watch` scan ran: `start-up`, `folder change`, `periodic` or
+    /// `new folder`.
+    pub reason: Option<String>,
 }
 
 impl From<Job> for GqlJob {
@@ -1038,6 +1041,7 @@ impl From<Job> for GqlJob {
             message: job.message,
             done: job.done,
             total: job.total,
+            reason: job.reason.map(str::to_owned),
         }
     }
 }
