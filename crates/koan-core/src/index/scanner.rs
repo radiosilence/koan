@@ -108,7 +108,7 @@ pub fn scan_folders(
     on_started: Option<&dyn Fn(u64)>,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
-    let _turn = super::lane::enter(folders, &mut opts);
+    let _turn = super::lane::enter(folders, &mut opts).then_credit(db);
     scan_folders_in_lane(db, folders, &opts, on_started, on_track)
 }
 
@@ -261,7 +261,7 @@ pub fn scan_dirs(
     mut opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
-    let _turn = super::lane::enter(dirs, &mut opts);
+    let _turn = super::lane::enter(dirs, &mut opts).then_credit(db);
     let mut result = ScanResult::default();
     let mut spelling = super::spelling::Spelling::default();
     let library: Vec<PathBuf> = library.iter().map(|f| library_folder(db, f)).collect();
@@ -877,7 +877,7 @@ pub fn full_scan(
     mut opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
-    let _turn = super::lane::enter(folders, &mut opts);
+    let _turn = super::lane::enter(folders, &mut opts).then_credit(db);
     let existing: Vec<PathBuf> = folders
         .iter()
         .filter(|folder| {

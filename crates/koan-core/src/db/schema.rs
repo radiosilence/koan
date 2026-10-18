@@ -727,6 +727,18 @@ const CREDIT_TABLES: &str = "
         PRIMARY KEY (album_id, artist_id)
     );
     CREATE INDEX IF NOT EXISTS idx_album_credits_artist ON album_credits(artist_id);
+    -- A MusicBrainz release's artists, fetched for files that carry the
+    -- release's id but name its artists only as one credit. `credits` is the
+    -- JSON list (`queries::Credit`), NULL when MusicBrainz has no such release.
+    CREATE TABLE IF NOT EXISTS release_credits (
+        album_mbid TEXT PRIMARY KEY,
+        credits    TEXT,
+        fetched_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_local_files_release ON local_files(album_mbid)
+        WHERE album_mbid IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_remote_entries_release ON remote_entries(album_mbid)
+        WHERE album_mbid IS NOT NULL;
     -- A credit finds its artist by MusicBrainz id before name.
     CREATE INDEX IF NOT EXISTS idx_artists_credit_mbid ON artists(mbid) WHERE mbid IS NOT NULL;
     DROP VIEW IF EXISTS album_artist_links;

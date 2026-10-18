@@ -279,7 +279,7 @@ fn store(conn: &Connection, artist_id: i64, info: &ArtistInfo) -> rusqlite::Resu
 
 /// MusicBrainz allows one request a second per client, and paging through
 /// artists quickly would otherwise exceed it.
-fn throttle() {
+pub(crate) fn throttle() {
     static LAST: LazyLock<parking_lot::Mutex<Option<Instant>>> =
         LazyLock::new(|| parking_lot::Mutex::new(None));
     let mut last = LAST.lock();
@@ -292,7 +292,7 @@ fn throttle() {
     *last = Some(Instant::now());
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

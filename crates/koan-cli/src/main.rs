@@ -692,6 +692,7 @@ pub fn sigint_received() -> bool {
 }
 
 fn main() {
+    koan_core::index::release_credits::enable();
     // Graceful SIGINT: set a flag instead of killing immediately so we can
     // persist queue state. In raw mode crossterm delivers Ctrl+C as a key
     // event, but outside raw mode (e.g. during scan) we need this handler.

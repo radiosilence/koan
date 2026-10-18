@@ -691,10 +691,22 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
             .cloned()
             .unwrap_or_default()
     };
-    let credits = super::Credits {
+    let mut credits = super::Credits {
         artists: list(|c| &c.artists),
         album_artists: list(|c| &c.album_artists),
     };
+    // Files tagged with the release but not its artists one by one take them
+    // from MusicBrainz, once fetched: the album's, and the track's when it is
+    // credited as its album is.
+    if credits.album_artists.len() < 2
+        && let Some(release) = pick(|m| m.album_mbid.clone())
+        && let Some(fetched) = release_credits(conn, &release)?
+    {
+        if credits.artists.is_empty() && fold(&primary.artist) == fold(album_artist) {
+            credits.artists = fetched.clone();
+        }
+        credits.album_artists = fetched;
+    }
     // `derive_record` may have folded the album into another holding the
     // server's id, and the track with it.
     let album_id: i64 = conn
@@ -826,6 +838,109 @@ fn derive_credits(
     }
     for artist in dropped {
         super::tracks::prune_if_empty(conn, None, Some(artist))?;
+    }
+    Ok(())
+}
+
+/// A release's artists as MusicBrainz credits them, when fetched and there is
+/// more than one: a release by one artist is already filed under them.
+fn release_credits(
+    conn: &Connection,
+    release: &str,
+) -> Result<Option<Vec<super::Credit>>, DbError> {
+    let json: Option<Option<String>> = conn
+        .prepare_cached("SELECT credits FROM release_credits WHERE album_mbid = ?1")?
+        .query_row(params![release], |r| r.get(0))
+        .optional()?;
+    Ok(json
+        .flatten()
+        .and_then(|j| serde_json::from_str::<Vec<super::Credit>>(&j).ok())
+        .filter(|list| list.len() > 1))
+}
+
+/// Releases whose files or server entries carry the release's MusicBrainz id
+/// but not its artists one by one, under a credit that may name several, and
+/// that have not been looked up.
+pub(crate) fn releases_to_credit(conn: &Connection) -> Result<Vec<String>, DbError> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for kind in [Kind::Local, Kind::Remote] {
+        let rows: Vec<(String, String)> = conn
+            .prepare_cached(&format!(
+                "SELECT DISTINCT s.album_mbid, COALESCE(s.album_artist, s.artist) FROM {} s
+                  WHERE s.album_mbid IS NOT NULL AND s.album_mbid != ''
+                    AND COALESCE(json_array_length(s.credits, '$.album_artists'), 0) < 2
+                    AND NOT EXISTS (SELECT 1 FROM release_credits r
+                                     WHERE r.album_mbid = s.album_mbid)",
+                kind.table()
+            ))?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (release, credit) in rows {
+            if may_name_several(&credit) && seen.insert(release.clone()) {
+                out.push(release);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Whether a credit could name more than one artist, which is all that is
+/// worth asking MusicBrainz about. Generous on purpose ("Iron and Wine",
+/// "Malcolm X" pass): a false pass costs one request, and nothing is split
+/// here, since the release's own artist credits decide.
+fn may_name_several(credit: &str) -> bool {
+    let lower = format!(" {} ", credit.to_lowercase());
+    [
+        " × ",
+        " x ",
+        " & ",
+        " + ",
+        " / ",
+        ", ",
+        "; ",
+        " and ",
+        " with ",
+        " feat. ",
+        " feat ",
+        " featuring ",
+        " ft. ",
+        " ft ",
+        " vs. ",
+        " vs ",
+        " meets ",
+    ]
+    .iter()
+    .any(|sep| lower.contains(sep))
+}
+
+/// Keep what MusicBrainz credits `release` with (`None`: it has no such
+/// release) and derive again every track tagged with it.
+pub(crate) fn adopt_release_credits(
+    conn: &Connection,
+    release: &str,
+    credits: Option<&[super::Credit]>,
+    now: i64,
+) -> Result<(), DbError> {
+    conn.prepare_cached(
+        "INSERT INTO release_credits (album_mbid, credits, fetched_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(album_mbid) DO UPDATE SET credits = excluded.credits,
+                                               fetched_at = excluded.fetched_at",
+    )?
+    .execute(params![
+        release,
+        credits.map(|c| serde_json::to_string(c).expect("credits serialise")),
+        now
+    ])?;
+    let tracks: Vec<i64> = conn
+        .prepare_cached(
+            "SELECT track_id FROM local_files WHERE album_mbid = ?1
+             UNION SELECT track_id FROM remote_entries WHERE album_mbid = ?1",
+        )?
+        .query_map(params![release], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for track in tracks {
+        derive(conn, track)?;
     }
     Ok(())
 }

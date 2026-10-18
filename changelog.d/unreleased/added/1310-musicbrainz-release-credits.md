@@ -1,0 +1,1 @@
+- **Older collaborations are credited from MusicBrainz.** Files tagged with a MusicBrainz release but crediting its artists only as one string ("A × B") are looked up once after a scan, one release a second, and listed under each artist the release credits. Only credits that could name several artists are looked up, and the answers are kept.

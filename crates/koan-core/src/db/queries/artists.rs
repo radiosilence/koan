@@ -512,6 +512,58 @@ mod tests {
     }
 
     #[test]
+    fn a_release_musicbrainz_credits_lists_its_files_under_each_artist() {
+        use crate::db::queries::{Credit, sample_meta, sources, upsert_track};
+        let db = collaboration_db(false);
+        let credit = format!("{DUCHAMP} × {ATLAS}");
+        for (n, title) in [(1, "Revenant du nord"), (2, "Siilent")] {
+            let mut m = sample_meta(title, &credit, "Revenant du nord / Siilent");
+            m.track_number = Some(n);
+            m.path = Some(format!("/music/ep/{n}.mp3"));
+            m.album_mbid = Some("00ef66fb-e5f3-4b84-8497-6277d041776b".into());
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        assert_eq!(
+            sources::releases_to_credit(&db.conn).unwrap(),
+            ["00ef66fb-e5f3-4b84-8497-6277d041776b"]
+        );
+        let both = [DUCHAMP, ATLAS].map(|name| Credit {
+            name: name.into(),
+            mbid: None,
+            remote_id: None,
+        });
+        sources::adopt_release_credits(
+            &db.conn,
+            "00ef66fb-e5f3-4b84-8497-6277d041776b",
+            Some(&both),
+            0,
+        )
+        .unwrap();
+        let ep = "Revenant du nord / Siilent".to_string();
+        for name in [DUCHAMP, ATLAS] {
+            assert!(
+                album_titles(&db, artist_id(&db, name)).contains(&ep),
+                "{name}"
+            );
+        }
+        assert!(
+            sources::releases_to_credit(&db.conn).unwrap().is_empty(),
+            "a release is fetched once"
+        );
+    }
+
+    #[test]
+    fn a_release_by_one_artist_is_not_looked_up() {
+        use crate::db::queries::{sample_meta, sources, upsert_track};
+        let db = test_db();
+        let mut m = sample_meta("t", "Burial", "Untrue");
+        m.path = Some("/music/untrue.flac".into());
+        m.album_mbid = Some("rel".into());
+        upsert_track(&db.conn, &m).unwrap();
+        assert!(sources::releases_to_credit(&db.conn).unwrap().is_empty());
+    }
+
+    #[test]
     fn a_credit_named_only_as_a_string_is_left_as_it_was() {
         let db = collaboration_db(false);
         let credit = format!("{DUCHAMP} × {ATLAS}");

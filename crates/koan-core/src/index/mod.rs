@@ -3,6 +3,7 @@ mod id3v2_pictures;
 pub mod lane;
 pub mod metadata;
 pub mod playlist_files;
+pub mod release_credits;
 pub mod scanner;
 pub mod spelling;
 pub mod watch;

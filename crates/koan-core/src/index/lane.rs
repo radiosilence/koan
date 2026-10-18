@@ -41,11 +41,25 @@ struct Running {
 /// A scan's turn in the lane, held for as long as it runs.
 pub(crate) struct Turn {
     _lane: MutexGuard<'static, ()>,
+    /// The database to credit releases in once the scan is done.
+    credit: Option<PathBuf>,
+}
+
+impl Turn {
+    /// Look up the releases this scan left to credit when it finishes
+    /// ([`super::release_credits`]).
+    pub(crate) fn then_credit(mut self, db: &crate::db::connection::Database) -> Self {
+        self.credit = super::release_credits::database_path(db);
+        self
+    }
 }
 
 impl Drop for Turn {
     fn drop(&mut self) {
         *RUNNING.lock() = None;
+        if let Some(path) = self.credit.take() {
+            super::release_credits::after_scan(path);
+        }
     }
 }
 
@@ -62,7 +76,10 @@ pub(crate) fn enter(roots: &[PathBuf], opts: &mut ScanOptions) -> Turn {
         roots: roots.to_vec(),
         cancel,
     });
-    Turn { _lane: lane }
+    Turn {
+        _lane: lane,
+        credit: None,
+    }
 }
 
 /// Held while rows are being forgotten: no scan and no import underneath.

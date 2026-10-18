@@ -688,6 +688,7 @@ impl KoanEngine {
     /// has no async primary constructors.
     #[uniffi::constructor]
     pub async fn open(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+        koan_core::index::release_credits::enable();
         offload::offload(move || Self::build(device_name)).await
     }
     // --- Transport ---------------------------------------------------------
