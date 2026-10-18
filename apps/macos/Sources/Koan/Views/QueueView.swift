@@ -189,6 +189,22 @@ struct QueueView: View {
                 changed: { $0 != $1 },
                 menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
                 primaryAction: { play(rowIds: $0) },
+                // Out of the queue a row is its track, and a heading its
+                // record. The table writes one item per row, so a heading
+                // cannot carry its tracks one by one; when they are dragged
+                // with it, they stand for it and the heading carries nothing.
+                drag: { ids in
+                    let dragged = ids.isSubset(of: selection) ? selection : ids
+                    return rows.filter { ids.contains($0.id) }.compactMap { row -> PlayableTransfer? in
+                        switch row {
+                        case .track(let item), .single(let item):
+                            return item.trackId.map { PlayableTransfer(kind: .track, id: $0, name: item.title) }
+                        case .album(_, let group):
+                            guard !group.items.contains(where: { dragged.contains($0.queueItemId) }) else { return nil }
+                            return group.items.first?.albumId.map { PlayableTransfer(kind: .album, id: $0, name: group.album) }
+                        }
+                    }
+                },
                 delete: { _ in removeSelected() },
                 selectAllToken: onStage ? ui.selectAllToken : 0,
                 move: { ids, before in
