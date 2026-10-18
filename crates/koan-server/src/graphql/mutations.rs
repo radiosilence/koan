@@ -1242,10 +1242,14 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
         let registry = ctx.data::<JobRegistry>()?;
-        let pool = ctx.data::<DbHandle>()?.pool.pool.clone();
-        super::jobs::start_scan(registry, pool, reread.unwrap_or(false))
-            .map(Into::into)
-            .map_err(async_graphql::Error::new)
+        let handle = ctx.data::<DbHandle>()?.clone();
+        super::jobs::start_scan(
+            registry,
+            move || handle.open_detached().map_err(|e| e.to_string()),
+            reread.unwrap_or(false),
+        )
+        .map(Into::into)
+        .map_err(async_graphql::Error::new)
     }
 
     /// Start a remote library sync and return immediately.

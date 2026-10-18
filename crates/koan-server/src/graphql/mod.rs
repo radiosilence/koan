@@ -351,9 +351,7 @@ pub(crate) fn build_schema_sharing(
     viz: Option<Arc<VizSnapshot>>,
     jobs: jobs::JobRegistry,
 ) -> KoanSchema {
-    builder_with(DbHandle::new(pool), state, cmd_tx, viz)
-        .data(jobs)
-        .finish()
+    builder_with(DbHandle::new(pool), state, cmd_tx, viz, jobs).finish()
 }
 
 /// `build_schema` with `extension` running on every request.
@@ -363,7 +361,7 @@ pub(crate) fn build_schema_extended(
     pool: Arc<Pool>,
     extension: impl async_graphql::extensions::ExtensionFactory,
 ) -> KoanSchema {
-    builder_with(DbHandle::new(pool), state, cmd_tx, None)
+    builder_with(DbHandle::new(pool), state, cmd_tx, None, Default::default())
         .extension(extension)
         .finish()
 }
@@ -374,7 +372,7 @@ fn build_schema_with(
     cmd_tx: Sender<PlayerCommand>,
     viz: Option<Arc<VizSnapshot>>,
 ) -> KoanSchema {
-    builder_with(handle, state, cmd_tx, viz).finish()
+    builder_with(handle, state, cmd_tx, viz, Default::default()).finish()
 }
 
 fn builder_with(
@@ -382,6 +380,7 @@ fn builder_with(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     viz: Option<Arc<VizSnapshot>>,
+    jobs: jobs::JobRegistry,
 ) -> async_graphql::SchemaBuilder<QueryRoot, MutationRoot, SubscriptionRoot> {
     // Batching only, no caching: a schema-wide loader outlives the request, and
     // favourites and library contents change under it.
@@ -391,7 +390,7 @@ fn builder_with(
     let mut builder = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(handle)
         .data(loader)
-        .data(jobs::JobRegistry::default())
+        .data(jobs)
         .data(Arc::new(queries::Fuzzy::default()))
         .data(state)
         .data(cmd_tx);

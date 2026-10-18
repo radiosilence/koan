@@ -176,13 +176,13 @@ impl JobRegistry {
         self.inner.lock().get(id).cloned()
     }
 
-    /// The most recently started job of `kind`.
-    pub(crate) fn latest(&self, kind: &str) -> Option<Job> {
+    /// The most recently started job of any of `kinds`.
+    pub(crate) fn latest(&self, kinds: &[&str]) -> Option<Job> {
         // Ids are UUIDv7, so they sort by when the job started.
         self.inner
             .lock()
             .values()
-            .filter(|j| j.kind == kind)
+            .filter(|j| kinds.contains(&j.kind.as_str()))
             .max_by(|a, b| a.id.cmp(&b.id))
             .cloned()
     }
@@ -215,22 +215,36 @@ impl JobHandle {
     }
 }
 
-/// Scan the library folders as a job. With `reread`, every file's tags are
-/// read again, ignoring the scan cache: for when what koan takes from tags
-/// changes and files that have not changed need reading again.
-pub(crate) fn start_scan(
-    registry: &JobRegistry,
-    pool: Arc<koan_core::db::pool::Pool>,
-    reread: bool,
-) -> Result<Job, String> {
+/// What a scan's job is called: a re-read is a job of its own, so asking for
+/// one while a plain scan runs waits its turn in the scan lane rather than
+/// joining a scan that will not read every file.
+pub(crate) const SCAN: &str = "scan";
+pub(crate) const REREAD: &str = "reread";
+
+/// How many files a scan reads between progress reports.
+const REPORT_EVERY: u64 = 50;
+
+/// Scan the library folders as a job, with a connection from `open`. With
+/// `reread`, every file's tags are read again, ignoring the scan cache: for
+/// when what koan takes from tags changes and files that have not changed
+/// need reading again.
+pub(crate) fn start_scan<O>(registry: &JobRegistry, open: O, reread: bool) -> Result<Job, String>
+where
+    O: FnOnce() -> Result<koan_core::db::connection::Database, String> + Send + 'static,
+{
     registry.spawn(
-        "scan",
-        // Deliberately outside the pool's bound: this connection is held for
-        // minutes and must not deny one to request-path resolvers.
-        move || pool.take().map_err(|e| e.to_string()),
-        move |db, _| {
+        if reread { REREAD } else { SCAN },
+        open,
+        move |db, progress| {
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             crate::clients::changed_if_library_moved(&db.conn);
+            let read = std::sync::atomic::AtomicU64::new(0);
+            let on_track: &dyn Fn(koan_core::index::scanner::ScanEvent) = &|_| {
+                let n = read.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n % REPORT_EVERY == 0 {
+                    progress.progress(n, None, format!("{n} files read"));
+                }
+            };
             let result = koan_core::index::scanner::full_scan(
                 &db,
                 &cfg.library.folders,
@@ -238,7 +252,7 @@ pub(crate) fn start_scan(
                     force: reread,
                     ..Default::default()
                 },
-                None,
+                Some(on_track),
             );
             crate::clients::changed_if_library_moved(&db.conn);
             Ok(format!(
