@@ -1,0 +1,1 @@
+- **Rescan from the web UI.** Admins can rescan the library from the foot of the Library page, optionally reading every file's tags again, which is how a remote server picks up tags an upgrade starts reading. `triggerScan(reread: true)` does the same over GraphQL.
