@@ -1,0 +1,1 @@
+- **Queue rows drag onto playlists again on the Mac.** A track dragged out of the queue lands on a playlist or New Playlist, and a record heading brings its record; since the queue became a table they carried nothing outside it.
