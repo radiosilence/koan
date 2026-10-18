@@ -313,9 +313,6 @@ jobs:
       # pull request typechecks the shared sources for tvOS, which catches an
       # API tvOS lacks, and a release uploads a tvOS build to TestFlight.
       TVOS: ${{ needs.changes.outputs.release == 'true' }}
-      # Signing is present only in this repository; without it (a fork) a
-      # release is packaged ad-hoc signed rather than failing.
-      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
     steps:
       - if: env.RUN == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -329,6 +326,9 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: apple
+          workspaces: |
+            . -> target
+            . -> target/tv-26.0
       - if: env.RUN == 'true'
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       - if: env.RUN == 'true' && env.RELEASE != 'true'
@@ -337,12 +337,11 @@ jobs:
         run: cargo test --all-targets
       - if: env.RUN == 'true' && env.RELEASE != 'true'
         run: cargo test --doc
-      - if: env.RUN == 'true'
-        run: cargo build --release
       # Builds koan-ffi, regenerates the Swift bindings from it, then compiles
       # the app. The bindings are generated, so this catches drift between the
-      # Rust surface and the Swift that calls it.
-      - if: env.RUN == 'true'
+      # Rust surface and the Swift that calls it. A release builds the app
+      # through `macos-dmg` below instead, once.
+      - if: env.RUN == 'true' && env.RELEASE != 'true'
         run: just macos-build
       # The shared sources also build for iOS and tvOS. These need the same
       # bindings and nothing else: no Rust build for either, no simulator.
@@ -366,7 +365,7 @@ jobs:
       # on its code directory hash, so the tarball published now is the one
       # notarised later.
       - name: Developer ID
-        if: env.RUN == 'true' && env.RELEASE == 'true' && env.MACOS_CERTIFICATE_P12 != ''
+        if: env.RUN == 'true' && env.RELEASE == 'true'
         uses: ./.github/actions/developer-id
         with:
           certificate-p12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -374,28 +373,25 @@ jobs:
       - name: Package the CLI
         if: env.RUN == 'true' && env.RELEASE == 'true'
         run: |
+          cargo build --release -p koan-cli
           cp target/release/koan koan
-          if [ -n "$MACOS_CERTIFICATE_P12" ]; then
-            codesign --force --options runtime --timestamp --sign "$KOAN_SIGN_IDENTITY" koan
-            codesign --verify --strict --verbose=2 koan
-          fi
+          codesign --force --options runtime --timestamp --sign "$KOAN_SIGN_IDENTITY" koan
+          codesign --verify --strict --verbose=2 koan
           tar czf koan-macos-arm64.tar.gz koan
       - if: env.RUN == 'true' && env.RELEASE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: koan-macos-arm64
           path: koan-macos-arm64.tar.gz
-      # Bundle, check, then package. `macos-verify` inspects the assembled
-      # kōan.app, so it comes after `macos-bundle`. Both reuse the app
-      # `macos-build` compiled above.
+      # Build, bundle and package in one invocation, so `macos-build` runs
+      # once; then check the kōan.app the disk image was made from.
       - name: Package the app
         if: env.RUN == 'true' && env.RELEASE == 'true'
         run: |
-          just macos-bundle
-          just macos-verify arm64
           just macos-dmg
+          just macos-verify arm64
       - name: Sign the DMG
-        if: env.RUN == 'true' && env.RELEASE == 'true' && env.MACOS_CERTIFICATE_P12 != ''
+        if: env.RUN == 'true' && env.RELEASE == 'true'
         run: codesign --force --timestamp --sign "$KOAN_SIGN_IDENTITY" apps/macos/.build/pkg/Koan.dmg
       - if: env.RUN == 'true' && env.RELEASE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

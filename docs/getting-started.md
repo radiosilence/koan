@@ -2,7 +2,7 @@
 
 kōan plays a music folder on this machine, a server's library, or both merged into one. Which piece to install depends on where the music is:
 
-- **On the computer you listen at:** the macOS app, or the terminal UI on macOS and Linux.
+- **On the computer you listen at:** the macOS app, or the terminal UI on macOS (Apple silicon) and Linux.
 - **On another machine:** run the [server](guide/headless-server.md) there, and sign in from the apps, the browser or any Subsonic client.
 - **On a Navidrome or Subsonic server you already run:** the apps and terminal UI play from it directly. See [Remote servers](guide/remote-servers.md), or [Migrating from Navidrome](guide/migrating-from-navidrome.md) to replace it.
 
