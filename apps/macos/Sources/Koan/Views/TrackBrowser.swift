@@ -105,7 +105,7 @@ struct TrackBrowser: View {
                 rowHeight: TrackTableRow.artHeight,
                 menu: { ids, environment in hostedMenu(menu(for: ids), environment: environment) },
                 primaryAction: play,
-                drag: { line in line.track.map { PlayableTransfer(.track($0)) } },
+                drag: \.transfer,
                 selectAllToken: ui.selectAllToken,
                 offset: library.tracksOffset,
                 noteOffset: { library.tracksOffset = $0 },

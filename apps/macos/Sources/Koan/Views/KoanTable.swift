@@ -88,8 +88,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     var covered: (Set<ID>) -> Set<ID> = { _ in [] }
     /// ⌫, where removing rows means something.
     var delete: ((Set<ID>) -> Void)?
-    /// ⌘A. A counter, as `UIState.selectAllToken`.
-    var selectAllToken = 0
+    /// ⌘A. A counter, as `UIState.selectAllToken`; nil while the list is not
+    /// listening, and coming back adopts the count without acting on it.
+    var selectAllToken: Int? = 0
     /// Where the list was scrolled to when the page was last left, and where
     /// to note it now. Not observed — see `LibraryModel.albumsOffset`.
     var offset: CGFloat?
@@ -269,7 +270,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
             applySelection(parent.selection)
 
-            if let token = selectAllToken, token != parent.selectAllToken, table.window?.firstResponder === table {
+            if let token = selectAllToken, let wanted = parent.selectAllToken, token != wanted,
+               table.window?.firstResponder === table {
                 // After the update: selecting writes the selection binding,
                 // and a write made during the update is dropped, so the next
                 // one put the old selection back.

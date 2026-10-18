@@ -27,6 +27,9 @@ struct TrackLine: Equatable {
         if case .track(let track) = kind { track } else { nil }
     }
 
+    /// What dragging the row carries.
+    var transfer: PlayableTransfer? { track.map { PlayableTransfer(.track($0)) } }
+
     var isHeading: Bool {
         if case .heading = kind { true } else { false }
     }

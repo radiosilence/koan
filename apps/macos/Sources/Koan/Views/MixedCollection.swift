@@ -175,14 +175,15 @@ struct MixedCollection: NSViewRepresentable {
             }
             applySelection(parent.selection)
             if let token = selectAllToken, token != parent.selectAllToken,
-               collection.window?.firstResponder === collection,
-               let section = sections.firstIndex(of: .tracks) {
-                let all = Set((0..<parent.tracks.count).map { IndexPath(item: $0, section: section) })
-                // After the update, as `KoanTable` selects all.
-                DispatchQueue.main.async { [weak self, weak collection] in
+               collection.window?.firstResponder === collection {
+                // After the update, as `KoanTable` selects all, and from the
+                // tracks as they are by then.
+                DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
-                        collection?.selectionIndexPaths = all
-                        self?.selectionChanged()
+                        guard let self, let collection = self.collection, let parent = self.parent,
+                              let section = self.sections.firstIndex(of: .tracks) else { return }
+                        collection.selectionIndexPaths = Set((0..<parent.tracks.count).map { IndexPath(item: $0, section: section) })
+                        self.selectionChanged()
                     }
                 }
             }

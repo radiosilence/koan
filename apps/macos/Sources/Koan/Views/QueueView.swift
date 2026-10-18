@@ -202,12 +202,12 @@ struct QueueView: View {
                 },
                 covered: { dragged in
                     Set(rows.filter { dragged.contains($0.id) }.flatMap { row -> [String] in
-                        guard case .album(_, let group) = row else { return [] }
+                        guard case .album(_, let group) = row, group.items.first?.albumId != nil else { return [] }
                         return group.items.map(\.queueItemId)
                     })
                 },
                 delete: { _ in removeSelected() },
-                selectAllToken: onStage ? ui.selectAllToken : 0,
+                selectAllToken: onStage ? ui.selectAllToken : nil,
                 move: { ids, before in
                     let moving = IndexSet(ids.compactMap { id in rows.firstIndex { $0.id == id } })
                     move(from: moving, to: before)
