@@ -29,9 +29,10 @@ fn forbidden() -> Response {
     (StatusCode::FORBIDDEN, "admins only").into_response()
 }
 
-/// What the latest scan is doing, or has done. A running one asks to be
-/// followed when the page loads with it.
-fn status(job: Option<&Job>) -> String {
+/// What the current scan is doing, or the last did. On a page as it loads
+/// (`on_load`), a running one asks to be followed; a stream's own patches
+/// never do, or each would open another stream.
+fn status(job: Option<&Job>, on_load: bool) -> String {
     let Some(j) = job else {
         return "<div id=scan-status></div>".into();
     };
@@ -47,7 +48,12 @@ fn status(job: Option<&Job>) -> String {
                 Some(_) => format!("{doing} {}", j.message),
                 None => doing.to_owned(),
             };
-            ("text-muted", text, " data-init=\"@get('/library/scan')\"")
+            let follow = if on_load {
+                " data-init=\"@get('/library/scan')\""
+            } else {
+                ""
+            };
+            ("text-muted", text, follow)
         }
         JobState::Succeeded => {
             let what = if reread { "Last re-read" } else { "Last scan" };
@@ -75,20 +81,21 @@ data-on:submit__prevent=\"@post('/library/scan')\">\
 <label class=\"inline-flex items-center gap-1.5\"><input type=checkbox data-bind:reread>\
 Read every file again</label>\
 <button data-indicator:_scanning data-attr:disabled=\"$_scanning\">Rescan</button></form>{}",
-        status(s.jobs.latest(&KINDS).as_ref())
+        status(s.jobs.current(&KINDS).as_ref(), true)
     )
 }
 
-/// Patches the status line as `id` moves, until it ends. Waits on the
+/// Patches the status line as scans move, until none is running: a re-read
+/// queued behind a scan is followed once the scan ends. Waits on the
 /// registry's signal; the keep-alive stops a proxy closing a stream that is
 /// quiet for a long stretch of a scan.
-fn follow(jobs: JobRegistry, id: Option<String>) -> Response {
+fn follow(jobs: JobRegistry) -> Response {
     let mut changed = jobs.subscribe();
     let stream = async_stream::stream! {
         let mut shown = String::new();
         loop {
-            let now = id.as_deref().and_then(|id| jobs.get(id));
-            let html = status(now.as_ref());
+            let now = jobs.current(&KINDS);
+            let html = status(now.as_ref(), false);
             if html != shown {
                 yield Ok::<_, Infallible>(patch(&html, None));
                 shown = html;
@@ -120,13 +127,8 @@ pub(super) async fn start(
         .ok()
         .and_then(|v| v.get("reread").and_then(|r| r.as_bool()))
         .unwrap_or(false);
-    let pool = s.pool.clone();
-    match start_scan(
-        &s.jobs,
-        move || pool.take().map_err(|e| e.to_string()),
-        reread,
-    ) {
-        Ok(job) => follow(s.jobs.clone(), Some(job.id)),
+    match start_scan(&s.jobs, s.pool.clone(), reread) {
+        Ok(_) => follow(s.jobs.clone()),
         Err(e) => events(vec![patch(
             &format!(
                 "<div id=scan-status><p class=\"{COPY_ERROR}\" role=alert>{}</p></div>",
@@ -137,7 +139,7 @@ pub(super) async fn start(
     }
 }
 
-/// Follow the latest scan: what a page opened while one runs asks for.
+/// Follow the running scan: what a page opened while one runs asks for.
 pub(super) async fn watch(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
@@ -145,6 +147,5 @@ pub(super) async fn watch(
     if !allowed(&user) {
         return forbidden();
     }
-    let latest = s.jobs.latest(&KINDS).map(|j| j.id);
-    follow(s.jobs.clone(), latest)
+    follow(s.jobs.clone())
 }

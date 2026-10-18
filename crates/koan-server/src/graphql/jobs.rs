@@ -176,14 +176,17 @@ impl JobRegistry {
         self.inner.lock().get(id).cloned()
     }
 
-    /// The most recently started job of any of `kinds`.
-    pub(crate) fn latest(&self, kinds: &[&str]) -> Option<Job> {
+    /// The job of any of `kinds` worth showing: the earliest still running,
+    /// which is the one holding the lane while later ones wait, or else the
+    /// one started last.
+    pub(crate) fn current(&self, kinds: &[&str]) -> Option<Job> {
         // Ids are UUIDv7, so they sort by when the job started.
-        self.inner
-            .lock()
-            .values()
-            .filter(|j| kinds.contains(&j.kind.as_str()))
-            .max_by(|a, b| a.id.cmp(&b.id))
+        let jobs = self.inner.lock();
+        let of_kind = || jobs.values().filter(|j| kinds.contains(&j.kind.as_str()));
+        of_kind()
+            .filter(|j| j.state == JobState::Running)
+            .min_by(|a, b| a.id.cmp(&b.id))
+            .or_else(|| of_kind().max_by(|a, b| a.id.cmp(&b.id)))
             .cloned()
     }
 
@@ -224,17 +227,21 @@ pub(crate) const REREAD: &str = "reread";
 /// How many files a scan reads between progress reports.
 const REPORT_EVERY: u64 = 50;
 
-/// Scan the library folders as a job, with a connection from `open`. With
-/// `reread`, every file's tags are read again, ignoring the scan cache: for
-/// when what koan takes from tags changes and files that have not changed
-/// need reading again.
-pub(crate) fn start_scan<O>(registry: &JobRegistry, open: O, reread: bool) -> Result<Job, String>
-where
-    O: FnOnce() -> Result<koan_core::db::connection::Database, String> + Send + 'static,
-{
+/// Scan the library folders as a job. With `reread`, every file's tags are
+/// read again, ignoring the scan cache: for when what koan takes from tags
+/// changes and files that have not changed need reading again. Progress
+/// counts the files whose tags were read, which in a plain scan are only the
+/// changed ones.
+pub(crate) fn start_scan(
+    registry: &JobRegistry,
+    pool: Arc<koan_core::db::pool::Pool>,
+    reread: bool,
+) -> Result<Job, String> {
     registry.spawn(
         if reread { REREAD } else { SCAN },
-        open,
+        // Taken outside the pool's bound: this connection is held for minutes
+        // and must not deny one to request-path resolvers.
+        move || pool.take().map_err(|e| e.to_string()),
         move |db, progress| {
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             crate::clients::changed_if_library_moved(&db.conn);
@@ -255,10 +262,20 @@ where
                 Some(on_track),
             );
             crate::clients::changed_if_library_moved(&db.conn);
-            Ok(format!(
+            let mut summary = format!(
                 "{} added, {} updated, {} unchanged",
                 result.added, result.updated, result.skipped
-            ))
+            );
+            if !result.errors.is_empty() {
+                summary.push_str(&format!(", {} unreadable", result.errors.len()));
+            }
+            if result.cancelled {
+                Err(format!("cancelled after {summary}"))
+            } else if result.incomplete {
+                Err(format!("stopped part way, after {summary}"))
+            } else {
+                Ok(summary)
+            }
         },
     )
 }
