@@ -25,6 +25,9 @@ struct QueueHeading: Equatable {
     let title: String
     /// The record's artist, under its title.
     let artist: String?
+    /// The record, where the library knows it: the title opens it and the
+    /// artist opens whoever it is filed under.
+    let albumId: Int64?
     /// "2007 · 11 tracks · 59:10 · FLAC", where the list says it.
     let detail: String?
     let sleeve: AlbumArtwork.Source?
@@ -49,6 +52,7 @@ final class QueueTableRow: TableCell, TableRow {
         let art: CoverArtCache
         let levels: PlayingLevels
         let toggleFavourite: (Int64) -> Void
+        let open: (LinkText.Target) -> Void
         /// Offline: rows with no file here say so, in place of their status.
         var offline = false
     }
@@ -93,6 +97,8 @@ final class QueueTableRow: TableCell, TableRow {
     private var wideNumber = false
     private let title = NSTextField(labelWithString: "")
     private let artist = NSTextField(labelWithString: "")
+    private let separator = NSTextField(labelWithString: " — ")
+    private let album = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private let availability = AvailabilityMark()
     private let heart = CALayer()
@@ -102,6 +108,7 @@ final class QueueTableRow: TableCell, TableRow {
     private var line: QueueLine?
     private var context: Context?
     private var hovered = false
+    private var hoveredPart: Part?
     private var sleeveLoad: Task<Void, Never>?
     private var shownSleeve: AlbumArtwork.Source?
     private var statusImage: CGImage? { didSet { status.contents = statusImage } }
@@ -116,7 +123,7 @@ final class QueueTableRow: TableCell, TableRow {
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
         for layer in [status, shade, sleeve, availability, heart] { self.layer?.addSublayer(layer) }
-        for label in [number, title, artist, detail, codec, duration] {
+        for label in [number, title, artist, separator, album, detail, codec, duration] {
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
             addSubview(label)
@@ -124,6 +131,8 @@ final class QueueTableRow: TableCell, TableRow {
         number.font = Self.numberFont
         number.alignment = .right
         artist.font = Self.captionFont
+        separator.font = Self.captionFont
+        album.font = Self.captionFont
         codec.font = Self.codecFont
         codec.alignment = .right
         duration.font = Self.numberFont
@@ -140,21 +149,24 @@ final class QueueTableRow: TableCell, TableRow {
         let fresh = self.line?.id != line.id
         self.line = line
         self.context = context
-        if fresh { hovered = false }
+        if fresh {
+            hovered = false
+            hoveredPart = nil
+        }
 
         switch line.kind {
         case .heading(let heading):
             title.font = Self.headingFont
             title.stringValue = Format.title(heading.title)
             artist.stringValue = heading.artist ?? ""
+            album.stringValue = ""
             detail.stringValue = heading.detail ?? ""
             showSleeve(heading.sleeve, art: context.art, corner: 5)
         case .track(let content, _, let showArtist, let artwork):
             title.font = Self.titleFont
             title.stringValue = Format.title(content.title)
-            artist.stringValue = !showArtist || content.artist.isEmpty
-                ? ""
-                : (artwork && !content.album.isEmpty ? "\(content.artist) — \(content.album)" : content.artist)
+            artist.stringValue = !showArtist ? "" : content.artist
+            album.stringValue = !showArtist || content.artist.isEmpty || !artwork ? "" : content.album
             number.stringValue = content.place
             wideNumber = content.disc != nil
             codec.stringValue = content.codec?.uppercased() ?? ""
@@ -189,6 +201,8 @@ final class QueueTableRow: TableCell, TableRow {
         for view in [number, codec, duration] as [NSView] { view.isHidden = heading }
         detail.isHidden = !heading || detail.stringValue.isEmpty
         artist.isHidden = artist.stringValue.isEmpty
+        album.isHidden = album.stringValue.isEmpty
+        separator.isHidden = album.isHidden
 
         if case .heading = line.kind {
             showBars(false, live: false, context: context, selected: selected)
@@ -200,8 +214,8 @@ final class QueueTableRow: TableCell, TableRow {
             heart.isHidden = true
             sleeve.opacity = 1
             CATransaction.commit()
-            title.textColor = selected ? onAccent : .koanLabel
-            artist.textColor = selected ? onAccent : .koanSecondaryLabel
+            style(title, font: Self.headingFont, colour: selected ? onAccent : .koanLabel, linked: hoveredPart == .title)
+            style(artist, font: Self.captionFont, colour: selected ? onAccent : .koanSecondaryLabel, linked: hoveredPart == .artist)
             detail.textColor = selected ? onAccent : .koanTertiaryLabel
             needsLayout = true
             return
@@ -245,7 +259,10 @@ final class QueueTableRow: TableCell, TableRow {
         CATransaction.commit()
 
         title.textColor = isCurrent && !selected ? context.tint : (selected ? onAccent : (dimmed ? .koanSecondaryLabel : .koanLabel))
-        artist.textColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
+        let caption: NSColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
+        style(artist, font: Self.captionFont, colour: caption, linked: hoveredPart == .artist)
+        separator.textColor = caption
+        style(album, font: Self.captionFont, colour: caption, linked: hoveredPart == .album)
         number.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
         codec.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
         duration.textColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
@@ -253,6 +270,17 @@ final class QueueTableRow: TableCell, TableRow {
             : content.status == .failed ? content.failureReason ?? "Couldn't be fetched"
             : (content.status == .priorityPending ? "Queued for download" : nil)
         needsLayout = true
+    }
+
+    /// A name drawn as a link while the pointer is on it, as `TrackTableRow`
+    /// draws its artist and record.
+    private func style(_ label: NSTextField, font: NSFont, colour: NSColor, linked: Bool) {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: linked && backgroundStyle != .emphasized ? NSColor.koanLabel : colour,
+        ]
+        if linked { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        label.attributedStringValue = NSAttributedString(string: label.stringValue, attributes: attributes)
     }
 
     /// The playing row's bars, made for that row only — see `PlayingIndicator`.
@@ -327,10 +355,10 @@ final class QueueTableRow: TableCell, TableRow {
             let block = titleHeight + (artist.isHidden ? 0 : 2 + captionHeight) + detailHeight
             var y = (height - block) / 2
             let width = max(bounds.width - x, 0)
-            title.frame = CGRect(x: x, y: y, width: width, height: titleHeight)
+            title.frame = CGRect(x: x, y: y, width: min(TrackTableRow.measure(title.stringValue, Self.headingFont), width), height: titleHeight)
             y += titleHeight + 2
             if !artist.isHidden {
-                artist.frame = CGRect(x: x, y: y, width: width, height: captionHeight)
+                artist.frame = CGRect(x: x, y: y, width: min(TrackTableRow.measure(artist.stringValue, Self.captionFont), width), height: captionHeight)
                 y += captionHeight + 2
             }
             if !detail.isHidden {
@@ -384,22 +412,69 @@ final class QueueTableRow: TableCell, TableRow {
         let top = (height - block) / 2
         let width = max(right - x, 0)
         title.frame = CGRect(x: x, y: top, width: width, height: titleHeight)
-        artist.frame = CGRect(x: x, y: top + titleHeight + 1, width: width, height: captionHeight)
+        let captionY = top + titleHeight + 1
+        artist.frame = CGRect(x: x, y: captionY, width: min(TrackTableRow.measure(artist.stringValue, Self.captionFont), width), height: captionHeight)
+        if !album.isHidden {
+            let separatorWidth = TrackTableRow.measure(separator.stringValue, Self.captionFont)
+            separator.frame = CGRect(x: artist.frame.maxX, y: captionY, width: separatorWidth, height: captionHeight)
+            let albumX = separator.frame.maxX
+            album.frame = CGRect(
+                x: albumX, y: captionY,
+                width: min(TrackTableRow.measure(album.stringValue, Self.captionFont), max(x + width - albumX, 0)),
+                height: captionHeight
+            )
+        }
     }
 
     // MARK: Pointer
 
+    private enum Part { case title, artist, album }
+
+    /// Where each name leads, if anywhere.
+    private func target(of part: Part) -> LinkText.Target? {
+        guard let line else { return nil }
+        switch (line.kind, part) {
+        case (.heading(let heading), .title):
+            return heading.artist == nil ? nil : heading.albumId.map { .album($0) }
+        case (.heading(let heading), .artist):
+            return heading.albumId.map { .artistOfAlbum($0) }
+        case (.track(let content, _, _, _), .artist):
+            return content.artistLink
+        case (.track(let content, _, _, _), .album):
+            return content.albumId.map { .album($0) }
+        default:
+            return nil
+        }
+    }
+
+    /// The name under the pointer that leads somewhere.
+    private func part(at point: NSPoint) -> Part? {
+        guard let line else { return nil }
+        let candidates: [(Part, NSTextField)] = line.isTrack
+            ? [(.artist, artist), (.album, album)]
+            : [(.title, title), (.artist, artist)]
+        return candidates.first { _, label in !label.isHidden && label.frame.contains(point) }
+            .map { $0.0 }
+            .flatMap { target(of: $0) == nil ? nil : $0 }
+    }
+
     func hover(at point: NSPoint?) -> Bool {
         let now = point != nil
-        if now != hovered {
+        let part = point.flatMap(part(at:))
+        if now != hovered || part != hoveredPart {
             hovered = now
+            hoveredPart = part
             restyle()
         }
-        return false
+        return part != nil
     }
 
     func hit(at point: NSPoint) -> RowHit {
-        guard let line, let context, case .track(let content, _, _, _) = line.kind,
+        guard let line, let context else { return .plain }
+        if let part = part(at: point), let target = target(of: part) {
+            return .link { context.open(target) }
+        }
+        guard case .track(let content, _, _, _) = line.kind,
               let trackId = content.trackId, !heart.isHidden,
               heart.frame.insetBy(dx: -3, dy: -3).contains(point)
         else { return .plain }
@@ -410,6 +485,7 @@ final class QueueTableRow: TableCell, TableRow {
         super.prepareForReuse()
         sleeveLoad?.cancel()
         hovered = false
+        hoveredPart = nil
         if let bars, let context {
             context.levels.detach(bars)
             bars.removeFromSuperview()

@@ -8,9 +8,16 @@ import SwiftUI
 /// Underlines on hover rather than permanently: a library view is mostly names,
 /// and colouring or underlining all of them turns it into a ransom note.
 struct LinkText: View {
-    enum Target {
+    enum Target: Hashable {
         case artist(Int64)
         case album(Int64)
+        /// The artist credited on a track, found when the link is followed. A
+        /// queue item knows its track and record but not its artist.
+        case artistOfTrack(Int64)
+        /// The artist a record is filed under, found when the link is followed:
+        /// a run of queue items or playlist entries knows its record by id but
+        /// not its album artist.
+        case artistOfAlbum(Int64)
     }
 
     let text: String
@@ -19,14 +26,19 @@ struct LinkText: View {
     /// The link is the row's own subject rather than a reference out of it —
     /// an artist in the artists list, not the artist credited on a track.
     var prominent = false
+    var lines = 1
 
     @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
     @State private var hovering = false
 
-    private func transfer(for target: Target) -> PlayableTransfer {
+    /// Only for a target known by its own id; one still to be looked up has
+    /// nothing to drag yet.
+    private func transfer(for target: Target) -> PlayableTransfer? {
         switch target {
         case .artist(let id): PlayableTransfer(kind: .artist, id: id, name: text)
         case .album(let id): PlayableTransfer(kind: .album, id: id, name: text)
+        case .artistOfTrack, .artistOfAlbum: nil
         }
     }
 
@@ -37,16 +49,16 @@ struct LinkText: View {
         Text(text)
             .font(font ?? .role(.control, system: .callout))
             .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
-            .lineLimit(1)
+            .lineLimit(lines)
         #else
         if let target {
-            Text(text)
+            let link = Text(text)
                 .font(font ?? .role(.control, system: .callout))
                 .underline(hovering)
                 .foregroundStyle(
                     hovering || prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary)
                 )
-                .lineLimit(1)
+                .lineLimit(lines)
                 .contentShape(.rect)
                 #if os(macOS)
                 .pointerStyle(.link)
@@ -55,25 +67,45 @@ struct LinkText: View {
                 // A row that scrolls or filters away while hovered never sees
                 // the exit, so it would come back still underlined.
                 .onDisappear { hovering = false }
-                .onTapGesture {
-                    switch target {
-                    case .artist(let id): nav.open(artist: id)
-                    case .album(let id): nav.open(album: id)
-                    }
-                }
-                // Dragging the name drags what it names, which is not
-                // necessarily what the surrounding row or tile stands for: the
-                // artist link on an album tile queues the whole artist, while
-                // the artwork beside it queues just that record.
-                .dragSource(transfer(for: target))
+                .onTapGesture { nav.follow(target, engine: library.engine) }
                 .help("Go to \(text)")
+            // Dragging the name drags what it names, which is not
+            // necessarily what the surrounding row or tile stands for: the
+            // artist link on an album tile queues the whole artist, while
+            // the artwork beside it queues just that record.
+            if let transfer = transfer(for: target) {
+                link.dragSource(transfer)
+            } else {
+                link
+            }
         } else {
             Text(text)
                 .font(font ?? .role(.control, system: .callout))
                 .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
-                .lineLimit(1)
+                .lineLimit(lines)
         }
         #endif
+    }
+}
+
+extension Navigator {
+    /// Goes where a link points, looking up first what a link knows only
+    /// through its track or its record.
+    func follow(_ target: LinkText.Target, engine: KoanEngine) {
+        switch target {
+        case .artist(let id): open(artist: id)
+        case .album(let id): open(album: id)
+        case .artistOfTrack(let id):
+            Task {
+                guard let artistId = (try? await engine.track(trackId: id))??.artistId else { return }
+                open(artist: artistId)
+            }
+        case .artistOfAlbum(let id):
+            Task {
+                guard let album = (try? await engine.album(albumId: id)) ?? nil else { return }
+                open(artist: album.artistId)
+            }
+        }
     }
 }
 

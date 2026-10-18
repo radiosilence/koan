@@ -13,6 +13,9 @@ struct QueueRowContent: Equatable {
     var title: String
     var artist: String
     var album: String
+    /// Where the artist and the album names lead.
+    var artistLink: LinkText.Target?
+    var albumId: Int64?
     /// Its place: the track number in the queue, the position in a playlist.
     /// Int64 because the two sources disagree on width and this only ever gets
     /// printed.
@@ -44,6 +47,8 @@ struct QueueRowContent: Equatable {
         title = item.title
         artist = item.artist
         album = item.album
+        artistLink = item.trackId.map { .artistOfTrack($0) }
+        albumId = item.albumId
         number = item.trackNumber
         if let album = item.albumId, discs.contains(album) { disc = item.disc ?? 1 }
         codec = item.codec
@@ -73,6 +78,8 @@ struct QueueRowContent: Equatable {
         title = track.title
         artist = track.artistName
         album = track.albumTitle
+        artistLink = track.artistId.map { .artist($0) }
+        albumId = track.albumId
         number = Int64(position)
         codec = track.codec
         durationMs = track.durationMs
@@ -148,12 +155,16 @@ struct QueueRow: View {
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
                 if showArtist && !item.artist.isEmpty {
-                    Text(artwork && !item.album.isEmpty
-                        ? "\(item.artist) — \(item.album)"
-                        : item.artist)
-                        .font(.role(.fine, system: .caption))
-                        .foregroundStyle(played ? .tertiary : .secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 0) {
+                        LinkText(text: item.artist, target: item.artistLink, font: .role(.fine, system: .caption))
+                        if artwork && !item.album.isEmpty {
+                            Text(" — ")
+                                .font(.role(.fine, system: .caption))
+                                .foregroundStyle(played ? .tertiary : .secondary)
+                            LinkText(text: item.album, target: item.albumId.map { .album($0) }, font: .role(.fine, system: .caption))
+                        }
+                    }
+                    .lineLimit(1)
                 }
             }
 
