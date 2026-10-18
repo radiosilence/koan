@@ -1234,8 +1234,10 @@ impl MutationRoot {
     async fn trigger_scan(
         &self,
         ctx: &Context<'_>,
-        #[graphql(desc = "Read every file's tags again, even files the scan cache says are \
-                          unchanged: after an upgrade that reads more from tags.")]
+        #[graphql(
+            desc = "Read every file's tags again, even files the scan cache says are \
+                          unchanged: after an upgrade that reads more from tags."
+        )]
         reread: Option<bool>,
     ) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;

@@ -1946,7 +1946,11 @@ mod tests {
         };
         let r = scan_folder(&db, &music_dir, forced, None);
         assert_eq!(r.skipped, 0, "the cache is not consulted: {:?}", r.errors);
-        assert_eq!((r.added, r.updated), (0, 1), "the file is read again, not added twice");
+        assert_eq!(
+            (r.added, r.updated),
+            (0, 1),
+            "the file is read again, not added twice"
+        );
     }
 
     #[test]

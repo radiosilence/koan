@@ -2840,7 +2840,8 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     let f = setup(true);
     let db = Database::open(f.state.pool.path()).unwrap();
     let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
-    let admin = auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let admin =
+        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
     let scan = |access: &str| {
         Request::post("/library/scan")
             .header(header::HOST, HOST)
@@ -2868,7 +2869,16 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     // The stream follows the scan to its end, so the whole body is its story.
     let r = send(&f.app, scan(&admin)).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert!(r.body.contains("Last scan: 0 added, 0 updated, 0 unchanged"), "{}", r.body);
+    assert!(
+        r.body
+            .contains("Last scan: 0 added, 0 updated, 0 unchanged"),
+        "{}",
+        r.body
+    );
     let r = send(&f.app, library(&admin)).await;
-    assert!(r.body.contains("Last scan:"), "the page remembers it: {}", r.body);
+    assert!(
+        r.body.contains("Last scan:"),
+        "the page remembers it: {}",
+        r.body
+    );
 }
