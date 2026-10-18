@@ -15,14 +15,14 @@ use uuid::Uuid;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
 #[graphql(name = "JobState")]
-pub(super) enum JobState {
+pub(crate) enum JobState {
     Running,
     Succeeded,
     Failed,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Job {
+pub(crate) struct Job {
     pub id: String,
     pub kind: String,
     pub state: JobState,
@@ -33,10 +33,22 @@ pub(super) struct Job {
 }
 
 /// Jobs started by this process, newest last. Bounded so a long-lived server
-/// does not accumulate history forever.
-#[derive(Clone, Default)]
-pub(super) struct JobRegistry {
+/// does not accumulate history forever. Shared by GraphQL and the web UI, so
+/// a scan started from either shows in both.
+#[derive(Clone)]
+pub(crate) struct JobRegistry {
     inner: Arc<Mutex<HashMap<String, Job>>>,
+    /// Moves whenever a job starts, reports progress or finishes.
+    changed: Arc<tokio::sync::watch::Sender<u64>>,
+}
+
+impl Default for JobRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Arc::default(),
+            changed: Arc::new(tokio::sync::watch::Sender::new(0)),
+        }
+    }
 }
 
 const MAX_HISTORY: usize = 64;
@@ -46,7 +58,7 @@ impl JobRegistry {
     ///
     /// Two concurrent scans of the same library fight over the same rows, so
     /// the second caller gets the first job's handle instead of a second scan.
-    pub(super) fn start(&self, kind: &str) -> Result<Job, Job> {
+    pub(crate) fn start(&self, kind: &str) -> Result<Job, Job> {
         let mut jobs = self.inner.lock();
         if let Some(running) = jobs
             .values()
@@ -73,15 +85,61 @@ impl JobRegistry {
             total: None,
         };
         jobs.insert(job.id.clone(), job.clone());
+        drop(jobs);
+        self.ring();
         Ok(job)
     }
 
-    pub(super) fn finish(&self, id: &str, state: JobState, message: String) {
+    pub(crate) fn finish(&self, id: &str, state: JobState, message: String) {
         let mut jobs = self.inner.lock();
         if let Some(job) = jobs.get_mut(id) {
             job.state = state;
             job.message = message;
         }
+        drop(jobs);
+        self.ring();
+    }
+
+    fn ring(&self) {
+        self.changed.send_modify(|n| *n = n.wrapping_add(1));
+    }
+
+    /// Wakes whenever any job moves.
+    pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    /// Run `work` on a detached thread with a connection from `open`,
+    /// returning its job. A job of the same kind already running is returned
+    /// as it is rather than started twice.
+    pub(crate) fn spawn<O, F>(&self, kind: &'static str, open: O, work: F) -> Result<Job, String>
+    where
+        O: FnOnce() -> Result<koan_core::db::connection::Database, String> + Send + 'static,
+        F: FnOnce(koan_core::db::connection::Database, JobHandle) -> Result<String, String>
+            + Send
+            + 'static,
+    {
+        let job = match self.start(kind) {
+            Ok(job) => job,
+            Err(running) => return Ok(running),
+        };
+        let id = job.id.clone();
+        let registry = self.clone();
+        let reporter = self.handle(&id);
+        let spawned = std::thread::Builder::new()
+            .name(format!("koan-job-{kind}"))
+            .spawn(move || {
+                registry.run(&id, || work(open()?, reporter));
+            });
+        if spawned.is_err() {
+            self.finish(
+                &job.id,
+                JobState::Failed,
+                "failed to spawn worker thread".into(),
+            );
+            return Err("failed to start job".into());
+        }
+        Ok(job)
     }
 
     /// Run `work` and record its outcome against job `id`. A panic finishes the
@@ -114,8 +172,22 @@ impl JobRegistry {
         }
     }
 
-    pub(super) fn get(&self, id: &str) -> Option<Job> {
+    pub(crate) fn get(&self, id: &str) -> Option<Job> {
         self.inner.lock().get(id).cloned()
+    }
+
+    /// The job of any of `kinds` worth showing: the earliest still running,
+    /// which is the one holding the lane while later ones wait, or else the
+    /// one started last.
+    pub(crate) fn current(&self, kinds: &[&str]) -> Option<Job> {
+        // Ids are UUIDv7, so they sort by when the job started.
+        let jobs = self.inner.lock();
+        let of_kind = || jobs.values().filter(|j| kinds.contains(&j.kind.as_str()));
+        of_kind()
+            .filter(|j| j.state == JobState::Running)
+            .min_by(|a, b| a.id.cmp(&b.id))
+            .or_else(|| of_kind().max_by(|a, b| a.id.cmp(&b.id)))
+            .cloned()
     }
 
     pub(super) fn list(&self) -> Vec<Job> {
@@ -126,7 +198,7 @@ impl JobRegistry {
 }
 
 /// A running job's line back to the registry.
-pub(super) struct JobHandle {
+pub(crate) struct JobHandle {
     registry: JobRegistry,
     id: String,
 }
@@ -141,7 +213,71 @@ impl JobHandle {
             job.total = total;
             job.message = message;
         }
+        drop(jobs);
+        self.registry.ring();
     }
+}
+
+/// What a scan's job is called: a re-read is a job of its own, so asking for
+/// one while a plain scan runs waits its turn in the scan lane rather than
+/// joining a scan that will not read every file.
+pub(crate) const SCAN: &str = "scan";
+pub(crate) const REREAD: &str = "reread";
+
+/// How many files a scan reads between progress reports.
+const REPORT_EVERY: u64 = 50;
+
+/// Scan the library folders as a job. With `reread`, every file's tags are
+/// read again, ignoring the scan cache: for when what koan takes from tags
+/// changes and files that have not changed need reading again. Progress
+/// counts the files whose tags were read, which in a plain scan are only the
+/// changed ones.
+pub(crate) fn start_scan(
+    registry: &JobRegistry,
+    pool: Arc<koan_core::db::pool::Pool>,
+    reread: bool,
+) -> Result<Job, String> {
+    registry.spawn(
+        if reread { REREAD } else { SCAN },
+        // Taken outside the pool's bound: this connection is held for minutes
+        // and must not deny one to request-path resolvers.
+        move || pool.take().map_err(|e| e.to_string()),
+        move |db, progress| {
+            let cfg = koan_core::config::Config::load().unwrap_or_default();
+            crate::clients::changed_if_library_moved(&db.conn);
+            let read = std::sync::atomic::AtomicU64::new(0);
+            let on_track: &dyn Fn(koan_core::index::scanner::ScanEvent) = &|_| {
+                let n = read.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n.is_multiple_of(REPORT_EVERY) {
+                    progress.progress(n, None, format!("{n} files read"));
+                }
+            };
+            let result = koan_core::index::scanner::full_scan(
+                &db,
+                &cfg.library.folders,
+                koan_core::index::scanner::ScanOptions {
+                    force: reread,
+                    ..Default::default()
+                },
+                Some(on_track),
+            );
+            crate::clients::changed_if_library_moved(&db.conn);
+            let mut summary = format!(
+                "{} added, {} updated, {} unchanged",
+                result.added, result.updated, result.skipped
+            );
+            if !result.errors.is_empty() {
+                summary.push_str(&format!(", {} unreadable", result.errors.len()));
+            }
+            if result.cancelled {
+                Err(format!("cancelled after {summary}"))
+            } else if result.incomplete {
+                Err(format!("stopped part way, after {summary}"))
+            } else {
+                Ok(summary)
+            }
+        },
+    )
 }
 
 #[cfg(test)]

@@ -21,6 +21,7 @@ mod oauth;
 mod pages;
 mod pair;
 mod properties;
+mod scan;
 mod scrobbling;
 mod session;
 mod setup;
@@ -101,10 +102,12 @@ pub struct UiState {
     redirect_hosts: Arc<Vec<String>>,
     /// `graphql.proxy_auth_header`, when an authenticating proxy is trusted.
     proxy_auth: Option<ProxyAuth>,
+    /// GraphQL's background jobs, which a rescan started here joins.
+    jobs: crate::graphql::jobs::JobRegistry,
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn router(
+pub(crate) fn router(
     pool: Arc<Pool>,
     auth: AuthRouteState,
     auth_enabled: bool,
@@ -113,6 +116,7 @@ pub fn router(
     public_url: Option<String>,
     redirect_hosts: Vec<String>,
     proxy_auth: Option<ProxyAuth>,
+    jobs: crate::graphql::jobs::JobRegistry,
 ) -> axum::Router {
     let state = UiState {
         pool,
@@ -125,6 +129,7 @@ pub fn router(
         codes: oauth::Codes::default(),
         redirect_hosts: Arc::new(redirect_hosts),
         proxy_auth,
+        jobs,
     };
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
@@ -142,6 +147,7 @@ pub fn router(
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))
         .route("/library", get(pages::library))
+        .route("/library/scan", get(scan::watch).post(scan::start))
         .route("/favourites", get(pages::favourites))
         .route("/recent", get(pages::recent))
         .route("/history", get(history::page))

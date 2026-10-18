@@ -9,7 +9,7 @@ use koan_core::db::pool::Pool;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 
-use super::{KoanSchema, build_schema};
+use super::KoanSchema;
 use crate::auth::AuthUser;
 use crate::auth::middleware::{AuthState, auth_middleware};
 use crate::auth::routes::{AuthRouteState, RateLimiter, auth_router};
@@ -252,7 +252,8 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         headless,
         shutdown.clone(),
     );
-    let schema = build_schema(state, cmd_tx, pool.clone(), viz);
+    let jobs = super::jobs::JobRegistry::default();
+    let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
 
     if auth_enabled {
         log::info!(
@@ -325,6 +326,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             cfg.sharing.public_url.clone(),
             cfg.mcp.redirect_hosts.clone(),
             proxy_auth,
+            jobs,
         );
 
         // Auth routes — always accessible (no auth middleware).

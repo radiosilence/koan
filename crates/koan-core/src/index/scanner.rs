@@ -1929,6 +1929,31 @@ mod tests {
     }
 
     #[test]
+    fn a_forced_scan_reads_unchanged_files_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let music_dir = dir.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+        test_utils::generate_wav(&music_dir.join("unchanged.wav"), 44100, 1, 1.0, 16);
+        let db = test_db(dir.path());
+        assert_eq!(
+            scan_folder(&db, &music_dir, ScanOptions::default(), None).added,
+            1
+        );
+
+        let forced = ScanOptions {
+            force: true,
+            ..Default::default()
+        };
+        let r = scan_folder(&db, &music_dir, forced, None);
+        assert_eq!(r.skipped, 0, "the cache is not consulted: {:?}", r.errors);
+        assert_eq!(
+            (r.added, r.updated),
+            (0, 1),
+            "the file is read again, not added twice"
+        );
+    }
+
+    #[test]
     fn scan_folder_removes_deleted_tracks() {
         let dir = tempfile::tempdir().unwrap();
         let music_dir = dir.path().join("music");

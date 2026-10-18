@@ -991,7 +991,8 @@ impl From<koan_core::organize::OrganizeResult> for GqlOrganizePlan {
 #[graphql(name = "Job")]
 pub(super) struct GqlJob {
     pub id: String,
-    /// What the job is doing — `scan` or `remoteSync`.
+    /// What the job is doing: `scan`, `reread` (a scan reading every file
+    /// again) or `remoteSync`.
     pub kind: String,
     pub state: JobState,
     /// Human-readable progress or outcome.
