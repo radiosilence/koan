@@ -702,11 +702,6 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
     ))
 }
 
-/// Columns added after the initial schema. Applied when absent, so a database
-/// created by any earlier version converges on the current shape.
-///
-/// `organize_log.size_bytes`/`mtime` are checked against the file before undo
-/// moves it back, so a file replaced since the organize is left alone.
 /// Each artist a track's or an album's credits name, beside its own artist,
 /// which stays the credit as it reads ("A × B"). Derived from the sources by
 /// `sources::derive_credits`, like every other track column.
@@ -715,6 +710,8 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
 /// artists, and the artist it is filed under. `listed` marks the ones the
 /// artist browser shows, which leaves out a credit string standing for
 /// artists credited one by one; its page still holds the album.
+///
+/// Run on every upgrade, so the view is redefined whenever the schema moves.
 const CREDIT_TABLES: &str = "
     CREATE TABLE IF NOT EXISTS track_credits (
         track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -730,7 +727,8 @@ const CREDIT_TABLES: &str = "
         PRIMARY KEY (album_id, artist_id)
     );
     CREATE INDEX IF NOT EXISTS idx_album_credits_artist ON album_credits(artist_id);
-    CREATE VIEW IF NOT EXISTS album_artist_links AS
+    DROP VIEW IF EXISTS album_artist_links;
+    CREATE VIEW album_artist_links AS
         SELECT al.id AS album_id, al.artist_id AS artist_id,
                NOT EXISTS (SELECT 1 FROM album_credits c WHERE c.album_id = al.id)
                OR EXISTS (SELECT 1 FROM album_credits c
@@ -742,10 +740,17 @@ const CREDIT_TABLES: &str = "
                             WHERE al.id = c.album_id AND al.artist_id = c.artist_id);
 ";
 
+/// Columns added after the initial schema. Applied when absent, so a database
+/// created by any earlier version converges on the current shape.
+///
+/// `organize_log.size_bytes`/`mtime` are checked against the file before undo
+/// moves it back, so a file replaced since the organize is left alone.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
-    // Each artist a source's credits name, as JSON (`queries::Credits`).
+    // Each artist a source's credits name, as JSON (`queries::Credits`), and
+    // on the track, the credits its links were derived from.
     ("local_files", "credits", "TEXT"),
     ("remote_entries", "credits", "TEXT"),
+    ("tracks", "credits", "TEXT"),
     // The device a key signed in, and the public key that device proves
     // itself with to the account's other devices on the local network. On the
     // key's row, so revoking the key drops it. See `api_keys::device_keys`.
@@ -2595,11 +2600,14 @@ mod tests {
         assert!(fk_cascades(&conn, "scan_cache").unwrap());
         assert!(fk_cascades(&conn, "lyrics_cache").unwrap());
         let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-        assert_eq!(
-            count("SELECT COUNT(*) FROM scan_cache WHERE track_id = 7"),
-            1
-        );
-        assert_eq!(count("SELECT COUNT(*) FROM scan_cache"), 1);
+        // Upgrading from 23 also empties the scan cache, so every file is
+        // read again; the rebuilt table's cascade is checked with a new row.
+        assert_eq!(count("SELECT COUNT(*) FROM scan_cache"), 0);
+        conn.execute(
+            "INSERT INTO scan_cache (path, mtime, size, track_id) VALUES ('/m/t.flac', 1, 2, 7)",
+            [],
+        )
+        .unwrap();
         assert_eq!(count("SELECT COUNT(*) FROM lyrics_cache"), 1);
 
         conn.execute("DELETE FROM tracks WHERE id = 7", []).unwrap();

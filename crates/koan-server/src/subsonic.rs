@@ -1593,27 +1593,17 @@ fn song_extras<'a>(
     }
     let ids = json_ids(tracks.iter().map(|t| t.id));
     let user = history_user(db, user)?;
-    let credits = credits_of(
-        db,
-        "SELECT c.track_id, a.id, a.name, a.mbid FROM track_credits c
-           JOIN artists a ON a.id = c.artist_id
-          WHERE c.track_id IN (SELECT value FROM json_each(?1))
-          ORDER BY c.track_id, c.position",
-        &ids,
-    )?;
+    let credits = credits_of(db, CreditsOf::Tracks, tracks.iter().map(|t| t.id))?;
     let album_credits = credits_of(
         db,
-        "SELECT c.album_id, a.id, a.name, a.mbid FROM album_credits c
-           JOIN artists a ON a.id = c.artist_id
-          WHERE c.album_id IN (SELECT value FROM json_each(?1))
-          ORDER BY c.album_id, c.position",
-        &json_ids(tracks.iter().filter_map(|t| t.album_id)),
+        CreditsOf::Albums,
+        tracks.iter().filter_map(|t| t.album_id),
     )?;
     let credited = credits
         .values()
         .chain(album_credits.values())
         .flatten()
-        .map(|c| c.id)
+        .map(|c| c.artist.id)
         .collect::<Vec<_>>();
     Ok(SongExtras {
         uids: Uids::load(
@@ -1653,34 +1643,17 @@ fn song_extras<'a>(
     })
 }
 
-/// An artist a credit names, as a response lists it.
-struct Credited {
-    id: i64,
-    name: String,
-    mbid: Option<String>,
-}
+use queries::batch::{CreditedArtist as Credited, CreditsOf};
 
-/// Credits by owner from `sql`, which selects owner, artist id, name and
-/// MusicBrainz id for the owners in `?1`, in credit order.
+/// Each artist the credits of these tracks or albums name, by owner.
 fn credits_of(
     db: &Database,
-    sql: &str,
-    ids: &str,
+    of: CreditsOf,
+    ids: impl IntoIterator<Item = i64>,
 ) -> Result<HashMap<i64, Vec<Credited>>, SubsonicError> {
-    let mut out: HashMap<i64, Vec<Credited>> = HashMap::new();
-    for (owner, credited) in by_id(db, sql, [ids], |r| {
-        Ok((
-            r.get(0)?,
-            Credited {
-                id: r.get(1)?,
-                name: r.get(2)?,
-                mbid: r.get(3)?,
-            },
-        ))
-    })? {
-        out.entry(owner).or_default().push(credited);
-    }
-    Ok(out)
+    let ids: Vec<i64> = ids.into_iter().collect();
+    queries::batch::credited_artists(&db.conn, of, &ids)
+        .map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
 /// The `artists` or `albumArtists` of a song or album: each credited artist
@@ -1690,7 +1663,7 @@ fn credit_refs(tag: &str, credits: Option<&Vec<Credited>>, uids: &Uids) -> Vec<X
         .into_iter()
         .flatten()
         .map(|c| {
-            artist_ref(tag, &uids.artist(c.id), &c.name)
+            artist_ref(tag, &uids.artist(c.artist.id), &c.artist.name)
                 .attr_opt("musicBrainzId", c.mbid.as_deref())
         })
         .collect()
@@ -1790,15 +1763,12 @@ fn album_extras<'a>(
             (genres, stats)
         }
     };
-    let credits = credits_of(
-        db,
-        "SELECT c.album_id, a.id, a.name, a.mbid FROM album_credits c
-           JOIN artists a ON a.id = c.artist_id
-          WHERE c.album_id IN (SELECT value FROM json_each(?1))
-          ORDER BY c.album_id, c.position",
-        &ids,
-    )?;
-    let credited = credits.values().flatten().map(|c| c.id).collect::<Vec<_>>();
+    let credits = credits_of(db, CreditsOf::Albums, album_ids.iter().copied())?;
+    let credited = credits
+        .values()
+        .flatten()
+        .map(|c| c.artist.id)
+        .collect::<Vec<_>>();
     Ok(AlbumExtras {
         uids: Uids::load(
             db,

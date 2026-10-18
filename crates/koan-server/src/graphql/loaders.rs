@@ -201,7 +201,7 @@ impl Loader<AlbumStatsOf> for DbLoader {
 macro_rules! credits_loader {
     ($key:ident, $of:expr) => {
         impl Loader<$key> for DbLoader {
-            type Value = Vec<queries::ArtistRow>;
+            type Value = Vec<queries::batch::CreditedArtist>;
             type Error = async_graphql::Error;
 
             async fn load(&self, keys: &[$key]) -> Result<HashMap<$key, Self::Value>, Self::Error> {

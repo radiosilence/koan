@@ -235,12 +235,30 @@ fn credits_of(tag: &lofty::tag::Tag) -> Credits {
         }
     }
     Credits {
-        artists: Credits::pair(artists, all(ItemKey::MusicBrainzArtistId)),
-        album_artists: Credits::pair(
+        artists: slashed(artists, all(ItemKey::MusicBrainzArtistId)),
+        album_artists: slashed(
             all(ItemKey::AlbumArtists),
             all(ItemKey::MusicBrainzReleaseArtistId),
         ),
     }
+}
+
+/// Picard writes ID3v2.3's multi-valued frames joined with "/". A name may
+/// hold a slash of its own ("AC/DC"), so names are split only where the ids,
+/// which never do, say how many artists there are.
+fn slashed(mut names: Vec<String>, mut ids: Vec<String>) -> Vec<crate::db::queries::Credit> {
+    if let [joined] = ids.as_slice()
+        && joined.contains('/')
+    {
+        ids = joined.split('/').map(|s| s.trim().to_string()).collect();
+        if let [name] = names.as_slice() {
+            let parts: Vec<String> = name.split('/').map(|s| s.trim().to_string()).collect();
+            if parts.len() == ids.len() {
+                names = parts;
+            }
+        }
+    }
+    Credits::pair(names, ids)
 }
 
 /// Fallback metadata read when lofty fails. Uses Symphonia to probe

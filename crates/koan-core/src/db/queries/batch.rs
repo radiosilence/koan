@@ -99,14 +99,20 @@ pub enum CreditsOf {
     Albums,
 }
 
+/// An artist a credit names. The row carries no counts.
+#[derive(Debug, Clone)]
+pub struct CreditedArtist {
+    pub artist: ArtistRow,
+    pub mbid: Option<String>,
+}
+
 /// Each artist the credits of these tracks or albums name, in credit order,
-/// keyed by track or album. Absent for one that names only its credit. The
-/// rows carry no counts.
+/// keyed by track or album. Absent for one that names only its credit.
 pub fn credited_artists(
     conn: &Connection,
     of: CreditsOf,
     ids: &[i64],
-) -> Result<HashMap<i64, Vec<ArtistRow>>, DbError> {
+) -> Result<HashMap<i64, Vec<CreditedArtist>>, DbError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -115,7 +121,7 @@ pub fn credited_artists(
         CreditsOf::Albums => ("album_credits", "album_id"),
     };
     let sql = format!(
-        "SELECT c.{owner}, a.id, a.name, a.sort_name, a.remote_id
+        "SELECT c.{owner}, a.id, a.name, a.sort_name, a.remote_id, a.mbid
            FROM {table} c JOIN artists a ON a.id = c.artist_id
           WHERE c.{owner} IN {IN_LIST}
           ORDER BY c.{owner}, c.position"
@@ -124,17 +130,20 @@ pub fn credited_artists(
     let rows = stmt.query_map([json_list(ids)], |row| {
         Ok((
             row.get::<_, i64>(0)?,
-            ArtistRow {
-                id: row.get(1)?,
-                name: row.get(2)?,
-                sort_name: row.get(3)?,
-                remote_id: row.get(4)?,
-                album_count: 0,
-                track_count: 0,
+            CreditedArtist {
+                artist: ArtistRow {
+                    id: row.get(1)?,
+                    name: row.get(2)?,
+                    sort_name: row.get(3)?,
+                    remote_id: row.get(4)?,
+                    album_count: 0,
+                    track_count: 0,
+                },
+                mbid: row.get(5)?,
             },
         ))
     })?;
-    let mut out: HashMap<i64, Vec<ArtistRow>> = HashMap::new();
+    let mut out: HashMap<i64, Vec<CreditedArtist>> = HashMap::new();
     for row in rows {
         let (owner, artist) = row?;
         out.entry(owner).or_default().push(artist);
@@ -201,9 +210,8 @@ pub fn tracks_for_artists(
     let mut out: HashMap<i64, Vec<TrackRow>> = HashMap::new();
     for row in rows {
         let (track, key) = row?;
-        if let Some(key) = key.filter(|k| wanted.contains(k))
-            && !out.entry(key).or_default().iter().any(|t| t.id == track.id)
-        {
+        // The UNION yields each track once per artist.
+        if let Some(key) = key.filter(|k| wanted.contains(k)) {
             out.entry(key).or_default().push(track);
         }
     }

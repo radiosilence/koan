@@ -211,7 +211,7 @@ impl GqlAlbum {
             .await?
             .unwrap_or_default()
             .into_iter()
-            .map(|row| GqlArtist { row })
+            .map(|c| GqlArtist { row: c.artist })
             .collect())
     }
 
@@ -295,7 +295,7 @@ impl GqlTrack {
             .await?
             .unwrap_or_default()
             .into_iter()
-            .map(|row| GqlArtist { row })
+            .map(|c| GqlArtist { row: c.artist })
             .collect())
     }
 
