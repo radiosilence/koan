@@ -46,7 +46,10 @@ pub enum WatchScan<'a> {
     /// or `new folder`. It may yet wait for another scan to leave the lane.
     Started(&'static str),
     /// Files whose tags were read, of those found so far to need reading.
-    Read { done: u64, total: u64 },
+    Read {
+        done: u64,
+        total: u64,
+    },
     Finished(&'a ScanResult),
 }
 
@@ -152,10 +155,20 @@ pub fn spawn_library_watch(
                         on_scan(WatchScan::Read { done, total });
                     }
                 };
-                let result = match dirs {
-                    Some(dirs) => scanner::scan_dirs(&db, folders, dirs, opts, Some(&on_track)),
-                    None => scanner::full_scan(&db, folders, opts, Some(&on_track)),
-                };
+                // A scan that panics is reported as stopped part way, and the
+                // watch carries on: the next change or rescan tries again.
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match dirs {
+                        Some(dirs) => scanner::scan_dirs(&db, folders, dirs, opts, Some(&on_track)),
+                        None => scanner::full_scan(&db, folders, opts, Some(&on_track)),
+                    }))
+                    .unwrap_or_else(|_| {
+                        log::error!("{reason} scan panicked");
+                        ScanResult {
+                            incomplete: true,
+                            ..Default::default()
+                        }
+                    });
                 on_scan(WatchScan::Finished(&result));
                 log::info!(
                     "{reason} scan: {} added, {} updated, {} removed, {} unchanged",

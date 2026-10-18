@@ -57,18 +57,20 @@ pub fn cmd_serve(
         }
     });
 
-    if let Err(e) = run_api_blocking(ApiServerOpts {
-        state,
-        cmd_tx,
-        pool,
-        port,
-        bind,
-        subsonic_port,
-        playground,
-        viz: None, // headless — no viz analyzer
-        headless: true,
+    if let Err(e) = run_api_blocking(
+        ApiServerOpts {
+            state,
+            cmd_tx,
+            pool,
+            port,
+            bind,
+            subsonic_port,
+            playground,
+            viz: None, // headless — no viz analyzer
+            headless: true,
+        },
         jobs,
-    }) {
+    ) {
         eprintln!("koan: {}", e);
         std::process::exit(1);
     }
@@ -150,9 +152,6 @@ pub struct ApiServerOpts {
     pub viz: Option<Arc<VizSnapshot>>,
     /// No TUI or app: the player here is heard by nobody.
     pub headless: bool,
-    /// Started before the server, so the library watch's scans are recorded
-    /// from the first.
-    pub(crate) jobs: super::jobs::JobRegistry,
 }
 
 /// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
@@ -160,7 +159,10 @@ pub struct ApiServerOpts {
 ///
 /// `Err` means the server refused to start on a misconfiguration the caller has
 /// to surface — never a silent downgrade to an unauthenticated server.
-fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
+///
+/// `jobs` is made by the caller, so a library watch started before the server
+/// records its scans from the first.
+fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Result<(), String> {
     let ApiServerOpts {
         state,
         cmd_tx,
@@ -171,7 +173,6 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         playground,
         viz,
         headless,
-        jobs,
     } = opts;
     use axum::routing::{get, post};
 
@@ -505,18 +506,20 @@ pub fn start_api_background(
 ) {
     // Runs on a spawned thread in TUI mode, where a panic would take the API
     // down with nothing on screen to say so.
-    if let Err(e) = run_api_blocking(ApiServerOpts {
-        state,
-        cmd_tx,
-        pool: Arc::new(Pool::new(db_path)),
-        port,
-        bind,
-        subsonic_port,
-        playground,
-        viz: None,
-        headless: false,
-        jobs: Default::default(),
-    }) {
+    if let Err(e) = run_api_blocking(
+        ApiServerOpts {
+            state,
+            cmd_tx,
+            pool: Arc::new(Pool::new(db_path)),
+            port,
+            bind,
+            subsonic_port,
+            playground,
+            viz: None,
+            headless: false,
+        },
+        Default::default(),
+    ) {
         log::error!("API server not started: {}", e);
     }
 }

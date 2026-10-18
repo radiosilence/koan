@@ -309,6 +309,12 @@ pub(crate) fn record_watch(registry: &JobRegistry) -> impl Fn(&WatchScan) + Send
     let running: Mutex<Option<JobHandle>> = Mutex::new(None);
     move |scan| match scan {
         WatchScan::Started(reason) => {
+            // A scan every quarter hour would push people's own jobs out of
+            // the history; only the last watch scan is worth showing.
+            registry
+                .inner
+                .lock()
+                .retain(|_, j| j.kind != WATCH || j.state == JobState::Running);
             // The watch runs one scan at a time, so none of its kind is live.
             let (Ok(job) | Err(job)) = registry.start(WATCH, Some(reason));
             *running.lock() = Some(registry.handle(&job.id));
@@ -384,6 +390,7 @@ mod tests {
 
         record(&WatchScan::Started("folder change"));
         assert_ne!(reg.current(&[WATCH]).unwrap().id, running.id);
+        assert!(reg.get(&running.id).is_none(), "only the last is kept");
     }
 
     #[test]
