@@ -2868,7 +2868,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     assert_eq!(r.status, StatusCode::OK);
     assert!(
         r.body
-            .contains("Last scan: 0 added, 0 updated, 0 unchanged"),
+            .contains("Last scan: 0 added, 0 updated, 0 removed, 0 unchanged"),
         "{}",
         r.body
     );
@@ -2885,8 +2885,23 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         r.body
     );
     assert!(
-        !r.body.contains("data-init"),
-        "a finished scan is not followed: {}",
+        r.body.contains("data-init=\"@get('/library/scan')\""),
+        "the page follows scans still to come: {}",
+        r.body
+    );
+
+    // A scan the folder watcher runs shows with what started it.
+    let record = crate::graphql::jobs::record_watch(&f.state.jobs);
+    record(&koan_core::helpers::WatchScan::Started("start-up"));
+    record(&koan_core::helpers::WatchScan::Read {
+        done: 50,
+        total: 1200,
+    });
+    let r = send(&f.app, library(&admin)).await;
+    assert!(
+        r.body
+            .contains("Scanning (start-up)… 50 of 1200 files read"),
+        "{}",
         r.body
     );
 }
