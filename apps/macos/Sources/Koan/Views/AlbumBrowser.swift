@@ -188,7 +188,7 @@ struct AlbumDetailView: View {
                 subtitle: subtitle,
                 tracks: record.tracks,
                 artwork: .album(albumId),
-                artistLink: record.album?.artistId,
+                artistCredit: record.album?.artistCredit,
                 playable: record.album.map { Playable.album($0) }
             )
         } else if let record {

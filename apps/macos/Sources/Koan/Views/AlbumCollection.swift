@@ -564,7 +564,8 @@ final class AlbumTile: NSCollectionViewItem {
         var meter: TransferMeter?
     }
 
-    private enum Part { case sleeve, title, artist, elsewhere }
+    /// The artist is the credit part under the pointer.
+    private enum Part: Equatable { case sleeve, title, artist(Int), elsewhere }
 
     private static var titleFont: NSFont { NSFont.role(.meta, system: NSFont.systemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium
@@ -618,7 +619,7 @@ final class AlbumTile: NSCollectionViewItem {
     private var load: Task<Void, Never>?
     private var playing = false
     private var hovered: Part?
-    private var underlined: (title: Bool, artist: Bool) = (false, false)
+    private var underlined: (title: Bool, artist: Int?) = (false, nil)
     /// The sleeve on show, for the drag image.
     private var shown: CGImage? {
         didSet { sleeve.contents = shown }
@@ -709,8 +710,11 @@ final class AlbumTile: NSCollectionViewItem {
         self.album = album
         self.context = context
         titleLabel.stringValue = album.title
-        artistLabel.stringValue = album.artistName
-        artistLabel.toolTip = "Go to \(album.artistName)"
+        artistLabel.stringValue = CreditLabel.text(album.artistCredit)
+        artistLabel.toolTip = nil
+        // The labels were just set plain, so whatever hover marks there were
+        // are to be drawn again.
+        underlined = (false, nil)
         yearLabel.stringValue = album.year.map { "· \($0)" } ?? ""
         codec.string = album.codec?.uppercased()
         badge.isHidden = album.codec == nil
@@ -720,8 +724,9 @@ final class AlbumTile: NSCollectionViewItem {
         view.setAccessibilityCustomActions([
             NSAccessibilityCustomAction(name: "Play") { [weak self] in self?.act(.sleeve) ?? false },
             NSAccessibilityCustomAction(name: "Open album") { [weak self] in self?.act(.title) ?? false },
-            NSAccessibilityCustomAction(name: "Go to \(album.artistName)") { [weak self] in self?.act(.artist) ?? false },
-        ])
+        ] + album.artistCredit.enumerated().filter { $0.element.artistId != nil }.map { i, part in
+            NSAccessibilityCustomAction(name: "Go to \(part.text)") { [weak self] in self?.act(.artist(i)) ?? false }
+        })
         if changedRecord {
             playing = false
             spin(false)
@@ -768,12 +773,15 @@ final class AlbumTile: NSCollectionViewItem {
         playMark.isHidden = !showsPlay || playing
         if playing { spin(true) }
 
-        let linked = !context.selecting && hovered == .artist
+        let linked = context.selecting ? nil : linkedArtist
         let titled = !context.selecting && hovered == .title
         if underlined != (titled, linked) {
             underlined = (titled, linked)
-            artistLabel.textColor = linked ? .koanLabel : .koanSecondaryLabel
-            underline(artistLabel, linked)
+            artistLabel.attributedStringValue = CreditLabel.attributed(
+                album.artistCredit, font: Self.detailFont, colour: .koanSecondaryLabel,
+                linked: linked, linkColour: .koanLabel
+            )
+            artistLabel.toolTip = linked.map { "Go to \(album.artistCredit[$0].text)" }
             underline(titleLabel, titled)
         }
     }
@@ -937,8 +945,19 @@ final class AlbumTile: NSCollectionViewItem {
     private func part(at point: NSPoint) -> Part {
         if sleeve.frame.contains(point) { return .sleeve }
         if titleLabel.frame.contains(point) { return .title }
-        if artistLabel.frame.contains(point) { return .artist }
+        if artistLabel.frame.contains(point), let album,
+           let i = CreditLabel.artist(
+               at: point.x - artistLabel.frame.minX, in: album.artistCredit,
+               font: Self.detailFont, width: artistLabel.frame.width
+           ) {
+            return .artist(i)
+        }
         return .elsewhere
+    }
+
+    private var linkedArtist: Int? {
+        guard case .artist(let i) = hovered, let album, album.artistCredit.indices.contains(i) else { return nil }
+        return i
     }
 
     /// The pointer is at `point` in the tile, or has left it. Whether it is
@@ -950,7 +969,7 @@ final class AlbumTile: NSCollectionViewItem {
             hovered = now
             update(in: context)
         }
-        return now == .artist && context?.selecting == false
+        return linkedArtist != nil && context?.selecting == false
     }
 
     func hoverEnded() { hover(at: nil) }
@@ -969,7 +988,9 @@ final class AlbumTile: NSCollectionViewItem {
         switch part {
         case .sleeve: play(album, context: context)
         case .title: context.actions.open(album.id)
-        case .artist: context.actions.openArtist(album.artistId)
+        case .artist(let i):
+            guard album.artistCredit.indices.contains(i), let id = album.artistCredit[i].artistId else { return false }
+            context.actions.openArtist(id)
         case .elsewhere: return false
         }
         return true
@@ -1005,8 +1026,9 @@ final class AlbumTile: NSCollectionViewItem {
     /// the record — or the whole pick, when the record is part of it.
     fileprivate func dragged(from point: NSPoint) -> [PlayableTransfer] {
         guard let album, let context else { return [] }
-        if part(at: point) == .artist, !context.selecting {
-            return [PlayableTransfer(kind: .artist, id: album.artistId, name: album.artistName)]
+        if case .artist(let i) = part(at: point), !context.selecting,
+           album.artistCredit.indices.contains(i), let id = album.artistCredit[i].artistId {
+            return [PlayableTransfer(kind: .artist, id: id, name: album.artistCredit[i].text)]
         }
         let key = Playable.album(album).key
         if context.selecting, context.picked.contains(key) {

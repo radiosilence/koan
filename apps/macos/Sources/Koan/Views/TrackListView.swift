@@ -8,8 +8,8 @@ struct TrackListView: View {
     var subtitle = ""
     let tracks: [Track]
     var artwork: AlbumArtwork.Source?
-    /// Makes the header's subtitle navigate to the artist.
-    var artistLink: Int64?
+    /// Makes the header's subtitle navigate to the artists it credits.
+    var artistCredit: [CreditPart]?
     /// What the header's play button acts on.
     var playable: Playable?
     /// Set when the tracks come from all over rather than from one record.
@@ -304,12 +304,8 @@ struct TrackListView: View {
         }
     }
 
-    /// The subtitle is "Artist · 2007 · FLAC · 59:10"; only the first part is
-    /// the artist, and only that part should link.
-    private var subtitleArtist: String {
-        subtitle.components(separatedBy: " · ").first ?? subtitle
-    }
-
+    /// The subtitle is "Artist · 2007 · FLAC · 59:10"; past the artist, which
+    /// `artistCredit` draws as links, are the details.
     private var subtitleDetails: String {
         subtitle.components(separatedBy: " · ").dropFirst().joined(separator: " · ")
     }
@@ -344,9 +340,9 @@ struct TrackListView: View {
                 }
                 #endif
             } detail: {
-                if let artistLink {
+                if let artistCredit {
                     HStack(spacing: 5) {
-                        LinkText(text: subtitleArtist, target: .artist(artistLink))
+                        CreditLinks(parts: artistCredit)
                         if !subtitleRest.isEmpty {
                             Text(subtitleRest)
                         }
@@ -388,8 +384,8 @@ struct TrackListView: View {
                 .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
-            if let artistLink {
-                LinkText(text: subtitleArtist, target: .artist(artistLink))
+            if let artistCredit {
+                CreditLinks(parts: artistCredit)
                 if !subtitleDetails.isEmpty {
                     Text(subtitleDetails)
                         .font(.role(.fine, system: .footnote))
@@ -489,11 +485,7 @@ struct TrackRow: View {
                     )
                 if credited {
                     HStack(spacing: 5) {
-                        LinkText(
-                            text: track.artistName,
-                            target: track.artistId.map { .artist($0) },
-                            font: .role(.fine, system: .caption)
-                        )
+                        CreditLinks(parts: track.artistCredit, font: .role(.fine, system: .caption))
                         if showsAlbum {
                             Text("·")
                                 .font(.role(.fine, system: .caption))
