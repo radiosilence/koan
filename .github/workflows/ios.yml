@@ -64,7 +64,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
-          targets: aarch64-apple-ios,aarch64-apple-tvos
+          targets: ${{ inputs.platform == 'ios' && 'aarch64-apple-ios' || inputs.platform == 'tvos' && 'aarch64-apple-tvos' || 'aarch64-apple-ios,aarch64-apple-tvos' }}
       # The engine builds for iOS into a target directory of its own (see
       # `ios-ffi`), which rust-cache does not look in unless told. Saved even
       # when the archive fails: the Rust built fine, and a failed upload
