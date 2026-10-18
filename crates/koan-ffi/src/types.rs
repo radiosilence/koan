@@ -4,8 +4,6 @@
 //! `PathBuf`, no `Arc`. These conversions are the only place that translation
 //! happens; everything above and below speaks its own native vocabulary.
 
-use std::collections::HashMap;
-
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, TrackRow};
 use koan_core::helpers;
 use koan_core::player::state::{
