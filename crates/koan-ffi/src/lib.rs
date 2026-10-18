@@ -6176,33 +6176,54 @@ impl KoanEngine {
     /// only has a URL.
     ///
     /// Each track's credited artists come in the same pass, one query for the
-    /// listing.
+    /// listing. A track that names no artists of its own but is credited as
+    /// its record is takes the record's.
     fn decorate(&self, db: &Database, rows: Vec<queries::TrackRow>) -> Vec<Track> {
+        use queries::batch::CreditsOf;
         let favs: HashSet<i64> =
             queries::favourite_track_ids_batch(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-        let credits =
-            koan_core::helpers::credits_by_id(&db.conn, queries::batch::CreditsOf::Tracks, &ids)
-                .unwrap_or_default();
+        let tracks = credits(db, CreditsOf::Tracks, &ids);
+        let as_record = |r: &queries::TrackRow| {
+            r.album_id
+                .filter(|_| !tracks.contains_key(&r.id) && r.artist_name == r.album_artist_name)
+        };
+        let mut records: Vec<i64> = rows.iter().filter_map(as_record).collect();
+        records.sort_unstable();
+        records.dedup();
+        let records = credits(db, CreditsOf::Albums, &records);
         rows.into_iter()
             .map(|r| {
                 let is_fav = favs.contains(&r.id);
-                let artists = credits.get(&r.id);
+                let artists = tracks
+                    .get(&r.id)
+                    .or_else(|| as_record(&r).and_then(|a| records.get(&a)))
+                    .map_or(&[][..], Vec::as_slice);
                 Track::from_row(r, is_fav, artists)
             })
             .collect()
     }
 }
 
+/// The credited artists `credits_by_id` reads, none where the read fails.
+fn credits(
+    db: &Database,
+    of: queries::batch::CreditsOf,
+    ids: &[i64],
+) -> HashMap<i64, Vec<(i64, String)>> {
+    koan_core::helpers::credits_by_id(&db.conn, of, ids).unwrap_or_else(|e| {
+        log::warn!("credited artists unread, credits left unlinked: {e}");
+        HashMap::new()
+    })
+}
+
 /// Albums with their credited artists, one query for the listing.
 fn decorate_albums(db: &Database, rows: Vec<queries::AlbumRow>) -> Vec<Album> {
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let credits =
-        koan_core::helpers::credits_by_id(&db.conn, queries::batch::CreditsOf::Albums, &ids)
-            .unwrap_or_default();
+    let credits = credits(db, queries::batch::CreditsOf::Albums, &ids);
     rows.into_iter()
         .map(|r| {
-            let artists = credits.get(&r.id);
+            let artists = credits.get(&r.id).map_or(&[][..], Vec::as_slice);
             Album::from_row(r, artists)
         })
         .collect()

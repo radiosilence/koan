@@ -1,0 +1,1 @@
+- **Credit parts for every front end.** koan-core cuts an artist credit into its credited artists' names and the text joining them (`helpers::credit_parts`), and koan-ffi's albums and tracks carry the parts, so each app links every artist of a collaboration from one implementation.

@@ -103,12 +103,8 @@ impl From<helpers::CreditPart> for CreditPart {
     }
 }
 
-fn parts(
-    credit: &str,
-    filed: Option<i64>,
-    artists: Option<&Vec<(i64, String)>>,
-) -> Vec<CreditPart> {
-    helpers::parts_of(credit, filed, artists)
+fn parts(credit: &str, filed: Option<i64>, artists: &[(i64, String)]) -> Vec<CreditPart> {
+    helpers::credit_parts(credit, filed, artists)
         .into_iter()
         .map(Into::into)
         .collect()
@@ -142,15 +138,9 @@ pub struct AlbumOnDevice {
     pub total: u32,
 }
 
-impl From<AlbumRow> for Album {
-    fn from(r: AlbumRow) -> Self {
-        Self::from_row(r, None)
-    }
-}
-
 impl Album {
     /// The row, with the artists `credits_by_id` read for it.
-    pub(crate) fn from_row(r: AlbumRow, artists: Option<&Vec<(i64, String)>>) -> Self {
+    pub(crate) fn from_row(r: AlbumRow, artists: &[(i64, String)]) -> Self {
         let year = r.date.as_deref().and_then(year_of);
         Self {
             id: r.id,
@@ -297,11 +287,7 @@ pub struct PlayHistoryEntry {
 
 impl Track {
     /// The row, with the artists `credits_by_id` read for it.
-    pub(crate) fn from_row(
-        r: TrackRow,
-        is_favourite: bool,
-        artists: Option<&Vec<(i64, String)>>,
-    ) -> Self {
+    pub(crate) fn from_row(r: TrackRow, is_favourite: bool, artists: &[(i64, String)]) -> Self {
         let path = r.path.clone().or_else(|| r.cached_path.clone());
         Self {
             id: r.id,
