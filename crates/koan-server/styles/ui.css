@@ -204,6 +204,11 @@
     @apply block truncate text-meta text-muted;
   }
 
+  /* A row is mostly names; linked in the brand colour they would shout over its title. */
+  .tracks .t small a {
+    @apply text-inherit hover:text-strong;
+  }
+
   .tracks .d {
     @apply flex-none text-meta text-muted tabular-nums;
   }

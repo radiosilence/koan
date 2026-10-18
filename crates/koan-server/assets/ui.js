@@ -89,7 +89,11 @@
   function render({ queue, cur, playing, track }) {
     document.body.classList.toggle("playing", playing);
     for (const el of all("[data-np=title]")) el.textContent = track ? track.title : "Nothing playing";
-    for (const el of all("[data-np=artist]")) el.textContent = track ? track.artist : "";
+    for (const el of all("[data-np=artist]")) {
+      el.textContent = track ? track.artist : "";
+      if (el.tagName === "A") el.href = track && track.artistId ? `/artist/${track.artistId}` : "/artists";
+    }
+    for (const el of all("[data-np=sep]")) el.hidden = !(track && track.artist && track.album);
     for (const el of all("[data-np=album]")) {
       el.textContent = track ? track.album : "";
       el.href = track && track.albumId ? `/album/${track.albumId}` : "/albums";
@@ -141,7 +145,15 @@
       title.className = "t";
       title.textContent = t.title;
       const small = document.createElement("small");
-      small.textContent = [t.artist, t.album].filter(Boolean).join(" · ");
+      const names = [[t.artist, t.artistId, "artist"], [t.album, t.albumId, "album"]].filter(([name]) => name);
+      names.forEach(([name, id, kind], j) => {
+        if (j) small.append(" · ");
+        if (!id) return small.append(name);
+        const a = document.createElement("a");
+        a.href = `/${kind}/${id}`;
+        a.textContent = name;
+        small.append(a);
+      });
       title.append(small);
       const d = document.createElement("span");
       d.className = "d";

@@ -14,7 +14,7 @@ use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
-use super::pages::{COPY_INPUT, KICKER, SUB, respond, unavailable};
+use super::pages::{COPY_INPUT, KICKER, SUB, link, respond, unavailable};
 use super::{UiState, open};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
@@ -74,7 +74,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let mut out = format!(
         "<p class=\"{KICKER}\">Properties</p><h2 class=\"my-1 normal-case\">{}</h2><p class=\"{SUB}\">{}</p>",
         escape(&t.title),
-        escape(&t.artist_name),
+        link("artist", t.artist_id, &t.artist_name),
     );
     if admin && let Some(path) = crate::subsonic::track_file_path(&t) {
         out.push_str(&format!(
@@ -86,11 +86,22 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     }
 
     let number = |v: Option<i32>| v.map(|v| v.to_string());
+    // Names that have a page are linked to it; everything else is text.
+    let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
+    let named = [
+        ("Artist", linked("artist", t.artist_id, &t.artist_name)),
+        (
+            "Album artist",
+            linked(
+                "artist",
+                album.as_ref().map(|a| a.artist_id),
+                &t.album_artist_name,
+            ),
+        ),
+        ("Album", linked("album", t.album_id, &t.album_title)),
+    ];
     let track = [
         ("Title", Some(t.title.clone())),
-        ("Artist", Some(t.artist_name.clone())),
-        ("Album artist", Some(t.album_artist_name.clone())),
-        ("Album", Some(t.album_title.clone())),
         ("Disc", number(t.disc)),
         ("Track", number(t.track_number)),
         ("Discs", album.as_ref().and_then(|a| number(a.total_discs))),
@@ -107,9 +118,12 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         ("MusicBrainz release", first(|m| m.album_mbid.clone())),
     ];
     out.push_str(&format!("<p class=\"{SECTION}\">Track</p>"));
-    out.push_str(&list(track.into_iter().filter_map(|(name, value)| {
-        Some((name, value.filter(|v| !v.is_empty())?))
-    })));
+    let mut fields: Vec<_> = track
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, escape(&value.filter(|v| !v.is_empty())?))))
+        .collect();
+    fields.splice(1..1, named.into_iter().filter_map(|(n, v)| Some((n, v?))));
+    out.push_str(&list(fields.into_iter()));
 
     for mut source in sources {
         if !admin {
@@ -121,14 +135,20 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
             "From the file"
         };
         out.push_str(&format!("<p class=\"{SECTION}\">{heading}</p>"));
-        out.push_str(&list(source.info_fields().into_iter()));
+        out.push_str(&list(
+            source
+                .info_fields()
+                .into_iter()
+                .map(|(name, value)| (name, escape(&value))),
+        ));
     }
     Some(Some(out))
 }
 
+/// A definition list of `fields`, whose values are HTML.
 fn list(fields: impl Iterator<Item = (&'static str, String)>) -> String {
     let rows: String = fields
-        .map(|(name, value)| format!("<dt>{name}</dt><dd>{}</dd>", escape(&value)))
+        .map(|(name, value)| format!("<dt>{name}</dt><dd>{value}</dd>"))
         .collect();
     format!("<dl class=\"{LIST}\">{rows}</dl>")
 }

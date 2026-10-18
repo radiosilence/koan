@@ -667,6 +667,43 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
 }
 
 #[tokio::test]
+async fn artists_and_albums_are_linked_wherever_they_are_named() {
+    let f = setup(true);
+    let page = |uri: String| {
+        let app = f.app.clone();
+        let req = authed(&f.state, &uri).body(Body::empty()).unwrap();
+        async move { send(&app, req).await.body }
+    };
+    let artist = "\">Rrose</a>";
+    let album = format!(
+        "<a href=\"/album/{}\">Hymn &lt;to&gt; Moisture</a>",
+        f.album_id
+    );
+
+    let tiles = page("/albums".into()).await;
+    assert!(
+        tiles.contains("href=\"/artist/") && tiles.contains(artist),
+        "{tiles}"
+    );
+
+    let search = page("/search?q=Rrose".into()).await;
+    let row = search
+        .split("<small>")
+        .nth(1)
+        .and_then(|r| r.split("</small>").next())
+        .unwrap_or_else(|| panic!("a track row: {search}"));
+    assert!(row.contains(artist) && row.contains(&album), "{row}");
+
+    let props = page(format!("/track/{}/properties", f.track_id)).await;
+    assert!(props.contains(&album), "{props}");
+    assert_eq!(
+        props.matches(artist).count(),
+        3,
+        "heading, artist and album artist: {props}"
+    );
+}
+
+#[tokio::test]
 async fn sorting_and_filtering_live_in_the_query_string() {
     let f = setup(true);
     let page = |uri: &str| {
