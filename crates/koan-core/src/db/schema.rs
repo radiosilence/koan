@@ -599,8 +599,10 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         ",
     )?;
     conn.execute_batch(crate::db::queries::sources::SOURCE_TABLES)?;
-    apply_migrations(conn, found)?;
+    // Before the migrations: rebuilding source rows derives tracks, and
+    // deriving writes their credits.
     conn.execute_batch(CREDIT_TABLES)?;
+    apply_migrations(conn, found)?;
     // After the migrations: rebuilding `play_history` drops its triggers.
     //
     // A play a client reports is queued for every service its account
