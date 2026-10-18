@@ -241,7 +241,7 @@ where
             let read = std::sync::atomic::AtomicU64::new(0);
             let on_track: &dyn Fn(koan_core::index::scanner::ScanEvent) = &|_| {
                 let n = read.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if n % REPORT_EVERY == 0 {
+                if n.is_multiple_of(REPORT_EVERY) {
                     progress.progress(n, None, format!("{n} files read"));
                 }
             };
