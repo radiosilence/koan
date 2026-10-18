@@ -1,0 +1,1 @@
+- **One macOS runner per CI run.** The macOS checks, the app builds and release packaging share one job, and TestFlight uploads iOS and tvOS from one, tvOS on releases only. Pull requests no longer queue behind each other for the few macOS runners.

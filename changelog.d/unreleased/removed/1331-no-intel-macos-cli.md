@@ -1,0 +1,1 @@
+- **No Intel macOS build of the CLI.** Releases ship `koan` for Apple silicon only, as the app already was; the Homebrew formula now requires arm64. Building it held a macOS runner on every release for machines whose newest supported macOS is behind the app's minimum.
