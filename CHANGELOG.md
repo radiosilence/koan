@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.65.0
+
+### Added
+
+- **Scans the server runs by itself show in the web UI.** The Rescan section on the Library page shows the scan at start-up, on a change in the library folders, the periodic one and one for a newly added folder, with what started it, how many files it has read of those it found to read, and how it ended. After an upgrade that empties the scan cache the start-up scan reads every file, which used to run for a long time with nothing to show for it. Over GraphQL they are `watch` jobs with a `reason`.
+
+### Changed
+
+- **Artists and albums link the same way everywhere on macOS and iOS.** Every track row, the downloads list, the transport bar and the mini player show "Artist · Album" with both names linked, and queue and playlist album headings link the record and its artist. Queue items and playlist entries carry the artist ids those links need.
+- **Each artist of a collaboration is its own link.** On iOS and macOS a credit such as "Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains" links each named artist separately in album headers, track and history rows, album tiles and Now Playing, where it used to be one link to the combined credit. Go to Artist menus, tvOS's included, list each artist.
+- **Web UI links every artist and album name.** Track rows on every page, the queue, album tiles, the playback bar, Now Playing and track properties link each name to its page, so a name behaves the same wherever it appears.
+
+### Removed
+
+- **No Intel macOS build of the CLI.** Releases ship `koan` for Apple silicon only, as the app already was; the Homebrew formula now requires arm64. Building it held a macOS runner on every release for machines whose newest supported macOS is behind the app's minimum.
+
+### Internal
+
+- **Release script recuts a stale branch.** `scripts/release.sh` deletes a release branch whose PR was closed or merged, locally and on origin, and cuts it again from origin/main; a branch with an open PR still stops it.
+- **Credit parts for every front end.** koan-core cuts an artist credit into its credited artists' names and the text joining them (`helpers::credit_parts`), and koan-ffi's albums and tracks carry the parts, so each app links every artist of a collaboration from one implementation.
+- **The pre-push hook only formats.** Clippy no longer runs before every push; CI runs it on every pull request, so a push is not held up running it locally.
+- **One macOS runner per CI run.** The macOS checks, the app builds and release packaging share one job, and TestFlight uploads iOS and tvOS from one, tvOS on releases only. Pull requests no longer queue behind each other for the few macOS runners.
+
 ## 0.64.1
 
 ### Added
