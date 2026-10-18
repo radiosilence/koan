@@ -191,18 +191,19 @@ struct QueueView: View {
                 primaryAction: { play(rowIds: $0) },
                 // Out of the queue a row is its track, and a heading its
                 // record. The table writes one item per row, so a heading
-                // cannot carry its tracks one by one; when they are dragged
-                // with it, they stand for it and the heading carries nothing.
-                drag: { ids in
-                    let dragged = ids.isSubset(of: selection) ? selection : ids
-                    return rows.filter { ids.contains($0.id) }.compactMap { row -> PlayableTransfer? in
-                        switch row {
-                        case .track(let item), .single(let item):
-                            return item.trackId.map { PlayableTransfer(kind: .track, id: $0, name: item.title) }
-                        case .album(_, let group):
-                            guard !group.items.contains(where: { dragged.contains($0.queueItemId) }) else { return nil }
-                            return group.items.first?.albumId.map { PlayableTransfer(kind: .album, id: $0, name: group.album) }
-                        }
+                // cannot carry only the tracks queued under it: dragged alone
+                // it is the whole record. Dragged with any of its tracks, it
+                // carries nothing and those tracks are what was meant.
+                drag: { line, dragged in
+                    switch line.kind {
+                    case .track(let content, _, _, _):
+                        return content.trackId.map { PlayableTransfer(kind: .track, id: $0, name: content.title) }
+                    case .heading(let heading):
+                        guard let albumId = heading.albumId,
+                              case .album(_, let group) = rows.first(where: { $0.id == line.id }),
+                              !group.items.contains(where: { dragged.contains($0.queueItemId) })
+                        else { return nil }
+                        return PlayableTransfer(kind: .album, id: albumId, name: heading.title)
                     }
                 },
                 delete: { _ in removeSelected() },
