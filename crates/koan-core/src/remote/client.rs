@@ -1719,6 +1719,42 @@ pub struct SubsonicSong {
     pub channel_count: Option<i32>,
     #[serde(default, deserialize_with = "non_empty")]
     pub music_brainz_id: Option<String>,
+    /// OpenSubsonic: each artist the song's and its album's credits name.
+    #[serde(default)]
+    pub artists: Vec<SubsonicArtistRef>,
+    #[serde(default)]
+    pub album_artists: Vec<SubsonicArtistRef>,
+}
+
+/// An `ArtistID3` inside a song's `artists` or `albumArtists`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubsonicArtistRef {
+    #[serde(default, deserialize_with = "non_empty")]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default, deserialize_with = "non_empty")]
+    pub music_brainz_id: Option<String>,
+}
+
+impl SubsonicSong {
+    /// The song's credits one by one, as OpenSubsonic servers send them.
+    pub fn credits(&self) -> crate::db::queries::Credits {
+        let list = |refs: &[SubsonicArtistRef]| {
+            refs.iter()
+                .filter(|r| !r.name.trim().is_empty())
+                .map(|r| crate::db::queries::Credit {
+                    name: r.name.clone(),
+                    mbid: r.music_brainz_id.clone(),
+                    remote_id: r.id.clone(),
+                })
+                .collect()
+        };
+        crate::db::queries::Credits {
+            artists: list(&self.artists),
+            album_artists: list(&self.album_artists),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

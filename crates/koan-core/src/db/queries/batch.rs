@@ -65,26 +65,79 @@ pub fn albums_for_artists(
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let rows = stmt.query_map([json_list(artist_ids)], |row| {
-        Ok((row.get::<_, i64>(11)?, AlbumRow {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            artist_id: row.get(2)?,
-            artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            date: row.get(4)?,
-            total_discs: row.get(5)?,
-            total_tracks: row.get(6)?,
-            codec: row.get(7)?,
-            label: row.get(8)?,
-            remote_id: row.get(9)?,
-            added_at: row.get(10)?,
-            on_device: None,
-        }))
+        Ok((
+            row.get::<_, i64>(11)?,
+            AlbumRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                artist_id: row.get(2)?,
+                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                date: row.get(4)?,
+                total_discs: row.get(5)?,
+                total_tracks: row.get(6)?,
+                codec: row.get(7)?,
+                label: row.get(8)?,
+                remote_id: row.get(9)?,
+                added_at: row.get(10)?,
+                on_device: None,
+            },
+        ))
     })?;
 
     let mut out: HashMap<i64, Vec<AlbumRow>> = HashMap::new();
     for row in rows {
         let (artist, album) = row?;
         out.entry(artist).or_default().push(album);
+    }
+    Ok(out)
+}
+
+/// Whose credits [`credited_artists`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditsOf {
+    Tracks,
+    Albums,
+}
+
+/// Each artist the credits of these tracks or albums name, in credit order,
+/// keyed by track or album. Absent for one that names only its credit. The
+/// rows carry no counts.
+pub fn credited_artists(
+    conn: &Connection,
+    of: CreditsOf,
+    ids: &[i64],
+) -> Result<HashMap<i64, Vec<ArtistRow>>, DbError> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let (table, owner) = match of {
+        CreditsOf::Tracks => ("track_credits", "track_id"),
+        CreditsOf::Albums => ("album_credits", "album_id"),
+    };
+    let sql = format!(
+        "SELECT c.{owner}, a.id, a.name, a.sort_name, a.remote_id
+           FROM {table} c JOIN artists a ON a.id = c.artist_id
+          WHERE c.{owner} IN {IN_LIST}
+          ORDER BY c.{owner}, c.position"
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(ids)], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            ArtistRow {
+                id: row.get(1)?,
+                name: row.get(2)?,
+                sort_name: row.get(3)?,
+                remote_id: row.get(4)?,
+                album_count: 0,
+                track_count: 0,
+            },
+        ))
+    })?;
+    let mut out: HashMap<i64, Vec<ArtistRow>> = HashMap::new();
+    for row in rows {
+        let (owner, artist) = row?;
+        out.entry(owner).or_default().push(artist);
     }
     Ok(out)
 }

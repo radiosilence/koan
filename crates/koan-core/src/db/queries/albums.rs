@@ -533,7 +533,8 @@ fn album_body(
     }
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
-        wheres.push("al.id IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?)".into());
+        wheres
+            .push("al.id IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?)".into());
     }
     if let Some(id) = q.features_of {
         params.push(Box::new(id));

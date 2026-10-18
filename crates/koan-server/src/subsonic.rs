@@ -1380,11 +1380,25 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             extras.rating.get(&track.id).map(|&r| r.into()),
         )
         .list("genres", track.genre.iter().map(|g| genre_node(g)))
+        .list("artists", {
+            let credited = credit_refs("artists", extras.credits.get(&track.id), &extras.uids);
+            if credited.is_empty() {
+                track
+                    .artist_id
+                    .map(|id| artist_ref("artists", &extras.uids.artist(id), &track.artist_name))
+                    .into_iter()
+                    .collect()
+            } else {
+                credited
+            }
+        })
         .list(
-            "artists",
-            track
-                .artist_id
-                .map(|id| artist_ref("artists", &extras.uids.artist(id), &track.artist_name)),
+            "albumArtists",
+            credit_refs(
+                "albumArtists",
+                track.album_id.and_then(|a| extras.album_credits.get(&a)),
+                &extras.uids,
+            ),
         )
 }
 
@@ -1469,14 +1483,18 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
         )
         .child(item_date("releaseDate", album.date.as_deref()))
         .list("genres", genres.iter().map(|g| genre_node(g)))
-        .list(
-            "artists",
-            [artist_ref(
-                "artists",
-                &extras.uids.artist(album.artist_id),
-                &album.artist_name,
-            )],
-        )
+        .list("artists", {
+            let credited = credit_refs("artists", extras.credits.get(&album.id), &extras.uids);
+            if credited.is_empty() {
+                vec![artist_ref(
+                    "artists",
+                    &extras.uids.artist(album.artist_id),
+                    &album.artist_name,
+                )]
+            } else {
+                credited
+            }
+        })
         .list(
             "recordLabels",
             album
@@ -1546,6 +1564,9 @@ fn by_id<T>(
 #[derive(Default)]
 struct SongExtras {
     uids: Uids,
+    /// Each artist a track's credits name, by track, and its album's, by album.
+    credits: HashMap<i64, Vec<Credited>>,
+    album_credits: HashMap<i64, Vec<Credited>>,
     mbid: HashMap<i64, String>,
     /// Last play, seconds since the epoch.
     played: HashMap<i64, i64>,
@@ -1572,13 +1593,37 @@ fn song_extras<'a>(
     }
     let ids = json_ids(tracks.iter().map(|t| t.id));
     let user = history_user(db, user)?;
+    let credits = credits_of(
+        db,
+        "SELECT c.track_id, a.id, a.name, a.mbid FROM track_credits c
+           JOIN artists a ON a.id = c.artist_id
+          WHERE c.track_id IN (SELECT value FROM json_each(?1))
+          ORDER BY c.track_id, c.position",
+        &ids,
+    )?;
+    let album_credits = credits_of(
+        db,
+        "SELECT c.album_id, a.id, a.name, a.mbid FROM album_credits c
+           JOIN artists a ON a.id = c.artist_id
+          WHERE c.album_id IN (SELECT value FROM json_each(?1))
+          ORDER BY c.album_id, c.position",
+        &json_ids(tracks.iter().filter_map(|t| t.album_id)),
+    )?;
+    let credited = credits
+        .values()
+        .chain(album_credits.values())
+        .flatten()
+        .map(|c| c.id)
+        .collect::<Vec<_>>();
     Ok(SongExtras {
         uids: Uids::load(
             db,
-            tracks.iter().filter_map(|t| t.artist_id),
+            tracks.iter().filter_map(|t| t.artist_id).chain(credited),
             tracks.iter().filter_map(|t| t.album_id),
             tracks.iter().map(|t| t.id),
         )?,
+        credits,
+        album_credits,
         mbid: by_id(
             db,
             "SELECT id, mbid FROM tracks
@@ -1606,6 +1651,49 @@ fn song_extras<'a>(
         )?,
         starred: starred(db, user, Favourite::Track, &ids)?,
     })
+}
+
+/// An artist a credit names, as a response lists it.
+struct Credited {
+    id: i64,
+    name: String,
+    mbid: Option<String>,
+}
+
+/// Credits by owner from `sql`, which selects owner, artist id, name and
+/// MusicBrainz id for the owners in `?1`, in credit order.
+fn credits_of(
+    db: &Database,
+    sql: &str,
+    ids: &str,
+) -> Result<HashMap<i64, Vec<Credited>>, SubsonicError> {
+    let mut out: HashMap<i64, Vec<Credited>> = HashMap::new();
+    for (owner, credited) in by_id(db, sql, [ids], |r| {
+        Ok((
+            r.get(0)?,
+            Credited {
+                id: r.get(1)?,
+                name: r.get(2)?,
+                mbid: r.get(3)?,
+            },
+        ))
+    })? {
+        out.entry(owner).or_default().push(credited);
+    }
+    Ok(out)
+}
+
+/// The `artists` or `albumArtists` of a song or album: each credited artist
+/// where its credits name them, otherwise the one it is filed under.
+fn credit_refs(tag: &str, credits: Option<&Vec<Credited>>, uids: &Uids) -> Vec<XmlNode> {
+    credits
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            artist_ref(tag, &uids.artist(c.id), &c.name)
+                .attr_opt("musicBrainzId", c.mbid.as_deref())
+        })
+        .collect()
 }
 
 /// The caller's ratings of these rows.
@@ -1657,6 +1745,7 @@ fn starred(
 #[derive(Default)]
 struct AlbumExtras {
     uids: Uids,
+    credits: HashMap<i64, Vec<Credited>>,
     /// MusicBrainz release id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
     genres: HashMap<i64, Vec<String>>,
@@ -1701,13 +1790,23 @@ fn album_extras<'a>(
             (genres, stats)
         }
     };
+    let credits = credits_of(
+        db,
+        "SELECT c.album_id, a.id, a.name, a.mbid FROM album_credits c
+           JOIN artists a ON a.id = c.artist_id
+          WHERE c.album_id IN (SELECT value FROM json_each(?1))
+          ORDER BY c.album_id, c.position",
+        &ids,
+    )?;
+    let credited = credits.values().flatten().map(|c| c.id).collect::<Vec<_>>();
     Ok(AlbumExtras {
         uids: Uids::load(
             db,
-            albums.iter().map(|a| a.artist_id),
+            albums.iter().map(|a| a.artist_id).chain(credited),
             album_ids.iter().copied(),
             [],
         )?,
+        credits,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM albums WHERE id IN (SELECT value FROM json_each(?1))",

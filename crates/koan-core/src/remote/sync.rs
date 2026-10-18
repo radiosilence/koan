@@ -660,7 +660,7 @@ fn write_albums(
                 mbid: song.music_brainz_id.clone(),
                 album_mbid: album.music_brainz_id.clone(),
                 album_added_at: album.created.clone(),
-                credits: Default::default(),
+                credits: song.credits(),
             };
 
             match queries::upsert_synced_track(&db.conn, &meta, song_ids) {
