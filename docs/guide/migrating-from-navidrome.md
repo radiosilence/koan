@@ -1,5 +1,7 @@
 # Migrating from Navidrome
 
+Navidrome is fantastic, incredible software, and I owe a huge amount for bringing self-hosting music into the modern age. However, there were a lot of neat things I wanted to try out and experiment with which required tighter integration between client and server. In order take full advantage of these things (see the features page), there are a variety of OpenSubsonic extensions that are specific to kōan (but by no means closed off to other clients), which are available by running kōan as your server.
+
 A kōan server does the job Navidrome does: it indexes a music folder, serves it over the Subsonic API with OpenSubsonic extensions, and gives each person an account. Subsonic apps that work with Navidrome work with kōan.
 
 You do not have to switch to use kōan's apps. The macOS and iOS apps and the terminal UI play from a Navidrome server as they do from a kōan one, so a move can be gradual: run kōan beside Navidrome on the same read-only music folder, try it, and move clients one at a time.
