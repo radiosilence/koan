@@ -89,7 +89,8 @@ pub fn fuzzy_corpus(conn: &Connection, kind: CorpusKind) -> Result<Vec<(i64, Str
         }
         CorpusKind::Artist => {
             "SELECT a.id, a.name FROM artists a
-             WHERE EXISTS (SELECT 1 FROM albums al WHERE al.artist_id = a.id)"
+             WHERE EXISTS (SELECT 1 FROM album_artist_links l
+                            WHERE l.artist_id = a.id AND l.listed)"
         }
     })?;
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;

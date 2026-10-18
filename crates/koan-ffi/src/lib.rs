@@ -6827,6 +6827,7 @@ mod restore_tests {
             album_mbid: None,
             remote_url: None,
             album_added_at: None,
+            credits: Default::default(),
         };
         queries::upsert_track(&db.conn, &meta).unwrap()
     }

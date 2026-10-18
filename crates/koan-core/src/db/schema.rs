@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 23;
+pub const SCHEMA_VERSION: i64 = 24;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -600,6 +600,7 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     )?;
     conn.execute_batch(crate::db::queries::sources::SOURCE_TABLES)?;
     apply_migrations(conn, found)?;
+    conn.execute_batch(CREDIT_TABLES)?;
     // After the migrations: rebuilding `play_history` drops its triggers.
     //
     // A play a client reports is queued for every service its account
@@ -704,7 +705,45 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
 ///
 /// `organize_log.size_bytes`/`mtime` are checked against the file before undo
 /// moves it back, so a file replaced since the organize is left alone.
+/// Each artist a track's or an album's credits name, beside its own artist,
+/// which stays the credit as it reads ("A × B"). Derived from the sources by
+/// `sources::derive_credits`, like every other track column.
+///
+/// `album_artist_links` is an album's artists either way: its credited
+/// artists, and the artist it is filed under. `listed` marks the ones the
+/// artist browser shows, which leaves out a credit string standing for
+/// artists credited one by one; its page still holds the album.
+const CREDIT_TABLES: &str = "
+    CREATE TABLE IF NOT EXISTS track_credits (
+        track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+        position  INTEGER NOT NULL,
+        PRIMARY KEY (track_id, artist_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_id);
+    CREATE TABLE IF NOT EXISTS album_credits (
+        album_id  INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+        artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+        position  INTEGER NOT NULL,
+        PRIMARY KEY (album_id, artist_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_album_credits_artist ON album_credits(artist_id);
+    CREATE VIEW IF NOT EXISTS album_artist_links AS
+        SELECT al.id AS album_id, al.artist_id AS artist_id,
+               NOT EXISTS (SELECT 1 FROM album_credits c WHERE c.album_id = al.id)
+               OR EXISTS (SELECT 1 FROM album_credits c
+                           WHERE c.album_id = al.id AND c.artist_id = al.artist_id) AS listed
+          FROM albums al WHERE al.artist_id IS NOT NULL
+        UNION ALL
+        SELECT c.album_id, c.artist_id, 1 FROM album_credits c
+         WHERE NOT EXISTS (SELECT 1 FROM albums al
+                            WHERE al.id = c.album_id AND al.artist_id = c.artist_id);
+";
+
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    // Each artist a source's credits name, as JSON (`queries::Credits`).
+    ("local_files", "credits", "TEXT"),
+    ("remote_entries", "credits", "TEXT"),
     // The device a key signed in, and the public key that device proves
     // itself with to the account's other devices on the local network. On the
     // key's row, so revoking the key drops it. See `api_keys::device_keys`.
@@ -1014,6 +1053,15 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             crate::db::connection::DbError::Sqlite(e) => e,
             other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
         })?;
+        conn.execute_batch(
+            "DELETE FROM scan_cache;
+             UPDATE remote_servers SET library_version = NULL;",
+        )?;
+    }
+
+    // Sources read before credits were kept: every file's tags are read
+    // again on the next scan, and every server walked again on its next sync.
+    if (14..24).contains(&found) {
         conn.execute_batch(
             "DELETE FROM scan_cache;
              UPDATE remote_servers SET library_version = NULL;",

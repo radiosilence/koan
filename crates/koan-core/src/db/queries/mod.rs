@@ -245,6 +245,52 @@ pub struct TrackMeta {
     /// supplies the server's `created`; anything else leaves it and the album
     /// is stamped with the time it was first seen.
     pub album_added_at: Option<String>,
+    /// Each artist the credits name, where the source names them one by one.
+    pub credits: Credits,
+}
+
+/// The artists a track's and its album's credits name, one by one: `ARTISTS`
+/// and `ALBUMARTISTS` with their MusicBrainz ids in a file, OpenSubsonic's
+/// `artists` and `albumArtists` from a server. `artist` and `album_artist`
+/// stay the credit as it reads ("A × B"); these are what lists the record
+/// under each artist. Empty when the source names only the credit.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Credits {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artists: Vec<Credit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub album_artists: Vec<Credit>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Credit {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mbid: Option<String>,
+    /// The server's id for the artist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_id: Option<String>,
+}
+
+impl Credits {
+    pub fn is_empty(&self) -> bool {
+        self.artists.is_empty() && self.album_artists.is_empty()
+    }
+
+    /// Names paired with ids by position, as taggers write them; ids that do
+    /// not line up with the names are dropped rather than guessed at.
+    pub fn pair(names: Vec<String>, mbids: Vec<String>) -> Vec<Credit> {
+        let aligned = names.len() == mbids.len();
+        names
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| Credit {
+                name,
+                mbid: aligned.then(|| mbids[i].clone()),
+                remote_id: None,
+            })
+            .collect()
+    }
 }
 
 impl TrackMeta {
@@ -323,6 +369,7 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         album_mbid: None,
         remote_url: None,
         album_added_at: None,
+        credits: Default::default(),
     }
 }
 

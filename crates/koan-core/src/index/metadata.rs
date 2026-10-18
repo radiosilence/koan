@@ -9,7 +9,7 @@ use lofty::prelude::*;
 use symphonia::core::meta::{MetadataRevision, StandardTag};
 use thiserror::Error;
 
-use crate::db::queries::TrackMeta;
+use crate::db::queries::{Credits, TrackMeta};
 
 #[derive(Debug, Error)]
 pub enum MetadataError {
@@ -138,6 +138,7 @@ fn read_metadata_lofty(
     };
     let mbid = musicbrainz(ItemKey::MusicBrainzRecordingId);
     let album_mbid = musicbrainz(ItemKey::MusicBrainzReleaseId);
+    let credits = tag.map(credits_of).unwrap_or_default();
 
     let (title, artist, album_artist, album, date, disc, track_number, genre, label) =
         if let Some(tag) = tag {
@@ -209,7 +210,37 @@ fn read_metadata_lofty(
         album_mbid,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
+        credits,
     })
+}
+
+/// Each artist the tag names one by one, with their MusicBrainz ids: the
+/// `ARTISTS` and `ALBUMARTISTS` Picard and sift write, or for a Vorbis comment
+/// without them, a repeated `ARTIST`. ID3v2.4 joins a multi-valued frame with
+/// NULs, which is split here whichever way lofty hands it over.
+fn credits_of(tag: &lofty::tag::Tag) -> Credits {
+    let all = |key: ItemKey| -> Vec<String> {
+        tag.get_strings(key)
+            .flat_map(|v| v.split('\0'))
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut artists = all(ItemKey::TrackArtists);
+    if artists.is_empty() {
+        let repeated = all(ItemKey::TrackArtist);
+        if repeated.len() > 1 {
+            artists = repeated;
+        }
+    }
+    Credits {
+        artists: Credits::pair(artists, all(ItemKey::MusicBrainzArtistId)),
+        album_artists: Credits::pair(
+            all(ItemKey::AlbumArtists),
+            all(ItemKey::MusicBrainzReleaseArtistId),
+        ),
+    }
 }
 
 /// Fallback metadata read when lofty fails. Uses Symphonia to probe
@@ -271,6 +302,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         album_mbid: None,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
+        credits: Default::default(),
     })
 }
 
@@ -618,6 +650,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         album_mbid: None,
         remote_url: None,
         album_added_at: None,
+        credits: Default::default(),
     }
 }
 

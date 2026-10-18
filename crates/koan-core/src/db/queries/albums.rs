@@ -533,14 +533,17 @@ fn album_body(
     }
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
-        wheres.push("al.artist_id = ?".into());
+        wheres.push("al.id IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?)".into());
     }
     if let Some(id) = q.features_of {
         params.push(Box::new(id));
         params.push(Box::new(id));
+        params.push(Box::new(id));
         wheres.push(
-            "al.id IN (SELECT album_id FROM tracks WHERE artist_id = ?)
-             AND al.artist_id IS NOT ?"
+            "al.id IN (SELECT album_id FROM tracks WHERE artist_id = ?
+                       UNION SELECT t.album_id FROM track_credits c
+                               JOIN tracks t ON t.id = c.track_id WHERE c.artist_id = ?)
+             AND al.id NOT IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?)"
                 .into(),
         );
     }

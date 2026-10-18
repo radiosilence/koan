@@ -215,12 +215,16 @@ fn artist_body(
     conn: &Connection,
     q: &ArtistQuery,
 ) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>), DbError> {
+    // An album is under each artist its credits name, and the artist list
+    // leaves out a credit string standing for artists credited one by one.
     let mut sql = String::from(if q.without_track_counts {
         "FROM artists a
-         INNER JOIN albums al ON al.artist_id = a.id"
+         INNER JOIN album_artist_links l ON l.artist_id = a.id AND l.listed
+         INNER JOIN albums al ON al.id = l.album_id"
     } else {
         "FROM artists a
-         INNER JOIN albums al ON al.artist_id = a.id
+         INNER JOIN album_artist_links l ON l.artist_id = a.id AND l.listed
+         INNER JOIN albums al ON al.id = l.album_id
          LEFT JOIN tracks t ON t.album_id = al.id"
     });
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -285,10 +289,13 @@ pub fn get_artist(conn: &Connection, artist_id: i64) -> Result<Option<ArtistRow>
     Ok(conn
         .query_row(
             "SELECT a.id, a.name, a.sort_name, a.remote_id,
-                    (SELECT COUNT(*) FROM albums WHERE artist_id = a.id),
+                    (SELECT COUNT(DISTINCT album_id) FROM album_artist_links
+                      WHERE artist_id = a.id),
                     (SELECT COUNT(*) FROM tracks
                       WHERE artist_id = a.id
-                         OR album_id IN (SELECT id FROM albums WHERE artist_id = a.id))
+                         OR id IN (SELECT track_id FROM track_credits WHERE artist_id = a.id)
+                         OR album_id IN (SELECT album_id FROM album_artist_links
+                                          WHERE artist_id = a.id))
              FROM artists a
              WHERE a.id = ?1",
             params![artist_id],
