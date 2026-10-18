@@ -77,6 +77,36 @@ struct LinkText: View {
     }
 }
 
+/// An artist credit as it reads, each credited artist's name a `LinkText` of
+/// its own and the text joining them ("×", " feat. ") plain. A credit naming
+/// one artist is a single link, as before collaborations were split.
+struct CreditLinks: View {
+    let parts: [CreditPart]
+    var font: Font?
+
+    var body: some View {
+        if parts.count == 1, let part = parts.first {
+            LinkText(text: part.text, target: part.artistId.map { .artist($0) }, font: font)
+        } else {
+            HStack(spacing: 0) {
+                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                    if let id = part.artistId {
+                        LinkText(text: part.text, target: .artist(id), font: font)
+                    } else {
+                        // The names give way first: a joiner cut short reads
+                        // as nothing at all.
+                        Text(part.text)
+                            .font(font ?? .role(.control, system: .callout))
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Album art that plays the record when clicked and opens it, with the
 /// affordance only showing on hover so a wall of covers stays a wall of covers.
 ///
