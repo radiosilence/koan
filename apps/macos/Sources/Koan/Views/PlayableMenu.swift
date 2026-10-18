@@ -160,19 +160,26 @@ struct PlayableMenu: View {
             Button { nav.open(album: albumId, highlighting: track.id) } label: {
                 Label("Go to Album", koan: Icon.album)
             }
-            if let artistId = track.artistId {
-                Button { nav.open(artist: artistId) } label: {
-                    Label("Go to Artist", koan: Icon.artist)
-                }
-            }
+            goToArtists(track.artistCredit)
         }
         if case .album(let album) = playable {
             Divider()
             Button { nav.open(album: album.id) } label: {
                 Label("Go to Album", koan: Icon.album)
             }
-            Button { nav.open(artist: album.artistId) } label: {
-                Label("Go to Artist", koan: Icon.artist)
+            goToArtists(album.artistCredit)
+        }
+    }
+
+    /// One item per artist the credit links, each named when there are more
+    /// than one.
+    @ViewBuilder private func goToArtists(_ credit: [CreditPart]) -> some View {
+        let linked = credit.filter { $0.artistId != nil }
+        ForEach(Array(linked.enumerated()), id: \.offset) { _, part in
+            if let id = part.artistId {
+                Button { nav.open(artist: id) } label: {
+                    Label(linked.count == 1 ? "Go to Artist" : "Go to \(part.text)", koan: Icon.artist)
+                }
             }
         }
     }

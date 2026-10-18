@@ -98,12 +98,45 @@ extension Navigator {
     }
 }
 
-/// A track's artist and record, each a link, the way every row, the
-/// transport and the mini player show them: "Artist · Album". One view, so the
-/// separator, the colours and the hover are the same wherever the pair appears.
+/// An artist credit as it reads, each credited artist's name a `LinkText` of
+/// its own and the text joining them ("×", " feat. ") plain. A credit naming
+/// one artist is a single link.
+struct CreditLinks: View {
+    let parts: [CreditPart]
+    var font: Font?
+    var dimmed = false
+
+    var body: some View {
+        if parts.count == 1, let part = parts.first {
+            LinkText(text: part.text, target: part.artistId.map { .artist($0) }, font: font, dimmed: dimmed)
+        } else {
+            HStack(spacing: 0) {
+                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                    if let id = part.artistId {
+                        LinkText(text: part.text, target: .artist(id), font: font, dimmed: dimmed)
+                    } else {
+                        // The names give way first: a joiner cut short reads
+                        // as nothing at all.
+                        Text(part.text)
+                            .font(font ?? .role(.control, system: .callout))
+                            .foregroundStyle(
+                                dimmed ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary)
+                            )
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A track's artist credit and record, each name a link, the way every row,
+/// the transport and the mini player show them: "Artist · Album". One view, so
+/// the separator, the colours and the hover are the same wherever the pair
+/// appears.
 struct ArtistAlbumLine: View {
-    let artist: String
-    let artistId: Int64?
+    let artist: [CreditPart]
     /// Left out where the list already says which record this is.
     var album: String?
     var albumId: Int64?
@@ -112,7 +145,7 @@ struct ArtistAlbumLine: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            LinkText(text: artist, target: artistId.map { .artist($0) }, font: font, dimmed: dimmed)
+            CreditLinks(parts: artist, font: font, dimmed: dimmed)
             if let album, !album.isEmpty {
                 Text("·")
                     .font(font)
@@ -121,6 +154,14 @@ struct ArtistAlbumLine: View {
             }
         }
         .lineLimit(1)
+    }
+}
+
+extension ArtistAlbumLine {
+    /// For an artist known by one name and id, with no credit split into
+    /// parts: a queue item, a download.
+    init(artist: String, artistId: Int64?, album: String? = nil, albumId: Int64? = nil, dimmed: Bool = false) {
+        self.init(artist: [CreditPart(text: artist, artistId: artistId)], album: album, albumId: albumId, dimmed: dimmed)
     }
 }
 

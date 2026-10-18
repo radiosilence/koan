@@ -43,8 +43,7 @@ struct MiniPlayer: View {
                     // Links, as in the transport bar; the rest of the bar opens
                     // Now Playing.
                     ArtistAlbumLine(
-                        artist: entry.artist,
-                        artistId: player.currentArtistId,
+                        artist: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
                         album: entry.album,
                         albumId: player.currentAlbumId
                     )

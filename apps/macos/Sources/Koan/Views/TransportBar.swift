@@ -140,8 +140,7 @@ struct TransportBar: View {
                     // line as a whole meaning one of them, drawn as every row
                     // draws them.
                     ArtistAlbumLine(
-                        artist: entry.artist,
-                        artistId: player.currentArtistId,
+                        artist: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
                         album: entry.album,
                         albumId: player.currentAlbumId
                     )

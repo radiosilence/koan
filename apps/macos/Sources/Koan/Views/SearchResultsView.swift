@@ -283,8 +283,7 @@ private struct SearchTrackRow: View {
                 // While picking, a tap anywhere on the row ticks it.
                 let linked = !selection.isActive
                 ArtistAlbumLine(
-                    artist: track.artistName,
-                    artistId: linked ? track.artistId : nil,
+                    artist: linked ? track.artistCredit : [CreditPart(text: track.artistName, artistId: nil)],
                     album: track.albumTitle,
                     albumId: linked ? track.albumId : nil
                 )

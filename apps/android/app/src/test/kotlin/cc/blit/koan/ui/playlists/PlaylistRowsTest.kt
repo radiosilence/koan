@@ -11,7 +11,7 @@ class PlaylistRowsTest {
     private fun entry(id: Long, album: String, albumId: Long?, artist: String = "Tone Collective") = PlaylistEntry(
         entryId = id,
         track = Track(
-            id = id * 10, title = "Track $id", artistName = artist, albumArtistName = artist, albumTitle = album,
+            id = id * 10, title = "Track $id", artistName = artist, artistCredit = emptyList(), albumArtistName = artist, albumTitle = album,
             albumId = albumId, artistId = 1, disc = 1, trackNumber = id.toInt(), durationMs = 60_000, codec = "FLAC",
             sampleRate = 44_100, bitDepth = 16, channels = 2, bitrate = null, genre = null, source = "remote",
             onServer = true, onDisk = false, path = null, isFavourite = false,

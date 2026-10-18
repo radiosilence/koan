@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, Place, TrackRow};
+use koan_core::helpers;
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueEntry, QueueEntryStatus, TrackInfo,
 };
@@ -83,12 +84,40 @@ impl From<ArtistRow> for Artist {
     }
 }
 
+/// One stretch of an artist credit: a credited artist's name, linked to that
+/// artist, or the plain text joining two names. A credit's parts, in order,
+/// read as the credit does, or as its artists joined by commas where a name
+/// could not be found in it. See `koan_core::helpers::credit_parts`.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CreditPart {
+    pub text: String,
+    pub artist_id: Option<i64>,
+}
+
+impl From<helpers::CreditPart> for CreditPart {
+    fn from(p: helpers::CreditPart) -> Self {
+        Self {
+            text: p.text,
+            artist_id: p.artist_id,
+        }
+    }
+}
+
+fn parts(credit: &str, filed: Option<i64>, artists: &[(i64, String)]) -> Vec<CreditPart> {
+    helpers::credit_parts(credit, filed, artists)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Album {
     pub id: i64,
     pub title: String,
     pub artist_id: i64,
     pub artist_name: String,
+    /// `artist_name` with each artist it credits linked.
+    pub artist_credit: Vec<CreditPart>,
     pub year: Option<i32>,
     pub codec: Option<String>,
     pub label: Option<String>,
@@ -109,13 +138,15 @@ pub struct AlbumOnDevice {
     pub total: u32,
 }
 
-impl From<AlbumRow> for Album {
-    fn from(r: AlbumRow) -> Self {
+impl Album {
+    /// The row, with the artists `credits_by_id` read for it.
+    pub(crate) fn from_row(r: AlbumRow, artists: &[(i64, String)]) -> Self {
         let year = r.date.as_deref().and_then(year_of);
         Self {
             id: r.id,
             title: r.title,
             artist_id: r.artist_id,
+            artist_credit: parts(&r.artist_name, Some(r.artist_id), artists),
             artist_name: r.artist_name,
             year,
             codec: r.codec,
@@ -136,6 +167,8 @@ pub struct Track {
     pub id: i64,
     pub title: String,
     pub artist_name: String,
+    /// `artist_name` with each artist it credits linked.
+    pub artist_credit: Vec<CreditPart>,
     pub album_artist_name: String,
     pub album_title: String,
     pub album_id: Option<i64>,
@@ -253,11 +286,13 @@ pub struct PlayHistoryEntry {
 }
 
 impl Track {
-    pub(crate) fn from_row(r: TrackRow, is_favourite: bool) -> Self {
+    /// The row, with the artists `credits_by_id` read for it.
+    pub(crate) fn from_row(r: TrackRow, is_favourite: bool, artists: &[(i64, String)]) -> Self {
         let path = r.path.clone().or_else(|| r.cached_path.clone());
         Self {
             id: r.id,
             title: r.title,
+            artist_credit: parts(&r.artist_name, r.artist_id, artists),
             artist_name: r.artist_name,
             album_artist_name: r.album_artist_name,
             album_title: r.album_title,

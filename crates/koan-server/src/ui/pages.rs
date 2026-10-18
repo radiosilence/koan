@@ -204,10 +204,12 @@ max-wide:pl-3\">\
 <progress class=\"absolute inset-x-0 -top-px hidden h-0.5 w-full appearance-none border-0 bg-rule \
 max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule \
 [&::-webkit-progress-value]:bg-brand\" data-np=progress max=1 value=0></progress>\
-<a class=\"flex min-w-0 items-center gap-2.5 text-ink hover:no-underline\" href=\"/queue\">\
-<img class=\"size-10 flex-none bg-surface object-cover\" data-np=cover alt=\"\" hidden>\
-<span class=\"flex min-w-0 flex-col\"><span class=\"truncate text-meta text-strong\" data-np=title>Nothing playing</span>\
-<span class=\"truncate text-fine text-muted\" data-np=artist></span></span></a>\
+<div class=\"flex min-w-0 items-center gap-2.5\">\
+<a class=\"flex-none hover:no-underline\" href=\"/queue\" tabindex=-1 aria-hidden=true>\
+<img class=\"size-10 bg-surface object-cover\" data-np=cover alt=\"\" hidden></a>\
+<span class=\"flex min-w-0 flex-col items-start\">\
+<a class=\"max-w-full truncate text-meta text-strong hover:no-underline\" href=\"/queue\" data-np=title>Nothing playing</a>\
+<a class=\"max-w-full truncate text-fine text-muted hover:text-strong\" data-np=artist></a></span></div>\
 <div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}{TRACK_PROPERTIES}</body></html>",
         head = head(title),
         datastar = super::ASSETS.datastar_js,
@@ -347,16 +349,18 @@ fn cells(albums: &[AlbumRow], versions: &Versions, hearts: Option<&Hearts>) -> S
     albums.iter().fold(String::new(), |mut out, a| {
         let _ = write!(
             out,
-            "<div class=\"relative min-w-0\"><a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
+            "<div class=\"relative flex min-w-0 flex-col gap-0.5\"><a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
 <img class=\"mb-1.5 aspect-square h-auto w-full bg-surface object-cover \
 [&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
 width={size} height={size} src=\"{src}\" alt=\"\">\
-<span class=\"truncate group-hover:text-strong\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>{heart}</div>",
+<span class=\"truncate group-hover:text-strong\">{title}</span></a>\
+<a class=\"truncate self-start max-w-full text-meta text-muted hover:text-strong\" href=\"/artist/{artist_id}\" tabindex=-1>{artist}</a>{heart}</div>",
             id = a.id,
             heart = hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
             size = crate::covers::GRID,
             src = cover_url(a.id, crate::covers::GRID, versions),
             title = escape(&a.title),
+            artist_id = a.artist_id,
             artist = escape(&a.artist_name),
         );
         out
@@ -401,6 +405,34 @@ title=\"Share this track\">{share_icon}</button>",
     }
 }
 
+/// A name linked to its artist or album page (`kind`), or the name alone
+/// where the row has no id for it.
+pub(super) fn link(kind: &str, id: Option<i64>, name: &str) -> String {
+    match id {
+        Some(id) => format!("<a href=\"/{kind}/{id}\">{}</a>", escape(name)),
+        None => escape(name),
+    }
+}
+
+/// A track row's subtitle: its artist and its album, each where asked for
+/// and named, linked to their pages.
+pub(super) fn credit_line(t: &TrackRow, artist: bool, album: bool) -> String {
+    let names = [
+        (artist, "artist", t.artist_id, &t.artist_name),
+        (album, "album", t.album_id, &t.album_title),
+    ];
+    let sub: Vec<_> = names
+        .into_iter()
+        .filter(|(shown, _, _, name)| *shown && !name.is_empty())
+        .map(|(_, kind, id, name)| link(kind, id, name))
+        .collect();
+    if sub.is_empty() {
+        String::new()
+    } else {
+        format!("<small>{}</small>", sub.join(" · "))
+    }
+}
+
 /// A track row. `album` is set where the row stands alone (search) and names
 /// the record it comes from.
 fn track_row(
@@ -412,18 +444,7 @@ fn track_row(
     share: bool,
     hearts: Option<&Hearts>,
 ) -> String {
-    let mut sub = Vec::new();
-    if show_artist {
-        sub.push(escape(&t.artist_name));
-    }
-    if album {
-        sub.push(escape(&t.album_title));
-    }
-    let sub = if sub.is_empty() {
-        String::new()
-    } else {
-        format!("<small>{}</small>", sub.join(" · "))
-    };
+    let sub = credit_line(t, show_artist, album);
     format!(
         "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
 data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
@@ -1201,7 +1222,7 @@ pub(super) async fn queue(
         "<header class=\"{HERO}\"><img class=\"{HERO_COVER} max-wide:max-w-[360px] max-wide:self-center\" \
 data-np=cover alt=\"\" hidden><div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Now playing</p>\
 <h1 class=\"mb-1 normal-case\" data-np=title>Nothing playing</h1>\
-<p class=\"{SUB}\"><span data-np=artist></span> <a data-np=album href=\"/albums\"></a></p>\
+<p class=\"{SUB}\"><a data-np=artist></a><span data-np=sep hidden> · </span><a data-np=album></a></p>\
 {buttons}{scrub}</div></header>\
 <div class=\"{LIST_HEAD}\"><h2>Up next</h2>\
 <button class=\"quiet px-2 py-1\" data-act=clear>Clear</button></div>\

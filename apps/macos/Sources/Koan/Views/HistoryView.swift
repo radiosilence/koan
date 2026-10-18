@@ -269,8 +269,7 @@ private struct HistoryRow: View {
                 Text(track.title)
                     .lineLimit(1)
                 ArtistAlbumLine(
-                    artist: track.artistName,
-                    artistId: track.artistId,
+                    artist: track.artistCredit,
                     album: track.albumTitle,
                     albumId: track.albumId
                 )

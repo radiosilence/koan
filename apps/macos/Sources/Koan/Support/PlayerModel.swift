@@ -186,7 +186,8 @@ final class PlayerModel {
     /// were never in the library. Resolved once when the track changes rather
     /// than per frame: this is a database read.
     private(set) var currentAlbumId: Int64?
-    private(set) var currentArtistId: Int64?
+    /// The playing track's artist credit, each credited artist linked.
+    private(set) var currentArtistCredit: [CreditPart]?
     /// The track `currentAlbumId` has been resolved for, as opposed to
     /// one still being looked up. Only `currentArtwork` cares, and it cares a
     /// lot — see there.
@@ -209,11 +210,14 @@ final class PlayerModel {
     private func resolveCurrentPlace(trackId: Int64?) {
         guard let trackId else {
             currentAlbumId = nil
-            currentArtistId = nil
+            currentArtistCredit = nil
             placeResolvedFor = nil
             return
         }
         placeResolvedFor = nil
+        // The last track's credit would draw beside this one's title until
+        // the lookup lands; the entry's own name stands in meanwhile.
+        if currentArtistCredit != nil { currentArtistCredit = nil }
         let engine = self.engine
         Task {
             let track = (try? await engine.track(trackId: trackId)) ?? nil
@@ -224,7 +228,7 @@ final class PlayerModel {
             // opinion about equality, so the next track off the same record
             // would otherwise re-run everything coloured by it.
             if self.currentAlbumId != track?.albumId { self.currentAlbumId = track?.albumId }
-            if self.currentArtistId != track?.artistId { self.currentArtistId = track?.artistId }
+            if self.currentArtistCredit != track?.artistCredit { self.currentArtistCredit = track?.artistCredit }
             self.placeResolvedFor = trackId
         }
     }
