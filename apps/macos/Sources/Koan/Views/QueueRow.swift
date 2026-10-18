@@ -17,6 +17,9 @@ struct QueueRowContent: Equatable {
     /// Int64 because the two sources disagree on width and this only ever gets
     /// printed.
     var number: Int64?
+    /// Its disc, set only where its record in the list runs past disc 1, so
+    /// the place reads "2.03" there and stays a bare number everywhere else.
+    var disc: Int64?
     var codec: String?
     var durationMs: Int64?
     /// The record to draw, asked for by album wherever one is known — art is
@@ -34,12 +37,15 @@ struct QueueRowContent: Equatable {
     /// row behind it, which draws no mark rather than a guessed one.
     var onServer = false
     var onDisk = false
-    init(item: QueueItem) {
+    /// `discs` holds the records whose tracks in the list run past disc 1
+    /// (`QueueView.multiDisc`).
+    init(item: QueueItem, discs: Set<Int64> = []) {
         trackId = item.trackId
         title = item.title
         artist = item.artist
         album = item.album
         number = item.trackNumber
+        if let album = item.albumId, discs.contains(album) { disc = item.disc ?? 1 }
         codec = item.codec
         durationMs = item.durationMs.map(Int64.init)
         sleeve = item.sleeve
@@ -128,10 +134,10 @@ struct QueueRow: View {
                     // Always occupies its column, number or not: a missing track
                     // number would otherwise shift the title left and break the
                     // alignment down the list.
-                    Text(item.number.map(String.init) ?? "")
+                    Text(item.place)
                         .font(.role(.fine, system: .caption.monospacedDigit()))
                         .foregroundStyle(played ? .quaternary : .tertiary)
-                        .frame(width: artwork ? 34 : 20, alignment: .trailing)
+                        .frame(width: artwork || item.disc != nil ? 34 : 20, alignment: .trailing)
                 }
             }
 
@@ -286,5 +292,15 @@ struct QueueRow: View {
             KoanIcon(Icon.pending).foregroundStyle(KoanTheme.style(.rule, system: .quaternary))
             #endif
         }
+    }
+}
+
+extension QueueRowContent {
+    /// The place as the number column prints it: "2.03" on a record that
+    /// spans discs, the bare number otherwise.
+    var place: String {
+        guard let number else { return "" }
+        guard let disc else { return String(number) }
+        return "\(disc)." + (number < 10 ? "0\(number)" : String(number))
     }
 }

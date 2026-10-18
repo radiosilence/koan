@@ -90,6 +90,7 @@ final class QueueTableRow: TableCell, TableRow {
     private let shade = CALayer()
     private let sleeve = CALayer()
     private let number = NSTextField(labelWithString: "")
+    private var wideNumber = false
     private let title = NSTextField(labelWithString: "")
     private let artist = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
@@ -154,7 +155,8 @@ final class QueueTableRow: TableCell, TableRow {
             artist.stringValue = !showArtist || content.artist.isEmpty
                 ? ""
                 : (artwork && !content.album.isEmpty ? "\(content.artist) — \(content.album)" : content.artist)
-            number.stringValue = content.number.map(String.init) ?? ""
+            number.stringValue = content.place
+            wideNumber = content.disc != nil
             codec.stringValue = content.codec?.uppercased() ?? ""
             duration.stringValue = content.durationMs.map { Format.duration($0) } ?? ""
             showSleeve(artwork ? content.sleeve : nil, art: context.art, corner: 3)
@@ -355,8 +357,11 @@ final class QueueTableRow: TableCell, TableRow {
             x += side + 10
         } else {
             let numberHeight = lineHeight(Self.numberFont)
-            number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: 20, height: numberHeight)
-            x += 20 + 10
+            // Wide enough for a disc's "2.03" where its record carries discs,
+            // the same for every row of it so the titles line up.
+            let numberWidth: CGFloat = wideNumber ? 34 : 20
+            number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: numberWidth, height: numberHeight)
+            x += numberWidth + 10
         }
 
         var right = bounds.width

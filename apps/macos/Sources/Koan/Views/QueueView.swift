@@ -87,6 +87,15 @@ struct QueueView: View {
         grouped ? Row.build(from: listed) : listed.map(Row.track)
     }
 
+    /// The records whose tracks in the queue run past disc 1: their rows
+    /// number by disc and track in the grouped queue, where a heading names
+    /// the record. Per album rather than per group, so a record queued twice
+    /// numbers both copies alike. Read from the tracks, since an album's disc
+    /// total is often missing.
+    static func multiDisc(_ items: [QueueItem]) -> Set<Int64> {
+        Set(items.compactMap { ($0.disc ?? 1) > 1 ? $0.albumId : nil })
+    }
+
     /// What the list is laid out from. On the Mac, the queue as it reads now:
     /// the table compares its rows and redraws only those on screen. Elsewhere
     /// the rows as last sent whole, which a track change or a download does not
@@ -138,7 +147,8 @@ struct QueueView: View {
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private func table(_ rows: [Row]) -> some View {
-        let lines = rows.map(line)
+        let discs = grouped ? Self.multiDisc(listed) : []
+        let lines = rows.map { line($0, discs: discs) }
         let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
         let jumpTarget: String? = switch ui.queueJumpTarget {
@@ -194,7 +204,7 @@ struct QueueView: View {
     }
 
     /// A row of the queue as the table draws it.
-    private func line(_ row: Row) -> QueueLine {
+    private func line(_ row: Row, discs: Set<Int64>) -> QueueLine {
         switch row {
         case .album(let id, let group):
             QueueLine(id: id, kind: .heading(QueueHeading(
@@ -210,7 +220,7 @@ struct QueueView: View {
             ))
         case .track(let item):
             QueueLine(id: item.queueItemId, kind: .track(
-                QueueRowContent(item: item),
+                QueueRowContent(item: item, discs: discs),
                 isCurrent: item.status == .playing,
                 showArtist: !grouped || item.artist != item.albumArtist,
                 artwork: !grouped
@@ -220,10 +230,11 @@ struct QueueView: View {
     #endif
 
     private func list(_ rows: [Row]) -> some View {
-                ScrollViewReader { scroll in
+                let discs = grouped ? Self.multiDisc(listed) : []
+                return ScrollViewReader { scroll in
                     List(selection: $selection) {
                         ForEach(rows) { row in
-                            rowView(row)
+                            rowView(row, discs: discs)
                         }
                         .onMove(perform: move)
                     }
@@ -444,7 +455,7 @@ struct QueueView: View {
     /// Extracted because the type checker gives up on a switch this size
     /// inline in a ForEach.
     @ViewBuilder
-    private func rowView(_ row: Row) -> some View {
+    private func rowView(_ row: Row, discs: Set<Int64>) -> some View {
         switch row {
         case .album(_, let group):
             QueueAlbumHeader(group: group)
@@ -465,7 +476,8 @@ struct QueueView: View {
                 // Ungrouped there is no heading above to say what record this
                 // is, so the row says it itself.
                 showArtist: !grouped || item.artist != item.albumArtist,
-                artwork: !grouped
+                artwork: !grouped,
+                discs: discs
             )
             .rowBehaviour()
             // Built from the row in hand: on tvOS the menu is made with the row,
@@ -959,13 +971,14 @@ private struct LiveQueueRow: View {
     let sent: QueueItem
     let showArtist: Bool
     let artwork: Bool
+    var discs: Set<Int64> = []
 
     @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
         let item = mirror.queueItem(sent.queueItemId) ?? sent
         QueueRow(
-            item: QueueRowContent(item: item),
+            item: QueueRowContent(item: item, discs: discs),
             // The queue already says which row the cursor is on — and says it
             // again when the cursor moves, since that redraws two rows either
             // way. Asking the player as well would subscribe every row to
