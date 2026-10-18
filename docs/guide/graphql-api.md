@@ -208,6 +208,12 @@ mutation { triggerScan { id kind state } }
 kind runs at a time — calling again while one is live returns the running job rather than starting a
 second.
 
+The server also scans the library by itself: at start-up, when the library folders change, every
+fifteen minutes, and when a folder is added. Each of those scans is a job of kind `watch`, listed by
+`jobs`, with `reason` saying which it was (`start-up`, `folder change`, `periodic` or `new folder`).
+While a scan runs, `done` counts the files whose tags it has read and `total` the files it has found
+to need reading so far; with the scan cache, that is only the files that changed.
+
 ### Limits
 
 Requests are refused rather than queued when the server is saturated, so a slow client cannot make

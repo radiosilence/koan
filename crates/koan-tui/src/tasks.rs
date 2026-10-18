@@ -119,6 +119,7 @@ pub fn scan(force: bool, activity: &Activity) -> String {
         force,
         force_remove: false,
         cancel: activity.cancel.clone(),
+        ..Default::default()
     };
     let r = scanner::scan_folders(
         &db,
