@@ -1,0 +1,1 @@
+- **Web UI links every artist and album name.** Track rows on every page, the queue, album tiles, the playback bar, Now Playing and track properties link each name to its page, so a name behaves the same wherever it appears.
