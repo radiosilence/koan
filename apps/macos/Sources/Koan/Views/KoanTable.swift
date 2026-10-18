@@ -81,12 +81,16 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     var menu: (Set<ID>, EnvironmentValues) -> NSMenu? = { _, _ in nil }
     /// Double-click or Return.
     var primaryAction: (Set<ID>) -> Void = { _ in }
-    /// What dragging these rows carries.
-    var drag: (Set<ID>) -> [PlayableTransfer] = { _ in [] }
+    /// What dragging this row carries.
+    var drag: (Row.Item) -> PlayableTransfer? = { _ in nil }
+    /// The rows of a drag that another row of it already carries, which the
+    /// drag leaves out: a queue record's tracks under its heading.
+    var covered: (Set<ID>) -> Set<ID> = { _ in [] }
     /// ⌫, where removing rows means something.
     var delete: ((Set<ID>) -> Void)?
-    /// ⌘A. A counter, as `UIState.selectAllToken`.
-    var selectAllToken = 0
+    /// ⌘A. A counter, as `UIState.selectAllToken`; nil while the list is not
+    /// listening, and coming back adopts the count without acting on it.
+    var selectAllToken: Int? = 0
     /// Where the list was scrolled to when the page was last left, and where
     /// to note it now. Not observed — see `LibraryModel.albumsOffset`.
     var offset: CGFloat?
@@ -178,6 +182,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var environment = EnvironmentValues()
         private var items: [Row.Item] = []
         private var ids: [ID] = []
+        /// The rows the drag in progress leaves out.
+        private var left: Set<ID> = []
         private var index: [ID: Int] = [:]
         private var shownKey: AnyHashable?
         private var selectAllToken: Int?
@@ -264,8 +270,14 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
             applySelection(parent.selection)
 
-            if let token = selectAllToken, token != parent.selectAllToken, table.window?.firstResponder === table {
-                table.selectAll(nil)
+            if let token = selectAllToken, let wanted = parent.selectAllToken, token != wanted,
+               table.window?.firstResponder === table {
+                // After the update: selecting writes the selection binding,
+                // and a write made during the update is dropped, so the next
+                // one put the old selection back.
+                DispatchQueue.main.async { [weak table] in
+                    MainActor.assumeIsolated { table?.selectAll(nil) }
+                }
             }
             selectAllToken = parent.selectAllToken
             if let rewinds, rewinds != parent.rewinds {
@@ -498,9 +510,16 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         // MARK: Drag
 
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-            guard let parent, row < ids.count else { return nil }
-            table?.dragging = true
-            let transfer = parent.drag([ids[row]]).first?.placed(row)
+            guard let parent, let table, row < ids.count else { return nil }
+            // Read once per drag, as the table decides it: the selection when
+            // the drag starts on a selected row, else that row alone.
+            if !table.dragging {
+                let rows = table.selectedRowIndexes.contains(row) ? table.selectedRowIndexes : IndexSet(integer: row)
+                left = parent.covered(Set(rows.compactMap { $0 < ids.count ? ids[$0] : nil }))
+                table.dragging = true
+            }
+            guard !left.contains(ids[row]) else { return nil }
+            let transfer = parent.drag(items[row])?.placed(row)
             guard transfer != nil || parent.move != nil else { return nil }
             let item = transfer.flatMap(pasteboardItem) ?? NSPasteboardItem()
             // Which row, for a drop back into this list to read as a move.
