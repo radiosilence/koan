@@ -695,6 +695,12 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
         artists: list(|c| &c.artists),
         album_artists: list(|c| &c.album_artists),
     };
+    // `derive_record` may have folded the album into another holding the
+    // server's id, and the track with it.
+    let album_id: i64 = conn
+        .prepare_cached("SELECT album_id FROM tracks WHERE id = ?1")?
+        .query_row(params![track], |r| r.get::<_, Option<i64>>(0))?
+        .unwrap_or(album_id);
     derive_credits(conn, track, before.album_id, album_id, &credits)?;
 
     let artist_text = if primary.artist == album_artist {
@@ -781,6 +787,9 @@ fn derive_record(
 /// own artist stays the credit as it reads; these rows are beside it. A track
 /// whose sources name no one in particular has none, and keeps its album's.
 ///
+/// A list naming one artist links nothing: that artist is the credit, or a
+/// spelling of it, and the track and album are filed under them already.
+///
 /// The credits the links were made from are kept on the track, so a sync,
 /// which passes every track through here, resolves nothing when they have
 /// not changed.
@@ -802,11 +811,18 @@ fn derive_credits(
     }
     conn.prepare_cached("UPDATE tracks SET credits = ?1 WHERE id = ?2")?
         .execute(params![json, track])?;
-    let artists = resolve_credits(conn, &credits.artists)?;
+    let artists = resolve_credits(conn, several(&credits.artists))?;
     let mut dropped = replace_links(conn, "track_credits", "track_id", track, &artists)?;
-    dropped.extend(derive_album_credits(conn, album)?);
-    if let Some(old) = before_album.filter(|_| moved) {
-        dropped.extend(derive_album_credits(conn, old)?);
+    // The album's tally changes only with this track's album artists, or
+    // with the track moving between albums.
+    let had = stored
+        .and_then(|j| serde_json::from_str::<super::Credits>(&j).ok())
+        .unwrap_or_default();
+    if moved || had.album_artists != credits.album_artists {
+        dropped.extend(derive_album_credits(conn, album)?);
+        if let Some(old) = before_album.filter(|_| moved) {
+            dropped.extend(derive_album_credits(conn, old)?);
+        }
     }
     for artist in dropped {
         super::tracks::prune_if_empty(conn, None, Some(artist))?;
@@ -830,7 +846,7 @@ fn derive_album_credits(conn: &Connection, album: i64) -> Result<Vec<i64>, DbErr
         let Ok(credits) = serde_json::from_str::<super::Credits>(&json) else {
             continue;
         };
-        if credits.album_artists.is_empty() {
+        if credits.album_artists.len() < 2 {
             continue;
         }
         match tally.iter_mut().find(|(l, _)| *l == credits.album_artists) {
@@ -847,6 +863,26 @@ fn derive_album_credits(conn: &Connection, album: i64) -> Result<Vec<i64>, DbErr
         .unwrap_or_default();
     let artists = resolve_credits(conn, chosen)?;
     replace_links(conn, "album_credits", "album_id", album, &artists)
+}
+
+/// `list`, when it names more than one artist.
+fn several(list: &[super::Credit]) -> &[super::Credit] {
+    if list.len() > 1 { list } else { &[] }
+}
+
+/// Count an album's credits again after its tracks were moved onto it or off
+/// it other than by deriving them, and prune the artists it no longer credits.
+pub(crate) fn recount_album_credits(conn: &Connection, album: i64) -> rusqlite::Result<()> {
+    let recount = || -> Result<(), DbError> {
+        for artist in derive_album_credits(conn, album)? {
+            super::tracks::prune_if_empty(conn, None, Some(artist))?;
+        }
+        Ok(())
+    };
+    recount().map_err(|e| match e {
+        DbError::Sqlite(e) => e,
+        other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
+    })
 }
 
 fn resolve_credits(conn: &Connection, list: &[super::Credit]) -> Result<Vec<i64>, DbError> {
@@ -1142,6 +1178,13 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
            WHERE id = ?1 AND cached_path IS NULL",
     )?
     .execute(params![winner, loser])?;
+    let album: Option<i64> = conn
+        .prepare_cached("SELECT album_id FROM tracks WHERE id = ?1")?
+        .query_row(params![loser], |r| r.get(0))?;
+    let credited: Vec<i64> = conn
+        .prepare_cached("SELECT artist_id FROM track_credits WHERE track_id = ?1")?
+        .query_map(params![loser], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
     // What did not move across, a duplicate favourite or a second set of
     // lyrics, goes with it by its foreign keys.
     for sql in [
@@ -1149,6 +1192,12 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
         "DELETE FROM tracks WHERE id = ?1",
     ] {
         conn.prepare_cached(sql)?.execute(params![loser])?;
+    }
+    if let Some(album) = album {
+        recount_album_credits(conn, album)?;
+    }
+    for artist in credited {
+        super::tracks::prune_if_empty(conn, None, Some(artist))?;
     }
     Ok(())
 }

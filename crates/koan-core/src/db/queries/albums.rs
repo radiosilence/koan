@@ -180,6 +180,9 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         ] {
             conn.execute(sql, params![gone])?;
         }
+        // The deleted album's credits went with it; the tracks it gave up
+        // count towards the album they joined.
+        super::sources::recount_album_credits(conn, keep)?;
         if let Some(uid) = &server_uid {
             conn.execute(
                 "UPDATE albums SET uid = ?1 WHERE id = ?2",

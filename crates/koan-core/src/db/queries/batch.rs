@@ -291,16 +291,16 @@ pub fn artist_stats(
     // Every track the artist is on, own credit or album artist, counted once:
     // what they appear on, which is more than `tracks_for_artist` plays.
     let track_sql = format!(
-        "SELECT k.id, COUNT(DISTINCT t.id)
-         FROM artists k
-         JOIN tracks t ON t.artist_id = k.id
-             OR t.id IN (SELECT track_id FROM track_credits WHERE artist_id = k.id)
-             OR t.album_id IN (SELECT album_id FROM album_artist_links WHERE artist_id = k.id)
-         WHERE k.id IN {IN_LIST}
-         GROUP BY k.id"
+        "SELECT k.artist_id, COUNT(DISTINCT k.track_id)
+         FROM (SELECT artist_id, id AS track_id FROM tracks WHERE artist_id IN {IN_LIST}
+               UNION SELECT artist_id, track_id FROM track_credits WHERE artist_id IN {IN_LIST}
+               UNION SELECT l.artist_id, t.id FROM album_artist_links l
+                       JOIN tracks t ON t.album_id = l.album_id
+                      WHERE l.artist_id IN {IN_LIST}) k
+         GROUP BY k.artist_id"
     );
     let mut stmt = conn.prepare_cached(&track_sql)?;
-    let rows = stmt.query_map([&ids], |row| {
+    let rows = stmt.query_map([&ids, &ids, &ids], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
     })?;
     for row in rows {

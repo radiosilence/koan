@@ -1328,7 +1328,7 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
         .as_deref()
         .map(codec_to_mime)
         .unwrap_or(("bin", "application/octet-stream"));
-    XmlNode::new(tag)
+    let node = XmlNode::new(tag)
         .attr("id", &extras.uids.track(track.id))
         .attr("title", &track.title)
         .attr("album", &track.album_title)
@@ -1391,15 +1391,19 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             } else {
                 credited
             }
-        })
-        .list(
-            "albumArtists",
-            credit_refs(
-                "albumArtists",
-                track.album_id.and_then(|a| extras.album_credits.get(&a)),
-                &extras.uids,
-            ),
-        )
+        });
+    // Only where the album credits its artists one by one; absent otherwise,
+    // as it was before credits.
+    let album_artists = credit_refs(
+        "albumArtists",
+        track.album_id.and_then(|a| extras.album_credits.get(&a)),
+        &extras.uids,
+    );
+    if album_artists.is_empty() {
+        node
+    } else {
+        node.list("albumArtists", album_artists)
+    }
 }
 
 fn track_to_xml_node(track: &queries::TrackRow, extras: &SongExtras) -> XmlNode {

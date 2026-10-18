@@ -727,6 +727,8 @@ const CREDIT_TABLES: &str = "
         PRIMARY KEY (album_id, artist_id)
     );
     CREATE INDEX IF NOT EXISTS idx_album_credits_artist ON album_credits(artist_id);
+    -- A credit finds its artist by MusicBrainz id before name.
+    CREATE INDEX IF NOT EXISTS idx_artists_credit_mbid ON artists(mbid) WHERE mbid IS NOT NULL;
     DROP VIEW IF EXISTS album_artist_links;
     CREATE VIEW album_artist_links AS
         SELECT al.id AS album_id, al.artist_id AS artist_id,
