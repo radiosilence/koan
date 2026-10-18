@@ -214,8 +214,8 @@ final class QueueTableRow: TableCell, TableRow {
             heart.isHidden = true
             sleeve.opacity = 1
             CATransaction.commit()
-            style(title, font: Self.headingFont, colour: selected ? onAccent : .koanLabel, linked: hoveredPart == .title)
-            style(artist, font: Self.captionFont, colour: selected ? onAccent : .koanSecondaryLabel, linked: hoveredPart == .artist)
+            title.styleLink(font: Self.headingFont, colour: selected ? onAccent : .koanLabel, underlined: hoveredPart == .title)
+            artist.styleLink(font: Self.captionFont, colour: selected ? onAccent : (hoveredPart == .artist ? .koanLabel : .koanSecondaryLabel), underlined: hoveredPart == .artist)
             detail.textColor = selected ? onAccent : .koanTertiaryLabel
             needsLayout = true
             return
@@ -260,9 +260,9 @@ final class QueueTableRow: TableCell, TableRow {
 
         title.textColor = isCurrent && !selected ? context.tint : (selected ? onAccent : (dimmed ? .koanSecondaryLabel : .koanLabel))
         let caption: NSColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
-        style(artist, font: Self.captionFont, colour: caption, linked: hoveredPart == .artist)
+        artist.styleLink(font: Self.captionFont, colour: hoveredPart == .artist && !selected ? .koanLabel : caption, underlined: hoveredPart == .artist)
         separator.textColor = caption
-        style(album, font: Self.captionFont, colour: caption, linked: hoveredPart == .album)
+        album.styleLink(font: Self.captionFont, colour: hoveredPart == .album && !selected ? .koanLabel : caption, underlined: hoveredPart == .album)
         number.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
         codec.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
         duration.textColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
@@ -270,17 +270,6 @@ final class QueueTableRow: TableCell, TableRow {
             : content.status == .failed ? content.failureReason ?? "Couldn't be fetched"
             : (content.status == .priorityPending ? "Queued for download" : nil)
         needsLayout = true
-    }
-
-    /// A name drawn as a link while the pointer is on it, as `TrackTableRow`
-    /// draws its artist and record.
-    private func style(_ label: NSTextField, font: NSFont, colour: NSColor, linked: Bool) {
-        var attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: linked && backgroundStyle != .emphasized ? NSColor.koanLabel : colour,
-        ]
-        if linked { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-        label.attributedStringValue = NSAttributedString(string: label.stringValue, attributes: attributes)
     }
 
     /// The playing row's bars, made for that row only — see `PlayingIndicator`.
@@ -414,13 +403,17 @@ final class QueueTableRow: TableCell, TableRow {
         title.frame = CGRect(x: x, y: top, width: width, height: titleHeight)
         let captionY = top + titleHeight + 1
         artist.frame = CGRect(x: x, y: captionY, width: min(TrackTableRow.measure(artist.stringValue, Self.captionFont), width), height: captionHeight)
+        // An artist that fills the line leaves no room for the record.
+        let separatorWidth = TrackTableRow.measure(separator.stringValue, Self.captionFont)
+        let fits = artist.frame.maxX + separatorWidth < x + width
+        separator.isHidden = album.stringValue.isEmpty || !fits
+        album.isHidden = separator.isHidden
         if !album.isHidden {
-            let separatorWidth = TrackTableRow.measure(separator.stringValue, Self.captionFont)
             separator.frame = CGRect(x: artist.frame.maxX, y: captionY, width: separatorWidth, height: captionHeight)
             let albumX = separator.frame.maxX
             album.frame = CGRect(
                 x: albumX, y: captionY,
-                width: min(TrackTableRow.measure(album.stringValue, Self.captionFont), max(x + width - albumX, 0)),
+                width: min(TrackTableRow.measure(album.stringValue, Self.captionFont), x + width - albumX),
                 height: captionHeight
             )
         }

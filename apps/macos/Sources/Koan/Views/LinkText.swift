@@ -1,4 +1,5 @@
 import KoanFFI
+import OSLog
 import SwiftUI
 
 /// A name that navigates. Artist and album names should behave the same way
@@ -27,10 +28,28 @@ struct LinkText: View {
     /// an artist in the artists list, not the artist credited on a track.
     var prominent = false
     var lines = 1
+    /// Stepped back, as a played row's text is.
+    var dimmed = false
 
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
+    #if os(iOS)
+    /// A list picking rows takes a tap on any of it as a tick.
+    @Environment(\.editMode) private var editMode
+    #endif
     @State private var hovering = false
+
+    private var rest: AnyShapeStyle {
+        if prominent { return KoanTheme.style(.ink, system: .primary) }
+        return dimmed ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary)
+    }
+
+    private var followed: Target? {
+        #if os(iOS)
+        if editMode?.wrappedValue.isEditing == true { return nil }
+        #endif
+        return target
+    }
 
     /// Only for a target known by its own id; one still to be looked up has
     /// nothing to drag yet.
@@ -48,16 +67,14 @@ struct LinkText: View {
         // never be reached, so it reads as the name it is.
         Text(text)
             .font(font ?? .role(.control, system: .callout))
-            .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
+            .foregroundStyle(rest)
             .lineLimit(lines)
         #else
-        if let target {
+        if let target = followed {
             let link = Text(text)
                 .font(font ?? .role(.control, system: .callout))
                 .underline(hovering)
-                .foregroundStyle(
-                    hovering || prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary)
-                )
+                .foregroundStyle(hovering ? KoanTheme.style(.ink, system: .primary) : rest)
                 .lineLimit(lines)
                 .contentShape(.rect)
                 #if os(macOS)
@@ -81,7 +98,7 @@ struct LinkText: View {
         } else {
             Text(text)
                 .font(font ?? .role(.control, system: .callout))
-                .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
+                .foregroundStyle(rest)
                 .lineLimit(lines)
         }
         #endif
@@ -90,21 +107,26 @@ struct LinkText: View {
 
 extension Navigator {
     /// Goes where a link points, looking up first what a link knows only
-    /// through its track or its record.
+    /// through its track or its record. A lookup that lands after the person
+    /// has gone somewhere else is dropped rather than pulling them away.
     func follow(_ target: LinkText.Target, engine: KoanEngine) {
+        let from = current
+        let arrive = { [weak self] (artistId: Int64?) in
+            guard let self, self.current == from else { return }
+            guard let artistId else {
+                Logger(subsystem: "cc.blit.koan", category: "navigation")
+                    .warning("no artist found for \(String(describing: target), privacy: .public)")
+                return
+            }
+            self.open(artist: artistId)
+        }
         switch target {
         case .artist(let id): open(artist: id)
         case .album(let id): open(album: id)
         case .artistOfTrack(let id):
-            Task {
-                guard let artistId = (try? await engine.track(trackId: id))??.artistId else { return }
-                open(artist: artistId)
-            }
+            Task { arrive((try? await engine.track(trackId: id))??.artistId) }
         case .artistOfAlbum(let id):
-            Task {
-                guard let album = (try? await engine.album(albumId: id)) ?? nil else { return }
-                open(artist: album.artistId)
-            }
+            Task { arrive(((try? await engine.album(albumId: id)) ?? nil)?.artistId) }
         }
     }
 }

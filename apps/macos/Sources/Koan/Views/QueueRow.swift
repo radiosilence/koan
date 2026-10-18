@@ -156,12 +156,12 @@ struct QueueRow: View {
                 // artist — compilations and features, not every track.
                 if showArtist && !item.artist.isEmpty {
                     HStack(spacing: 0) {
-                        LinkText(text: item.artist, target: item.artistLink, font: .role(.fine, system: .caption))
+                        LinkText(text: item.artist, target: item.artistLink, font: .role(.fine, system: .caption), dimmed: played)
                         if artwork && !item.album.isEmpty {
                             Text(" — ")
                                 .font(.role(.fine, system: .caption))
                                 .foregroundStyle(played ? .tertiary : .secondary)
-                            LinkText(text: item.album, target: item.albumId.map { .album($0) }, font: .role(.fine, system: .caption))
+                            LinkText(text: item.album, target: item.albumId.map { .album($0) }, font: .role(.fine, system: .caption), dimmed: played)
                         }
                     }
                     .lineLimit(1)

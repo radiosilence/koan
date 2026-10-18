@@ -280,8 +280,8 @@ final class TrackTableRow: TableCell, TableRow {
         title.textColor = current && !selected ? context.tint : (selected ? onAccent : .koanLabel)
         let artistLinked = hovered == .artist && track.artistId != nil
         let albumLinked = hovered == .album && track.albumId != nil
-        style(artist, linked: artistLinked, selected: selected)
-        style(album, linked: albumLinked, selected: selected)
+        artist.styleLink(font: Self.captionFont, colour: selected ? onAccent : (artistLinked ? .koanLabel : .koanSecondaryLabel), underlined: artistLinked)
+        album.styleLink(font: Self.captionFont, colour: selected ? onAccent : (albumLinked ? .koanLabel : .koanSecondaryLabel), underlined: albumLinked)
         dot.textColor = selected ? onAccent : .koanTertiaryLabel
         quality.textColor = selected ? onAccent : .koanTertiaryLabel
         duration.textColor = selected ? onAccent : .koanSecondaryLabel
@@ -317,17 +317,6 @@ final class TrackTableRow: TableCell, TableRow {
         )
         CATransaction.commit()
         needsLayout = true
-    }
-
-    private func style(_ label: NSTextField, linked: Bool, selected: Bool) {
-        var attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.captionFont,
-            .foregroundColor: selected
-                ? NSColor.alternateSelectedControlTextColor
-                : (linked ? NSColor.koanLabel : NSColor.koanSecondaryLabel),
-        ]
-        if linked { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-        label.attributedStringValue = NSAttributedString(string: label.stringValue, attributes: attributes)
     }
 
     /// The playing row's bars, made for that row only — see `PlayingIndicator`.
@@ -537,6 +526,16 @@ final class TrackTableRow: TableCell, TableRow {
             bars.removeFromSuperview()
             self.bars = nil
         }
+    }
+}
+
+extension NSTextField {
+    /// A name in a table row that leads somewhere: underlined while the
+    /// pointer is on it, in whatever colour the row gives it.
+    func styleLink(font: NSFont, colour: NSColor, underlined: Bool) {
+        var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: colour]
+        if underlined { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        attributedStringValue = NSAttributedString(string: stringValue, attributes: attributes)
     }
 }
 #endif
