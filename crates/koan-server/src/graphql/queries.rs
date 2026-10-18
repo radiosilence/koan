@@ -799,14 +799,18 @@ impl QueryRoot {
         }))
     }
 
-    /// A background job started by `triggerScan` or `triggerRemoteSync`.
+    /// A background job: one started by `triggerScan` or `triggerRemoteSync`,
+    /// or a scan the server ran by itself. Admins only.
     async fn job(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<GqlJob>> {
+        super::require_role(ctx, koan_core::auth::Role::Admin)?;
         let registry = ctx.data::<JobRegistry>()?;
         Ok(registry.get(&id).map(GqlJob::from))
     }
 
-    /// Background jobs started by this process, oldest first.
+    /// Background jobs started by this process, oldest first. The `jobs`
+    /// subscription sends the same list as it changes. Admins only.
     async fn jobs(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlJob>> {
+        super::require_role(ctx, koan_core::auth::Role::Admin)?;
         let registry = ctx.data::<JobRegistry>()?;
         Ok(registry.list().into_iter().map(GqlJob::from).collect())
     }

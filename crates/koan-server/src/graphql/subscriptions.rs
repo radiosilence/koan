@@ -6,6 +6,7 @@ use tokio_stream::Stream;
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::player::state::SharedPlayerState;
 
+use super::jobs::JobRegistry;
 use super::types::*;
 
 // ---------------------------------------------------------------------------
@@ -173,10 +174,90 @@ impl SubscriptionRoot {
             }
         }
     }
+
+    /// Background jobs, the whole list as `jobs` returns it, again whenever
+    /// one starts, moves or ends: the scans people start, the ones the server
+    /// runs by itself (`watch`), and remote syncs. A running scan moves every
+    /// fifty files read. Admins only.
+    async fn jobs(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<impl Stream<Item = Vec<GqlJob>>> {
+        super::require_role(ctx, koan_core::auth::Role::Admin)?;
+        let registry = ctx.data::<JobRegistry>()?.clone();
+        let mut changed = registry.subscribe();
+        Ok(async_stream::stream! {
+            loop {
+                // Marked seen before the read, so a move between the two is
+                // not slept through.
+                changed.borrow_and_update();
+                yield registry.list().into_iter().map(GqlJob::from).collect();
+                if changed.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use futures_util::StreamExt;
+
+    use crate::auth::AuthUser;
+    use crate::graphql::jobs::{JobRegistry, WATCH, record_watch};
+    use koan_core::helpers::WatchScan;
+
+    /// An admin's `jobs` stream sends the list, then the list again as a
+    /// scan moves; anyone else is refused.
+    #[tokio::test]
+    async fn admins_follow_jobs_as_they_move() {
+        koan_core::config::isolate_config_for_tests();
+        let (state, _timeline, _viz, cmd_tx) = koan_core::player::Player::spawn();
+        let jobs = JobRegistry::default();
+        let schema = crate::graphql::build_schema_sharing(
+            state,
+            cmd_tx,
+            std::sync::Arc::new(koan_core::db::pool::Pool::new(
+                "/nonexistent/koan-test.db".into(),
+            )),
+            None,
+            jobs.clone(),
+        );
+        let query = "subscription { jobs { kind reason state done total } }";
+
+        let listener = AuthUser {
+            user_id: 2,
+            username: "listener".into(),
+            role: koan_core::auth::Role::User,
+        };
+        let refused = schema
+            .execute_stream(async_graphql::Request::new(query).data(listener))
+            .next()
+            .await
+            .unwrap();
+        assert!(!refused.errors.is_empty(), "{refused:?}");
+
+        let mut stream = schema.execute_stream(query);
+        let first = stream.next().await.unwrap();
+        assert!(first.errors.is_empty(), "{first:?}");
+        assert_eq!(first.data.to_string(), "{jobs: []}");
+
+        let record = record_watch(&jobs);
+        record(&WatchScan::Started("start-up"));
+        let started = stream.next().await.unwrap().data.to_string();
+        assert!(started.contains(&format!("kind: \"{WATCH}\"")), "{started}");
+        assert!(started.contains("reason: \"start-up\""), "{started}");
+
+        record(&WatchScan::Read {
+            done: 50,
+            total: 1200,
+        });
+        let moved = stream.next().await.unwrap().data.to_string();
+        assert!(moved.contains("done: 50"), "{moved}");
+        assert!(moved.contains("total: 1200"), "{moved}");
+    }
+
     /// The arguments stay in the schema, unused, so a query that names one
     /// still parses.
     #[test]

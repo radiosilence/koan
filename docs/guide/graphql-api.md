@@ -214,6 +214,10 @@ fifteen minutes, and when a folder is added. Each of those scans is a job of kin
 While a scan runs, `done` counts the files whose tags it has read and `total` the files it has found
 to need reading so far; with the scan cache, that is only the files that changed.
 
+`subscription { jobs { kind reason state message done total } }` sends the same list as `jobs`, and
+again whenever a job starts, reports progress or ends, so a client can show the server's scan without
+polling. `job`, `jobs` and the subscription are for admins, as starting a job is.
+
 ### Limits
 
 Requests are refused rather than queued when the server is saturated, so a slow client cannot make
