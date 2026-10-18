@@ -1,7 +1,8 @@
 //! Rescanning the library folders, for admins: the Library page's last
 //! section. The scan is the same job `triggerScan` starts, so one started over
-//! GraphQL shows here and the other way round. Starting one, or opening the
-//! page while one runs, opens a stream that follows it to its end.
+//! GraphQL shows here and the other way round, and the folder watcher's own
+//! scans show beside them. The page keeps a stream open that shows each scan
+//! as it starts, moves and ends, whoever started it.
 
 use std::convert::Infallible;
 
@@ -16,10 +17,10 @@ use koan_core::auth::Role;
 use super::pages::{COPY_ERROR, SUB};
 use super::{UiState, events, patch};
 use crate::auth::AuthUser;
-use crate::graphql::jobs::{Job, JobRegistry, JobState, REREAD, SCAN, start_scan};
+use crate::graphql::jobs::{Job, JobRegistry, JobState, REREAD, SCAN, WATCH, start_scan};
 use crate::share::escape;
 
-const KINDS: [&str; 2] = [SCAN, REREAD];
+const KINDS: [&str; 3] = [SCAN, REREAD, WATCH];
 
 fn allowed(user: &AuthUser) -> bool {
     user.role == Role::Admin
@@ -30,36 +31,43 @@ fn forbidden() -> Response {
 }
 
 /// What the current scan is doing, or the last did. On a page as it loads
-/// (`on_load`), a running one asks to be followed; a stream's own patches
-/// never do, or each would open another stream.
+/// (`on_load`) it asks to be followed; a stream's own patches never do, or
+/// each would open another stream.
 fn status(job: Option<&Job>, on_load: bool) -> String {
-    let Some(j) = job else {
-        return "<div id=scan-status></div>".into();
+    let follow = if on_load {
+        " data-init=\"@get('/library/scan')\""
+    } else {
+        ""
     };
-    let reread = j.kind == REREAD;
-    let (class, text, follow) = match j.state {
+    let Some(j) = job else {
+        return format!("<div id=scan-status{follow}></div>");
+    };
+    let reason = j.reason.map(|r| format!(" ({r})")).unwrap_or_default();
+    let (class, text) = match j.state {
         JobState::Running => {
-            let doing = if reread {
-                "Reading every file again…"
+            let doing = if j.kind == REREAD {
+                "Reading every file again…".to_owned()
             } else {
-                "Scanning…"
+                format!("Scanning{reason}…")
             };
             let text = match j.done {
                 Some(_) => format!("{doing} {}", j.message),
-                None => doing.to_owned(),
+                None => doing,
             };
-            let follow = if on_load {
-                " data-init=\"@get('/library/scan')\""
-            } else {
-                ""
-            };
-            ("text-muted", text, follow)
+            ("text-muted", text)
         }
         JobState::Succeeded => {
-            let what = if reread { "Last re-read" } else { "Last scan" };
-            ("text-muted", format!("{what}: {}", j.message), "")
+            let what = if j.kind == REREAD {
+                "Last re-read".to_owned()
+            } else {
+                format!("Last scan{reason}")
+            };
+            ("text-muted", format!("{what}: {}", j.message))
         }
-        JobState::Failed => ("text-bad", format!("The scan failed: {}", j.message), ""),
+        JobState::Failed => (
+            "text-bad",
+            format!("The scan failed{reason}: {}", j.message),
+        ),
     };
     format!(
         "<div id=scan-status{follow}><p class=\"{class} text-control\" role=status>{}</p></div>",
@@ -85,11 +93,12 @@ Read every file again</label>\
     )
 }
 
-/// Patches the status line as scans move, until none is running: a re-read
-/// queued behind a scan is followed once the scan ends. Waits on the
-/// registry's signal; the keep-alive stops a proxy closing a stream that is
-/// quiet for a long stretch of a scan.
-fn follow(jobs: JobRegistry) -> Response {
+/// Patches the status line as scans move: with `until_idle`, until none is
+/// running, so a re-read queued behind a scan is followed once the scan ends;
+/// otherwise for as long as the page is open, so a scan the folder watcher
+/// starts shows when it starts. Waits on the registry's signal; the
+/// keep-alive stops a proxy closing a stream that is quiet for a long stretch.
+fn follow(jobs: JobRegistry, until_idle: bool) -> Response {
     let mut changed = jobs.subscribe();
     let stream = async_stream::stream! {
         let mut shown = String::new();
@@ -100,7 +109,8 @@ fn follow(jobs: JobRegistry) -> Response {
                 yield Ok::<_, Infallible>(patch(&html, None));
                 shown = html;
             }
-            if now.is_none_or(|j| j.state != JobState::Running) || changed.changed().await.is_err() {
+            let idle = now.is_none_or(|j| j.state != JobState::Running);
+            if (until_idle && idle) || changed.changed().await.is_err() {
                 break;
             }
         }
@@ -128,7 +138,7 @@ pub(super) async fn start(
         .and_then(|v| v.get("reread").and_then(|r| r.as_bool()))
         .unwrap_or(false);
     match start_scan(&s.jobs, s.pool.clone(), reread) {
-        Ok(_) => follow(s.jobs.clone()),
+        Ok(_) => follow(s.jobs.clone(), true),
         Err(e) => events(vec![patch(
             &format!(
                 "<div id=scan-status><p class=\"{COPY_ERROR}\" role=alert>{}</p></div>",
@@ -139,7 +149,7 @@ pub(super) async fn start(
     }
 }
 
-/// Follow the running scan: what a page opened while one runs asks for.
+/// Follow the library's scans: what the page asks for as it opens.
 pub(super) async fn watch(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
@@ -147,5 +157,5 @@ pub(super) async fn watch(
     if !allowed(&user) {
         return forbidden();
     }
-    follow(s.jobs.clone())
+    follow(s.jobs.clone(), false)
 }

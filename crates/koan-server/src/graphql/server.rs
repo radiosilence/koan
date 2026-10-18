@@ -43,10 +43,13 @@ pub fn cmd_serve(
     // A server has no one to press "scan": index at start and whenever the
     // library folders change, as the macOS app does.
     let watched = db_path.clone();
-    koan_core::helpers::spawn_library_watch(db_path, move |running| {
+    let jobs = super::jobs::JobRegistry::default();
+    let record = super::jobs::record_watch(&jobs);
+    koan_core::helpers::spawn_library_watch(db_path, move |scan| {
+        record(&scan);
         // A scan that just finished may have brought in an album someone asked
         // to have queued when it arrived.
-        if !running {
+        if let koan_core::helpers::WatchScan::Finished(_) = scan {
             crate::clients::fulfil_from(&watched);
             if let Ok(db) = koan_core::db::connection::Database::open_existing(&watched) {
                 crate::clients::changed_if_library_moved(&db.conn);
@@ -54,17 +57,20 @@ pub fn cmd_serve(
         }
     });
 
-    if let Err(e) = run_api_blocking(ApiServerOpts {
-        state,
-        cmd_tx,
-        pool,
-        port,
-        bind,
-        subsonic_port,
-        playground,
-        viz: None, // headless — no viz analyzer
-        headless: true,
-    }) {
+    if let Err(e) = run_api_blocking(
+        ApiServerOpts {
+            state,
+            cmd_tx,
+            pool,
+            port,
+            bind,
+            subsonic_port,
+            playground,
+            viz: None, // headless — no viz analyzer
+            headless: true,
+        },
+        jobs,
+    ) {
         eprintln!("koan: {}", e);
         std::process::exit(1);
     }
@@ -153,7 +159,10 @@ pub struct ApiServerOpts {
 ///
 /// `Err` means the server refused to start on a misconfiguration the caller has
 /// to surface — never a silent downgrade to an unauthenticated server.
-fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
+///
+/// `jobs` is made by the caller, so a library watch started before the server
+/// records its scans from the first.
+fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Result<(), String> {
     let ApiServerOpts {
         state,
         cmd_tx,
@@ -252,7 +261,6 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         headless,
         shutdown.clone(),
     );
-    let jobs = super::jobs::JobRegistry::default();
     let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
 
     if auth_enabled {
@@ -498,17 +506,20 @@ pub fn start_api_background(
 ) {
     // Runs on a spawned thread in TUI mode, where a panic would take the API
     // down with nothing on screen to say so.
-    if let Err(e) = run_api_blocking(ApiServerOpts {
-        state,
-        cmd_tx,
-        pool: Arc::new(Pool::new(db_path)),
-        port,
-        bind,
-        subsonic_port,
-        playground,
-        viz: None,
-        headless: false,
-    }) {
+    if let Err(e) = run_api_blocking(
+        ApiServerOpts {
+            state,
+            cmd_tx,
+            pool: Arc::new(Pool::new(db_path)),
+            port,
+            bind,
+            subsonic_port,
+            playground,
+            viz: None,
+            headless: false,
+        },
+        Default::default(),
+    ) {
         log::error!("API server not started: {}", e);
     }
 }

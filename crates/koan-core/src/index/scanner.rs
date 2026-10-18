@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::UNIX_EPOCH;
 
 use rayon::prelude::*;
@@ -61,6 +61,10 @@ pub struct ScanOptions {
     /// audio files is still left alone, and an IO error still never counts as
     /// "file gone".
     pub force_remove: bool,
+    /// Counts the files whose tags the scan will read, raised as each
+    /// directory's are known: with the scan cache, only the changed files,
+    /// which is what a progress bar over `on_track` counts against.
+    pub to_read: Option<Arc<AtomicU64>>,
 }
 
 /// Files per transaction. Bounds peak memory (only one chunk's metadata is
@@ -508,6 +512,12 @@ fn index_files(
     };
 
     result.skipped += total_files - files_to_scan.len();
+    if let Some(to_read) = &opts.to_read {
+        to_read.fetch_add(
+            files_to_scan.len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
 
     // Tag reads and database writes run at the same time.
     //
@@ -920,6 +930,33 @@ mod tests {
     fn test_db(dir: &Path) -> Database {
         let db_path = dir.join("test.db");
         Database::open(&db_path).unwrap()
+    }
+
+    /// `to_read` counts what the scan will read: every file the first time,
+    /// only the changed one after.
+    #[test]
+    fn to_read_counts_the_files_whose_tags_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        for name in ["a.wav", "b.wav", "c.wav"] {
+            test_utils::generate_wav(&music.join(name), 8000, 1, 0.1, 16);
+        }
+        let db = test_db(dir.path());
+        let counted = |db: &Database| {
+            let to_read = Arc::new(AtomicU64::new(0));
+            let opts = ScanOptions {
+                to_read: Some(to_read.clone()),
+                ..Default::default()
+            };
+            scan_folder(db, &music, opts, None);
+            to_read.load(std::sync::atomic::Ordering::Relaxed)
+        };
+        assert_eq!(counted(&db), 3);
+
+        std::fs::remove_file(music.join("b.wav")).unwrap();
+        test_utils::generate_wav(&music.join("b.wav"), 8000, 1, 0.2, 16);
+        assert_eq!(counted(&db), 1);
     }
 
     /// A batch lost to a failed commit may hold a file moved in from another
