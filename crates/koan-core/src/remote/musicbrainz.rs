@@ -65,25 +65,6 @@ struct MbUrl {
     resource: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct MbRelease {
-    #[serde(rename = "artist-credit", default)]
-    artist_credit: Vec<MbCredit>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MbCredit {
-    artist: MbRelatedArtist,
-}
-
-#[derive(Debug, Deserialize)]
-struct MbRelatedArtist {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    name: String,
-}
-
 /// Search for an artist by name. Returns up to `limit` results sorted by match score.
 pub fn search_artist(
     http: &reqwest::blocking::Client,
@@ -146,7 +127,8 @@ pub fn wikidata_id(
         }))
 }
 
-/// The artists a release is credited to, as `(name, mbid)`.
+/// The artists a release is credited to, as `(name, mbid)`. Decoded with
+/// sift's own release types, which `inc=artist-credits` fills.
 pub fn release_artists(
     http: &reqwest::blocking::Client,
     release_mbid: &str,
@@ -158,12 +140,14 @@ pub fn release_artists(
         404 => return Err(MusicBrainzError::NotFound),
         _ => {}
     }
-    let release: MbRelease = resp.error_for_status()?.json()?;
-    Ok(release
-        .artist_credit
-        .into_iter()
-        .map(|credit| (credit.artist.name, credit.artist.id))
-        .collect())
+    let release: sift::musicbrainz::Release = resp.error_for_status()?.json()?;
+    Ok(credited(&release))
+}
+
+/// A release's artists by sift's rule, each by their own MusicBrainz name
+/// rather than as credited, so koan and sift never spell one artist two ways.
+fn credited(release: &sift::musicbrainz::Release) -> Vec<(String, String)> {
+    sift::musicbrainz::credited(&release.artist_credit).collect()
 }
 
 /// An HTTP client carrying the User-Agent MusicBrainz requires.
@@ -176,6 +160,36 @@ pub fn default_client() -> reqwest::blocking::Client {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_release_credits_each_artist_by_their_own_name_and_id() {
+        let release: sift::musicbrainz::Release = serde_json::from_value(serde_json::json!({
+            "id": "00ef66fb-e5f3-4b84-8497-6277d041776b",
+            "title": "Revenant du nord / Siilent",
+            "artist-credit": [
+                {"name": "OTPMD", "joinphrase": " × ",
+                 "artist": {"id": "177de814-d272-43ef-a42d-fb2ed79a0f78",
+                            "name": "Orchestre Tout Puissant Marcel Duchamp"}},
+                {"name": "Frànçois", "joinphrase": "",
+                 "artist": {"id": "63862e0f-4e06-458e-88d7-2baabbf27398",
+                            "name": "Frànçois & the Atlas Mountains"}}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            credited(&release),
+            [
+                (
+                    "Orchestre Tout Puissant Marcel Duchamp".to_string(),
+                    "177de814-d272-43ef-a42d-fb2ed79a0f78".to_string()
+                ),
+                (
+                    "Frànçois & the Atlas Mountains".to_string(),
+                    "63862e0f-4e06-458e-88d7-2baabbf27398".to_string()
+                ),
+            ]
+        );
+    }
+
     use super::*;
 
     #[test]
