@@ -1226,7 +1226,7 @@ impl MutationRoot {
 
     // -- Library management --
 
-    /// Start a library scan and return immediately; poll `job(id:)`.
+    /// Start a library scan and return immediately; follow it with `job(id:)` or the `jobs` subscription.
     ///
     /// A full scan walks the filesystem and writes for minutes, so it runs on a
     /// detached thread rather than holding a runtime worker that in-flight audio
