@@ -172,10 +172,23 @@ impl Default for PushConfig {
 /// The folders koan indexes. None until someone chooses one: looking in
 /// `~/Music` unasked reads the Apple Music library inside it, and macOS asks
 /// the person whether koan may.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibraryConfig {
     pub folders: Vec<PathBuf>,
+    /// List a record under each artist its tags or server name one by one
+    /// (`ARTISTS`, `ALBUMARTISTS`), rather than only under its credit as it
+    /// reads ("A × B").
+    pub artist_credits: bool,
+}
+
+impl Default for LibraryConfig {
+    fn default() -> Self {
+        Self {
+            folders: Vec::new(),
+            artist_credits: true,
+        }
+    }
 }
 
 /// The folder koan used to index when none was chosen, `~/Music`. Kept so a

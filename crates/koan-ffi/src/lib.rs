@@ -4016,6 +4016,7 @@ impl KoanEngine {
 
             let db = self.db().ok();
             Settings {
+                artist_credits: cfg.library.artist_credits,
                 library_folders: cfg
                     .library
                     .folders
@@ -4079,12 +4080,14 @@ impl KoanEngine {
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
         offload::offload(move || {
             let limit_before = Config::cached().remote.cache_limit.clone();
+            let credits_before = Config::cached().library.artist_credits;
             Config::persist(|cfg| {
                 cfg.library.folders = s
                     .library_folders
                     .iter()
                     .map(|f| PathBuf::from(&f.path))
                     .collect();
+                cfg.library.artist_credits = s.artist_credits;
 
                 cfg.remote.enabled = s.remote_enabled;
                 cfg.remote.url = s.remote_url.clone();
@@ -4122,6 +4125,22 @@ impl KoanEngine {
             koan_core::remote::nearby::reconfigure();
             if Config::cached().remote.cache_limit != limit_before {
                 koan_core::remote::queue::cache_limit_changed();
+            }
+            if s.artist_credits != credits_before {
+                // Every credited track is derived again, behind any scan: a
+                // thread of its own rather than the settings lane.
+                let engine = self.clone();
+                let on = s.artist_credits;
+                let _ = std::thread::Builder::new()
+                    .name("koan-artist-credits".into())
+                    .spawn(move || {
+                        let Ok(db) = engine.db() else { return };
+                        match koan_core::helpers::apply_artist_credits(&db, on) {
+                            Ok(true) => engine.bump_library(),
+                            Ok(false) => {}
+                            Err(e) => log::warn!("library.artist_credits: {e}"),
+                        }
+                    });
             }
             Ok(())
         })

@@ -123,6 +123,10 @@ impl Database {
     pub fn open_default() -> Result<Self, DbError> {
         let db = Self::open(&config::db_path())?;
         crate::helpers::keep_former_default_folder(&db);
+        let credits = config::Config::cached().library.artist_credits;
+        if let Err(e) = crate::helpers::apply_artist_credits(&db, credits) {
+            log::warn!("could not apply library.artist_credits: {e}");
+        }
         Ok(db)
     }
 

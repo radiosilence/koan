@@ -252,6 +252,8 @@ One or more directories to scan for music. Subdirectories are scanned recursivel
 
 None by default: kōan reads no folder you have not named. Looking in `~/Music` unasked meant reading the Apple Music library inside it, and macOS asking whether kōan may. Versions before 0.61.1 used `~/Music` when no folder was set; if your library was indexed from there, the first newer kōan to open it writes `~/Music` into `config.local.toml`, so nothing is lost. A `folders` key in either file, an empty list included, is left as it is.
 
+`artist_credits` (default `true`) lists a record under each artist its tags or server name one by one (`ARTISTS`, `ALBUMARTISTS`, OpenSubsonic's `artists` and `albumArtists`). Set to `false`, every record is listed only under its credit as it reads, as it was before kōan read those tags. It is a matter of taste, so it lives in `config.toml`. The tags are kept either way, so changing it takes effect at once, without a rescan.
+
 ---
 
 ## `[remote]`

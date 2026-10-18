@@ -43,6 +43,7 @@ class FakeEngine {
 
 fun settings(signedIn: Boolean = true, url: String = "https://music.example.com", username: String = "droid") = Settings(
     libraryFolders = emptyList(),
+    artistCredits = true,
     remoteEnabled = signedIn,
     remoteUrl = url,
     remoteUsername = username,

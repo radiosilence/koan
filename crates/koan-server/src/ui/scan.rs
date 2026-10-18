@@ -80,9 +80,59 @@ an upgrade that reads more from tags.</p>\
 data-on:submit__prevent=\"@post('/library/scan')\">\
 <label class=\"inline-flex items-center gap-1.5\"><input type=checkbox data-bind:reread>\
 Read every file again</label>\
-<button data-indicator:_scanning data-attr:disabled=\"$_scanning\">Rescan</button></form>{}",
-        status(s.jobs.current(&KINDS).as_ref(), true)
+<button data-indicator:_scanning data-attr:disabled=\"$_scanning\">Rescan</button></form>{}{}",
+        status(s.jobs.current(&KINDS).as_ref(), true),
+        credits_form(koan_core::config::Config::cached().library.artist_credits)
     )
+}
+
+/// The toggle for `library.artist_credits`, which it posts as it changes.
+fn credits_form(on: bool) -> String {
+    format!(
+        "<h2>Artists</h2><form id=credits class=\"mb-2 max-w-form\" \
+data-signals=\"{{credits: {on}}}\" data-on:change=\"@post('/library/credits')\">\
+<label class=\"inline-flex items-center gap-1.5\"><input type=checkbox data-bind:credits>\
+List a collaboration under each artist it credits.</label></form>"
+    )
+}
+
+/// Turn `library.artist_credits` on or off, and apply it to the library.
+/// Datastar posts its signals as JSON: `credits`.
+pub(super) async fn credits(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    body: Bytes,
+) -> Response {
+    if !allowed(&user) {
+        return forbidden();
+    }
+    let Some(on) = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("credits").and_then(|c| c.as_bool()))
+    else {
+        return (StatusCode::BAD_REQUEST, "credits must be true or false").into_response();
+    };
+    let pool = s.pool.clone();
+    let applied = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        koan_core::config::Config::persist(|cfg| cfg.library.artist_credits = on)
+            .map_err(|e| e.to_string())?;
+        let db = pool.get().map_err(|e| e.to_string())?;
+        koan_core::helpers::apply_artist_credits(&db, on).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|r| r);
+    match applied {
+        Ok(()) => events(vec![patch(&credits_form(on), None)]),
+        Err(e) => events(vec![patch(
+            &format!(
+                "<form id=credits><p class=\"{COPY_ERROR}\" role=alert>{}</p></form>",
+                escape(&e)
+            ),
+            None,
+        )]),
+    }
 }
 
 /// Patches the status line as scans move, until none is running: a re-read

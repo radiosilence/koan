@@ -93,6 +93,21 @@ pub fn keep_former_default_folder(db: &Database) -> bool {
     }
 }
 
+/// Apply `library.artist_credits` to the library: off, every record is listed
+/// under its credit as it reads; on, under each artist it credits, derived
+/// again from the credits the source rows keep. Work happens only when the
+/// library is not already that way, and holds the scan lane while it runs, as
+/// other library-wide changes do. Returns whether anything changed.
+pub fn apply_artist_credits(
+    db: &Database,
+    on: bool,
+) -> Result<bool, crate::db::connection::DbError> {
+    let _quiet = crate::index::lane::wait();
+    crate::db::queries::atomically(&db.conn, || {
+        crate::db::queries::sources::set_artist_credits(&db.conn, on)
+    })
+}
+
 /// How many tracks the server accounts for.
 pub fn tracks_from_server(db: &Database) -> u64 {
     db.conn

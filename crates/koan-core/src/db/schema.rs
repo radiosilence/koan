@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 24;
+pub const SCHEMA_VERSION: i64 = 25;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -727,6 +727,13 @@ const CREDIT_TABLES: &str = "
         PRIMARY KEY (album_id, artist_id)
     );
     CREATE INDEX IF NOT EXISTS idx_album_credits_artist ON album_credits(artist_id);
+    -- Whether credits become links at all: `library.artist_credits`, as last
+    -- applied to this database, so every process writing it agrees.
+    CREATE TABLE IF NOT EXISTS credit_links (
+        id      INTEGER PRIMARY KEY CHECK (id = 1),
+        enabled INTEGER NOT NULL
+    );
+    INSERT OR IGNORE INTO credit_links (id, enabled) VALUES (1, 1);
     -- A credit finds its artist by MusicBrainz id before name.
     CREATE INDEX IF NOT EXISTS idx_artists_credit_mbid ON artists(mbid) WHERE mbid IS NOT NULL;
     DROP VIEW IF EXISTS album_artist_links;

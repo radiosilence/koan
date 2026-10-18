@@ -48,6 +48,8 @@ A record credited to several artists ("Orchestre Tout Puissant Marcel Duchamp ×
 
 After upgrading, the next scan reads every file's tags again and the next sync walks the whole server, so a library already indexed picks these tags up without a rescan by hand.
 
+To list each record only under its credit as it reads, turn off **Collaborations under each artist** (Settings → Library on the Mac, Settings → Server on iPhone and Android, the Library page of the web UI), or set `library.artist_credits = false`. The tags stay in the index, so turning it back on lists collaborations again straight away, without a rescan.
+
 ## Downloaded and offline
 
 **Downloaded**, in the Mac's and the iPad's sidebar and the iPhone's Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.

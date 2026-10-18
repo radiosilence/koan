@@ -512,6 +512,61 @@ mod tests {
     }
 
     #[test]
+    fn turning_credits_off_lists_records_under_their_credit_and_on_restores_them() {
+        use crate::db::queries::sources::set_artist_credits;
+        let credited = collaboration_db(true);
+        let plain = collaboration_db(false);
+        let listing = |db: &Database| -> Vec<(String, Vec<String>)> {
+            all_artists(&db.conn)
+                .unwrap()
+                .into_iter()
+                .map(|a| (a.name.clone(), album_titles(db, a.id)))
+                .collect()
+        };
+        let before = listing(&credited);
+
+        assert!(set_artist_credits(&credited.conn, false).unwrap());
+        assert_eq!(
+            listing(&credited),
+            listing(&plain),
+            "as if the tags named no one"
+        );
+        assert!(!set_artist_credits(&credited.conn, false).unwrap(), "once");
+        // A rescan while off keeps it off.
+        let credit = format!("{DUCHAMP} × {ATLAS}");
+        let mut m =
+            crate::db::queries::sample_meta("Siilent", &credit, "Revenant du nord / Siilent");
+        m.track_number = Some(2);
+        m.path = Some("/music/ep/2.mp3".into());
+        m.credits = crate::db::queries::Credits {
+            artists: vec![
+                crate::db::queries::Credit {
+                    name: DUCHAMP.into(),
+                    ..Default::default()
+                },
+                crate::db::queries::Credit {
+                    name: ATLAS.into(),
+                    ..Default::default()
+                },
+            ],
+            album_artists: Vec::new(),
+        };
+        crate::db::queries::upsert_track(&credited.conn, &m).unwrap();
+        let links: i64 = credited
+            .conn
+            .query_row("SELECT COUNT(*) FROM track_credits", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(links, 0);
+
+        assert!(set_artist_credits(&credited.conn, true).unwrap());
+        assert_eq!(
+            listing(&credited),
+            before,
+            "from the stored source rows, no rescan"
+        );
+    }
+
+    #[test]
     fn a_credit_named_only_as_a_string_is_left_as_it_was() {
         let db = collaboration_db(false);
         let credit = format!("{DUCHAMP} × {ATLAS}");

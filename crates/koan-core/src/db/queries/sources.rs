@@ -800,6 +800,8 @@ fn derive_credits(
     album: i64,
     credits: &super::Credits,
 ) -> Result<(), DbError> {
+    let none = super::Credits::default();
+    let credits = if credit_links(conn)? { credits } else { &none };
     let json =
         (!credits.is_empty()).then(|| serde_json::to_string(credits).expect("credits serialise"));
     let stored: Option<String> = conn
@@ -828,6 +830,66 @@ fn derive_credits(
         super::tracks::prune_if_empty(conn, None, Some(artist))?;
     }
     Ok(())
+}
+
+/// Whether credits become links (`library.artist_credits`). Off, a track
+/// derives none, and every record is listed under its credit as it reads.
+fn credit_links(conn: &Connection) -> Result<bool, DbError> {
+    Ok(conn
+        .prepare_cached("SELECT enabled FROM credit_links WHERE id = 1")?
+        .query_row([], |r| r.get(0))
+        .optional()?
+        .unwrap_or(true))
+}
+
+/// Turn credit links on or off for the whole library. Off removes every link;
+/// on derives them again from the credits the source rows keep, which neither
+/// setting touches, so nothing is rescanned or synced. Returns whether it
+/// changed anything: a library already in that state is only read.
+pub(crate) fn set_artist_credits(conn: &Connection, on: bool) -> Result<bool, DbError> {
+    conn.prepare_cached("UPDATE credit_links SET enabled = ?1 WHERE id = 1")?
+        .execute(params![on])?;
+    let exists = |sql: &str| -> Result<bool, DbError> {
+        Ok(conn.query_row(&format!("SELECT EXISTS ({sql})"), [], |r| r.get(0))?)
+    };
+    let derived = exists("SELECT 1 FROM tracks WHERE credits IS NOT NULL")?;
+    if on {
+        if derived
+            || !exists(
+                "SELECT 1 FROM local_files WHERE credits IS NOT NULL
+                 UNION ALL SELECT 1 FROM remote_entries WHERE credits IS NOT NULL",
+            )?
+        {
+            return Ok(false);
+        }
+        let tracks: Vec<i64> = conn
+            .prepare(
+                "SELECT track_id FROM local_files WHERE credits IS NOT NULL
+                 UNION SELECT track_id FROM remote_entries WHERE credits IS NOT NULL",
+            )?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for track in tracks {
+            derive(conn, track)?;
+        }
+        return Ok(true);
+    }
+    if !derived && !exists("SELECT 1 FROM track_credits UNION ALL SELECT 1 FROM album_credits")? {
+        return Ok(false);
+    }
+    let credited: Vec<i64> = conn
+        .prepare("SELECT artist_id FROM track_credits UNION SELECT artist_id FROM album_credits")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    conn.execute_batch(
+        "DELETE FROM track_credits;
+         DELETE FROM album_credits;
+         UPDATE tracks SET credits = NULL WHERE credits IS NOT NULL;",
+    )?;
+    for artist in credited {
+        super::tracks::prune_if_empty(conn, None, Some(artist))?;
+    }
+    Ok(true)
 }
 
 /// An album's credited artists: the album artists most of its tracks name,

@@ -106,6 +106,14 @@ fun ServerPane(model: SettingsModel) {
         }
         footer("Each sync asks the server only for what changed since the last.")
 
+        header("Artists")
+        item {
+            SwitchRow("Collaborations under each artist", s.artistCredits) { on ->
+                model.edit { it.copy(artistCredits = on) }
+            }
+        }
+        footer("List a collaboration under each artist it credits.")
+
         serverOffers(connection)
     }
 

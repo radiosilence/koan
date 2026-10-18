@@ -338,6 +338,24 @@ extension SettingsModel {
 
 // MARK: - Library
 
+/// Whether a record is listed under each artist its tags or server name, or
+/// only under its credit as it reads.
+private struct ArtistCreditsSection: View {
+    @Bindable var model: SettingsModel
+
+    var body: some View {
+        Section {
+            Toggle("Collaborations under each artist", isOn: model.binding(\.artistCredits))
+                .koanToggle()
+        } header: {
+            KoanSectionHeader("Artists")
+        } footer: {
+            Text("List a collaboration under each artist it credits.")
+                .koanText(.fine, .muted)
+        }
+    }
+}
+
 private struct LibrarySettings: View {
     @Bindable var model: SettingsModel
     @Environment(ActivityModel.self) private var activity
@@ -383,6 +401,8 @@ private struct LibrarySettings: View {
                 Text("Removing a folder stops it being scanned. It does not delete anything.")
                     .koanText(.fine, .muted)
             }
+
+            ArtistCreditsSection(model: model)
 
             Section {
                 HStack {
@@ -637,6 +657,11 @@ private struct RemoteSettings: View {
                 Text("Each sync asks the server only for what changed since the last.")
                     .koanText(.fine, .muted)
             }
+
+            #if !os(macOS)
+            // The Mac has it under Library, beside the folders.
+            ArtistCreditsSection(model: model)
+            #endif
 
             #if os(tvOS)
             if model.settings.remoteSignedIn {

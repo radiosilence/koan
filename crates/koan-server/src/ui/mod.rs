@@ -148,6 +148,7 @@ pub(crate) fn router(
         .route("/queue", get(pages::queue))
         .route("/library", get(pages::library))
         .route("/library/scan", get(scan::watch).post(scan::start))
+        .route("/library/credits", post(scan::credits))
         .route("/favourites", get(pages::favourites))
         .route("/recent", get(pages::recent))
         .route("/history", get(history::page))

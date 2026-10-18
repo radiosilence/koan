@@ -2040,6 +2040,9 @@ pub struct Settings {
     /// Folders and how many tracks each accounts for — a folder is easier to
     /// judge by what it contributed than by its path.
     pub library_folders: Vec<LibraryFolder>,
+    /// List a record under each artist its tags or server name one by one,
+    /// rather than only under its credit as it reads.
+    pub artist_credits: bool,
 
     pub remote_enabled: bool,
     pub remote_url: String,
