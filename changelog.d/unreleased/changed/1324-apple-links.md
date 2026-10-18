@@ -1,0 +1,1 @@
+- **Artists and albums link the same way everywhere on macOS and iOS.** Every track row, the downloads list, the transport bar and the mini player show "Artist · Album" with both names linked, and queue and playlist album headings link the record and its artist. Queue items and playlist entries carry the artist ids those links need.

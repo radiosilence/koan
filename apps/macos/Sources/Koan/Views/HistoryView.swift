@@ -268,17 +268,11 @@ private struct HistoryRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title)
                     .lineLimit(1)
-                HStack(spacing: 5) {
-                    CreditLinks(parts: track.artistCredit, font: .role(.fine, system: .caption))
-                    Text("·")
-                        .font(.role(.fine, system: .caption))
-                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
-                    LinkText(
-                        text: track.albumTitle,
-                        target: track.albumId.map { .album($0) },
-                        font: .role(.fine, system: .caption)
-                    )
-                }
+                ArtistAlbumLine(
+                    artist: track.artistCredit,
+                    album: track.albumTitle,
+                    albumId: track.albumId
+                )
             }
 
             Spacer(minLength: 8)

@@ -20,7 +20,7 @@ struct SearchSuggestions: View {
                         albumId: track.albumId,
                         icon: Icon.track,
                         title: track.title,
-                        subtitle: "\(track.artistName) — \(track.albumTitle)"
+                        subtitle: "\(track.artistName) · \(track.albumTitle)"
                     )
                     .searchCompletion(
                         SearchModel.Selection.track(track.id, album: track.albumId).token

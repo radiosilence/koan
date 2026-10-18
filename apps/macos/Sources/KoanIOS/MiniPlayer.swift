@@ -39,11 +39,14 @@ struct MiniPlayer: View {
                             .foregroundStyle(.tint)
                             .lineLimit(1)
                     }
-                } else if player.resolving == nil, let artist = entry?.artist, !artist.isEmpty {
-                    Text(artist)
-                        .font(.role(.fine, system: .caption))
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                        .lineLimit(1)
+                } else if player.resolving == nil, let entry, !entry.artist.isEmpty {
+                    // Links, as in the transport bar; the rest of the bar opens
+                    // Now Playing.
+                    ArtistAlbumLine(
+                        artist: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
+                        album: entry.album,
+                        albumId: player.currentAlbumId
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

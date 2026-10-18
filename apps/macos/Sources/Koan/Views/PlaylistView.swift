@@ -182,6 +182,8 @@ struct PlaylistView: View {
                 return QueueLine(id: id, kind: .heading(QueueHeading(
                     title: group.album,
                     artist: group.artist.isEmpty ? "Unknown Artist" : group.artist,
+                    albumId: track?.albumId,
+                    artistId: group.entries.first?.albumArtistId,
                     detail: nil,
                     sleeve: track.map { $0.albumId.map { .album($0) } ?? .track($0.id) },
                     sleeveSize: 44
@@ -223,7 +225,8 @@ struct PlaylistView: View {
                     onStage: onStage,
                     art: art,
                     levels: levels,
-                    toggleFavourite: { library.toggleFavourite(track: $0) }
+                    toggleFavourite: { library.toggleFavourite(track: $0) },
+                    open: { [nav] in nav.follow($0) }
                 ),
                 contextKey: AnyHashable(key),
                 selection: $selection,
@@ -761,14 +764,19 @@ private struct PlaylistAlbumHeader: View {
                     .frame(width: 44, height: 44)
                     .koanShadow(0.28, radius: 4, y: 2)
             }
+            let albumId = group.entries.first?.track.albumId
             VStack(alignment: .leading, spacing: 2) {
-                Text(group.album)
-                    .font(.role(.body, system: .system(size: 14, weight: .semibold)))
-                    .lineLimit(1)
-                Text(group.artist.isEmpty ? "Unknown Artist" : group.artist)
-                    .font(.role(.fine, system: .caption))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    .lineLimit(1)
+                LinkText(
+                    text: group.album,
+                    target: albumId.map { .album($0) },
+                    font: .role(.body, system: .system(size: 14, weight: .semibold)),
+                    prominent: true
+                )
+                LinkText(
+                    text: group.artist.isEmpty ? "Unknown Artist" : group.artist,
+                    target: group.entries.first?.albumArtistId.map { .artist($0) },
+                    font: .role(.fine, system: .caption)
+                )
             }
             Spacer()
         }

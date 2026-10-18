@@ -350,6 +350,42 @@ pub fn album_ids_for_tracks(
         .map_err(Into::into)
 }
 
+/// Where a track sits in the library: its record, its artist and the
+/// record's artist. What a list needs to link the names it shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Place {
+    pub album_id: Option<i64>,
+    pub artist_id: Option<i64>,
+    pub album_artist_id: Option<i64>,
+}
+
+/// Each track's place, in one query for a whole list.
+pub fn places_for_tracks(
+    conn: &Connection,
+    track_ids: &[i64],
+) -> Result<HashMap<i64, Place>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let sql = format!(
+        "SELECT t.id, t.album_id, t.artist_id, al.artist_id \
+         FROM tracks t LEFT JOIN albums al ON al.id = t.album_id WHERE t.id IN {IN_LIST}"
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(track_ids)], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            Place {
+                album_id: row.get(1)?,
+                artist_id: row.get(2)?,
+                album_artist_id: row.get(3)?,
+            },
+        ))
+    })?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
+}
+
 /// Where each track's bytes are: on the server, on this machine, or both.
 ///
 /// One query for a whole queue. The same reading `Track` gives, so a row in the
@@ -911,6 +947,27 @@ mod tests {
         assert_eq!(rows.iter().map(|t| t.id).collect::<Vec<_>>(), [id]);
     }
 
+    #[test]
+    fn a_place_names_the_track_artist_and_the_record_artist() {
+        let db = test_db();
+        let mut meta = sample_meta("Guest Spot", "Guest", "Host Album");
+        meta.album_artist = Some("Host".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+        let guest = crate::db::queries::get_or_create_artist(&db.conn, "Guest", None).unwrap();
+        let host = crate::db::queries::get_or_create_artist(&db.conn, "Host", None).unwrap();
+        let track = &tracks_by_ids_for_test(&db, &[id])[0];
+
+        let place = places_for_tracks(&db.conn, &[id]).unwrap()[&id];
+        assert_eq!(
+            place,
+            Place {
+                album_id: track.album_id,
+                artist_id: Some(guest),
+                album_artist_id: Some(host),
+            }
+        );
+    }
+
     /// More ids than SQLite allows parameters in one statement.
     #[test]
     fn id_lists_are_not_limited_by_the_parameter_count() {
@@ -919,6 +976,7 @@ mod tests {
         let ids: Vec<i64> = (1..=40_000).collect();
         assert_eq!(tracks_by_ids_for_test(&db, &ids).len(), 3);
         assert_eq!(album_ids_for_tracks(&db.conn, &ids).unwrap().len(), 3);
+        assert_eq!(places_for_tracks(&db.conn, &ids).unwrap().len(), 3);
         assert_eq!(sources_for_tracks(&db.conn, &ids).unwrap().len(), 3);
         assert!(
             favourite_track_ids(&db.conn, crate::db::queries::LOCAL_USER, &ids)

@@ -16,6 +16,7 @@ class PlaylistRowsTest {
             sampleRate = 44_100, bitDepth = 16, channels = 2, bitrate = null, genre = null, source = "remote",
             onServer = true, onDisk = false, path = null, isFavourite = false,
         ),
+        albumArtistId = 1,
     )
 
     private fun playlist(smart: Boolean = false, readonly: Boolean = false, fromFile: Boolean = false, tracks: UInt = 3u) = Playlist(

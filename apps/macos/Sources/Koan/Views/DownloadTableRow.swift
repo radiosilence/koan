@@ -3,14 +3,18 @@ import AppKit
 import KoanFFI
 
 /// One transfer in the Mac's downloads list, as `DownloadRow` draws it in
-/// SwiftUI: the sleeve; the title and how far along; a bar; who it is by and
-/// how it is going, with a link to the record under the pointer.
+/// SwiftUI: the sleeve; the title and how far along; a bar; its artist and
+/// record, which link out, and how it is going, with a link to the record
+/// under the pointer.
 final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     struct Context {
         let meter: TransferMeter
         let art: CoverArtCache
         let showInLibrary: (Transfer) -> Void
+        let open: (LinkText.Target) -> Void
     }
+
+    private enum Part { case artist, album, showInLibrary }
 
     static let identifier = NSUserInterfaceItemIdentifier("DownloadTableRow")
     static let height: CGFloat = 60
@@ -24,6 +28,10 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     private let filled = CALayer()
     private let title = NSTextField(labelWithString: "")
     private let figure = NSTextField(labelWithString: "")
+    private let artist = NSTextField(labelWithString: "")
+    private let dot = NSTextField(labelWithString: "·")
+    private let album = NSTextField(labelWithString: "")
+    private let statusDot = NSTextField(labelWithString: "·")
     private let subtitle = NSTextField(labelWithString: "")
     private let link = NSTextField(labelWithString: "Show in Library")
 
@@ -31,6 +39,7 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     private var context: Context?
     private var fraction: Double = 0
     private var hovered = false
+    private var hoveredPart: Part?
     private var sleeveLoad: Task<Void, Never>?
 
     init() {
@@ -42,7 +51,7 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         sleeve.contentsGravity = .resizeAspectFill
         track.cornerRadius = KoanTheme.radius(2)
         filled.cornerRadius = KoanTheme.radius(2)
-        for label in [title, figure, subtitle, link] {
+        for label in [title, figure, artist, dot, album, statusDot, subtitle, link] {
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
             addSubview(label)
@@ -50,7 +59,7 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         title.font = Self.titleFont
         figure.font = Self.figureFont
         figure.alignment = .right
-        subtitle.font = Self.captionFont
+        for label in [artist, dot, album, statusDot, subtitle] { label.font = Self.captionFont }
         link.font = Self.captionFont
         link.alignment = .right
         textField = title
@@ -63,8 +72,11 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     func show(_ transfer: Transfer, in context: Context) {
         if self.transfer?.trackId != transfer.trackId {
             hovered = false
+            hoveredPart = nil
             showSleeve(transfer.trackId, art: context.art)
         }
+        artist.stringValue = transfer.artist
+        album.stringValue = transfer.artist.isEmpty ? "" : transfer.album
         self.transfer = transfer
         self.context = context
         title.stringValue = transfer.title
@@ -110,12 +122,11 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     private static func subtitle(_ transfer: Transfer, figures: TransferFigure?) -> String {
         switch transfer.state {
         case .failed: return transfer.failureReason ?? "Couldn't be fetched"
-        case .queued: return transfer.artist.isEmpty ? "Waiting" : "\(transfer.artist) — waiting"
-        case .done: return transfer.artist.isEmpty ? "Downloaded" : "\(transfer.artist) — downloaded"
+        case .queued: return "Waiting"
+        case .done: return "Downloaded"
         case .running:
             // A rate of nothing is a stall, and saying so is the point of the row.
             var parts: [String] = []
-            if !transfer.artist.isEmpty { parts.append(transfer.artist) }
             let rate = figures?.bytesPerSecond ?? 0
             parts.append(rate > 0 ? "\(Format.bytes(Int64(rate)))/s" : "stalled")
             let written = figures?.bytesWritten ?? 0
@@ -152,6 +163,16 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         title.textColor = selected ? onAccent : .koanLabel
         figure.textColor = selected ? onAccent : .koanSecondaryLabel
         subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? NSColor.koanBad(.systemOrange) : .koanSecondaryLabel)
+        artist.isHidden = transfer.artist.isEmpty
+        statusDot.isHidden = artist.isHidden
+        album.isHidden = album.stringValue.isEmpty
+        dot.isHidden = album.isHidden
+        for label in [dot, statusDot] { label.textColor = selected ? onAccent : .koanTertiaryLabel }
+        let ink = { (part: Part, id: Int64?) -> NSColor in
+            selected ? onAccent : (self.hoveredPart == part && id != nil ? .koanLabel : .koanSecondaryLabel)
+        }
+        artist.styleLink(font: Self.captionFont, colour: ink(.artist, transfer.artistId), underlined: hoveredPart == .artist)
+        album.styleLink(font: Self.captionFont, colour: ink(.album, transfer.albumId), underlined: hoveredPart == .album)
         link.isHidden = !hovered
         var attributes: [NSAttributedString.Key: Any] = [
             .font: Self.captionFont, .foregroundColor: selected ? onAccent : NSColor.linkColor,
@@ -216,29 +237,58 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         let captionY = top + titleHeight + barBlock
         let linkWidth = ceil((link.stringValue as NSString).size(withAttributes: [.font: Self.captionFont]).width) + 5
         link.frame = CGRect(x: bounds.width - linkWidth, y: captionY, width: linkWidth, height: captionHeight)
-        subtitle.frame = CGRect(x: x, y: captionY, width: max(width - (hovered ? linkWidth + 8 : 0), 0), height: captionHeight)
+        // Artist · record · status, as `TrackTableRow` measures its caption.
+        let end = x + max(width - (hovered ? linkWidth + 8 : 0), 0)
+        var at = x
+        let place = { (label: NSTextField, measured: Bool) in
+            guard !label.isHidden else { return }
+            let natural = measured ? TrackTableRow.measure(label.stringValue, Self.captionFont) : 10
+            label.frame = CGRect(x: at, y: captionY, width: max(min(natural, end - at), 0), height: captionHeight)
+            at = label.frame.maxX + (measured ? 0 : 2)
+        }
+        place(artist, true)
+        place(dot, false)
+        place(album, true)
+        place(statusDot, false)
+        subtitle.frame = CGRect(x: at, y: captionY, width: max(end - at, 0), height: captionHeight)
     }
 
     // MARK: Pointer
 
+    private func part(at point: NSPoint) -> Part? {
+        guard let transfer else { return nil }
+        if hovered, link.frame.contains(point) { return .showInLibrary }
+        if transfer.artistId != nil, !artist.isHidden, artist.frame.contains(point) { return .artist }
+        if transfer.albumId != nil, !album.isHidden, album.frame.contains(point) { return .album }
+        return nil
+    }
+
     func hover(at point: NSPoint?) -> Bool {
         let now = point != nil
-        if now != hovered {
+        let part = point.flatMap(part(at:))
+        if now != hovered || part != hoveredPart {
             hovered = now
+            hoveredPart = part
             restyle()
         }
-        return point.map { link.frame.contains($0) } ?? false
+        return part != nil
     }
 
     func hit(at point: NSPoint) -> RowHit {
-        guard let transfer, let context, hovered, link.frame.contains(point) else { return .plain }
-        return .button { context.showInLibrary(transfer) }
+        guard let transfer, let context else { return .plain }
+        switch part(at: point) {
+        case .showInLibrary: return .button { context.showInLibrary(transfer) }
+        case .artist: return transfer.artistId.map { id in .link { context.open(.artist(id)) } } ?? .plain
+        case .album: return transfer.albumId.map { id in .link { context.open(.album(id)) } } ?? .plain
+        case nil: return .plain
+        }
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
         sleeveLoad?.cancel()
         hovered = false
+        hoveredPart = nil
     }
 }
 #endif

@@ -108,7 +108,7 @@ struct TransportBar: View {
                             source: sleeve,
                             title: player.currentEntry?.title ?? "",
                             subtitle: player.currentEntry.map {
-                                "\($0.artist) — \($0.album)"
+                                "\($0.artist) · \($0.album)"
                             }
                         )
                 } else {
@@ -137,24 +137,13 @@ struct TransportBar: View {
                         .lineLimit(1)
                         .rainbowShimmer()
                     // Both names go where they say they go, rather than the
-                    // line as a whole meaning one of them. `CreditLinks` and
-                    // `LinkText` are the ones the rows and headers use.
-                    HStack(spacing: 0) {
-                        CreditLinks(
-                            parts: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
-                            font: .role(.fine, system: .caption)
-                        )
-                        if !entry.album.isEmpty {
-                            Text(" — ")
-                                .koanText(.fine, .muted)
-                            LinkText(
-                                text: entry.album,
-                                target: player.currentAlbumId.map { .album($0) },
-                                font: .role(.fine, system: .caption)
-                            )
-                        }
-                    }
-                    .lineLimit(1)
+                    // line as a whole meaning one of them, drawn as every row
+                    // draws them.
+                    ArtistAlbumLine(
+                        artist: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
+                        album: entry.album,
+                        albumId: player.currentAlbumId
+                    )
                 } else {
                     Text("Nothing playing").koanCase()
                         .koanText(.meta, .muted)

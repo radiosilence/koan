@@ -72,7 +72,8 @@ extension DownloadsView {
                 context: DownloadTableRow.Context(
                     meter: meter,
                     art: art,
-                    showInLibrary: { DownloadMenu.showInLibrary($0, library: library, nav: nav) }
+                    showInLibrary: { DownloadMenu.showInLibrary($0, library: library, nav: nav) },
+                    open: { [nav] in nav.follow($0) }
                 ),
                 contextKey: AnyHashable(key),
                 selection: $selection,
@@ -198,8 +199,19 @@ private struct DownloadRow: View {
             )
             .frame(height: 4)
 
-            HStack(spacing: 6) {
-                Text(subtitle)
+            HStack(spacing: 5) {
+                if !transfer.artist.isEmpty {
+                    ArtistAlbumLine(
+                        artist: transfer.artist,
+                        artistId: transfer.artistId,
+                        album: transfer.album,
+                        albumId: transfer.albumId
+                    )
+                    .layoutPriority(1)
+                    Text("·")
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                }
+                Text(status)
                     .lineLimit(1)
                     .foregroundStyle(
                         transfer.state == .failed ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.muted, system: .secondary)
@@ -232,20 +244,20 @@ private struct DownloadRow: View {
         return progress ?? 0
     }
 
-    private var subtitle: String {
+    /// How it is going, after the artist and record.
+    private var status: String {
         switch transfer.state {
         case .failed: transfer.failureReason ?? "Couldn't be fetched"
-        case .queued: transfer.artist.isEmpty ? "Waiting" : "\(transfer.artist) — waiting"
-        case .done: transfer.artist.isEmpty ? "Downloaded" : "\(transfer.artist) — downloaded"
+        case .queued: "Waiting"
+        case .done: "Downloaded"
         case .running: rateAndSize
         }
     }
 
-    /// "Artist · 4.2 MB/s · 210 MB of 451 MB", dropping whatever is not known.
-    /// A rate of nothing is a stall, and saying so is the point of the row.
+    /// "4.2 MB/s · 210 MB of 451 MB", dropping whatever is not known. A rate
+    /// of nothing is a stall, and saying so is the point of the row.
     private var rateAndSize: String {
         var parts: [String] = []
-        if !transfer.artist.isEmpty { parts.append(transfer.artist) }
         parts.append(
             bytesPerSecond > 0
                 ? "\(Format.bytes(Int64(bytesPerSecond)))/s"

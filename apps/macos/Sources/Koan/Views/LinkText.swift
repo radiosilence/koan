@@ -8,7 +8,7 @@ import SwiftUI
 /// Underlines on hover rather than permanently: a library view is mostly names,
 /// and colouring or underlining all of them turns it into a ransom note.
 struct LinkText: View {
-    enum Target {
+    enum Target: Hashable {
         case artist(Int64)
         case album(Int64)
     }
@@ -19,9 +19,28 @@ struct LinkText: View {
     /// The link is the row's own subject rather than a reference out of it —
     /// an artist in the artists list, not the artist credited on a track.
     var prominent = false
+    var lines = 1
+    /// Stepped back, as a played row's text is.
+    var dimmed = false
 
     @Environment(Navigator.self) private var nav
+    #if os(iOS)
+    /// A list picking rows takes a tap on any of it as a tick.
+    @Environment(\.editMode) private var editMode
+    #endif
     @State private var hovering = false
+
+    private var rest: AnyShapeStyle {
+        if prominent { return KoanTheme.style(.ink, system: .primary) }
+        return dimmed ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary)
+    }
+
+    private var followed: Target? {
+        #if os(iOS)
+        if editMode?.wrappedValue.isEditing == true { return nil }
+        #endif
+        return target
+    }
 
     private func transfer(for target: Target) -> PlayableTransfer {
         switch target {
@@ -36,17 +55,15 @@ struct LinkText: View {
         // never be reached, so it reads as the name it is.
         Text(text)
             .font(font ?? .role(.control, system: .callout))
-            .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
-            .lineLimit(1)
+            .foregroundStyle(rest)
+            .lineLimit(lines)
         #else
-        if let target {
+        if let target = followed {
             Text(text)
                 .font(font ?? .role(.control, system: .callout))
                 .underline(hovering)
-                .foregroundStyle(
-                    hovering || prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary)
-                )
-                .lineLimit(1)
+                .foregroundStyle(hovering ? KoanTheme.style(.ink, system: .primary) : rest)
+                .lineLimit(lines)
                 .contentShape(.rect)
                 #if os(macOS)
                 .pointerStyle(.link)
@@ -55,12 +72,7 @@ struct LinkText: View {
                 // A row that scrolls or filters away while hovered never sees
                 // the exit, so it would come back still underlined.
                 .onDisappear { hovering = false }
-                .onTapGesture {
-                    switch target {
-                    case .artist(let id): nav.open(artist: id)
-                    case .album(let id): nav.open(album: id)
-                    }
-                }
+                .onTapGesture { nav.follow(target) }
                 // Dragging the name drags what it names, which is not
                 // necessarily what the surrounding row or tile stands for: the
                 // artist link on an album tile queues the whole artist, while
@@ -70,10 +82,19 @@ struct LinkText: View {
         } else {
             Text(text)
                 .font(font ?? .role(.control, system: .callout))
-                .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
-                .lineLimit(1)
+                .foregroundStyle(rest)
+                .lineLimit(lines)
         }
         #endif
+    }
+}
+
+extension Navigator {
+    func follow(_ target: LinkText.Target) {
+        switch target {
+        case .artist(let id): open(artist: id)
+        case .album(let id): open(album: id)
+        }
     }
 }
 
@@ -83,27 +104,64 @@ struct LinkText: View {
 struct CreditLinks: View {
     let parts: [CreditPart]
     var font: Font?
+    var dimmed = false
 
     var body: some View {
         if parts.count == 1, let part = parts.first {
-            LinkText(text: part.text, target: part.artistId.map { .artist($0) }, font: font)
+            LinkText(text: part.text, target: part.artistId.map { .artist($0) }, font: font, dimmed: dimmed)
         } else {
             HStack(spacing: 0) {
                 ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
                     if let id = part.artistId {
-                        LinkText(text: part.text, target: .artist(id), font: font)
+                        LinkText(text: part.text, target: .artist(id), font: font, dimmed: dimmed)
                     } else {
                         // The names give way first: a joiner cut short reads
                         // as nothing at all.
                         Text(part.text)
                             .font(font ?? .role(.control, system: .callout))
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .foregroundStyle(
+                                dimmed ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary)
+                            )
                             .lineLimit(1)
                             .fixedSize()
                     }
                 }
             }
         }
+    }
+}
+
+/// A track's artist credit and record, each name a link, the way every row,
+/// the transport and the mini player show them: "Artist · Album". One view, so
+/// the separator, the colours and the hover are the same wherever the pair
+/// appears.
+struct ArtistAlbumLine: View {
+    let artist: [CreditPart]
+    /// Left out where the list already says which record this is.
+    var album: String?
+    var albumId: Int64?
+    var font: Font = .role(.fine, system: .caption)
+    var dimmed = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            CreditLinks(parts: artist, font: font, dimmed: dimmed)
+            if let album, !album.isEmpty {
+                Text("·")
+                    .font(font)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                LinkText(text: album, target: albumId.map { .album($0) }, font: font, dimmed: dimmed)
+            }
+        }
+        .lineLimit(1)
+    }
+}
+
+extension ArtistAlbumLine {
+    /// For an artist known by one name and id, with no credit split into
+    /// parts: a queue item, a download.
+    init(artist: String, artistId: Int64?, album: String? = nil, albumId: Int64? = nil, dimmed: Bool = false) {
+        self.init(artist: [CreditPart(text: artist, artistId: artistId)], album: album, albumId: albumId, dimmed: dimmed)
     }
 }
 

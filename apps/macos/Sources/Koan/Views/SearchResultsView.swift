@@ -280,10 +280,13 @@ private struct SearchTrackRow: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title).lineLimit(1)
-                Text("\(track.artistName) — \(track.albumTitle)")
-                    .font(.role(.fine, system: .caption))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    .lineLimit(1)
+                // While picking, a tap anywhere on the row ticks it.
+                let linked = !selection.isActive
+                ArtistAlbumLine(
+                    artist: linked ? track.artistCredit : [CreditPart(text: track.artistName, artistId: nil)],
+                    album: track.albumTitle,
+                    albumId: linked ? track.albumId : nil
+                )
                 if !KoanTheme.isOn {
                     SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
                 }

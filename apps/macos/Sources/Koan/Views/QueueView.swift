@@ -179,6 +179,7 @@ struct QueueView: View {
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) },
+                    open: { [nav] in nav.follow($0) },
                     offline: offline
                 ),
                 contextKey: AnyHashable(key),
@@ -210,6 +211,8 @@ struct QueueView: View {
             QueueLine(id: id, kind: .heading(QueueHeading(
                 title: group.title,
                 artist: group.album.isEmpty ? nil : (group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist),
+                albumId: group.items.first?.albumId,
+                artistId: group.items.first?.albumArtistId,
                 detail: group.detail,
                 sleeve: group.items.first?.sleeve,
                 sleeveSize: 52
@@ -331,16 +334,18 @@ struct QueueView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 if let name = lockedName, !albumOnce {
+                    let record: LinkText.Target? = if case .album(let album) = mirror.lock { .album(album.id) } else { nil }
                     // On a phone the label leaves the name a few letters; the
                     // sleeve beside it already says the queue follows it.
                     #if os(iOS)
-                    Text(Format.title(name))
-                        .font(.role(.body, system: .headline))
-                        .lineLimit(1)
+                    LinkText(text: Format.title(name), target: record, font: .role(.body, system: .headline), prominent: true)
                     #else
-                    Text("\(KoanTheme.label("Playing")) \(name)")
-                        .font(.role(.body, system: .headline))
-                        .lineLimit(1)
+                    HStack(spacing: 0) {
+                        Text("\(KoanTheme.label("Playing")) ")
+                            .font(.role(.body, system: .headline))
+                        LinkText(text: name, target: record, font: .role(.body, system: .headline), prominent: true)
+                    }
+                    .lineLimit(1)
                     #endif
                 } else if !KoanTheme.tabRootTitle("Queue").isEmpty {
                     Text("Queue").koanCase()
@@ -992,6 +997,7 @@ private struct LiveQueueRow: View {
 
 private struct QueueAlbumHeader: View {
     let group: QueueGroup
+    private var albumId: Int64? { group.items.first?.albumId }
 
     // A fixed size reads as a heading on a desktop; a television scales the
     // text styles beneath it and left the record smaller than its artist.
@@ -1015,18 +1021,29 @@ private struct QueueAlbumHeader: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(Format.title(group.title))
-                    .font(.role(.titleSmall, system: Self.titleFont))
-                    .foregroundStyle(KoanTheme.style(.ink, system: .primary))
-                    .lineLimit(Format.titleLines)
+                if !group.album.isEmpty, let albumId {
+                    LinkText(
+                        text: Format.title(group.title),
+                        target: .album(albumId),
+                        font: .role(.titleSmall, system: Self.titleFont),
+                        prominent: true,
+                        lines: Format.titleLines
+                    )
+                } else {
+                    Text(Format.title(group.title))
+                        .font(.role(.titleSmall, system: Self.titleFont))
+                        .foregroundStyle(KoanTheme.style(.ink, system: .primary))
+                        .lineLimit(Format.titleLines)
+                }
 
                 // Only when the line above is the record: a group with no album
                 // title already leads with the artist.
                 if !group.album.isEmpty {
-                    Text(group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist)
-                        .font(.role(.fine, system: .caption))
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                        .lineLimit(1)
+                    LinkText(
+                        text: group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist,
+                        target: group.items.first?.albumArtistId.map { .artist($0) },
+                        font: .role(.fine, system: .caption)
+                    )
                 }
 
                 Text(group.detail)

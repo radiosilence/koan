@@ -13,6 +13,9 @@ struct QueueRowContent: Equatable {
     var title: String
     var artist: String
     var album: String
+    /// Where the artist and the album names lead.
+    var artistId: Int64?
+    var albumId: Int64?
     /// Its place: the track number in the queue, the position in a playlist.
     /// Int64 because the two sources disagree on width and this only ever gets
     /// printed.
@@ -44,6 +47,8 @@ struct QueueRowContent: Equatable {
         title = item.title
         artist = item.artist
         album = item.album
+        artistId = item.artistId
+        albumId = item.albumId
         number = item.trackNumber
         if let album = item.albumId, discs.contains(album) { disc = item.disc ?? 1 }
         codec = item.codec
@@ -73,6 +78,8 @@ struct QueueRowContent: Equatable {
         title = track.title
         artist = track.artistName
         album = track.albumTitle
+        artistId = track.artistId
+        albumId = track.albumId
         number = Int64(position)
         codec = track.codec
         durationMs = track.durationMs
@@ -148,12 +155,13 @@ struct QueueRow: View {
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
                 if showArtist && !item.artist.isEmpty {
-                    Text(artwork && !item.album.isEmpty
-                        ? "\(item.artist) — \(item.album)"
-                        : item.artist)
-                        .font(.role(.fine, system: .caption))
-                        .foregroundStyle(played ? .tertiary : .secondary)
-                        .lineLimit(1)
+                    ArtistAlbumLine(
+                        artist: item.artist,
+                        artistId: item.artistId,
+                        album: artwork ? item.album : nil,
+                        albumId: item.albumId,
+                        dimmed: played
+                    )
                 }
             }
 
