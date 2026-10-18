@@ -15,7 +15,7 @@ use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 use koan_core::db::queries::{self, PlayHistoryRow};
 
 use super::favourite::Hearts;
-use super::pages::{EMPTY, ERROR, MORE, cover_url, link, track_versions, unavailable};
+use super::pages::{EMPTY, ERROR, MORE, cover_url, credit_line, track_versions, unavailable};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape};
@@ -74,7 +74,7 @@ fn plays(
             "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
 data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
 <input type=checkbox class=\"flex-none max-wide:hidden\" value={play} aria-label=\"Select this play\">\
-<span class=\"n w-auto max-wide:text-meta\">{time}</span><span class=\"t\">{title}<small>{artist_link} · {album_link}</small></span>\
+<span class=\"n w-auto max-wide:text-meta\">{time}</span><span class=\"t\">{title}{sub}</span>\
 <span class=\"d\">{dur}</span><span class=\"contents max-wide:hidden\">{heart}\
 <button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{mark}{MORE}</li>",
             id = t.id,
@@ -83,8 +83,7 @@ data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-
             title = escape(&t.title),
             artist = escape(&t.artist_name),
             album = escape(&t.album_title),
-            artist_link = link("artist", t.artist_id, &t.artist_name),
-            album_link = link("album", t.album_id, &t.album_title),
+            sub = credit_line(t, true, true),
             album_id = t.album_id.unwrap_or(0),
             artist_id = t.artist_id.unwrap_or(0),
             cover = t

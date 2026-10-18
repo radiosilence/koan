@@ -91,12 +91,14 @@
     for (const el of all("[data-np=title]")) el.textContent = track ? track.title : "Nothing playing";
     for (const el of all("[data-np=artist]")) {
       el.textContent = track ? track.artist : "";
-      if (el.tagName === "A") el.href = track && track.artistId ? `/artist/${track.artistId}` : "/artists";
+      if (track && track.artistId) el.href = `/artist/${track.artistId}`;
+      else el.removeAttribute("href");
     }
     for (const el of all("[data-np=sep]")) el.hidden = !(track && track.artist && track.album);
     for (const el of all("[data-np=album]")) {
       el.textContent = track ? track.album : "";
-      el.href = track && track.albumId ? `/album/${track.albumId}` : "/albums";
+      if (track && track.albumId) el.href = `/album/${track.albumId}`;
+      else el.removeAttribute("href");
     }
     for (const el of all("img[data-np=cover]")) {
       const src = track && track.cover;
@@ -372,7 +374,7 @@
   const menuRow = (e) => e.target.closest && e.target.closest("li[data-id]");
   document.addEventListener("contextmenu", (e) => {
     const li = menuRow(e);
-    if (!li || e.target.closest("a, input")) return;
+    if (!li || e.target.closest("a:not(.t a), input")) return;
     e.preventDefault();
     // The keyboard's menu key has no pointer: open it at the row.
     const r = li.getBoundingClientRect();
@@ -383,7 +385,7 @@
   let press = 0, pressed = false, pressAt = null;
   document.addEventListener("pointerdown", (e) => {
     const li = e.pointerType === "touch" && menuRow(e);
-    if (!li || e.target.closest("a, button, input, label")) return;
+    if (!li || e.target.closest("a:not(.t a), button, input, label")) return;
     pressAt = [e.clientX, e.clientY];
     pressed = false;
     press = setTimeout(() => { pressed = true; openMenu(li, e.clientX, e.clientY); }, 500);
@@ -593,6 +595,7 @@
     if (url.origin !== location.origin || !INTERNAL.test(url.pathname)) return;
     e.preventDefault();
     if (url.pathname + url.search !== location.pathname + location.search) navigate(url.pathname + url.search, true);
+    else if (properties?.open) properties.close();
   });
   addEventListener("popstate", () => navigate(location.pathname + location.search, false));
 

@@ -207,6 +207,8 @@
   /* A row is mostly names; linked in the brand colour they would shout over its title. */
   .tracks .t small a {
     @apply text-inherit hover:text-strong;
+    /* A long press opens the row's menu, not the browser's link preview. */
+    -webkit-touch-callout: none;
   }
 
   .tracks .d {

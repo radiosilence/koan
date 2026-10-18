@@ -86,9 +86,11 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     }
 
     let number = |v: Option<i32>| v.map(|v| v.to_string());
-    // Names that have a page are linked to it; everything else is text.
+    let text = |v: Option<String>| v.map(|v| escape(&v));
+    // Names that have a page are linked to it.
     let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
-    let named = [
+    let track = [
+        ("Title", text(Some(t.title.clone()))),
         ("Artist", linked("artist", t.artist_id, &t.artist_name)),
         (
             "Album artist",
@@ -99,31 +101,25 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
             ),
         ),
         ("Album", linked("album", t.album_id, &t.album_title)),
-    ];
-    let track = [
-        ("Title", Some(t.title.clone())),
         ("Disc", number(t.disc)),
         ("Track", number(t.track_number)),
         ("Discs", album.as_ref().and_then(|a| number(a.total_discs))),
-        ("Date", date),
-        ("Genre", t.genre.clone()),
-        ("Codec", t.codec.clone()),
+        ("Date", text(date)),
+        ("Genre", text(t.genre.clone())),
+        ("Codec", text(t.codec.clone())),
         ("Sample rate", t.sample_rate.map(|r| format!("{r} Hz"))),
         ("Bit depth", t.bit_depth.map(|b| format!("{b} bit"))),
         ("Length", Some(duration(t.duration_ms))),
         ("Size", size),
-        ("Track uid", track_uid),
-        ("Album uid", album_uid),
-        ("MusicBrainz recording", first(|m| m.mbid.clone())),
-        ("MusicBrainz release", first(|m| m.album_mbid.clone())),
+        ("Track uid", text(track_uid)),
+        ("Album uid", text(album_uid)),
+        ("MusicBrainz recording", text(first(|m| m.mbid.clone()))),
+        ("MusicBrainz release", text(first(|m| m.album_mbid.clone()))),
     ];
     out.push_str(&format!("<p class=\"{SECTION}\">Track</p>"));
-    let mut fields: Vec<_> = track
-        .into_iter()
-        .filter_map(|(name, value)| Some((name, escape(&value.filter(|v| !v.is_empty())?))))
-        .collect();
-    fields.splice(1..1, named.into_iter().filter_map(|(n, v)| Some((n, v?))));
-    out.push_str(&list(fields.into_iter()));
+    out.push_str(&list(track.into_iter().filter_map(|(name, value)| {
+        Some((name, value.filter(|v| !v.is_empty())?))
+    })));
 
     for mut source in sources {
         if !admin {
