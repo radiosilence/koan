@@ -23,7 +23,6 @@ pages=(
   "Playback|docs/guide/apple-tv.md"
   "Playback|docs/guide/android.md"
   "Playback|docs/guide/shuffle-and-repeat.md"
-  "Playback|docs/guide/sleep-timer.md"
   "Playback|docs/guide/dsp.md"
   "Playback|docs/guide/headphone-eq.md"
   "Automation|docs/guide/mcp-integration.md"

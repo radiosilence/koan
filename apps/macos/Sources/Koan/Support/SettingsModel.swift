@@ -200,6 +200,7 @@ final class SettingsModel {
                 // A server to send notifications now exists; ask to show them.
                 PushDelegate.requestAlertsIfSignedIn()
                 #endif
+                syncNow()
             case .failure(let e):
                 lastError = Self.describe(e)
             }

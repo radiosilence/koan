@@ -4579,13 +4579,22 @@ impl KoanEngine {
         .await
     }
 
-    /// Forget the server. Leaves the synced library alone — those tracks are
-    /// still real, they just cannot be fetched until you sign in again.
+    /// Forget the server, and the queue and transfers that came from it.
+    /// Leaves the synced library alone — those tracks are still real, they
+    /// just cannot be fetched until you sign in again.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::offload(move || {
+        offload::sequenced(move || {
             koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
-            })
+            })?;
+            // This device's own queue, never a controlled device's.
+            self.tx
+                .send(PlayerCommand::ClearPlaylist)
+                .map_err(|_| KoanError::Player {
+                    message: "the player has stopped".into(),
+                })?;
+            self.state.downloads().forget_all();
+            Ok(())
         })
         .await
     }
