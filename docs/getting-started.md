@@ -26,7 +26,7 @@ On an iPad with room for it, the iOS app's sidebar is the Mac's: Queue, the libr
 
 The Mac switches the output device to each track's sample rate, so playback is bit-perfect. On iOS koan asks the audio session for each track's rate, and the route decides. A USB DAC (USB-C, or Lightning with the Camera Adapter) that supports the track's rate is switched to it, so there is no resampling in koan or iOS. The built-in speaker stays at its own rate, Apple's headphone adapters go to 48 kHz at most, and iOS resamples anything they do not take. Bluetooth is lossy (AAC, or SBC on other headphones) and never bit-perfect, and AirPlay carries 16-bit/44.1 kHz Apple Lossless.
 
-The format badge shows the rate the hardware runs at, read back from the session, so a route that did not take the track's rate shows as a conversion. The Apple TV app does the same; over HDMI the rate is the one the television or receiver negotiates.
+The format badge shows the rate the hardware runs at, read back from the session, so a route that did not take the track's rate shows as a conversion. The Apple TV app does the same; over HDMI the rate is the one the television or receiver negotiates. A lossy file is shown by its bitrate ("MP3 320 kbps") rather than its sample rate, since the encoder setting says more about how it sounds.
 
 
 ## The Android app

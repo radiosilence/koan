@@ -34,7 +34,8 @@ enum Format {
             : String(format: "%d:%02d", m, s)
     }
 
-    /// What the source is: "FLAC 24/96" and so on.
+    /// What the source is: "FLAC 24/96", or "MP3 320 kbps" for a lossy file,
+    /// whose encoder setting says more about it than its sample rate does.
     ///
     /// A rate the device refused is appended — "FLAC 24/96 → 48" — because a
     /// badge that reads the same whether or not something resampled is the one
@@ -42,8 +43,11 @@ enum Format {
     /// reason: "FLAC 24/96 → 48 · EQ + FIR".
     static func quality(_ f: StreamFormat) -> String {
         var parts = [f.codec.uppercased()]
+        let kbps = isLossy(f.codec) ? f.bitrateKbps : nil
         if let depth = f.bitDepth {
             parts.append("\(depth)/\(rate(f.sampleRate))")
+        } else if let kbps {
+            parts.append("\(kbps) kbps")
         } else {
             parts.append("\(rate(f.sampleRate)) kHz")
         }
@@ -51,7 +55,7 @@ enum Format {
             parts.append("\(f.channels)ch")
         }
         if isResampled(f), let out = f.outputSampleRate {
-            parts.append("→ \(rate(out))")
+            parts.append(kbps == nil ? "→ \(rate(out))" : "→ \(rate(out)) kHz")
         }
         if let dsp = f.dsp {
             parts.append("· \(dspLabel(dsp))")
@@ -102,10 +106,19 @@ enum Format {
         var s = codec.uppercased()
         if let depth = t.bitDepth, let sr = t.sampleRate {
             s += " \(depth)/\(rate(UInt32(sr)))"
+        } else if isLossy(codec), let kbps = t.bitrate, kbps > 0 {
+            s += " \(kbps) kbps"
         } else if let sr = t.sampleRate {
             s += " \(rate(UInt32(sr))) kHz"
         }
         return s
+    }
+
+    /// Codecs whose encoder setting, not the rate, says what the file is.
+    /// Named rather than inferred from a missing bit depth, which a server
+    /// can leave out for lossless files too.
+    private static func isLossy(_ codec: String) -> Bool {
+        ["MP3", "AAC", "VORBIS", "OPUS", "OGG", "WMA", "MPC", "MP2"].contains(codec.uppercased())
     }
 
     /// 44100 → "44.1", 96000 → "96". Trailing ".0" is noise.
