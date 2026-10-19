@@ -379,6 +379,14 @@ pub fn set_config_dir(path: String) {
     config::set_config_dir(path);
 }
 
+/// A size as koan reads one in the config ("50GB", "500 MB"), in bytes, or
+/// `None` when it is not one. So the apps read the cache limit as the core
+/// does, without a parser of their own.
+#[uniffi::export]
+pub fn size_in_bytes(text: String) -> Option<u64> {
+    config::parse_size_bytes(&text)
+}
+
 impl Drop for KoanEngine {
     /// Wake the state watcher so it notices there is nothing left to watch.
     ///
@@ -4066,6 +4074,7 @@ impl KoanEngine {
                 }),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
+                download_ahead: cfg.remote.download_ahead,
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
                 cache_bytes,
                 auto_sync: cfg.remote.auto_sync,
@@ -4100,7 +4109,11 @@ impl KoanEngine {
     /// `sign_in_remote`.
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
         offload::offload(move || {
-            let limit_before = Config::cached().remote.cache_limit.clone();
+            let before = Config::cached();
+            let window_before = (
+                before.remote.cache_limit.clone(),
+                before.remote.download_ahead,
+            );
             Config::persist(|cfg| {
                 cfg.library.folders = s
                     .library_folders
@@ -4113,6 +4126,7 @@ impl KoanEngine {
                 cfg.remote.username = s.remote_username.clone();
                 cfg.remote.download_workers = s.download_workers.max(1) as usize;
                 cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
+                cfg.remote.download_ahead = s.download_ahead;
                 cfg.remote.auto_sync = s.auto_sync;
                 cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
 
@@ -4142,7 +4156,12 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
             koan_core::remote::nearby::reconfigure();
-            if Config::cached().remote.cache_limit != limit_before {
+            let after = Config::cached();
+            if (
+                after.remote.cache_limit.clone(),
+                after.remote.download_ahead,
+            ) != window_before
+            {
                 koan_core::remote::queue::cache_limit_changed();
             }
             Ok(())

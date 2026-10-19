@@ -356,6 +356,9 @@ impl SettingsPage {
                     return None;
                 }
                 let said = match &limit {
+                    Some(l) if koan_core::config::parse_size_bytes(l) == Some(0) => {
+                        "no cache: only the queue ahead and downloads you asked for are kept".into()
+                    }
                     Some(l) => format!("downloads kept to {l}"),
                     None => "no limit on downloads".into(),
                 };

@@ -87,6 +87,9 @@ class SettingsModel(
         }
     }
 
+    /** Say why something typed was not taken. */
+    fun report(message: String) = _state.update { it.copy(error = message, result = null) }
+
     // -- Server ----------------------------------------------------------
 
     fun syncNow() = run(holds = REMOTE) {

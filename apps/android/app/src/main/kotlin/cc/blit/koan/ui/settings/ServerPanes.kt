@@ -2,6 +2,7 @@ package cc.blit.koan.ui.settings
 
 import android.text.format.DateUtils
 import android.text.format.Formatter
+import java.util.Locale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,10 +22,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.SyncPhase
 import cc.blit.koan.ffi.SyncProgress
+import cc.blit.koan.ffi.sizeInBytes
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -178,14 +181,39 @@ fun DownloadsPane(model: SettingsModel) {
     val context = LocalContext.current
     val state by model.state.collectAsStateWithLifecycle()
     val cacheBytes by app.mirror.cacheBytes.collectAsStateWithLifecycle()
-    // The limit as typed, committed whole: "5" on the way to "50GB" is not a
+    // The limit as typed, committed whole: "5" on the way to "50" is not a
     // limit anyone set.
     var draft by rememberSaveable { mutableStateOf<String?>(null) }
     val s = state.settings ?: return SettingsPage(Pane.Downloads.title, state) {}
+    // Read as the core reads it: none set is no limit, a limit of nothing no cache.
+    val limitBytes = s.cacheLimit.takeIf { it.isNotBlank() }?.let { sizeInBytes(it) }
+    val keeping = when {
+        s.cacheLimit.isBlank() -> Keeping.Unlimited
+        limitBytes == 0uL -> Keeping.Off
+        else -> Keeping.Limited
+    }
+    val limitGb = limitBytes?.takeIf { it > 0uL }?.let { "%.2f".format(Locale.ROOT, it.toDouble() / GIB).trimEnd('0').trimEnd('.') }.orEmpty()
     val commit = {
-        draft?.let { typed -> if (typed.trim() != s.cacheLimit) model.edit { it.copy(cacheLimit = typed.trim()) } }
+        draft?.let { typed ->
+            val gb = typed.trim().replace(',', '.').toDoubleOrNull()
+            if (gb == null || gb <= 0) {
+                model.report("A limit is a number of gigabytes, such as 50.")
+            } else {
+                val limit = "%.2f".format(Locale.ROOT, gb).trimEnd('0').trimEnd('.') + "GB"
+                if (limit != s.cacheLimit) model.edit { it.copy(cacheLimit = limit) }
+            }
+        }
         draft = null
     }
+    val note = listOfNotNull(
+        "Nothing plays gaplessly, and each track waits for its download before it starts."
+            .takeIf { s.downloadAhead == 0u },
+        when (keeping) {
+            Keeping.Off -> "Tracks are deleted once played. Downloads you ask for and favourite records stay."
+            Keeping.Limited -> "Past the limit, the tracks played longest ago are deleted first. Favourite records stay."
+            Keeping.Unlimited -> null
+        },
+    ).joinToString(" ")
 
     SettingsPage(Pane.Downloads.title, state) {
         header("Downloads")
@@ -212,15 +240,42 @@ fun DownloadsPane(model: SettingsModel) {
             }
         }
         item {
-            KoanFormRow("Cache limit", inset) {
-                KoanField(
-                    draft ?: s.cacheLimit,
-                    { draft = it },
-                    Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) commit() },
-                    placeholder = "e.g. 50GB, blank for none",
-                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { commit() }),
-                )
+            ChoiceRow(
+                "Download ahead",
+                s.downloadAhead?.toInt() ?: -1,
+                listOf("Playing track only" to 0, "1 track" to 1) + (2..10).map { "$it tracks" to it } + ("Whole queue" to -1),
+            ) { n -> model.edit { it.copy(downloadAhead = n.takeIf { it >= 0 }?.toUInt()) } }
+        }
+        item {
+            ChoiceRow(
+                "Keep downloads",
+                keeping,
+                listOf("Up to a limit" to Keeping.Limited, "Without limit" to Keeping.Unlimited, "Only what plays next" to Keeping.Off),
+            ) { k ->
+                draft = null
+                model.edit {
+                    it.copy(
+                        cacheLimit = when (k) {
+                            Keeping.Limited -> "10GB"
+                            Keeping.Unlimited -> ""
+                            Keeping.Off -> "0"
+                        },
+                    )
+                }
+            }
+        }
+        if (keeping == Keeping.Limited) {
+            item {
+                KoanFormRow("Limit in GB", inset) {
+                    KoanField(
+                        draft ?: limitGb,
+                        { draft = it },
+                        Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) commit() },
+                        placeholder = "50",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { commit() }),
+                    )
+                }
             }
         }
         item {
@@ -234,8 +289,14 @@ fun DownloadsPane(model: SettingsModel) {
                 )
             }
         }
+        if (note.isNotEmpty()) footer(note)
     }
 }
+
+/** How much of what is downloaded to play the cache keeps. */
+private enum class Keeping { Limited, Unlimited, Off }
+
+private const val GIB = 1024.0 * 1024 * 1024
 
 internal fun describe(p: SyncProgress): String {
     val what = when (p.phase) {

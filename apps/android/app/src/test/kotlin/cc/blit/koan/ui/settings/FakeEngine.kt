@@ -51,6 +51,7 @@ fun settings(signedIn: Boolean = true, url: String = "https://music.example.com"
     remoteLastSync = null,
     downloadWorkers = 4u,
     cacheLimit = "",
+    downloadAhead = null,
     cacheDir = "",
     cacheBytes = 0u,
     autoSync = true,

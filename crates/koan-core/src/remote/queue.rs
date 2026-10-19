@@ -291,12 +291,26 @@ fn sync(inner: &Arc<Inner>) {
     }
 }
 
-/// The entries the cache has room for, from the cursor on
-/// (`helpers::playback_window`). `None` with no cache limit, and when the
-/// database cannot say: then the whole playlist is fetched, as without one.
+/// The entries to fetch, from the cursor on: as many as `download_ahead`
+/// allows past the playing one, then as many of those as the cache limit has
+/// room for (`helpers::playback_window`). `None` when neither is set, and when
+/// the database cannot say: then the whole playlist is fetched. A limit of
+/// nothing keeps no cache rather than holding the queue to a track or two;
+/// `download_ahead` alone decides how far ahead it reaches.
 fn playback_window(state: &SharedPlayerState) -> Option<Vec<(i64, QueueItemId)>> {
-    let limit = config::Config::cached().cache_limit_bytes()?;
+    let cfg = config::Config::cached();
+    let ahead = cfg.remote.download_ahead;
+    let limit = cfg.cache_limit_bytes();
+    if ahead.is_none() && limit.is_none() {
+        return None;
+    }
     let mut order = state.playback_order();
+    if let Some(ahead) = ahead {
+        order.truncate(ahead as usize + 1);
+    }
+    let Some(limit) = limit.filter(|limit| *limit > 0) else {
+        return Some(order);
+    };
     let tracks: Vec<i64> = order.iter().map(|(track, _)| *track).collect();
     let fits = crate::db::pool::shared()
         .get()
@@ -503,11 +517,12 @@ fn trim_cache(inner: &Inner, now: bool) {
     }
 }
 
-/// Moved whenever the cache limit is changed.
+/// Moved whenever the cache limit or how far ahead to fetch is changed.
 static LIMIT_CHANGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The cache limit was changed: work the window out again and evict down to
-/// the new limit now, rather than at the next download.
+/// The cache limit, or how far ahead to fetch, was changed: work the window
+/// out again and evict down to the new limit now, rather than at the next
+/// download.
 pub fn cache_limit_changed() {
     LIMIT_CHANGES.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     crate::signal::engine_changed().bump();
@@ -599,7 +614,8 @@ fn follow_playlist(inner: Arc<Inner>) {
 
 /// Send the cursor's track, and the one after it, down the priority lane, if
 /// the cursor's track is waiting in the queue. The queue is already in the
-/// order the player will reach it, so the one after is its front.
+/// order the player will reach it, and cut to the window, so the one after is
+/// its front when there is one to fetch.
 fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
     if inner.state.item_state(cursor_id) != Some(ItemState::Pending) {
         return;

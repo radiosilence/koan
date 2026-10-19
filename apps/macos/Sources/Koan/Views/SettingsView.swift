@@ -665,18 +665,42 @@ private struct RemoteSettings: View {
                     in: 1...16
                 )
                 #endif
-                LabeledContent("Cache limit") {
-                    TextField("Cache limit", text: Binding(
-                        get: { cacheLimit ?? model.settings.cacheLimit },
-                        set: { cacheLimit = $0 }
-                    ), prompt: Text("e.g. 50GB — blank for no limit"))
-                    .verbatimEntry()
-                    .focused($cacheLimitFocused)
-                    .onSubmit(commitCacheLimit)
-                    .onChange(of: cacheLimitFocused) { _, focused in
-                        if !focused { commitCacheLimit() }
+                KoanPicker(
+                    "Download ahead",
+                    selection: Binding(
+                        get: { model.settings.downloadAhead.map(Int.init) ?? -1 },
+                        set: { v in model.edit { $0.downloadAhead = v < 0 ? nil : UInt32(v) } }
+                    ),
+                    options: [("Playing track only", 0), ("1 track", 1)]
+                        + (2...10).map { ("\($0) tracks", $0) }
+                        + [("Whole queue", -1)]
+                )
+                KoanPicker(
+                    "Keep downloads",
+                    selection: Binding(get: { keeping }, set: keep),
+                    options: [
+                        ("Up to a limit", CacheKeeping.limited),
+                        ("Without limit", .unlimited),
+                        ("Only what plays next", .off),
+                    ]
+                )
+                if keeping == .limited {
+                    LabeledContent("Limit in GB") {
+                        TextField("Limit in GB", text: Binding(
+                            get: { cacheLimit ?? limitGB },
+                            set: { cacheLimit = $0 }
+                        ), prompt: Text("50"))
+                        #if os(iOS)
+                        .keyboardType(.decimalPad)
+                        #endif
+                        .monospacedDigit()
+                        .focused($cacheLimitFocused)
+                        .onSubmit(commitCacheLimit)
+                        .onChange(of: cacheLimitFocused) { _, focused in
+                            if !focused { commitCacheLimit() }
+                        }
+                        .koanField(cacheLimit ?? limitGB, prompt: "50")
                     }
-                    .koanField(cacheLimit ?? model.settings.cacheLimit, prompt: "e.g. 50GB — blank for no limit")
                 }
                 LabeledContent("Using") {
                     HStack(spacing: KoanTheme.Space.l) {
@@ -689,6 +713,11 @@ private struct RemoteSettings: View {
                 }
             } header: {
                 KoanSectionHeader("Downloads")
+            } footer: {
+                if !downloadsNote.isEmpty {
+                    Text(downloadsNote)
+                        .koanText(.fine, .muted)
+                }
             }
         }
         .koanSheet()
@@ -713,11 +742,60 @@ private struct RemoteSettings: View {
         }
     }
 
+    /// What the cache keeps, read from the limit as the core reads it: none
+    /// set is no limit, and a limit of nothing is no cache.
+    private var keeping: CacheKeeping {
+        let limit = model.settings.cacheLimit
+        if limit.isEmpty { return .unlimited }
+        return sizeInBytes(text: limit) == 0 ? .off : .limited
+    }
+
+    /// The limit in gigabytes, however it was written in the config.
+    private var limitGB: String {
+        guard let bytes = sizeInBytes(text: model.settings.cacheLimit), bytes > 0 else { return "" }
+        return (Double(bytes) / 1_073_741_824).formatted(.number.precision(.fractionLength(0...2)).grouping(.never))
+    }
+
+    private func keep(_ keeping: CacheKeeping) {
+        cacheLimit = nil
+        model.edit {
+            switch keeping {
+            case .limited: $0.cacheLimit = "10GB"
+            case .unlimited: $0.cacheLimit = ""
+            case .off: $0.cacheLimit = "0"
+            }
+        }
+    }
+
+    private var downloadsNote: String {
+        var lines: [String] = []
+        if model.settings.downloadAhead == 0 {
+            lines.append("Nothing plays gaplessly, and each track waits for its download before it starts.")
+        }
+        switch keeping {
+        case .off: lines.append("Tracks are deleted once played. Downloads you ask for and favourite records stay.")
+        case .limited: lines.append("Past the limit, the tracks played longest ago are deleted first. Favourite records stay.")
+        case .unlimited: break
+        }
+        return lines.joined(separator: " ")
+    }
+
     private func commitCacheLimit() {
         guard let draft = cacheLimit else { return }
         cacheLimit = nil
-        if draft != model.settings.cacheLimit { model.edit { $0.cacheLimit = draft } }
+        let typed = draft.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        guard let gb = Double(typed), gb > 0 else {
+            model.report("A limit is a number of gigabytes, such as 50.")
+            return
+        }
+        let limit = "\(gb.formatted(.number.precision(.fractionLength(0...2)).grouping(.never).locale(Locale(identifier: "en_US_POSIX"))))GB"
+        if limit != model.settings.cacheLimit { model.edit { $0.cacheLimit = limit } }
     }
+}
+
+/// How much of what is downloaded to play the cache keeps.
+private enum CacheKeeping: Hashable {
+    case limited, unlimited, off
 }
 
 // MARK: - Account

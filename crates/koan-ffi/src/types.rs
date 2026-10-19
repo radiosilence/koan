@@ -2109,8 +2109,12 @@ pub struct Settings {
     /// Read only.
     pub remote_last_sync: Option<i64>,
     pub download_workers: u32,
-    /// Human-readable, e.g. "50GB". Empty means unlimited.
+    /// Human-readable, e.g. "50GB". Empty means unlimited; "0" keeps no
+    /// cache beyond the tracks about to play and downloads asked for.
     pub cache_limit: String,
+    /// Tracks past the playing one to fetch ahead. `None` fetches the whole
+    /// queue; 0 gives up gapless playback.
+    pub download_ahead: Option<u32>,
     pub cache_dir: String,
     pub cache_bytes: u64,
     pub auto_sync: bool,

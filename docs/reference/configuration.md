@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password`, `lastfm.api_key`, `lastfm.secret` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `remote.download_ahead`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -267,7 +267,8 @@ username = "admin"
 # config.toml or config.local.toml
 [remote]
 download_workers = 5             # parallel download threads (default: 5)
-cache_limit = "50GB"             # max cache size, LRU eviction at startup and as downloads land (default: unlimited)
+cache_limit = "50GB"             # max cache size, LRU eviction at startup and as downloads land; "0" keeps no cache (default: unlimited)
+download_ahead = 3               # tracks past the playing one to fetch; 0 gives up gapless (default: the whole queue)
 cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)
 auto_sync = true                 # check the server for changes on a timer (default: true)
 auto_sync_interval_mins = 60     # minutes between checks; 0 checks once at startup (default: 60)
