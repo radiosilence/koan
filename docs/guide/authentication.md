@@ -160,6 +160,24 @@ on your network visits could open a pairing from their address and read the key
 sent when they approve it. One address, or one IPv6 /64, can have three
 pairings waiting at a time.
 
+Pairing has the shape of the OAuth device authorization grant (RFC 8628): the
+pairing id is its device code, the `XXXX-XXXX` code its user code, the
+koan.rocks link its `verification_uri_complete`, and `approved`, `declined` and
+`expired` its token response and its `access_denied` and `expired_token`
+errors. The code
+follows the RFC's security advice: it cannot be usefully guessed in ten minutes,
+only a signed-in account can enter one, and the approver sees where the request
+came from. The protocol itself is not RFC 8628, for three reasons. The device
+needs an OpenSubsonic API key, which every koan client signs in with, rather
+than an OAuth token. The OAuth endpoints are served only with
+`sharing.public_url` set, and pairing has to work on a server reachable only on
+the local network. And the RFC only polls, where a socket delivers the outcome
+the moment it is settled and binds the key to the connection that asked for it:
+a key approved for a device that has since gone is revoked rather than left for
+a later poll to collect. Approving does not go through an invite either; an
+invite token signs in any number of devices for a week, where an approval hands
+one device one key of its own.
+
 The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send
 themselves.

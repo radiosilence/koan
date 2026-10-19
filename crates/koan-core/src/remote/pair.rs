@@ -10,6 +10,13 @@
 //!
 //! The link carries the server and the id in the fragment of a koan.rocks
 //! address, as invites do, so the site serving the page never sees them.
+//!
+//! This is RFC 8628's device grant in shape (id for device code, code for user
+//! code, link for `verification_uri_complete`) but not on the wire: the device
+//! needs an OpenSubsonic API key rather than an OAuth token, the OAuth
+//! endpoints exist only on a server with a public address, and the outcome is
+//! pushed rather than polled for. `docs/guide/authentication.md` has the
+//! mapping.
 
 use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
