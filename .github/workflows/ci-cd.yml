@@ -216,15 +216,16 @@ jobs:
         run: git diff --exit-code crates/koan-server/assets
 
   # Clippy, the tests and the release build on one runner, with one target
-  # directory and one cache: as separate jobs each compiled the workspace from
-  # its own cache. Each step runs whatever an earlier one did, so one push
-  # reports every failure.
+  # directory and one cache: build scripts and proc-macros are compiled once
+  # rather than per job, and the repository's cache space holds one entry
+  # rather than three. Each check runs whatever an earlier one did, so one
+  # push reports every failure; none runs after a failed setup step.
   linux:
     name: Linux
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    timeout-minutes: 60
+    timeout-minutes: 90
     concurrency:
       group: linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
@@ -235,17 +236,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: linux
+          # One failing check would otherwise leave all three profiles unsaved.
+          cache-on-failure: true
       - run: cargo clippy --all-targets -- -D warnings
-      - if: ${{ !cancelled() }}
+      - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test --all-targets
-      - if: ${{ !cancelled() }}
+      - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test --doc
       - id: build
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo build --release
       # On main the binary goes on to the release jobs, which package this
       # build rather than compiling the same commit again. Manual runs upload

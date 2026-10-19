@@ -1,1 +1,1 @@
-- **One Linux CI job.** Clippy, the tests and the release build on Linux share one runner and one cache, so a run compiles the workspace once per profile instead of three times.
+- **One Linux CI job.** Clippy, the tests and the release build on Linux share one runner and one cache, so build scripts and proc-macros compile once per run and the cache holds one entry instead of three.
