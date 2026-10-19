@@ -158,12 +158,29 @@ fn read(socket: &mut Socket) -> Result<PairMessage, PairError> {
     loop {
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
-                return serde_json::from_str(&text).map_err(|_| PairError::BadResponse);
+                if let Some(message) = message(&text)? {
+                    return Ok(message);
+                }
             }
             Ok(tungstenite::Message::Close(_)) => return Err(PairError::Closed),
             Ok(_) => {}
             Err(_) => return Err(PairError::Closed),
         }
+    }
+}
+
+/// A message from the server; `None` for one of a type from a newer server,
+/// which is passed over. Anything that is not a message at all is not koan.
+fn message(text: &str) -> Result<Option<PairMessage>, PairError> {
+    if let Ok(message) = serde_json::from_str(text) {
+        return Ok(Some(message));
+    }
+    let typed = serde_json::from_str::<serde_json::Value>(text)
+        .is_ok_and(|v| v.get("type").is_some_and(|t| t.is_string()));
+    if typed {
+        Ok(None)
+    } else {
+        Err(PairError::BadResponse)
     }
 }
 
@@ -258,6 +275,16 @@ pub fn decline(pair: &str) -> Result<String, PairError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_from_a_newer_server_is_passed_over() {
+        assert_eq!(
+            message(r#"{"type":"declined"}"#).unwrap(),
+            Some(PairMessage::Declined)
+        );
+        assert_eq!(message(r#"{"type":"somethingNew","x":1}"#).unwrap(), None);
+        assert!(matches!(message("<html>"), Err(PairError::BadResponse)));
+    }
 
     #[test]
     fn a_link_reads_back() {

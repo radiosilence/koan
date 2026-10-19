@@ -56,6 +56,36 @@ impl Envelope {
     }
 }
 
+/// The id a command this end cannot read was sent under, so it is refused
+/// rather than left unanswered: a sender takes silence as the device gone.
+pub fn unread_id(text: &str) -> Option<u64> {
+    #[derive(Deserialize)]
+    struct Id {
+        ack: Option<u64>,
+    }
+    serde_json::from_str::<Id>(text).ok()?.ack
+}
+
+/// The device and id of a `command` report whose command the server cannot
+/// read, so the sender is refused rather than left waiting.
+pub fn unread_relay(text: &str) -> Option<(String, u64)> {
+    #[derive(Deserialize)]
+    struct Relay {
+        r#type: String,
+        to: String,
+        ack: u64,
+    }
+    let relay = serde_json::from_str::<Relay>(text).ok()?;
+    (relay.r#type == "command").then_some((relay.to, relay.ack))
+}
+
+/// The answer to a command this end cannot read: one from a newer version.
+pub fn unknown_command() -> AckOutcome {
+    AckOutcome::Refused {
+        reason: "unknown command".into(),
+    }
+}
+
 impl From<LinkCommand> for Envelope {
     fn from(command: LinkCommand) -> Self {
         Self { command, ack: None }
@@ -247,6 +277,30 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Envelope>(r#"{"type":"pause"}"#).unwrap(),
             Envelope::from(LinkCommand::Pause)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_command_still_gives_up_its_id() {
+        let newer = r#"{"type":"somethingNew","x":1,"ack":9}"#;
+        assert!(serde_json::from_str::<Envelope>(newer).is_err());
+        assert_eq!(unread_id(newer), Some(9));
+        assert_eq!(unread_id(r#"{"type":"somethingNew"}"#), None);
+        assert_eq!(unread_id("not json"), None);
+    }
+
+    #[test]
+    fn an_unreadable_relay_names_its_target_and_id() {
+        let newer = r#"{"type":"command","to":"d1","command":{"type":"somethingNew"},"ack":4}"#;
+        assert!(serde_json::from_str::<crate::remote::link::LinkReport>(newer).is_err());
+        assert_eq!(unread_relay(newer), Some(("d1".into(), 4)));
+        assert_eq!(
+            unread_relay(r#"{"type":"command","to":"d1","command":{"type":"x"}}"#),
+            None
+        );
+        assert_eq!(
+            unread_relay(r#"{"type":"somethingNew","to":"d1","ack":4}"#),
+            None
         );
     }
 

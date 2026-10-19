@@ -6123,7 +6123,17 @@ async fn link_session(
                                     }
                                 });
                             }
-                            Ok(LinkReport::Hello(_)) | Err(_) => {}
+                            Ok(LinkReport::Hello(_)) => {}
+                            Err(e) => {
+                                log::debug!("link: not a report ({e}): {text}");
+                                // A command this server cannot read, from a newer
+                                // device: refused, so its sender is not left waiting.
+                                if let Some((to, ack)) = koan_core::remote::acks::unread_relay(&text) {
+                                    answer_once(&username, &device, &to, ack)(
+                                        koan_core::remote::acks::unknown_command(),
+                                    );
+                                }
+                            }
                         }
                     }
                 }

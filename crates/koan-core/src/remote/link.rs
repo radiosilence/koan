@@ -1098,6 +1098,13 @@ impl wire::Session for LinkSession<'_> {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("link: not a command ({e}): {text}");
+                if let Some(ack) = crate::remote::acks::unread_id(text) {
+                    report(LinkReport::Received { ack });
+                    report(LinkReport::Ack {
+                        ack,
+                        outcome: crate::remote::acks::unknown_command(),
+                    });
+                }
                 return;
             }
         };

@@ -1039,7 +1039,13 @@ impl Serving<'_> {
                 }
                 let envelope = match serde_json::from_str::<Envelope>(&command) {
                     Ok(envelope) => envelope,
-                    Err(e) => return log::warn!("nearby: not a command ({e}): {command}"),
+                    Err(e) => {
+                        log::warn!("nearby: not a command ({e}): {command}");
+                        if let Some(ack) = crate::remote::acks::unread_id(&command) {
+                            self.answer()(ack, crate::remote::acks::unknown_command());
+                        }
+                        return;
+                    }
                 };
                 let peer = by.peer.clone();
                 self.run(envelope, &peer);
@@ -1146,6 +1152,12 @@ impl wire::Session for Serving<'_> {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("nearby: not a command ({e}): {text}");
+                // A proven peer's commands come signed; this is not one.
+                if self.proven.is_none()
+                    && let Some(ack) = crate::remote::acks::unread_id(text)
+                {
+                    self.answer()(ack, crate::remote::acks::unknown_command());
+                }
                 return;
             }
         };
