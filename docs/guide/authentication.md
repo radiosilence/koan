@@ -169,22 +169,21 @@ Pairing has the shape of the OAuth device authorization grant (RFC 8628): the
 `verification_uri_complete` (carrying the long pairing id in place of the code,
 which makes the link a second, unguessable user code), the open socket stands in
 for the device code, and `approved`, `declined` and `expired` are its token
-response and its `access_denied` and `expired_token` errors. Only an authenticated
-caller can look a code up or decline it, and only an account's own password or
-key can approve it; a code has 40 bits and lives ten minutes, and the approver
-sees where the request came from. RFC 8628 §5.1 also recommends rate limiting
-failed code lookups, which koan does not yet do.
+response and its `access_denied` and `expired_token` errors. A pairing belongs
+to no account until it is approved: any authenticated caller, an app password
+included, can look a code up or decline it, while approving takes an account's
+own password or key. A code has 40 bits; failed lookups are not rate limited,
+which RFC 8628 §5.1 recommends.
 
 The protocol itself is not RFC 8628, for three reasons. The device needs an
 OpenSubsonic API key, which every koan client signs in with, rather than an
 OAuth token. The OAuth endpoints are served only with `sharing.public_url` set,
 and pairing has to work on a server without it, such as one reachable only on
 the local network. And the RFC only polls, where a socket delivers the outcome
-the moment it is settled and binds the key to the connection that asked for it:
-a key approved for a device whose socket has already closed is revoked rather
-than left for a later poll to collect. Approving does not go through an invite either; an
-invite token signs in any number of devices for a week, where an approval hands
-one device one key of its own.
+the moment it is settled.
+
+Approving does not go through an invite: an invite token signs in any number of
+devices for a week, where an approval hands one device one key of its own.
 
 The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send

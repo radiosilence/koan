@@ -11,12 +11,8 @@
 //! The link carries the server and the id in the fragment of a koan.rocks
 //! address, as invites do, so the site serving the page never sees them.
 //!
-//! This is RFC 8628's device grant in shape (code for user code, link for
-//! `verification_uri_complete`, the socket for the device code) but not on the
-//! wire: the device needs an OpenSubsonic API key rather than an OAuth token,
-//! the OAuth endpoints are served only with `sharing.public_url` set, and the
-//! outcome is pushed rather than polled for. `docs/guide/authentication.md` has
-//! the mapping.
+//! How this relates to RFC 8628's device grant, and why it is not that
+//! protocol, is in `docs/guide/authentication.md`.
 
 use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
