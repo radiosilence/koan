@@ -142,10 +142,17 @@ struct QueueRow: View {
                     // Always occupies its column, number or not: a missing track
                     // number would otherwise shift the title left and break the
                     // alignment down the list.
-                    Text(item.place)
-                        .font(.role(.fine, system: .caption.monospacedDigit()))
-                        .foregroundStyle(played ? .quaternary : .tertiary)
-                        .frame(width: artwork || item.disc != nil ? 34 : 20, alignment: .trailing)
+                    // The hidden template holds the column at "2.03" or "00"
+                    // in whichever face and size the text is drawn in.
+                    ZStack(alignment: .trailing) {
+                        Text(artwork || item.disc != nil ? "0.00" : "00").hidden()
+                        Text(item.place)
+                            .foregroundStyle(played ? .quaternary : .tertiary)
+                    }
+                    .font(.role(.fine, system: .caption.monospacedDigit()))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(minWidth: artwork || item.disc != nil ? 34 : 20, alignment: .trailing)
                 }
             }
 

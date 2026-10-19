@@ -1,1 +1,1 @@
-- **Disc and track numbers fit on the Mac.** The number column in the queue and playlists is measured from its font, so "2.03" is no longer cut off in the kōan theme or at larger text sizes.
+- **Disc and track numbers fit.** The number column in the queue, playlists and album pages is measured from its font, so "2.03" is no longer cut off in the kōan theme or at larger text sizes, and a longer place such as "10.03" widens its own row.
