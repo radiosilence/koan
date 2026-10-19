@@ -12,7 +12,7 @@
 //! address, as invites do, so the site serving the page never sees them.
 //!
 //! How this relates to RFC 8628's device grant, and why it is not that
-//! protocol, is in `docs/guide/authentication.md`.
+//! protocol, is in `docs/reference/protocol/pairing-and-invites.md`.
 
 use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
