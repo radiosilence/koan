@@ -29,7 +29,7 @@ A field marked `?` may be absent, and senders leave most of them out when they h
 
 | `type` | Fields | Effect |
 |--------|--------|--------|
-| `play` | `trackIds`, `startAt?`, `positionMs?`, `paused?`, `handoff?`, `mode?` | Replace the queue with these tracks and play from `startAt`, `positionMs` into it, or load paused. `mode` `inOrder` or `shuffled` resets the play mode, as a play button does; absent, it is kept. `handoff` marks music handed over from another device: a receiver controlling another device takes control back |
+| `play` | `trackIds`, `startAt?`, `positionMs?`, `paused?`, `handoff?`, `mode?` | Replace the queue with these tracks and play from `startAt`, `positionMs` into it, or load paused. `mode` `inOrder` or `shuffled` resets the play mode, as a play button does; `keep`, or absent, keeps it. `handoff` marks music handed over from another device: a receiver controlling another device takes control back |
 | `enqueue` | `trackIds`, `play?` | Append; with `play`, start the first of them |
 | `playNext` | `trackIds` | Insert after the current track |
 | `insert` | `trackIds`, `after` | Insert after the queue entry `after` |
@@ -81,6 +81,8 @@ A field marked `?` may be absent, and senders leave most of them out when they h
 | `forget` | `device` | Remove a device from the account |
 | `levels` | `f` | A frame of this device's audio levels, while watched |
 
+`LinkReport` has one more variant, `hello`, which only a [nearby](nearby-protocol.md#handshake) listener sends.
+
 `state` requires `playing`, and may carry `title`, `artist`, `album`, `positionMs` (as of sending), `durationMs`, `queue`, `outputs`, `shuffle`, `repeat`, `sleep` and `sleepFading`. `queue` is the queue, or the part around the current track when it is long; each entry requires `title`, `artist` and `current`, and may carry `id` (its queue entry id on that device), `trackId` (absent for a file only that device has), `album` and `durationMs`. A device sends `state` when something changes beyond the playhead moving at one second per second: a seek, a pause, another track, an edited queue.
 
 ## Devices
@@ -93,7 +95,7 @@ A device commands another with a `command` report. The `ack`, when there is one,
 {"type":"command","to":"0192…","command":{"type":"pause"},"ack":7}
 ```
 
-The server relays it when `to` is one of the caller's devices or one shared with the caller. Only commands one device gives another are relayed (`LinkCommand::relayable`): the server's own news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `acked`) is refused, so a forged copy cannot pass as the server's. `levels` go only between live links, by their own route: a controller sends `{"type":"command","to":…,"command":{"type":"watchLevels","on":true}}`, and the server forwards the watched device's `levels` reports to it as `levels` news.
+`to` is matched against each device's id, then its link's id, then its name without regard to case; a client should send the id, since names need not be unique. The server relays the command when `to` is one of the caller's devices or one shared with the caller. Only commands one device gives another are relayed (`LinkCommand::relayable`): the server's own news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `acked`) is refused, so a forged copy cannot pass as the server's. `levels` go only between live links, by their own route: a controller sends `{"type":"command","to":…,"command":{"type":"watchLevels","on":true}}`, and the server forwards the watched device's `levels` reports to it as `levels` news.
 
 A command for a device that is not linked is kept and delivered when it links. An iOS device that gave a push token is woken, if the server has a `[push]` key. `watchLevels` and `refreshOutputs` are only worth saying to a device that is there, so they are never kept or pushed.
 
@@ -107,7 +109,7 @@ A command for a device that is not linked is kept and delivered when it links. A
 {"type":"pause","ack":7}
 ```
 
-The server attaches an id only for a device that linked with `acks=1`. That device reports `received` as soon as the command comes off its link, then `ack` once it has acted, with `outcome` one of `{"result":"done"}`, `{"result":"refused","reason":…}` or `{"result":"failed","error":…}`. The server relays the answer to the sender as `acked`, and itself answers `{"result":"queued"}` for a device that is away. A link that has not shown a command as `received` within a moment is taken as gone: the server drops it, wakes the device, keeps the command for it and answers `queued`.
+The server attaches an id only for a device that linked with `acks=1`. That device reports `received` as soon as the command comes off its link, then `ack` once it has acted, with `outcome` one of `{"result":"done"}`, `{"result":"refused","reason":…}` or `{"result":"failed","error":…}`. The server relays the answer to the sender as `acked`. It also answers on the device's behalf, with `from` naming the device: `queued` for a device that is away, `refused` when it will not relay the command (not the caller's device, or not relayable), and `failed` when the device's link went as the command was sent. A link that has not shown a command as `received` within a moment is taken as gone: the server drops it, wakes the device, keeps the command for it and answers `queued`.
 
 Ids are drawn at random. A sender that hears nothing tries the next route with the same id, so a command can arrive twice; a device remembers the ids it has taken for a minute, and answers a repeat with the first outcome without acting on it again.
 
@@ -116,3 +118,5 @@ Ids are drawn at random. A sender that hears nothing tries the next route with t
 ## Shares
 
 `koanShares`. A device reports `share` about itself only. Its link is sent `shares` when it links and whenever the list changes. A shared device appears in each grantee's `devices` with its `owner`, and a grantee's command reaches it wrapped as `shared`. It runs as the grantee's request, from the playback set: transport, the queue, the sleep timer, the volume, the output and preset, and moving the music (`LinkCommand::allowed_playback`; the list is on [Nearby](nearby-protocol.md#what-a-peer-may-do)). Nothing a shared command does changes the owner's library, favourites, playlists or history, and a track it names that the library lacks is not synced for.
+
+The other way, a shared device may send its grantee's devices one command: `play` with `handoff`, which is how Move here hands the music to a grantee. The server delivers it wrapped as `shared` and refuses anything else.

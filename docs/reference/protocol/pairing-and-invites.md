@@ -13,7 +13,7 @@ https://koan.rocks/join/#server=<server>&username=<username>&invite=<token>
 koan://join?server=<server>&username=<username>&invite=<token>
 ```
 
-The parameters are form-encoded. On koan.rocks they ride in the fragment, which browsers do not send, so the site never sees them; the page opens the app through its universal link, or offers the downloads and the `koan://` link. `/join` without the trailing slash parses too. `server` must be an `http(s)` address. A link missing a parameter, or carrying a `password`, is not an invite.
+The parameters are form-encoded. On koan.rocks they ride in the fragment, which browsers do not send, so the site never sees them; the page opens the app through its universal link, or offers the downloads and the `koan://` link. `/join` without the trailing slash parses too. `server` must be an `http(s)` address. A link missing `server`, `username` or `invite` is not an invite; parameters it does not know, such as the `password` older links carried, are ignored.
 
 A server address with the account in it, `https://user:password@host`, is read as a sign-in with that password rather than an invite.
 
