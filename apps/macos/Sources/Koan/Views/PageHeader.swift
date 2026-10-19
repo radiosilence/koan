@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The head of a page: a cover if the page has one, then the title on a line
-/// of its own, a line of detail under it — a count, a credit — then any play
-/// controls, and the page's lesser actions below those, as a phone stacks
-/// them. Whatever acts on the page as a whole trails.
+/// The head of a page: a cover if the page has one, then any play controls
+/// level with its top, the title on a line of its own, a line of detail under
+/// it — a count, a credit — and the page's lesser actions below that.
+/// Whatever acts on the page as a whole trails.
 ///
 /// One layout for records, artists, playlists and the library's own pages, so
 /// the title, its count and its actions are in the same places wherever you
@@ -49,6 +49,10 @@ struct PageHeader<Art: View, Lead: View, Detail: View, Actions: View, Trailing: 
         HStack(alignment: .top, spacing: 18) {
             art
             VStack(alignment: .leading, spacing: 6) {
+                if Lead.self != EmptyView.self {
+                    HStack(spacing: 12) { lead }
+                        .padding(.bottom, 8)
+                }
                 Text(title)
                     .textCase(appWords && KoanTheme.isOn ? .lowercase : nil)
                     .font(.role(role, system: .system(size: systemSize, weight: .semibold)))
@@ -59,10 +63,6 @@ struct PageHeader<Art: View, Lead: View, Detail: View, Actions: View, Trailing: 
                     detail
                         .font(.role(.control, system: .callout))
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                }
-                if Lead.self != EmptyView.self {
-                    HStack(spacing: 12) { lead }
-                        .padding(.top, 8)
                 }
                 if Actions.self != EmptyView.self {
                     actions.padding(.top, 4)

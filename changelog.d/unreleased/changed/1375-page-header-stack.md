@@ -1,1 +1,1 @@
-- **Record, artist and playlist headers on the Mac stack as the phone's do.** The title has its line to itself, the credit below it, then Play and Shuffle, then the lesser actions.
+- **Record, artist and playlist headers on the Mac put Play and Shuffle on top.** They sit level with the sleeve, with the title on a line of its own below them, then the credit, then the lesser actions.
