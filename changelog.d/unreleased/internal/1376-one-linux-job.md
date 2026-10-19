@@ -1,1 +1,1 @@
-- **One Linux CI job.** Clippy, the tests and the release build on Linux share one runner and one cache, so build scripts and proc-macros compile once per run and the cache holds one entry instead of three.
+- **One Linux CI job for clippy and the tests.** They share build scripts and proc-macros, so one runner and one cache compiles those once per run, and the cache holds one entry instead of two.
