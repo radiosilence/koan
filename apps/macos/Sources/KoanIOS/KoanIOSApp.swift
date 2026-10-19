@@ -45,10 +45,8 @@ struct KoanIOSApp: App {
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
-                        .task(id: state.mirror.offers(PushDelegate.extensionName)) {
-                            if state.mirror.offers(PushDelegate.extensionName) {
-                                await PushDelegate.requestAlerts()
-                            }
+                        .task(id: state.mirror.offers(PushDelegate.extensionName)) { [offers = state.mirror.offers(PushDelegate.extensionName)] in
+                            if offers { await PushDelegate.requestAlerts() }
                         }
                         // No app-wide accent on a television: it draws focus
                         // as a white platter, and system alerts and toggle

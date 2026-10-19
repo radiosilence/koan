@@ -56,8 +56,9 @@ pub const APP_PASSWORDS: &str = "koanAppPasswords";
 pub const MCP: &str = "koanMcp";
 /// The server can push to the iOS app through Apple: wake it once suspended,
 /// ask it to play, update its Live Activities. Listed only where `[push]`
-/// holds a key, which only the app's developer can make, so a client sends
-/// its push tokens and asks to show notifications only where it is listed.
+/// holds a key, which only the app's developer can make. The app asks to show
+/// notifications where it is listed; its tokens go to every server, which
+/// lists a suspended phone by them.
 pub const APNS: &str = "koanApns";
 
 /// The server relays devices' answers to commands sent with an id, and

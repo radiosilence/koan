@@ -44,8 +44,8 @@ not that.
   app is playing, and shows the same kind of notification instead. Waking and
   notifications need a server that can push to the app
   ([`[push]`](../reference/configuration.md#push)); with any other, a
-  suspended phone takes what was sent when it is next opened, and the app does
-  not ask to show notifications.
+  suspended phone is listed but takes what was sent only when it is next
+  opened, and the app does not ask to show notifications.
 - **Anyone's device on this network.** Apps find each other over Bonjour and
   connect directly, with no server involved and whoever is signed in. A device
   playing from a different server can be controlled but not sent music, since
