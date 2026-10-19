@@ -269,7 +269,8 @@ fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, selection: Selectio
 /**
  * One track. Its number, or bars while it is the one playing; the title, and
  * the artist where it is not the record's. Gathered from all over
- * (`mixed`), a row carries its own sleeve and names its record.
+ * (`mixed`), a row carries its own sleeve and names its record. Names are
+ * links to their pages, but for the page the row is on.
  */
 @Composable
 fun TrackRow(
@@ -282,6 +283,8 @@ fun TrackRow(
     selection: Selection<Playable>? = null,
     mixed: Boolean = false,
     marked: Boolean = false,
+    /** The artist whose page this row is on, whose name it leaves as text. */
+    onArtistPage: Long? = null,
 ) {
     LibraryRow(
         Playable.OfTrack(track),
@@ -313,7 +316,8 @@ fun TrackRow(
         TitleAndDetail(
             track.title,
             listOfNotNull(
-                artistName(track.artistName, track.artistId).takeIf { mixed || track.artistName != track.albumArtistName },
+                artistName(track.artistName, track.artistId?.takeIf { it != onArtistPage })
+                    .takeIf { mixed || track.artistName != track.albumArtistName },
                 albumName(track.albumTitle, track.albumId, track.id).takeIf { mixed },
             ),
             linked = selection?.active != true,

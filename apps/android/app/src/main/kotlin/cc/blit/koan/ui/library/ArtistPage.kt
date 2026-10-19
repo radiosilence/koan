@@ -95,6 +95,7 @@ fun ArtistPage(artistId: Long) {
                             onPlay = { app.playFrom(ids, index, nav) },
                             selection = selection,
                             mixed = true,
+                            onArtistPage = artistId,
                         )
                     }
                 }
