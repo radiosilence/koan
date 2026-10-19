@@ -74,7 +74,7 @@ private fun PlaylistsPage() {
 
     Column {
         PageBar("Playlists") {
-            if (playlists.orEmpty().size > 1) {
+            if (editing || playlists.orEmpty().size > 1) {
                 KoanButton(if (editing) "Done" else "Edit", { editing = !editing }, kind = KoanButtonKind.Text)
             }
             KoanButton("New Playlist", { naming = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.add)
@@ -139,7 +139,7 @@ private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: 
     }
 
     LazyColumn(state = listState) {
-        items(if (editing) order else playlists, key = { it.id }) { playlist ->
+        items(order, key = { it.id }) { playlist ->
             PlaylistListRow(
                 playlist,
                 edits,
@@ -148,7 +148,7 @@ private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: 
                     detectDragGestures(
                         onDragStart = { dragging = playlist.id; offset = 0f },
                         onDragEnd = { drop() },
-                        onDragCancel = { drop() },
+                        onDragCancel = { order = playlists; dragging = null; offset = 0f },
                         onDrag = { change, amount -> change.consume(); dragBy(amount.y) },
                     )
                 },

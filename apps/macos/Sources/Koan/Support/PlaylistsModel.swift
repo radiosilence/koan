@@ -246,7 +246,9 @@ final class PlaylistsModel {
         else { return }
         var order = ids.filter { !doomed.contains($0) }
         guard let at = order.firstIndex(of: target) else { return }
-        order.insert(contentsOf: moving, at: firstMoving < targetAt ? at + 1 : at)
+        // In the order they sat, whatever order the drop handed them over in.
+        let moved = ids.filter(doomed.contains)
+        order.insert(contentsOf: moved, at: firstMoving < targetAt ? at + 1 : at)
         arrange(order)
     }
 
