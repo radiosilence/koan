@@ -113,7 +113,7 @@ struct PlaylistView: View {
                     ForEach(rows) { row in
                         rowView(row)
                     }
-                    .onMove(perform: playlists.fillable(playlistId) ? move : nil)
+                    .onMove(perform: mover)
                 }
                 .insetList()
                 .washedGround()
@@ -431,6 +431,11 @@ struct PlaylistView: View {
     }
 
     private var grouped: Bool { playlist?.grouped ?? false }
+
+    /// Smart and read-only playlists keep their order.
+    private var mover: ((IndexSet, Int) -> Void)? {
+        playlists.fillable(playlistId) ? { move(from: $0, to: $1) } : nil
+    }
 
     // MARK: - Actions
 
