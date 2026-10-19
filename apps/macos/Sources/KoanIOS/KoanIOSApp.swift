@@ -45,6 +45,16 @@ struct KoanIOSApp: App {
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
+                        #if !os(tvOS)
+                        // In front only: a profile read after a background
+                        // wake would ask where iOS cannot show the question.
+                        .onChange(
+                            of: scenePhase == .active && state.mirror.offers(PushDelegate.extensionName),
+                            initial: true
+                        ) { _, ask in
+                            if ask { Task { await PushDelegate.requestAlerts() } }
+                        }
+                        #endif
                         // No app-wide accent on a television: it draws focus
                         // as a white platter, and system alerts and toggle
                         // rows that take the tint put green text on it.
@@ -100,7 +110,6 @@ struct KoanIOSApp: App {
                     #if !os(tvOS)
                     remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror, art: built.art)
                     #endif
-                    PushDelegate.requestAlertsIfSignedIn()
                     // Configured before anything can be asked to play, and
                     // activated by the engine only when something does: koan
                     // opening must not stop another app's music.
