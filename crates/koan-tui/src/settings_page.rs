@@ -105,6 +105,11 @@ pub enum Outcome {
     OpenOutputs,
     OpenUrl(String),
     Copy(String),
+    /// The server was signed out of: the player lets go of its queue and
+    /// downloads, and its tracks are forgotten too when asked.
+    SignedOut {
+        forget: bool,
+    },
 }
 
 /// A text the page asks for, kept as typed until it is used.

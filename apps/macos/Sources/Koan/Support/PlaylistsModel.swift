@@ -232,16 +232,37 @@ final class PlaylistsModel {
 
     /// Put `moving` where `target` currently sits.
     ///
-    /// Applied locally first, so the row lands under the pointer rather than a
-    /// round trip later. Dropping a playlist onto itself is a no-op rather than
-    /// an error — it is the commonest way to abandon a drag.
+    /// Dragged down, the playlists land below the row they were dropped on;
+    /// dragged up, above it. Either way they take that row's place, and the
+    /// row makes way in the direction they came from. Dropping a playlist onto
+    /// itself is a no-op rather than an error — it is the commonest way to
+    /// abandon a drag.
     func reorder(moving: [Int64], onto target: Int64) {
         let doomed = Set(moving)
         guard !doomed.contains(target) else { return }
-        var order = playlists.map(\.id).filter { !doomed.contains($0) }
+        let ids = playlists.map(\.id)
+        guard let targetAt = ids.firstIndex(of: target),
+              let firstMoving = ids.firstIndex(where: doomed.contains)
+        else { return }
+        var order = ids.filter { !doomed.contains($0) }
         guard let at = order.firstIndex(of: target) else { return }
-        order.insert(contentsOf: moving, at: at)
+        // In the order they sat, whatever order the drop handed them over in.
+        let moved = ids.filter(doomed.contains)
+        order.insert(contentsOf: moved, at: firstMoving < targetAt ? at + 1 : at)
+        arrange(order)
+    }
 
+    /// `List.onMove`'s reorder, for the lists that use it.
+    func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        var order = playlists.map(\.id)
+        order.move(fromOffsets: source, toOffset: destination)
+        arrange(order)
+    }
+
+    /// Applied locally first, so the row lands under the pointer rather than a
+    /// round trip later.
+    private func arrange(_ order: [Int64]) {
+        guard order != playlists.map(\.id) else { return }
         let byId = Dictionary(playlists.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         playlists = order.compactMap { byId[$0] }
         let engine = self.engine

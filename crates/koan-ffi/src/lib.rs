@@ -782,6 +782,12 @@ impl KoanEngine {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("push: not a command ({e}): {command}");
+                koan_core::remote::acks::refuse_unread(&command, |ack, outcome| {
+                    koan_core::remote::link::report(koan_core::remote::link::LinkReport::Ack {
+                        ack,
+                        outcome,
+                    });
+                });
                 return Ok(());
             }
         };
@@ -4598,13 +4604,18 @@ impl KoanEngine {
         .await
     }
 
-    /// Forget the server. Leaves the synced library alone — those tracks are
-    /// still real, they just cannot be fetched until you sign in again.
+    /// Forget the server, and the queue and transfers that came from it.
+    /// Leaves the synced library alone — those tracks are still real, they
+    /// just cannot be fetched until you sign in again.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::offload(move || {
+        offload::sequenced(move || {
             koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
-            })
+            })?;
+            // This device's own queue, never a controlled device's. A player
+            // that has stopped has nothing left to clear.
+            let _ = self.send_local(PlayerCommand::SignedOut);
+            Ok(())
         })
         .await
     }

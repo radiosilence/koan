@@ -248,6 +248,16 @@ impl DownloadQueue {
         self.inner.queue.lock().cache.extend(track_ids);
         wake_workers(&self.inner);
     }
+
+    /// Fetch nothing more: what is queued is dropped and what is running is
+    /// left for its worker to withdraw. For signing out, after which none of
+    /// it can be fetched.
+    pub fn forget(&self) {
+        let mut q = self.inner.queue.lock();
+        q.pending.clear();
+        q.cache.clear();
+        self.inner.state.downloads().forget_all();
+    }
 }
 
 /// There is work: start what workers the setting allows, try the server now,

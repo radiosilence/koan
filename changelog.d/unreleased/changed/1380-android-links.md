@@ -1,0 +1,1 @@
+- **Android names its artists and albums as links.** Track rows, record headings, history, downloads and search open the artist or record a row names, as the Apple apps and the web UI do, and every detail line reads "Artist · Album".

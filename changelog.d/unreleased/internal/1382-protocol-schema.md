@@ -1,0 +1,1 @@
+- **Protocol schema.** JSON Schema for the link, pairing and nearby messages is generated from the Rust types into `docs/reference/protocol/schema/` by `just protocol-schema`, and the test suite fails when the committed files fall behind the types.

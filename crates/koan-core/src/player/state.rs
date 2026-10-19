@@ -58,6 +58,7 @@ pub struct Lookahead {
 }
 
 /// What follows a track once it ends, beyond the queue's own order.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -139,6 +140,7 @@ impl PlayMode {
 /// its play button — a record, an artist, a playlist, a selection — starts
 /// as asked, in order or shuffled, with repeat off, whatever the modes were.
 /// A queue restored, synced or handed over keeps them.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -172,6 +174,7 @@ impl QueueMode {
 /// A sleep timer as asked for: stop after a while, or at the end of the
 /// track or record playing. It pauses, fading out, and leaves the queue as it
 /// was, so playing again carries on from there.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SleepTimer {
@@ -182,6 +185,7 @@ pub enum SleepTimer {
 
 /// A sleep timer that is set, as clients show it. A time rather than what
 /// is left of one, so it says the same thing for as long as it stands.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Sleep {

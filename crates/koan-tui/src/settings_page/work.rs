@@ -283,8 +283,7 @@ impl SettingsPage {
                 self.reload();
                 match out {
                     Err(e) => Some(Outcome::Say(format!("could not sign out: {e}"))),
-                    Ok(()) if forget => Some(Outcome::Run(Task::ForgetRemote)),
-                    Ok(()) => say("signed out"),
+                    Ok(()) => Some(Outcome::SignedOut { forget }),
                 }
             }
 

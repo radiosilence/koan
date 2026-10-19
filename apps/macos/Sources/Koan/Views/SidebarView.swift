@@ -120,8 +120,12 @@ struct SidebarView: View {
                     // work, and a target you have to hit precisely is no target.
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
+                    // Rows from the queue itself are refused: a reorder that
+                    // overshoots onto this row would add them all again.
                     .dropTarget(for: PlayableTransfer.self) { dropped, _ in
-                        player.acceptDrop(dropped)
+                        let adding = dropped.filter { $0.fromQueue != true }
+                        guard !adding.isEmpty else { return false }
+                        player.acceptDrop(adding)
                         return true
                     } isTargeted: { targeted in
                         queueDropTargeted = targeted

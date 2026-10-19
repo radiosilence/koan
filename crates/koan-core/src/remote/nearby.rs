@@ -39,9 +39,10 @@ pub const SERVICE: &str = "_koan._tcp";
 /// Tagged apart from every `LinkCommand` and `LinkReport`, and sent only to a
 /// peer whose part in the handshake shows it knows them: the listener's
 /// `Hello` nonce, the dialler's `NearbyAuth`.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-enum ProofFrame {
+pub(crate) enum ProofFrame {
     /// The dialler: who it is, its nonce, and its signature over both nonces.
     #[serde(rename = "nearbyAuth")]
     Auth {
@@ -1037,9 +1038,13 @@ impl Serving<'_> {
                     log::warn!("nearby: a command not signed for this connection; refused");
                     return;
                 }
-                let envelope = match serde_json::from_str::<Envelope>(&command) {
+                let envelope = match Envelope::parse(&command) {
                     Ok(envelope) => envelope,
-                    Err(e) => return log::warn!("nearby: not a command ({e}): {command}"),
+                    Err(e) => {
+                        log::warn!("nearby: not a command ({e}): {command}");
+                        crate::remote::acks::refuse_unread(&command, self.answer());
+                        return;
+                    }
                 };
                 let peer = by.peer.clone();
                 self.run(envelope, &peer);
@@ -1142,10 +1147,14 @@ impl wire::Session for Serving<'_> {
         if let Ok(f) = serde_json::from_str::<ProofFrame>(text) {
             return self.proof(f);
         }
-        let envelope = match serde_json::from_str::<Envelope>(text) {
+        let envelope = match Envelope::parse(text) {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("nearby: not a command ({e}): {text}");
+                // A proven peer's commands come signed; this is not one.
+                if self.proven.is_none() {
+                    crate::remote::acks::refuse_unread(text, self.answer());
+                }
                 return;
             }
         };

@@ -1,0 +1,1878 @@
+{
+  "$defs": {
+    "AckOutcome": {
+      "oneOf": [
+        {
+          "properties": {
+            "result": {
+              "const": "done",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "result": {
+              "const": "queued",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "result": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "result": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Frame": {
+      "maxItems": 4,
+      "minItems": 4,
+      "prefixItems": [
+        {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      ],
+      "type": "array"
+    },
+    "LinkCommand": {
+      "oneOf": [
+        {
+          "properties": {
+            "handoff": {
+              "type": "boolean"
+            },
+            "mode": {
+              "$ref": "#/$defs/QueueMode"
+            },
+            "paused": {
+              "type": "boolean"
+            },
+            "positionMs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "startAt": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "trackIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "play",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "trackIds"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "play": {
+              "type": "boolean"
+            },
+            "trackIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "enqueue",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "trackIds"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "trackIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "playNext",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "trackIds"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "trackIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "remove",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "trackIds"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "clear",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "full": {
+              "default": false,
+              "type": "boolean"
+            },
+            "type": {
+              "const": "sync",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "trackIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "evict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "trackIds"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "trackId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "jumpTo",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "trackId"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "positionMs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "seek",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "positionMs"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "pause",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "next",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "previous",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "playItem",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "removeItems",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "ids"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "after": {
+              "type": "boolean"
+            },
+            "ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "target": {
+              "type": "string"
+            },
+            "type": {
+              "const": "moveItems",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "ids",
+            "target",
+            "after"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "after": {
+              "type": "string"
+            },
+            "trackIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "insert",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "trackIds",
+            "after"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "undo",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "redo",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "on": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "shuffle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "on"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "mode": {
+              "$ref": "#/$defs/Repeat"
+            },
+            "type": {
+              "const": "repeat",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "timer": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SleepTimer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "sleepTimer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "to": {
+              "type": "string"
+            },
+            "type": {
+              "const": "handOff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "devices": {
+              "items": {
+                "$ref": "#/$defs/LinkDevice"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "devices",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "devices"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "keys": {
+              "items": {
+                "$ref": "#/$defs/LinkDeviceKey"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "deviceKeys",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "accounts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "grantees": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "shares",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantees"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/LinkCommand"
+            },
+            "type": {
+              "const": "shared",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "device": {
+              "type": "string"
+            },
+            "type": {
+              "const": "forgotten",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "device"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "historyChanged",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "dspProfilesChanged",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "output": {
+              "$ref": "#/$defs/OutputChoice"
+            },
+            "type": {
+              "const": "setOutput",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "refreshOutputs",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "setRendererVolume",
+              "type": "string"
+            },
+            "volume": {
+              "format": "uint8",
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "volume"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "device": {
+              "type": "string"
+            },
+            "profile": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "setPreset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "device"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "on": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "watchLevels",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "on"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "f": {
+              "$ref": "#/$defs/Frame"
+            },
+            "from": {
+              "type": "string"
+            },
+            "type": {
+              "const": "levels",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "from",
+            "f"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "ack": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "from": {
+              "type": "string"
+            },
+            "outcome": {
+              "$ref": "#/$defs/AckOutcome"
+            },
+            "type": {
+              "const": "acked",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "from",
+            "ack",
+            "outcome"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LinkDevice": {
+      "properties": {
+        "acks": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "lastSeen": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "linked": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wakeable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "platform",
+        "linked"
+      ],
+      "type": "object"
+    },
+    "LinkDeviceKey": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "key"
+      ],
+      "type": "object"
+    },
+    "LinkOutput": {
+      "properties": {
+        "busy": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "preset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unsaved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "LinkOutputs": {
+      "properties": {
+        "current": {
+          "$ref": "#/$defs/OutputChoice",
+          "default": {
+            "kind": "default"
+          }
+        },
+        "devices": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LinkOutput"
+          },
+          "type": "array"
+        },
+        "dspEnabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "profiles": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "renderers": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LinkOutput"
+          },
+          "type": "array"
+        },
+        "volume": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "LinkQueueEntry": {
+      "properties": {
+        "album": {
+          "default": "",
+          "type": "string"
+        },
+        "artist": {
+          "type": "string"
+        },
+        "current": {
+          "type": "boolean"
+        },
+        "durationMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "trackId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "artist",
+        "current"
+      ],
+      "type": "object"
+    },
+    "LinkState": {
+      "properties": {
+        "album": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "artist": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "durationMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outputs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkOutputs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "playing": {
+          "type": "boolean"
+        },
+        "positionMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queue": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LinkQueueEntry"
+          },
+          "type": "array"
+        },
+        "repeat": {
+          "$ref": "#/$defs/Repeat"
+        },
+        "shuffle": {
+          "type": "boolean"
+        },
+        "sleep": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sleep"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sleepFading": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "playing"
+      ],
+      "type": "object"
+    },
+    "OutputChoice": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "default",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "device",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "renderer",
+              "type": "string"
+            },
+            "udn": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "udn"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "QueueMode": {
+      "enum": [
+        "keep",
+        "inOrder",
+        "shuffled"
+      ],
+      "type": "string"
+    },
+    "Repeat": {
+      "oneOf": [
+        {
+          "const": "off",
+          "type": "string"
+        },
+        {
+          "const": "queue",
+          "type": "string"
+        },
+        {
+          "const": "one",
+          "type": "string"
+        }
+      ]
+    },
+    "Sleep": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "at",
+              "type": "string"
+            },
+            "unix_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "unix_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "endOfTrack",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "endOfRecord",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SleepTimer": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "after",
+              "type": "string"
+            },
+            "minutes": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "minutes"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "endOfTrack",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "endOfRecord",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "properties": {
+        "handoff": {
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/QueueMode"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "positionMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "startAt": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "play",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "play": {
+          "type": "boolean"
+        },
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "enqueue",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "playNext",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "remove",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "clear",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "full": {
+          "default": false,
+          "type": "boolean"
+        },
+        "type": {
+          "const": "sync",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "evict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackId": {
+          "type": "string"
+        },
+        "type": {
+          "const": "jumpTo",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackId"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "positionMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "seek",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "positionMs"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "pause",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "resume",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "next",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "previous",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "playItem",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "removeItems",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "ids"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "after": {
+          "type": "boolean"
+        },
+        "ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "target": {
+          "type": "string"
+        },
+        "type": {
+          "const": "moveItems",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "ids",
+        "target",
+        "after"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "after": {
+          "type": "string"
+        },
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "insert",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds",
+        "after"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "undo",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "redo",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "on": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "shuffle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "on"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/Repeat"
+        },
+        "type": {
+          "const": "repeat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "mode"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "timer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SleepTimer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "sleepTimer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "to": {
+          "type": "string"
+        },
+        "type": {
+          "const": "handOff",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "to"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "devices": {
+          "items": {
+            "$ref": "#/$defs/LinkDevice"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "devices",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "devices"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "#/$defs/LinkDeviceKey"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "deviceKeys",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "keys"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "accounts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "grantees": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "shares",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "grantees"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/LinkCommand"
+        },
+        "type": {
+          "const": "shared",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "command"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "type": {
+          "const": "forgotten",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "device"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "historyChanged",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "dspProfilesChanged",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "output": {
+          "$ref": "#/$defs/OutputChoice"
+        },
+        "type": {
+          "const": "setOutput",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "output"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "refreshOutputs",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "setRendererVolume",
+          "type": "string"
+        },
+        "volume": {
+          "format": "uint8",
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "volume"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "const": "setPreset",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "device"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "on": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "watchLevels",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "on"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "f": {
+          "$ref": "#/$defs/Frame"
+        },
+        "from": {
+          "type": "string"
+        },
+        "type": {
+          "const": "levels",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "from",
+        "f"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "ack": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/AckOutcome"
+        },
+        "type": {
+          "const": "acked",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "from",
+        "ack",
+        "outcome"
+      ],
+      "type": "object"
+    }
+  ],
+  "properties": {
+    "ack": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "title": "Envelope",
+  "type": "object"
+}

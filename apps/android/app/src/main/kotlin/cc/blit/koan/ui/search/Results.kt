@@ -28,12 +28,16 @@ import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.ArtistRoute
+import cc.blit.koan.ui.library.NameLine
+import cc.blit.koan.ui.library.Named
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.Selection
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.library.TrackAvailability
+import cc.blit.koan.ui.library.albumName
+import cc.blit.koan.ui.library.artistName
 import cc.blit.koan.ui.library.pickable
 import cc.blit.koan.ui.library.rememberPlayNow
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -78,8 +82,8 @@ internal fun ArtistPill(id: Long, name: String, selection: Selection<Playable>) 
 }
 
 /**
- * A record: the sleeve plays it, the title opens it, the artist goes to the
- * artist. While picking, any of it ticks the record.
+ * A record: the sleeve plays it, the words under it open it, the artist's name
+ * goes to the artist. While picking, any of it ticks the record.
  */
 @Composable
 internal fun AlbumTile(album: Album, selection: Selection<Playable>) {
@@ -108,12 +112,11 @@ internal fun AlbumTile(album: Album, selection: Selection<Playable>) {
             role = KoanType.Control,
             maxLines = 1,
         )
-        KoanText(
-            listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
-            Modifier.fillMaxWidth().pickable(playable, selection, showMenu) { nav.push(ArtistRoute(album.artistId)) },
+        NameLine(
+            listOfNotNull(artistName(album.artistName, album.artistId), album.year?.let { Named("$it") }),
+            Modifier.fillMaxWidth().pickable(playable, selection, showMenu) { nav.push(AlbumRoute(album.id)) },
             role = KoanType.Fine,
-            tone = KoanTone.Muted,
-            maxLines = 1,
+            linked = !selection.active,
         )
     }
 }
@@ -139,7 +142,11 @@ internal fun TrackRow(track: Track, selection: Selection<Playable>) {
             Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id), size = 40.dp)
             Column(Modifier.weight(1f)) {
                 KoanText(track.title, maxLines = 1)
-                KoanText("${track.artistName} — ${track.albumTitle}", role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
+                NameLine(
+                    listOf(artistName(track.artistName, track.artistId), albumName(track.albumTitle, track.albumId, track.id)),
+                    role = KoanType.Fine,
+                    linked = !selection.active,
+                )
             }
             TrackAvailability(track)
             track.durationMs?.let { KoanText(duration(it), role = KoanType.Fine, tone = KoanTone.Muted) }

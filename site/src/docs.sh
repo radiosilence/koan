@@ -23,7 +23,6 @@ pages=(
   "Playback|docs/guide/apple-tv.md"
   "Playback|docs/guide/android.md"
   "Playback|docs/guide/shuffle-and-repeat.md"
-  "Playback|docs/guide/sleep-timer.md"
   "Playback|docs/guide/dsp.md"
   "Playback|docs/guide/headphone-eq.md"
   "Automation|docs/guide/mcp-integration.md"
@@ -33,6 +32,11 @@ pages=(
   "Reference|docs/reference/keybindings.md"
   "Reference|docs/recipes/troubleshooting.md"
   "Reference|CHANGELOG.md"
+  "Protocol|docs/reference/protocol/protocol.md"
+  "Protocol|docs/reference/protocol/link-protocol.md"
+  "Protocol|docs/reference/protocol/nearby-protocol.md"
+  "Protocol|docs/reference/protocol/pairing-and-invites.md"
+  "Protocol|docs/reference/protocol/server-extensions.md"
 )
 
 slug() { basename "$1" .md | tr '[:upper:]' '[:lower:]'; }

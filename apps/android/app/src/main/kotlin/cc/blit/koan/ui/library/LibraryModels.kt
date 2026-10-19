@@ -67,7 +67,8 @@ val AlbumSort.label
         AlbumSort.RECENTLY_ADDED -> "Recently Added"
         AlbumSort.TITLE -> "Title"
         AlbumSort.ARTIST -> "Artist"
-        AlbumSort.YEAR -> "Year"
+        AlbumSort.YEAR -> "Year, Newest"
+        AlbumSort.YEAR_ASC -> "Year, Oldest"
         AlbumSort.RANDOM -> "Random"
         AlbumSort.LAST_PLAYED -> "Last Played"
         AlbumSort.DOWNLOADED -> "Most Downloaded"
@@ -84,7 +85,7 @@ fun BrowseQuery<AlbumSort>.offered() =
     (if (search.isNotBlank()) listOf(AlbumSort.BEST_MATCH) else emptyList()) +
         (if (filter.recent) listOf(AlbumSort.LAST_PLAYED) else emptyList()) +
         (if (filter.downloaded) listOf(AlbumSort.DOWNLOADED) else emptyList()) +
-        listOf(AlbumSort.RECENTLY_ADDED, AlbumSort.TITLE, AlbumSort.ARTIST, AlbumSort.YEAR, AlbumSort.RANDOM)
+        listOf(AlbumSort.RECENTLY_ADDED, AlbumSort.TITLE, AlbumSort.ARTIST, AlbumSort.YEAR, AlbumSort.YEAR_ASC, AlbumSort.RANDOM)
 
 val TrackBrowseSort.label
     get() = when (this) {

@@ -794,6 +794,9 @@ private struct PadSidebar: View {
                         }
                         .listRowSeparator(.hidden)
                 }
+                #if os(iOS)
+                .onMove { playlists.move(fromOffsets: $0, toOffset: $1) }
+                #endif
                 Button { playlists.naming = [] } label: {
                     KoanLabel("New Playlist", icon: Icon.add)
                         .frame(maxWidth: .infinity, alignment: .leading)

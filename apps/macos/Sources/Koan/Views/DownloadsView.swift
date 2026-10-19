@@ -199,18 +199,18 @@ private struct DownloadRow: View {
             )
             .frame(height: 4)
 
+            // The artist and record on a line of their own: sharing one with
+            // the status, a long name squeezed the rest down to a glyph wide.
+            if !transfer.artist.isEmpty {
+                ArtistAlbumLine(
+                    artist: transfer.artist,
+                    artistId: transfer.artistId,
+                    album: transfer.album,
+                    albumId: transfer.albumId
+                )
+            }
+
             HStack(spacing: 5) {
-                if !transfer.artist.isEmpty {
-                    ArtistAlbumLine(
-                        artist: transfer.artist,
-                        artistId: transfer.artistId,
-                        album: transfer.album,
-                        albumId: transfer.albumId
-                    )
-                    .layoutPriority(1)
-                    Text("·")
-                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
-                }
                 Text(status)
                     .lineLimit(1)
                     .foregroundStyle(
@@ -222,6 +222,8 @@ private struct DownloadRow: View {
                     Button("Show in Library") { showInLibrary() }
                         .linkButton()
                         .font(.role(.fine, system: .caption))
+                        .lineLimit(1)
+                        .fixedSize()
                 }
             }
             .font(.role(.fine, system: .caption))

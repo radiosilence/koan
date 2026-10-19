@@ -89,6 +89,8 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 `docs/` is the user guide and reference, and koan.rocks is built from it (`site/src/docs.sh`, deployed by `site.yml`). A change in behaviour, a setting, a CLI flag or a supported platform updates the matching page in the same PR, as does a changelog fragment. Before a release, check that the guide still describes what the code does, since screenshots and settings drift fastest.
 
+`docs/reference/protocol/` specifies the protocol: the link, nearby connections, pairing and invites, every `koan*` extension, and the compatibility rules. A change to it (`EXTENSIONS` in `subsonic.rs`, the constants in `remote/profile.rs`, a `/rest/koan*` route, a field or variant of `LinkCommand`, `LinkReport`, `PairMessage` or the nearby frames, or the TXT entries) updates the matching page in the same PR, and keeps the compatibility rules on `protocol.md`. The guide pages that describe the same endpoints for people (`authentication.md`, `devices.md`, `dsp.md`, `headless-server.md`) are updated with it, and `just protocol-schema` regenerates the JSON Schema in `docs/reference/protocol/schema/`, which the tests check against the types.
+
 ## Supervising sessions
 
 If you are told you are the foreman, supervisor, manager, boss or guvnor of the koan sessions, in any wording, this section is your brief: read it before doing anything else. Other sessions skip it.
@@ -110,6 +112,7 @@ just check          # cargo test + clippy -D warnings
 just fmt            # cargo fmt
 just release VER    # X.Y.Z or patch/minor/major: branch, bump, changelog, commit, PR
 just theme-leaks    # styling in the apps that bypasses the kōan theme's roles
+just protocol-schema # regenerate docs/reference/protocol/schema/ from the message types
 just cli            # cargo run --release -p koan-cli -- <args>
 just build          # cargo build --release
 just macos-run      # build + launch the macOS app

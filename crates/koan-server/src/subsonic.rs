@@ -101,6 +101,10 @@ struct AppState {
     /// `sharing.public_url`, trimmed: where an assistant reaches `/mcp`.
     /// Without it, MCP's sign-in cannot work, so none is offered.
     public_url: Option<String>,
+    /// Whether `[push]` holds an APNs key. Apple takes pushes for the app only
+    /// when signed by its developer's team, so most servers cannot send them,
+    /// and the app asks to show notifications only where one can.
+    apns: bool,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -4387,6 +4391,11 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
+    let apns: &[(&str, &[i64])] = if state.apns {
+        &[(koan_core::remote::profile::APNS, &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
@@ -4395,6 +4404,7 @@ async fn get_open_subsonic_extensions(
                 .chain(transcode)
                 .chain(mcp)
                 .chain(app_passwords)
+                .chain(apns)
                 .map(|(name, versions)| {
                     XmlNode::new("openSubsonicExtensions")
                         .attr("name", name)
@@ -6123,7 +6133,17 @@ async fn link_session(
                                     }
                                 });
                             }
-                            Ok(LinkReport::Hello(_)) | Err(_) => {}
+                            Ok(LinkReport::Hello(_)) => {}
+                            Err(e) => {
+                                log::debug!("link: not a report ({e}): {text}");
+                                // A command this server cannot read, from a newer
+                                // device: refused, so its sender is not left waiting.
+                                if let Some((to, ack)) = koan_core::remote::acks::unread_relay(&text) {
+                                    answer_once(&username, &device, &to, ack)(
+                                        koan_core::remote::acks::unreadable(),
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -6541,6 +6561,7 @@ pub fn subsonic_router(
             .as_deref()
             .map(|u| u.trim().trim_end_matches('/').to_owned())
             .filter(|u| !u.is_empty()),
+        apns: crate::push::pusher().is_some(),
     });
     // Once per process, though the router may be built for two ports.
     static KEYS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
@@ -6587,6 +6608,7 @@ mod tests {
             last_modified: Default::default(),
             transcoder: None,
             public_url: None,
+            apns: false,
         });
         (state, dir)
     }
@@ -8188,6 +8210,26 @@ mod tests {
         );
         let v = mcp(state, "u=mate&p=wrong").await;
         assert_eq!(v["error"]["code"], 40, "signed in only: {v}");
+    }
+
+    /// Notifications are offered only by a server holding an APNs key.
+    #[tokio::test]
+    async fn notifications_are_offered_with_an_apns_key() {
+        let extensions = |state: Arc<AppState>| async move {
+            get_response(
+                build_test_router(state),
+                "/rest/getOpenSubsonicExtensions?f=json",
+            )
+            .await
+            .1
+        };
+        let (state, _dir) = test_state();
+        assert!(!extensions(state).await.contains("koanApns"));
+
+        let (state, _dir) = test_state();
+        let mut inner = Arc::try_unwrap(state).ok().unwrap();
+        inner.apns = true;
+        assert!(extensions(Arc::new(inner)).await.contains("koanApns"));
     }
 
     /// An app password must not mint keys that outlive it, nor revoke the

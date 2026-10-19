@@ -1114,7 +1114,10 @@ pub enum AlbumSort {
     RecentlyAdded,
     Title,
     Artist,
+    /// Newest release first.
     Year,
+    /// Oldest release first.
+    YearAsc,
     /// Shuffled by the seed passed alongside it. The same seed is the same
     /// order, page after page; a new seed is a new order — which is the point,
     /// it's for turning up records you'd forgotten.
@@ -1174,6 +1177,7 @@ impl From<AlbumSort> for koan_core::browse::AlbumSort {
             AlbumSort::Title => Self::Title,
             AlbumSort::Artist => Self::Artist,
             AlbumSort::Year => Self::Year,
+            AlbumSort::YearAsc => Self::YearAsc,
             AlbumSort::Random => Self::Random,
             AlbumSort::LastPlayed => Self::LastPlayed,
             AlbumSort::Downloaded => Self::Downloaded,

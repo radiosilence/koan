@@ -49,14 +49,20 @@ struct PlaylistsList: View {
     }
 
     private var list: some View {
-        List(shown, id: \.id) { playlist in
-            NavigationLink(value: Route.page(.section(.playlist(playlist.id)))) {
-                PlaylistRow(
-                    playlist: playlist,
-                    covers: playlists.covers[playlist.id] ?? []
-                )
+        List {
+            ForEach(shown, id: \.id) { playlist in
+                NavigationLink(value: Route.page(.section(.playlist(playlist.id)))) {
+                    PlaylistRow(
+                        playlist: playlist,
+                        covers: playlists.covers[playlist.id] ?? []
+                    )
+                }
+                .listLink()
             }
-            .listLink()
+            #if os(iOS)
+            // Press and drag. The order is this device's, as the Mac's sidebar is.
+            .onMove { playlists.move(fromOffsets: $0, toOffset: $1) }
+            #endif
         }
         .washedGround()
     }

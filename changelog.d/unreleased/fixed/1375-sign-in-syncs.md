@@ -1,0 +1,1 @@
+- **Signing in with a password loads the library on the Mac and iPhone.** It synced only when joining with an invite, so a fresh sign-in showed an empty library until a manual sync.

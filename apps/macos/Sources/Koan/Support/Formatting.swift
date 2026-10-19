@@ -97,16 +97,29 @@ enum Format {
             : "Device stayed at \(rate(out)) kHz, so \(rate(f.sampleRate)) kHz is being resampled to reach it"
     }
 
+    /// What a track is, as its row shows it: "FLAC 16/44.1", or "MP3 320 kbps"
+    /// for a lossy file, whose encoder setting says more about it than its
+    /// sample rate does. The transport keeps the rate, which is what the
+    /// device is matched to.
     static func quality(_ t: Track) -> String? {
         guard let codec = t.codec else { return nil }
         var s = codec.uppercased()
         if let depth = t.bitDepth, let sr = t.sampleRate {
             s += " \(depth)/\(rate(UInt32(sr)))"
+        } else if lossy.contains(s), let kbps = t.bitrate, kbps > 0 {
+            s += " \(kbps) kbps"
         } else if let sr = t.sampleRate {
             s += " \(rate(UInt32(sr))) kHz"
         }
         return s
     }
+
+    /// Codecs whose encoder setting, not the rate, says what a file without a
+    /// bit depth is. Named rather than inferred from the missing bit depth
+    /// alone, which a server can leave out for FLAC too. Covers the indexer's
+    /// MP3, AAC, Vorbis and Opus, and the suffixes other Subsonic servers
+    /// report in place of a codec; M4A is AAC once no bit depth says ALAC.
+    private static let lossy: Set = ["MP3", "AAC", "M4A", "VORBIS", "OPUS", "OGG", "OGA", "WMA", "MPC", "MP2", "AC3", "SPX"]
 
     /// 44100 → "44.1", 96000 → "96". Trailing ".0" is noise.
     private static func rate(_ hz: UInt32) -> String {

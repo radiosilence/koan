@@ -196,12 +196,19 @@ final class SettingsModel {
                 self.password = ""
                 lastError = nil
                 lastResult = "Signed in to \(url)"
-                #if os(iOS)
-                // A server to send notifications now exists; ask to show them.
-                PushDelegate.requestAlertsIfSignedIn()
-                #endif
             case .failure(let e):
                 lastError = Self.describe(e)
+                reload()
+                return
+            }
+            reload()
+            let synced = await activity.run(
+                "Loading the library", uses: [.remoteTracks], followsSync: true
+            ) {
+                try await engine.syncRemote()
+            }
+            if case .failure(let e) = synced {
+                lastError = "Signed in, but the library did not load: \(Self.describe(e))"
             }
             reload()
         }

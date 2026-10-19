@@ -27,10 +27,13 @@ import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.Named
 import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.library.Shelf
 import cc.blit.koan.ui.library.ShelfRoute
 import cc.blit.koan.ui.library.Sleeve
+import cc.blit.koan.ui.library.albumName
+import cc.blit.koan.ui.library.artistName
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.playlists.CollectionRow
@@ -154,17 +157,22 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
     var menu by remember { mutableStateOf(false) }
     val size = { bytes: ULong -> Formatter.formatShortFileSize(context, bytes.toLong()) }
 
-    val detail = when (transfer.state) {
-        TransferState.FAILED -> transfer.failureReason ?: "Couldn't be fetched"
-        TransferState.QUEUED -> listOf(transfer.artist, "waiting").filter { it.isNotEmpty() }.joinToString(" — ")
-        TransferState.DONE -> listOf(transfer.artist, "downloaded").filter { it.isNotEmpty() }.joinToString(" — ")
-        TransferState.RUNNING -> buildList {
-            if (transfer.artist.isNotEmpty()) add(transfer.artist)
-            val f = figure
-            // A rate of nothing is a stall, and saying so is the point of the row.
-            add(if (f != null && f.bytesPerSecond > 0u) "${size(f.bytesPerSecond)}/s" else "stalled")
-            if (f != null && f.totalBytes > 0u) add("${size(f.bytesWritten)} of ${size(f.totalBytes)}")
-        }.joinToString(" · ")
+    val names = when (transfer.state) {
+        TransferState.FAILED -> listOf(Named(transfer.failureReason ?: "Couldn't be fetched"))
+        else -> buildList {
+            add(artistName(transfer.artist, transfer.artistId))
+            add(albumName(transfer.album, transfer.albumId, transfer.trackId))
+            when (transfer.state) {
+                TransferState.QUEUED -> add(Named("waiting"))
+                TransferState.DONE -> add(Named("downloaded"))
+                else -> {
+                    val f = figure
+                    // A rate of nothing is a stall, and saying so is the point of the row.
+                    add(Named(if (f != null && f.bytesPerSecond > 0u) "${size(f.bytesPerSecond)}/s" else "stalled"))
+                    if (f != null && f.totalBytes > 0u) add(Named("${size(f.bytesWritten)} of ${size(f.totalBytes)}"))
+                }
+            }
+        }
     }
     // Whole once it has landed, whatever the last figure said; empty while the length is unknown.
     val fraction = if (transfer.state == TransferState.DONE) 1f else figure?.progress?.toFloat() ?: 0f
@@ -172,7 +180,8 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
     Box(modifier) {
         CollectionRow(
             transfer.title,
-            detail,
+            null,
+            names = names,
             detailTone = if (transfer.state == TransferState.FAILED) KoanTone.Bad else KoanTone.Muted,
             onClick = transfer.albumId?.let { id -> { nav.push(AlbumRoute(id)) } },
             onLongClick = { menu = true },
