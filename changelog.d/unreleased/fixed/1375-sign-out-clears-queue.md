@@ -1,0 +1,1 @@
+- **Signing out clears the queue and downloads.** The queue held tracks from a server this device can no longer reach, and its transfers, queued or running, kept going; both are dropped on signing out, in the apps and the terminal UI alike. The synced library still stays.

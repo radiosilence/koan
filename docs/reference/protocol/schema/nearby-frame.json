@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "sig": {
+          "type": "string"
+        },
+        "type": {
+          "const": "nearbyAuth",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "nonce",
+        "sig"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "sig": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "const": "nearbyProof",
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "verified"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sig": {
+          "type": "string"
+        },
+        "type": {
+          "const": "nearbySigned",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "sig",
+        "command"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "report": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sig": {
+          "type": "string"
+        },
+        "type": {
+          "const": "nearbySignedReport",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "sig",
+        "report"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "ProofFrame"
+}

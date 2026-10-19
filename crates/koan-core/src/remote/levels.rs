@@ -31,6 +31,7 @@ use crate::signal::Wake;
 /// One analysed frame, as the link carries it: milliseconds into the track it
 /// was heard at, then the low, mid and high bands in thousandths. An array, so
 /// a frame is about forty bytes of JSON at the analyser's full rate.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Frame(pub u64, pub u16, pub u16, pub u16);
 

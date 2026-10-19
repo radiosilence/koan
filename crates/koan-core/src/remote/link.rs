@@ -28,6 +28,7 @@ use crate::remote::profile;
 use crate::remote::wire::{self, Waker};
 
 /// What a server asks a linked client to do.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LinkCommand {
@@ -194,6 +195,7 @@ pub enum LinkCommand {
     RefreshOutputs,
     /// The volume of the renderer the device plays to, 0–100.
     SetRendererVolume {
+        #[cfg_attr(test, schemars(range(max = 100)))]
         volume: u8,
     },
     /// Play the output `device` through the DSP profile `profile`, or
@@ -436,6 +438,7 @@ pub enum CommandSource {
 }
 
 /// A device's public key, as `LinkCommand::DeviceKeys` carries it.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkDeviceKey {
     /// The device's id.
@@ -458,6 +461,7 @@ pub fn valid_device_key(key: &str) -> bool {
 }
 
 /// Another device on the same account, as the server sends it.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkDevice {
@@ -536,6 +540,7 @@ impl LinkCommand {
 }
 
 /// What a linked client tells the server about itself, as it changes.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkState {
@@ -566,6 +571,7 @@ pub struct LinkState {
     pub sleep_fading: bool,
 }
 
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkQueueEntry {
@@ -605,6 +611,7 @@ impl LinkState {
 }
 
 /// A message from a client, up the same socket.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LinkReport {
@@ -673,6 +680,7 @@ pub enum LinkReport {
 
 /// How a device introduces itself to one that connected to it over the local
 /// network, before anything else.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkHello {

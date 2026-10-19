@@ -20,6 +20,8 @@ pub mod profile;
 pub mod proof;
 pub mod queue;
 pub mod refusal;
+#[cfg(test)]
+mod schema;
 pub mod scrobbling;
 pub mod sync;
 pub mod wikimedia;

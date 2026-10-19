@@ -578,6 +578,20 @@ impl DownloadStore {
         }
     }
 
+    /// Want nothing: every running transfer is left for the downloader to
+    /// withdraw, which leaves no row, and the settled ones are dropped. For
+    /// signing out, after which none of them can be fetched.
+    pub fn forget_all(&self) {
+        let mut entries = self.entries.write();
+        entries.retain_mut(|e| {
+            e.waiters.clear();
+            e.keep = false;
+            e.is_live()
+        });
+        drop(entries);
+        self.bump();
+    }
+
     fn bump(&self) {
         self.version.fetch_add(1, Ordering::Release);
         crate::signal::engine_changed().bump();

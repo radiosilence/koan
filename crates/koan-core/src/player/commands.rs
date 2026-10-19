@@ -70,6 +70,9 @@ pub enum PlayerCommand {
     },
     /// Clear the entire playlist (stop + remove all items).
     ClearPlaylist,
+    /// The server was signed out of: clear the playlist and drop every
+    /// download, queued or running, since none of them can be fetched now.
+    SignedOut,
     /// Replace the playlist and open the track at `start`, as one operation:
     /// from `position_ms`, playing or paused.
     ///
