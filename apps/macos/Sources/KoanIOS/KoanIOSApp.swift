@@ -45,6 +45,7 @@ struct KoanIOSApp: App {
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
+                        #if !os(tvOS)
                         // In front only: a profile read after a background
                         // wake would ask where iOS cannot show the question.
                         .onChange(
@@ -53,6 +54,7 @@ struct KoanIOSApp: App {
                         ) { _, ask in
                             if ask { Task { await PushDelegate.requestAlerts() } }
                         }
+                        #endif
                         // No app-wide accent on a television: it draws focus
                         // as a white platter, and system alerts and toggle
                         // rows that take the tint put green text on it.
