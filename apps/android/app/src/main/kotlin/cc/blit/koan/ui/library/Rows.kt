@@ -155,11 +155,10 @@ fun AlbumTile(album: Album, modifier: Modifier = Modifier, selection: Selection<
             PlayableMenu(playable, menu) { menu = false }
         }
         KoanText(album.title, role = KoanType.Control, maxLines = 1)
-        KoanText(
-            listOfNotNull(album.artistName.takeIf { showArtist }, album.year?.toString()).joinToString(" · "),
+        NameLine(
+            listOfNotNull(artistName(album.artistName, album.artistId).takeIf { showArtist }, album.year?.let { Named("$it") }),
             role = KoanType.Fine,
-            tone = KoanTone.Muted,
-            maxLines = 1,
+            linked = selection?.active != true,
         )
     }
 }
@@ -214,10 +213,10 @@ private fun LibraryRow(
 }
 
 @Composable
-private fun TitleAndDetail(title: String, detail: String?, tone: KoanTone = KoanTone.Ink) {
+private fun TitleAndDetail(title: String, detail: List<Named>, linked: Boolean, tone: KoanTone = KoanTone.Ink) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         KoanText(title, tone = tone, maxLines = 1)
-        if (detail != null) KoanText(detail, role = KoanType.Meta, tone = KoanTone.Muted, maxLines = 1)
+        if (detail.any { it.text.isNotEmpty() }) NameLine(detail, linked = linked)
     }
 }
 
@@ -233,7 +232,11 @@ fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection<P
         lead = { Sleeve(Art.album(album.id)) },
         trailing = { AlbumHeart(album.id, showing = false) },
     ) {
-        TitleAndDetail(album.title, listOfNotNull(album.artistName, album.year?.toString(), album.codec?.uppercase()).joinToString(" · "))
+        TitleAndDetail(
+            album.title,
+            listOfNotNull(artistName(album.artistName, album.artistId), album.year?.let { Named("$it") }, album.codec?.let { Named(it.uppercase()) }),
+            linked = selection?.active != true,
+        )
     }
 }
 
@@ -257,7 +260,8 @@ fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, selection: Selectio
             listOfNotNull(
                 count(artist.albumCount, "album").takeIf { artist.albumCount > 0 },
                 count(artist.trackCount, "track"),
-            ).joinToString(" · "),
+            ).map { Named(it) },
+            linked = false,
         )
     }
 }
@@ -265,7 +269,8 @@ fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, selection: Selectio
 /**
  * One track. Its number, or bars while it is the one playing; the title, and
  * the artist where it is not the record's. Gathered from all over
- * (`mixed`), a row carries its own sleeve and names its record.
+ * (`mixed`), a row carries its own sleeve and names its record. Names are
+ * links to their pages, but for the page the row is on.
  */
 @Composable
 fun TrackRow(
@@ -278,6 +283,8 @@ fun TrackRow(
     selection: Selection<Playable>? = null,
     mixed: Boolean = false,
     marked: Boolean = false,
+    /** The artist whose page this row is on, whose name it leaves as text. */
+    onArtistPage: Long? = null,
 ) {
     LibraryRow(
         Playable.OfTrack(track),
@@ -308,7 +315,12 @@ fun TrackRow(
     ) {
         TitleAndDetail(
             track.title,
-            if (mixed) "${track.artistName} · ${track.albumTitle}" else track.artistName.takeIf { it != track.albumArtistName },
+            listOfNotNull(
+                artistName(track.artistName, track.artistId?.takeIf { it != onArtistPage })
+                    .takeIf { mixed || track.artistName != track.albumArtistName },
+                albumName(track.albumTitle, track.albumId, track.id).takeIf { mixed },
+            ),
+            linked = selection?.active != true,
             tone = if (current) KoanTone.Accent else KoanTone.Ink,
         )
     }

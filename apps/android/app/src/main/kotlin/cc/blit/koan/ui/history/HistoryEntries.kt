@@ -32,6 +32,7 @@ import cc.blit.koan.ffi.PlayHistoryEntry
 import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.Named
 import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.Removal
@@ -41,6 +42,8 @@ import cc.blit.koan.ui.library.Selection
 import cc.blit.koan.ui.library.SelectionBar
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
+import cc.blit.koan.ui.library.albumName
+import cc.blit.koan.ui.library.artistName
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.nowplaying.clock
@@ -177,7 +180,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
     val swipe = rememberSwipeToDismissBoxState()
     var menu by remember { mutableStateOf(false) }
     // A play another client scrobbled in did not happen here, and saying so stops it reading as a phantom.
-    val elsewhere = if (entry.source != "local") " · scrobbled by another client" else ""
+    val elsewhere = if (entry.source != "local") "scrobbled by another client" else ""
 
     SwipeToDismissBox(
         state = swipe,
@@ -199,7 +202,14 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
         Box(if (swipe.dismissDirection == SwipeToDismissBoxValue.Settled) Modifier else Modifier.koanSurface()) {
             CollectionRow(
                 track.title,
-                "${timeOf(entry.playedAt, zone)} · ${track.artistName} · ${track.albumTitle}$elsewhere",
+                null,
+                names = listOf(
+                    Named(timeOf(entry.playedAt, zone)),
+                    artistName(track.artistName, track.artistId),
+                    albumName(track.albumTitle, track.albumId, track.id),
+                    Named(elsewhere),
+                ),
+                linked = !selection.active,
                 onClick = { if (!selection.take(entry)) app.player.playTracks(listOf(track.id)) },
                 onLongClick = if (selection.active) null else ({ menu = true }),
                 leading = {

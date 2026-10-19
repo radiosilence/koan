@@ -1,0 +1,1 @@
+- **Disc, track and playlist numbers fit.** The number column in the queue, playlists and album pages is sized to the widest number in the list, measured in its font, so "2.03" and playlist positions past 99 are no longer cut off in the kōan theme or at larger text sizes.

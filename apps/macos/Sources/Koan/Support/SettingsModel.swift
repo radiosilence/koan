@@ -196,10 +196,6 @@ final class SettingsModel {
                 self.password = ""
                 lastError = nil
                 lastResult = "Signed in to \(url)"
-                #if os(iOS)
-                // A server to send notifications now exists; ask to show them.
-                PushDelegate.requestAlertsIfSignedIn()
-                #endif
             case .failure(let e):
                 lastError = Self.describe(e)
                 reload()

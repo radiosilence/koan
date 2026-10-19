@@ -1,0 +1,1 @@
+- **Commands from newer versions are answered.** A device, a nearby device or the server that cannot read a command sent with an id now refuses it, so the sender is not left waiting and the server no longer takes the device for gone. Pairing passes over messages from a newer server instead of failing.

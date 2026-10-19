@@ -10,6 +10,13 @@
 //!
 //! The link carries the server and the id in the fragment of a koan.rocks
 //! address, as invites do, so the site serving the page never sees them.
+//!
+//! This is RFC 8628's device grant in shape (code for user code, link for
+//! `verification_uri_complete`, the socket for the device code) but not on the
+//! wire: the device needs an OpenSubsonic API key rather than an OAuth token,
+//! the OAuth endpoints are served only with `sharing.public_url` set, and the
+//! outcome is pushed rather than polled for. `docs/guide/authentication.md` has
+//! the mapping.
 
 use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
@@ -158,12 +165,28 @@ fn read(socket: &mut Socket) -> Result<PairMessage, PairError> {
     loop {
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
-                return serde_json::from_str(&text).map_err(|_| PairError::BadResponse);
+                if let Some(message) = message(&text)? {
+                    return Ok(message);
+                }
             }
             Ok(tungstenite::Message::Close(_)) => return Err(PairError::Closed),
             Ok(_) => {}
             Err(_) => return Err(PairError::Closed),
         }
+    }
+}
+
+/// A message from the server; `None` for one of a type from a newer server,
+/// which is passed over. A known type that does not read, or anything that is
+/// not a message at all, is a bad response.
+fn message(text: &str) -> Result<Option<PairMessage>, PairError> {
+    if let Ok(message) = serde_json::from_str(text) {
+        return Ok(Some(message));
+    }
+    let value = serde_json::from_str::<serde_json::Value>(text).ok();
+    match value.as_ref().and_then(|v| v.get("type")?.as_str()) {
+        Some("pending" | "approved" | "declined" | "expired") | None => Err(PairError::BadResponse),
+        Some(_) => Ok(None),
     }
 }
 
@@ -258,6 +281,20 @@ pub fn decline(pair: &str) -> Result<String, PairError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_from_a_newer_server_is_passed_over() {
+        assert_eq!(
+            message(r#"{"type":"declined"}"#).unwrap(),
+            Some(PairMessage::Declined)
+        );
+        assert_eq!(message(r#"{"type":"somethingNew","x":1}"#).unwrap(), None);
+        assert!(matches!(
+            message(r#"{"type":"approved","key":"renamed"}"#),
+            Err(PairError::BadResponse)
+        ));
+        assert!(matches!(message("<html>"), Err(PairError::BadResponse)));
+    }
 
     #[test]
     fn a_link_reads_back() {

@@ -1,0 +1,1 @@
+- **Sort albums by year, oldest first.** Every album browser now offers the year order in both directions, so a filtered listing can be played or queued in the order the records came out.

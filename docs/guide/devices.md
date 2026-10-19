@@ -41,7 +41,13 @@ not that.
   stays listed as asleep: commands wake it, and music sent to it arrives as a
   notification to tap, since iOS does not let an app it woke start playing.
   A phone still awake in the background is refused the audio while another
-  app is playing, and shows the same kind of notification instead.
+  app is playing, and shows the same kind of notification instead. Waking and
+  notifications need a server that can push to the app
+  ([`[push]`](../reference/configuration.md#push)); with any other, a
+  suspended phone is listed but takes what was sent only when it is next
+  opened. The app asks to show notifications only on a server that can push,
+  so elsewhere a phone refused the audio shows nothing either, unless
+  notifications were allowed for kōan in iOS Settings.
 - **Anyone's device on this network.** Apps find each other over Bonjour and
   connect directly, with no server involved and whoever is signed in. A device
   playing from a different server can be controlled but not sent music, since
@@ -338,20 +344,12 @@ send the command in one request to the server when the app's link is down.
 ## What the server has to support
 
 kōan lists its additions to Subsonic as OpenSubsonic extensions, and a client
-uses one only where the server lists it:
-
-| Extension | What it is |
-|-----------|------------|
-| `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
-| `koanShares` | Sharing a device with other accounts on the server: the grant from the device, the server's accounts to choose from, and shared devices in each grantee's list, relayed with their outputs for the playback set. |
-| `koanHistory` | The account's play history as every device's: `/rest/koanHistory` pages the plays and forgettings after a cursor, `/rest/koanForgetPlays` forgets plays for every device, and the link says when the history moved. See [Play history](remote-servers.md#play-history). |
-| `koanDspProfiles` | The account's corrections, EQs and presets kept on every device: `/rest/koanDspProfiles` reads what changed after a cursor, `/rest/koanDspProfileSave` and `/rest/koanDspProfileDelete` change one, `/rest/koanDspFile` moves the files each names by SHA-256, and the link says when they moved. Only the account's password or an API key reach them, never the shared secret or an app password. See [On every device](dsp.md#on-every-device). |
-| `koanDspDeleted` | The account's EQs deleted in the last thirty days, which the server keeps: `/rest/koanDspDeleted` lists them with when each was deleted and will be forgotten, and `/rest/koanDspRestore` (POST, `uid`) saves one again as a new edit, which every device adopts. The same sign-ins as `koanDspProfiles`. See [On every device](dsp.md#on-every-device). |
-| `koanAck` | Commands answered: a device says once it has acted on a command sent with an id, and the server relays the answer to the sender, answers for a device that is away (queued, once woken), and drops a link that has gone quiet since the command and wakes the device instead. `/rest/koanCommand` waits a moment for the answer and returns it. Without it, commands are sent as before and taken as sent. |
-| `koanDeviceKeys` | Each device's public key, for proving on the local network that it is the account's own (or shared with it) without the server in the room. A device registers it as `deviceKey` when it links with an API key; it is kept on that key's row, so revoking the key or signing out drops it. Links that registered one are sent the account's keys, and those of devices shared with it, as `DeviceKeys`. The local network never may send them. |
-| `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |
-| `koanAppPasswords` | The account's own app passwords, for Subsonic apps that sign in with a token rather than the account's password: `/rest/koanAppPasswords` lists them (never the passwords), and `/rest/koanCreateAppPassword` and `/rest/koanRevokeAppPassword` make and revoke one. |
+uses one only where the server lists it. Devices rely on `koanLink`,
+`koanDevices`, `koanAck`, `koanShares` and `koanDeviceKeys`; the
+[protocol reference](../reference/protocol/protocol.md) specifies each. Each
+device's outputs travel with its state, and a server older than the apps drops
+them, so the Output menu for another device needs the server updated too.
 
 Settings → Server shows what the server said it is and the extensions it
-listed. A server that lists neither, such as Navidrome, still gets every
+listed. A server that lists none of them, such as Navidrome, still gets every
 Subsonic feature; its devices can find each other only on the local network.

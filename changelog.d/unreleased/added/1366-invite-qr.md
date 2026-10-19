@@ -1,0 +1,1 @@
+- **Invite QR codes in the web UI.** The invite panel shows the link as a QR code, so a phone beside the screen can join by scanning it.

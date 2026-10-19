@@ -92,8 +92,24 @@ struct QueueView: View {
     /// the record. Per album rather than per group, so a record queued twice
     /// numbers both copies alike. Read from the tracks, since an album's disc
     /// total is often missing.
-    static func multiDisc(_ items: [QueueItem]) -> Set<Int64> {
-        Set(items.compactMap { ($0.disc ?? 1) > 1 ? $0.albumId : nil })
+    static func numbering(_ items: [QueueItem]) -> Numbering {
+        // A disc past 9 is past 1, so the widest disc is always on a record
+        // that numbers by disc.
+        var discs = Set<Int64>()
+        var widestNumber: Int64 = 0
+        var widestDisc: Int64 = 1
+        for item in items {
+            if let number = item.trackNumber { widestNumber = max(widestNumber, number) }
+            if let disc = item.disc, disc > 1, let album = item.albumId {
+                discs.insert(album)
+                widestDisc = max(widestDisc, disc)
+            }
+        }
+        let number = Numbering.zeros(String(widestNumber).count)
+        return Numbering(
+            discs: discs,
+            widest: discs.isEmpty ? number : String(repeating: "0", count: String(widestDisc).count) + "." + number
+        )
     }
 
     /// What the list is laid out from. On the Mac, the queue as it reads now:
@@ -147,8 +163,8 @@ struct QueueView: View {
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private func table(_ rows: [Row]) -> some View {
-        let discs = grouped ? Self.multiDisc(listed) : []
-        let lines = rows.map { line($0, discs: discs) }
+        let numbering = grouped ? Self.numbering(listed) : Numbering()
+        let lines = rows.map { line($0, numbering: numbering) }
         let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
         let jumpTarget: String? = switch ui.queueJumpTarget {
@@ -195,9 +211,9 @@ struct QueueView: View {
                 drag: { line in
                     switch line.kind {
                     case .track(let content, _, _, _):
-                        content.trackId.map { PlayableTransfer(kind: .track, id: $0, name: content.title) }
+                        content.trackId.map { PlayableTransfer(kind: .track, id: $0, name: content.title, fromQueue: true) }
                     case .heading(let heading):
-                        heading.albumId.map { PlayableTransfer(kind: .album, id: $0, name: heading.title) }
+                        heading.albumId.map { PlayableTransfer(kind: .album, id: $0, name: heading.title, fromQueue: true) }
                     }
                 },
                 covered: { dragged in
@@ -222,7 +238,7 @@ struct QueueView: View {
     }
 
     /// A row of the queue as the table draws it.
-    private func line(_ row: Row, discs: Set<Int64>) -> QueueLine {
+    private func line(_ row: Row, numbering: Numbering) -> QueueLine {
         switch row {
         case .album(let id, let group):
             QueueLine(id: id, kind: .heading(QueueHeading(
@@ -239,7 +255,7 @@ struct QueueView: View {
             ))
         case .track(let item):
             QueueLine(id: item.queueItemId, kind: .track(
-                QueueRowContent(item: item, discs: discs),
+                QueueRowContent(item: item, numbering: numbering),
                 isCurrent: item.status == .playing,
                 showArtist: !grouped || item.artist != item.albumArtist,
                 artwork: !grouped
@@ -249,11 +265,11 @@ struct QueueView: View {
     #endif
 
     private func list(_ rows: [Row]) -> some View {
-                let discs = grouped ? Self.multiDisc(listed) : []
+                let numbering = grouped ? Self.numbering(listed) : Numbering()
                 return ScrollViewReader { scroll in
                     List(selection: $selection) {
                         ForEach(rows) { row in
-                            rowView(row, discs: discs)
+                            rowView(row, numbering: numbering)
                         }
                         .onMove(perform: move)
                     }
@@ -476,7 +492,7 @@ struct QueueView: View {
     /// Extracted because the type checker gives up on a switch this size
     /// inline in a ForEach.
     @ViewBuilder
-    private func rowView(_ row: Row, discs: Set<Int64>) -> some View {
+    private func rowView(_ row: Row, numbering: Numbering) -> some View {
         switch row {
         case .album(_, let group):
             QueueAlbumHeader(group: group)
@@ -498,7 +514,7 @@ struct QueueView: View {
                 // is, so the row says it itself.
                 showArtist: !grouped || item.artist != item.albumArtist,
                 artwork: !grouped,
-                discs: discs
+                numbering: numbering
             )
             .rowBehaviour()
             // Built from the row in hand: on tvOS the menu is made with the row,
@@ -998,14 +1014,14 @@ private struct LiveQueueRow: View {
     let sent: QueueItem
     let showArtist: Bool
     let artwork: Bool
-    var discs: Set<Int64> = []
+    var numbering = Numbering()
 
     @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
         let item = mirror.queueItem(sent.queueItemId) ?? sent
         QueueRow(
-            item: QueueRowContent(item: item, discs: discs),
+            item: QueueRowContent(item: item, numbering: numbering),
             // The queue already says which row the cursor is on — and says it
             // again when the cursor moves, since that redraws two rows either
             // way. Asking the player as well would subscribe every row to
