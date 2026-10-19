@@ -93,17 +93,22 @@ struct QueueView: View {
     /// numbers both copies alike. Read from the tracks, since an album's disc
     /// total is often missing.
     static func numbering(_ items: [QueueItem]) -> Numbering {
-        let discs = Set(items.compactMap { ($0.disc ?? 1) > 1 ? $0.albumId : nil })
-        let digits = { (n: Int64?) in n.map { String($0).count } ?? 0 }
-        let numberDigits = items.lazy.map { digits($0.trackNumber) }.max() ?? 0
-        let discDigits = discs.isEmpty ? 0 : items.lazy
-            .filter { $0.albumId.map(discs.contains) ?? false }
-            .map { digits($0.disc ?? 1) }
-            .max() ?? 0
-        let number = String(repeating: "0", count: max(2, numberDigits))
+        // A disc past 9 is past 1, so the widest disc is always on a record
+        // that numbers by disc.
+        var discs = Set<Int64>()
+        var numberDigits = 0
+        var widestDisc: Int64 = 1
+        for item in items {
+            if let number = item.trackNumber { numberDigits = max(numberDigits, String(number).count) }
+            if let disc = item.disc, disc > 1, let album = item.albumId {
+                discs.insert(album)
+                widestDisc = max(widestDisc, disc)
+            }
+        }
+        let number = Numbering.zeros(numberDigits)
         return Numbering(
             discs: discs,
-            widest: discDigits == 0 ? number : String(repeating: "0", count: discDigits) + "." + number
+            widest: discs.isEmpty ? number : String(repeating: "0", count: String(widestDisc).count) + "." + number
         )
     }
 

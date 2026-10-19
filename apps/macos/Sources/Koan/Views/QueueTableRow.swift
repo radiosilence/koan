@@ -95,7 +95,6 @@ final class QueueTableRow: TableCell, TableRow {
     private let sleeve = CALayer()
     private let number = NSTextField(labelWithString: "")
     private var placeTemplate = ""
-    private var wideNumber = false
     private let title = NSTextField(labelWithString: "")
     private let artist = NSTextField(labelWithString: "")
     private let separator = NSTextField(labelWithString: "·")
@@ -169,7 +168,6 @@ final class QueueTableRow: TableCell, TableRow {
             artist.stringValue = !showArtist ? "" : CreditLabel.text(content.artistCredit)
             album.stringValue = !showArtist || content.artist.isEmpty || !artwork ? "" : content.album
             number.stringValue = content.place
-            wideNumber = content.disc != nil
             placeTemplate = content.placeTemplate
             codec.stringValue = content.codec?.uppercased() ?? ""
             duration.stringValue = content.durationMs.map { Format.duration($0) } ?? ""
@@ -404,7 +402,7 @@ final class QueueTableRow: TableCell, TableRow {
             let numberHeight = lineHeight(Self.numberFont)
             // Wide enough for the widest place in the list, the same for
             // every row so the titles line up.
-            let numberWidth = max(wideNumber ? 34 : 20, TrackTableRow.measure(placeTemplate, Self.numberFont))
+            let numberWidth = max(Numbering(widest: placeTemplate).minimumWidth, TrackTableRow.measure(placeTemplate, Self.numberFont))
             number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: numberWidth, height: numberHeight)
             x += numberWidth + 10
         }

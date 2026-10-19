@@ -448,7 +448,10 @@ struct TrackRow: View {
         HStack(spacing: compact ? 8 : 12) {
             // The row number becomes bars for whatever is playing —
             // same width either way so the column doesn't twitch.
-            Group {
+            ZStack(alignment: .trailing) {
+                // Holds the column at the longest number in the list, in
+                // whichever face and size it is drawn.
+                Text(Numbering.zeros(String(allTrackIds.count).count)).hidden()
                 if hovering {
                     RowPlayButton(
                         playable: .track(track),
@@ -463,8 +466,9 @@ struct TrackRow: View {
                 }
             }
             .font(.role(.fine, system: .caption.monospacedDigit()))
-            // On a phone, as wide as the longest number and no wider.
-            .frame(width: compact ? max(16, CGFloat(String(allTrackIds.count).count) * 8) : 22, alignment: .trailing)
+            .lineLimit(1)
+            .fixedSize()
+            .frame(minWidth: compact ? 16 : 22, alignment: .trailing)
 
             if showsAlbum {
                 // The cover is what you recognise a record by, and a list

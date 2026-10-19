@@ -84,7 +84,7 @@ struct QueueRowContent: Equatable {
         artistCredit = track.artistCredit
         albumId = track.albumId
         number = Int64(position)
-        placeTemplate = String(repeating: "0", count: max(2, String(count).count))
+        placeTemplate = Numbering.zeros(String(count).count)
         codec = track.codec
         durationMs = track.durationMs
         sleeve = track.albumId.map { .album($0) } ?? .track(track.id)
@@ -153,7 +153,7 @@ struct QueueRow: View {
                     .font(.role(.fine, system: .caption.monospacedDigit()))
                     .lineLimit(1)
                     .fixedSize()
-                    .frame(minWidth: artwork || item.disc != nil ? 34 : 20, alignment: .trailing)
+                    .frame(minWidth: Numbering(widest: item.placeTemplate).minimumWidth, alignment: .trailing)
                 }
             }
 
@@ -316,6 +316,15 @@ struct QueueRow: View {
 struct Numbering {
     var discs: Set<Int64> = []
     var widest = "00"
+
+    /// A number of `digits` as zeros, never narrower than two.
+    static func zeros(_ digits: Int) -> String {
+        String(repeating: "0", count: max(2, digits))
+    }
+
+    /// Room for "2.03" where the list numbers by disc, two digits otherwise,
+    /// in the platform look; the template widens it past that.
+    var minimumWidth: CGFloat { widest.contains(".") ? 34 : 20 }
 }
 
 extension QueueRowContent {
