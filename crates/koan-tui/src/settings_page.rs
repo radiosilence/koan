@@ -1009,11 +1009,19 @@ impl Setting {
                     (c.remote.download_workers as isize + d).clamp(1, 16) as usize;
             }
             Setting::DownloadAhead => {
-                // A number past the steps, set by hand, steps from the largest.
+                // A number past the steps, set by hand, sits between the
+                // largest and the whole queue.
                 let at = DOWNLOAD_AHEAD
                     .iter()
                     .position(|n| *n == c.remote.download_ahead)
-                    .unwrap_or(DOWNLOAD_AHEAD.len() - 2) as isize;
+                    .map_or(
+                        if forward {
+                            DOWNLOAD_AHEAD.len() - 2
+                        } else {
+                            DOWNLOAD_AHEAD.len() - 1
+                        },
+                        |at| at,
+                    ) as isize;
                 // Clamped, not cycled: one step past the whole queue would
                 // otherwise give up gapless playback.
                 c.remote.download_ahead =

@@ -36,12 +36,9 @@ pub fn cmd_cache_status() {
     }
 
     let size = format_bytes(total_bytes);
-    if let Some(limit) = cfg.cache_limit_bytes() {
-        let pct = if limit > 0 {
-            (total_bytes as f64 / limit as f64 * 100.0) as u64
-        } else {
-            0
-        };
+    // A limit of nothing is no cache, not a cache over its limit.
+    if let Some(limit) = cfg.cache_limit_bytes().filter(|limit| *limit > 0) {
+        let pct = (total_bytes as f64 / limit as f64 * 100.0) as u64;
         println!(
             "{} {} / {} ({}%) {}",
             "size:".cyan(),

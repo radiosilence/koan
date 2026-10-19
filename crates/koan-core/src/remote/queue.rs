@@ -620,14 +620,15 @@ fn follow_playlist(inner: Arc<Inner>) {
         }
         if current != last_cursor {
             last_cursor = current;
-            // With no cache, what the cursor has just left is to go now, not
-            // at the next download: there may be none.
-            if config::Config::cached().cache_limit_bytes() == Some(0) {
-                trim_cache(&inner, true);
-            }
             inner.has_work.notify_all();
             if let Some(cursor_id) = current {
                 promote_cursor(&inner, cursor_id);
+            }
+            // With no cache, what the cursor has just left is to go now, not
+            // at the next download: there may be none. After the cursor's
+            // track is on its way, which waits for nothing here.
+            if config::Config::cached().cache_limit_bytes() == Some(0) {
+                trim_cache(&inner, true);
             }
         }
         seen = changed.wait(seen);

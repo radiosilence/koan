@@ -358,7 +358,11 @@ impl SettingsPage {
                 let bytes = limit
                     .as_deref()
                     .and_then(koan_core::config::parse_size_bytes);
-                if bytes.is_some_and(|b| b < self.local.cache_bytes) {
+                // Asked only when the limit comes down past what is stored.
+                let current = self.cfg.cache_limit_bytes().filter(|l| *l > 0);
+                if bytes
+                    .is_some_and(|b| b < self.local.cache_bytes && current.is_none_or(|c| b < c))
+                {
                     let (title, detail) = if bytes == Some(0) {
                         (
                             "keep only what plays next?".to_string(),

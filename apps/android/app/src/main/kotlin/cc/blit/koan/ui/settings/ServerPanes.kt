@@ -214,7 +214,10 @@ fun DownloadsPane(model: SettingsModel) {
                 model.report("A limit is a number of gigabytes, such as 50.")
             } else {
                 val limit = gigabytes(gb) + "GB"
-                if ((sizeInBytes(limit) ?: 0uL).toLong() < cacheBytes) {
+                // Asked only when the limit comes down past what is stored.
+                val bytes = (sizeInBytes(limit) ?: 0uL).toLong()
+                val current = limitBytes?.takeIf { saved == Keeping.Limited }?.toLong()
+                if (bytes < cacheBytes && (current == null || bytes < current)) {
                     pendingLimit = limit
                 } else {
                     setLimit(limit)

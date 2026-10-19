@@ -826,7 +826,9 @@ private struct RemoteSettings: View {
             return
         }
         let limit = "\(gb.formatted(.number.precision(.fractionLength(0...2)).grouping(.never).locale(Locale(identifier: "en_US_POSIX"))))GB"
-        if let bytes = sizeInBytes(text: limit), bytes < mirror.cacheBytes {
+        // Asked only when the limit comes down past what is stored.
+        let current = keeping == .limited ? sizeInBytes(text: model.settings.cacheLimit) : nil
+        if let bytes = sizeInBytes(text: limit), bytes < mirror.cacheBytes, current.map({ bytes < $0 }) ?? true {
             pendingLimit = limit
         } else {
             setLimit(limit)
