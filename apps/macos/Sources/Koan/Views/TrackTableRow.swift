@@ -39,7 +39,9 @@ extension TrackTableRow {
     /// A lead column wide enough for the longest number in a list of `count`.
     static func leadWidth(for count: Int) -> CGFloat {
         let digits = String(count).count
-        return max(22, CGFloat(digits) * 7 + 8, measure(String(repeating: "0", count: digits), numberFont))
+        // The digits measured in the face they are drawn in, with the padding
+        // the old per-digit estimate left.
+        return max(22, CGFloat(digits) * 7 + 8, measure(String(repeating: "0", count: digits), numberFont) + 3)
     }
 }
 

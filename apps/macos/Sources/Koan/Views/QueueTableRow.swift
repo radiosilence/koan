@@ -94,6 +94,7 @@ final class QueueTableRow: TableCell, TableRow {
     private let shade = CALayer()
     private let sleeve = CALayer()
     private let number = NSTextField(labelWithString: "")
+    private var placeTemplate = ""
     private var wideNumber = false
     private let title = NSTextField(labelWithString: "")
     private let artist = NSTextField(labelWithString: "")
@@ -169,6 +170,7 @@ final class QueueTableRow: TableCell, TableRow {
             album.stringValue = !showArtist || content.artist.isEmpty || !artwork ? "" : content.album
             number.stringValue = content.place
             wideNumber = content.disc != nil
+            placeTemplate = content.placeTemplate
             codec.stringValue = content.codec?.uppercased() ?? ""
             duration.stringValue = content.durationMs.map { Format.duration($0) } ?? ""
             showSleeve(artwork ? content.sleeve : nil, art: context.art, corner: 3)
@@ -400,14 +402,9 @@ final class QueueTableRow: TableCell, TableRow {
             x += side + 10
         } else {
             let numberHeight = lineHeight(Self.numberFont)
-            // Wide enough for a disc's "2.03" where its record carries discs,
-            // the same for every row of it so the titles line up; a longer
-            // place ("10.03", "123") widens only its own row.
-            let numberWidth = max(
-                wideNumber ? 34 : 20,
-                TrackTableRow.measure(wideNumber ? "0.00" : "00", Self.numberFont),
-                TrackTableRow.measure(number.stringValue, Self.numberFont)
-            )
+            // Wide enough for the widest place in the list, the same for
+            // every row so the titles line up.
+            let numberWidth = max(wideNumber ? 34 : 20, TrackTableRow.measure(placeTemplate, Self.numberFont))
             number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: numberWidth, height: numberHeight)
             x += numberWidth + 10
         }

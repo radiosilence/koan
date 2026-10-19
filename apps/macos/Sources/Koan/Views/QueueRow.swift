@@ -41,9 +41,10 @@ struct QueueRowContent: Equatable {
     /// row behind it, which draws no mark rather than a guessed one.
     var onServer = false
     var onDisk = false
-    /// `discs` holds the records whose tracks in the list run past disc 1
-    /// (`QueueView.multiDisc`).
-    init(item: QueueItem, discs: Set<Int64> = []) {
+    /// The widest place in the list, its digits as zeros. The number column
+    /// is sized to it, so every row's title lines up in any face and size.
+    var placeTemplate = "00"
+    init(item: QueueItem, numbering: Numbering = Numbering()) {
         trackId = item.trackId
         title = item.title
         artist = item.artist
@@ -51,7 +52,8 @@ struct QueueRowContent: Equatable {
         artistCredit = item.artistCredit
         albumId = item.albumId
         number = item.trackNumber
-        if let album = item.albumId, discs.contains(album) { disc = item.disc ?? 1 }
+        if let album = item.albumId, numbering.discs.contains(album) { disc = item.disc ?? 1 }
+        placeTemplate = numbering.widest
         codec = item.codec
         durationMs = item.durationMs.map(Int64.init)
         sleeve = item.sleeve
@@ -73,7 +75,7 @@ struct QueueRowContent: Equatable {
     /// Only the *live* states are mirrored — playing, fetching, failed. A
     /// playlist is not a queue, so "queued" and "played" say nothing about the
     /// track in front of you and would dot or dim half the list.
-    init(entry: PlaylistEntry, position: Int, queued: QueueItem?, isCurrent: Bool) {
+    init(entry: PlaylistEntry, position: Int, of count: Int, queued: QueueItem?, isCurrent: Bool) {
         let track = entry.track
         trackId = track.id
         title = track.title
@@ -82,6 +84,7 @@ struct QueueRowContent: Equatable {
         artistCredit = track.artistCredit
         albumId = track.albumId
         number = Int64(position)
+        placeTemplate = String(repeating: "0", count: max(2, String(count).count))
         codec = track.codec
         durationMs = track.durationMs
         sleeve = track.albumId.map { .album($0) } ?? .track(track.id)
@@ -142,10 +145,8 @@ struct QueueRow: View {
                     // Always occupies its column, number or not: a missing track
                     // number would otherwise shift the title left and break the
                     // alignment down the list.
-                    // The hidden template holds the column at "2.03" or "00"
-                    // in whichever face and size the text is drawn in.
                     ZStack(alignment: .trailing) {
-                        Text(artwork || item.disc != nil ? "0.00" : "00").hidden()
+                        Text(item.placeTemplate).hidden()
                         Text(item.place)
                             .foregroundStyle(played ? .quaternary : .tertiary)
                     }
@@ -308,6 +309,13 @@ struct QueueRow: View {
             #endif
         }
     }
+}
+
+/// How a list numbers its rows: the records that number by disc and track,
+/// and the widest place among them (`QueueRowContent.placeTemplate`).
+struct Numbering {
+    var discs: Set<Int64> = []
+    var widest = "00"
 }
 
 extension QueueRowContent {
