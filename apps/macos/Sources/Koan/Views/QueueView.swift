@@ -195,9 +195,9 @@ struct QueueView: View {
                 drag: { line in
                     switch line.kind {
                     case .track(let content, _, _, _):
-                        content.trackId.map { PlayableTransfer(kind: .track, id: $0, name: content.title) }
+                        content.trackId.map { PlayableTransfer(kind: .track, id: $0, name: content.title, fromQueue: true) }
                     case .heading(let heading):
-                        heading.albumId.map { PlayableTransfer(kind: .album, id: $0, name: heading.title) }
+                        heading.albumId.map { PlayableTransfer(kind: .album, id: $0, name: heading.title, fromQueue: true) }
                     }
                 },
                 covered: { dragged in

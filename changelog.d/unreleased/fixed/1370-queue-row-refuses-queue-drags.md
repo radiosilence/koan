@@ -1,0 +1,1 @@
+- **Queue rows overshooting onto the sidebar no longer duplicate.** On the Mac, rows dragged out of the queue and dropped on the sidebar's Queue row are ignored instead of added to the queue a second time; drags from anywhere else still add there.
