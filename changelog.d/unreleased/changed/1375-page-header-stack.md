@@ -1,0 +1,1 @@
+- **Record, artist and playlist headers on the Mac put Play and Shuffle on top.** They sit level with the sleeve, with the title on a line of its own below them, then the credit, then the lesser actions.

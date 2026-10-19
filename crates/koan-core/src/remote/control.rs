@@ -726,6 +726,7 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         | PlayerCommand::StreamProbed { .. }
         | PlayerCommand::TrackFailed(_)
         | PlayerCommand::CacheTracks(_)
+        | PlayerCommand::SignedOut
         | PlayerCommand::DecodeFinished(_)
         | PlayerCommand::TrackQueued
         | PlayerCommand::SetOutputDevice(_)

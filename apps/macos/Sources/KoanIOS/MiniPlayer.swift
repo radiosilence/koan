@@ -40,13 +40,12 @@ struct MiniPlayer: View {
                             .lineLimit(1)
                     }
                 } else if player.resolving == nil, let entry, !entry.artist.isEmpty {
-                    // Links, as in the transport bar; the rest of the bar opens
-                    // Now Playing.
-                    ArtistAlbumLine(
-                        artist: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
-                        album: entry.album,
-                        albumId: player.currentAlbumId
-                    )
+                    // Plain text: the bar is too small a target to share with
+                    // links. Now Playing has them.
+                    Text(entry.album.isEmpty ? entry.artist : "\(entry.artist) · \(entry.album)")
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                        .lineLimit(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

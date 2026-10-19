@@ -100,9 +100,12 @@ enum EvidenceRenderer {
             windows.append(("window-album", { nav.open(album: album) }))
         }
         // Pages that need to be told which record, artist, playlist or query:
-        // `KOAN_RENDER_ARTIST` and `KOAN_RENDER_PLAYLIST` are row ids, and
-        // `KOAN_RENDER_SEARCH` the text typed into the field.
+        // `KOAN_RENDER_ALBUM`, `KOAN_RENDER_ARTIST` and `KOAN_RENDER_PLAYLIST`
+        // are row ids, and `KOAN_RENDER_SEARCH` the text typed into the field.
         let environment = ProcessInfo.processInfo.environment
+        if let album = environment["KOAN_RENDER_ALBUM"].flatMap({ Int64($0) }) {
+            windows.append(("window-album-\(album)", { nav.open(album: album) }))
+        }
         if let artist = environment["KOAN_RENDER_ARTIST"].flatMap({ Int64($0) }) {
             windows.append(("window-artist", { nav.open(artist: artist) }))
         }

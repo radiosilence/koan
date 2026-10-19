@@ -2339,6 +2339,7 @@ impl Player {
                     | PlayerCommand::PauseAndReport(_)
                     | PlayerCommand::Stop
                     | PlayerCommand::ClearPlaylist
+                    | PlayerCommand::SignedOut
                     | PlayerCommand::ReplacePlaylist { .. }
             )
         {
@@ -2453,6 +2454,13 @@ impl Player {
                 self.push_undo(UndoEntry::Inserted { ids });
             }
             PlayerCommand::ClearPlaylist => self.clear_playlist(),
+            PlayerCommand::SignedOut => {
+                self.clear_playlist();
+                match &self.downloads {
+                    Some(downloads) => downloads.forget(),
+                    None => self.shared_state.downloads().forget_all(),
+                }
+            }
             PlayerCommand::ReplacePlaylist {
                 items,
                 start,

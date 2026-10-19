@@ -198,6 +198,17 @@ final class SettingsModel {
                 lastResult = "Signed in to \(url)"
             case .failure(let e):
                 lastError = Self.describe(e)
+                reload()
+                return
+            }
+            reload()
+            let synced = await activity.run(
+                "Loading the library", uses: [.remoteTracks], followsSync: true
+            ) {
+                try await engine.syncRemote()
+            }
+            if case .failure(let e) = synced {
+                lastError = "Signed in, but the library did not load: \(Self.describe(e))"
             }
             reload()
         }

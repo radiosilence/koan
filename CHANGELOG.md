@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Invite QR codes in the web UI.** The invite panel shows the link as a QR code, so a phone beside the screen can join by scanning it.
+- **Sort albums by year, oldest first.** Every album browser now offers the year order in both directions, so a filtered listing can be played or queued in the order the records came out.
+- **Playlists reorder by drag on iOS and Android.** Press and drag on iOS, in the Playlists page and the iPad sidebar; Edit on Android's Playlists page puts a handle on each row. The order is kept per device, as the Mac's is.
+- **Protocol reference.** A Protocol section in the docs specifies the link between the apps and the server, nearby connections, pairing and invites, each of kōan's OpenSubsonic extensions, and the rules that keep old and new versions working together, for anyone writing a client or server that speaks it.
+
+### Changed
+
+- **Lossy tracks show their bitrate.** Track rows read "MP3 320 kbps" rather than "MP3 44.1 kHz", since the encoder setting says more about a lossy file than its sample rate. The transport badge keeps the rate, which is what the device is matched to.
+- **Notifications only from servers that can send them.** The iOS app asks to show notifications only on a server listing `koanApns`, which a server does when `[push]` holds an APNs key. Apple accepts pushes only signed by the app developer's team, so on any other server the prompt was noise.
+- **Record, artist and playlist headers on the Mac put Play and Shuffle on top.** They sit level with the sleeve, with the title on a line of its own below them, then the credit, then the lesser actions.
+- **Android names its artists and albums as links.** Track rows, record headings, history, downloads and search open the artist or record a row names, as the Apple apps and the web UI do, and every detail line reads "Artist · Album".
+
+### Removed
+
+- **The sleep timer guide page.** One menu does not need a page.
+
+### Fixed
+
+- **Disc, track and playlist numbers fit.** The number column in the queue, playlists and album pages is sized to the widest number in the list, measured in its font, so "2.03" and playlist positions past 99 are no longer cut off in the kōan theme or at larger text sizes.
+- **Queue rows overshooting onto the sidebar no longer duplicate.** On the Mac, rows dragged out of the queue and dropped on the sidebar's Queue row are ignored instead of added to the queue a second time; drags from anywhere else still add there.
+- **Mac playlists move when dragged down.** A playlist dropped on a row below it takes that row's place; before, a drag of one row down did nothing and longer ones landed a row short.
+- **Downloads on iPhone lay out properly.** The artist and record now sit on their own line, where they squeezed the status and *Show in Library* down to a glyph wide and stretched every row.
+- **The iPhone mini player is one tap target again.** Its artist and record are plain text rather than links, which made the bar hard to tap without leaving the page; Now Playing keeps the links.
+- **Signing in with a password loads the library on the Mac and iPhone.** It synced only when joining with an invite, so a fresh sign-in showed an empty library until a manual sync.
+- **Signing out clears the queue and downloads.** The queue held tracks from a server this device can no longer reach, and its transfers, queued or running, kept going; both are dropped on signing out, in the apps and the terminal UI alike. The synced library still stays.
+- **Commands from newer versions are answered.** A device, a nearby device or the server that cannot read a command sent with an id now refuses it, so the sender is not left waiting and the server no longer takes the device for gone. Pairing passes over messages from a newer server instead of failing.
+
+### Internal
+
+- **Pairing documented against RFC 8628.** The authentication guide maps pairing onto the device authorization grant and says why its protocol differs: an API key rather than an OAuth token, LAN-only servers, and a pushed outcome.
+
 ## 0.65.1
 
 ### Added
@@ -753,7 +788,7 @@ The library database moves from schema 19 to 20 (new tables for Subsonic saved p
 
 ### Changed
 
-- **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it. See [Sleep timer](docs/guide/sleep-timer.md#the-fade).
+- **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it.
 
 ### Fixed
 
@@ -799,7 +834,7 @@ The library database moves from schema 16 to 19 (new tables for ratings, bookmar
 - **Hearts in the web UI.** Tracks, records and artists can be favourited from the browser: a heart on every track row, record tile, album and artist page. It is the same favourite the apps and the Subsonic API's `star` make, per account, so the account's apps pick it up at once. Read-only accounts see no hearts.
 - **A track menu in the web UI.** Right-click a track row, or press and hold it on a phone, for what the apps' context menu offers: Play, Play Next, Add to Queue, favourite, share, Go to Album and Go to Artist. On a phone a row shows only a ⋯ button for it, so its title has the width.
 - **History in the web UI.** What the signed-in account has played, most recent first, grouped by day in the browser's own time zone. Tick plays and forget them, as in the apps; only the account's own plays can be forgotten.
-- **Sleep timer** ([#795](https://github.com/radiosilence/koan/issues/795)). Stop playback after 15, 30, 45 or 60 minutes, fading out over a few seconds, or at the end of the track or record playing. It pauses rather than clearing the queue, so playing again carries on from there. The timer is the player's, so it holds while iOS suspends the app, and it is set on the device playing: a phone controlling a Mac sets the Mac's, over the link. From the moon in the Mac and iOS transport, `T` in the terminal UI, and `setSleepTimerOnClient` for assistants. See [Sleep timer](docs/guide/sleep-timer.md).
+- **Sleep timer** ([#795](https://github.com/radiosilence/koan/issues/795)). Stop playback after 15, 30, 45 or 60 minutes, fading out over a few seconds, or at the end of the track or record playing. It pauses rather than clearing the queue, so playing again carries on from there. The timer is the player's, so it holds while iOS suspends the app, and it is set on the device playing: a phone controlling a Mac sets the Mac's, over the link. From the moon in the Mac and iOS transport, `T` in the terminal UI, and `setSleepTimerOnClient` for assistants.
 - **Scrobbling to ListenBrainz.** Each account can connect ListenBrainz on the web UI's Scrobbling page, under Account, by pasting its user token. The server then sends the account's existing history, and from then on every play kōan's apps and other Subsonic clients report, with now-playing notices; no client needs configuring. Plays wait in the database until ListenBrainz accepts them, so an outage or restart delays them rather than losing them. The library database moves to schema 19 for the new `scrobble_services` and `scrobble_outbox` tables; a build older than this one refuses it.
 - **Smart playlists.** A playlist can hold whatever matches a set of rules instead of a list: text, number and date conditions over title, artists, album, genre, format, path, year, duration, bit depth, sample rate, play count, last played, date added and favourites, grouped with all/any, sorted (or shuffled) and limited. Plays and favourites are the owner's. kōan evaluates the rules when the playlist is read, at most once a minute (a random order once a day), and at once when a scrobble or a favourite the rules read reaches the server, telling linked devices to pull; it rewrites its contents only when they change, keeping entry ids so a queue following it keeps its place. Every client sees an ordinary playlist that cannot be edited: Subsonic apps get OpenSubsonic's `readonly`, kōan's apps refuse drops, removals and reorders and leave it out of Add to Playlist. Made with `createSmartPlaylist` and changed with `setPlaylistRules` over GraphQL, so an assistant connected over MCP can make one, or read from Navidrome `.nsp` files in the library folders, which scans and the folder watcher pick up; the file names the playlist and decides its rules, so neither is edited in kōan. A playlist a Subsonic server marks read-only is mirrored read-only and never pushed back. The library database moves to schema 19 for the playlist columns; a build older than this one refuses it. See [Smart playlists](docs/guide/smart-playlists.md).
 - **M3U playlists in the library folders are imported.** `.m3u` and `.m3u8` files become playlists of the tracks they list, with paths relative to the file, absolute or `file://`, Windows separators understood, plain `.m3u` read as Latin-1 when it is not UTF-8 and UTF-16 read behind a byte order mark. Entries naming tracks not yet indexed fill in after the scan that adds them. The file decides what the playlist holds: scans and the folder watcher follow its changes, deleting it deletes the playlist, and the playlist cannot be renamed or edited from any client. See [Smart playlists](docs/guide/smart-playlists.md#m3u-files).

@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The head of a page: a cover if the page has one, then the title with any
-/// play controls on its line, a line of detail under it — a count, a credit —
-/// and the page's lesser actions below that. Whatever acts on the page as a
-/// whole trails.
+/// The head of a page: a cover if the page has one, then any play controls
+/// level with its top, the title on a line of its own, a line of detail under
+/// it — a count, a credit — and the page's lesser actions below that.
+/// Whatever acts on the page as a whole trails.
 ///
 /// One layout for records, artists, playlists and the library's own pages, so
 /// the title, its count and its actions are in the same places wherever you
@@ -49,18 +49,16 @@ struct PageHeader<Art: View, Lead: View, Detail: View, Actions: View, Trailing: 
         HStack(alignment: .top, spacing: 18) {
             art
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .headerCentre, spacing: pageTitleGap) {
-                    lead
-                    Text(title)
-                        .textCase(appWords && KoanTheme.isOn ? .lowercase : nil)
-                        .font(.role(role, system: .system(size: systemSize, weight: .semibold)))
-                        .headerTitleCentre(role, systemSize: systemSize)
-                        .foregroundStyle(KoanTheme.style(.strong, system: .primary))
-                        .lineLimit(2)
-                        // Beside the play button the row offers one line's
-                        // height; asked for two, it has to be let grow.
-                        .fixedSize(horizontal: false, vertical: true)
+                if Lead.self != EmptyView.self {
+                    HStack(spacing: 12) { lead }
+                        .padding(.bottom, 8)
                 }
+                Text(title)
+                    .textCase(appWords && KoanTheme.isOn ? .lowercase : nil)
+                    .font(.role(role, system: .system(size: systemSize, weight: .semibold)))
+                    .foregroundStyle(KoanTheme.style(.strong, system: .primary))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if Detail.self != EmptyView.self {
                     detail
                         .font(.role(.control, system: .callout))
@@ -78,8 +76,6 @@ struct PageHeader<Art: View, Lead: View, Detail: View, Actions: View, Trailing: 
 
 #if os(tvOS)
 let pageTitleSize: CGFloat = 48
-private let pageTitleGap: CGFloat = 32
 #else
 let pageTitleSize: CGFloat = 26
-private let pageTitleGap: CGFloat = 12
 #endif

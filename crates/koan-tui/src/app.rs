@@ -1767,6 +1767,14 @@ impl App {
                 copy_to_clipboard(&text);
                 self.say("copied");
             }
+            Outcome::SignedOut { forget } => {
+                self.local_tx.send(PlayerCommand::SignedOut).ok();
+                if forget {
+                    self.run_task(Task::ForgetRemote);
+                } else {
+                    self.say("signed out");
+                }
+            }
         }
     }
 

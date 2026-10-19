@@ -1,0 +1,1 @@
+- **The iPhone mini player is one tap target again.** Its artist and record are plain text rather than links, which made the bar hard to tap without leaving the page; Now Playing keeps the links.
