@@ -29,9 +29,8 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
     /// Where the drag started, when that matters.
     ///
     /// A track dragged out of a playlist is still just a track — the queue
-    /// wants its id and nothing else. Dropped back into the playlist it came
-    /// from it is a *move*, and since a playlist may hold the same track twice,
-    /// only the position says which copy moved.
+    /// wants its id and nothing else. The playlist it came from reorders it
+    /// itself, and leaves it out of any drop that would add it back as a copy.
     var origin: Origin?
     /// Its place among the items of one drag. A drop hands its items over in
     /// whatever order they finished loading, so the order they were dragged in
@@ -40,7 +39,6 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
     struct Origin: Codable, Hashable {
         let playlistId: Int64
-        let position: Int
     }
 
     static var transferRepresentation: some TransferRepresentation {

@@ -144,10 +144,6 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
-        var accepted: [NSPasteboard.PasteboardType] = []
-        if move != nil { accepted.append(.koanRow) }
-        if accept != nil { accepted.append(NSPasteboard.PasteboardType(UTType.koanPlayable.identifier)) }
-        if !accepted.isEmpty { table.registerForDraggedTypes(accepted) }
 
         let scroll = PageScrollView()
         scroll.documentView = table
@@ -167,6 +163,17 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         scroll.pageInsets = NSEdgeInsets(
             top: 0, left: insets.leading, bottom: insets.bottom, right: insets.trailing
         )
+        // Here rather than once: one table can go from a playlist that cannot
+        // be reordered to one that can.
+        if let table = scroll.documentView as? NSTableView {
+            var accepted: [NSPasteboard.PasteboardType] = []
+            if move != nil { accepted.append(.koanRow) }
+            if accept != nil { accepted.append(NSPasteboard.PasteboardType(UTType.koanPlayable.identifier)) }
+            if Set(table.registeredDraggedTypes) != Set(accepted) {
+                table.unregisterDraggedTypes()
+                if !accepted.isEmpty { table.registerForDraggedTypes(accepted) }
+            }
+        }
         context.coordinator.update(self, environment: context.environment)
     }
 
