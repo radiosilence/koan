@@ -2,9 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- **Invite QR codes in the web UI.** The invite panel shows the link as a QR code, so a phone beside the screen can join by scanning it.
+- **Sort albums by year, oldest first.** Every album browser now offers the year order in both directions, so a filtered listing can be played or queued in the order the records came out.
+- **Playlists reorder by drag on iOS and Android.** Press and drag on iOS, in the Playlists page and the iPad sidebar; Edit on Android's Playlists page puts a handle on each row. The order is kept per device, as the Mac's is.
+- **Protocol reference.** A Protocol section in the docs specifies the link between the apps and the server, nearby connections, pairing and invites, each of kōan's OpenSubsonic extensions, and the rules that keep old and new versions working together, for anyone writing a client or server that speaks it.
+
 ### Changed
 
+- **Lossy tracks show their bitrate.** Track rows read "MP3 320 kbps" rather than "MP3 44.1 kHz", since the encoder setting says more about a lossy file than its sample rate. The transport badge keeps the rate, which is what the device is matched to.
+- **Notifications only from servers that can send them.** The iOS app asks to show notifications only on a server listing `koanApns`, which a server does when `[push]` holds an APNs key. Apple accepts pushes only signed by the app developer's team, so on any other server the prompt was noise.
 - **Record, artist and playlist headers on the Mac put Play and Shuffle on top.** They sit level with the sleeve, with the title on a line of its own below them, then the credit, then the lesser actions.
+- **Android names its artists and albums as links.** Track rows, record headings, history, downloads and search open the artist or record a row names, as the Apple apps and the web UI do, and every detail line reads "Artist · Album".
 
 ### Removed
 
@@ -12,10 +22,18 @@
 
 ### Fixed
 
+- **Disc, track and playlist numbers fit.** The number column in the queue, playlists and album pages is sized to the widest number in the list, measured in its font, so "2.03" and playlist positions past 99 are no longer cut off in the kōan theme or at larger text sizes.
+- **Queue rows overshooting onto the sidebar no longer duplicate.** On the Mac, rows dragged out of the queue and dropped on the sidebar's Queue row are ignored instead of added to the queue a second time; drags from anywhere else still add there.
+- **Mac playlists move when dragged down.** A playlist dropped on a row below it takes that row's place; before, a drag of one row down did nothing and longer ones landed a row short.
 - **Downloads on iPhone lay out properly.** The artist and record now sit on their own line, where they squeezed the status and *Show in Library* down to a glyph wide and stretched every row.
 - **The iPhone mini player is one tap target again.** Its artist and record are plain text rather than links, which made the bar hard to tap without leaving the page; Now Playing keeps the links.
 - **Signing in with a password loads the library on the Mac and iPhone.** It synced only when joining with an invite, so a fresh sign-in showed an empty library until a manual sync.
 - **Signing out clears the queue and downloads.** The queue held tracks from a server this device can no longer reach, and its transfers, queued or running, kept going; both are dropped on signing out, in the apps and the terminal UI alike. The synced library still stays.
+- **Commands from newer versions are answered.** A device, a nearby device or the server that cannot read a command sent with an id now refuses it, so the sender is not left waiting and the server no longer takes the device for gone. Pairing passes over messages from a newer server instead of failing.
+
+### Internal
+
+- **Pairing documented against RFC 8628.** The authentication guide maps pairing onto the device authorization grant and says why its protocol differs: an API key rather than an OAuth token, LAN-only servers, and a pushed outcome.
 
 ## 0.65.1
 
