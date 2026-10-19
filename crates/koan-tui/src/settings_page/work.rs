@@ -359,7 +359,7 @@ impl SettingsPage {
                     .as_deref()
                     .and_then(koan_core::config::parse_size_bytes);
                 // Asked only when the limit comes down past what is stored.
-                let current = self.cfg.cache_limit_bytes().filter(|l| *l > 0);
+                let current = self.cfg.cache_limit_bytes();
                 if bytes
                     .is_some_and(|b| b < self.local.cache_bytes && current.is_none_or(|c| b < c))
                 {

@@ -216,7 +216,7 @@ fun DownloadsPane(model: SettingsModel) {
                 val limit = gigabytes(gb) + "GB"
                 // Asked only when the limit comes down past what is stored.
                 val bytes = (sizeInBytes(limit) ?: 0uL).toLong()
-                val current = limitBytes?.takeIf { saved == Keeping.Limited }?.toLong()
+                val current = limitBytes?.takeIf { saved != Keeping.Unlimited }?.toLong()
                 if (bytes < cacheBytes && (current == null || bytes < current)) {
                     pendingLimit = limit
                 } else {
