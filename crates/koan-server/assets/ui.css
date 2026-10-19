@@ -343,10 +343,6 @@
     width: calc(var(--spacing) * 11);
     height: calc(var(--spacing) * 11);
   }
-  .size-48 {
-    width: calc(var(--spacing) * 48);
-    height: calc(var(--spacing) * 48);
-  }
   .size-\[0\.8em\] {
     width: 0.8em;
     height: 0.8em;
@@ -1063,10 +1059,6 @@
   }
   .\[\&_dt\]\:text-muted dt {
     color: var(--muted);
-  }
-  .\[\&_svg\]\:size-full svg {
-    width: 100%;
-    height: 100%;
   }
   .\[\&\.missing\]\:visible.missing {
     visibility: visible;
