@@ -976,7 +976,12 @@ fn start_player(
     server: Option<String>,
 ) {
     let cfg = koan_core::config::Config::load_or_default();
-    commands::evict_cache(&cfg, false);
+    // With no cache, everything over the limit is everything: the restored
+    // queue's files would go before it plays. The download queue trims around
+    // the queue instead, once it has one.
+    if cfg.cache_limit_bytes() != Some(0) {
+        commands::evict_cache(&cfg, false);
+    }
 
     if let Some(ref url) = server {
         commands::cmd_play_remote(url);

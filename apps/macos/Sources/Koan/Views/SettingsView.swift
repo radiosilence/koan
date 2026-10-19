@@ -479,6 +479,11 @@ private struct RemoteSettings: View {
     /// not a limit anyone set.
     @State private var cacheLimit: String?
     @FocusState private var cacheLimitFocused: Bool
+    /// "Up to a limit" chosen and no limit typed yet: nothing is written, and
+    /// nothing deleted, until there is a number.
+    @State private var choosingLimit = false
+    /// A change to the cache that deletes files, waiting to be confirmed.
+    @State private var pendingLimit: String?
 
     private func join(_ text: String) {
         guard let invite = state.engine.parseInvite(link: text) else {
@@ -672,19 +677,19 @@ private struct RemoteSettings: View {
                         set: { v in model.edit { $0.downloadAhead = v < 0 ? nil : UInt32(v) } }
                     ),
                     options: [("Playing track only", 0), ("1 track", 1)]
-                        + (2...10).map { ("\($0) tracks", $0) }
+                        + (2...max(10, Int(model.settings.downloadAhead ?? 0))).map { ("\($0) tracks", $0) }
                         + [("Whole queue", -1)]
                 )
                 KoanPicker(
                     "Keep downloads",
-                    selection: Binding(get: { keeping }, set: keep),
+                    selection: Binding(get: { shownKeeping }, set: keep),
                     options: [
                         ("Up to a limit", CacheKeeping.limited),
                         ("Without limit", .unlimited),
                         ("Only what plays next", .off),
                     ]
                 )
-                if keeping == .limited {
+                if shownKeeping == .limited {
                     LabeledContent("Limit in GB") {
                         TextField("Limit in GB", text: Binding(
                             get: { cacheLimit ?? limitGB },
@@ -726,6 +731,20 @@ private struct RemoteSettings: View {
             username = model.settings.remoteUsername
         }
         .confirmationDialog(
+            pendingLimit == "0" ? "Keep only what plays next?" : "Lower the limit to \(pendingLimit ?? "")?",
+            isPresented: Binding(get: { pendingLimit != nil }, set: { if !$0 { pendingLimit = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Downloads", role: .destructive) {
+                if let limit = pendingLimit { setLimit(limit) }
+            }
+            Button("Cancel", role: .cancel) { pendingLimit = nil }
+        } message: {
+            Text(pendingLimit == "0"
+                ? "Tracks fetched to play that are not in the queue ahead are deleted now. Downloads you asked for and favourite records stay."
+                : "Downloads over the limit are deleted now, the tracks played longest ago first. Favourite records stay.")
+        }
+        .confirmationDialog(
             "Sign out of \(model.settings.remoteUrl)?",
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
@@ -756,15 +775,29 @@ private struct RemoteSettings: View {
         return (Double(bytes) / 1_073_741_824).formatted(.number.precision(.fractionLength(0...2)).grouping(.never))
     }
 
-    private func keep(_ keeping: CacheKeeping) {
+    /// The choice as the picker shows it: a limit being typed counts as one.
+    private var shownKeeping: CacheKeeping {
+        choosingLimit ? .limited : keeping
+    }
+
+    private func keep(_ choice: CacheKeeping) {
+        guard choice != shownKeeping else { return }
         cacheLimit = nil
-        model.edit {
-            switch keeping {
-            case .limited: $0.cacheLimit = "10GB"
-            case .unlimited: $0.cacheLimit = ""
-            case .off: $0.cacheLimit = "0"
-            }
+        switch choice {
+        case .limited:
+            choosingLimit = true
+            cacheLimitFocused = true
+        case .unlimited:
+            setLimit("")
+        case .off:
+            pendingLimit = "0"
         }
+    }
+
+    private func setLimit(_ limit: String) {
+        choosingLimit = false
+        pendingLimit = nil
+        if limit != model.settings.cacheLimit { model.edit { $0.cacheLimit = limit } }
     }
 
     private var downloadsNote: String {
@@ -772,7 +805,7 @@ private struct RemoteSettings: View {
         if model.settings.downloadAhead == 0 {
             lines.append("Nothing plays gaplessly, and each track waits for its download before it starts.")
         }
-        switch keeping {
+        switch shownKeeping {
         case .off: lines.append("Tracks are deleted once played. Downloads you ask for and favourite records stay.")
         case .limited: lines.append("Past the limit, the tracks played longest ago are deleted first. Favourite records stay.")
         case .unlimited: break
@@ -784,12 +817,18 @@ private struct RemoteSettings: View {
         guard let draft = cacheLimit else { return }
         cacheLimit = nil
         let typed = draft.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
-        guard let gb = Double(typed), gb > 0 else {
+        if typed.isEmpty { return }
+        // Two places, as the limit is written: less would round to no cache.
+        guard let gb = Double(typed), gb >= 0.01 else {
             model.report("A limit is a number of gigabytes, such as 50.")
             return
         }
         let limit = "\(gb.formatted(.number.precision(.fractionLength(0...2)).grouping(.never).locale(Locale(identifier: "en_US_POSIX"))))GB"
-        if limit != model.settings.cacheLimit { model.edit { $0.cacheLimit = limit } }
+        if let bytes = sizeInBytes(text: limit), bytes < mirror.cacheBytes {
+            pendingLimit = limit
+        } else {
+            setLimit(limit)
+        }
     }
 }
 

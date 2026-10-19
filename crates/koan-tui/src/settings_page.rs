@@ -801,7 +801,7 @@ impl SettingsPage {
             }
             Step::Setting(setting) => {
                 let wrote = self.persist(|c| setting.step(c, forward));
-                if setting == Setting::DownloadAhead {
+                if setting == Setting::DownloadAhead && wrote.is_ok() {
                     koan_core::remote::queue::cache_limit_changed();
                 }
                 Some(match wrote {
@@ -1007,10 +1007,11 @@ impl Setting {
                     (c.remote.download_workers as isize + d).clamp(1, 16) as usize;
             }
             Setting::DownloadAhead => {
+                // A number past the steps, set by hand, steps from the largest.
                 let at = DOWNLOAD_AHEAD
                     .iter()
                     .position(|n| *n == c.remote.download_ahead)
-                    .unwrap_or(DOWNLOAD_AHEAD.len() - 1) as isize;
+                    .unwrap_or(DOWNLOAD_AHEAD.len() - 2) as isize;
                 c.remote.download_ahead =
                     DOWNLOAD_AHEAD[(at + d).rem_euclid(DOWNLOAD_AHEAD.len() as isize) as usize];
             }

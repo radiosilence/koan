@@ -2,7 +2,6 @@ package cc.blit.koan.ui.settings
 
 import android.text.format.DateUtils
 import android.text.format.Formatter
-import java.util.Locale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +28,7 @@ import cc.blit.koan.ffi.SyncPhase
 import cc.blit.koan.ffi.SyncProgress
 import cc.blit.koan.ffi.sizeInBytes
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.playlists.ConfirmDialog
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanField
@@ -38,6 +38,7 @@ import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
+import java.util.Locale
 
 /** The server signed in to, syncing it, signing out, and what it offers. */
 @Composable
@@ -184,23 +185,39 @@ fun DownloadsPane(model: SettingsModel) {
     // The limit as typed, committed whole: "5" on the way to "50" is not a
     // limit anyone set.
     var draft by rememberSaveable { mutableStateOf<String?>(null) }
+    // "Up to a limit" chosen and no limit typed yet: nothing is written, and
+    // nothing deleted, until there is a number.
+    var choosingLimit by rememberSaveable { mutableStateOf(false) }
+    // A change to the cache that deletes files, waiting to be confirmed.
+    var pendingLimit by rememberSaveable { mutableStateOf<String?>(null) }
     val s = state.settings ?: return SettingsPage(Pane.Downloads.title, state) {}
     // Read as the core reads it: none set is no limit, a limit of nothing no cache.
     val limitBytes = s.cacheLimit.takeIf { it.isNotBlank() }?.let { sizeInBytes(it) }
     val keeping = when {
+        choosingLimit -> Keeping.Limited
         s.cacheLimit.isBlank() -> Keeping.Unlimited
         limitBytes == 0uL -> Keeping.Off
         else -> Keeping.Limited
     }
+    val setLimit = { limit: String ->
+        choosingLimit = false
+        pendingLimit = null
+        if (limit != s.cacheLimit) model.edit { it.copy(cacheLimit = limit) }
+    }
     val limitGb = limitBytes?.takeIf { it > 0uL }?.let { "%.2f".format(Locale.ROOT, it.toDouble() / GIB).trimEnd('0').trimEnd('.') }.orEmpty()
     val commit = {
-        draft?.let { typed ->
-            val gb = typed.trim().replace(',', '.').toDoubleOrNull()
-            if (gb == null || gb <= 0) {
+        draft?.trim()?.replace(',', '.')?.takeIf { it.isNotEmpty() }?.let { typed ->
+            val gb = typed.toDoubleOrNull()
+            // Two places, as the limit is written: less would round to no cache.
+            if (gb == null || gb < 0.01) {
                 model.report("A limit is a number of gigabytes, such as 50.")
             } else {
                 val limit = "%.2f".format(Locale.ROOT, gb).trimEnd('0').trimEnd('.') + "GB"
-                if (limit != s.cacheLimit) model.edit { it.copy(cacheLimit = limit) }
+                if ((sizeInBytes(limit) ?: 0uL).toLong() < cacheBytes) {
+                    pendingLimit = limit
+                } else {
+                    setLimit(limit)
+                }
             }
         }
         draft = null
@@ -243,7 +260,9 @@ fun DownloadsPane(model: SettingsModel) {
             ChoiceRow(
                 "Download ahead",
                 s.downloadAhead?.toInt() ?: -1,
-                listOf("Playing track only" to 0, "1 track" to 1) + (2..10).map { "$it tracks" to it } + ("Whole queue" to -1),
+                listOf("Playing track only" to 0, "1 track" to 1) +
+                    (2..maxOf(10, s.downloadAhead?.toInt() ?: 0)).map { "$it tracks" to it } +
+                    ("Whole queue" to -1),
             ) { n -> model.edit { it.copy(downloadAhead = n.takeIf { it >= 0 }?.toUInt()) } }
         }
         item {
@@ -252,15 +271,12 @@ fun DownloadsPane(model: SettingsModel) {
                 keeping,
                 listOf("Up to a limit" to Keeping.Limited, "Without limit" to Keeping.Unlimited, "Only what plays next" to Keeping.Off),
             ) { k ->
+                if (k == keeping) return@ChoiceRow
                 draft = null
-                model.edit {
-                    it.copy(
-                        cacheLimit = when (k) {
-                            Keeping.Limited -> "10GB"
-                            Keeping.Unlimited -> ""
-                            Keeping.Off -> "0"
-                        },
-                    )
+                when (k) {
+                    Keeping.Limited -> { choosingLimit = true }
+                    Keeping.Unlimited -> setLimit("")
+                    Keeping.Off -> { pendingLimit = "0" }
                 }
             }
         }
@@ -290,6 +306,19 @@ fun DownloadsPane(model: SettingsModel) {
             }
         }
         if (note.isNotEmpty()) footer(note)
+    }
+
+    pendingLimit?.let { limit ->
+        ConfirmDialog(
+            if (limit == "0") "Keep only what plays next?" else "Lower the limit to $limit?",
+            if (limit == "0") {
+                "Tracks fetched to play that are not in the queue ahead are deleted now. Downloads you asked for and favourite records stay."
+            } else {
+                "Downloads over the limit are deleted now, the tracks played longest ago first. Favourite records stay."
+            },
+            "Delete downloads",
+            onDismiss = { pendingLimit = null },
+        ) { setLimit(limit) }
     }
 }
 
