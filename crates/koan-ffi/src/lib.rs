@@ -774,6 +774,12 @@ impl KoanEngine {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("push: not a command ({e}): {command}");
+                koan_core::remote::acks::refuse_unread(&command, |ack, outcome| {
+                    koan_core::remote::link::report(koan_core::remote::link::LinkReport::Ack {
+                        ack,
+                        outcome,
+                    });
+                });
                 return Ok(());
             }
         };
