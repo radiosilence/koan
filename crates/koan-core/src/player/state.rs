@@ -1958,13 +1958,13 @@ impl SharedPlayerState {
     /// Every entry with a library track the player has yet to reach, in the
     /// order `pending_downloads` gives, whatever its state: what the cache has
     /// to hold, downloaded or not, for the player to reach it. The cursor's
-    /// entry and those not played in this pass of the queue; a played one
-    /// comes round again only when a repeating queue starts over, which
-    /// clears the mark.
+    /// entry and those not played in this pass of the queue, unless the queue
+    /// repeats: then the played ones come round again after the last.
     pub fn playback_order(&self) -> Vec<(i64, QueueItemId)> {
+        let repeating = self.play_mode().repeat == Repeat::Queue;
         let pl = self.playlist.read();
         reach_order(&pl)
-            .filter(|item| !item.played || pl.cursor == Some(item.id))
+            .filter(|item| repeating || !item.played || pl.cursor == Some(item.id))
             .filter_map(|item| item.db_id.map(|db_id| (db_id, item.id)))
             .collect()
     }

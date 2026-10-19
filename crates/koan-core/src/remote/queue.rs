@@ -277,7 +277,7 @@ fn wake_workers(inner: &Arc<Inner>) {
 /// worked out before, from the database; an entry added in between is
 /// outside it, and the sync its arrival causes brings it in.
 fn sync(inner: &Arc<Inner>) {
-    let window = playback_window(&inner.state);
+    let window = playback_window(&inner.state, &config::Config::cached());
     let mut q = inner.queue.lock();
     let wanted = inner.state.pending_downloads();
     let entries = window
@@ -298,8 +298,10 @@ fn sync(inner: &Arc<Inner>) {
 /// is fetched. A limit of
 /// nothing keeps no cache rather than holding the queue to a track or two;
 /// `download_ahead` alone decides how far ahead it reaches.
-fn playback_window(state: &SharedPlayerState) -> Option<Vec<(i64, QueueItemId)>> {
-    let cfg = config::Config::cached();
+fn playback_window(
+    state: &SharedPlayerState,
+    cfg: &config::Config,
+) -> Option<Vec<(i64, QueueItemId)>> {
     let ahead = cfg.remote.download_ahead;
     let limit = cfg.cache_limit_bytes();
     if ahead.is_none() && limit.is_none() {
@@ -307,7 +309,11 @@ fn playback_window(state: &SharedPlayerState) -> Option<Vec<(i64, QueueItemId)>>
     }
     let mut order = state.playback_order();
     if let Some(ahead) = ahead {
-        order.truncate(ahead as usize + 1);
+        // Counted from the cursor, which leads the order only when it has a
+        // track to fetch.
+        let cursor = state.cursor();
+        let leads = order.first().is_some_and(|(_, id)| Some(*id) == cursor);
+        order.truncate(ahead as usize + usize::from(leads));
     }
     let Some(limit) = limit.filter(|limit| *limit > 0) else {
         return Some(order);
@@ -501,14 +507,16 @@ fn trim_cache(inner: &Inner, now: bool) {
     if cfg.cache_limit_bytes().is_none() {
         return;
     }
-    let keep = inner.queue.lock().window.clone().unwrap_or_else(|| {
-        inner
-            .state
-            .playback_order()
-            .into_iter()
-            .map(|(track, _)| track)
-            .collect()
-    });
+    let order = inner.state.playback_order();
+    // The playing track and the next always: the decoder may be reading ahead
+    // into a file already here, however little is fetched ahead.
+    let mut keep = inner
+        .queue
+        .lock()
+        .window
+        .clone()
+        .unwrap_or_else(|| order.iter().map(|(track, _)| *track).collect());
+    keep.extend(order.iter().take(2).map(|(track, _)| *track));
     match crate::db::pool::shared().get() {
         Ok(db) => {
             if crate::helpers::evict_cache(&db, &cfg, &keep, false) > 0 {

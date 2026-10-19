@@ -188,6 +188,8 @@ pub(crate) enum Op {
     },
     AskRebuild,
     CommitCacheLimit,
+    /// A cache limit that deletes downloads, confirmed.
+    SetCacheLimit(Option<String>),
     ChangePassword,
     NewApiKey,
     AskRevokeKey(i64, String),
@@ -1012,8 +1014,10 @@ impl Setting {
                     .iter()
                     .position(|n| *n == c.remote.download_ahead)
                     .unwrap_or(DOWNLOAD_AHEAD.len() - 2) as isize;
+                // Clamped, not cycled: one step past the whole queue would
+                // otherwise give up gapless playback.
                 c.remote.download_ahead =
-                    DOWNLOAD_AHEAD[(at + d).rem_euclid(DOWNLOAD_AHEAD.len() as isize) as usize];
+                    DOWNLOAD_AHEAD[(at + d).clamp(0, DOWNLOAD_AHEAD.len() as isize - 1) as usize];
             }
             Setting::Offline => {}
             Setting::Discoverable => c.devices.discoverable = !c.devices.discoverable,

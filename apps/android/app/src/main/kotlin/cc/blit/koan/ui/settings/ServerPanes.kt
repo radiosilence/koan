@@ -204,7 +204,7 @@ fun DownloadsPane(model: SettingsModel) {
         pendingLimit = null
         if (limit != s.cacheLimit) model.edit { it.copy(cacheLimit = limit) }
     }
-    val limitGb = limitBytes?.takeIf { it > 0uL }?.let { "%.2f".format(Locale.ROOT, it.toDouble() / GIB).trimEnd('0').trimEnd('.') }.orEmpty()
+    val limitGb = limitBytes?.takeIf { it > 0uL }?.let { gigabytes(it.toDouble() / GIB) }.orEmpty()
     val commit = {
         draft?.trim()?.replace(',', '.')?.takeIf { it.isNotEmpty() }?.let { typed ->
             val gb = typed.toDoubleOrNull()
@@ -212,7 +212,7 @@ fun DownloadsPane(model: SettingsModel) {
             if (gb == null || gb < 0.01) {
                 model.report("A limit is a number of gigabytes, such as 50.")
             } else {
-                val limit = "%.2f".format(Locale.ROOT, gb).trimEnd('0').trimEnd('.') + "GB"
+                val limit = gigabytes(gb) + "GB"
                 if ((sizeInBytes(limit) ?: 0uL).toLong() < cacheBytes) {
                     pendingLimit = limit
                 } else {
@@ -326,6 +326,9 @@ fun DownloadsPane(model: SettingsModel) {
 private enum class Keeping { Limited, Unlimited, Off }
 
 private const val GIB = 1024.0 * 1024 * 1024
+
+/** Gigabytes to two places at most, as the limit is shown and written. */
+private fun gigabytes(gb: Double) = "%.2f".format(Locale.ROOT, gb).trimEnd('0').trimEnd('.')
 
 internal fun describe(p: SyncProgress): String {
     val what = when (p.phase) {

@@ -355,17 +355,36 @@ impl SettingsPage {
                 if limit == self.cfg.remote.cache_limit {
                     return None;
                 }
-                let said = match &limit {
-                    Some(l) if koan_core::config::parse_size_bytes(l) == Some(0) => {
-                        "no cache: only the queue ahead and downloads you asked for are kept".into()
-                    }
-                    Some(l) => format!("downloads kept to {l}"),
-                    None => "no limit on downloads".into(),
-                };
-                let wrote = self.persist(|c| c.remote.cache_limit = limit);
-                koan_core::remote::queue::cache_limit_changed();
-                Some(Outcome::Say(wrote.map_or_else(|e| e, |()| said)))
+                let bytes = limit
+                    .as_deref()
+                    .and_then(koan_core::config::parse_size_bytes);
+                if bytes.is_some_and(|b| b < self.local.cache_bytes) {
+                    let (title, detail) = if bytes == Some(0) {
+                        (
+                            "keep only what plays next?".to_string(),
+                            "Tracks fetched to play that are not in the queue ahead are deleted \
+                             now. Downloads you asked for and favourite records stay.",
+                        )
+                    } else {
+                        (
+                            format!(
+                                "lower the limit to {}?",
+                                limit.as_deref().unwrap_or_default()
+                            ),
+                            "Downloads over the limit are deleted now, the tracks played longest \
+                             ago first. Favourite records stay.",
+                        )
+                    };
+                    self.dialog = Some(
+                        Dialog::new(title, detail)
+                            .choice("delete downloads", Op::SetCacheLimit(limit))
+                            .choice("cancel", Op::Cancel),
+                    );
+                    return None;
+                }
+                self.set_cache_limit(limit)
             }
+            Op::SetCacheLimit(limit) => self.set_cache_limit(limit),
 
             Op::ChangePassword => {
                 let current = self.field(Field::CurrentPassword).to_string();
@@ -693,6 +712,21 @@ impl SettingsPage {
     }
 
     /// Gives `username` the password typed into the dialog.
+    fn set_cache_limit(&mut self, limit: Option<String>) -> Option<Outcome> {
+        let said = match &limit {
+            Some(l) if koan_core::config::parse_size_bytes(l) == Some(0) => {
+                "no cache: only the queue ahead and downloads you asked for are kept".into()
+            }
+            Some(l) => format!("downloads kept to {l}"),
+            None => "no limit on downloads".into(),
+        };
+        let wrote = self.persist(|c| c.remote.cache_limit = limit);
+        if wrote.is_ok() {
+            koan_core::remote::queue::cache_limit_changed();
+        }
+        Some(Outcome::Say(wrote.map_or_else(|e| e, |()| said)))
+    }
+
     pub(super) fn set_password(&mut self, username: String, password: String) -> Option<Outcome> {
         if password.is_empty() {
             return Some(Outcome::Say("type the new password".into()));

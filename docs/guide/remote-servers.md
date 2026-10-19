@@ -68,7 +68,7 @@ download_workers = 5    # parallel download threads (default: 5)
 
 ## Cache management
 
-Played tracks are kept, so they play again from disk. See [Cache management](../recipes/cache-management.md) for size limits and eviction.
+Played tracks are kept, so they play again from disk, until the cache limit needs the room; with `cache_limit = "0"` they are deleted once the queue moves past them. See [Cache management](../recipes/cache-management.md) for size limits and eviction.
 
 ```toml
 [remote]
