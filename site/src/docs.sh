@@ -31,9 +31,13 @@ pages=(
   "Reference|docs/reference/configuration.md"
   "Reference|docs/reference/cli.md"
   "Reference|docs/reference/keybindings.md"
-  "Reference|docs/reference/server-extensions.md"
   "Reference|docs/recipes/troubleshooting.md"
   "Reference|CHANGELOG.md"
+  "Protocol|docs/reference/protocol/protocol.md"
+  "Protocol|docs/reference/protocol/link-protocol.md"
+  "Protocol|docs/reference/protocol/nearby-protocol.md"
+  "Protocol|docs/reference/protocol/pairing-and-invites.md"
+  "Protocol|docs/reference/protocol/server-extensions.md"
 )
 
 slug() { basename "$1" .md | tr '[:upper:]' '[:lower:]'; }

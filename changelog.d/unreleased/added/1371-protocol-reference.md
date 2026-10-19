@@ -1,0 +1,1 @@
+- **Protocol reference.** A Protocol section in the docs specifies the link between the apps and the server, nearby connections, pairing and invites, each of kōan's OpenSubsonic extensions, and the rules that keep old and new versions working together, for anyone writing a client or server that speaks it.

@@ -1,1 +1,0 @@
-- **Server extensions reference.** A page under Reference specifies each of kōan's OpenSubsonic extensions: endpoints, parameters, answers, link messages and the credentials each accepts, for anyone writing a client against a kōan server.

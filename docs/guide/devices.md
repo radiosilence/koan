@@ -339,9 +339,11 @@ send the command in one request to the server when the app's link is down.
 
 kōan lists its additions to Subsonic as OpenSubsonic extensions, and a client
 uses one only where the server lists it. Devices rely on `koanLink`,
-`koanDevices`, `koanAck`, `koanShares` and `koanDeviceKeys`; each is specified
-in [Server extensions](../reference/server-extensions.md).
+`koanDevices`, `koanAck`, `koanShares` and `koanDeviceKeys`; the
+[protocol reference](../reference/protocol/protocol.md) specifies each. Each
+device's outputs travel with its state, and a server older than the apps drops
+them, so the Output menu for another device needs the server updated too.
 
 Settings → Server shows what the server said it is and the extensions it
-listed. A server that lists neither, such as Navidrome, still gets every
+listed. A server that lists none of them, such as Navidrome, still gets every
 Subsonic feature; its devices can find each other only on the local network.

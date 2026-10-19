@@ -89,7 +89,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 `docs/` is the user guide and reference, and koan.rocks is built from it (`site/src/docs.sh`, deployed by `site.yml`). A change in behaviour, a setting, a CLI flag or a supported platform updates the matching page in the same PR, as does a changelog fragment. Before a release, check that the guide still describes what the code does, since screenshots and settings drift fastest.
 
-`docs/reference/server-extensions.md` specifies every `koan*` OpenSubsonic extension: its endpoints, parameters, answers, link messages and who may call them. Adding, removing or changing an extension (`EXTENSIONS` in `subsonic.rs`, the constants in `remote/profile.rs`, a `/rest/koan*` route, or a `LinkCommand`/`LinkReport` variant) updates that page in the same PR.
+`docs/reference/protocol/` specifies the protocol: the link, nearby connections, pairing and invites, every `koan*` extension, and the compatibility rules. A change to it (`EXTENSIONS` in `subsonic.rs`, the constants in `remote/profile.rs`, a `/rest/koan*` route, a field or variant of `LinkCommand`, `LinkReport`, `PairMessage` or the nearby frames, or the TXT entries) updates the matching page in the same PR, and keeps the compatibility rules on `protocol.md`. The guide pages that describe the same endpoints for people (`authentication.md`, `devices.md`, `dsp.md`, `headless-server.md`) are updated with it.
 
 ## Supervising sessions
 
