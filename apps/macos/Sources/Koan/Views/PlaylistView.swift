@@ -152,11 +152,8 @@ struct PlaylistView: View {
         }
         // On the whole page, not the List: an empty playlist is exactly when
         // you want to drop something on it, and it has no rows to land on.
-        // Its own rows are left out: one let go over the header is a drag
-        // abandoned, not a copy wanted.
         .dropTarget(for: PlayableTransfer.self) { dropped, _ in
-            let foreign = dropped.filter { $0.origin?.playlistId != playlistId }
-            if !foreign.isEmpty { playlists.add(dropped: foreign, to: playlistId) }
+            playlists.add(dropped: dropped, to: playlistId)
             return true
         }
         // Only for a library change — the rows arrived before the page did.
@@ -234,41 +231,24 @@ struct PlaylistView: View {
                 changed: { $0 != $1 },
                 menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
                 primaryAction: { play(rowIds: $0) },
-                // Out of the playlist a row is its track, and a heading its
-                // record, whose tracks dragged with it are left out. Where it
-                // came from keeps it from being added back here as a copy.
+                // Out of the playlist a row is its track. A heading carries
+                // nothing out, since the record would be more than the run
+                // the playlist holds; within the table it moves the run.
+                // Where a row came from keeps it from being added back here.
                 drag: { line in
-                    switch rows.first(where: { $0.id == line.id }) {
-                    case .entry(let entry, _):
-                        PlayableTransfer(
-                            kind: .track, id: entry.track.id, name: entry.track.title,
-                            origin: .init(playlistId: playlistId)
-                        )
-                    case .album(_, let group):
-                        group.entries.first?.track.albumId.map {
-                            PlayableTransfer(kind: .album, id: $0, name: group.album, origin: .init(playlistId: playlistId))
-                        }
-                    case nil:
-                        nil
-                    }
-                },
-                covered: { dragged in
-                    Set(rows.filter { dragged.contains($0.id) }.flatMap { row -> [String] in
-                        guard case .album(_, let group) = row, group.entries.first?.track.albumId != nil else { return [] }
-                        return group.entries.map { "entry:\($0.entryId)" }
-                    })
+                    guard case .entry(let entry, _) = rows.first(where: { $0.id == line.id }) else { return nil }
+                    return PlayableTransfer(
+                        kind: .track, id: entry.track.id, name: entry.track.title,
+                        origin: .init(playlistId: playlistId)
+                    )
                 },
                 delete: { _ in removeSelected() },
                 selectAllToken: ui.selectAllToken,
-                move: playlists.fillable(playlistId)
-                    ? { ids, before in
-                        move(from: IndexSet(ids.compactMap { id in rows.firstIndex { $0.id == id } }), to: before)
-                    }
-                    : nil,
+                move: mover.map { mover in
+                    { ids, before in mover(IndexSet(ids.compactMap { id in rows.firstIndex { $0.id == id } }), before) }
+                },
                 accept: { dropped, index in
-                    let foreign = dropped.filter { $0.origin?.playlistId != playlistId }
-                    guard !foreign.isEmpty else { return false }
-                    playlists.insert(dropped: foreign, into: playlistId, at: position(index))
+                    playlists.insert(dropped: dropped, into: playlistId, at: position(index))
                     return true
                 },
                 insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: insets.trailing)
@@ -575,7 +555,9 @@ struct PlaylistView: View {
     private func move(from source: IndexSet, to destination: Int) {
         let rows = self.rows
         var seen = Set<Int>()
-        let moving = source.sorted().flatMap { rows[$0].positions }.filter { seen.insert($0).inserted }
+        // Indices from the rows as drawn, which a reload can have shortened.
+        let moving = source.sorted().filter(rows.indices.contains)
+            .flatMap { rows[$0].positions }.filter { seen.insert($0).inserted }
         guard !moving.isEmpty else { return }
         // The first entry at or after the drop that stays put, by identity:
         // its index shifts once the moved entries are lifted out. None is the end.
