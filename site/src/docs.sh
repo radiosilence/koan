@@ -31,6 +31,7 @@ pages=(
   "Reference|docs/reference/configuration.md"
   "Reference|docs/reference/cli.md"
   "Reference|docs/reference/keybindings.md"
+  "Reference|docs/reference/server-extensions.md"
   "Reference|docs/recipes/troubleshooting.md"
   "Reference|CHANGELOG.md"
 )
