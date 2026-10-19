@@ -153,7 +153,8 @@ struct QueueRow: View {
                     .font(.role(.fine, system: .caption.monospacedDigit()))
                     .lineLimit(1)
                     .fixedSize()
-                    .frame(minWidth: Numbering(widest: item.placeTemplate).minimumWidth, alignment: .trailing)
+                    // Ungrouped, a row without a sleeve keeps the sleeve's width.
+                    .frame(minWidth: artwork ? 34 : Numbering.minimumWidth(for: item.placeTemplate), alignment: .trailing)
                 }
             }
 
@@ -324,7 +325,7 @@ struct Numbering {
 
     /// Room for "2.03" where the list numbers by disc, two digits otherwise,
     /// in the platform look; the template widens it past that.
-    var minimumWidth: CGFloat { widest.contains(".") ? 34 : 20 }
+    static func minimumWidth(for template: String) -> CGFloat { template.contains(".") ? 34 : 20 }
 }
 
 extension QueueRowContent {

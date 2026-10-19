@@ -402,7 +402,7 @@ final class QueueTableRow: TableCell, TableRow {
             let numberHeight = lineHeight(Self.numberFont)
             // Wide enough for the widest place in the list, the same for
             // every row so the titles line up.
-            let numberWidth = max(Numbering(widest: placeTemplate).minimumWidth, TrackTableRow.measure(placeTemplate, Self.numberFont))
+            let numberWidth = max(Numbering.minimumWidth(for: placeTemplate), TrackTableRow.measure(placeTemplate, Self.numberFont))
             number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: numberWidth, height: numberHeight)
             x += numberWidth + 10
         }
