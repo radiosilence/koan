@@ -9,6 +9,10 @@ kōan's apps talk to a kōan server over Subsonic, and to each other through it 
 | [Pairing and invites](pairing-and-invites.md) | Signing a device in without typing the password on it |
 | [Server extensions](server-extensions.md) | Each `koan*` OpenSubsonic extension: endpoints, parameters, answers, credentials |
 
+## Schema
+
+[`docs/reference/protocol/schema/`](https://github.com/radiosilence/koan/tree/main/docs/reference/protocol/schema) holds JSON Schema (draft 2020-12) for every message: `link-command.json` and `link-report.json` for the link and nearby connections, `envelope.json` for a command carrying an ack id, `pair-message.json` for a pairing socket, and `nearby-frame.json` for the nearby handshake and signed frames. They are generated from the Rust types, so they state what the code accepts; these pages state what the messages mean. `just protocol-schema` regenerates them, and the test suite fails when the committed files differ from what the types produce.
+
 ## Capabilities
 
 A client decides what to use from what the other end says it supports, never from the server calling itself kōan.

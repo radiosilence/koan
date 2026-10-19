@@ -25,6 +25,11 @@ check:
     fi
     cargo clippy --all-targets -- -D warnings
 
+# Write the protocol's JSON Schema into docs/reference/protocol/schema/ from
+# the Rust types. `just check` fails while the committed files are stale.
+protocol-schema:
+    KOAN_WRITE_PROTOCOL_SCHEMA=1 cargo test -p koan-core --lib remote::schema
+
 # Format
 fmt:
     cargo fmt

@@ -39,9 +39,10 @@ pub const SERVICE: &str = "_koan._tcp";
 /// Tagged apart from every `LinkCommand` and `LinkReport`, and sent only to a
 /// peer whose part in the handshake shows it knows them: the listener's
 /// `Hello` nonce, the dialler's `NearbyAuth`.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-enum ProofFrame {
+pub(crate) enum ProofFrame {
     /// The dialler: who it is, its nonce, and its signature over both nonces.
     #[serde(rename = "nearbyAuth")]
     Auth {

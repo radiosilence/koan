@@ -2971,6 +2971,7 @@ dependencies = [
  "rtrb",
  "rubato",
  "rusqlite",
+ "schemars",
  "security-framework",
  "serde",
  "serde_json",

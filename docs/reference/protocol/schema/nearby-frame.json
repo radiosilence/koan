@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProofFrame",
+  "description": "The proof's frames, beside the link's messages on a nearby connection.\nTagged apart from every `LinkCommand` and `LinkReport`, and sent only to a\npeer whose part in the handshake shows it knows them: the listener's\n`Hello` nonce, the dialler's `NearbyAuth`.",
+  "oneOf": [
+    {
+      "description": "The dialler: who it is, its nonce, and its signature over both nonces.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "sig": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "nearbyAuth"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "nonce",
+        "sig"
+      ]
+    },
+    {
+      "description": "The listener's answer: whether it took the dialler for the account's\nor a shared device, and its own signature, when it has a key.",
+      "type": "object",
+      "properties": {
+        "sig": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "nearbyProof"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "verified"
+      ]
+    },
+    {
+      "description": "A command from a proven dialler, as JSON, signed for this session.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "sig": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "nearbySigned"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "sig",
+        "command"
+      ]
+    },
+    {
+      "description": "A report from a listener that signs them, as JSON, signed for this\nsession.",
+      "type": "object",
+      "properties": {
+        "report": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "sig": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "nearbySignedReport"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "sig",
+        "report"
+      ]
+    }
+  ]
+}

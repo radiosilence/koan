@@ -15,6 +15,7 @@ use crate::player::commands::PlayerCommand;
 use crate::player::state::SharedPlayerState;
 
 /// What a device can play through.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkOutputs {
@@ -40,6 +41,7 @@ pub struct LinkOutputs {
 }
 
 /// One output: a device by its name, or a renderer by its UDN.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkOutput {
@@ -64,6 +66,7 @@ pub struct LinkOutput {
 }
 
 /// An output to play through.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum OutputChoice {

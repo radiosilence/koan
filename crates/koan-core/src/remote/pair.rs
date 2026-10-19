@@ -30,6 +30,7 @@ const SILENCE: Duration = Duration::from_secs(90);
 
 /// What the server sends down a pairing socket: `Pending` once it is open,
 /// then one outcome before it closes.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum PairMessage {
