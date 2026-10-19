@@ -243,6 +243,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::Barrier(_)
             | PlayerCommand::TrackFailed(_)
             | PlayerCommand::CacheTracks(_)
+            | PlayerCommand::SignedOut
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch
             | PlayerCommand::UpdatePaths(_)
