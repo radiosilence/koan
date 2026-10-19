@@ -164,7 +164,8 @@ on your network visits could open a pairing from their address and read the key
 sent when they approve it. One address, or one IPv6 /64, can have three
 pairings waiting at a time.
 
-Approving needs the account's own password or an API key, not an app password;
+Approving needs the account's own password or an API key, not an app password
+or the shared secret;
 [Pairing and invites](../reference/protocol/pairing-and-invites.md#the-approver)
 has the full rules.
 

@@ -11,8 +11,9 @@
 //! The link carries the server and the id in the fragment of a koan.rocks
 //! address, as invites do, so the site serving the page never sees them.
 //!
-//! How this relates to RFC 8628's device grant, and why it is not that
-//! protocol, is in `docs/reference/protocol/pairing-and-invites.md`.
+//! RFC 8628's device grant in shape (code for user code, link for
+//! `verification_uri_complete`, the socket for the device code) but not its
+//! protocol: see the RFC 8628 section of the pairing protocol reference.
 
 use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
