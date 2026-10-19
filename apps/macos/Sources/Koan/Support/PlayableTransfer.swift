@@ -33,6 +33,9 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
     /// from it is a *move*, and since a playlist may hold the same track twice,
     /// only the position says which copy moved.
     var origin: Origin?
+    /// Dragged out of the queue. Dropped back on the queue it would only be
+    /// added again; see the sidebar's Queue row.
+    var fromQueue: Bool?
     /// Its place among the items of one drag. A drop hands its items over in
     /// whatever order they finished loading, so the order they were dragged in
     /// travels with them — see `inDragOrder`.
@@ -55,11 +58,12 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         })
     }
 
-    init(kind: Kind, id: Int64, name: String, origin: Origin? = nil) {
+    init(kind: Kind, id: Int64, name: String, origin: Origin? = nil, fromQueue: Bool? = nil) {
         self.kind = kind
         self.id = id
         self.name = name
         self.origin = origin
+        self.fromQueue = fromQueue
     }
 
     var key: Playable.Key { Playable.Key(kind: kind, id: id) }
@@ -77,6 +81,7 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
     init(_ playable: Playable) {
         origin = nil
+        fromQueue = nil
         place = nil
         switch playable {
         case .track(let track):
