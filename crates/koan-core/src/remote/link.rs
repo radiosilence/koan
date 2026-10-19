@@ -866,8 +866,8 @@ fn run(local: Local) {
             rest(RETRY_MAX);
             continue;
         };
-        match profile::for_auth(&auth) {
-            Some(p) if p.links() => {}
+        let pushes = match profile::for_auth(&auth) {
+            Some(p) if p.links() => p.offers(profile::APNS),
             // Not a server that links; asked again when the sign-in changes.
             Some(_) => {
                 rest(RETRY_MAX);
@@ -878,7 +878,7 @@ fn run(local: Local) {
                 wait = (wait * 2).min(RETRY_MAX);
                 continue;
             }
-        }
+        };
 
         match connect(&auth, &local.identity) {
             Ok((mut socket, fd)) => {
@@ -889,7 +889,7 @@ fn run(local: Local) {
                     client.outage().retry_now();
                 }
                 wait = RETRY_MIN;
-                if let Err(e) = serve(&mut socket, fd, &local, signed_in, account) {
+                if let Err(e) = serve(&mut socket, fd, &local, signed_in, account, pushes) {
                     log::info!("link: closed: {e}");
                 }
                 *LINK.lock() = None;
@@ -1012,6 +1012,7 @@ fn serve(
     local: &Local,
     signed_in: u64,
     account: Option<String>,
+    pushes: bool,
 ) -> Result<(), String> {
     let waker = Waker::new().map_err(|e| e.to_string())?;
     let watcher = waker.clone();
@@ -1030,6 +1031,7 @@ fn serve(
         levels: None,
         signed_in,
         account,
+        pushes,
     };
     wire::drive(socket, fd, &waker, &mut session)
 }
@@ -1048,20 +1050,24 @@ struct LinkSession<'a> {
     /// The account it signed in as, which the device keys it is sent are
     /// for (`proof::account_of`).
     account: Option<String>,
+    /// The server offers `koanApns`. Push tokens go only to a server that can
+    /// push with them.
+    pushes: bool,
 }
 
 impl wire::Session for LinkSession<'_> {
     fn outgoing(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         let push = PUSH_TOKEN.lock().clone();
-        if let Some((token, sandbox)) = push.clone()
+        if self.pushes
+            && let Some((token, sandbox)) = push.clone()
             && push != self.sent_push
         {
             out.push(LinkReport::Push { token, sandbox });
             self.sent_push = push;
         }
         let activity = ACTIVITY.lock().clone();
-        if activity.is_some() && activity != self.sent_activity {
+        if self.pushes && activity.is_some() && activity != self.sent_activity {
             let (token, device, sandbox) = match activity.clone().flatten() {
                 Some((t, d, s)) => (Some(t), Some(d), s),
                 None => (None, None, false),

@@ -41,7 +41,11 @@ not that.
   stays listed as asleep: commands wake it, and music sent to it arrives as a
   notification to tap, since iOS does not let an app it woke start playing.
   A phone still awake in the background is refused the audio while another
-  app is playing, and shows the same kind of notification instead.
+  app is playing, and shows the same kind of notification instead. Waking and
+  notifications need a server that can push to the app
+  ([`[push]`](../reference/configuration.md#push)); with any other, a
+  suspended phone takes what was sent when it is next opened, and the app does
+  not ask to show notifications.
 - **Anyone's device on this network.** Apps find each other over Bonjour and
   connect directly, with no server involved and whoever is signed in. A device
   playing from a different server can be controlled but not sent music, since

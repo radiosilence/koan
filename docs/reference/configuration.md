@@ -499,7 +499,10 @@ notification extension can fetch it without a login.
 
 Apple accepts pushes only signed with the key of the team that ships the app,
 so only a server holding that key can send them. Without one, phones are
-reached only while linked. Development builds of the app use
+reached only while linked; anything sent while a phone is suspended is applied
+when the app next opens. A server with a key lists the `koanApns` extension,
+and the app asks to show notifications, and sends its push tokens, only to a
+server that lists it, since elsewhere none would ever arrive. Development builds of the app use
 Apple's sandbox gateway and release builds the production one; the app says
 which with its token, and the key works for both.
 

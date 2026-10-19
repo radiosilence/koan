@@ -45,6 +45,11 @@ struct KoanIOSApp: App {
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
+                        .task(id: state.mirror.offers(PushDelegate.extensionName)) {
+                            if state.mirror.offers(PushDelegate.extensionName) {
+                                await PushDelegate.requestAlerts()
+                            }
+                        }
                         // No app-wide accent on a television: it draws focus
                         // as a white platter, and system alerts and toggle
                         // rows that take the tint put green text on it.
@@ -100,7 +105,6 @@ struct KoanIOSApp: App {
                     #if !os(tvOS)
                     remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror, art: built.art)
                     #endif
-                    PushDelegate.requestAlertsIfSignedIn()
                     // Configured before anything can be asked to play, and
                     // activated by the engine only when something does: koan
                     // opening must not stop another app's music.
