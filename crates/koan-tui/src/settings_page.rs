@@ -1014,14 +1014,11 @@ impl Setting {
                 let at = DOWNLOAD_AHEAD
                     .iter()
                     .position(|n| *n == c.remote.download_ahead)
-                    .map_or(
-                        if forward {
-                            DOWNLOAD_AHEAD.len() - 2
-                        } else {
-                            DOWNLOAD_AHEAD.len() - 1
-                        },
-                        |at| at,
-                    ) as isize;
+                    .unwrap_or(if forward {
+                        DOWNLOAD_AHEAD.len() - 2
+                    } else {
+                        DOWNLOAD_AHEAD.len() - 1
+                    }) as isize;
                 // Clamped, not cycled: one step past the whole queue would
                 // otherwise give up gapless playback.
                 c.remote.download_ahead =
