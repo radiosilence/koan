@@ -164,6 +164,10 @@ on your network visits could open a pairing from their address and read the key
 sent when they approve it. One address, or one IPv6 /64, can have three
 pairings waiting at a time.
 
+Approving mints a key, so it needs the account's own password or an API key;
+an app password or the shared secret is refused. Looking a code up or declining
+it takes any credential.
+
 Pairing follows the shape of the OAuth device authorization grant (RFC 8628)
 but not its protocol; [Pairing and invites](../reference/protocol/pairing-and-invites.md#rfc-8628)
 has the mapping and the reasons.
