@@ -161,16 +161,19 @@ sent when they approve it. One address, or one IPv6 /64, can have three
 pairings waiting at a time.
 
 Pairing has the shape of the OAuth device authorization grant (RFC 8628): the
-pairing id is its device code, the `XXXX-XXXX` code its user code, the
-koan.rocks link its `verification_uri_complete`, and `approved`, `declined` and
-`expired` its token response and its `access_denied` and `expired_token`
-errors. The code
-follows the RFC's security advice: it cannot be usefully guessed in ten minutes,
-only a signed-in account can enter one, and the approver sees where the request
-came from. The protocol itself is not RFC 8628, for three reasons. The device
-needs an OpenSubsonic API key, which every koan client signs in with, rather
-than an OAuth token. The OAuth endpoints are served only with
-`sharing.public_url` set, and pairing has to work on a server reachable only on
+`XXXX-XXXX` code is its user code, the koan.rocks link its
+`verification_uri_complete` (carrying the long pairing id in place of the code,
+which makes the link a second, unguessable user code), the open socket stands in
+for the device code, and `approved`, `declined` and `expired` are its token
+response and its `access_denied` and `expired_token` errors. Only a signed-in
+account can enter a code, a code has 40 bits and lives ten minutes, and the
+approver sees where the request came from. Failed code lookups are not rate
+limited, which RFC 8628 §5.1 recommends.
+
+The protocol itself is not RFC 8628, for three reasons. The device needs an
+OpenSubsonic API key, which every koan client signs in with, rather than an
+OAuth token. The OAuth endpoints are served only with `sharing.public_url` set,
+and pairing has to work on a server without it, such as one reachable only on
 the local network. And the RFC only polls, where a socket delivers the outcome
 the moment it is settled and binds the key to the connection that asked for it:
 a key approved for a device that has since gone is revoked rather than left for
