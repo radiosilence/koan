@@ -226,6 +226,8 @@ pub enum AlbumOrder {
     Title,
     /// Newest release first.
     YearDesc,
+    /// Oldest release first, by full date within a year. Undated records last.
+    YearAsc,
     /// Seeded, so every page of one shuffle belongs to the same shuffle. A new
     /// seed is a new order — that is what the reshuffle button asks for.
     Random(i64),
@@ -258,6 +260,10 @@ impl AlbumOrder {
             Self::YearDesc => {
                 "COALESCE(CAST(substr(al.date, 1, 4) AS INTEGER), 0) DESC, \
                                a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
+            }
+            Self::YearAsc => {
+                "COALESCE(NULLIF(CAST(substr(al.date, 1, 4) AS INTEGER), 0), 10000), \
+                               al.date, a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
             }
             Self::Random(_) => "koan_shuffle(al.id, ?)",
             Self::LastPlayed => "p.last DESC, p.last_id DESC",
@@ -791,6 +797,35 @@ mod tests {
             crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
         }
         db
+    }
+
+    /// Oldest first runs by full date within a year, with undated records
+    /// after every dated one rather than before.
+    #[test]
+    fn year_asc_is_chronological_with_undated_last() {
+        let db = test_db();
+        for (album, date) in [
+            ("Late", "2010"),
+            ("Undated", ""),
+            ("Autumn", "1999-10-01"),
+            ("Spring", "1999-03-01"),
+        ] {
+            let mut meta = crate::db::queries::sample_meta(album, "Ayla", album);
+            meta.date = (!date.is_empty()).then(|| date.into());
+            crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+        let titles: Vec<String> = list_albums(
+            &db.conn,
+            &AlbumQuery {
+                order: AlbumOrder::YearAsc,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|a| a.title)
+        .collect();
+        assert_eq!(titles, ["Spring", "Autumn", "Late", "Undated"]);
     }
 
     /// An artist's own records and the ones they feature on are two lists

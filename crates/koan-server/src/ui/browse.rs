@@ -42,11 +42,12 @@ pub(super) struct Browse {
 }
 
 /// Album sorts, as the macOS app offers them.
-const ALBUM_SORTS: [(&str, &str); 5] = [
+const ALBUM_SORTS: [(&str, &str); 6] = [
     ("recent", "Recently added"),
     ("title", "Title"),
     ("artist", "Artist"),
-    ("year", "Year"),
+    ("year", "Year, newest"),
+    ("year-asc", "Year, oldest"),
     ("random", "Random"),
 ];
 
@@ -148,6 +149,7 @@ impl Browse {
             "title" => AlbumOrder::Title,
             "artist" => AlbumOrder::ArtistThenDate,
             "year" => AlbumOrder::YearDesc,
+            "year-asc" => AlbumOrder::YearAsc,
             "random" => AlbumOrder::Random(self.seed.unwrap_or(0)),
             "played" => AlbumOrder::LastPlayed,
             "best" => AlbumOrder::Relevance,
