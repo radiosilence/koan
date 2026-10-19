@@ -676,11 +676,7 @@ private struct RemoteSettings: View {
                         get: { model.settings.downloadAhead.map(Int.init) ?? -1 },
                         set: { v in model.edit { $0.downloadAhead = v < 0 ? nil : UInt32(v) } }
                     ),
-                    options: [("Playing track only", 0), ("1 track", 1)]
-                        + (2...10).map { ("\($0) tracks", $0) }
-                        // A number past the choices, set by hand, shows as itself.
-                        + (model.settings.downloadAhead.map(Int.init).flatMap { $0 > 10 ? [("\($0) tracks", $0)] : nil } ?? [])
-                        + [("Whole queue", -1)]
+                    options: aheadOptions
                 )
                 KoanPicker(
                     "Keep downloads",
@@ -776,6 +772,18 @@ private struct RemoteSettings: View {
     private var limitGB: String {
         guard let bytes = sizeInBytes(text: model.settings.cacheLimit), bytes > 0 else { return "" }
         return (Double(bytes) / 1_073_741_824).formatted(.number.precision(.fractionLength(0...2)).grouping(.never))
+    }
+
+    /// Download ahead's choices: none to ten, and the whole queue as -1.
+    private var aheadOptions: [(label: String, value: Int)] {
+        var options: [(label: String, value: Int)] = [("Playing track only", 0), ("1 track", 1)]
+        options += (2...10).map { (label: "\($0) tracks", value: $0) }
+        // A number past the choices, set by hand, shows as itself.
+        if let set = model.settings.downloadAhead.map(Int.init), set > 10 {
+            options.append((label: "\(set) tracks", value: set))
+        }
+        options.append((label: "Whole queue", value: -1))
+        return options
     }
 
     /// The choice as the picker shows it: a limit being typed counts as one.
