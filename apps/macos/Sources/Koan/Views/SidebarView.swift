@@ -231,7 +231,9 @@ struct SidebarView: View {
         if !moving.isEmpty {
             playlists.reorder(moving: moving, onto: playlist.id)
         }
-        let adding = dropped.filter { $0.kind != .playlist }
+        // A playlist's own rows dropped back on it are a drag abandoned, as
+        // they are over its page.
+        let adding = dropped.filter { $0.kind != .playlist && $0.origin?.playlistId != playlist.id }
         if !adding.isEmpty {
             playlists.add(dropped: adding, to: playlist.id)
         }

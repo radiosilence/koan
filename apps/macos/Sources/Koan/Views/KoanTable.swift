@@ -543,9 +543,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             guard let parent else { return [] }
             // Between rows, never onto one: a drop lands before the row.
             if operation == .on { tableView.setDropRow(row, dropOperation: .above) }
-            if (info.draggingSource as AnyObject?) === tableView, parent.move != nil,
-               info.draggingPasteboard.types?.contains(.koanRow) == true {
-                return .move
+            // Its own rows only ever move: a list that cannot be reordered
+            // refuses them rather than promising a copy.
+            if (info.draggingSource as AnyObject?) === tableView {
+                return parent.move != nil && info.draggingPasteboard.types?.contains(.koanRow) == true ? .move : []
             }
             return parent.accept == nil ? [] : .copy
         }

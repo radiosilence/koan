@@ -234,14 +234,29 @@ struct PlaylistView: View {
                 changed: { $0 != $1 },
                 menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
                 primaryAction: { play(rowIds: $0) },
-                // Out of the playlist a row is its track. Where it came from
-                // keeps it from being added back to this playlist as a copy.
+                // Out of the playlist a row is its track, and a heading its
+                // record, whose tracks dragged with it are left out. Where it
+                // came from keeps it from being added back here as a copy.
                 drag: { line in
-                    guard case .entry(let entry, _) = rows.first(where: { $0.id == line.id }) else { return nil }
-                    return PlayableTransfer(
-                        kind: .track, id: entry.track.id, name: entry.track.title,
-                        origin: .init(playlistId: playlistId)
-                    )
+                    switch rows.first(where: { $0.id == line.id }) {
+                    case .entry(let entry, _):
+                        PlayableTransfer(
+                            kind: .track, id: entry.track.id, name: entry.track.title,
+                            origin: .init(playlistId: playlistId)
+                        )
+                    case .album(_, let group):
+                        group.entries.first?.track.albumId.map {
+                            PlayableTransfer(kind: .album, id: $0, name: group.album, origin: .init(playlistId: playlistId))
+                        }
+                    case nil:
+                        nil
+                    }
+                },
+                covered: { dragged in
+                    Set(rows.filter { dragged.contains($0.id) }.flatMap { row -> [String] in
+                        guard case .album(_, let group) = row, group.entries.first?.track.albumId != nil else { return [] }
+                        return group.entries.map { "entry:\($0.entryId)" }
+                    })
                 },
                 delete: { _ in removeSelected() },
                 selectAllToken: ui.selectAllToken,
