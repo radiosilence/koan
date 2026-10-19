@@ -959,6 +959,53 @@ mod tests {
     }
 
     #[test]
+    fn the_window_reaches_as_far_ahead_as_it_is_told() {
+        let (inner, ids, _) = queue_over(&[1, 2, 3, 4, 5]);
+        let tracks = |cfg: &config::Config| {
+            playback_window(&inner.state, cfg)
+                .map(|w| w.into_iter().map(|(track, _)| track).collect::<Vec<_>>())
+        };
+        let mut cfg = config::Config::default();
+        assert_eq!(tracks(&cfg), None, "unset: the whole queue");
+
+        cfg.remote.download_ahead = Some(0);
+        assert_eq!(tracks(&cfg), Some(vec![1]), "only what is playing");
+
+        cfg.remote.download_ahead = Some(2);
+        inner.state.set_cursor(Some(ids[3].1));
+        assert_eq!(tracks(&cfg), Some(vec![4, 5]), "from the cursor to the end");
+    }
+
+    #[test]
+    fn no_cache_leaves_the_window_to_how_far_ahead() {
+        let (inner, _, _) = queue_over(&[1, 2, 3, 4]);
+        let mut cfg = config::Config::default();
+        cfg.remote.cache_limit = Some("0GB".into());
+        let window = playback_window(&inner.state, &cfg).expect("a limit makes a window");
+        assert_eq!(window.len(), 4, "the whole queue, not a track or two");
+
+        cfg.remote.download_ahead = Some(1);
+        let window = playback_window(&inner.state, &cfg).expect("a window");
+        assert_eq!(window.len(), 2);
+    }
+
+    #[test]
+    fn the_window_never_comes_round_to_what_was_skipped() {
+        // Jumped to the middle of a queue that does not repeat: what came
+        // before is never reached, played or not.
+        let (inner, ids, _) = queue_over(&[1, 2, 3, 4]);
+        inner.state.set_cursor(Some(ids[2].1));
+        let mut cfg = config::Config::default();
+        cfg.remote.cache_limit = Some("0".into());
+        let window: Vec<i64> = playback_window(&inner.state, &cfg)
+            .expect("a window")
+            .into_iter()
+            .map(|(track, _)| track)
+            .collect();
+        assert_eq!(window, vec![3, 4]);
+    }
+
+    #[test]
     fn the_window_never_comes_round_to_what_has_played() {
         // Near the end of the queue the order runs on from the top, where the
         // tracks already heard are: with no cache, keeping them, or fetching

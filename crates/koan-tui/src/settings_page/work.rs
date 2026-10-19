@@ -711,7 +711,7 @@ impl SettingsPage {
         }
     }
 
-    /// Gives `username` the password typed into the dialog.
+    /// Writes the cache limit and says what it now keeps.
     fn set_cache_limit(&mut self, limit: Option<String>) -> Option<Outcome> {
         let said = match &limit {
             Some(l) if koan_core::config::parse_size_bytes(l) == Some(0) => {
@@ -727,6 +727,7 @@ impl SettingsPage {
         Some(Outcome::Say(wrote.map_or_else(|e| e, |()| said)))
     }
 
+    /// Gives `username` the password typed into the dialog.
     pub(super) fn set_password(&mut self, username: String, password: String) -> Option<Outcome> {
         if password.is_empty() {
             return Some(Outcome::Say("type the new password".into()));

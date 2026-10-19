@@ -193,12 +193,13 @@ fun DownloadsPane(model: SettingsModel) {
     val s = state.settings ?: return SettingsPage(Pane.Downloads.title, state) {}
     // Read as the core reads it: none set is no limit, a limit of nothing no cache.
     val limitBytes = s.cacheLimit.takeIf { it.isNotBlank() }?.let { sizeInBytes(it) }
-    val keeping = when {
-        choosingLimit -> Keeping.Limited
+    val saved = when {
         s.cacheLimit.isBlank() -> Keeping.Unlimited
         limitBytes == 0uL -> Keeping.Off
         else -> Keeping.Limited
     }
+    // A limit being typed counts as one.
+    val keeping = if (choosingLimit) Keeping.Limited else saved
     val setLimit = { limit: String ->
         choosingLimit = false
         pendingLimit = null
@@ -209,7 +210,7 @@ fun DownloadsPane(model: SettingsModel) {
         draft?.trim()?.replace(',', '.')?.takeIf { it.isNotEmpty() }?.let { typed ->
             val gb = typed.toDoubleOrNull()
             // Two places, as the limit is written: less would round to no cache.
-            if (gb == null || gb < 0.01) {
+            if (gb == null || !gb.isFinite() || gb < 0.01) {
                 model.report("A limit is a number of gigabytes, such as 50.")
             } else {
                 val limit = gigabytes(gb) + "GB"
@@ -222,6 +223,7 @@ fun DownloadsPane(model: SettingsModel) {
         }
         draft = null
     }
+    val ahead = s.downloadAhead?.let { minOf(it, Int.MAX_VALUE.toUInt()).toInt() } ?: -1
     val note = listOfNotNull(
         "Nothing plays gaplessly, and each track waits for its download before it starts."
             .takeIf { s.downloadAhead == 0u },
@@ -259,9 +261,11 @@ fun DownloadsPane(model: SettingsModel) {
         item {
             ChoiceRow(
                 "Download ahead",
-                s.downloadAhead?.toInt() ?: -1,
+                ahead,
                 listOf("Playing track only" to 0, "1 track" to 1) +
-                    (2..maxOf(10, s.downloadAhead?.toInt() ?: 0)).map { "$it tracks" to it } +
+                    (2..10).map { "$it tracks" to it } +
+                    // A number past the choices, set by hand, shows as itself.
+                    listOfNotNull(ahead.takeIf { it > 10 }?.let { "$it tracks" to it }) +
                     ("Whole queue" to -1),
             ) { n -> model.edit { it.copy(downloadAhead = n.takeIf { it >= 0 }?.toUInt()) } }
         }
@@ -271,12 +275,15 @@ fun DownloadsPane(model: SettingsModel) {
                 keeping,
                 listOf("Up to a limit" to Keeping.Limited, "Without limit" to Keeping.Unlimited, "Only what plays next" to Keeping.Off),
             ) { k ->
-                if (k == keeping) return@ChoiceRow
                 draft = null
-                when (k) {
-                    Keeping.Limited -> { choosingLimit = true }
-                    Keeping.Unlimited -> setLimit("")
-                    Keeping.Off -> { pendingLimit = "0" }
+                // Back from a limit not yet typed, to what is already set.
+                choosingLimit = k == Keeping.Limited && saved != Keeping.Limited
+                if (k != saved) {
+                    when (k) {
+                        Keeping.Limited -> {}
+                        Keeping.Unlimited -> setLimit("")
+                        Keeping.Off -> { pendingLimit = "0" }
+                    }
                 }
             }
         }

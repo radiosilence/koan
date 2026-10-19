@@ -677,7 +677,9 @@ private struct RemoteSettings: View {
                         set: { v in model.edit { $0.downloadAhead = v < 0 ? nil : UInt32(v) } }
                     ),
                     options: [("Playing track only", 0), ("1 track", 1)]
-                        + (2...max(10, Int(model.settings.downloadAhead ?? 0))).map { ("\($0) tracks", $0) }
+                        + (2...10).map { ("\($0) tracks", $0) }
+                        // A number past the choices, set by hand, shows as itself.
+                        + (model.settings.downloadAhead.map(Int.init).filter { $0 > 10 }.map { [("\($0) tracks", $0)] } ?? [])
                         + [("Whole queue", -1)]
                 )
                 KoanPicker(
@@ -700,6 +702,7 @@ private struct RemoteSettings: View {
                         #endif
                         .monospacedDigit()
                         .focused($cacheLimitFocused)
+                        .onAppear { if choosingLimit { cacheLimitFocused = true } }
                         .onSubmit(commitCacheLimit)
                         .onChange(of: cacheLimitFocused) { _, focused in
                             if !focused { commitCacheLimit() }
@@ -781,17 +784,15 @@ private struct RemoteSettings: View {
     }
 
     private func keep(_ choice: CacheKeeping) {
-        guard choice != shownKeeping else { return }
         cacheLimit = nil
-        switch choice {
-        case .limited:
-            choosingLimit = true
-            cacheLimitFocused = true
-        case .unlimited:
-            setLimit("")
-        case .off:
-            pendingLimit = "0"
+        if choice == .limited {
+            choosingLimit = keeping != .limited
+            return
         }
+        // Back from a limit not yet typed, to what is already set.
+        choosingLimit = false
+        guard choice != keeping else { return }
+        if choice == .off { pendingLimit = "0" } else { setLimit("") }
     }
 
     private func setLimit(_ limit: String) {
@@ -819,7 +820,7 @@ private struct RemoteSettings: View {
         let typed = draft.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
         if typed.isEmpty { return }
         // Two places, as the limit is written: less would round to no cache.
-        guard let gb = Double(typed), gb >= 0.01 else {
+        guard let gb = Double(typed), gb.isFinite, gb >= 0.01 else {
             model.report("A limit is a number of gigabytes, such as 50.")
             return
         }
