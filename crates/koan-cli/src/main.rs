@@ -786,6 +786,12 @@ fn main() {
             CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
             CacheCommands::Evict => {
                 let cfg = config::Config::load().unwrap_or_default();
+                // Nothing here knows a player's queue, and with no cache
+                // everything unpinned is over the limit, its files included.
+                if cfg.cache_limit_bytes() == Some(0) {
+                    println!("no cache: the player removes tracks as it moves past them");
+                    return;
+                }
                 let freed = commands::evict_cache(&cfg, true);
                 if freed == 0 {
                     println!("cache within limit, nothing to evict");

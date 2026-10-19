@@ -227,7 +227,7 @@ fun DownloadsPane(model: SettingsModel) {
     val note = listOfNotNull(
         "Nothing plays gaplessly, and each track waits for its download before it starts."
             .takeIf { s.downloadAhead == 0u },
-        when (keeping) {
+        when (saved) {
             Keeping.Off -> "Tracks are deleted once played. Downloads you ask for and favourite records stay."
             Keeping.Limited -> "Past the limit, the tracks played longest ago are deleted first. Favourite records stay."
             Keeping.Unlimited -> null
@@ -282,7 +282,8 @@ fun DownloadsPane(model: SettingsModel) {
                     when (k) {
                         Keeping.Limited -> {}
                         Keeping.Unlimited -> setLimit("")
-                        Keeping.Off -> { pendingLimit = "0" }
+                        // Nothing to delete, nothing to ask.
+                        Keeping.Off -> if (cacheBytes > 0) pendingLimit = "0" else setLimit("0")
                     }
                 }
             }

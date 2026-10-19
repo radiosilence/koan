@@ -792,7 +792,8 @@ private struct RemoteSettings: View {
         // Back from a limit not yet typed, to what is already set.
         choosingLimit = false
         guard choice != keeping else { return }
-        if choice == .off { pendingLimit = "0" } else { setLimit("") }
+        // Nothing to delete, nothing to ask.
+        if choice == .off && mirror.cacheBytes > 0 { pendingLimit = "0" } else { setLimit(choice == .off ? "0" : "") }
     }
 
     private func setLimit(_ limit: String) {
@@ -806,7 +807,7 @@ private struct RemoteSettings: View {
         if model.settings.downloadAhead == 0 {
             lines.append("Nothing plays gaplessly, and each track waits for its download before it starts.")
         }
-        switch shownKeeping {
+        switch keeping {
         case .off: lines.append("Tracks are deleted once played. Downloads you ask for and favourite records stay.")
         case .limited: lines.append("Past the limit, the tracks played longest ago are deleted first. Favourite records stay.")
         case .unlimited: break

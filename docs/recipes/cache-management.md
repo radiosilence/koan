@@ -40,7 +40,7 @@ cache_limit = "50GB"
 
 In Settings this is **Keep downloads**: up to a limit (in GB), without limit, or only what plays next, which writes `cache_limit = "0"`.
 
-With a limit set, the queue is fetched only as far ahead as the limit allows, and no further than `download_ahead`: the playing track and the next always (gapless playback reads ahead), then each following track while the cache stays under the limit. The rest of the queue waits and is fetched as the cursor reaches it. Without this a long queue downloaded in full and then could not be evicted.
+With a limit set, the queue is fetched only as far ahead as the limit allows, and no further than `download_ahead`: the playing track, and the next unless `download_ahead` is 0 (gapless playback reads ahead), then each following track while the cache stays under the limit. The rest of the queue waits and is fetched as the cursor reaches it. Without this a long queue downloaded in full and then could not be evicted.
 
 Eviction takes, in order:
 1. Downloads fetched for playback, least recently used first. Tracks already played from the queue are among them, as is anything past the window above.

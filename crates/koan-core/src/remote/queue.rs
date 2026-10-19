@@ -507,16 +507,21 @@ fn trim_cache(inner: &Inner, now: bool) {
     if cfg.cache_limit_bytes().is_none() {
         return;
     }
-    let order = inner.state.playback_order();
+    let order = inner
+        .state
+        .playback_order()
+        .into_iter()
+        .map(|(track, _)| track);
     // The playing track and the next always: the decoder may be reading ahead
     // into a file already here, however little is fetched ahead.
-    let mut keep = inner
-        .queue
-        .lock()
-        .window
-        .clone()
-        .unwrap_or_else(|| order.iter().map(|(track, _)| *track).collect());
-    keep.extend(order.iter().take(2).map(|(track, _)| *track));
+    let window = inner.queue.lock().window.clone();
+    let keep = match window {
+        Some(mut window) => {
+            window.extend(order.take(2));
+            window
+        }
+        None => order.collect(),
+    };
     match crate::db::pool::shared().get() {
         Ok(db) => {
             if crate::helpers::evict_cache(&db, &cfg, &keep, false) > 0 {
