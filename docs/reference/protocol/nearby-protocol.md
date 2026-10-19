@@ -41,7 +41,7 @@ A peer that proves nothing, because it is older, signed out or on another server
 
 ### Signatures
 
-Ed25519, base64 (standard alphabet). Each signed message is a label and a list of fields, each written as a 32-bit big-endian length followed by its bytes.
+Ed25519, base64 (standard alphabet). Each signed message is the label followed by the fields, every one of them, the label included, written as its length in bytes (a 32-bit big-endian integer) followed by the bytes. Text fields are UTF-8, and ids and nonces are signed as the strings sent, `reports.` prefix included, not base64-decoded. The transcript (below) is its 32 raw bytes, `seq` 8 bytes big-endian, and `verified` one byte; each is length-prefixed like the rest.
 
 | Signature | Label | Fields |
 |-----------|-------|--------|
@@ -50,28 +50,30 @@ Ed25519, base64 (standard alphabet). Each signed message is a label and a list o
 | Command | `koan-nearby-v1 command` | transcript, `seq` as a 64-bit big-endian integer, the command's JSON |
 | Report | `koan-nearby-v1 report` | transcript, `seq`, the report's JSON |
 
-The transcript is the SHA-256 of `koan-nearby-v1 session` over listener id, dialler id, listener nonce and dialler nonce. Both handshake signatures name both devices, both nonces and which end made them, so a recorded handshake fails against a fresh nonce.
+The transcript is the SHA-256 digest of a message built the same way, with label `koan-nearby-v1 session` and fields listener id, dialler id, listener nonce, dialler nonce. It is hashed once and the 32-byte digest signed over, not the message itself. Both handshake signatures name both devices, both nonces and which end made them, so a recorded handshake fails against a fresh nonce.
 
 A key with no `owner` in `deviceKeys` proves the account's own device; one with an `owner` proves a device shared by that account. A kept key list older than thirty days is not trusted.
 
 ### Signed traffic
 
-Nearby connections are not encrypted, so after a verified handshake every command goes as `{"type":"nearbySigned","seq":n,"sig":…,"command":"<JSON>"}`, and the listener refuses unsigned ones. Reports go as `{"type":"nearbySignedReport","seq":n,"sig":…,"report":"<JSON>"}` when the listener signed and both nonces carry the `reports.` mark; the listener then resends its state signed. `seq` starts at 1 on each side, and a receiver takes only a `seq` above the last it accepted, so a command slipped in, replayed or taken from another session is refused.
+Nearby connections are not encrypted, so after a verified handshake every command goes as `{"type":"nearbySigned","seq":n,"sig":…,"command":"<JSON>"}`, and the listener drops unsigned ones without an answer. An `ack` goes inside the signed `command` string, as on the link, not on the outer frame. Reports go as `{"type":"nearbySignedReport","seq":n,"sig":…,"report":"<JSON>"}` when the listener signed and both nonces carry the `reports.` mark; the listener then resends its state signed. `seq` starts at 1 on each side, and a receiver takes only a `seq` above the last it accepted, so a command slipped in, replayed or taken from another session is refused.
 
 ## What a peer may do
 
 | Peer | How it is known | What it may send |
 |------|-----------------|------------------|
-| The account's own device | Proven with a key that has no `owner` | Every command a device may relay through the server (`LinkCommand::relayable`) |
+| The account's own device | Proven with a key that has no `owner` | Every command a device may relay through the server (`LinkCommand::relayable`), and `watchLevels` |
 | A device shared with this account | Proven with an `owner`'s key | The playback set |
 | Anyone else, under **Full control** (`devices.nearby_control = "full"`, the default) | Unproven | The playback set |
 | Anyone else, under **Playback only** (`"playback"`) | Unproven | The stranger's set |
+
+`watchLevels` is taken from every peer, whatever its class: levels say no more than the state it already sees.
 
 The **playback set** (`LinkCommand::allowed_playback`): `play`, `enqueue`, `playNext`, `remove`, `clear`, `jumpTo`, `seek`, `pause`, `resume`, `next`, `previous`, `playItem`, `removeItems`, `moveItems`, `insert`, `undo`, `redo`, `shuffle`, `repeat`, `sleepTimer`, `handOff`, `setOutput`, `refreshOutputs`, `setRendererVolume`, `setPreset`, `watchLevels`.
 
 The **stranger's set** (`LinkCommand::allowed_nearby`) is the playback set without `setOutput`, `refreshOutputs`, `setRendererVolume` and `setPreset`: where the sound goes reaches into the room and the config. Under Playback only, the listener also leaves `outputs` out of its state.
 
-Neither set includes anything that touches the library, the files on disk, or the account's favourites, playlists or history, and none of the server's news (`devices`, `deviceKeys`, `shares`, `forgotten`, `historyChanged`, `dspProfilesChanged`) is taken from the network. A refused command sent with an `ack` is answered `{"result":"refused","reason":"not allowed from this network"}`.
+Neither set includes anything that touches the library, the files on disk, or the account's favourites, playlists or history, and none of the server's news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `levels`, `acked`) is taken from the network. A command the peer's class does not allow, sent with an `ack`, is answered `{"result":"refused","reason":"not allowed from this network"}`.
 
 A device's `id` is its own claim. When the `id` in a listener's `hello` belongs to one of the account's devices, or one shared with it (as the server's `devices` list names them), the dialler sends it commands and acts on its reports only once it has proved it is that device under that account; a device nobody lists is taken at its word as a stranger. Addresses in `devices.refused` are hung up on at once, and Disconnect in Settings holds a device off by address, and by id once it has proven itself.
 

@@ -62,7 +62,7 @@ The account's app passwords, for Subsonic apps that sign in only with a `t`/`s` 
 
 | Endpoint | Parameters | Answer |
 |----------|------------|--------|
-| `koanAppPasswords` | | `appPasswords`, one `appPassword` per password with `id`, `name`, `created`, `lastUsed`. Never the password |
+| `koanAppPasswords` | | `appPasswords`, one `appPassword` per password with `id`, `name`, `created`, `lastUsed` (ISO 8601). Never the password |
 | `koanCreateAppPassword` (**POST**) | `name` | `appPassword` with `id`, `name`, `password`. Shown once; error 0 when the account holds as many as it may |
 | `koanRevokeAppPassword` (**POST**) | `id` | empty |
 
@@ -82,7 +82,7 @@ The standing WebSocket at `/rest/koanLink` through which the server commands a c
 
 ### `koanDevices`
 
-The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. See [Link: Devices](link-protocol.md#devices). Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too.
+The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. See [Link: Devices](link-protocol.md#devices).
 
 ### `koanAck`
 
@@ -94,7 +94,7 @@ Sharing a device with other accounts on the server. See [Link: Shares](link-prot
 
 ### `koanDeviceKeys`
 
-Devices proving to each other on the local network that they belong to the same account. A device that links with an API key and `deviceKey` registers its public key, kept on that key's row, so revoking the key or signing out drops it. Links that registered one are sent `deviceKeys`, when they link and whenever the account's keys change. How the keys are used is on [Nearby](nearby-protocol.md#handshake).
+Devices proving to each other on the local network that they belong to the same account. A device that links with an API key and `deviceKey` registers its public key, kept on that key's row, so revoking the key or signing out drops it. Any link opened with a `deviceKey` parameter is sent `deviceKeys`, when it links and whenever the account's keys change, whether or not its key could be kept. How the keys are used is on [Nearby](nearby-protocol.md#handshake).
 
 ## Account data
 

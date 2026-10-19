@@ -4,7 +4,7 @@ Two ways a device signs in to a kōan server without anyone typing the account's
 
 ## Invites (`koanInvite`)
 
-An admin makes an invite for an account with `/rest/koanInvite?username=…` (or `koanCreateUser`, which makes the account too). The answer carries a token: a JWT signed with the server's key, typed `koan-invite`, naming the account (`sub`, `username`), a mark of its password hash (`pwd`), and an expiry seven days on (`exp`). Nothing is stored when one is made, so a link signs in as many devices as its holder has until it expires or the account's password changes, which changes the mark. Resetting the password (`reset=true`) is how a link sent to the wrong place is withdrawn.
+An admin makes an invite for an account with `/rest/koanInvite?username=…` (or `koanCreateUser`, which makes the account too). The answer carries a token: a JWT signed with the server's key whose payload claims are `typ` (`koan-invite`), the account (`sub`, its id, and `username`), a mark of its password hash (`pwd`), when it was made (`iat`) and an expiry seven days on (`exp`). Nothing is stored when one is made, so a link signs in as many devices as its holder has until it expires or the account's password changes, which changes the mark. Resetting the password (`reset=true`) is how a link sent to the wrong place is withdrawn.
 
 ### Link format
 
@@ -13,7 +13,7 @@ https://koan.rocks/join/#server=<server>&username=<username>&invite=<token>
 koan://join?server=<server>&username=<username>&invite=<token>
 ```
 
-The parameters are form-encoded. On koan.rocks they ride in the fragment, which browsers do not send, so the site never sees them; the page opens the app through its universal link, or offers the downloads and the `koan://` link. `/join` without the trailing slash parses too. `server` must be an `http(s)` address. A link missing a parameter, or carrying a `password`, is not an invite.
+The parameters are form-encoded. On koan.rocks they ride in the fragment, which browsers do not send, so the site never sees them; the page opens the app through its universal link, or offers the downloads and the `koan://` link. `/join` without the trailing slash parses too. `server` must be an `http(s)` address. A link missing `server`, `username` or `invite` is not an invite; parameters it does not know, such as the `password` older links carried, are ignored.
 
 A server address with the account in it, `https://user:password@host`, is read as a sign-in with that password rather than an invite.
 
