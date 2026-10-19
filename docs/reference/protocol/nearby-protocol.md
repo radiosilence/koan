@@ -41,7 +41,7 @@ A peer that proves nothing, because it is older, signed out or on another server
 
 ### Signatures
 
-Ed25519, base64 (standard alphabet). Each signed message is the label followed by the fields, every one of them, the label included, written as its length in bytes (a 32-bit big-endian integer) followed by the bytes. Text fields are UTF-8, and ids and nonces are signed as the strings sent, `reports.` prefix included, not base64-decoded. The transcript is its 32 raw bytes, `seq` 8 bytes big-endian, and `verified` one byte; each is length-prefixed like the rest. The transcript is built the same way.
+Ed25519, base64 (standard alphabet). Each signed message is the label followed by the fields, every one of them, the label included, written as its length in bytes (a 32-bit big-endian integer) followed by the bytes. Text fields are UTF-8, and ids and nonces are signed as the strings sent, `reports.` prefix included, not base64-decoded. The transcript (below) is its 32 raw bytes, `seq` 8 bytes big-endian, and `verified` one byte; each is length-prefixed like the rest.
 
 | Signature | Label | Fields |
 |-----------|-------|--------|
@@ -50,7 +50,7 @@ Ed25519, base64 (standard alphabet). Each signed message is the label followed b
 | Command | `koan-nearby-v1 command` | transcript, `seq` as a 64-bit big-endian integer, the command's JSON |
 | Report | `koan-nearby-v1 report` | transcript, `seq`, the report's JSON |
 
-The transcript is the SHA-256 of the message with label `koan-nearby-v1 session` and fields listener id, dialler id, listener nonce, dialler nonce. Both handshake signatures name both devices, both nonces and which end made them, so a recorded handshake fails against a fresh nonce.
+The transcript is the SHA-256 digest of a message built the same way, with label `koan-nearby-v1 session` and fields listener id, dialler id, listener nonce, dialler nonce. It is hashed once and the 32-byte digest signed over, not the message itself. Both handshake signatures name both devices, both nonces and which end made them, so a recorded handshake fails against a fresh nonce.
 
 A key with no `owner` in `deviceKeys` proves the account's own device; one with an `owner` proves a device shared by that account. A kept key list older than thirty days is not trusted.
 

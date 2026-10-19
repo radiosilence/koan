@@ -21,7 +21,7 @@ A new link from the same `device` replaces the old one. The server closes a link
 
 ## Messages
 
-Each WebSocket text frame is one JSON object tagged by `type`, with camelCase fields. Down the link the server sends commands and news (`LinkCommand`); up it the client sends reports (`LinkReport`). Track ids are the server's track uids.
+Each WebSocket text frame is one JSON object tagged by `type`, with camelCase fields (one exception: `unix_ms` in a `state`'s `sleep`). Down the link the server sends commands and news (`LinkCommand`); up it the client sends reports (`LinkReport`). Track ids are the server's track uids.
 
 A field marked `?` may be absent, and senders leave most of them out when they hold their default: `false`, `0`, empty, or none. Every other field is required.
 
@@ -85,6 +85,12 @@ A field marked `?` may be absent, and senders leave most of them out when they h
 
 `state` requires `playing`, and may carry `title`, `artist`, `album`, `positionMs` (as of sending), `durationMs`, `queue`, `outputs`, `shuffle`, `repeat`, `sleep` and `sleepFading`. `queue` is the queue, or the part around the current track when it is long; each entry requires `title`, `artist` and `current`, and may carry `id` (its queue entry id on that device), `trackId` (absent for a file only that device has), `album` and `durationMs`. A device sends `state` when something changes beyond the playhead moving at one second per second: a seek, a pause, another track, an edited queue.
 
+`sleep` is the sleep timer as set: `{"kind":"at","unix_ms":n}` (when it ends, ms since the epoch), `{"kind":"endOfTrack"}` or `{"kind":"endOfRecord"}`.
+
+`outputs` is what the device can play through: `devices` (its own audio outputs) and `renderers` (the UPnP renderers it sees), each a list of `{"id","name","kind?","detail?","busy?","preset?","unsaved?"}`; `current`, an output as `setOutput` takes it; `volume?`, the renderer's volume; `profiles`, its EQ presets; and `dspEnabled`. `kind` is how an output is connected (`usb`, `bluetooth`, `upnp` and others), `detail` a renderer's make and model, `busy` that it is playing for something else, `preset` the EQ preset it was set from, and `unsaved` that its EQ has changed since.
+
+A levels frame `f` is an array `[atMs, low, mid, high]`: milliseconds into the track it was heard at, then three bands in thousandths (0–1000).
+
 ## Devices
 
 `koanDevices`. A link opened with `devices=1` is sent `devices` when it links and whenever one of the account's devices changes. Each device has `id`, `name`, `platform`, `linked`, and may carry `state` (its last report, with the playhead placed as of sending), `lastSeen` (Unix seconds, for one not linked), `wakeable` (the server can push to it), `owner` (for a device another account shares) and `acks`.
@@ -95,7 +101,7 @@ A device commands another with a `command` report. The `ack`, when there is one,
 {"type":"command","to":"0192…","command":{"type":"pause"},"ack":7}
 ```
 
-`to` names the first linked device whose id, link id or name (without regard to case) equals it; a client should send the device id, since names need not be unique and one could equal another device's id. The server relays the command when `to` is one of the caller's devices or one shared with the caller. Only commands one device gives another are relayed (`LinkCommand::relayable`): the server's own news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `acked`) is refused, so a forged copy cannot pass as the server's. `levels` go only between live links, by their own route: a controller sends `{"type":"command","to":…,"command":{"type":"watchLevels","on":true}}`, and the server forwards the watched device's `levels` reports to it as `levels` news.
+`to` names the first linked device whose id, link id or name (without regard to case) equals it; a client should send the device id, since names need not be unique and one could equal another device's id. The server relays the command when `to` is one of the caller's devices or one shared with the caller. Only commands one device gives another are relayed (`LinkCommand::relayable`): the server's own news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `levels`, `acked`) is refused, so a forged copy cannot pass as the server's. Levels go only between live links, by their own route: a controller sends `{"type":"command","to":…,"command":{"type":"watchLevels","on":true}}`, and the server forwards the watched device's `levels` reports to it as `levels` news. `watchLevels` works only as a link report; `koanCommand` refuses it.
 
 A command for a device that is not linked is kept and delivered when it links. An iOS device that gave a push token is woken, if the server has a `[push]` key. `watchLevels` and `refreshOutputs` are only worth saying to a device that is there, so they are never kept or pushed.
 
@@ -113,10 +119,10 @@ The server attaches an id only for a device that linked with `acks=1`. That devi
 
 Ids are random unsigned 64-bit integers across the whole range, so a client must read and echo them as integers without rounding them to a double. A sender that hears nothing tries the next route with the same id, so a command can arrive twice; a device remembers the ids it has taken for a minute, and answers a repeat with the first outcome without acting on it again.
 
-`koanCommand` waits up to four seconds for the answer and returns it as a `koanCommand` element with `result`, and `reason` or `error`. With no answer in that time, the response is empty: sent. A command the server will not relay is not answered with `refused` here but with a Subsonic error: 10 for a command it cannot parse, 70 for a device that is not the caller's or a command it does not relay.
+`koanCommand` waits up to four seconds for the answer and returns it as a `koanCommand` element with `result`, and `reason` or `error`. With no answer in that time, the response is empty: sent. A command the server will not deliver is not answered with `refused` or `failed` here but with a Subsonic error: 10 for a command it cannot parse, and 70 when `to` matches no device of the caller's or shared with it, when the command is not relayable, or when the device's link dropped as it was sent.
 
 ## Shares
 
-`koanShares`. A device reports `share` about itself only. Its link is sent `shares` when it links and whenever the list changes. A shared device appears in each grantee's `devices` with its `owner`, and a grantee's command reaches it wrapped as `shared`. It runs as the grantee's request, from the playback set: transport, the queue, the sleep timer, the volume, the output and preset, and moving the music (`LinkCommand::allowed_playback`; the list is on [Nearby](nearby-protocol.md#what-a-peer-may-do)). Nothing a shared command does changes the owner's library, favourites, playlists or history, and a track it names that the library lacks is not synced for.
+`koanShares`. A device reports `share` about itself only. A link opened with `devices=1` is sent `shares` when it links and whenever the list changes. A shared device appears in each grantee's `devices` with its `owner`, and a grantee's command reaches it wrapped as `shared`. It runs as the grantee's request, from the playback set: transport, the queue, the sleep timer, the volume, the output and preset, and moving the music (`LinkCommand::allowed_playback`; the list is on [Nearby](nearby-protocol.md#what-a-peer-may-do)). Nothing a shared command does changes the owner's library, favourites, playlists or history, and a track it names that the library lacks is not synced for.
 
 The other way, a shared device may send its grantee's devices one command: `play` with `handoff`, which is how Move here hands the music to a grantee. The server delivers it wrapped as `shared` and refuses anything else.
