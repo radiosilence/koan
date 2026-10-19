@@ -446,25 +446,31 @@ struct TrackRow: View {
         let credited = showsAlbum || !compact || track.artistName != track.albumArtistName
 
         HStack(spacing: compact ? 8 : 12) {
-            // The row number becomes bars for whatever is playing —
-            // same width either way so the column doesn't twitch.
-            Group {
-                if hovering {
-                    RowPlayButton(
-                        playable: .track(track),
-                        visible: true,
-                        inContext: (trackIds: allTrackIds, startAt: position - 1)
-                    )
-                } else if isCurrent {
-                    PlayingIndicator(isPlaying: player.isPlaying)
-                } else {
-                    Text("\(number ?? position)")
-                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+            // The row number becomes bars for whatever is playing. The longest
+            // number in the list, in whichever face and size it is drawn,
+            // holds the column, so what shows over it never moves the title.
+            Text(Numbering.zeros(String(allTrackIds.count).count))
+                .lineLimit(1)
+                .fixedSize()
+                .hidden()
+                .frame(minWidth: compact ? 16 : 22, alignment: .trailing)
+                .overlay(alignment: .trailing) {
+                    if hovering {
+                        RowPlayButton(
+                            playable: .track(track),
+                            visible: true,
+                            inContext: (trackIds: allTrackIds, startAt: position - 1)
+                        )
+                    } else if isCurrent {
+                        PlayingIndicator(isPlaying: player.isPlaying)
+                    } else {
+                        Text("\(number ?? position)")
+                            .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
                 }
-            }
-            .font(.role(.fine, system: .caption.monospacedDigit()))
-            // On a phone, as wide as the longest number and no wider.
-            .frame(width: compact ? max(16, CGFloat(String(allTrackIds.count).count) * 8) : 22, alignment: .trailing)
+                .font(.role(.fine, system: .caption.monospacedDigit()))
 
             if showsAlbum {
                 // The cover is what you recognise a record by, and a list
