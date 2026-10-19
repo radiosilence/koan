@@ -1,1107 +1,377 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Envelope",
-  "description": "A command as it travels, with the id that asks for an answer.",
-  "type": "object",
-  "properties": {
-    "ack": {
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0
-    }
-  },
-  "oneOf": [
-    {
-      "description": "Replace the queue with these tracks and play from `start_at`,\n`position_ms` into it — or load it there paused, when `paused`.",
-      "type": "object",
-      "properties": {
-        "handoff": {
-          "description": "Sent by a device handing its music over. One that receives it\nwhile controlling another device takes control back: the music\nis here now, so this device is what the person is listening to.\nA plain play leaves control alone, so two devices can still\ncontrol each other on purpose.",
-          "type": "boolean"
-        },
-        "mode": {
-          "description": "Whether to reset the play mode, as a play from a play button\ndoes. Absent, the modes are kept.",
-          "$ref": "#/$defs/QueueMode"
-        },
-        "paused": {
-          "type": "boolean"
-        },
-        "positionMs": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "startAt": {
-          "type": "integer",
-          "format": "uint32",
-          "default": 0,
-          "minimum": 0
-        },
-        "trackIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "play"
-        }
-      },
-      "required": [
-        "type",
-        "trackIds"
-      ]
-    },
-    {
-      "description": "Append these tracks to the queue, and with `play` start the first of\nthem. A device that does not know `play` only appends.",
-      "type": "object",
-      "properties": {
-        "play": {
-          "type": "boolean"
-        },
-        "trackIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "enqueue"
-        }
-      },
-      "required": [
-        "type",
-        "trackIds"
-      ]
-    },
-    {
-      "description": "Insert these tracks after the current one.",
-      "type": "object",
-      "properties": {
-        "trackIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "playNext"
-        }
-      },
-      "required": [
-        "type",
-        "trackIds"
-      ]
-    },
-    {
-      "description": "Take every queue entry for these tracks out of the queue.",
-      "type": "object",
-      "properties": {
-        "trackIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "remove"
-        }
-      },
-      "required": [
-        "type",
-        "trackIds"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "clear"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "Pull what the server has changed: library, favourites and playlists.\nThe library is walked only if the server says it moved, unless `full`,\nwhich walks it regardless.",
-      "type": "object",
-      "properties": {
-        "full": {
-          "type": "boolean",
-          "default": false
-        },
-        "type": {
-          "type": "string",
-          "const": "sync"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "Delete the downloaded copies of these tracks, so the next play fetches\nthem again: for a copy that was cached while the server's was bad.",
-      "type": "object",
-      "properties": {
-        "trackIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "evict"
-        }
-      },
-      "required": [
-        "type",
-        "trackIds"
-      ]
-    },
-    {
-      "description": "Play this track: from where it sits in the queue, or slotted in after\nthe current one when the queue does not hold it.",
-      "type": "object",
-      "properties": {
-        "trackId": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "jumpTo"
-        }
-      },
-      "required": [
-        "type",
-        "trackId"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "positionMs": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "type": {
-          "type": "string",
-          "const": "seek"
-        }
-      },
-      "required": [
-        "type",
-        "positionMs"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "pause"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "resume"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "next"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "previous"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "Play this queue entry, by the id the device reported it under. Unlike\n`JumpTo` it names one entry of a track queued twice, and reaches a file\nonly that device has.",
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "playItem"
-        }
-      },
-      "required": [
-        "type",
-        "id"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "removeItems"
-        }
-      },
-      "required": [
-        "type",
-        "ids"
-      ]
-    },
-    {
-      "description": "Move these queue entries before or after `target`, in the order given.",
-      "type": "object",
-      "properties": {
-        "after": {
-          "type": "boolean"
-        },
-        "ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "target": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "moveItems"
-        }
-      },
-      "required": [
-        "type",
-        "ids",
-        "target",
-        "after"
-      ]
-    },
-    {
-      "description": "Insert these tracks after the queue entry `after`.",
-      "type": "object",
-      "properties": {
-        "after": {
-          "type": "string"
-        },
-        "trackIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "insert"
-        }
-      },
-      "required": [
-        "type",
-        "trackIds",
-        "after"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "undo"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "redo"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "Turn shuffle on or off. The queue keeps its order; shuffle picks\nwhich track yet to play this pass plays next.",
-      "type": "object",
-      "properties": {
-        "on": {
-          "type": "boolean"
-        },
-        "type": {
-          "type": "string",
-          "const": "shuffle"
-        }
-      },
-      "required": [
-        "type",
-        "on"
-      ]
-    },
-    {
-      "description": "What follows a track at its end: `off`, `queue` or `one`.",
-      "type": "object",
-      "properties": {
-        "mode": {
-          "$ref": "#/$defs/Repeat"
-        },
-        "type": {
-          "type": "string",
-          "const": "repeat"
-        }
-      },
-      "required": [
-        "type",
-        "mode"
-      ]
-    },
-    {
-      "description": "Set the sleep timer, or with none cancel it.",
-      "type": "object",
-      "properties": {
-        "timer": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SleepTimer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "type": {
-          "type": "string",
-          "const": "sleepTimer"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "Send this device's queue and playhead to the device `to`, as a `play`,\nand pause here. The device holding the queue does it, so taking music\nfrom another device and sending it there are one command.",
-      "type": "object",
-      "properties": {
-        "to": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "handOff"
-        }
-      },
-      "required": [
-        "type",
-        "to"
-      ]
-    },
-    {
-      "description": "The account's other devices, as they are now. News rather than a\ncommand: sent whenever one of them changes, to links that asked for it.",
-      "type": "object",
-      "properties": {
-        "devices": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/LinkDevice"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "devices"
-        }
-      },
-      "required": [
-        "type",
-        "devices"
-      ]
-    },
-    {
-      "description": "The public keys the account's devices, and devices shared with it,\nprove themselves with on the local network (`koanDeviceKeys`). News,\nas `Devices` is: sent when a device that registered a key links, and\nwhenever the account's keys change. From the server alone, never from\nthe network: it is what the network's claims are checked against.",
-      "type": "object",
-      "properties": {
-        "keys": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/LinkDeviceKey"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "deviceKeys"
-        }
-      },
-      "required": [
-        "type",
-        "keys"
-      ]
-    },
-    {
-      "description": "The accounts this device lets control it. News, as `Devices` is: sent\nwhen it links and whenever the list changes.",
-      "type": "object",
-      "properties": {
-        "accounts": {
-          "description": "Every account on the server, to choose from.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "error": {
-          "description": "Why the last request to share or stop sharing was refused.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "grantees": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "type": {
-          "type": "string",
-          "const": "shares"
-        }
-      },
-      "required": [
-        "type",
-        "grantees"
-      ]
-    },
-    {
-      "description": "`command`, sent by another account this device is shared with: run as\nthat account's request, from the playback set (`allowed_playback`).",
-      "type": "object",
-      "properties": {
-        "command": {
-          "$ref": "#/$defs/LinkCommand"
-        },
-        "type": {
-          "type": "string",
-          "const": "shared"
-        }
-      },
-      "required": [
-        "type",
-        "command"
-      ]
-    },
-    {
-      "description": "`device` was forgotten: drop it, however it was last heard of. News,\nas `Devices` is.",
-      "type": "object",
-      "properties": {
-        "device": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "forgotten"
-        }
-      },
-      "required": [
-        "type",
-        "device"
-      ]
-    },
-    {
-      "description": "The account's play history on the server moved: a play recorded or\nforgotten on one of its devices. The device reads what changed\n(`remote::history::sync`).",
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "historyChanged"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "The account's EQ profiles kept everywhere moved on the server: one\nchanged or deleted on another of its devices. The device reads what\nchanged (`remote::dsp_sync::sync`).",
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "dspProfilesChanged"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "Play through this output from now on, carrying on from where the music\nis, as the device's own output menu would.",
-      "type": "object",
-      "properties": {
-        "output": {
-          "$ref": "#/$defs/OutputChoice"
-        },
-        "type": {
-          "type": "string",
-          "const": "setOutput"
-        }
-      },
-      "required": [
-        "type",
-        "output"
-      ]
-    },
-    {
-      "description": "List the outputs again, and publish them if they moved: a controller\nhas opened its output menu. Cheap, and answered by the link state.",
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "refreshOutputs"
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    {
-      "description": "The volume of the renderer the device plays to, 0–100.",
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "setRendererVolume"
-        },
-        "volume": {
-          "type": "integer",
-          "format": "uint8",
-          "maximum": 255,
-          "minimum": 0
-        }
-      },
-      "required": [
-        "type",
-        "volume"
-      ]
-    },
-    {
-      "description": "Play the output `device` through the DSP profile `profile`, or\nuntouched with `None`. A renderer is named by its UDN.",
-      "type": "object",
-      "properties": {
-        "device": {
-          "type": "string"
-        },
-        "profile": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "type": {
-          "type": "string",
-          "const": "setPreset"
-        }
-      },
-      "required": [
-        "type",
-        "device"
-      ]
-    },
-    {
-      "description": "Send this device's audio levels (`LinkReport::Levels`) while `on`: a\ncontroller has playing bars on screen. A device on the same network may\nask; levels say no more than the now-playing it already sees.",
-      "type": "object",
-      "properties": {
-        "on": {
-          "type": "boolean"
-        },
-        "type": {
-          "type": "string",
-          "const": "watchLevels"
-        }
-      },
-      "required": [
-        "type",
-        "on"
-      ]
-    },
-    {
-      "description": "A frame of the levels of `from`, a device this one watches, relayed by\nthe server. News, like `Devices`.",
-      "type": "object",
-      "properties": {
-        "f": {
-          "$ref": "#/$defs/Frame"
-        },
-        "from": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "levels"
-        }
-      },
-      "required": [
-        "type",
-        "from",
-        "f"
-      ]
-    },
-    {
-      "description": "The device `from` answered the command this device sent it under\n`ack`: see `remote::acks`. Relayed by the server; news, like `Levels`.",
-      "type": "object",
-      "properties": {
-        "ack": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "from": {
-          "type": "string"
-        },
-        "outcome": {
-          "$ref": "#/$defs/AckOutcome"
-        },
-        "type": {
-          "type": "string",
-          "const": "acked"
-        }
-      },
-      "required": [
-        "type",
-        "from",
-        "ack",
-        "outcome"
-      ]
-    }
-  ],
   "$defs": {
     "AckOutcome": {
-      "description": "How a command went, as the device it was sent to says.",
       "oneOf": [
         {
-          "description": "Acted on.",
-          "type": "object",
           "properties": {
             "result": {
-              "type": "string",
-              "const": "done"
+              "const": "done",
+              "type": "string"
             }
           },
           "required": [
             "result"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Not acted on yet, but kept for the device: it is asleep, and takes it\nwhen woken. Said by the server, for the device.",
-          "type": "object",
           "properties": {
             "result": {
-              "type": "string",
-              "const": "queued"
+              "const": "queued",
+              "type": "string"
             }
           },
           "required": [
             "result"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Not allowed from where it came.",
-          "type": "object",
           "properties": {
             "reason": {
               "type": "string"
             },
             "result": {
-              "type": "string",
-              "const": "refused"
+              "const": "refused",
+              "type": "string"
             }
           },
           "required": [
             "result",
             "reason"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Taken, and it failed.",
-          "type": "object",
           "properties": {
             "error": {
               "type": "string"
             },
             "result": {
-              "type": "string",
-              "const": "failed"
+              "const": "failed",
+              "type": "string"
             }
           },
           "required": [
             "result",
             "error"
-          ]
+          ],
+          "type": "object"
         }
       ]
     },
     "Frame": {
-      "description": "One analysed frame, as the link carries it: milliseconds into the track it\nwas heard at, then the low, mid and high bands in thousandths. An array, so\na frame is about forty bytes of JSON at the analyser's full rate.",
-      "type": "array",
       "maxItems": 4,
       "minItems": 4,
       "prefixItems": [
         {
-          "type": "integer",
           "format": "uint64",
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         {
-          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         {
-          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         {
-          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         }
-      ]
+      ],
+      "type": "array"
     },
     "LinkCommand": {
-      "description": "What a server asks a linked client to do.",
       "oneOf": [
         {
-          "description": "Replace the queue with these tracks and play from `start_at`,\n`position_ms` into it — or load it there paused, when `paused`.",
-          "type": "object",
           "properties": {
             "handoff": {
-              "description": "Sent by a device handing its music over. One that receives it\nwhile controlling another device takes control back: the music\nis here now, so this device is what the person is listening to.\nA plain play leaves control alone, so two devices can still\ncontrol each other on purpose.",
               "type": "boolean"
             },
             "mode": {
-              "description": "Whether to reset the play mode, as a play from a play button\ndoes. Absent, the modes are kept.",
               "$ref": "#/$defs/QueueMode"
             },
             "paused": {
               "type": "boolean"
             },
             "positionMs": {
-              "type": "integer",
               "format": "uint64",
-              "minimum": 0
+              "minimum": 0,
+              "type": "integer"
             },
             "startAt": {
-              "type": "integer",
-              "format": "uint32",
               "default": 0,
-              "minimum": 0
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
             },
             "trackIds": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "play"
+              "const": "play",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "trackIds"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Append these tracks to the queue, and with `play` start the first of\nthem. A device that does not know `play` only appends.",
-          "type": "object",
           "properties": {
             "play": {
               "type": "boolean"
             },
             "trackIds": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "enqueue"
+              "const": "enqueue",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "trackIds"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Insert these tracks after the current one.",
-          "type": "object",
           "properties": {
             "trackIds": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "playNext"
+              "const": "playNext",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "trackIds"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Take every queue entry for these tracks out of the queue.",
-          "type": "object",
           "properties": {
             "trackIds": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "remove"
+              "const": "remove",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "trackIds"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "clear"
+              "const": "clear",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Pull what the server has changed: library, favourites and playlists.\nThe library is walked only if the server says it moved, unless `full`,\nwhich walks it regardless.",
-          "type": "object",
           "properties": {
             "full": {
-              "type": "boolean",
-              "default": false
+              "default": false,
+              "type": "boolean"
             },
             "type": {
-              "type": "string",
-              "const": "sync"
+              "const": "sync",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Delete the downloaded copies of these tracks, so the next play fetches\nthem again: for a copy that was cached while the server's was bad.",
-          "type": "object",
           "properties": {
             "trackIds": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "evict"
+              "const": "evict",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "trackIds"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Play this track: from where it sits in the queue, or slotted in after\nthe current one when the queue does not hold it.",
-          "type": "object",
           "properties": {
             "trackId": {
               "type": "string"
             },
             "type": {
-              "type": "string",
-              "const": "jumpTo"
+              "const": "jumpTo",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "trackId"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "positionMs": {
-              "type": "integer",
               "format": "uint64",
-              "minimum": 0
+              "minimum": 0,
+              "type": "integer"
             },
             "type": {
-              "type": "string",
-              "const": "seek"
+              "const": "seek",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "positionMs"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "pause"
+              "const": "pause",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "resume"
+              "const": "resume",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "next"
+              "const": "next",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "previous"
+              "const": "previous",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Play this queue entry, by the id the device reported it under. Unlike\n`JumpTo` it names one entry of a track queued twice, and reaches a file\nonly that device has.",
-          "type": "object",
           "properties": {
             "id": {
               "type": "string"
             },
             "type": {
-              "type": "string",
-              "const": "playItem"
+              "const": "playItem",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "id"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "ids": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "removeItems"
+              "const": "removeItems",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "ids"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Move these queue entries before or after `target`, in the order given.",
-          "type": "object",
           "properties": {
             "after": {
               "type": "boolean"
             },
             "ids": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "target": {
               "type": "string"
             },
             "type": {
-              "type": "string",
-              "const": "moveItems"
+              "const": "moveItems",
+              "type": "string"
             }
           },
           "required": [
@@ -1109,93 +379,89 @@
             "ids",
             "target",
             "after"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Insert these tracks after the queue entry `after`.",
-          "type": "object",
           "properties": {
             "after": {
               "type": "string"
             },
             "trackIds": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "insert"
+              "const": "insert",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "trackIds",
             "after"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "undo"
+              "const": "undo",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "redo"
+              "const": "redo",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Turn shuffle on or off. The queue keeps its order; shuffle picks\nwhich track yet to play this pass plays next.",
-          "type": "object",
           "properties": {
             "on": {
               "type": "boolean"
             },
             "type": {
-              "type": "string",
-              "const": "shuffle"
+              "const": "shuffle",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "on"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "What follows a track at its end: `off`, `queue` or `one`.",
-          "type": "object",
           "properties": {
             "mode": {
               "$ref": "#/$defs/Repeat"
             },
             "type": {
-              "type": "string",
-              "const": "repeat"
+              "const": "repeat",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "mode"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Set the sleep timer, or with none cancel it.",
-          "type": "object",
           "properties": {
             "timer": {
               "anyOf": [
@@ -1208,218 +474,204 @@
               ]
             },
             "type": {
-              "type": "string",
-              "const": "sleepTimer"
+              "const": "sleepTimer",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Send this device's queue and playhead to the device `to`, as a `play`,\nand pause here. The device holding the queue does it, so taking music\nfrom another device and sending it there are one command.",
-          "type": "object",
           "properties": {
             "to": {
               "type": "string"
             },
             "type": {
-              "type": "string",
-              "const": "handOff"
+              "const": "handOff",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "to"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "The account's other devices, as they are now. News rather than a\ncommand: sent whenever one of them changes, to links that asked for it.",
-          "type": "object",
           "properties": {
             "devices": {
-              "type": "array",
               "items": {
                 "$ref": "#/$defs/LinkDevice"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "devices"
+              "const": "devices",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "devices"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "The public keys the account's devices, and devices shared with it,\nprove themselves with on the local network (`koanDeviceKeys`). News,\nas `Devices` is: sent when a device that registered a key links, and\nwhenever the account's keys change. From the server alone, never from\nthe network: it is what the network's claims are checked against.",
-          "type": "object",
           "properties": {
             "keys": {
-              "type": "array",
               "items": {
                 "$ref": "#/$defs/LinkDeviceKey"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "deviceKeys"
+              "const": "deviceKeys",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "keys"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "The accounts this device lets control it. News, as `Devices` is: sent\nwhen it links and whenever the list changes.",
-          "type": "object",
           "properties": {
             "accounts": {
-              "description": "Every account on the server, to choose from.",
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "error": {
-              "description": "Why the last request to share or stop sharing was refused.",
               "type": [
                 "string",
                 "null"
               ]
             },
             "grantees": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "type": {
-              "type": "string",
-              "const": "shares"
+              "const": "shares",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "grantees"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "`command`, sent by another account this device is shared with: run as\nthat account's request, from the playback set (`allowed_playback`).",
-          "type": "object",
           "properties": {
             "command": {
               "$ref": "#/$defs/LinkCommand"
             },
             "type": {
-              "type": "string",
-              "const": "shared"
+              "const": "shared",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "command"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "`device` was forgotten: drop it, however it was last heard of. News,\nas `Devices` is.",
-          "type": "object",
           "properties": {
             "device": {
               "type": "string"
             },
             "type": {
-              "type": "string",
-              "const": "forgotten"
+              "const": "forgotten",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "device"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "The account's play history on the server moved: a play recorded or\nforgotten on one of its devices. The device reads what changed\n(`remote::history::sync`).",
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "historyChanged"
+              "const": "historyChanged",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "The account's EQ profiles kept everywhere moved on the server: one\nchanged or deleted on another of its devices. The device reads what\nchanged (`remote::dsp_sync::sync`).",
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "dspProfilesChanged"
+              "const": "dspProfilesChanged",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Play through this output from now on, carrying on from where the music\nis, as the device's own output menu would.",
-          "type": "object",
           "properties": {
             "output": {
               "$ref": "#/$defs/OutputChoice"
             },
             "type": {
-              "type": "string",
-              "const": "setOutput"
+              "const": "setOutput",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "output"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "List the outputs again, and publish them if they moved: a controller\nhas opened its output menu. Cheap, and answered by the link state.",
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "refreshOutputs"
+              "const": "refreshOutputs",
+              "type": "string"
             }
           },
           "required": [
             "type"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "The volume of the renderer the device plays to, 0–100.",
-          "type": "object",
           "properties": {
             "type": {
-              "type": "string",
-              "const": "setRendererVolume"
+              "const": "setRendererVolume",
+              "type": "string"
             },
             "volume": {
-              "type": "integer",
               "format": "uint8",
-              "maximum": 255,
-              "minimum": 0
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
             "type",
             "volume"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Play the output `device` through the DSP profile `profile`, or\nuntouched with `None`. A renderer is named by its UDN.",
-          "type": "object",
           "properties": {
             "device": {
               "type": "string"
@@ -1431,35 +683,33 @@
               ]
             },
             "type": {
-              "type": "string",
-              "const": "setPreset"
+              "const": "setPreset",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "device"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "Send this device's audio levels (`LinkReport::Levels`) while `on`: a\ncontroller has playing bars on screen. A device on the same network may\nask; levels say no more than the now-playing it already sees.",
-          "type": "object",
           "properties": {
             "on": {
               "type": "boolean"
             },
             "type": {
-              "type": "string",
-              "const": "watchLevels"
+              "const": "watchLevels",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "on"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "A frame of the levels of `from`, a device this one watches, relayed by\nthe server. News, like `Devices`.",
-          "type": "object",
           "properties": {
             "f": {
               "$ref": "#/$defs/Frame"
@@ -1468,24 +718,23 @@
               "type": "string"
             },
             "type": {
-              "type": "string",
-              "const": "levels"
+              "const": "levels",
+              "type": "string"
             }
           },
           "required": [
             "type",
             "from",
             "f"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "description": "The device `from` answered the command this device sent it under\n`ack`: see `remote::acks`. Relayed by the server; news, like `Levels`.",
-          "type": "object",
           "properties": {
             "ack": {
-              "type": "integer",
               "format": "uint64",
-              "minimum": 0
+              "minimum": 0,
+              "type": "integer"
             },
             "from": {
               "type": "string"
@@ -1494,8 +743,8 @@
               "$ref": "#/$defs/AckOutcome"
             },
             "type": {
-              "type": "string",
-              "const": "acked"
+              "const": "acked",
+              "type": "string"
             }
           },
           "required": [
@@ -1503,39 +752,33 @@
             "from",
             "ack",
             "outcome"
-          ]
+          ],
+          "type": "object"
         }
       ]
     },
     "LinkDevice": {
-      "description": "Another device on the same account, as the server sends it.",
-      "type": "object",
       "properties": {
         "acks": {
-          "description": "It answers commands sent with an id, which the server relays: see\n`remote::acks`. False from a server or a device that predates that.",
           "type": "boolean"
         },
         "id": {
-          "description": "The device's own id: stable across its reconnects.",
           "type": "string"
         },
         "lastSeen": {
-          "description": "Unix seconds when it last held a link, for one that does not now.",
+          "format": "int64",
           "type": [
             "integer",
             "null"
-          ],
-          "format": "int64"
+          ]
         },
         "linked": {
-          "description": "Linked now. A device that is not is one iOS has suspended: a command\nwakes it, and music reaches it as a notification to tap.",
           "type": "boolean"
         },
         "name": {
           "type": "string"
         },
         "owner": {
-          "description": "The account it belongs to, for a device another account shares: `None`\nfor the account's own.",
           "type": [
             "string",
             "null"
@@ -1545,7 +788,6 @@
           "type": "string"
         },
         "state": {
-          "description": "What it last reported, with the playhead placed as of sending. `None`\nuntil it has reported at all.",
           "anyOf": [
             {
               "$ref": "#/$defs/LinkState"
@@ -1556,7 +798,6 @@
           ]
         },
         "wakeable": {
-          "description": "Whether the server can wake it once it is not linked: it gave a push\ntoken, and the server has a push key. `None` from a server older than\nthis, which listed an absent device only when it had a token.",
           "type": [
             "boolean",
             "null"
@@ -1568,22 +809,18 @@
         "name",
         "platform",
         "linked"
-      ]
+      ],
+      "type": "object"
     },
     "LinkDeviceKey": {
-      "description": "A device's public key, as `LinkCommand::DeviceKeys` carries it.",
-      "type": "object",
       "properties": {
         "id": {
-          "description": "The device's id.",
           "type": "string"
         },
         "key": {
-          "description": "Base64 of its 32-byte Ed25519 public key.",
           "type": "string"
         },
         "owner": {
-          "description": "The account it belongs to, for a device shared with this one's: `None`\nfor the account's own.",
           "type": [
             "string",
             "null"
@@ -1593,105 +830,93 @@
       "required": [
         "id",
         "key"
-      ]
+      ],
+      "type": "object"
     },
     "LinkOutput": {
-      "description": "One output: a device by its name, or a renderer by its UDN.",
-      "type": "object",
       "properties": {
         "busy": {
-          "description": "Playing or paused for something else: picking it takes it over.",
           "type": "boolean"
         },
         "detail": {
-          "description": "What to say under its name: a renderer's make and model.",
           "type": "string"
         },
         "id": {
           "type": "string"
         },
         "kind": {
-          "description": "How it is connected: `usb`, `bluetooth`, `upnp` and the rest.",
-          "type": "string",
-          "default": ""
+          "default": "",
+          "type": "string"
         },
         "name": {
           "type": "string"
         },
         "preset": {
-          "description": "The EQ preset it was set from.",
           "type": [
             "string",
             "null"
           ]
         },
         "unsaved": {
-          "description": "Its EQ is not a preset as saved: changed since, or never saved. Flat\nis neither this nor a preset.",
           "type": "boolean"
         }
       },
       "required": [
         "id",
         "name"
-      ]
+      ],
+      "type": "object"
     },
     "LinkOutputs": {
-      "description": "What a device can play through.",
-      "type": "object",
       "properties": {
         "current": {
-          "description": "What it plays through now.",
           "$ref": "#/$defs/OutputChoice",
           "default": {
             "kind": "default"
           }
         },
         "devices": {
-          "description": "Its own audio devices: on a phone, the route the system chose.",
-          "type": "array",
           "default": [],
           "items": {
             "$ref": "#/$defs/LinkOutput"
-          }
+          },
+          "type": "array"
         },
         "dspEnabled": {
-          "type": "boolean",
-          "default": false
+          "default": false,
+          "type": "boolean"
         },
         "profiles": {
-          "description": "Its EQ presets, which any of its outputs can be set from, and\nwhether processing is on at all (always, since a device is made flat\ninstead; kept for apps from before).",
-          "type": "array",
           "default": [],
           "items": {
             "type": "string"
-          }
+          },
+          "type": "array"
         },
         "renderers": {
-          "description": "The UPnP renderers it can see.",
-          "type": "array",
           "default": [],
           "items": {
             "$ref": "#/$defs/LinkOutput"
-          }
+          },
+          "type": "array"
         },
         "volume": {
-          "description": "The volume of the renderer it plays to, when it has one.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ],
-          "format": "uint8",
-          "maximum": 255,
-          "minimum": 0
+          ]
         }
-      }
+      },
+      "type": "object"
     },
     "LinkQueueEntry": {
-      "type": "object",
       "properties": {
         "album": {
-          "type": "string",
-          "default": ""
+          "default": "",
+          "type": "string"
         },
         "artist": {
           "type": "string"
@@ -1700,24 +925,22 @@
           "type": "boolean"
         },
         "durationMs": {
-          "type": "integer",
-          "format": "uint64",
           "default": 0,
-          "minimum": 0
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "id": {
-          "description": "The queue entry's own id on that device, for `playItem` and the rest.",
+          "default": null,
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "title": {
           "type": "string"
         },
         "trackId": {
-          "description": "The server's id for the track; `None` for a file only this device has.",
           "type": [
             "string",
             "null"
@@ -1728,18 +951,17 @@
         "title",
         "artist",
         "current"
-      ]
+      ],
+      "type": "object"
     },
     "LinkState": {
-      "description": "What a linked client tells the server about itself, as it changes.",
-      "type": "object",
       "properties": {
         "album": {
+          "default": null,
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "artist": {
           "type": [
@@ -1748,13 +970,12 @@
           ]
         },
         "durationMs": {
-          "type": "integer",
-          "format": "uint64",
           "default": 0,
-          "minimum": 0
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "outputs": {
-          "description": "What the device can play through, for the device controlling it.",
           "anyOf": [
             {
               "$ref": "#/$defs/LinkOutputs"
@@ -1768,19 +989,17 @@
           "type": "boolean"
         },
         "positionMs": {
-          "description": "Into the current track, as of when this was sent.",
-          "type": "integer",
-          "format": "uint64",
           "default": 0,
-          "minimum": 0
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "queue": {
-          "description": "The queue, or the part of it around the current track when it is long.",
-          "type": "array",
           "default": [],
           "items": {
             "$ref": "#/$defs/LinkQueueEntry"
-          }
+          },
+          "type": "array"
         },
         "repeat": {
           "$ref": "#/$defs/Repeat"
@@ -1799,7 +1018,6 @@
           ]
         },
         "sleepFading": {
-          "description": "The sleep timer is fading playback out.",
           "type": "boolean"
         },
         "title": {
@@ -1811,30 +1029,28 @@
       },
       "required": [
         "playing"
-      ]
+      ],
+      "type": "object"
     },
     "OutputChoice": {
-      "description": "An output to play through.",
       "oneOf": [
         {
-          "description": "The system's default output.",
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "default"
+              "const": "default",
+              "type": "string"
             }
           },
           "required": [
             "kind"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "device"
+              "const": "device",
+              "type": "string"
             },
             "name": {
               "type": "string"
@@ -1843,14 +1059,14 @@
           "required": [
             "kind",
             "name"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "renderer"
+              "const": "renderer",
+              "type": "string"
             },
             "udn": {
               "type": "string"
@@ -1859,133 +1075,804 @@
           "required": [
             "kind",
             "udn"
-          ]
+          ],
+          "type": "object"
         }
       ]
     },
     "QueueMode": {
-      "description": "What replacing the queue does to the play mode. Something played from\nits play button — a record, an artist, a playlist, a selection — starts\nas asked, in order or shuffled, with repeat off, whatever the modes were.\nA queue restored, synced or handed over keeps them.",
-      "type": "string",
       "enum": [
         "keep",
         "inOrder",
         "shuffled"
-      ]
+      ],
+      "type": "string"
     },
     "Repeat": {
-      "description": "What follows a track once it ends, beyond the queue's own order.",
       "oneOf": [
         {
-          "description": "The queue ends at its last item.",
-          "type": "string",
-          "const": "off"
+          "const": "off",
+          "type": "string"
         },
         {
-          "description": "The last item runs on into the first.",
-          "type": "string",
-          "const": "queue"
+          "const": "queue",
+          "type": "string"
         },
         {
-          "description": "The item plays again. An explicit next or previous still moves on.",
-          "type": "string",
-          "const": "one"
+          "const": "one",
+          "type": "string"
         }
       ]
     },
     "Sleep": {
-      "description": "A sleep timer that is set, as clients show it. A time rather than what\nis left of one, so it says the same thing for as long as it stands.",
       "oneOf": [
         {
-          "description": "Milliseconds since the Unix epoch.",
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "at"
+              "const": "at",
+              "type": "string"
             },
             "unix_ms": {
-              "type": "integer",
               "format": "uint64",
-              "minimum": 0
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
             "kind",
             "unix_ms"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "endOfTrack"
+              "const": "endOfTrack",
+              "type": "string"
             }
           },
           "required": [
             "kind"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "endOfRecord"
+              "const": "endOfRecord",
+              "type": "string"
             }
           },
           "required": [
             "kind"
-          ]
+          ],
+          "type": "object"
         }
       ]
     },
     "SleepTimer": {
-      "description": "A sleep timer as asked for: stop after a while, or at the end of the\ntrack or record playing. It pauses, fading out, and leaves the queue as it\nwas, so playing again carries on from there.",
       "oneOf": [
         {
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "after"
+              "const": "after",
+              "type": "string"
             },
             "minutes": {
-              "type": "integer",
               "format": "uint32",
-              "minimum": 0
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": [
             "kind",
             "minutes"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "endOfTrack"
+              "const": "endOfTrack",
+              "type": "string"
             }
           },
           "required": [
             "kind"
-          ]
+          ],
+          "type": "object"
         },
         {
-          "type": "object",
           "properties": {
             "kind": {
-              "type": "string",
-              "const": "endOfRecord"
+              "const": "endOfRecord",
+              "type": "string"
             }
           },
           "required": [
             "kind"
-          ]
+          ],
+          "type": "object"
         }
       ]
     }
-  }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "properties": {
+        "handoff": {
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/QueueMode"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "positionMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "startAt": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "play",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "play": {
+          "type": "boolean"
+        },
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "enqueue",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "playNext",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "remove",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "clear",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "full": {
+          "default": false,
+          "type": "boolean"
+        },
+        "type": {
+          "const": "sync",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "evict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "trackId": {
+          "type": "string"
+        },
+        "type": {
+          "const": "jumpTo",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackId"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "positionMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "seek",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "positionMs"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "pause",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "resume",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "next",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "previous",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "playItem",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "removeItems",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "ids"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "after": {
+          "type": "boolean"
+        },
+        "ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "target": {
+          "type": "string"
+        },
+        "type": {
+          "const": "moveItems",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "ids",
+        "target",
+        "after"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "after": {
+          "type": "string"
+        },
+        "trackIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "insert",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "trackIds",
+        "after"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "undo",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "redo",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "on": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "shuffle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "on"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/Repeat"
+        },
+        "type": {
+          "const": "repeat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "mode"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "timer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SleepTimer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "sleepTimer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "to": {
+          "type": "string"
+        },
+        "type": {
+          "const": "handOff",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "to"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "devices": {
+          "items": {
+            "$ref": "#/$defs/LinkDevice"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "devices",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "devices"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "#/$defs/LinkDeviceKey"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "deviceKeys",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "keys"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "accounts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "grantees": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "shares",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "grantees"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/LinkCommand"
+        },
+        "type": {
+          "const": "shared",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "command"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "type": {
+          "const": "forgotten",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "device"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "historyChanged",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "dspProfilesChanged",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "output": {
+          "$ref": "#/$defs/OutputChoice"
+        },
+        "type": {
+          "const": "setOutput",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "output"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "refreshOutputs",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "setRendererVolume",
+          "type": "string"
+        },
+        "volume": {
+          "format": "uint8",
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "volume"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "const": "setPreset",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "device"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "on": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "watchLevels",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "on"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "f": {
+          "$ref": "#/$defs/Frame"
+        },
+        "from": {
+          "type": "string"
+        },
+        "type": {
+          "const": "levels",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "from",
+        "f"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "ack": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/AckOutcome"
+        },
+        "type": {
+          "const": "acked",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "from",
+        "ack",
+        "outcome"
+      ],
+      "type": "object"
+    }
+  ],
+  "properties": {
+    "ack": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "title": "Envelope",
+  "type": "object"
 }

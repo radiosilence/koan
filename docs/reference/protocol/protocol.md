@@ -11,7 +11,7 @@ kōan's apps talk to a kōan server over Subsonic, and to each other through it 
 
 ## Schema
 
-[`docs/reference/protocol/schema/`](https://github.com/radiosilence/koan/tree/main/docs/reference/protocol/schema) holds JSON Schema (draft 2020-12) for every message: `link-command.json` and `link-report.json` for the link and nearby connections, `envelope.json` for a command carrying an ack id, `pair-message.json` for a pairing socket, and `nearby-frame.json` for the nearby handshake and signed frames. They are generated from the Rust types, so they state what the code accepts; these pages state what the messages mean. `just protocol-schema` regenerates them, and the test suite fails when the committed files differ from what the types produce.
+[`docs/reference/protocol/schema/`](https://github.com/radiosilence/koan/tree/main/docs/reference/protocol/schema) holds JSON Schema (draft 2020-12) for every message: `link-command.json` and `link-report.json` for the link and nearby connections, `envelope.json` for a command carrying an ack id, `pair-message.json` for a pairing socket, and `nearby-frame.json` for the nearby handshake and signed frames. They are generated from the Rust types, so they state what the code accepts; these pages state what the messages mean. `envelope.json` admits every command type, but `acked` is never sent in an envelope: its own `ack` field is the id of the command being answered. `just protocol-schema` regenerates them, and the test suite fails when the committed files differ from what the types produce.
 
 ## Capabilities
 

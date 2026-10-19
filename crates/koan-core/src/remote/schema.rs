@@ -1,6 +1,10 @@
 //! JSON Schema for the protocol's messages, generated from these types into
 //! `docs/reference/protocol/schema/`. The test fails when the committed files
 //! differ from what the types produce; `just protocol-schema` writes them.
+//!
+//! The schema states shapes only. Doc comments here speak of Rust names and
+//! modules, so they are left out; what a message means is on the protocol
+//! pages.
 
 use std::path::PathBuf;
 
@@ -15,9 +19,22 @@ fn render<T: JsonSchema>() -> String {
     let schema = SchemaSettings::draft2020_12()
         .into_generator()
         .into_root_schema_for::<T>();
-    let mut json = serde_json::to_string_pretty(&schema).unwrap();
+    let mut value = schema.to_value();
+    strip_descriptions(&mut value);
+    let mut json = serde_json::to_string_pretty(&value).unwrap();
     json.push('\n');
     json
+}
+
+fn strip_descriptions(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("description");
+            map.values_mut().for_each(strip_descriptions);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_descriptions),
+        _ => {}
+    }
 }
 
 #[test]

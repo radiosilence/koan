@@ -195,6 +195,7 @@ pub enum LinkCommand {
     RefreshOutputs,
     /// The volume of the renderer the device plays to, 0–100.
     SetRendererVolume {
+        #[cfg_attr(test, schemars(range(max = 100)))]
         volume: u8,
     },
     /// Play the output `device` through the DSP profile `profile`, or

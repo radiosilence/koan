@@ -1,11 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ProofFrame",
-  "description": "The proof's frames, beside the link's messages on a nearby connection.\nTagged apart from every `LinkCommand` and `LinkReport`, and sent only to a\npeer whose part in the handshake shows it knows them: the listener's\n`Hello` nonce, the dialler's `NearbyAuth`.",
   "oneOf": [
     {
-      "description": "The dialler: who it is, its nonce, and its signature over both nonces.",
-      "type": "object",
       "properties": {
         "id": {
           "type": "string"
@@ -17,8 +13,8 @@
           "type": "string"
         },
         "type": {
-          "type": "string",
-          "const": "nearbyAuth"
+          "const": "nearbyAuth",
+          "type": "string"
         }
       },
       "required": [
@@ -26,11 +22,10 @@
         "id",
         "nonce",
         "sig"
-      ]
+      ],
+      "type": "object"
     },
     {
-      "description": "The listener's answer: whether it took the dialler for the account's\nor a shared device, and its own signature, when it has a key.",
-      "type": "object",
       "properties": {
         "sig": {
           "type": [
@@ -39,8 +34,8 @@
           ]
         },
         "type": {
-          "type": "string",
-          "const": "nearbyProof"
+          "const": "nearbyProof",
+          "type": "string"
         },
         "verified": {
           "type": "boolean"
@@ -49,26 +44,25 @@
       "required": [
         "type",
         "verified"
-      ]
+      ],
+      "type": "object"
     },
     {
-      "description": "A command from a proven dialler, as JSON, signed for this session.",
-      "type": "object",
       "properties": {
         "command": {
           "type": "string"
         },
         "seq": {
-          "type": "integer",
           "format": "uint64",
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         "sig": {
           "type": "string"
         },
         "type": {
-          "type": "string",
-          "const": "nearbySigned"
+          "const": "nearbySigned",
+          "type": "string"
         }
       },
       "required": [
@@ -76,26 +70,25 @@
         "seq",
         "sig",
         "command"
-      ]
+      ],
+      "type": "object"
     },
     {
-      "description": "A report from a listener that signs them, as JSON, signed for this\nsession.",
-      "type": "object",
       "properties": {
         "report": {
           "type": "string"
         },
         "seq": {
-          "type": "integer",
           "format": "uint64",
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         "sig": {
           "type": "string"
         },
         "type": {
-          "type": "string",
-          "const": "nearbySignedReport"
+          "const": "nearbySignedReport",
+          "type": "string"
         }
       },
       "required": [
@@ -103,7 +96,9 @@
         "seq",
         "sig",
         "report"
-      ]
+      ],
+      "type": "object"
     }
-  ]
+  ],
+  "title": "ProofFrame"
 }

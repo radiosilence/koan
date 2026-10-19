@@ -1,27 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PairMessage",
-  "description": "What the server sends down a pairing socket: `Pending` once it is open,\nthen one outcome before it closes.",
   "oneOf": [
     {
-      "type": "object",
       "properties": {
         "code": {
-          "description": "`XXXX-XXXX`, for someone to type.",
           "type": "string"
         },
         "expiresIn": {
-          "description": "Seconds until the pairing lapses.",
-          "type": "integer",
           "format": "uint64",
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         "id": {
           "type": "string"
         },
         "type": {
-          "type": "string",
-          "const": "pending"
+          "const": "pending",
+          "type": "string"
         }
       },
       "required": [
@@ -29,17 +24,17 @@
         "id",
         "code",
         "expiresIn"
-      ]
+      ],
+      "type": "object"
     },
     {
-      "type": "object",
       "properties": {
         "apiKey": {
           "type": "string"
         },
         "type": {
-          "type": "string",
-          "const": "approved"
+          "const": "approved",
+          "type": "string"
         },
         "username": {
           "type": "string"
@@ -49,31 +44,33 @@
         "type",
         "username",
         "apiKey"
-      ]
+      ],
+      "type": "object"
     },
     {
-      "type": "object",
       "properties": {
         "type": {
-          "type": "string",
-          "const": "declined"
+          "const": "declined",
+          "type": "string"
         }
       },
       "required": [
         "type"
-      ]
+      ],
+      "type": "object"
     },
     {
-      "type": "object",
       "properties": {
         "type": {
-          "type": "string",
-          "const": "expired"
+          "const": "expired",
+          "type": "string"
         }
       },
       "required": [
         "type"
-      ]
+      ],
+      "type": "object"
     }
-  ]
+  ],
+  "title": "PairMessage"
 }
