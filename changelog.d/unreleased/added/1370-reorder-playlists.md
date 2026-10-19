@@ -1,0 +1,1 @@
+- **Playlists reorder by drag on iOS and Android.** Press and drag on iOS, in the Playlists page and the iPad sidebar; Edit on Android's Playlists page puts a handle on each row. The order is kept per device, as the Mac's is.

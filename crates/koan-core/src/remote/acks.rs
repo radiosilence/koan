@@ -52,9 +52,51 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    /// A command as a push carries it: the same JSON as over the link.
+    /// A command as the link, the network or a push carries it. `acked` has
+    /// an `ack` field of its own, which the envelope's would take, so a
+    /// command that does not read as an envelope is read bare.
     pub fn parse(json: &str) -> Result<Self, String> {
-        serde_json::from_str(json).map_err(|e| e.to_string())
+        serde_json::from_str(json)
+            .or_else(|e| {
+                serde_json::from_str::<LinkCommand>(json)
+                    .map(Self::from)
+                    .map_err(|_| e)
+            })
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Refuse a command this end cannot read, under the id it was sent with,
+/// rather than leave it unanswered: a sender takes silence as the device
+/// gone. Nothing to do for one sent without an id.
+pub fn refuse_unread(text: &str, answer: impl FnOnce(u64, AckOutcome)) {
+    #[derive(Deserialize)]
+    struct Id {
+        ack: Option<u64>,
+    }
+    if let Some(ack) = serde_json::from_str::<Id>(text).ok().and_then(|i| i.ack) {
+        answer(ack, unreadable());
+    }
+}
+
+/// The device and id of a `command` report whose command the server cannot
+/// read, so the sender is refused rather than left waiting.
+pub fn unread_relay(text: &str) -> Option<(String, u64)> {
+    #[derive(Deserialize)]
+    struct Relay {
+        r#type: String,
+        to: String,
+        ack: u64,
+    }
+    let relay = serde_json::from_str::<Relay>(text).ok()?;
+    (relay.r#type == "command").then_some((relay.to, relay.ack))
+}
+
+/// The answer to a command this end cannot read: one from a newer version,
+/// or one whose fields have changed shape.
+pub fn unreadable() -> AckOutcome {
+    AckOutcome::Refused {
+        reason: "cannot read this command".into(),
     }
 }
 
@@ -249,6 +291,46 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Envelope>(r#"{"type":"pause"}"#).unwrap(),
             Envelope::from(LinkCommand::Pause)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_command_is_refused_under_its_id() {
+        let refused = |text: &str| {
+            let mut answered = None;
+            refuse_unread(text, |ack, outcome| answered = Some((ack, outcome)));
+            answered
+        };
+        let newer = r#"{"type":"somethingNew","x":1,"ack":9}"#;
+        assert!(Envelope::parse(newer).is_err());
+        assert_eq!(refused(newer), Some((9, unreadable())));
+        assert_eq!(refused(r#"{"type":"somethingNew"}"#), None);
+        assert_eq!(refused("not json"), None);
+    }
+
+    #[test]
+    fn acked_reads_though_its_own_field_is_called_ack() {
+        let acked = LinkCommand::Acked {
+            from: "d1".into(),
+            ack: 9,
+            outcome: AckOutcome::Done,
+        };
+        let json = serde_json::to_string(&acked).unwrap();
+        assert_eq!(Envelope::parse(&json).unwrap(), Envelope::from(acked));
+    }
+
+    #[test]
+    fn an_unreadable_relay_names_its_target_and_id() {
+        let newer = r#"{"type":"command","to":"d1","command":{"type":"somethingNew"},"ack":4}"#;
+        assert!(serde_json::from_str::<crate::remote::link::LinkReport>(newer).is_err());
+        assert_eq!(unread_relay(newer), Some(("d1".into(), 4)));
+        assert_eq!(
+            unread_relay(r#"{"type":"command","to":"d1","command":{"type":"x"}}"#),
+            None
+        );
+        assert_eq!(
+            unread_relay(r#"{"type":"somethingNew","to":"d1","ack":4}"#),
+            None
         );
     }
 

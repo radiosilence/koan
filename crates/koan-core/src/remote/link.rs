@@ -1102,10 +1102,14 @@ impl wire::Session for LinkSession<'_> {
     }
 
     fn incoming(&mut self, text: &str) {
-        let envelope = match serde_json::from_str::<crate::remote::acks::Envelope>(text) {
+        let envelope = match crate::remote::acks::Envelope::parse(text) {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("link: not a command ({e}): {text}");
+                crate::remote::acks::refuse_unread(text, |ack, outcome| {
+                    report(LinkReport::Received { ack });
+                    report(LinkReport::Ack { ack, outcome });
+                });
                 return;
             }
         };

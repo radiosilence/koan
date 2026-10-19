@@ -45,9 +45,6 @@ extension AppState {
                 return
             }
             nav.show(.albums)
-            #if os(iOS)
-            PushDelegate.requestAlertsIfSignedIn()
-            #endif
             let synced = await activity.run(
                 "Loading the library", uses: [.remoteTracks], followsSync: true
             ) {

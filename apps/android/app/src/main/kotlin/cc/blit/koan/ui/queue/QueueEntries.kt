@@ -63,9 +63,12 @@ import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.QueueLock
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.library.NameLine
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.PlayingBars
+import cc.blit.koan.ui.library.albumName
+import cc.blit.koan.ui.library.artistName
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.nowplaying.art
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
@@ -339,11 +342,12 @@ private fun ReorderableCollectionItemScope.RowContent(
         }
         Box(Modifier.weight(1f)) {
             when (row) {
-                is QueueRow.Album -> AlbumHeading(row.group)
-                is QueueRow.Single -> TrackRow(row.item, playing, sleeve = true, showArtist = true)
+                is QueueRow.Album -> AlbumHeading(row.group, linked = !selecting)
+                is QueueRow.Single -> TrackRow(row.item, playing, sleeve = true, showArtist = true, linked = !selecting)
                 is QueueRow.Track -> TrackRow(
                     row.item,
                     playing,
+                    linked = !selecting,
                     // Ungrouped there is no heading above to say what record this is.
                     sleeve = !grouped,
                     showArtist = !grouped || row.item.artist != row.item.albumArtist,
@@ -360,16 +364,19 @@ private fun ReorderableCollectionItemScope.RowContent(
 private fun sleeveShape(radius: Int) = if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(radius.dp)
 
 @Composable
-private fun AlbumHeading(group: QueueGroup) {
+private fun AlbumHeading(group: QueueGroup, linked: Boolean) {
     Row(Modifier.padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
         val sleeve = Modifier.size(52.dp).clip(sleeveShape(5))
         group.items.first().art(ArtSize.Thumb)?.let { AsyncImage(it, null, sleeve) }
             ?: Box(sleeve.background(KoanTheme.color(KoanTone.Rule)))
         Spacer(Modifier.width(KoanSpace.m))
         Column {
-            KoanText(group.title, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 2)
+            val first = group.items.first()
             if (group.album.isNotEmpty()) {
-                KoanText(group.albumArtist.ifEmpty { "Unknown Artist" }, role = KoanType.Meta, tone = KoanTone.Muted, maxLines = 1)
+                NameLine(listOf(albumName(group.title, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
+                NameLine(listOf(artistName(group.albumArtist.ifEmpty { "Unknown Artist" }, first.albumArtistId)), linked = linked)
+            } else {
+                KoanText(group.title, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 2)
             }
             KoanText(group.detail, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
         }
@@ -377,7 +384,7 @@ private fun AlbumHeading(group: QueueGroup) {
 }
 
 @Composable
-private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArtist: Boolean) {
+private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArtist: Boolean, linked: Boolean) {
     val tokens = LocalKoanTokens.current
     val played = item.status == EntryStatus.PLAYED
     val current = item.status == EntryStatus.PLAYING
@@ -406,11 +413,13 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
                 maxLines = 1,
             )
             if (showArtist && item.artist.isNotEmpty()) {
-                KoanText(
-                    if (sleeve && item.album.isNotEmpty()) "${item.artist} — ${item.album}" else item.artist,
+                NameLine(
+                    listOfNotNull(
+                        artistName(item.artist, item.artistId),
+                        albumName(item.album, item.albumId, item.trackId).takeIf { sleeve },
+                    ),
                     role = KoanType.Fine,
-                    tone = KoanTone.Muted,
-                    maxLines = 1,
+                    linked = linked,
                 )
             }
         }
@@ -492,7 +501,7 @@ private fun Header(
             // What the queue still is, when it came from a playlist or a record and has not been edited since.
             when (lock) {
                 is QueueLock.Playlist -> KoanText(lock.playlist.name, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 1)
-                is QueueLock.Album -> KoanText(lock.album.title, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 1)
+                is QueueLock.Album -> NameLine(listOf(albumName(lock.album.title, lock.album.id)), role = KoanType.Body, tone = KoanTone.Strong)
                 null -> KoanText("Queue", role = KoanType.Body, tone = KoanTone.Strong, appText = true)
             }
             if (items.isNotEmpty()) {

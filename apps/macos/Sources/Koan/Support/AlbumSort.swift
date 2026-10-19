@@ -9,6 +9,7 @@ extension AlbumSort {
         case .title: "title"
         case .artist: "artist"
         case .year: "year"
+        case .yearAsc: "yearAsc"
         case .random: "random"
         case .lastPlayed: "lastPlayed"
         case .downloaded: "downloaded"
@@ -22,6 +23,7 @@ extension AlbumSort {
         case "title": self = .title
         case "artist": self = .artist
         case "year": self = .year
+        case "yearAsc": self = .yearAsc
         case "random": self = .random
         case "lastPlayed": self = .lastPlayed
         case "downloaded": self = .downloaded
@@ -35,7 +37,8 @@ extension AlbumSort {
         case .recentlyAdded: "Recently Added"
         case .title: "Title"
         case .artist: "Artist"
-        case .year: "Year"
+        case .year: "Year, Newest"
+        case .yearAsc: "Year, Oldest"
         case .random: "Random"
         case .lastPlayed: "Last Played"
         case .downloaded: "Most Downloaded"
@@ -49,7 +52,7 @@ extension AlbumSort {
     static func offered(recent: Bool, downloaded: Bool, searching: Bool) -> [AlbumSort] {
         (searching ? [.bestMatch] : []) + (recent ? [.lastPlayed] : [])
             + (downloaded ? [.downloaded] : [])
-            + [.recentlyAdded, .title, .artist, .year, .random]
+            + [.recentlyAdded, .title, .artist, .year, .yearAsc, .random]
     }
 }
 

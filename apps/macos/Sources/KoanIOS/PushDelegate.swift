@@ -44,7 +44,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = self
         #endif
         // A token needs no permission; showing a notification does, and is
-        // asked for once there is a server to send one.
+        // asked for once the server signed in to can send one.
         application.registerForRemoteNotifications()
         return true
     }
@@ -111,17 +111,16 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
     }
     #endif
 
-    /// Ask to show notifications, if a server is signed in to send them.
-    /// Asked once; iOS remembers the answer.
-    static func requestAlertsIfSignedIn() {
+    /// What a server lists when it holds an APNs key and so can send
+    /// notifications: only one signed by the app's own developer can.
+    static let extensionName = "koanApns"
+
+    /// Ask to show notifications. Called once the signed-in server offers
+    /// them; iOS asks the person only the first time.
+    static func requestAlerts() async {
         #if !os(tvOS)
-        guard let engine else { return }
-        Task {
-            let settings = await engine.settings()
-            guard settings.remoteSignedIn else { return }
-            _ = try? await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound])
-        }
+        _ = try? await UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound])
         #endif
     }
 

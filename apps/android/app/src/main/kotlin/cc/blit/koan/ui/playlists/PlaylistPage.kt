@@ -50,6 +50,8 @@ import cc.blit.koan.ui.library.Selection
 import cc.blit.koan.ui.library.SelectionBar
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
+import cc.blit.koan.ui.library.albumName
+import cc.blit.koan.ui.library.artistName
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.theme.KoanButton
@@ -352,7 +354,9 @@ private fun RecordHeading(heading: PlaylistRow.Heading, selection: Selection<Pla
     val nav = LocalNavigator.current
     CollectionRow(
         heading.album,
-        heading.artist,
+        null,
+        names = listOf(artistName(heading.artist, heading.entries.first().albumArtistId)),
+        linked = !selection.active,
         modifier = Modifier.padding(top = KoanSpace.m),
         titleTone = KoanTone.Strong,
         // While picking, a heading picks its run, or lets it go when the whole run is picked.
@@ -391,7 +395,13 @@ private fun EntryRow(
     Box(modifier) {
         CollectionRow(
             track.title,
-            track.artistName,
+            null,
+            // Under a heading the record is named already, and so is its artist.
+            names = listOfNotNull(
+                artistName(track.artistName, track.artistId).takeIf { artwork || track.artistName != track.albumArtistName },
+                albumName(track.albumTitle, track.albumId, track.id).takeIf { artwork },
+            ),
+            linked = !selection.active && !editing,
             titleTone = if (playing) KoanTone.Accent else KoanTone.Ink,
             selected = playing,
             onClick = if (editing) null else ({ if (!selection.take(entry)) edits.play(playlist.id, entry.entryId) }),
