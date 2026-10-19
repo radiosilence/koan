@@ -679,7 +679,7 @@ private struct RemoteSettings: View {
                     options: [("Playing track only", 0), ("1 track", 1)]
                         + (2...10).map { ("\($0) tracks", $0) }
                         // A number past the choices, set by hand, shows as itself.
-                        + (model.settings.downloadAhead.map(Int.init).filter { $0 > 10 }.map { [("\($0) tracks", $0)] } ?? [])
+                        + (model.settings.downloadAhead.map(Int.init).flatMap { $0 > 10 ? [("\($0) tracks", $0)] : nil } ?? [])
                         + [("Whole queue", -1)]
                 )
                 KoanPicker(
