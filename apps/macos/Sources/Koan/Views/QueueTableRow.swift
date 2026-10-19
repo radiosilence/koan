@@ -84,6 +84,10 @@ final class QueueTableRow: TableCell, TableRow {
     /// Wide enough for an hour or more ("1:02:34") in whichever face the rows
     /// are drawn in; never narrower than the column was.
     private static var durationWidth: CGFloat { max(44, TrackTableRow.measure("0:00:00", numberFont)) }
+    /// Wide enough for a disc's "2.03" where its record carries discs, the
+    /// same for every row of it so the titles line up.
+    private static var discPlaceWidth: CGFloat { max(34, TrackTableRow.measure("0.00", numberFont)) }
+    private static var placeWidth: CGFloat { max(20, TrackTableRow.measure("00", numberFont)) }
     private static var headingFont: NSFont { NSFont.role(.body, system: NSFont.systemFont(ofSize: 14, weight: .semibold)) }
     private static var detailFont: NSFont { NSFont.role(.fine, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
@@ -400,9 +404,7 @@ final class QueueTableRow: TableCell, TableRow {
             x += side + 10
         } else {
             let numberHeight = lineHeight(Self.numberFont)
-            // Wide enough for a disc's "2.03" where its record carries discs,
-            // the same for every row of it so the titles line up.
-            let numberWidth: CGFloat = wideNumber ? 34 : 20
+            let numberWidth = wideNumber ? Self.discPlaceWidth : Self.placeWidth
             number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: numberWidth, height: numberHeight)
             x += numberWidth + 10
         }
