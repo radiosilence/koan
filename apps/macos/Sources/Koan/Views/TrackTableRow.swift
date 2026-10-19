@@ -98,7 +98,7 @@ final class TrackTableRow: TableCell, TableRow {
     )) }
     private static let spacing: CGFloat = 12
     /// Wide enough for an hour or more ("1:02:34") and for the widest format
-    /// ("VORBIS 44.1 kHz", a lossy file whose bitrate is unknown) in whichever face the rows are drawn
+    /// ("VORBIS 44.1 kHz", the lossy form) in whichever face the rows are drawn
     /// in; never narrower than the columns were.
     private static var durationWidth: CGFloat { max(48, measure("0:00:00", numberFont)) }
     private static var qualityWidth: CGFloat { max(92, measure("VORBIS 44.1 kHz", qualityFont)) }

@@ -34,8 +34,7 @@ enum Format {
             : String(format: "%d:%02d", m, s)
     }
 
-    /// What the source is: "FLAC 24/96", or "MP3 320 kbps" for a lossy file,
-    /// whose encoder setting says more about it than its sample rate does.
+    /// What the source is: "FLAC 24/96" and so on.
     ///
     /// A rate the device refused is appended — "FLAC 24/96 → 48" — because a
     /// badge that reads the same whether or not something resampled is the one
@@ -43,11 +42,8 @@ enum Format {
     /// reason: "FLAC 24/96 → 48 · EQ + FIR".
     static func quality(_ f: StreamFormat) -> String {
         var parts = [f.codec.uppercased()]
-        let kbps = isLossy(f.codec) ? f.bitrateKbps : nil
         if let depth = f.bitDepth {
             parts.append("\(depth)/\(rate(f.sampleRate))")
-        } else if let kbps {
-            parts.append("\(kbps) kbps")
         } else {
             parts.append("\(rate(f.sampleRate)) kHz")
         }
@@ -55,7 +51,7 @@ enum Format {
             parts.append("\(f.channels)ch")
         }
         if isResampled(f), let out = f.outputSampleRate {
-            parts.append(kbps == nil ? "→ \(rate(out))" : "→ \(rate(out)) kHz")
+            parts.append("→ \(rate(out))")
         }
         if let dsp = f.dsp {
             parts.append("· \(dspLabel(dsp))")
@@ -101,6 +97,10 @@ enum Format {
             : "Device stayed at \(rate(out)) kHz, so \(rate(f.sampleRate)) kHz is being resampled to reach it"
     }
 
+    /// What a track is, as its row shows it: "FLAC 16/44.1", or "MP3 320 kbps"
+    /// for a lossy file, whose encoder setting says more about it than its
+    /// sample rate does. The transport keeps the rate, which is what the
+    /// device is matched to.
     static func quality(_ t: Track) -> String? {
         guard let codec = t.codec else { return nil }
         var s = codec.uppercased()
@@ -114,11 +114,12 @@ enum Format {
         return s
     }
 
-    /// Codecs whose encoder setting, not the rate, says what the file is.
+    /// Codecs whose encoder setting, not the rate, says what the file is:
+    /// the indexer's names, and the suffixes other Subsonic servers report.
     /// Named rather than inferred from a missing bit depth, which a server
     /// can leave out for lossless files too.
     private static func isLossy(_ codec: String) -> Bool {
-        ["MP3", "AAC", "VORBIS", "OPUS", "OGG", "WMA", "MPC", "MP2"].contains(codec.uppercased())
+        ["MP3", "AAC", "M4A", "VORBIS", "OPUS", "OGG", "OGA", "WMA", "MPC", "MP2"].contains(codec.uppercased())
     }
 
     /// 44100 → "44.1", 96000 → "96". Trailing ".0" is noise.

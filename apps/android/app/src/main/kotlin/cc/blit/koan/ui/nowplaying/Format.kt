@@ -5,10 +5,8 @@ import cc.blit.koan.ffi.StreamFormat
 import java.util.Locale
 
 /**
- * "FLAC 24/96", "MP3 320 kbps", "FLAC 16/44.1 → 48 · EQ": what the output is
- * being fed, as the Apple apps' format badge says it. A lossy file is named by
- * its bitrate where the decoder knows it, since the encoder setting says more
- * about it than the sample rate does.
+ * "FLAC 24/96", "MP3 44.1 kHz", "FLAC 16/44.1 → 48 · EQ": what the output is
+ * being fed, as the Apple apps' format badge says it.
  *
  * DSP says so first. Otherwise, where the platform reports a mixer between
  * koan and the device (`outputMixed`), the badge says what it did: "→ 48"
@@ -18,11 +16,10 @@ import java.util.Locale
  */
 fun quality(f: StreamFormat): String {
     val parts = mutableListOf(f.codec.uppercase())
-    val kbps = f.bitrateKbps?.takeIf { f.codec.uppercase() in lossy }
-    parts += f.bitDepth?.let { "$it/${rate(f.sampleRate)}" } ?: kbps?.let { "$it kbps" } ?: "${rate(f.sampleRate)} kHz"
+    parts += f.bitDepth?.let { "$it/${rate(f.sampleRate)}" } ?: "${rate(f.sampleRate)} kHz"
     if (f.channels.toInt() != 2) parts += "${f.channels}ch"
     val resampled = f.outputSampleRate?.takeIf { it != f.sampleRate }
-    resampled?.let { parts += if (kbps == null) "→ ${rate(it)}" else "→ ${rate(it)} kHz" }
+    resampled?.let { parts += "→ ${rate(it)}" }
     val dsp = f.dsp
     when {
         dsp != null -> parts += "· ${dspLabel(dsp)}"
@@ -39,9 +36,6 @@ private fun dspLabel(d: DspInfo) = when {
     d.convolutionRate != null -> "FIR"
     else -> "EQ"
 }
-
-/** Codecs whose encoder setting, not the rate, says what the file is. */
-private val lossy = setOf("MP3", "AAC", "VORBIS", "OPUS", "OGG", "WMA", "MPC", "MP2")
 
 /** 44100 → "44.1", 96000 → "96". */
 private fun rate(hz: UInt): String {
