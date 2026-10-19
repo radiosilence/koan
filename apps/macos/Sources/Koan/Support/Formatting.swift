@@ -104,24 +104,22 @@ enum Format {
     static func quality(_ t: Track) -> String? {
         guard let codec = t.codec else { return nil }
         var s = codec.uppercased()
-        if isLossy(codec), let kbps = t.bitrate, kbps > 0 {
-            s += " \(kbps) kbps"
-        } else if let depth = t.bitDepth, let sr = t.sampleRate {
+        if let depth = t.bitDepth, let sr = t.sampleRate {
             s += " \(depth)/\(rate(UInt32(sr)))"
+        } else if lossy.contains(s), let kbps = t.bitrate, kbps > 0 {
+            s += " \(kbps) kbps"
         } else if let sr = t.sampleRate {
             s += " \(rate(UInt32(sr))) kHz"
         }
         return s
     }
 
-    /// Codecs whose encoder setting, not the rate, says what the file is:
-    /// the indexer's names, and the suffixes other Subsonic servers report
-    /// in their place. Named rather than inferred from a missing bit depth,
-    /// which a server can leave out for lossless files too. M4A is left out
-    /// because it holds ALAC as often as AAC.
-    private static func isLossy(_ codec: String) -> Bool {
-        ["MP3", "AAC", "VORBIS", "OPUS", "OGG", "OGA", "WMA", "MPC", "MP2", "AC3"].contains(codec.uppercased())
-    }
+    /// Codecs whose encoder setting, not the rate, says what a file without a
+    /// bit depth is. Named rather than inferred from the missing bit depth
+    /// alone, which a server can leave out for FLAC too. Covers the indexer's
+    /// MP3, AAC, Vorbis and Opus, and the suffixes other Subsonic servers
+    /// report in place of a codec; M4A is AAC once no bit depth says ALAC.
+    private static let lossy: Set = ["MP3", "AAC", "M4A", "VORBIS", "OPUS", "OGG", "OGA", "WMA", "MPC", "MP2", "AC3", "SPX"]
 
     /// 44100 → "44.1", 96000 → "96". Trailing ".0" is noise.
     private static func rate(_ hz: UInt32) -> String {
