@@ -170,17 +170,16 @@ fn read(socket: &mut Socket) -> Result<PairMessage, PairError> {
 }
 
 /// A message from the server; `None` for one of a type from a newer server,
-/// which is passed over. Anything that is not a message at all is not koan.
+/// which is passed over. A known type that does not read, or anything that is
+/// not a message at all, is a bad response.
 fn message(text: &str) -> Result<Option<PairMessage>, PairError> {
     if let Ok(message) = serde_json::from_str(text) {
         return Ok(Some(message));
     }
-    let typed = serde_json::from_str::<serde_json::Value>(text)
-        .is_ok_and(|v| v.get("type").is_some_and(|t| t.is_string()));
-    if typed {
-        Ok(None)
-    } else {
-        Err(PairError::BadResponse)
+    let value = serde_json::from_str::<serde_json::Value>(text).ok();
+    match value.as_ref().and_then(|v| v.get("type")?.as_str()) {
+        Some("pending" | "approved" | "declined" | "expired") | None => Err(PairError::BadResponse),
+        Some(_) => Ok(None),
     }
 }
 
@@ -283,6 +282,10 @@ mod tests {
             Some(PairMessage::Declined)
         );
         assert_eq!(message(r#"{"type":"somethingNew","x":1}"#).unwrap(), None);
+        assert!(matches!(
+            message(r#"{"type":"approved","key":"renamed"}"#),
+            Err(PairError::BadResponse)
+        ));
         assert!(matches!(message("<html>"), Err(PairError::BadResponse)));
     }
 

@@ -1037,13 +1037,11 @@ impl Serving<'_> {
                     log::warn!("nearby: a command not signed for this connection; refused");
                     return;
                 }
-                let envelope = match serde_json::from_str::<Envelope>(&command) {
+                let envelope = match Envelope::parse(&command) {
                     Ok(envelope) => envelope,
                     Err(e) => {
                         log::warn!("nearby: not a command ({e}): {command}");
-                        if let Some(ack) = crate::remote::acks::unread_id(&command) {
-                            self.answer()(ack, crate::remote::acks::unknown_command());
-                        }
+                        crate::remote::acks::refuse_unread(&command, self.answer());
                         return;
                     }
                 };
@@ -1148,15 +1146,13 @@ impl wire::Session for Serving<'_> {
         if let Ok(f) = serde_json::from_str::<ProofFrame>(text) {
             return self.proof(f);
         }
-        let envelope = match serde_json::from_str::<Envelope>(text) {
+        let envelope = match Envelope::parse(text) {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("nearby: not a command ({e}): {text}");
                 // A proven peer's commands come signed; this is not one.
-                if self.proven.is_none()
-                    && let Some(ack) = crate::remote::acks::unread_id(text)
-                {
-                    self.answer()(ack, crate::remote::acks::unknown_command());
+                if self.proven.is_none() {
+                    crate::remote::acks::refuse_unread(text, self.answer());
                 }
                 return;
             }

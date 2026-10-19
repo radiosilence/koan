@@ -6130,7 +6130,7 @@ async fn link_session(
                                 // device: refused, so its sender is not left waiting.
                                 if let Some((to, ack)) = koan_core::remote::acks::unread_relay(&text) {
                                     answer_once(&username, &device, &to, ack)(
-                                        koan_core::remote::acks::unknown_command(),
+                                        koan_core::remote::acks::unreadable(),
                                     );
                                 }
                             }
