@@ -1,1 +1,1 @@
-- **Playlists reorder by drag everywhere.** On the Mac a playlist dragged down now takes the place of the row it is dropped on, where before a drag of one row down did nothing; iOS reorders its playlists by press and drag, and Android through Edit on the Playlists page.
+- **Mac playlists move when dragged down.** A playlist dropped on a row below it takes that row's place; before, a drag of one row down did nothing and longer ones landed a row short.

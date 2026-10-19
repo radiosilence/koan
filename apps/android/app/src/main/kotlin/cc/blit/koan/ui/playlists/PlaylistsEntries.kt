@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -98,10 +99,16 @@ private fun PlaylistsPage() {
 @Composable
 private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: PlaylistEdits, open: (Long) -> Unit) {
     val listState = rememberLazyListState()
-    // The order shown while a row is dragged; the engine's again once the drop lands and the library moves.
-    var order by remember(playlists) { mutableStateOf(playlists) }
+    // One state object for the page's life: each row's gesture outlives a
+    // recomposition and keeps the state it started with, so a fresh one per
+    // emission would leave the next drag moving a copy nobody draws.
+    val latest by rememberUpdatedState(playlists)
+    var order by remember { mutableStateOf(playlists) }
     var dragging by remember { mutableStateOf<Long?>(null) }
     var offset by remember { mutableFloatStateOf(0f) }
+    // The engine's order, except under a drag: a sync landing then must not
+    // move rows out from under the finger. The drop is written and comes back.
+    LaunchedEffect(playlists) { if (dragging == null) order = playlists }
 
     fun dragBy(delta: Float) {
         offset += delta
@@ -118,7 +125,7 @@ private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: 
     }
 
     fun drop() {
-        if (dragging != null && order.map { it.id } != playlists.map { it.id }) edits.arrange(order.map { it.id })
+        if (dragging != null && order.map { it.id } != latest.map { it.id }) edits.arrange(order.map { it.id })
         dragging = null
         offset = 0f
     }
@@ -148,7 +155,7 @@ private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: 
                     detectDragGestures(
                         onDragStart = { dragging = playlist.id; offset = 0f },
                         onDragEnd = { drop() },
-                        onDragCancel = { order = playlists; dragging = null; offset = 0f },
+                        onDragCancel = { order = latest; dragging = null; offset = 0f },
                         onDrag = { change, amount -> change.consume(); dragBy(amount.y) },
                     )
                 },
