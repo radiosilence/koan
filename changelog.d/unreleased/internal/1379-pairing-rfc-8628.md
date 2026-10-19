@@ -1,0 +1,1 @@
+- **Pairing documented against RFC 8628.** The authentication guide maps pairing onto the device authorization grant and says why its protocol differs: an API key rather than an OAuth token, LAN-only servers, and a pushed outcome.

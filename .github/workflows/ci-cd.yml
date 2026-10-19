@@ -215,14 +215,20 @@ jobs:
       - name: Compiled stylesheets match their sources
         run: git diff --exit-code crates/koan-server/assets
 
-  clippy:
-    name: Clippy (ubuntu-latest)
+  # Clippy and the tests on one runner, with one target directory and one
+  # cache: they share build scripts and proc-macros, which separate jobs each
+  # compiled. Each check runs however an earlier one went, so one push reports
+  # every failure; none runs after a failed setup step. The release build is
+  # its own job, since the release profile shares nothing with these and would
+  # only lengthen the run.
+  linux:
+    name: Linux
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    timeout-minutes: 45
+    timeout-minutes: 60
     concurrency:
-      group: clippy-ubuntu-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -231,32 +237,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: linux
+          # A failing check would otherwise leave the cache unsaved.
+          cache-on-failure: true
       - run: cargo clippy --all-targets -- -D warnings
-
-  test:
-    name: Test (ubuntu-latest)
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    timeout-minutes: 45
-    concurrency:
-      group: test-ubuntu-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install system deps
-        uses: ./.github/actions/linux-deps
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test --all-targets
-      - run: cargo test --doc
+      - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        run: cargo test --all-targets
+      - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        run: cargo test --doc
 
   build:
     name: Build (ubuntu-latest)
@@ -517,7 +509,7 @@ jobs:
     name: Container image
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [changes, check-version, fmt, clippy, test, audit]
+    needs: [changes, check-version, fmt, linux, audit]
     # check-version runs only on main, so it is skipped on pull requests and
     # this must not require it to have succeeded. The checks are skipped when
     # no code changed; an image is published only when none of them failed.
@@ -572,7 +564,7 @@ jobs:
     # The image this commit already pushed, tagged with the release's version
     # and `latest` only after every other job has passed: a failed release
     # must not move `latest`. Retagging needs no rebuild, and repeats safely.
-    needs: [fmt, css, clippy, test, build, msrv, audit, apple, create-release, container, check-version]
+    needs: [fmt, css, linux, build, msrv, audit, apple, create-release, container, check-version]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.container.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: read
@@ -752,7 +744,7 @@ jobs:
   # is retried alone, from ios.yml's manual dispatch.
   testflight:
     name: TestFlight
-    needs: [fmt, clippy, test, audit, check-version]
+    needs: [fmt, linux, audit, check-version]
     if: ${{ !cancelled() && !failure() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     uses: ./.github/workflows/ios.yml
     with:
@@ -763,7 +755,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, css, clippy, test, build, msrv, audit, apple, android-app, create-release, container-release, check-version, publish-crate, publish-package]
+    needs: [fmt, css, linux, build, msrv, audit, apple, android-app, create-release, container-release, check-version, publish-crate, publish-package]
     # The publishes having run, not merely not failed: they are skipped when
     # anything before them failed, and a skipped job is not a failure.
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.create-release.result == 'success' && needs.publish-crate.result == 'success' && needs.publish-package.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
@@ -835,7 +827,7 @@ jobs:
     # only once the rest of the release can follow it. Notarisation comes after the GitHub release and is
     # not waited for. Publishing is skipped when the version is already out
     # (below), so a re-run after a later failure passes straight through.
-    needs: [fmt, css, clippy, test, build, msrv, audit, apple, create-release, check-version]
+    needs: [fmt, css, linux, build, msrv, audit, apple, create-release, check-version]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
@@ -847,14 +839,14 @@ jobs:
         with:
           toolchain: stable
       # The verification build is a debug build of the published crates,
-      # which `Test (ubuntu-latest)` compiles on every push to main, so its
+      # which `Linux` compiles on every push to main, so its
       # cache is read rather than one of this job's own, which only a release
       # would save and which eviction always took first. rust-cache hashes
       # CARGO_* variables into the key, so the registry token is set on the
       # publishing step alone, not the job.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: test
+          shared-key: linux
           save-if: false
       - name: Publish crates
         env:
@@ -1074,7 +1066,7 @@ jobs:
     # a release it finds must already have its package. After every other job
     # has passed, as the crates are: a published package version cannot be
     # reused.
-    needs: [fmt, css, clippy, test, build, msrv, audit, apple, create-release, container-release, check-version]
+    needs: [fmt, css, linux, build, msrv, audit, apple, create-release, container-release, check-version]
     # The package pins the image by version, so the version tag must exist.
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.container-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     permissions:

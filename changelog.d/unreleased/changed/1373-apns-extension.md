@@ -1,0 +1,1 @@
+- **Notifications only from servers that can send them.** The iOS app asks to show notifications only on a server listing `koanApns`, which a server does when `[push]` holds an APNs key. Apple accepts pushes only signed by the app developer's team, so on any other server the prompt was noise.

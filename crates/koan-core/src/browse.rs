@@ -75,7 +75,10 @@ pub enum AlbumSort {
     RecentlyAdded,
     Title,
     Artist,
+    /// Newest release first.
     Year,
+    /// Oldest release first: a discography, or a shelf, in the order it happened.
+    YearAsc,
     /// Shuffled by a seed held beside the sort, so narrowing a shuffle does
     /// not deal it again.
     Random,
@@ -106,6 +109,7 @@ impl AlbumSort {
             AlbumSort::Title,
             AlbumSort::Artist,
             AlbumSort::Year,
+            AlbumSort::YearAsc,
             AlbumSort::Random,
         ]);
         sorts
@@ -117,6 +121,7 @@ impl AlbumSort {
             AlbumSort::Title => AlbumOrder::Title,
             AlbumSort::Artist => AlbumOrder::ArtistThenDate,
             AlbumSort::Year => AlbumOrder::YearDesc,
+            AlbumSort::YearAsc => AlbumOrder::YearAsc,
             AlbumSort::Random => AlbumOrder::Random(seed),
             AlbumSort::LastPlayed => AlbumOrder::LastPlayed,
             AlbumSort::Downloaded => AlbumOrder::Downloaded,

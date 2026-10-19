@@ -1,0 +1,1 @@
+- **Lossy tracks show their bitrate.** Track rows read "MP3 320 kbps" rather than "MP3 44.1 kHz", since the encoder setting says more about a lossy file than its sample rate. The transport badge keeps the rate, which is what the device is matched to.

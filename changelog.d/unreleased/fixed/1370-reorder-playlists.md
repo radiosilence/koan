@@ -1,0 +1,1 @@
+- **Mac playlists move when dragged down.** A playlist dropped on a row below it takes that row's place; before, a drag of one row down did nothing and longer ones landed a row short.

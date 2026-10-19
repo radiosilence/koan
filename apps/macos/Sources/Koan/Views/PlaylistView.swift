@@ -190,6 +190,7 @@ struct PlaylistView: View {
                     QueueRowContent(
                         entry: entry,
                         position: position + 1,
+                        of: entries.count,
                         queued: mirror.queuedByPlaylistEntry[entry.entryId],
                         isCurrent: isCurrent
                     ),
@@ -419,7 +420,7 @@ struct PlaylistView: View {
         case .album(_, let group):
             PlaylistAlbumHeader(group: group).rowBehaviour()
         case .entry(let entry, let position):
-            PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
+            PlaylistEntryRow(entry: entry, position: position, count: entries.count, artwork: !grouped)
                 .rowBehaviour()
                 .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
         }
@@ -664,6 +665,7 @@ struct PlaylistGroup {
 private struct PlaylistEntryRow: View {
     let entry: PlaylistEntry
     let position: Int
+    let count: Int
     /// Ungrouped there is no heading above to say what record this is, so the
     /// row says it itself.
     let artwork: Bool
@@ -677,6 +679,7 @@ private struct PlaylistEntryRow: View {
             item: QueueRowContent(
                 entry: entry,
                 position: position + 1,
+                of: count,
                 // Found by entry, not by track: two copies of one song are
                 // two rows, and each wears its own queue item's state.
                 queued: mirror.queuedByPlaylistEntry[entry.entryId],
