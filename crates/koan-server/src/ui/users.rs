@@ -88,7 +88,36 @@ fn failure(message: &str) -> Event {
     ))
 }
 
+/// The invite link as a QR code, for a phone to scan off the screen. Dark on
+/// white whatever the theme, since scanners expect that contrast; each module
+/// a whole 4px, so edges stay crisp. The code carries the invite's token, as
+/// the link beside it does.
+fn invite_qr(link: &str) -> String {
+    use qrcode::render::svg;
+    let code = match qrcode::QrCode::new(link) {
+        Ok(code) => code,
+        Err(e) => {
+            log::warn!("web UI: invite link too long for a QR code: {e}");
+            return String::new();
+        }
+    };
+    let svg = code
+        .render::<svg::Color>()
+        .module_dimensions(4, 4)
+        .dark_color(svg::Color("#000"))
+        .light_color(svg::Color("#fff"))
+        .build();
+    match svg.find("<svg") {
+        Some(at) => format!(
+            "<div class=\"mt-3\" role=img aria-label=\"Invite link as a QR code\">{}</div>",
+            &svg[at..]
+        ),
+        None => String::new(),
+    }
+}
+
 fn invite_panel(i: &Invite) -> String {
+    let link = i.link();
     let e = escape;
     let details = match &i.password {
         Some(password) => format!(
@@ -105,7 +134,7 @@ fn invite_panel(i: &Invite) -> String {
     format!(
         "<div class=\"mt-2 mb-4 max-w-panel border border-rule px-4 pt-1 pb-4\">\
 <h2>Invite for <span class=\"normal-case\">{user}</span></h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
-installed signs in and loads the library, on each device, for a week.</p>\
+installed signs in and loads the library, on each device, for a week.</p>{qr}\
 <div class=\"{COPY_ROW}\"><input id=invite-link readonly value=\"{link}\" \
 aria-label=\"Invite link\" class=\"{COPY_INPUT}\">\
 <button data-copy=invite-link>Copy link</button></div>\
@@ -116,7 +145,8 @@ text-meta text-ink lowercase hover:bg-hover/30 hover:no-underline\" href=\"{mail
 <textarea id=invite-text hidden readonly data-subject=\"{subject}\">{text}</textarea>\
 <template id=invite-html>{html}</template></div>",
         user = e(&i.username),
-        link = e(&i.link()),
+        qr = invite_qr(&link),
+        link = e(&link),
         mailto = e(&i.mailto()),
         subject = e(&i.email_subject()),
         text = e(&i.email_text()),
