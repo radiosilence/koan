@@ -15,7 +15,7 @@ The Rust types are `LinkCommand` and `LinkReport` in `koan_core::remote::link`, 
 | `device` | A stable id for the device. Without one, each connection is a device of its own |
 | `devices=1` | Send this link the account's devices and shares ([Devices](#devices)) |
 | `acks=1` | This device answers commands sent with an id ([Acks](#acks)) |
-| `deviceKey` | Base64 of the device's 32-byte Ed25519 public key (`koanDeviceKeys`). Kept only when the link signs in with an API key, on that key's row |
+| `deviceKey` | Base64 of the device's 32-byte Ed25519 public key (`koanDeviceKeys`). Kept only when the link signs in with an API key, on that key's row; passing it at all asks for `deviceKeys` |
 
 A new link from the same `device` replaces the old one. The server closes a link when its account changes in a way that could narrow what it may do: its role, its password, its deletion, or a key or app password revoked. The client reconnects, as after any close, and is authenticated afresh. The server drops a link it has heard nothing from for 100 seconds, so a client pings while idle.
 
@@ -23,12 +23,14 @@ A new link from the same `device` replaces the old one. The server closes a link
 
 Each WebSocket text frame is one JSON object tagged by `type`, with camelCase fields. Down the link the server sends commands and news (`LinkCommand`); up it the client sends reports (`LinkReport`). Track ids are the server's track uids.
 
+A field marked `?` may be absent, and senders leave most of them out when they hold their default: `false`, `0`, empty, or none. Every other field is required.
+
 ### Commands
 
 | `type` | Fields | Effect |
 |--------|--------|--------|
-| `play` | `trackIds`, `startAt`, `positionMs`, `paused`, `handoff`, `mode` | Replace the queue with these tracks and play from `startAt`, `positionMs` into it, or load paused. `mode` `inOrder` or `shuffled` resets the play mode, as a play button does; absent, it is kept. `handoff` marks music handed over from another device: a receiver controlling another device takes control back |
-| `enqueue` | `trackIds`, `play` | Append; with `play`, start the first of them |
+| `play` | `trackIds`, `startAt?`, `positionMs?`, `paused?`, `handoff?`, `mode?` | Replace the queue with these tracks and play from `startAt`, `positionMs` into it, or load paused. `mode` `inOrder` or `shuffled` resets the play mode, as a play button does; absent, it is kept. `handoff` marks music handed over from another device: a receiver controlling another device takes control back |
+| `enqueue` | `trackIds`, `play?` | Append; with `play`, start the first of them |
 | `playNext` | `trackIds` | Insert after the current track |
 | `insert` | `trackIds`, `after` | Insert after the queue entry `after` |
 | `remove` | `trackIds` | Remove every entry for these tracks |
@@ -40,14 +42,14 @@ Each WebSocket text frame is one JSON object tagged by `type`, with camelCase fi
 | `seek` | `positionMs` | |
 | `shuffle` | `on` | The queue keeps its order; shuffle picks which unplayed track plays next |
 | `repeat` | `mode`: `off`, `queue`, `one` | |
-| `sleepTimer` | `timer`: `{"kind":"after","minutes":n}`, `{"kind":"endOfTrack"}`, `{"kind":"endOfRecord"}`, or `null` to cancel | |
-| `sync` | `full` | Pull what the server changed: library, favourites, playlists. The library is walked only if the server says it moved, unless `full` |
+| `sleepTimer` | `timer?`: `{"kind":"after","minutes":n}`, `{"kind":"endOfTrack"}`, `{"kind":"endOfRecord"}`; `null` or absent cancels | |
+| `sync` | `full?` | Pull what the server changed: library, favourites, playlists. The library is walked only if the server says it moved, unless `full` |
 | `evict` | `trackIds` | Delete downloaded copies, so the next play fetches them again |
 | `handOff` | `to` | Send this device's queue and playhead to device `to` as a `play` with `handoff`, and pause here |
 | `setOutput` | `output`: `{"kind":"default"}`, `{"kind":"device","name":…}`, `{"kind":"renderer","udn":…}` | Play through this output from now on |
 | `refreshOutputs` | | List outputs again, and report them if they moved |
 | `setRendererVolume` | `volume` (0–100) | The volume of the UPnP renderer the device plays to |
-| `setPreset` | `device`, `profile` | Play output `device` through DSP profile `profile`, or untouched with `null` |
+| `setPreset` | `device`, `profile?` | Play output `device` through DSP profile `profile`, or untouched with `null` |
 | `watchLevels` | `on` | Report audio levels while `on`: a controller has playing bars on screen |
 
 ### News from the server
@@ -55,8 +57,8 @@ Each WebSocket text frame is one JSON object tagged by `type`, with camelCase fi
 | `type` | Fields | Meaning |
 |--------|--------|---------|
 | `devices` | `devices` | The account's devices, as they are now ([Devices](#devices)) |
-| `deviceKeys` | `keys`: `[{"id","key","owner"}]` | The public keys of the account's devices and those shared with it (`koanDeviceKeys`); `owner` set for the latter |
-| `shares` | `grantees`, `accounts`, `error` | The accounts this device lets control it, every account to choose from, and why the last change was refused ([Shares](#shares)) |
+| `deviceKeys` | `keys`: `[{"id","key","owner?"}]` | The public keys of the account's devices and those shared with it (`koanDeviceKeys`); `owner` set for the latter |
+| `shares` | `grantees`, `accounts?`, `error?` | The accounts this device lets control it, every account to choose from, and why the last change was refused ([Shares](#shares)) |
 | `shared` | `command` | A command from another account this device is shared with |
 | `forgotten` | `device` | That device was removed from the account |
 | `historyChanged` | | The account's play history moved; read `koanHistory` |
@@ -70,20 +72,20 @@ Each WebSocket text frame is one JSON object tagged by `type`, with camelCase fi
 |--------|--------|---------|
 | `state` | see below | What the device is playing |
 | `push` | `token`, `sandbox` | Where Apple's push service reaches this device once iOS suspends it; `sandbox` for a development build |
-| `command` | `to`, `command`, `ack` | Send `command` to device `to` ([Devices](#devices)) |
+| `command` | `to`, `command`, `ack?` | Send `command` to device `to` ([Devices](#devices)) |
 | `received` | `ack` | A command sent under `ack` came off this link, before it is acted on |
 | `ack` | `ack`, `outcome` | This device's answer to a command sent under `ack` |
-| `activity` | `token`, `device`, `sandbox` | Where to push updates to a Live Activity showing device `device`; `null` for both when the activity has ended |
-| `wake` | `to`, `notify` | Wake device `to`, which is not linked: with a background push, or with `notify` a notification to tap |
+| `activity` | `token?`, `device?`, `sandbox?` | Where to push updates to a Live Activity showing device `device`; `null` for both when the activity has ended |
+| `wake` | `to`, `notify?` | Wake device `to`, which is not linked: with a background push, or with `notify` a notification to tap |
 | `share` | `grantee`, `allow` | Let account `grantee` control this device, or stop letting it. Only ever about the device sending it |
 | `forget` | `device` | Remove a device from the account |
 | `levels` | `f` | A frame of this device's audio levels, while watched |
 
-`state` carries `playing` and, optionally, `title`, `artist`, `album`, `positionMs` (as of sending), `durationMs`, `queue`, `outputs`, `shuffle`, `repeat`, `sleep` and `sleepFading`. `queue` is the queue, or the part around the current track when it is long; each entry has `id` (its queue entry id on that device), `trackId` (absent for a file only that device has), `title`, `artist`, `album`, `durationMs` and `current`. A device sends `state` when something changes beyond the playhead moving at one second per second: a seek, a pause, another track, an edited queue.
+`state` requires `playing`, and may carry `title`, `artist`, `album`, `positionMs` (as of sending), `durationMs`, `queue`, `outputs`, `shuffle`, `repeat`, `sleep` and `sleepFading`. `queue` is the queue, or the part around the current track when it is long; each entry requires `title`, `artist` and `current`, and may carry `id` (its queue entry id on that device), `trackId` (absent for a file only that device has), `album` and `durationMs`. A device sends `state` when something changes beyond the playhead moving at one second per second: a seek, a pause, another track, an edited queue.
 
 ## Devices
 
-`koanDevices`. A link opened with `devices=1` is sent `devices` when it links and whenever one of the account's devices changes. Each device has `id`, `name`, `platform`, `linked`, and optionally `state` (its last report, with the playhead placed as of sending), `lastSeen` (Unix seconds, for one not linked), `wakeable` (the server can push to it), `owner` (for a device another account shares) and `acks`.
+`koanDevices`. A link opened with `devices=1` is sent `devices` when it links and whenever one of the account's devices changes. Each device has `id`, `name`, `platform`, `linked`, and may carry `state` (its last report, with the playhead placed as of sending), `lastSeen` (Unix seconds, for one not linked), `wakeable` (the server can push to it), `owner` (for a device another account shares) and `acks`.
 
 A device commands another with a `command` report. The `ack`, when there is one, sits beside `to` and `command`, not inside `command`:
 

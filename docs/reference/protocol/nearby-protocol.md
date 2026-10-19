@@ -41,7 +41,7 @@ A peer that proves nothing, because it is older, signed out or on another server
 
 ### Signatures
 
-Ed25519, base64 (standard alphabet). Each signed message is a label and a list of fields, each written as a 32-bit big-endian length followed by its bytes.
+Ed25519, base64 (standard alphabet). Each signed message is the label followed by the fields, every one of them, the label included, written as its length (a 32-bit big-endian integer) followed by its UTF-8 bytes. The transcript is built the same way.
 
 | Signature | Label | Fields |
 |-----------|-------|--------|
@@ -50,7 +50,7 @@ Ed25519, base64 (standard alphabet). Each signed message is a label and a list o
 | Command | `koan-nearby-v1 command` | transcript, `seq` as a 64-bit big-endian integer, the command's JSON |
 | Report | `koan-nearby-v1 report` | transcript, `seq`, the report's JSON |
 
-The transcript is the SHA-256 of `koan-nearby-v1 session` over listener id, dialler id, listener nonce and dialler nonce. Both handshake signatures name both devices, both nonces and which end made them, so a recorded handshake fails against a fresh nonce.
+The transcript is the SHA-256 of the message with label `koan-nearby-v1 session` and fields listener id, dialler id, listener nonce, dialler nonce. Both handshake signatures name both devices, both nonces and which end made them, so a recorded handshake fails against a fresh nonce.
 
 A key with no `owner` in `deviceKeys` proves the account's own device; one with an `owner` proves a device shared by that account. A kept key list older than thirty days is not trusted.
 
@@ -62,10 +62,12 @@ Nearby connections are not encrypted, so after a verified handshake every comman
 
 | Peer | How it is known | What it may send |
 |------|-----------------|------------------|
-| The account's own device | Proven with a key that has no `owner` | Every command a device may relay through the server (`LinkCommand::relayable`) |
+| The account's own device | Proven with a key that has no `owner` | Every command a device may relay through the server (`LinkCommand::relayable`), and `watchLevels` |
 | A device shared with this account | Proven with an `owner`'s key | The playback set |
 | Anyone else, under **Full control** (`devices.nearby_control = "full"`, the default) | Unproven | The playback set |
 | Anyone else, under **Playback only** (`"playback"`) | Unproven | The stranger's set |
+
+`watchLevels` is taken from every peer, whatever its class: levels say no more than the state it already sees.
 
 The **playback set** (`LinkCommand::allowed_playback`): `play`, `enqueue`, `playNext`, `remove`, `clear`, `jumpTo`, `seek`, `pause`, `resume`, `next`, `previous`, `playItem`, `removeItems`, `moveItems`, `insert`, `undo`, `redo`, `shuffle`, `repeat`, `sleepTimer`, `handOff`, `setOutput`, `refreshOutputs`, `setRendererVolume`, `setPreset`, `watchLevels`.
 

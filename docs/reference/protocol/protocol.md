@@ -21,7 +21,7 @@ A client decides what to use from what the other end says it supports, never fro
 
 These hold today, and a change to the protocol keeps them.
 
-**Unknown messages are ignored.** A receiver that cannot parse a frame, or does not know its `type`, drops it and keeps the connection open. Only a close, an I/O error or a missed ping ends a link or a nearby connection. A command that is parsed and then refused is answered with a `refused` ack when it carried an id.
+**Unknown messages are ignored.** A receiver that cannot parse a frame, or does not know its `type`, drops it and keeps the connection open: an unreadable frame never closes a link or a nearby connection. The reasons a connection does close are on [Link](link-protocol.md#connecting) and [Nearby](nearby-protocol.md#transport). A command that is parsed and then refused is answered with a `refused` ack when it carried an id.
 
 **Unknown fields are ignored.** No message type rejects fields it does not know.
 

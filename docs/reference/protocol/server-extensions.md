@@ -94,7 +94,7 @@ Sharing a device with other accounts on the server. See [Link: Shares](link-prot
 
 ### `koanDeviceKeys`
 
-Devices proving to each other on the local network that they belong to the same account. A device that links with an API key and `deviceKey` registers its public key, kept on that key's row, so revoking the key or signing out drops it. Links that registered one are sent `deviceKeys`, when they link and whenever the account's keys change. How the keys are used is on [Nearby](nearby-protocol.md#handshake).
+Devices proving to each other on the local network that they belong to the same account. A device that links with an API key and `deviceKey` registers its public key, kept on that key's row, so revoking the key or signing out drops it. Any link opened with a `deviceKey` parameter is sent `deviceKeys`, when it links and whenever the account's keys change, whether or not its key could be kept. How the keys are used is on [Nearby](nearby-protocol.md#handshake).
 
 ## Account data
 
