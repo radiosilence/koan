@@ -96,16 +96,16 @@ struct QueueView: View {
         // A disc past 9 is past 1, so the widest disc is always on a record
         // that numbers by disc.
         var discs = Set<Int64>()
-        var numberDigits = 0
+        var widestNumber: Int64 = 0
         var widestDisc: Int64 = 1
         for item in items {
-            if let number = item.trackNumber { numberDigits = max(numberDigits, String(number).count) }
+            if let number = item.trackNumber { widestNumber = max(widestNumber, number) }
             if let disc = item.disc, disc > 1, let album = item.albumId {
                 discs.insert(album)
                 widestDisc = max(widestDisc, disc)
             }
         }
-        let number = Numbering.zeros(numberDigits)
+        let number = Numbering.zeros(String(widestNumber).count)
         return Numbering(
             discs: discs,
             widest: discs.isEmpty ? number : String(repeating: "0", count: String(widestDisc).count) + "." + number
