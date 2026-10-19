@@ -45,7 +45,9 @@ not that.
   notifications need a server that can push to the app
   ([`[push]`](../reference/configuration.md#push)); with any other, a
   suspended phone is listed but takes what was sent only when it is next
-  opened, and the app does not ask to show notifications.
+  opened. The app asks to show notifications only on a server that can push,
+  so elsewhere a phone refused the audio shows nothing either, unless
+  notifications were allowed for kōan in iOS Settings.
 - **Anyone's device on this network.** Apps find each other over Bonjour and
   connect directly, with no server involved and whoever is signed in. A device
   playing from a different server can be controlled but not sent music, since
