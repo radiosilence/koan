@@ -224,7 +224,7 @@ pub enum AlbumOrder {
     /// just added is the one you were looking for.
     RecentlyAdded,
     Title,
-    /// Newest release first.
+    /// Newest release first, by full date within a year. Undated records last.
     YearDesc,
     /// Oldest release first, by full date within a year. Undated records last.
     YearAsc,
@@ -259,7 +259,7 @@ impl AlbumOrder {
             Self::Title => "al.title COLLATE LIBRARY, a.name COLLATE LIBRARY, al.date",
             Self::YearDesc => {
                 "COALESCE(CAST(substr(al.date, 1, 4) AS INTEGER), 0) DESC, \
-                               a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
+                               al.date DESC, a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
             }
             Self::YearAsc => {
                 "COALESCE(NULLIF(CAST(substr(al.date, 1, 4) AS INTEGER), 0), 10000), \

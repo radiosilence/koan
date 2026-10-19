@@ -446,6 +446,10 @@ mod tests {
         assert_eq!(q.search, Some("aphex"));
         assert_eq!(b.artists(0, 0).search, Some("aphex"));
         assert_eq!(q.order, AlbumOrder::YearDesc);
+        assert_eq!(
+            browse("sort=year-asc").albums(0, 0).order,
+            AlbumOrder::YearAsc
+        );
         assert!(q.favourites_of.is_none() && q.filter.lossless);
         assert_eq!(
             (q.filter.codec, q.filter.year_from, q.filter.year_to),
