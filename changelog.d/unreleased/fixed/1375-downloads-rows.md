@@ -1,0 +1,1 @@
+- **Downloads on iPhone lay out properly.** The artist and record now sit on their own line, where they squeezed the status and *Show in Library* down to a glyph wide and stretched every row.

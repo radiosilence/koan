@@ -1,0 +1,1 @@
+- **Record, artist and playlist headers on the Mac stack as the phone's do.** The title has its line to itself, the credit below it, then Play and Shuffle, then the lesser actions.

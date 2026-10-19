@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Record, artist and playlist headers on the Mac stack as the phone's do.** The title has its line to itself, the credit below it, then Play and Shuffle, then the lesser actions.
+
+### Removed
+
+- **The sleep timer guide page.** One menu does not need a page.
+
+### Fixed
+
+- **Downloads on iPhone lay out properly.** The artist and record now sit on their own line, where they squeezed the status and *Show in Library* down to a glyph wide and stretched every row.
+- **The iPhone mini player is one tap target again.** Its artist and record are plain text rather than links, which made the bar hard to tap without leaving the page; Now Playing keeps the links.
+- **Signing in with a password loads the library on the Mac and iPhone.** It synced only when joining with an invite, so a fresh sign-in showed an empty library until a manual sync.
+- **Signing out clears the queue and downloads.** The queue held tracks from a server this device can no longer reach, and its transfers kept running; both are dropped on signing out. The synced library still stays.
+
 ## 0.65.1
 
 ### Added
@@ -753,7 +770,7 @@ The library database moves from schema 19 to 20 (new tables for Subsonic saved p
 
 ### Changed
 
-- **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it. See [Sleep timer](docs/guide/sleep-timer.md#the-fade).
+- **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it.
 
 ### Fixed
 
@@ -799,7 +816,7 @@ The library database moves from schema 16 to 19 (new tables for ratings, bookmar
 - **Hearts in the web UI.** Tracks, records and artists can be favourited from the browser: a heart on every track row, record tile, album and artist page. It is the same favourite the apps and the Subsonic API's `star` make, per account, so the account's apps pick it up at once. Read-only accounts see no hearts.
 - **A track menu in the web UI.** Right-click a track row, or press and hold it on a phone, for what the apps' context menu offers: Play, Play Next, Add to Queue, favourite, share, Go to Album and Go to Artist. On a phone a row shows only a ⋯ button for it, so its title has the width.
 - **History in the web UI.** What the signed-in account has played, most recent first, grouped by day in the browser's own time zone. Tick plays and forget them, as in the apps; only the account's own plays can be forgotten.
-- **Sleep timer** ([#795](https://github.com/radiosilence/koan/issues/795)). Stop playback after 15, 30, 45 or 60 minutes, fading out over a few seconds, or at the end of the track or record playing. It pauses rather than clearing the queue, so playing again carries on from there. The timer is the player's, so it holds while iOS suspends the app, and it is set on the device playing: a phone controlling a Mac sets the Mac's, over the link. From the moon in the Mac and iOS transport, `T` in the terminal UI, and `setSleepTimerOnClient` for assistants. See [Sleep timer](docs/guide/sleep-timer.md).
+- **Sleep timer** ([#795](https://github.com/radiosilence/koan/issues/795)). Stop playback after 15, 30, 45 or 60 minutes, fading out over a few seconds, or at the end of the track or record playing. It pauses rather than clearing the queue, so playing again carries on from there. The timer is the player's, so it holds while iOS suspends the app, and it is set on the device playing: a phone controlling a Mac sets the Mac's, over the link. From the moon in the Mac and iOS transport, `T` in the terminal UI, and `setSleepTimerOnClient` for assistants.
 - **Scrobbling to ListenBrainz.** Each account can connect ListenBrainz on the web UI's Scrobbling page, under Account, by pasting its user token. The server then sends the account's existing history, and from then on every play kōan's apps and other Subsonic clients report, with now-playing notices; no client needs configuring. Plays wait in the database until ListenBrainz accepts them, so an outage or restart delays them rather than losing them. The library database moves to schema 19 for the new `scrobble_services` and `scrobble_outbox` tables; a build older than this one refuses it.
 - **Smart playlists.** A playlist can hold whatever matches a set of rules instead of a list: text, number and date conditions over title, artists, album, genre, format, path, year, duration, bit depth, sample rate, play count, last played, date added and favourites, grouped with all/any, sorted (or shuffled) and limited. Plays and favourites are the owner's. kōan evaluates the rules when the playlist is read, at most once a minute (a random order once a day), and at once when a scrobble or a favourite the rules read reaches the server, telling linked devices to pull; it rewrites its contents only when they change, keeping entry ids so a queue following it keeps its place. Every client sees an ordinary playlist that cannot be edited: Subsonic apps get OpenSubsonic's `readonly`, kōan's apps refuse drops, removals and reorders and leave it out of Add to Playlist. Made with `createSmartPlaylist` and changed with `setPlaylistRules` over GraphQL, so an assistant connected over MCP can make one, or read from Navidrome `.nsp` files in the library folders, which scans and the folder watcher pick up; the file names the playlist and decides its rules, so neither is edited in kōan. A playlist a Subsonic server marks read-only is mirrored read-only and never pushed back. The library database moves to schema 19 for the playlist columns; a build older than this one refuses it. See [Smart playlists](docs/guide/smart-playlists.md).
 - **M3U playlists in the library folders are imported.** `.m3u` and `.m3u8` files become playlists of the tracks they list, with paths relative to the file, absolute or `file://`, Windows separators understood, plain `.m3u` read as Latin-1 when it is not UTF-8 and UTF-16 read behind a byte order mark. Entries naming tracks not yet indexed fill in after the scan that adds them. The file decides what the playlist holds: scans and the folder watcher follow its changes, deleting it deletes the playlist, and the playlist cannot be renamed or edited from any client. See [Smart playlists](docs/guide/smart-playlists.md#m3u-files).
