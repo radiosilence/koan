@@ -4587,13 +4587,9 @@ impl KoanEngine {
             koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
-            // This device's own queue, never a controlled device's.
-            self.tx
-                .send(PlayerCommand::ClearPlaylist)
-                .map_err(|_| KoanError::Player {
-                    message: "the player has stopped".into(),
-                })?;
-            self.state.downloads().forget_all();
+            // This device's own queue, never a controlled device's. A player
+            // that has stopped has nothing left to clear.
+            let _ = self.send_local(PlayerCommand::SignedOut);
             Ok(())
         })
         .await

@@ -15,7 +15,7 @@
 - **Downloads on iPhone lay out properly.** The artist and record now sit on their own line, where they squeezed the status and *Show in Library* down to a glyph wide and stretched every row.
 - **The iPhone mini player is one tap target again.** Its artist and record are plain text rather than links, which made the bar hard to tap without leaving the page; Now Playing keeps the links.
 - **Signing in with a password loads the library on the Mac and iPhone.** It synced only when joining with an invite, so a fresh sign-in showed an empty library until a manual sync.
-- **Signing out clears the queue and downloads.** The queue held tracks from a server this device can no longer reach, and its transfers kept running; both are dropped on signing out. The synced library still stays.
+- **Signing out clears the queue and downloads.** The queue held tracks from a server this device can no longer reach, and its transfers, queued or running, kept going; both are dropped on signing out, in the apps and the terminal UI alike. The synced library still stays.
 
 ## 0.65.1
 
