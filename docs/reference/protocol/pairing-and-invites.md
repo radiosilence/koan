@@ -4,7 +4,7 @@ Two ways a device signs in to a kōan server without anyone typing the account's
 
 ## Invites (`koanInvite`)
 
-An admin makes an invite for an account with `/rest/koanInvite?username=…` (or `koanCreateUser`, which makes the account too). The answer carries a token: a JWT signed with the server's key, typed `koan-invite`, naming the account (`sub`, `username`), a mark of its password hash (`pwd`), and an expiry seven days on (`exp`). Nothing is stored when one is made, so a link signs in as many devices as its holder has until it expires or the account's password changes, which changes the mark. Resetting the password (`reset=true`) is how a link sent to the wrong place is withdrawn.
+An admin makes an invite for an account with `/rest/koanInvite?username=…` (or `koanCreateUser`, which makes the account too). The answer carries a token: a JWT signed with the server's key whose payload claims are `typ` (`koan-invite`), the account (`sub`, its id, and `username`), a mark of its password hash (`pwd`), when it was made (`iat`) and an expiry seven days on (`exp`). Nothing is stored when one is made, so a link signs in as many devices as its holder has until it expires or the account's password changes, which changes the mark. Resetting the password (`reset=true`) is how a link sent to the wrong place is withdrawn.
 
 ### Link format
 

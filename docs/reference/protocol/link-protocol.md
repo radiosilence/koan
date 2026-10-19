@@ -95,7 +95,7 @@ A device commands another with a `command` report. The `ack`, when there is one,
 {"type":"command","to":"0192…","command":{"type":"pause"},"ack":7}
 ```
 
-`to` is matched against each device's id, then its link's id, then its name without regard to case; a client should send the id, since names need not be unique. The server relays the command when `to` is one of the caller's devices or one shared with the caller. Only commands one device gives another are relayed (`LinkCommand::relayable`): the server's own news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `acked`) is refused, so a forged copy cannot pass as the server's. `levels` go only between live links, by their own route: a controller sends `{"type":"command","to":…,"command":{"type":"watchLevels","on":true}}`, and the server forwards the watched device's `levels` reports to it as `levels` news.
+`to` names the first linked device whose id, link id or name (without regard to case) equals it; a client should send the device id, since names need not be unique and one could equal another device's id. The server relays the command when `to` is one of the caller's devices or one shared with the caller. Only commands one device gives another are relayed (`LinkCommand::relayable`): the server's own news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `acked`) is refused, so a forged copy cannot pass as the server's. `levels` go only between live links, by their own route: a controller sends `{"type":"command","to":…,"command":{"type":"watchLevels","on":true}}`, and the server forwards the watched device's `levels` reports to it as `levels` news.
 
 A command for a device that is not linked is kept and delivered when it links. An iOS device that gave a push token is woken, if the server has a `[push]` key. `watchLevels` and `refreshOutputs` are only worth saying to a device that is there, so they are never kept or pushed.
 
@@ -111,9 +111,9 @@ A command for a device that is not linked is kept and delivered when it links. A
 
 The server attaches an id only for a device that linked with `acks=1`. That device reports `received` as soon as the command comes off its link, then `ack` once it has acted, with `outcome` one of `{"result":"done"}`, `{"result":"refused","reason":…}` or `{"result":"failed","error":…}`. The server relays the answer to the sender as `acked`. It also answers on the device's behalf, with `from` naming the device: `queued` for a device that is away, `refused` when it will not relay the command (not the caller's device, or not relayable), and `failed` when the device's link went as the command was sent. A link that has not shown a command as `received` within a moment is taken as gone: the server drops it, wakes the device, keeps the command for it and answers `queued`.
 
-Ids are drawn at random. A sender that hears nothing tries the next route with the same id, so a command can arrive twice; a device remembers the ids it has taken for a minute, and answers a repeat with the first outcome without acting on it again.
+Ids are random unsigned 64-bit integers across the whole range, so a client must read and echo them as integers without rounding them to a double. A sender that hears nothing tries the next route with the same id, so a command can arrive twice; a device remembers the ids it has taken for a minute, and answers a repeat with the first outcome without acting on it again.
 
-`koanCommand` waits up to four seconds for the answer and returns it as a `koanCommand` element with `result`, and `reason` or `error`. With no answer in that time, the response is empty: sent.
+`koanCommand` waits up to four seconds for the answer and returns it as a `koanCommand` element with `result`, and `reason` or `error`. With no answer in that time, the response is empty: sent. A command the server will not relay is not answered with `refused` here but with a Subsonic error: 10 for a command it cannot parse, 70 for a device that is not the caller's or a command it does not relay.
 
 ## Shares
 
