@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "expiresIn": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "pending",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "code",
+        "expiresIn"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "type": {
+          "const": "approved",
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "username",
+        "apiKey"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "declined",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "expired",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "PairMessage"
+}

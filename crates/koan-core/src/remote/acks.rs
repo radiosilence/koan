@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::remote::link::LinkCommand;
 
 /// How a command went, as the device it was sent to says.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum AckOutcome {
@@ -41,6 +42,7 @@ pub enum AckOutcome {
 }
 
 /// A command as it travels, with the id that asks for an answer.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
     #[serde(flatten)]
