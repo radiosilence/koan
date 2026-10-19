@@ -1295,6 +1295,7 @@ async fn admins_create_invite_and_remove_accounts() {
     )
     .await;
     assert!(r.body.contains("id=invite-link"), "{}", r.body);
+    assert!(r.body.contains("aria-label=\"Invite link as a QR code\"><svg"), "{}", r.body);
     assert!(!r.body.contains("<dt>Password</dt>"), "{}", r.body);
 
     // A reset does show one, and signs the account's devices out.
