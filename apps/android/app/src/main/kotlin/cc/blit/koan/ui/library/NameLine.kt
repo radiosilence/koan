@@ -16,7 +16,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.ffi.CreditPart
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -68,8 +67,8 @@ fun albumName(title: String, id: Long?, track: Long? = null) = Named(title, albu
  * tap anywhere else on the line goes to the row. `linked = false` while
  * picking, so a tap on a name ticks the row instead.
  *
- * `dense` for a line under a title in a row or tile: its links are only as
- * tall as the line. Compose otherwise extends a link to the 48-dp minimum
+ * `dense` for a line under a title in a row or tile: its links are exactly
+ * as large as their text. Compose otherwise extends a link to the 48-dp minimum
  * touch target, and the extension takes taps on the title above, the gap
  * between them and the row's padding, which open the row.
  */
@@ -94,7 +93,7 @@ fun NameLine(
             config
         } else {
             object : ViewConfiguration by config {
-                override val minimumTouchTargetSize get() = DpSize(config.minimumTouchTargetSize.width, 0.dp)
+                override val minimumTouchTargetSize get() = DpSize.Zero
             }
         }
     }

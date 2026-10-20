@@ -59,6 +59,7 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRow
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -118,32 +119,32 @@ fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.
 
 /**
  * A cover filling `modifier`, on the `rule` ground until it arrives, and the
- * kōan ensō on that ground where there is none: nothing playing, or a record
- * the engine has no artwork for. A cover that could not be fetched stays bare
- * ground, as does an artist without a photograph: the ensō stands for a record.
+ * kōan ensō on that ground where there is none: nothing playing, a record the
+ * engine has no artwork for, or one it could not fetch, which is asked for
+ * again the next time the cover is shown.
  */
 @Composable
 fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null) {
-    val miss = art?.miss
+    val record = art?.record
     // Each cover follows its own record, so a miss recomposes only the covers it is about.
-    val known by remember(miss) { ArtMisses.misses.map { miss != null && miss in it }.distinctUntilChanged() }
-        .collectAsStateWithLifecycle(ArtMisses.has(miss))
-    val missing = art == null || known
+    val known by remember(record) { ArtMisses.misses.map { record != null && record in it }.distinctUntilChanged() }
+        .collectAsStateWithLifecycle(ArtMisses.has(record))
+    var failed by remember(art) { mutableStateOf(false) }
     Box(modifier.background(KoanTheme.color(KoanTone.Rule))) {
-        if (missing) {
+        if (art == null || known || failed) {
             Image(
                 painterResource(R.drawable.koan_enso),
                 description,
                 Modifier.matchParentSize(),
                 colorFilter = ColorFilter.tint(KoanTheme.color(KoanTone.Muted).copy(alpha = 0.5f)),
             )
-        }
-        if (art != null && !missing) {
+        } else {
             AsyncImage(
                 art,
                 description,
                 Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
+                onState = { if (it is AsyncImagePainter.State.Error) failed = true },
             )
         }
     }

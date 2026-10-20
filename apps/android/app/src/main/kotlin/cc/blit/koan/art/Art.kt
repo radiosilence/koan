@@ -37,8 +37,8 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
 
     val key get() = "${kind.name.lowercase()}:$id:${size.name.lowercase()}"
 
-    /** How a miss of this cover is kept: artists' never are, as `artist_image` cannot tell a failure from one. */
-    val miss get() = Miss(kind, id).takeIf { kind != Kind.Artist }
+    /** The record, whichever size is asked for. */
+    val record get() = Miss(kind, id)
 
     companion object {
         fun album(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Album, id, size)
@@ -57,30 +57,22 @@ class NoArt : Exception("no artwork")
 data class Miss(val kind: Art.Kind, val id: Long)
 
 /**
- * The records the engine answered for and has no cover: asked once, so a grid
- * of them neither asks again nor waits to draw the placeholder. A failed fetch
- * is an error, not an answer, and is not kept. Row ids are reused and a server
- * signed into may hold covers, so the set empties whenever the library or the
- * connection moves.
+ * The records the engine answered for with no cover, as the Apple apps'
+ * `CoverArtCache.absent` keeps them: asked once, so a grid of them neither
+ * asks again nor waits to draw the placeholder. A failed fetch is not kept,
+ * and the next request tries again. A record leaves it when `art_evictions`
+ * names it.
  */
 object ArtMisses {
     private val held = MutableStateFlow<Set<Miss>>(emptySet())
     val misses: StateFlow<Set<Miss>> = held.asStateFlow()
 
-    /** Moves with each clearing, so a fetch begun before one does not record what it may have outlived. */
-    private var epoch = 0L
-
     fun has(miss: Miss?) = miss != null && miss in held.value
 
-    internal fun epoch() = synchronized(this) { epoch }
+    internal fun add(miss: Miss) = held.update { it + miss }
 
-    internal fun add(miss: Miss, since: Long) = synchronized(this) {
-        if (epoch == since) held.update { it + miss }
-    }
-
-    internal fun clear() = synchronized(this) {
-        epoch++
-        held.value = emptySet()
+    internal fun forget(gone: List<Miss>) {
+        if (gone.isNotEmpty()) held.update { it - gone.toSet() }
     }
 }
 
@@ -94,8 +86,7 @@ class ArtFetcher(
     private val mirror: EngineMirror,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
-        if (ArtMisses.has(art.miss)) throw NoArt()
-        val since = ArtMisses.epoch()
+        if (ArtMisses.has(art.record)) throw NoArt()
         val disk = loader.diskCache
         disk?.openSnapshot(art.key)?.let { snapshot ->
             return SourceFetchResult(
@@ -104,7 +95,7 @@ class ArtFetcher(
                 DataSource.DISK,
             )
         }
-        val cover = cover() ?: throw NoArt().also { art.miss?.let { ArtMisses.add(it, since) } }
+        val cover = cover() ?: throw NoArt().also { ArtMisses.add(art.record) }
         disk?.openEditor(art.key)?.let { editor ->
             try {
                 disk.fileSystem.write(editor.data) { write(cover.data) }
@@ -147,18 +138,18 @@ class ArtFetcher(
  * SQLite reuses a freed row id, so a cover cached under a deleted album's id
  * would show for the next album given it; a rescanned folder may have a new
  * cover beside its tracks. Each time the library moves, ask the engine what
- * went (`art_evictions`) and forget those covers at every size, and forget
- * every miss, as on each change of connection.
+ * went (`art_evictions`) and forget those covers at every size, and that
+ * they had none.
  */
 fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
-    mirror.launch { mirror.connection.drop(1).collect { ArtMisses.clear() } }
     mirror.launch {
         var seq = artEvictions(0).seq
         mirror.library.drop(1).collect {
-            ArtMisses.clear()
             val gone = artEvictions(seq)
             seq = gone.seq
-            val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
+            val arts = gone.albums.map { Art.Kind.Album to it } + gone.artists.map { Art.Kind.Artist to it } +
+                gone.tracks.map { Art.Kind.Track to it }
+            ArtMisses.forget(arts.map { (kind, id) -> Miss(kind, id) })
             for ((kind, id) in arts) {
                 for (size in ArtSize.entries) {
                     val key = Art(kind, id, size).key
