@@ -5,4 +5,4 @@
 <h1 class="mb-1 normal-case">{{ list.name }}</h1><p class="{{ crate::ui::pages::SUB }}">{% if let Some(owner) = owner %}{{ owner }} · {% endif %}{{ count }} track{% if count != 1 %}s{% endif %} · {{ crate::share::duration(Some(list.duration_ms.clone())) }}</p>
 {%- if let Some(comment) = comment %}<p class="{{ crate::ui::pages::SUB }}">{{ comment }}</p>{% endif %}
 <div class="{{ crate::ui::pages::ACTIONS }}">{% call library::play_buttons("primary") %}{% endcall %}</div></div></header>
-<ol class="tracks" data-context="album">{{ rows|safe }}</ol>
+<ol class="tracks" data-context="album">{{ rows }}</ol>

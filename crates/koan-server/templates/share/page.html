@@ -15,7 +15,7 @@
 {%- for (attr, key, content) in preview %}
 <meta {{ attr }}="{{ key }}" content="{{ content }}">
 {%- endfor %}
-{{ crate::share::icon_links("/share/assets")|safe }}<link rel="stylesheet" href="{{ css }}"></head><body>
+{{ crate::share::icon_links("/share/assets") }}<link rel="stylesheet" href="{{ css }}"></head><body>
 <main class="mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12">
 <header class="mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch">
 <img id="cover" class="size-[200px] flex-none bg-surface object-cover max-wide:aspect-square max-wide:h-auto max-wide:w-full" src="/share/{{ id }}/cover" alt="">
@@ -43,11 +43,11 @@
 <img class="art size-16 flex-none bg-surface object-cover [&.missing]:invisible" src="/share/{{ id }}/{{ a.first }}/cover" alt="" loading="lazy">
 <div><h2 class="m-0 text-title-sm font-light text-strong wrap-anywhere">{{ a.title }}</h2>
 <p class="mt-0.5 mb-0 text-meta text-muted">{{ a.sub }}</p></div></header>
-{%- call tracks(a.rows.as_slice()) %}{% endcall %}
+{%- call tracks(a.rows) %}{% endcall %}
 </section>
 {%- endfor %}
 {%- when None %}
-{%- call tracks(rows.as_slice()) %}{% endcall %}
+{%- call tracks(rows) %}{% endcall %}
 {%- endmatch %}
 </div><noscript><p>{% for r in rows %}<a href="/share/{{ id }}/{{ r.pos }}">{{ r.track.title }}</a><br>{% endfor %}</p></noscript></main>
 <script src="{{ engine }}" defer></script>

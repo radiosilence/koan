@@ -24,6 +24,8 @@ use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries::shares::{ShareKind, ShareRow};
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
 
+use crate::html::{Html, Render};
+
 /// The page's own script and stylesheet, from this server and nowhere else;
 /// `connect-src` is for the player fetching the tracks it decodes.
 const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; \
@@ -188,12 +190,12 @@ pub(crate) fn binary_asset(name: &str) -> Option<Response> {
 }
 
 /// `<link>`s for the icons, served under `base` (`/ui/assets` or `/share/assets`).
-pub(crate) fn icon_links(base: &str) -> String {
-    format!(
+pub(crate) fn icon_links(base: &str) -> Html {
+    Html::trusted(format!(
         "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"{base}/icon-32.png\">\
 <link rel=\"icon\" type=\"image/png\" sizes=\"192x192\" href=\"{base}/icon-192.png\">\
 <link rel=\"apple-touch-icon\" href=\"{base}/apple-touch-icon.png\">"
-    )
+    ))
 }
 
 /// A text asset. Requested by its hashed URL (`?v=`), it never changes, so it
@@ -270,7 +272,6 @@ fn year(date: Option<&str>) -> Option<&str> {
 
 /// A track row: its place in the share, which addresses its audio, and the
 /// number shown, which is the track number on an album or artist share.
-#[derive(Clone)]
 struct Row<'a> {
     track: &'a TrackRow,
     pos: usize,
@@ -288,7 +289,7 @@ struct AlbumSection<'a> {
     first: usize,
     title: &'a str,
     sub: String,
-    rows: Vec<Row<'a>>,
+    rows: &'a [Row<'a>],
 }
 
 #[derive(Template)]
@@ -304,7 +305,7 @@ struct SharePage<'a> {
     preview: Vec<(&'a str, &'a str, String)>,
     start: i64,
     download: bool,
-    rows: Vec<Row<'a>>,
+    rows: &'a [Row<'a>],
     albums: Option<Vec<AlbumSection<'a>>>,
     css: &'a str,
     engine: &'a str,
@@ -321,7 +322,7 @@ fn render(
     tracks: &[TrackRow],
     subject: &Subject,
     server_url: Option<&str>,
-) -> String {
+) -> Html {
     // The slice as recorded, unless what it names has since left the library.
     let album = match share.slice.kind {
         ShareKind::Album => subject
@@ -456,7 +457,7 @@ fn render(
                 first: i + 1,
                 title: &tracks[i].album_title,
                 sub: sub.join(" · "),
-                rows: rows[i..end].to_vec(),
+                rows: &rows[i..end],
             });
             i = end;
         }
@@ -477,14 +478,13 @@ fn render(
         download: tracks
             .iter()
             .any(|t| crate::subsonic::track_file_path(t).is_some()),
-        rows,
+        rows: &rows,
         albums,
         css: &SHARE_CSS_URL,
         engine: &SHARE_ENGINE_URL,
         js: &SHARE_JS_URL,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
@@ -510,7 +510,7 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
             (header::CACHE_CONTROL, "no-store"),
             (header::REFERRER_POLICY, "no-referrer"),
         ],
-        html,
+        String::from(html),
     )
         .into_response();
     let h = resp.headers_mut();

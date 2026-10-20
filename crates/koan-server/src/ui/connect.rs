@@ -6,11 +6,11 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
 
-use askama::Template;
-
 use super::UiState;
 use super::pages::respond;
 use crate::auth::AuthUser;
+use crate::html::Render;
+use askama::Template;
 
 /// `url` is the address to give an assistant, absent while the server does
 /// not know its own.
@@ -36,7 +36,6 @@ pub(super) async fn page(
         abilities: super::oauth::abilities(&user),
         days: s.auth.refresh_ttl_secs / 86_400,
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, "Assistants", &inner)
 }

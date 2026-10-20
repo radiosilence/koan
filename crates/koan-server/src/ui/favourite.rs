@@ -7,6 +7,7 @@
 //! replaces them all, so a track listed twice lights up twice.
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use askama::Template;
 use axum::Extension;
@@ -17,6 +18,7 @@ use koan_core::db::queries;
 
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
+use crate::html::{Html, Render};
 use crate::share::blocking;
 use crate::subsonic::EntityKind;
 
@@ -40,37 +42,30 @@ impl Hearts {
         })
     }
 
-    pub fn track(&self, id: i64) -> String {
-        heart(Kind::Song, id, self.tracks.contains(&id))
+    pub fn track(&self, id: i64) -> Html {
+        heart(Kind::Song, id, self.tracks.contains(&id), false)
     }
 
     /// A record's heart, over the corner of its tile.
-    pub fn tile(&self, id: i64) -> String {
-        Heart {
-            kind: Kind::Album.as_str(),
-            id,
-            on: self.albums.contains(&id),
-            label: label(Kind::Album, self.albums.contains(&id)),
-            tile: true,
-        }
-        .render()
-        .unwrap_or_default()
+    pub fn tile(&self, id: i64) -> Html {
+        heart(Kind::Album, id, self.albums.contains(&id), true)
     }
 
-    pub fn album(&self, id: i64) -> String {
-        heart(Kind::Album, id, self.albums.contains(&id))
+    pub fn album(&self, id: i64) -> Html {
+        heart(Kind::Album, id, self.albums.contains(&id), false)
     }
 
-    pub fn artist(&self, id: i64) -> String {
-        heart(Kind::Artist, id, self.artists.contains(&id))
+    pub fn artist(&self, id: i64) -> Html {
+        heart(Kind::Artist, id, self.artists.contains(&id), false)
     }
 
     /// A favourite's heart beside a track row's ⋯ on a narrow screen, where
     /// the row's own heart is in its menu: a mark, not a button. The stylesheet
     /// shows it while the row's hidden heart is pressed, so it follows a
     /// toggle made from the menu.
-    pub fn mark(&self) -> String {
-        Mark.render().unwrap_or_default()
+    pub fn mark(&self) -> &'static Html {
+        static MARK: LazyLock<Html> = LazyLock::new(|| Mark.html());
+        &MARK
     }
 }
 
@@ -128,17 +123,16 @@ fn label(kind: Kind, on: bool) -> String {
 }
 
 /// A heart for one thing, filled while it is a favourite. Pressing it asks
-/// for the opposite.
-fn heart(kind: Kind, id: i64, on: bool) -> String {
+/// for the opposite. `tile` places it over the corner of a record's tile.
+fn heart(kind: Kind, id: i64, on: bool, tile: bool) -> Html {
     Heart {
         kind: kind.as_str(),
         id,
         on,
         label: label(kind, on),
-        tile: false,
+        tile,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 #[derive(serde::Deserialize)]
@@ -172,7 +166,7 @@ pub(super) async fn toggle(
     .await;
     match done {
         Some(Ok(())) => events(vec![patch(
-            &heart(kind, id, on),
+            &heart(kind, id, on, false),
             Some((&selector, "outer")),
         )]),
         Some(Err(e)) => {

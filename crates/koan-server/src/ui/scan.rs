@@ -18,6 +18,7 @@ use koan_core::auth::Role;
 use super::{UiState, events, patch};
 use crate::auth::AuthUser;
 use crate::graphql::jobs::{Job, JobRegistry, JobState, REREAD, SCAN, WATCH, start_scan};
+use crate::html::{Html, Render};
 
 const KINDS: [&str; 3] = [SCAN, REREAD, WATCH];
 
@@ -40,7 +41,7 @@ struct Status {
 /// What the current scan is doing, or the last did. On a page as it loads
 /// (`on_load`) it asks to be followed; a stream's own patches never do, or
 /// each would open another stream.
-fn status(job: Option<&Job>, on_load: bool) -> String {
+fn status(job: Option<&Job>, on_load: bool) -> Html {
     let line = job.map(|j| {
         let reason = j.reason.map(|r| format!(" ({r})")).unwrap_or_default();
         match j.state {
@@ -74,26 +75,24 @@ fn status(job: Option<&Job>, on_load: bool) -> String {
         follow: on_load,
         line,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 #[derive(Template)]
 #[template(path = "scan/section.html")]
 struct Section {
-    status: String,
+    status: Html,
 }
 
 /// The section, for an admin; nothing for anyone else.
-pub(super) fn section(s: &UiState, user: &AuthUser) -> String {
+pub(super) fn section(s: &UiState, user: &AuthUser) -> Html {
     if !allowed(user) {
-        return String::new();
+        return Html::default();
     }
     Section {
         status: status(s.jobs.current(&KINDS).as_ref(), true),
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 #[derive(Template)]
@@ -110,7 +109,7 @@ struct Refused<'a> {
 fn follow(jobs: JobRegistry, until_idle: bool) -> Response {
     let mut changed = jobs.subscribe();
     let stream = async_stream::stream! {
-        let mut shown = String::new();
+        let mut shown = Html::default();
         loop {
             let now = jobs.current(&KINDS);
             let html = status(now.as_ref(), false);
@@ -148,10 +147,7 @@ pub(super) async fn start(
         .unwrap_or(false);
     match start_scan(&s.jobs, s.pool.clone(), reread) {
         Ok(_) => follow(s.jobs.clone(), true),
-        Err(e) => events(vec![patch(
-            &Refused { error: &e }.render().unwrap_or_default(),
-            None,
-        )]),
+        Err(e) => events(vec![patch(&Refused { error: &e }.html(), None)]),
     }
 }
 

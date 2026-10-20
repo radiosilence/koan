@@ -15,6 +15,8 @@ use koan_core::db::queries::{
 use koan_core::shelves::{Shelf, Tracks};
 use serde::Deserialize;
 
+use crate::html::{Html, Render};
+
 /// A browser's query string. Blank values, as an unfilled form field sends
 /// them, mean unset.
 #[derive(Deserialize, Default, Clone)]
@@ -348,7 +350,7 @@ fn chosen(options: Vec<(String, String)>, current: &str) -> Options {
 /// The sort and filter controls: a row above the grid on a wide screen, one
 /// "Sort · Filter" button that opens them on a phone. A plain GET form, so it
 /// works without script; with it, a change applies at once.
-pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[String]) -> String {
+pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[String]) -> Html {
     let mut sorts: Vec<(String, String)> = match kind {
         Kind::Albums => &ALBUM_SORTS[..],
         Kind::Artists => &ARTIST_SORTS[..],
@@ -396,8 +398,7 @@ pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[Strin
         from: &b.from,
         to: &b.to,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 #[cfg(test)]

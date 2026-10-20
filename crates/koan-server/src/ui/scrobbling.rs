@@ -11,12 +11,12 @@ use axum::response::sse::Event;
 use koan_core::db::queries::scrobbling::{self, LASTFM, LISTENBRAINZ, ScrobbleService};
 use koan_core::scrobbling::lastfm;
 
-use askama::Template;
-
 use super::pages::respond;
 use super::{UiState, events, open, patch, see_other};
 use crate::auth::AuthUser;
+use crate::html::{Html, Render};
 use crate::share::blocking;
+use askama::Template;
 
 pub(super) const NO_ACCOUNTS: &str =
     "Scrobbling belongs to accounts, and this server runs without sign-in.";
@@ -42,10 +42,8 @@ struct ListenBrainz<'a> {
     message: Option<&'a str>,
 }
 
-fn section(service: Option<&ScrobbleService>, message: Option<&str>) -> String {
-    ListenBrainz { service, message }
-        .render()
-        .unwrap_or_default()
+fn section(service: Option<&ScrobbleService>, message: Option<&str>) -> Html {
+    ListenBrainz { service, message }.html()
 }
 
 #[derive(Template)]
@@ -56,18 +54,13 @@ struct Lastfm<'a> {
     message: Option<&'a str>,
 }
 
-fn lastfm_section(
-    service: Option<&ScrobbleService>,
-    offered: bool,
-    message: Option<&str>,
-) -> String {
+fn lastfm_section(service: Option<&ScrobbleService>, offered: bool, message: Option<&str>) -> Html {
     Lastfm {
         service,
         offered,
         message,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 /// The scrobbling page. `sections` is the rendered ListenBrainz and Last.fm
@@ -75,7 +68,7 @@ fn lastfm_section(
 #[derive(Template)]
 #[template(path = "pages/scrobbling.html")]
 struct ScrobblingPage {
-    sections: Option<(String, String)>,
+    sections: Option<(Html, Html)>,
 }
 
 fn connection(s: &UiState, user_id: i64, service: &str) -> Option<Option<ScrobbleService>> {
@@ -124,7 +117,7 @@ async fn render(
             lastfm_section(fm.flatten().as_ref(), offered, message.as_deref()),
         ))
     };
-    let inner = ScrobblingPage { sections }.render().unwrap_or_default();
+    let inner = ScrobblingPage { sections }.html();
     respond(s, headers, user, "Scrobbling", &inner)
 }
 
@@ -213,7 +206,7 @@ struct Failed<'a> {
 }
 
 fn failed_in(id: &str, message: &str) -> Response {
-    let html = Failed { id, message }.render().unwrap_or_default();
+    let html = Failed { id, message }.html();
     events(vec![patch(&html, None)])
 }
 

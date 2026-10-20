@@ -39,6 +39,7 @@ use sha2::{Digest, Sha256};
 
 use super::{UiState, html, open};
 use crate::auth::AuthUser;
+use crate::html::Render;
 use crate::share::not_found;
 
 const CODE_TTL_SECS: u64 = 60;
@@ -254,10 +255,7 @@ fn check(s: &UiState, q: &AuthorizeParams) -> Result<(String, Client, String, Ur
             title: "Cannot connect",
             why,
         };
-        Box::new(html(
-            StatusCode::BAD_REQUEST,
-            page.render().unwrap_or_default(),
-        ))
+        Box::new(html(StatusCode::BAD_REQUEST, page.html()))
     };
     let base = public_base(s).ok_or_else(|| Box::new(not_found()))?;
     let c = client(s, &q.client_id).ok_or_else(|| refuse("This app is not registered here."))?;
@@ -392,7 +390,7 @@ pub(super) async fn authorize(
         ],
         here,
     };
-    let mut resp = html(StatusCode::OK, page.render().unwrap_or_default());
+    let mut resp = html(StatusCode::OK, page.html());
     // The approval answers with a redirect to the client, which a browser
     // holds the form's `form-action` to as well.
     let csp = super::PAGE_CSP.replace(

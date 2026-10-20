@@ -9,11 +9,11 @@
 {%- if let Some(day) = p.day %}
 <li class="disc">{{ day }}</li>
 {%- endif %}
-<li tabindex="0" data-id="{{ p.id }}" data-dur="{{ p.secs }}" data-title="{{ p.title }}" data-artist="{{ p.artist }}" data-album="{{ p.album }}" data-album-id="{{ p.album_id }}" data-artist-id="{{ p.artist_id }}" data-cover="{{ p.cover|safe }}"{{ p.credit|safe }}>
+<li tabindex="0" data-id="{{ p.id }}" data-dur="{{ p.secs }}" data-title="{{ p.title }}" data-artist="{{ p.artist }}" data-album="{{ p.album }}" data-album-id="{{ p.album_id }}" data-artist-id="{{ p.artist_id }}" data-cover="{{ p.cover }}"{{ p.credit }}>
 <input type="checkbox" class="flex-none max-wide:hidden" value="{{ p.play }}" aria-label="Select this play">
-<span class="n w-auto max-wide:text-meta">{{ p.time }}</span><span class="t">{{ p.title }}{{ p.sub|safe }}</span>
-<span class="d">{{ p.dur }}</span><span class="contents max-wide:hidden">{{ p.heart|safe }}
-<button class="quiet" data-act="add" aria-label="Add to queue" title="Add to queue">+</button></span>{{ p.mark|safe }}{{ crate::ui::pages::MORE|safe }}</li>
+<span class="n w-auto max-wide:text-meta">{{ p.time }}</span><span class="t">{{ p.title }}{{ p.sub }}</span>
+<span class="d">{{ p.dur }}</span><span class="contents max-wide:hidden">{{ p.heart }}
+<button class="quiet" data-act="add" aria-label="Add to queue" title="Add to queue">+</button></span>{{ p.mark }}{{ crate::ui::pages::MORE|safe }}</li>
 {%- endfor %}
 </ol>
 {%- if page > 0 || more %}

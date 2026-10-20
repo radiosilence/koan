@@ -5,4 +5,4 @@
 <span class="text-meta text-muted" data-text="$forget.length + ' selected'"></span>
 <button data-on:click="el.closest('.page').querySelectorAll('#history input:checked').forEach(i => i.checked = false); $forget = []">Deselect</button>
 <button class="bad" data-act-forget data-indicator:_forgetting data-attr:disabled="$_forgetting" data-on:click="@post('/history/forget?page={{ page }}')">Forget</button></div></div>
-<div id="history-result"></div>{{ list|safe }}</div>
+<div id="history-result"></div>{{ list }}</div>

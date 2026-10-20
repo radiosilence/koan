@@ -3,6 +3,6 @@
 {%- when None %}
 <p class="{{ crate::ui::pages::EMPTY }}">{{ crate::ui::scrobbling::NO_ACCOUNTS }}</p>
 {%- when Some((brainz, fm)) %}
-<h2>ListenBrainz</h2>{{ brainz|safe }}
-<h2>Last.fm</h2>{{ fm|safe }}
+<h2>ListenBrainz</h2>{{ brainz }}
+<h2>Last.fm</h2>{{ fm }}
 {%- endmatch %}

@@ -19,6 +19,7 @@ use super::pages::{
 };
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
+use crate::html::{Html, NOTHING, Render};
 use crate::share::{blocking, duration};
 
 /// Plays on one page; older ones are a link away.
@@ -55,7 +56,6 @@ fn day_label(day: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
 }
 
 /// One play's row, with the day's heading before it where the day changes.
-/// The markup fields are the server's own.
 struct Play<'a> {
     day: Option<String>,
     id: i64,
@@ -67,12 +67,12 @@ struct Play<'a> {
     album_id: i64,
     artist_id: i64,
     cover: String,
-    credit: String,
-    sub: String,
+    credit: Html,
+    sub: Html,
     time: String,
     dur: String,
-    heart: String,
-    mark: String,
+    heart: Html,
+    mark: &'a Html,
 }
 
 fn plays<'a>(
@@ -112,7 +112,7 @@ fn plays<'a>(
                 time: at.format("%H:%M").to_string(),
                 dur: duration(t.duration_ms),
                 heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
-                mark: hearts.map(Hearts::mark).unwrap_or_default(),
+                mark: hearts.map_or(&NOTHING, Hearts::mark),
             }
         })
         .collect()
@@ -163,21 +163,20 @@ struct List<'a> {
 }
 
 /// The list and its paging, as one element the forget action can replace.
-fn list(p: &Plays, page: u32, zone: FixedOffset) -> String {
+fn list(p: &Plays, page: u32, zone: FixedOffset) -> Html {
     List {
         plays: plays(&p.rows, &p.versions, &p.credits, zone, p.hearts.as_ref()),
         page,
         more: p.more,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 #[derive(Template)]
 #[template(path = "pages/history.html")]
 struct HistoryPage {
     page: u32,
-    list: String,
+    list: Html,
 }
 
 pub(super) async fn page(
@@ -194,8 +193,7 @@ pub(super) async fn page(
         page,
         list: list(&plays, page, zone(&headers)),
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     super::pages::respond(&s, &headers, &user, "History", &inner)
 }
 

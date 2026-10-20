@@ -7,6 +7,7 @@ pub mod auth;
 pub mod clients;
 pub mod covers;
 pub mod graphql;
+mod html;
 pub mod icon;
 pub mod mcp;
 pub mod pair;

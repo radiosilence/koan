@@ -16,6 +16,7 @@ use koan_core::db::queries::app_passwords::{self, AppPasswordRow};
 use super::pages::{COPY_ERROR, respond};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
+use crate::html::{Html, Render};
 use crate::share::blocking;
 
 pub(super) const MAX_NAME: usize = 100;
@@ -58,7 +59,7 @@ struct Credentials<'a> {
     confirm: &'a str,
 }
 
-fn key_list(keys: &[ApiKeyRow]) -> String {
+fn key_list(keys: &[ApiKeyRow]) -> Html {
     Credentials {
         id: "keys",
         rows: keys
@@ -69,11 +70,10 @@ fn key_list(keys: &[ApiKeyRow]) -> String {
         revoke: "/account/keys",
         confirm: REVOKE_KEY,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
-fn app_password_list(passwords: &[AppPasswordRow]) -> String {
+fn app_password_list(passwords: &[AppPasswordRow]) -> Html {
     Credentials {
         id: "app-passwords",
         rows: passwords
@@ -84,8 +84,7 @@ fn app_password_list(passwords: &[AppPasswordRow]) -> String {
         revoke: "/account/app-passwords",
         confirm: REVOKE_APP_PASSWORD,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 /// The account page. `credentials` is the rendered key and app password
@@ -95,7 +94,7 @@ fn app_password_list(passwords: &[AppPasswordRow]) -> String {
 struct AccountPage<'a> {
     username: &'a str,
     admin: bool,
-    credentials: Option<(String, String)>,
+    credentials: Option<(Html, Html)>,
 }
 
 pub(super) async fn page(
@@ -124,8 +123,7 @@ pub(super) async fn page(
         admin: user.role == Role::Admin,
         credentials,
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, "Account", &inner)
 }
 
@@ -157,7 +155,7 @@ struct Made<'a> {
 
 /// A credential made: shown once with a copy button, the list redrawn, the
 /// name field cleared.
-fn made(result: &str, what: &str, secret: &str, list: String, signal: &str) -> Response {
+fn made(result: &str, what: &str, secret: &str, list: Html, signal: &str) -> Response {
     events(vec![
         patch(
             &Made {
@@ -165,8 +163,7 @@ fn made(result: &str, what: &str, secret: &str, list: String, signal: &str) -> R
                 what,
                 secret,
             }
-            .render()
-            .unwrap_or_default(),
+            .html(),
             None,
         ),
         patch(&list, None),

@@ -18,18 +18,32 @@ use koan_core::db::queries::{self, UidKind};
 use super::pages::{Credits, credit_links, link, respond, unavailable};
 use super::{UiState, open};
 use crate::auth::AuthUser;
+use crate::html::{Html, Render};
 use crate::share::{blocking, duration, not_found};
 
 pub(super) const LIST: &str = "m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control \
 [&_dd]:m-0 [&_dd]:wrap-anywhere [&_dd]:select-text [&_dt]:text-muted";
 pub(super) const SECTION: &str = "mt-5 mb-2 text-meta";
 
-/// One row of a definition list. `html` values are the server's own markup:
-/// links to the artist and album pages.
+/// One row of a definition list: text, or links to the artist and album
+/// pages.
 struct Field {
     name: &'static str,
-    value: String,
-    html: bool,
+    value: Value,
+}
+
+enum Value {
+    Text(String),
+    Links(Html),
+}
+
+impl Value {
+    fn is_empty(&self) -> bool {
+        match self {
+            Value::Text(t) => t.is_empty(),
+            Value::Links(h) => h.is_empty(),
+        }
+    }
 }
 
 #[derive(Template)]
@@ -37,7 +51,7 @@ struct Field {
 struct Properties<'a> {
     title: &'a str,
     /// The artist credit, as links.
-    artist: &'a str,
+    artist: &'a Html,
     /// The file on the server, for an admin.
     path: Option<&'a str>,
     /// Each list under its heading: the track's, then each source's.
@@ -61,7 +75,7 @@ pub(super) async fn page(
 
 /// `None` when the library cannot be read, `Some(None)` for a track it does
 /// not have.
-fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
+fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
     let db = open(&s.pool)?;
     let conn = &db.conn;
     let Some(t) = queries::tracks_by_ids(conn, &[id]).ok()?.pop() else {
@@ -108,8 +122,8 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         None
     };
     let number = |v: Option<i32>| v.map(|v| v.to_string());
-    let text = |name, value: Option<String>| (name, value, false);
-    let html = |name, value: Option<String>| (name, value, true);
+    let text = |name, value: Option<String>| (name, value.map(Value::Text));
+    let html = |name, value: Option<Html>| (name, value.map(Value::Links));
     // Names that have a page are linked to it.
     let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
     let track = [
@@ -136,9 +150,9 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         "Track",
         track
             .into_iter()
-            .filter_map(|(name, value, html)| {
+            .filter_map(|(name, value)| {
                 let value = value.filter(|v| !v.is_empty())?;
-                Some(Field { name, value, html })
+                Some(Field { name, value })
             })
             .collect(),
     )];
@@ -157,8 +171,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
             .into_iter()
             .map(|(name, value)| Field {
                 name,
-                value,
-                html: false,
+                value: Value::Text(value),
             })
             .collect();
         lists.push((heading, fields));
@@ -169,5 +182,5 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         path,
         lists,
     };
-    Some(Some(page.render().unwrap_or_default()))
+    Some(Some(page.html()))
 }

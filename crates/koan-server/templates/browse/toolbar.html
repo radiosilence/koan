@@ -7,7 +7,7 @@
 <label class="{{ label }}">Name<input class="{{ name_width }} {{ field }} max-wide:w-auto max-wide:flex-1" type="search" name="q" placeholder="{{ name_hint }}" value="{{ q }}" aria-label="Filter by name"></label>
 {%- call m::select("sort", "Sort", sorts) %}{% endcall %}
 {%- if let Some(seed) = seed %}<input type="hidden" name="seed" value="{{ seed }}">{% endif %}
-{%- if let Some(query) = reshuffle %}<a class="text-muted lowercase" href="{{ path }}?{{ query|safe }}">Reshuffle</a>{% endif %}
+{%- if let Some(query) = reshuffle %}<a class="text-muted lowercase" href="{{ path }}?{{ query }}">Reshuffle</a>{% endif %}
 {%- call m::check("fav", "Favourites", fav) %}{% endcall %}
 {%- call m::check("recent", "Recently played", recent) %}{% endcall %}
 {#- A track's codec says as much; the album browsers' lossless means a whole record. #}

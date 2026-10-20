@@ -6,7 +6,7 @@
 {%- for (role, label) in crate::ui::users::ROLES %}<option value="{{ role.as_str() }}"{% if loop.first %} selected{% endif %}>{{ label }}</option>{% endfor -%}
 </select>
 <button class="primary">Create and invite</button></form>
-<div id="user-result"></div>{{ list|safe }}
+<div id="user-result"></div>{{ list }}
 {%- else %}
 <p class="{{ crate::ui::pages::EMPTY }}">This server runs without sign-in, so it has no accounts.</p>
 {%- endif %}

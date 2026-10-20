@@ -11,11 +11,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
-use askama::Template;
-
 use super::{UiState, encode, html, open, see_other};
 use crate::auth::AuthUser;
+use crate::html::Render;
 use crate::share::blocking;
+use askama::Template;
 
 const LIMITED: &str =
     "Too many codes were tried that no device was waiting with. Try again in a minute.";
@@ -57,7 +57,7 @@ fn page(status: StatusCode, view: View<'_>) -> Response {
         title: "Sign in a device",
         view,
     };
-    html(status, page.render().unwrap_or_default())
+    html(status, page.html())
 }
 
 #[derive(serde::Deserialize, Default)]

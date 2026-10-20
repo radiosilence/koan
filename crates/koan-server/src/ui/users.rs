@@ -17,6 +17,7 @@ use koan_core::invite::{self, AccountError, Invite};
 use super::pages::respond;
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
+use crate::html::{Html, NOTHING, Render};
 use crate::share::blocking;
 
 /// A one-line form: the field, an option or two, the button.
@@ -35,8 +36,8 @@ struct UserList<'a> {
     me: i64,
 }
 
-fn user_list(rows: &[UserRow], me: i64) -> String {
-    UserList { rows, me }.render().unwrap_or_default()
+fn user_list(rows: &[UserRow], me: i64) -> Html {
+    UserList { rows, me }.html()
 }
 
 /// What the result area under the form shows: rendered markup, or a message,
@@ -44,24 +45,24 @@ fn user_list(rows: &[UserRow], me: i64) -> String {
 #[derive(Template)]
 #[template(path = "users/result.html")]
 struct UserResult<'a> {
-    html: &'a str,
+    html: &'a Html,
     message: Option<(&'a str, bool)>,
 }
 
-fn result(html: &str) -> Event {
+fn result(html: &Html) -> Event {
     let html = UserResult {
         html,
         message: None,
     };
-    patch(&html.render().unwrap_or_default(), None)
+    patch(&html.html(), None)
 }
 
 fn message(text: &str, error: bool) -> Event {
     let html = UserResult {
-        html: "",
+        html: &NOTHING,
         message: Some((text, error)),
     };
-    patch(&html.render().unwrap_or_default(), None)
+    patch(&html.html(), None)
 }
 
 fn failure(text: &str) -> Event {
@@ -72,13 +73,13 @@ fn failure(text: &str) -> Event {
 /// white whatever the theme, since scanners expect that contrast; each module
 /// a whole 4px, so edges stay crisp. The code carries the invite's token, as
 /// the link beside it does.
-fn invite_qr(link: &str) -> String {
+fn invite_qr(link: &str) -> Html {
     use qrcode::render::svg;
     let code = match qrcode::QrCode::new(link) {
         Ok(code) => code,
         Err(e) => {
             log::warn!("web UI: invite link too long for a QR code: {e}");
-            return String::new();
+            return Html::default();
         }
     };
     let svg = code
@@ -88,11 +89,11 @@ fn invite_qr(link: &str) -> String {
         .light_color(svg::Color("#fff"))
         .build();
     match svg.find("<svg") {
-        Some(at) => format!(
-            "<div class=\"mt-3\" role=img aria-label=\"Invite link as a QR code\">{}</div>",
+        Some(at) => Html::trusted(format!(
+            "<div class=\"mt-3\" role=\"img\" aria-label=\"Invite link as a QR code\">{}</div>",
             &svg[at..]
-        ),
-        None => String::new(),
+        )),
+        None => Html::default(),
     }
 }
 
@@ -101,18 +102,17 @@ fn invite_qr(link: &str) -> String {
 struct InvitePanel<'a> {
     invite: &'a Invite,
     link: String,
-    qr: String,
+    qr: Html,
 }
 
-fn invite_panel(invite: &Invite) -> String {
+fn invite_panel(invite: &Invite) -> Html {
     let link = invite.link();
     InvitePanel {
         invite,
         qr: invite_qr(&link),
         link,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 /// An invite carrying a token signed with this server's key.
@@ -148,7 +148,7 @@ fn list(s: &UiState) -> Vec<UserRow> {
 #[derive(Template)]
 #[template(path = "pages/users.html")]
 struct UsersPage {
-    list: Option<String>,
+    list: Option<Html>,
 }
 
 pub(super) async fn page(
@@ -166,7 +166,7 @@ pub(super) async fn page(
     } else {
         None
     };
-    let inner = UsersPage { list }.render().unwrap_or_default();
+    let inner = UsersPage { list }.html();
     respond(&s, &headers, &user, "Users", &inner)
 }
 
@@ -301,10 +301,7 @@ pub(super) async fn password_form(
         id,
         name: &row.username,
     };
-    events(vec![
-        clear_password_signal(),
-        result(&form.render().unwrap_or_default()),
-    ])
+    events(vec![clear_password_signal(), result(&form.html())])
 }
 
 /// Set the password the form posts as its `setpassword` signal.
@@ -373,7 +370,7 @@ pub(super) async fn set_role(
     })
     .await;
     match done {
-        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result("")]),
+        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result(&NOTHING)]),
         // Redraw the list too, so the select goes back to what is stored.
         Some((Err(e), rows)) => events(vec![
             patch(&user_list(&rows, me), None),
@@ -406,7 +403,7 @@ pub(super) async fn delete(
     })
     .await;
     match done {
-        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result("")]),
+        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result(&NOTHING)]),
         Some((Err(e), _)) => events(vec![failure(&e.to_string())]),
         None => events(vec![failure("No such account.")]),
     }

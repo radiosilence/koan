@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
-
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -22,6 +21,7 @@ use super::browse::{self, Browse, Kind};
 use super::favourite::Hearts;
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
+use crate::html::{Html, NOTHING, Render};
 use crate::share::{blocking, duration, not_found};
 use koan_core::shelves::{self, Shelf, Summary};
 
@@ -81,7 +81,7 @@ struct Buttons {
 }
 
 /// The transport buttons: in the bar, or larger on a phone on the queue page.
-pub(super) fn buttons(page: bool) -> String {
+pub(super) fn buttons(page: bool) -> Html {
     let b = if page {
         Buttons {
             row: "flex flex-wrap items-center gap-2 max-wide:justify-center",
@@ -97,7 +97,7 @@ pub(super) fn buttons(page: bool) -> String {
             prev: "max-wide:hidden",
         }
     };
-    b.render().unwrap_or_default()
+    b.html()
 }
 
 #[derive(Template)]
@@ -108,8 +108,8 @@ struct Scrub<'a> {
 }
 
 /// Position and length around the seek bar.
-pub(super) fn scrub(extra: &str, height: &str) -> String {
-    Scrub { extra, height }.render().unwrap_or_default()
+pub(super) fn scrub(extra: &str, height: &str) -> Html {
+    Scrub { extra, height }.html()
 }
 
 /// `proxied`: an authenticating proxy is trusted, so the page renews its
@@ -118,7 +118,7 @@ pub(super) fn scrub(extra: &str, height: &str) -> String {
 #[template(path = "shell.html")]
 struct Shell<'a> {
     title: &'a str,
-    content: &'a str,
+    content: &'a Html,
     username: &'a str,
     auth_enabled: bool,
     proxied: bool,
@@ -128,7 +128,7 @@ struct Shell<'a> {
 #[template(path = "page.html")]
 struct Page<'a> {
     title: &'a str,
-    inner: &'a str,
+    inner: &'a Html,
 }
 
 /// The whole page, or only its content when the UI's script asked for that.
@@ -137,9 +137,9 @@ pub(super) fn respond(
     headers: &HeaderMap,
     user: &AuthUser,
     title: &str,
-    inner: &str,
+    inner: &Html,
 ) -> Response {
-    let content = Page { title, inner }.render().unwrap_or_default();
+    let content = Page { title, inner }.html();
     if headers.contains_key(PARTIAL) {
         html(StatusCode::OK, content)
     } else {
@@ -152,8 +152,7 @@ pub(super) fn respond(
                 auth_enabled: s.auth_enabled,
                 proxied: s.proxy_auth.is_some(),
             }
-            .render()
-            .unwrap_or_default(),
+            .html(),
         )
     }
 }
@@ -174,14 +173,13 @@ struct Login<'a> {
     error: Option<&'a str>,
 }
 
-pub(super) fn login(next: &str, error: Option<&str>) -> String {
+pub(super) fn login(next: &str, error: Option<&str>) -> Html {
     Login {
         title: "Sign in",
         next,
         error,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 /// The setup page: the first admin's name and password, chosen here.
@@ -193,14 +191,13 @@ struct Setup<'a> {
     error: Option<&'a str>,
 }
 
-pub(super) fn setup(username: &str, error: Option<&str>) -> String {
+pub(super) fn setup(username: &str, error: Option<&str>) -> Html {
     Setup {
         title: "Set up",
         username,
         error,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 fn year(date: Option<&str>) -> &str {
@@ -251,8 +248,8 @@ pub(super) fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -
 struct Tile<'a> {
     album: &'a AlbumRow,
     src: String,
-    artist: String,
-    heart: String,
+    artist: Html,
+    heart: Html,
 }
 
 #[derive(Template)]
@@ -268,7 +265,7 @@ fn cells(
     versions: &Versions,
     credits: &Credits,
     hearts: Option<&Hearts>,
-) -> String {
+) -> Html {
     let tiles = albums
         .iter()
         .map(|a| Tile {
@@ -281,7 +278,7 @@ fn cells(
             heart: hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
         })
         .collect();
-    Tiles { tiles }.render().unwrap_or_default()
+    Tiles { tiles }.html()
 }
 
 /// The codecs and genres the filters offer.
@@ -317,8 +314,8 @@ struct Link<'a> {
 
 /// A name linked to its artist or album page (`kind`), or the name alone
 /// where the row has no id for it.
-pub(super) fn link(kind: &str, id: Option<i64>, name: &str) -> String {
-    Link { kind, id, name }.render().unwrap_or_default()
+pub(super) fn link(kind: &str, id: Option<i64>, name: &str) -> Html {
+    Link { kind, id, name }.html()
 }
 
 /// The artists credited on a page's tracks and albums, read once for the
@@ -369,8 +366,8 @@ struct Credit<'a> {
 }
 
 /// A credit as it reads, each credited artist's name a link to their page.
-pub(super) fn credit_links(parts: &[CreditPart], quiet: bool) -> String {
-    Credit { parts, quiet }.render().unwrap_or_default()
+pub(super) fn credit_links(parts: &[CreditPart], quiet: bool) -> Html {
+    Credit { parts, quiet }.html()
 }
 
 #[derive(Template)]
@@ -382,9 +379,9 @@ struct CreditData {
 /// A row's credit for the player, which draws the queue and Now Playing from
 /// the row's data: `[text, artist id or 0]` for each part. Nothing where the
 /// credit is one name, which `data-artist` and `data-artist-id` already say.
-pub(super) fn credit_data(parts: &[CreditPart]) -> String {
+pub(super) fn credit_data(parts: &[CreditPart]) -> Html {
     if parts.len() < 2 {
-        return String::new();
+        return Html::default();
     }
     let parts: Vec<_> = parts
         .iter()
@@ -393,20 +390,19 @@ pub(super) fn credit_data(parts: &[CreditPart]) -> String {
     CreditData {
         json: serde_json::Value::Array(parts).to_string(),
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 #[derive(Template)]
 #[template(path = "library/credit_line.html")]
 struct CreditLine {
-    artist: String,
-    album: Option<String>,
+    artist: Html,
+    album: Option<Html>,
 }
 
 /// A track row's subtitle: its artist credit, where given, and its album,
 /// where asked for.
-pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bool) -> String {
+pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bool) -> Html {
     CreditLine {
         artist: artist
             .map(|parts| credit_links(parts, false))
@@ -414,8 +410,7 @@ pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bo
         album: (album && !t.album_title.is_empty())
             .then(|| link("album", t.album_id, &t.album_title)),
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 /// What a page read once for all its rows: covers, credits and hearts.
@@ -431,10 +426,10 @@ struct TrackRowView<'a> {
     t: &'a TrackRow,
     n: usize,
     cover: String,
-    credit: String,
-    sub: String,
-    heart: String,
-    mark: String,
+    credit: Html,
+    sub: Html,
+    heart: Html,
+    mark: &'a Html,
     /// Share this track: its album, cued to it. Only where the page has a
     /// `#share-result` to show the link in.
     share: bool,
@@ -449,7 +444,7 @@ fn track_row(
     album: bool,
     share: bool,
     data: &RowData,
-) -> String {
+) -> Html {
     let RowData {
         versions,
         credits,
@@ -466,11 +461,10 @@ fn track_row(
         credit: credit_data(&parts),
         sub: credit_line(t, show_artist.then_some(&parts[..]), album),
         heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
-        mark: hearts.map(Hearts::mark).unwrap_or_default(),
+        mark: hearts.map_or(&NOTHING, Hearts::mark),
         share,
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 /// Every album `b` lets through, in its order. Whole, as the apps list them:
@@ -496,8 +490,8 @@ fn album_ids(albums: &[AlbumRow]) -> Vec<i64> {
 struct AlbumsPage {
     count: usize,
     filtered: bool,
-    toolbar: String,
-    tiles: String,
+    toolbar: Html,
+    tiles: Html,
 }
 
 pub(super) async fn albums(
@@ -518,8 +512,7 @@ pub(super) async fn albums(
         toolbar: browse::toolbar(&b, Kind::Albums, &options.0, &options.1),
         tiles: cells(&albums, &versions, &credits, hearts.as_ref()),
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, "Albums", &inner)
 }
 
@@ -529,12 +522,12 @@ pub(super) async fn albums(
 struct AlbumPage<'a> {
     album: &'a AlbumRow,
     cover: String,
-    credit: String,
+    credit: Html,
     sub: Vec<String>,
     can_share: bool,
-    heart: String,
+    heart: Html,
     /// Each row, after its disc's heading where the album has several discs.
-    rows: Vec<(Option<i32>, String)>,
+    rows: Vec<(Option<i32>, Html)>,
 }
 
 pub(super) async fn album(
@@ -622,8 +615,7 @@ pub(super) async fn album(
             .unwrap_or_default(),
         rows,
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, &album.title, &inner)
 }
 
@@ -678,7 +670,7 @@ async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
     } else {
         Err("This account cannot make share links.".into())
     };
-    let html = ShareResult { result }.render().unwrap_or_default();
+    let html = ShareResult { result }.html();
     events(vec![patch(&html, None)])
 }
 
@@ -687,7 +679,7 @@ async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
 struct ArtistsPage {
     artists: Vec<queries::ArtistRow>,
     filtered: bool,
-    toolbar: String,
+    toolbar: Html,
 }
 
 fn artist_rows(s: &UiState, user: i64, b: &Browse) -> Option<Vec<queries::ArtistRow>> {
@@ -711,8 +703,7 @@ pub(super) async fn artists(
         toolbar: browse::toolbar(&b, Kind::Artists, &options.0, &options.1),
         artists,
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, "Artists", &inner)
 }
 
@@ -723,8 +714,8 @@ const TRACKS_PAGE: u32 = 200;
 #[template(path = "pages/tracks.html")]
 struct TracksPage {
     total: u64,
-    toolbar: String,
-    rows: String,
+    toolbar: Html,
+    rows: Html,
     previous: Option<String>,
     next: Option<String>,
 }
@@ -778,8 +769,7 @@ pub(super) async fn tracks(
         previous: (page > 0).then(|| at(page - 1)),
         next: ((((page + 1) * TRACKS_PAGE) as u64) < total).then(|| at(page + 1)),
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, "Tracks", &inner)
 }
 
@@ -789,8 +779,8 @@ pub(super) async fn tracks(
 #[template(path = "pages/artist.html")]
 struct ArtistPage<'a> {
     artist: &'a queries::ArtistRow,
-    heart: Option<String>,
-    tiles: String,
+    heart: Option<Html>,
+    tiles: Html,
 }
 
 pub(super) async fn artist(
@@ -823,8 +813,7 @@ pub(super) async fn artist(
         tiles: cells(&albums, &versions, &credits, hearts.as_ref()),
         artist: &artist,
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, &artist.name, &inner)
 }
 
@@ -848,7 +837,7 @@ pub(super) async fn playlists(
     let Some(lists) = found else {
         return unavailable();
     };
-    let inner = PlaylistsPage { lists }.render().unwrap_or_default();
+    let inner = PlaylistsPage { lists }.html();
     respond(&s, &headers, &user, "Playlists", &inner)
 }
 
@@ -860,7 +849,7 @@ struct PlaylistPage<'a> {
     owner: Option<&'a str>,
     comment: Option<&'a str>,
     count: usize,
-    rows: String,
+    rows: Html,
 }
 
 /// A playlist, laid out like an album so its rows play and queue the same way.
@@ -913,8 +902,7 @@ pub(super) async fn playlist(
             .map(|(i, t)| track_row(t, i + 1, true, true, false, &data))
             .collect(),
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, &list.name, &inner)
 }
 
@@ -923,7 +911,7 @@ enum Results<'a> {
     Blank,
     Unavailable,
     Nothing(&'a str),
-    Shelf(String),
+    Shelf(Html),
 }
 
 #[derive(Template)]
@@ -932,7 +920,7 @@ struct ResultsView<'a> {
     found: Results<'a>,
 }
 
-fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
+fn results(s: &UiState, user: &AuthUser, q: &str) -> Html {
     let q = q.trim();
     let found = if q.is_empty() {
         Results::Blank
@@ -959,14 +947,14 @@ fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
             )),
         }
     };
-    ResultsView { found }.render().unwrap_or_default()
+    ResultsView { found }.html()
 }
 
 #[derive(Template)]
 #[template(path = "pages/search.html")]
 struct SearchPage<'a> {
     q: &'a str,
-    results: String,
+    results: Html,
 }
 
 pub(super) async fn search(
@@ -985,8 +973,7 @@ pub(super) async fn search(
         q: &q,
         results: found,
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, "Search", &inner)
 }
 
@@ -1011,7 +998,7 @@ pub(super) async fn search_results(
 #[derive(Template)]
 #[template(path = "pages/library.html")]
 struct LibraryPage {
-    scan: String,
+    scan: Html,
 }
 
 /// The library's own lists, which the sidebar shows as links and a phone, with
@@ -1024,8 +1011,7 @@ pub(super) async fn library(
     let inner = LibraryPage {
         scan: super::scan::section(&s, &user),
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, "Library", &inner)
 }
 
@@ -1056,12 +1042,12 @@ struct ShelfView<'a> {
     artists: Option<(u64, String)>,
     albums: Option<(u64, String)>,
     tracks: Option<(u64, String)>,
-    tiles: String,
-    rows: String,
+    tiles: Html,
+    rows: Html,
 }
 
 /// The previews of a shelf.
-fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> String {
+fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> Html {
     let section = |empty: bool, total: u64, kind: Kind| {
         (!empty).then(|| (total, browse::shelf_browser(shelf, kind)))
     };
@@ -1079,15 +1065,14 @@ fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> String {
             .map(|(i, t)| track_row(t, i + 1, true, true, false, data))
             .collect(),
     }
-    .render()
-    .unwrap_or_default()
+    .html()
 }
 
 #[derive(Template)]
 #[template(path = "pages/shelf.html")]
 struct ShelfPage<'a> {
     title: &'a str,
-    sections: Option<String>,
+    sections: Option<Html>,
     empty: EmptyShelf,
 }
 
@@ -1128,8 +1113,7 @@ async fn shelf_page(
         sections,
         empty,
     }
-    .render()
-    .unwrap_or_default();
+    .html();
     respond(&s, &headers, &user, title, &inner)
 }
 
@@ -1186,6 +1170,6 @@ pub(super) async fn queue(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let inner = QueuePage.render().unwrap_or_default();
+    let inner = QueuePage.html();
     respond(&s, &headers, &user, "Queue", &inner)
 }

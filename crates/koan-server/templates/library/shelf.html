@@ -1,7 +1,8 @@
 {#- The previews of a shelf, as the apps' shelf lays them out: artists as pills, records as tiles, and the tracks as a list that plays on from the row picked. Each section's heading links to the browser with the shelf as its filter, and counts what the shelf has in all; the preview may show fewer. -#}
+{%- import "library/macros.html" as library -%}
 {% macro head(title, total, href, play) %}
 <div class="{{ crate::ui::pages::LIST_HEAD|safe }}"><h2><a class="inline-flex items-center gap-1.5 text-[inherit] hover:text-brand hover:no-underline" href="{{ href }}">{{ title }}<span class="text-muted tabular-nums">{{ total }}</span>{{ crate::icon::CHEVRON_RIGHT.svg(14.0, "size-[0.8em]")|safe }}</a></h2>
-<div class="{{ crate::ui::pages::ACTIONS }}">{% if play %}<button class="standard" data-act="play">Play</button><button class="standard" data-act="shuffle">Shuffle</button><button class="standard" data-act="queue">Add to queue</button>{% endif %}</div></div>
+<div class="{{ crate::ui::pages::ACTIONS }}">{% if play %}{% call library::play_buttons("standard") %}{% endcall %}{% endif %}</div></div>
 {%- endmacro %}
 {%- if let Some((total, href)) = artists %}
 {% call head("Artists", total, href, false) %}{% endcall %}
@@ -11,9 +12,9 @@
 {%- endif %}
 {%- if let Some((total, href)) = albums %}
 {% call head("Albums", total, href, false) %}{% endcall %}
-<div class="mb-6 {{ crate::ui::pages::GRID }}">{{ tiles|safe }}</div>
+<div class="mb-6 {{ crate::ui::pages::GRID }}">{{ tiles }}</div>
 {%- endif %}
 {%- if let Some((total, href)) = tracks %}
 {% call head("Tracks", total, href, true) %}{% endcall %}
-<ol class="tracks" data-context="album">{{ rows|safe }}</ol>
+<ol class="tracks" data-context="album">{{ rows }}</ol>
 {%- endif %}

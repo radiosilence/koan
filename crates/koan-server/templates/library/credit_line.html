@@ -1,2 +1,2 @@
 {#- A track row's subtitle: its artist credit, where given, and its album, where asked for, each named part linked to its page. -#}
-{% if !artist.is_empty() || album.is_some() %}<small>{{ artist|safe }}{% if !artist.is_empty() && album.is_some() %} · {% endif %}{% if let Some(album) = album %}{{ album|safe }}{% endif %}</small>{% endif %}
+{% if !artist.is_empty() || album.is_some() %}<small>{{ artist }}{% if !artist.is_empty() && album.is_some() %} · {% endif %}{% if let Some(album) = album %}{{ album }}{% endif %}</small>{% endif %}
