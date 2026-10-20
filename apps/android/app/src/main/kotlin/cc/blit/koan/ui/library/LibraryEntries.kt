@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.library
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
@@ -45,19 +46,17 @@ fun EntryProviderScope<NavKey>.libraryEntries() {
 @Composable
 private fun LibraryPage() {
     val nav = LocalNavigator.current
-    Column {
-        PageBar("Library", back = false)
-        LazyColumn {
-            item { LibraryStatus() }
-            item { KoanNavRow("Albums", KoanIcons.album, false, { nav.push(AlbumsRoute()) }) }
-            item { KoanNavRow("Artists", KoanIcons.artist, false, { nav.push(ArtistsRoute()) }) }
-            item { KoanNavRow("Favourites", KoanIcons.favourite, false, { nav.push(ShelfRoute(Shelf.Favourites)) }) }
-            item { KoanNavRow("Playlists", KoanIcons.playlist, false, { nav.push(PlaylistsRoute()) }) }
-            item { KoanNavRow("Recently Played", KoanIcons.recentlyPlayed, false, { nav.push(ShelfRoute(Shelf.Recent)) }) }
-            item { KoanNavRow("Downloaded", KoanIcons.onDevice, false, { nav.push(ShelfRoute(Shelf.Downloaded)) }) }
-            item { KoanNavRow("History", KoanIcons.history, false, { nav.push(HistoryRoute()) }) }
-            item { KoanNavRow("Downloads", KoanIcons.downloads, false, { nav.push(DownloadsRoute()) }) }
-        }
+    // No title: the tab beneath already says "library".
+    LazyColumn(contentPadding = PaddingValues(top = KoanSpace.m)) {
+        item { LibraryStatus() }
+        item { KoanNavRow("Albums", KoanIcons.album, false, { nav.push(AlbumsRoute()) }) }
+        item { KoanNavRow("Artists", KoanIcons.artist, false, { nav.push(ArtistsRoute()) }) }
+        item { KoanNavRow("Favourites", KoanIcons.favourite, false, { nav.push(ShelfRoute(Shelf.Favourites)) }) }
+        item { KoanNavRow("Playlists", KoanIcons.playlist, false, { nav.push(PlaylistsRoute()) }) }
+        item { KoanNavRow("Recently Played", KoanIcons.recentlyPlayed, false, { nav.push(ShelfRoute(Shelf.Recent)) }) }
+        item { KoanNavRow("Downloaded", KoanIcons.onDevice, false, { nav.push(ShelfRoute(Shelf.Downloaded)) }) }
+        item { KoanNavRow("History", KoanIcons.history, false, { nav.push(HistoryRoute()) }) }
+        item { KoanNavRow("Downloads", KoanIcons.downloads, false, { nav.push(DownloadsRoute()) }) }
     }
 }
 

@@ -504,15 +504,14 @@ private fun Header(
     Row(Modifier.fillMaxWidth().padding(start = KoanSpace.l, top = KoanSpace.s, bottom = KoanSpace.xs), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             // What the queue still is, when it came from a playlist or a record and has not been edited since.
+            // Otherwise no title: the tab beneath already says "queue".
             when (lock) {
                 is QueueLock.Playlist -> KoanText(lock.playlist.name, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 1)
                 is QueueLock.Album -> NameLine(listOf(albumName(lock.album.title, lock.album.id)), role = KoanType.Body, tone = KoanTone.Strong)
-                null -> KoanText("Queue", role = KoanType.Body, tone = KoanTone.Strong, appText = true)
+                null -> Unit
             }
-            if (items.isNotEmpty()) {
-                val total = items.sumOf { it.durationMs?.toLong() ?: 0 }
-                KoanText(count(items.size, "track") + if (total > 0) " · ${duration(total)}" else "", role = KoanType.Fine, tone = KoanTone.Muted)
-            }
+            val total = items.sumOf { it.durationMs?.toLong() ?: 0 }
+            KoanText(count(items.size, "track") + if (total > 0) " · ${duration(total)}" else "", role = KoanType.Fine, tone = KoanTone.Muted)
         }
         KoanButton(follow, kind = KoanButtonKind.Icon, enabled = canFollow) {
             KoanIcon(
