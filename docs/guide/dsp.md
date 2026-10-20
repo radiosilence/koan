@@ -256,15 +256,14 @@ another, its target and a group's member, with **Add…** at the foot to import
 one, find one in AutoEQ or build one from a measurement or squig.link. Each EQ
 of the filters has **On**, and tapping it opens its page. On the iPhone, swipe
 it left to remove it from the filters and right to move it up or down, or touch
-and hold it for the same; on the Mac, its **Options** menu or a right-click
-does these, and ⌫ removes the one focused. Removing takes an EQ out of the
+and hold it for the same; on Android, its ⋯ menu does these; on the Mac, its
+**Options** menu or a right-click does these, and ⌫ removes the one focused. Removing takes an EQ out of the
 device's filters and never deletes it: only **Delete…** in Manage EQ does,
 after asking. **Add EQ** adds another, and **New EQ…** there makes one: eight
 bands (a low shelf at 100 Hz, six peaks an octave apart from 200 Hz, a high
 shelf at 10 kHz), flat or from a bass boost, warm or bright starting curve,
 named before it is made, added to the filters and opened to edit. An empty
-stage is a dashed place to add one. On Android, **New EQ…** is under **Add**
-on the EQ page and in **Add a tuning**.
+stage is a dashed place to add one.
 
 On Apple TV the correction and **Add EQ** choose from the corrections and EQs
 already on the TV, which include those the account's other devices sync

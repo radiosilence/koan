@@ -42,7 +42,7 @@ internal suspend fun copyIn(context: Context, uris: List<Uri>): List<String> = w
     }
 }
 
-private fun displayName(context: Context, uri: Uri): String? =
+internal fun displayName(context: Context, uri: Uri): String? =
     if (uri.scheme == "file") {
         uri.lastPathSegment
     } else {
