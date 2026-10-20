@@ -9,6 +9,8 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
+use koan_core::db::queries::Place;
+use koan_core::helpers::RowCredits;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
@@ -155,6 +157,9 @@ pub struct Facts {
     pub sources: HashMap<i64, (bool, bool)>,
     /// What the queue is, when it is exactly a playlist or an album.
     pub lock: Option<String>,
+    /// Each library track's credit as drawn, where it reads differently from
+    /// its record's (`RowCredits::differ`): the artist line of a grouped row.
+    pub own_credits: HashMap<i64, Option<String>>,
 }
 
 impl Facts {
@@ -180,9 +185,34 @@ impl Facts {
                 .map(|a| a.title),
             None => None,
         };
+        let places = queries::places_for_tracks(&db.conn, &ids).unwrap_or_default();
+        let mut albums: Vec<i64> = places.values().filter_map(|p| p.album_id).collect();
+        albums.sort_unstable();
+        albums.dedup();
+        let credits = |of, ids: &[i64]| {
+            koan_core::helpers::credits_by_id(&db.conn, of, ids).unwrap_or_default()
+        };
+        let tracks = credits(queries::CreditsOf::Tracks, &ids);
+        let records = credits(queries::CreditsOf::Albums, &albums);
+        let own_credits = entries
+            .iter()
+            .filter_map(|e| {
+                let id = e.db_id?;
+                let place = places.get(&id).copied().unwrap_or_default();
+                let record = place
+                    .album_id
+                    .and_then(|a| records.get(&a))
+                    .map_or(&[][..], Vec::as_slice);
+                let own = tracks.get(&id).map(Vec::as_slice);
+                let row = RowCredits::new(&e.artist, &e.album_artist, place, own, record);
+                let text = row.artist.iter().map(|p| p.text.as_str()).collect();
+                Some((id, row.differ().then_some(text)))
+            })
+            .collect();
         Self {
             sources: queries::sources_for_tracks(&db.conn, &ids).unwrap_or_default(),
             lock,
+            own_credits,
         }
     }
 }
@@ -394,7 +424,7 @@ fn track_of<'e>(
     entries: &'e [QueueEntry],
     grouped: bool,
     line: Line,
-    look: Option<&Look>,
+    look: Option<&Look<'e>>,
     current: bool,
 ) -> rows::Track<'e> {
     let (Line::Track(i) | Line::Single(i)) = line else {
@@ -409,7 +439,15 @@ fn track_of<'e>(
             e.artist.as_str()
         })
     } else {
-        (!e.artist.is_empty() && e.artist != e.album_artist).then_some(e.artist.as_str())
+        match e.db_id.and_then(|id| look?.facts?.own_credits.get(&id)) {
+            Some(own) => own.as_deref(),
+            None => {
+                RowCredits::new::<&str>(&e.artist, &e.album_artist, Place::default(), None, &[])
+                    .differ()
+                    .then_some(e.artist.as_str())
+            }
+        }
+        .filter(|a| !a.is_empty())
     };
     let number = match (single, e.disc, e.track_number) {
         (true, ..) if !grouped => None,

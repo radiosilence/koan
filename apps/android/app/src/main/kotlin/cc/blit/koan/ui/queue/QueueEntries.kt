@@ -375,7 +375,7 @@ private fun ReorderableCollectionItemScope.RowContent(
                     linked = !selecting,
                     // Ungrouped there is no heading above to say what record this is.
                     sleeve = !grouped,
-                    showArtist = !grouped || row.item.artistCredit.joinToString("") { it.text } != row.item.albumArtistCredit.joinToString("") { it.text },
+                    showArtist = !grouped || row.item.creditDiffers,
                 )
             }
         }

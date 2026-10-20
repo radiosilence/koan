@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::db::connection::DbError;
-use crate::db::queries::batch::{CreditsOf, credited_artists};
+use crate::db::queries::batch::{CreditsOf, Place, credited_artists};
 
 /// One stretch of a credit: an artist's name, linked to them, or the plain
 /// text joining two names.
@@ -67,6 +67,45 @@ pub fn credit_parts<S: AsRef<str>>(
         });
     }
     parts
+}
+
+/// A queue row's credit and its record's, each with the artists it credits
+/// linked: the two credits a row and the heading above it draw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowCredits {
+    pub artist: Vec<CreditPart>,
+    pub album_artist: Vec<CreditPart>,
+}
+
+impl RowCredits {
+    /// `own` is the artists the track credits, where it has any of its own,
+    /// and `record` its record's. A track naming none of its own but credited
+    /// as its record is takes the record's.
+    pub fn new<S: AsRef<str>>(
+        artist: &str,
+        album_artist: &str,
+        place: Place,
+        own: Option<&[(i64, S)]>,
+        record: &[(i64, S)],
+    ) -> Self {
+        let own = own
+            .or((artist == album_artist).then_some(record))
+            .unwrap_or_default();
+        Self {
+            artist: credit_parts(artist, place.artist_id, own),
+            album_artist: credit_parts(album_artist, place.album_artist_id, record),
+        }
+    }
+
+    /// The track's credit reads differently from its record's. Grouped under
+    /// the record's heading, which names the record's artists, a row names its
+    /// own only then. The credits are compared as drawn, so artists a track
+    /// credits beyond its record's are shown even where its artist tag is the
+    /// record's.
+    pub fn differ(&self) -> bool {
+        let text = |parts: &[CreditPart]| parts.iter().map(|p| p.text.as_str()).collect::<String>();
+        text(&self.artist) != text(&self.album_artist)
+    }
 }
 
 /// A credit folded as names are matched: NFC, lowercased a character at a
@@ -276,5 +315,28 @@ mod tests {
             [("Solo", Some(4))]
         );
         assert_eq!(read(&credit_parts::<&str>("", None, &[])), [("", None)]);
+    }
+
+    #[test]
+    fn a_row_differs_from_its_record_by_its_credit_as_drawn() {
+        let place = Place {
+            album_id: Some(5),
+            artist_id: Some(1),
+            album_artist_id: Some(1),
+        };
+        let record: &[(i64, &str)] = &[];
+        let guests: &[(i64, &str)] = &[(1, "Big Data"), (2, "Kimbra")];
+        // The tag names only the record's artist; the credit names a guest.
+        let row = RowCredits::new("Big Data", "Big Data", place, Some(guests), record);
+        assert!(row.differ());
+        let row = RowCredits::new("Big Data", "Big Data", place, None, record);
+        assert!(!row.differ());
+        let row = RowCredits::new("Big Data feat. Kimbra", "Big Data", place, None, record);
+        assert!(row.differ());
+        // Credited as its record is, a track takes the record's artists.
+        let duo: &[(i64, &str)] = &[(1, "A"), (2, "B")];
+        let row = RowCredits::new("A × B", "A × B", place, None, duo);
+        assert_eq!(row.artist, row.album_artist);
+        assert!(!row.differ());
     }
 }

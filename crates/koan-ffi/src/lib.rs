@@ -5554,8 +5554,7 @@ impl KoanEngine {
                 let row = e.track_id.as_ref().and_then(|r| rows.get(r));
                 let album_artist =
                     row.map_or_else(|| e.artist.clone(), |r| r.album_artist_name.clone());
-                let (artist_credit, album_artist_credit) =
-                    joins.credits(row.map(|r| r.id), &e.artist, &album_artist);
+                let credits = joins.credits(row.map(|r| r.id), &e.artist, &album_artist);
                 QueueItem {
                     queue_item_id: e.id.clone().unwrap_or_else(|| format!("remote-{n}")),
                     track_id: row.map(|r| r.id),
@@ -5565,8 +5564,9 @@ impl KoanEngine {
                     title: e.title.clone(),
                     artist: e.artist.clone(),
                     album_artist,
-                    artist_credit,
-                    album_artist_credit,
+                    artist_credit: credits.artist,
+                    album_artist_credit: credits.album_artist,
+                    credit_differs: credits.differ,
                     album: if e.album.is_empty() {
                         row.map(|r| r.album_title.clone()).unwrap_or_default()
                     } else {

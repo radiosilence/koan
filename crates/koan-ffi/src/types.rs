@@ -500,6 +500,10 @@ pub struct QueueItem {
     /// `artist` and `album_artist` with each artist they credit linked.
     pub artist_credit: Vec<CreditPart>,
     pub album_artist_credit: Vec<CreditPart>,
+    /// The track's credit reads differently from its record's: grouped under
+    /// the record's heading, the row names its artists only when this is set.
+    /// See `koan_core::helpers::RowCredits::differ`.
+    pub credit_differs: bool,
     pub album: String,
     pub year: Option<String>,
     pub codec: Option<String>,
@@ -642,6 +646,8 @@ impl QueueItem {
             QueueEntryStatus::Playing if state == PlaybackState::Stopped => EntryStatus::Queued,
             status => status.into(),
         };
+        let credits =
+            crate::queue_slice::Joins::default().credits(None, &item.artist, &item.album_artist);
         Self {
             queue_item_id: item.id.0.to_string(),
             track_id: item.db_id,
@@ -652,8 +658,9 @@ impl QueueItem {
             artist_id: None,
             album_artist_id: None,
             title: item.title.clone(),
-            artist_credit: credit_parts(&item.artist, None, &[]),
-            album_artist_credit: credit_parts(&item.album_artist, None, &[]),
+            artist_credit: credits.artist,
+            album_artist_credit: credits.album_artist,
+            credit_differs: credits.differ,
             artist: item.artist.clone(),
             album_artist: item.album_artist.clone(),
             album: item.album.clone(),
@@ -684,8 +691,7 @@ impl QueueItem {
     pub(crate) fn from_entry(e: &QueueEntry, joins: &crate::queue_slice::Joins) -> Self {
         let place = joins.place(e.db_id);
         let (on_server, on_disk) = joins.sources(e.db_id);
-        let (artist_credit, album_artist_credit) =
-            joins.credits(e.db_id, &e.artist, &e.album_artist);
+        let credits = joins.credits(e.db_id, &e.artist, &e.album_artist);
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
@@ -694,8 +700,9 @@ impl QueueItem {
             artist_id: place.artist_id,
             album_artist_id: place.album_artist_id,
             title: e.title.clone(),
-            artist_credit,
-            album_artist_credit,
+            credit_differs: credits.differ,
+            artist_credit: credits.artist,
+            album_artist_credit: credits.album_artist,
             artist: e.artist.clone(),
             album_artist: e.album_artist.clone(),
             album: e.album.clone(),

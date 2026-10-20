@@ -17,6 +17,7 @@ class QueueRowsTest {
         albumArtist = artist,
         artistCredit = emptyList(),
         albumArtistCredit = emptyList(),
+        creditDiffers = false,
         album = album,
         year = "2007",
         codec = "flac",

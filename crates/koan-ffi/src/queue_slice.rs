@@ -16,10 +16,11 @@
 use std::collections::HashMap;
 
 use koan_core::db::queries::Place;
+use koan_core::helpers::RowCredits;
 use koan_core::player::state::{QueueItemId, QueueReading, SharedPlayerState};
 
 use crate::state::StateSlice;
-use crate::types::{CreditPart, EntryStatus, QueueItem, credit_parts};
+use crate::types::{CreditPart, EntryStatus, QueueItem};
 
 /// Past this many differing rows, the whole queue again: a client applies
 /// that as cheaply as a patch the size of the queue, and a base that has
@@ -40,15 +41,8 @@ pub(crate) struct Joins {
 }
 
 impl Joins {
-    /// A row's artist and record artist with each credited artist linked. A
-    /// track naming no artists of its own but credited as its record is takes
-    /// the record's, as `KoanEngine::decorate` does.
-    pub(crate) fn credits(
-        &self,
-        track: Option<i64>,
-        artist: &str,
-        album_artist: &str,
-    ) -> (Vec<CreditPart>, Vec<CreditPart>) {
+    /// A row's artist and record artist with each credited artist linked.
+    pub(crate) fn credits(&self, track: Option<i64>, artist: &str, album_artist: &str) -> Credits {
         let place = self.place(track);
         let record = place
             .album_id
@@ -56,13 +50,8 @@ impl Joins {
             .map_or(&[][..], Vec::as_slice);
         let own = track
             .and_then(|id| self.track_credits.get(&id))
-            .map(Vec::as_slice)
-            .or((artist == album_artist).then_some(record))
-            .unwrap_or_default();
-        (
-            credit_parts(artist, place.artist_id, own),
-            credit_parts(album_artist, place.album_artist_id, record),
-        )
+            .map(Vec::as_slice);
+        RowCredits::new(artist, album_artist, place, own, record).into()
     }
 
     pub(crate) fn place(&self, track: Option<i64>) -> Place {
@@ -77,6 +66,24 @@ impl Joins {
             .and_then(|id| self.sources.get(&id))
             .copied()
             .unwrap_or((false, false))
+    }
+}
+
+/// A row's credits as a `QueueItem` carries them.
+#[derive(Clone)]
+pub(crate) struct Credits {
+    pub artist: Vec<CreditPart>,
+    pub album_artist: Vec<CreditPart>,
+    pub differ: bool,
+}
+
+impl From<RowCredits> for Credits {
+    fn from(c: RowCredits) -> Self {
+        Self {
+            differ: c.differ(),
+            artist: c.artist.into_iter().map(Into::into).collect(),
+            album_artist: c.album_artist.into_iter().map(Into::into).collect(),
+        }
     }
 }
 
@@ -111,7 +118,7 @@ struct Library {
     /// The row's artist and record artist credits, only where they now read
     /// differently from the row as sent: a pass over the rows compares no
     /// strings.
-    credits: Option<(Vec<CreditPart>, Vec<CreditPart>)>,
+    credits: Option<Credits>,
 }
 
 impl Library {
@@ -121,7 +128,8 @@ impl Library {
         let (on_server, on_disk) = joins.sources(track);
         let credits = sent.and_then(|sent| {
             let now = joins.credits(track, &sent.artist, &sent.album_artist);
-            (now.0 != sent.artist_credit || now.1 != sent.album_artist_credit).then_some(now)
+            (now.artist != sent.artist_credit || now.album_artist != sent.album_artist_credit)
+                .then_some(now)
         });
         Self {
             place: joins.place(track),
@@ -248,10 +256,11 @@ fn moved(sent: &QueueItem, reading: &QueueReading, library: &Library) -> Option<
         && library.place.album_artist_id == sent.album_artist_id
         && library.credits.is_none();
     (!same).then(|| {
-        let (artist_credit, album_artist_credit) = library
-            .credits
-            .clone()
-            .unwrap_or_else(|| (sent.artist_credit.clone(), sent.album_artist_credit.clone()));
+        let credits = library.credits.clone().unwrap_or_else(|| Credits {
+            artist: sent.artist_credit.clone(),
+            album_artist: sent.album_artist_credit.clone(),
+            differ: sent.credit_differs,
+        });
         QueueItem {
             status,
             duration_ms: reading.duration_ms,
@@ -261,8 +270,9 @@ fn moved(sent: &QueueItem, reading: &QueueReading, library: &Library) -> Option<
             album_id: library.place.album_id,
             artist_id: library.place.artist_id,
             album_artist_id: library.place.album_artist_id,
-            artist_credit,
-            album_artist_credit,
+            credit_differs: credits.differ,
+            artist_credit: credits.artist,
+            album_artist_credit: credits.album_artist,
             ..sent.clone()
         }
     })
@@ -418,14 +428,14 @@ mod tests {
         };
         // A track naming no artists of its own, credited as its record is,
         // takes the record's.
-        let (artist, album_artist) = joins.credits(Some(1), "A × B", "A × B");
-        let ids: Vec<_> = artist.iter().map(|p| p.artist_id).collect();
+        let row = joins.credits(Some(1), "A × B", "A × B");
+        let ids: Vec<_> = row.artist.iter().map(|p| p.artist_id).collect();
         assert_eq!(ids, [Some(1), None, Some(2)]);
-        assert_eq!(artist, album_artist);
+        assert_eq!(row.artist, row.album_artist);
         // Credited otherwise, it leads where it is filed.
-        let (artist, _) = joins.credits(Some(1), "A", "A × B");
+        let row = joins.credits(Some(1), "A", "A × B");
         assert_eq!(
-            artist,
+            row.artist,
             [CreditPart {
                 text: "A".into(),
                 artist_id: Some(7)
