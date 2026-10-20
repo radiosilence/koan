@@ -348,7 +348,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">doc
       <p>Stick it behind a reverse proxy with TLS at the hostname you listed, or use the <a
           href="/docs/headless-server/#docker-compose">Docker Compose file</a>, which runs Caddy in front and sorts the
         certificate out itself. The server refuses any <code>Host</code> it wasn't given, and won't start without
-        <code>KOAN_SERVER__URL</code>, the address every link it hands out is built on. The first admin can only be made from a shell on the server, like above; after that,
+        <code>KOAN_SERVER__URL</code>, the address every link it hands out is built on. The first admin is made on the setup page the server shows until one exists (whoever gets there first wins, so do it straight away) or from a shell, like above; after that,
         add people from the web UI's Users page or with <code>koan auth create-user</code>. Without a container,
         <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>. <a
           href="/docs/headless-server/">Running a server</a> has the details, and <a
