@@ -29,6 +29,8 @@ curl -s http://localhost:4000/graphql \
   -d '{"query": "{ nowPlaying { state, track { title, artist } } }"}'
 ```
 
+A script is better served by an API key (`koan auth api-key create`, or API keys in the web UI or the apps' Settings), sent the same way as `Authorization: Bearer <key>`: it does not expire, and it can be revoked without touching the account's password.
+
 The IDE is for a server on your own machine: its key grants admin without signing in. A deployed server runs without `--playground` and is explored with a GraphQL client and an API key or access token (see [Authentication](authentication.md#graphql)).
 
 ## Authentication

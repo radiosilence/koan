@@ -232,8 +232,9 @@ each is checked as the app comes to the front.
 
 Network amplifiers and streamers that act as UPnP/DLNA renderers (WiiM,
 Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
-player" amps) are listed under **Play on** on the Mac, and in the output
-device list (`o`) in the TUI, where they are marked `· UPnP`. Kodi with
+player" amps) are listed under **Output** in the Mac, iPhone and Android
+apps, and in the output device list (`o`) in the TUI, where they are marked
+`· UPnP`. Kodi with
 "Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
 are renderers too.
 
@@ -282,9 +283,9 @@ so nothing else in the library can be fetched from it. On a Mac the first
 connection from the amplifier may bring up the firewall prompt. macOS also
 asks whether kōan may use the local network, the first time it looks; if
 no amplifier or other kōan appears, check System Settings → Privacy &
-Security → Local Network and turn kōan on. The iOS app
-cannot search for renderers yet, because Apple requires a multicast entitlement
-for it.
+Security → Local Network and turn kōan on. A phone searches when Now Playing
+opens, and Android also once a minute while the app is on screen; see
+[Android](android.md).
 
 ## Controlling and moving
 
@@ -321,7 +322,7 @@ push, while the music plays on where it is. Woken, it takes the music at once;
 still asleep, it gets a notification to tap.
 
 A command counts as delivered only once the other device answers that it has
-acted on it. Until then the Mac and iOS apps say so: "Waiting for Phone to
+acted on it. Until then the apps say so: "Waiting for Phone to
 wake" while it is queued for a device asleep, and "Couldn't reach Phone", with
 the reason, when it was refused or no way through answered. A move waits for
 the destination's answer: refused, and the music plays on here; not yet picked

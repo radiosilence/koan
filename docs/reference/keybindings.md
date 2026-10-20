@@ -1,8 +1,10 @@
 # Keybindings
 
-Every key in every mode. The hint bar at the bottom of the TUI shows available keys for the current mode.
+The keys of the terminal UI, page by page, and of the macOS app. The hint bar along the foot of the TUI shows the keys for the page in view, and `?` lists them all.
 
-## Normal mode (default)
+## Every page
+
+These work on any page, unless a text field has the keys.
 
 ### Playback
 
@@ -10,134 +12,181 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 |-----|--------|
 | `space` | Pause / resume |
 | `<` | Previous track |
-| `>` | Next track |
+| `>` or `n` | Next track |
+| `,` or `←` | Seek back 10 seconds (the queue and Now playing; elsewhere `←` moves the cursor) |
+| `.` or `→` | Seek forward 10 seconds |
 | `s` | Shuffle on / off ([plays the tracks not yet played in a random order](../guide/shuffle-and-repeat.md); the queue keeps its order) |
 | `R` | Repeat: off, the queue, one track |
 | `T` | Sleep timer: 15, 30, 45, 60 minutes, end of track, end of record, off |
-| `,` or `<-` | Seek -10 seconds |
-| `.` or `->` | Seek +10 seconds |
-| `Shift+D` | Device selector (switch audio output) |
+| `D` | Output device |
+| `C` | Play on: control another kōan, see its queue, or move the music between them |
+| `E` | The EQ page (also a click on `EQ` in the transport bar, the signal path's `dsp` row or the curve on Now playing) |
+| `B` | Bypass the EQ, or put back the one bypassed |
 
 ### Pages
 
-See [The terminal UI](../guide/terminal-ui.md). These work from any page.
+See [The terminal UI](../guide/terminal-ui.md).
 
 | Key | Action |
 |-----|--------|
-| `1` to `9`, `0` | Queue, Now playing, Albums, Artists, Favourites, Recent, History, Playlists, Settings, Search: the sidebar's order, Search at its top |
-| `Tab` / `Shift+Tab` | Next / previous page |
-| `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
+| `1` to `9`, `0` | Queue, Now playing, Albums, Artists, Favourites, Recent, History, Playlists, Settings, Search |
+| `Tab` / `Shift+Tab` | Next / previous page in the sidebar's order |
+| `[` / `]` or `Alt+←` / `Alt+→` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
+| `l` | Artists |
 | `I` | Draw covers as images or in half blocks |
-| `E` | Choose the EQ the output plays through (also a click on `EQ` in the transport bar, or on the signal path's `dsp` row or the curve on Now playing) |
-| `B` | Bypass the EQ, or put back the one bypassed |
+
+Tracks, Downloaded, Downloads and the EQ page have no number; they are reached from the sidebar, or `E` for the EQ.
+
+### Pickers, panels and the visualiser
+
+| Key | Action |
+|-----|--------|
+| `p` / `a` / `r` | Track / album / artist picker (fuzzy search) |
+| `/` | Jump to a track in the queue (on the queue; other pages filter with it) |
+| `i` | Track info |
+| `z` | Zoom the cover |
+| `L` | Lyrics panel |
+| `V` | Visualiser picker: off, or one of 22 modes, with a live preview |
+| `M` | Next visualiser mode |
+| `F` | Visualiser full screen |
+| `S` | Bass shake on / off (on an album or playlist page, `S` shuffles) |
+| `X` | Matrix overlay on / off |
+| `f` | Favourite the track under the cursor |
+| `w` / `W` | Put the selection in a playlist / save the queue as one |
 | `A` / `O` | Open the artist / the record of the selection |
-
-### Navigation
-
-| Key | Action |
-|-----|--------|
-| `p` | Track picker (fuzzy search) |
-| `a` | Album picker |
-| `r` | Artist picker |
-| `l` | Artists page (the library tree) |
-| `/` | Search queue (jump to matching track) |
-| `g` | Jump to start of queue |
-| `G` | Jump to end of queue |
-| `PgUp` or `Ctrl+U` | Page up |
-| `PgDn` or `Ctrl+D` | Page down |
-
-### Modes & panels
-
-| Key | Action |
-|-----|--------|
-| `i` | Track info modal (codec, sample rate, cover art) |
-| `z` | Zoom album art |
-| `V` | Visualizer picker: off, or one of 22 modes, with live preview |
-| `X` | Toggle matrix overlay on visualizer |
-| `S` | Toggle bass shake on visualizer |
-| `L` | Toggle lyrics panel |
-| `f` | Favourite / unfavourite current track |
-| `?` | Open help modal |
-| `n` | Next track |
+| `?` | Help |
 | `q` | Quit |
 
-### Queue changes
+---
+
+## Queue (`1`)
+
+There is no mode to enter: the cursor and the selection are always live, and the queue's keys act on the selection, or with none on the row under the cursor.
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Z` | Undo last queue change |
-| `Ctrl+Shift+Z` | Redo last undone change |
+| `↑` `↓` or `j` `k` | Move the cursor |
+| `Shift+↑` / `Shift+↓`, `Shift+PgUp` / `Shift+PgDn` | Extend the selection |
+| `t` | Tag the row under the cursor, or let it go |
+| `Ctrl+A` / `Esc` | Select everything / let the selection go |
+| `Enter` | Play the row |
+| `J` / `K` | Move the selection down / up |
+| `d`, `Delete` or `Backspace` | Remove the selection |
+| `m` | The selection's menu |
+| `v` | Albums, or a row per track |
+| `o` | Scroll to what is playing |
+| `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / redo |
+| `Ctrl+X` | Clear the queue |
+| `g` / `G` | Jump to start / end |
+| `PgUp` / `PgDn`, `Ctrl+U` / `Ctrl+D` | Page up / page down |
+
+| Action | Effect |
+|--------|--------|
+| Click | Select the track |
+| `Option`-click | Add or take away one track |
+| `Shift`- or `Ctrl`-click | Select a range |
+| Drag | Move the selection, as one block |
+| Double-click | Skip to that track; on one still downloading, fetch it first and play it when ready |
 
 ---
 
-## Picker mode (track/album/artist)
-
-Active when a fuzzy picker overlay is open (`p`, `a`, or `r`).
+## Pickers (`p`, `a`, `r`)
 
 | Key | Action |
 |-----|--------|
-| Type | Filter results (fuzzy matching) |
-| `Up` / `Down` | Navigate results |
-| `Enter` | Append selected to queue |
-| `Ctrl+Enter` | Append and start playing |
-| `Ctrl+R` | Replace entire queue and play |
-| `Esc` | Close picker |
+| Typing | Filter the results (fuzzy matching) |
+| `↑` / `↓` | Move through the results |
+| `←` / `→` | Tracks, albums or artists |
+| `Tab` | Pick the row, or let it go |
+| `Enter` | Add to the queue |
+| `Ctrl+Enter` | Add and play |
+| `Ctrl+R` | Replace the queue and play |
+| `Esc` | Close |
 
-### Mouse in pickers
-
-- Click items to select
-- Double-click to confirm (same as `Enter`)
-- Click outside the picker to dismiss
+Click a result to select it and double-click to add it; a click outside the picker closes it.
 
 ---
 
-## Artists page (`4` or `l`)
-
-Tree view: artist -> album -> track.
+## Albums, Artists, Tracks and an artist's page (`3`, `4`)
 
 | Key | Action |
 |-----|--------|
-| `Up` / `Down` | Navigate |
-| `Enter` | Expand node, or append the track and play it |
-| `a` | Append what is under the cursor to the queue |
+| Arrows or `h` `j` `k` `l` | Move through the tiles or rows |
+| `PgUp` / `PgDn`, `g` / `G` | Page, start, end |
+| `Enter` | Open the record or artist (a track row plays the track) |
+| `O` / `A` | Open the record / the artist |
+| `P` | Append and play |
+| `a` | Append to the queue |
 | `N` | Put it next, after the track playing |
-| `/` or `f` | Filter library (type to search) |
-| `Esc` | Clear the filter, then leave the page |
+| `Ctrl+R` | Replace the queue and play |
+| `f` | Favourite the record, or the track on a track row |
+| `H` | Favourite the artist (on an artist's page, that artist) |
+| `i` | What the library holds of the track (Tracks) |
+| `w` | Put it in a playlist |
+| `d` / `u` | Download it to this device / remove the download |
+| `m` | Menu of everything that can be done with it |
+| `/` | Filter by name |
+| `Ctrl+F` | The filters panel: lossless, downloaded, codec, genre, decade |
+| `o` | Cycle the order (Albums, Tracks) |
+| `S` | Shuffle again, while albums are in random order |
+| `v` | Tiles or rows (Albums, an artist's page) |
+
+Playing from a row asks before replacing a queue that has music in it.
+
+### Mouse
+
+| Action | Effect |
+|--------|--------|
+| Click | Select |
+| Second click | Open the record |
+| Click a title or artist under a tile | Open the record / the artist |
+| Right-click | Append to the queue |
+| Wheel | Scroll |
+| Click `sort:` or `view:` in the heading | Cycle the order, switch tiles and rows |
+| Click `⋯ actions` in the heading | Open the menu for what the cursor is on (also `m`) |
+| Click the sidebar or tab bar | Open that page, or go back or forward |
+| Click a key hint along the foot | The same as pressing that key |
+| Drag the scrollbar | Scroll |
 
 ---
 
-## Playlists (`8`)
+## Favourites, Recent and Downloaded (`5`, `6`)
+
+The shelves list artists, records and tracks in sections.
+
+| Key | Action |
+|-----|--------|
+| Arrows or `h` `j` `k` `l` | Move through the rows and tiles |
+| `Enter` | Open an artist or a record; play a track |
+| `O` / `A` | Open the record / the artist |
+| `P` / `a` / `N` | Play / append / put next |
+| `Ctrl+R` | Replace the queue and play |
+| `f` / `H` | Favourite it / its artist |
+| `i` | Track info |
+| `w` | Put it in a playlist |
+| `d` / `u` | Download it / remove the download |
+| `m` | Menu |
+| `v` | Tiles or rows |
+
+---
+
+## An album's page
 
 | Key | Action |
 |-----|--------|
 | `↑` `↓` or `j` `k` | Move |
-| `Enter` or `→` | Open the playlist |
-| `P` | Play it |
-| `a` / `N` | Add it to the queue / put it next |
-| `w` | Put its tracks in another playlist |
-| `c` or `+` | New playlist |
-| `r` | Rename |
-| `x` or `Delete` | Delete (press again to confirm) |
-| `/` | Filter by name |
-
-On a playlist's page:
-
-| Key | Action |
-|-----|--------|
 | `Enter` | Play from the track under the cursor |
-| `P` | Play all (the `shuffle` button plays it shuffled) |
-| `a` / `N` | Add all to the queue / put them next |
-| `K` / `J` | Move the track up / down |
-| `v` | Albums, or a row per track |
-| `x`, `Delete` or `Backspace` | Take the track out |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / redo the last edit to this playlist |
-| `r` | Rename |
-| `w` | Put the track in another playlist |
+| `P` / `S` | Play the record / play it shuffled |
+| `a` / `N` | Append the record / put it next |
+| `Ctrl+R` | Replace the queue with it |
+| `f` | Favourite the track |
+| `H` | Favourite the record |
 | `i` | Track info |
-| `A` / `O` | Open the artist / the record |
-
-Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name (play, shuffle, add to queue, undo, redo). The wheel and the scrollbar scroll.
+| `w` | Put the record in a playlist |
+| `d` / `u` | Download the record / remove the download |
+| `m` | Menu |
+| `A` | Open the artist; on a record credited to several, choose which |
 
 ---
 
@@ -148,18 +197,15 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 | Typing | Search the library; every key is text while the box has focus |
 | `Enter`, `↓` or `Tab` | Move to the results; `Tab` with none, and `Shift+Tab`, change page |
 | `Esc` | Clear the box, then leave the page |
-| `↑` on the first result, or `/` | Back to the box |
+| `/` | Back to the box |
 | `Enter` | Open an artist or a record; play a track |
 | `P` / `a` / `N` | Play / add to the queue / put next |
 | `w` | Put the result in a playlist |
 | `f` | Favourite it |
 | `A` / `O` | Open its artist / its record |
 | `i` | Track info (tracks) |
+| `v` | Tiles or rows |
 | `m` | Menu of everything above |
-
-## Add to a playlist (`w`, `W`)
-
-`w` on the queue (the cursor or the selection), on Now playing (the playing track), on the Albums, Favourites, Recent and artist pages, on an album page, on the Playlists page (the playlist's tracks) and a playlist's page, in History and in the Artists tree opens a list of playlists that can be filled, headed by `+ new playlist…`; `Enter` or a click chooses one, `Esc` or a click outside cancels. `W` in the queue asks for a name and saves the whole queue as a playlist.
 
 ---
 
@@ -187,6 +233,50 @@ Click a play to select it and again to play it; click the artist or the record t
 
 ---
 
+## Playlists (`8`)
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` or `j` `k` | Move |
+| `Enter`, `→`, `l` or `O` | Open the playlist |
+| `P` | Play it |
+| `a` / `N` | Add it to the queue / put it next |
+| `w` | Put its tracks in another playlist |
+| `c` or `+` | New playlist |
+| `r` | Rename |
+| `x` or `Delete` | Delete (press again to confirm) |
+| `m` | Menu |
+| `/` | Filter by name |
+
+On a playlist's page:
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Play from the track under the cursor |
+| `P` / `S` | Play all / play it shuffled |
+| `a` / `N` | Add all to the queue / put them next |
+| `K` / `J` | Move the track up / down |
+| `Y` | Shuffle the playlist's order |
+| `v` | Albums, or a row per track |
+| `x`, `Delete` or `Backspace` | Take the track out |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo the last edit to this playlist |
+| `r` | Rename |
+| `e` | Export as M3U8 |
+| `X` | Delete the playlist |
+| `w` | Put the track in another playlist |
+| `f` | Favourite the track |
+| `i` | Track info |
+| `m` | Menu |
+| `A` / `O` | Open the artist / the record |
+
+Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name (play, shuffle, add to queue, undo, redo). The wheel and the scrollbar scroll.
+
+## Add to a playlist (`w`, `W`)
+
+`w` opens a list of playlists that can be filled, headed by `+ new playlist…`, for what the page has under the cursor or selected: the queue's selection, the playing track on Now playing, a record, a track, a playlist's tracks or a play in History. `Enter` or a click chooses one; `Esc` or a click outside cancels. `W` asks for a name and saves the whole queue as a playlist.
+
+---
+
 ## Settings (`9`)
 
 | Key | Action |
@@ -201,102 +291,56 @@ Click a play to select it and again to play it; click the artist or the record t
 
 While typing in a field, every key goes to the field: `Enter` keeps what is typed and runs what it is for, `Esc` leaves it as typed, `Ctrl+U` clears it. A question asked over the page takes `←` `→` or `Tab` to choose and `Enter` to answer; `Esc` cancels. Click a section, a value, a field, a button or a row's action to use it.
 
------|--------|
-| `↑` `↓` or `j` `k` | Move between settings |
-| `→`, `Enter` or `Space` | Next value (flips a toggle), or run the task on the row |
-| `←` | Previous value |
-| `x` or `Delete` | Take the library folder under the cursor out and forget its tracks |
-
-Click the arrows beside a value, or the value, to change it, or `run` to start a task (`add folder` asks for a path; `×` on a folder takes it out and forgets its tracks). Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
+Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages and the pickers to what is on this device.
 
 ---
 
-## Albums, Favourites and Recent (`3`, `5`, `6`)
+## EQ (`E`)
 
 | Key | Action |
 |-----|--------|
-| Arrows or `h` `j` `k` `l` | Move through the tiles or rows |
-| `PgUp` / `PgDn`, `g` / `G` | Page, start, end |
-| `Enter` or `O` | Open the record (a track row plays the track) |
-| `A` | Open the artist |
-| `P` | Append the record (or track) and play it |
-| `a` | Append to the queue |
-| `N` | Put it next, after the track playing |
-| `Ctrl+R` | Replace the queue and play |
-| `/` | Filter what is shown by name |
-| `Ctrl+F` | Open the filters panel: lossless, downloaded, codec, genre, decade (not on an artist's page, nor on Favourites and Recent while they show tracks) |
-| `v` | Tiles or rows (tracks, on Favourites and Recent) |
-| `o` | Cycle the order (Albums) |
-| `f` | Favourite the record under the cursor, or the track on a track row |
-| `H` | Favourite the artist (on an artist's page, that artist) |
-| `i` | Show what the library holds of the track (track rows) |
-| `w` | Put the record or track in a playlist |
-| `m` | Menu of everything that can be done with the record or track |
-| `d` / `u` | Download the record or track to this device / remove the download |
-
-### Mouse
-
-| Action | Effect |
-|--------|--------|
-| Click | Select |
-| Second click | Open the record |
-| Click a title or artist under a tile | Open the record / the artist |
-| Right-click | Append to the queue (also `a`, and the hint bar) |
-| Wheel | Scroll |
-| Click `sort:` or `view:` in the heading | Cycle the order, switch tiles and rows |
-| Click `⋯ actions` in the heading | Open the menu for what the cursor is on (also `m`) |
-| Click the sidebar or tab bar | Open that page, or go back or forward |
-| Click a key hint along the foot | The same as pressing that key |
-| Drag the scrollbar | Scroll |
+| `↑` `↓` or `j` `k` | Move |
+| `Enter` | Choose: the device, a preset, the correction, or open an EQ |
+| `Space` | Switch an EQ on or off |
+| `K` / `J` (or `Shift+↑` / `Shift+↓`) | Move an EQ up / down the chain |
+| `x` or `Delete` | Take an EQ out of the filters, or remove a band |
+| `o` | Open the correction or EQ under the cursor |
+| `←` `→` or `Tab` | Move between a band's fields; on the device row, change device |
+| `+` `-` / `]` `[` | Nudge the figure, fine / coarse |
+| `0`–`9` | Type a figure (`1k`, `-3.5`, `0.7`) |
+| `a` | Add a band |
+| `n` / `i` | New EQ / import one |
+| `p` / `s` | Choose a preset / save as a preset |
+| `d` | Next device |
+| `u` | Use the EQ |
+| `m` | Manage every correction, EQ and preset |
+| `r` / `c` / `R` / `D` | Rename / save as new / reset to file / delete |
+| `B` | Bypass the EQ |
 
 ---
 
-## The queue's cursor and selection
-
-There is no mode to enter: the cursor and the selection are always live, and the queue's keys act on the selection, or with none on the row under the cursor.
+## Downloads
 
 | Key | Action |
 |-----|--------|
-| `↑` `↓` or `j` `k` | Move the cursor |
-| `Shift+↑` / `Shift+↓`, `Shift+PgUp` / `Shift+PgDn` | Extend the selection |
-| `t` | Tag the row under the cursor, or let it go |
-| `Ctrl+A` / `Esc` | Select everything / let the selection go |
-| `Enter` | Play the row |
-| `J` / `K` | Move the selection down / up |
-| `d`, `Delete` or `Backspace` | Remove the selection |
-| `m` | The selection's menu |
-| `v` | Albums, or a row per track |
-| `o` | Scroll to what is playing |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
-| `Ctrl+X` | Clear the queue |
-| `g` / `G` | Jump to start / end |
-| `PgUp` / `PgDn` | Page up / page down |
-
-| Action | Effect |
-|--------|--------|
-| Click | Select the track |
-| `Option`-click | Add or take away one track |
-| `Shift`- or `Ctrl`-click | Select a range |
-| Drag | Move the selection, as one block |
+| `↑` `↓` or `j` `k` | Move |
+| `Enter` or `O` | Show the track's record |
+| `u` | Remove a finished download |
+| `c` | Clear the finished and failed transfers from the list |
 
 ---
 
-## Mouse (works in any mode)
+## Mouse
 
 Mouse controls are always available.
 
 | Action | Effect |
 |--------|--------|
-| Double-click queue track | Skip to that track (forward or backward) |
-| Double-click downloading track | Prioritize download and play when ready |
-| Click seek bar | Jump to position |
-| Scroll wheel in queue | Scroll queue |
-| Click scrollbar | Jump scroll position |
-| Drag scrollbar | Drag scroll position |
-| Single-click in queue | Select track |
-| Drag in queue | Reorder |
+| Click the seek bar | Jump to that position |
+| Wheel | Scroll the list under the pointer |
+| Click or drag a scrollbar | Scroll to that position |
 
-### Finder drag & drop
+### Finder drag and drop
 
 Drag files or folders from macOS Finder into the terminal window to add them to the queue.
 
@@ -347,7 +391,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 |-----|--------|
 | `⌘K` | Search the library |
 | `⇧⌘K` | Add music |
-| `⌘1`–`⌘5` | Queue, Albums, Artists, Favourites, History |
+| `⌘1`–`⌘7` | Queue, Albums, Artists, Favourites, History, Recently Played, Tracks |
 | `⌘[` / `⌘]` | Back / forward |
 | `⌘F` | Filter what's on screen (albums, artists), otherwise search the library |
 | `⌘←` / `⌘→` | Previous / next track |

@@ -87,13 +87,16 @@ works where discovery cannot reach, across subnets or networks that block multic
 
 ## EQ
 
-Settings → EQ corrects the phone's output with a profile and plays tunings on
-top of it, as the iPhone does: AutoEQ's corrections by headphone, offered for
-the output in use when its name is one AutoEQ knows; profiles imported from
+Settings → EQ edits the EQ of any device, the phone or one it controls, as the
+iPhone does: a chain of a headphone correction and filters on top, with presets
+that hold a chain to switch between, saved over, reverted or saved as new.
+Corrections come from AutoEQ by headphone, from a measurement found on
+squig.link, read from a file or pasted, or from profiles imported from
 Equalizer APO, AutoEQ or Wavelet text, WAV impulse responses or a zip of them,
-from the file picker, pasted, or shared to kōan from another app; and presets
-that hold a correction and a tuning to switch between. A profile's page draws
-what it does; a tuning's bands are edited in its table or dragged on the graph,
-and a graphic curve is painted there. Nothing is applied until a profile is
-chosen. Measurements and squig.link, splitting a combined EQ, targets, and
-choosing profiles for other outputs are on the Mac and iPhone only for now.
+from the file picker, pasted, or shared to kōan from another app. A correction
+can be moved to another target, and a combined EQ split into its correction and
+its tuning. A profile's page draws what it does; a filter's bands are edited in
+its table or dragged on the graph, and a graphic curve is painted there. Manage
+EQ lists every correction, filter and preset with where each is used, and keeps
+what was deleted recently. Nothing is applied until a profile is chosen. See
+[Equalisation and convolution](dsp.md).

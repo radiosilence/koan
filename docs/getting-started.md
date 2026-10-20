@@ -18,7 +18,7 @@ Everything is set up in Settings: **Library** adds folders and scans them, **Ser
 
 ## The iOS app
 
-The iOS app plays from a server; a phone has no music folder to scan. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.
+The iOS app plays from a server; a phone has no music folder to scan. It is in public beta on [TestFlight](https://testflight.apple.com/join/96w2gjFz) until it is on the App Store, or can be built from source onto a phone plugged into a Mac with `just ios-phone`, signed with your own Apple developer team. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.
 
 On an iPad with room for it, the iOS app's sidebar is the Mac's: Queue, the library's sections, the playlists and Settings, each opening its page beside it. Narrower, in Split View or Slide Over, the app folds back into the iPhone's tabs, with the sections under Library.
 
@@ -31,10 +31,15 @@ The format badge shows the rate the hardware runs at, read back from the session
 
 ## The Android app
 
-The Android app plays from a server, as the iOS app does, and needs Android 10 or later on a 64-bit ARM phone. It is installed from an APK until it is on Google Play; see [Android](guide/android.md) for where to get one and what it does not do yet.
+The Android app plays from a server, as the iOS app does, and needs Android 10 or later on a 64-bit ARM phone. It is installed from an APK until it is on Google Play; see [Android](guide/android.md) for where to get one.
+
+## The Apple TV app
+
+The Apple TV app is in the same TestFlight beta as the iOS app and needs tvOS 26. It is signed in from a phone or Mac that already is, rather than with a password typed on the remote; see [Apple TV](guide/apple-tv.md).
+
 ## History and Recently played
 
-Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the iPhone's Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
+The apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the Library tab on iPhone and Android, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
 
 Recently Played and Favourites show the first few of each kind. Each section's heading gives how many there are in all and opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same. On the Mac, **Tracks**, beside Albums and Artists, lists every track in the library with the same filters; the iOS and Apple TV apps reach the track listing only filtered, from a "See all", since the whole library as one list is more than a phone or a television should draw and queue at once. On Apple TV the Albums, Artists, History and Playlists pages narrow by name from a field above the listing, as the other apps' filter fields do.
 
@@ -50,9 +55,9 @@ After upgrading, the next scan reads every file's tags again and the next sync w
 
 ## Downloaded and offline
 
-**Downloaded**, in the Mac's and the iPad's sidebar and the iPhone's Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
+**Downloaded**, in the Mac's and the iPad's sidebar and the Library tab on iPhone and Android, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
 
-On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the device, the queue greys out tracks that are not, and the Library tab (on an iPad, the sidebar) says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
+On iOS and Android, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the device, the queue greys out tracks that are not, and the Library tab (on an iPad, the sidebar) says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
 
 ## The terminal UI
 
@@ -90,7 +95,7 @@ koan remote sync
 
 ### Playing
 
-`p` searches tracks, `a` albums, `r` artists, and `l` browses the library. In a picker, `Enter` adds to the queue, `Ctrl+Enter` adds and plays, and `Ctrl+R` replaces the queue. `space` pauses, `<` and `>` skip, `,` and `.` seek, and `e` edits the queue, with `Ctrl+Z` to undo. The hint bar shows the keys for the current mode; [Keybindings](reference/keybindings.md) lists them all.
+The terminal UI has pages, as the apps do: `1` the queue, `2` Now playing, `3` Albums, `4` Artists, `5` Favourites, `6` Recent, `7` History, `8` Playlists, `9` Settings and `0` Search, also reached from the sidebar. On the queue, `p` picks tracks, `a` albums and `r` artists; in the picker, `Enter` adds to the queue, `Ctrl+Enter` adds and plays, and `Ctrl+R` replaces the queue. `space` plays and pauses, `<` and `>` skip, `,` and `.` seek, and `Ctrl+Z` undoes a queue edit. `?` lists every key; [The terminal UI](guide/terminal-ui.md) describes the pages and [Keybindings](reference/keybindings.md) lists the keys.
 
 `koan play` also takes paths: `koan play ~/Music/some-album/`.
 

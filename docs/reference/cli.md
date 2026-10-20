@@ -23,14 +23,17 @@ koan --api                              # TUI + GraphQL/Subsonic API on 127.0.0.
 These are root-level flags (not under `play`). The TUI serves the API only when asked: `--api`, any of `--port`, `--bind`, `--subsonic` or `--playground`, or `[graphql] enabled = true`. A server with no accounts lets whoever opens `/setup` first become its admin, so one started without being asked for would hand that to any local process. `--no-api` overrides the config.
 
 ```bash
-koan --headless                   # serve on 127.0.0.1:4000, no TUI
+koan --headless                   # serve on 127.0.0.1:4000, no TUI (needs server.url)
 koan --headless --playground      # with GraphiQL at /graphql
 koan --headless --subsonic 4040   # Subsonic also on a port of its own
 koan --port 8080                  # TUI + API on a custom port
 koan --bind 0.0.0.0              # listen on all interfaces (auth enabled by default)
 koan -d                           # background daemon
 koan -d --subsonic 4040           # daemon with Subsonic
+koan --no-api                     # TUI without the API, whatever the config says
 ```
+
+`--headless` and `-d` refuse to start without `server.url` (`KOAN_SERVER__URL`), the address clients reach the server at; see [Configuration](configuration.md#server).
 
 ### Remote TUI
 
@@ -71,7 +74,9 @@ See [Configuration](configuration.md) for details on what gets created.
 Scan configured library folders and index metadata.
 
 ```bash
-koan scan                         # standard metadata scan
+koan scan                         # scan the configured library folders
+koan scan ~/Music/new             # scan one folder
+koan scan --force                 # read every file's tags again
 ```
 
 Only files whose modification time or size changed are re-read; `--force` re-reads everything. See [Getting started](../getting-started.md#removed-files) for `--force-remove`.
@@ -214,7 +219,7 @@ List available audio output devices.
 koan devices
 ```
 
-Shows device names as recognized by CoreAudio (macOS) or ALSA/cpal (Linux). Use these names for the `[playback] output_device` config field or the `Shift+D` device selector in the TUI.
+Shows device names as recognized by CoreAudio (macOS) or ALSA/cpal (Linux). Use these names for the `[playback] output_device` config field or the `D` device selector in the TUI.
 
 ---
 
@@ -262,6 +267,27 @@ koan auth delete-user alice --yes
 
 See [Authentication](../guide/authentication.md) for the full guide.
 
+### `koan auth invite`
+
+```bash
+koan auth invite alice                    # an invite link for the account, and the email to send it in
+koan auth invite alice --reset-password   # also a new password, signing the account's devices out
+koan auth invite alice --server https://music.example.com  # a different address from server.url
+```
+
+See [Invites](../guide/authentication.md#invites).
+
+---
+
+## `koan check-db`
+
+```bash
+koan check-db                     # can this build open the configured database?
+koan check-db path/to/koan.db
+```
+
+Runs this build's migrations on a snapshot of the database, leaving the original untouched, and exits non-zero if they fail. Useful before upgrading a server.
+
 ---
 
 ## `koan probe`
@@ -292,3 +318,5 @@ COMPLETE=fish koan | source
 ```
 
 Then `koan play --album <TAB>` shows your actual albums with artist names.
+
+`koan completions SHELL` prints static completions (subcommands and flags only) for shells or setups that cannot run the dynamic ones.

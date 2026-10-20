@@ -14,14 +14,12 @@ Dropping a folder from Finder onto the queue indexes the files where they are an
 
 ## In the TUI
 
-1. Open the TUI: `koan`
-2. Press `e` to enter queue edit mode
-3. Select tracks (shift-arrows for multi-select, or `Ctrl`-click)
-4. Press `space` to open the context menu
-5. Select **Organize**
-6. Pick a named pattern from your config
-7. Preview the file moves
-8. Execute
+1. On the queue page (`1`), select tracks: `t` tags one, `Shift` with the arrows or a click extends the selection, `Ctrl+A` takes everything
+2. Open the row's menu with `m`, a right click or the `⋯` at the end of the row; on an album heading it covers the whole record
+3. Choose **Organize files…**
+4. Pick a named pattern from your config with `↑` and `↓`; the preview follows
+5. Read the preview (`Tab` moves to it, and `↑` `↓` scroll it)
+6. `Enter` moves the files; `Esc` closes without moving anything
 
 A track that is playing keeps playing while it moves.
 

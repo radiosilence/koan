@@ -27,9 +27,9 @@ Three kinds of setting are machine-scoped and always land in
 
 | Kind | Settings |
 |------|----------|
-| Secrets | `remote.password`, `subsonic.password`, `lastfm.api_key`, `lastfm.secret` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `remote.download_ahead`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, everything under `dsp` |
-| Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
+| Secrets | `remote.password/api_key/device_key`, `subsonic.password`, `auth.refresh_token`, `push.key/key_path/key_id/team_id`, `lastfm.api_key`, `lastfm.secret` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username/server_url`, `remote.cache_dir`, `remote.cache_limit`, `remote.download_ahead`, `remote.play_queue`, `server.url`, `auth.server`, `playback.output_device/renderer/renderer_name/renderers/muted/rate_switch_lead_in_ms`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, `appearance.text_size`, everything under `dsp` |
+| Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size/art_graphics/tui_theme/queue_grouped`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake`, `appearance.rainbow` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
 
@@ -142,18 +142,21 @@ stay local.
 replaygain = "off"          # off | track | album
 pre_amp_db = 0.0            # dB gain on top of ReplayGain (default: 0.0)
 fade_on_pause = true        # fade out on pause, back in on resume (default: true)
-rate_switch_lead_in_ms = 1000 # silence after a sample rate change (default: 1000)
 target_fps = 60             # TUI render rate in Hz (default: 60)
 show_fps = false            # FPS counter overlay in top-right corner (default: false)
 
-# config.local.toml -- this machine's hardware and window
+# config.local.toml -- this machine's hardware and terminal
 art_size = 24               # album art width in terminal columns (default: 24)
 art_graphics = true         # draw covers with the terminal's graphics protocol (default: true)
 tui_theme = "koan"          # koan | ansi (default: koan)
+queue_grouped = true        # the TUI's queue in album runs rather than a row per track (default: true)
 output_device = "My DAC"    # audio output device name (default: system default)
+rate_switch_lead_in_ms = 1000 # silence after a sample rate change (default: 1000)
 renderers = true            # look for UPnP renderers on the network (default: true)
 muted = false               # play silence (default: false)
 ```
+
+`renderer` and `renderer_name` record the UPnP renderer last chosen as the output; kōan returns to it at launch when it is on the network, and otherwise plays on `output_device`. They are written by the Output menu rather than by hand.
 
 ### ReplayGain
 
@@ -193,7 +196,7 @@ With `art_graphics` on, the TUI asks the terminal at startup whether it draws im
 
 ### Output device
 
-`output_device` selects an audio output by name. Press `Shift+D` in the TUI to browse available devices and switch live. The choice is saved to `config.local.toml` -- your DAC is not the next machine's. If the named device isn't available at startup, kōan falls back to the system default.
+`output_device` selects an audio output by name. Press `D` in the TUI to browse available devices and switch live. The choice is saved to `config.local.toml` -- your DAC is not the next machine's. If the named device isn't available at startup, kōan falls back to the system default.
 
 Run `koan devices` to list available audio outputs.
 
@@ -264,16 +267,22 @@ url = "https://music.example.com"
 username = "admin"
 # password is prompted by `koan remote login` and saved here
 
-# config.toml or config.local.toml
-[remote]
-download_workers = 5             # parallel download threads (default: 5)
+# config.local.toml -- this machine's disk
 cache_limit = "50GB"             # max cache size, LRU eviction at startup and as downloads land; "0" keeps no cache (default: unlimited)
 download_ahead = 3               # tracks past the playing one to fetch; 0 gives up gapless (default: the whole queue)
 cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)
+play_queue = false               # keep this device's queue on the server (default: false)
+
+# config.toml
+[remote]
+download_workers = 5             # parallel download threads (default: 5)
 auto_sync = true                 # check the server for changes on a timer (default: true)
 auto_sync_interval_mins = 60     # minutes between checks; 0 checks once at startup (default: 60)
-play_queue = false               # keep this device's queue on the server (default: false, per device)
 ```
+
+`cache_limit` takes a size such as `"500MB"` or `"50GB"`; unset or empty is unlimited. `"0"` keeps only what the queue is about to play, the downloads asked for and favourite albums, deleting each track once it has played. `download_ahead` counts tracks past the playing one: `1` is the least that keeps playback gapless, and `0` fetches each track only when it starts. Both are Settings → Downloads in the apps; see [Cache management](../recipes/cache-management.md).
+
+Signing in also writes `api_key` (the key an invite or pairing stores, used instead of a password), `device_key` (the keypair this device proves itself with to the account's other devices on the local network) and `server_url` (the address the server says it is reached at, which devices compare to tell whether they share a server). All three are kept in `config.local.toml` and dropped at sign-out.
 
 `auto_sync` is for servers that cannot say when their library changes; a kōan server tells its apps itself. A check walks the library only if the server reports a change since the last walk. `play_queue` is the Settings → Devices switch described in [The play queue on the server](../guide/remote-servers.md#the-play-queue-on-the-server).
 
@@ -323,18 +332,18 @@ reactive_bg = false           # beat-reactive background on braille modes (defau
 
 # config.local.toml -- the keybind toggles, saved as you press them
 enabled = true                # show visualizer in transport area (default: true)
-mode = "bars"                 # visualizer mode (default: bars). Press `v` to pick.
+mode = "bars"                 # visualizer mode (default: bars). Press `V` to pick.
 bass_shake = true             # camera jitter on bass hits for braille modes (default: true)
 matrix_overlay = false        # replace characters with matrix glyphs (default: false)
 ```
 
 Also accepts `[visualiser]` spelling.
 
-`enabled`, `mode`, `bass_shake` and `matrix_overlay` have keybinds (`V`, `v`/`M`,
-`S`, `X`) and are written back the moment you press one, so they live in
+`enabled`, `mode`, `bass_shake` and `matrix_overlay` have keybinds (`V` picks
+off or a mode, `M` cycles modes, `S`, `X`) and are written back the moment you press one, so they live in
 `config.local.toml`. The rest are hand-edited taste and travel with `config.toml`.
 
-22 modes available: bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moire, kaleidoscope, julia, spiral, interference, wormhole, matrix. Press `v` in the TUI to open the picker with live preview.
+22 modes available: bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moire, kaleidoscope, julia, spiral, interference, wormhole, matrix. Press `V` in the TUI to open the picker with live preview.
 
 The visualizer renders above the transport text when album art is present. 48-band FFT with sub-cell resolution using Unicode block characters, peak hold markers, and smooth exponential decay. The FFT runs on a dedicated thread so the UI is never blocked.
 
@@ -383,7 +392,7 @@ Named patterns for organize, in [format string](../format-strings.md) syntax. Se
 
 ```toml
 [graphql]
-enabled = false               # run API alongside TUI (default: false, true = --api)
+enabled = false               # serve the API beside the TUI (default: false; headless always serves)
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false            # enable GraphiQL IDE at GET /graphql (default: false)
@@ -398,6 +407,8 @@ proxy_auth_from = []          # addresses or ranges that proxy connects from
 allow_organize = false        # expose the organize* mutations, which move files
 setup_wizard = true           # headless: web UI /setup makes the first admin while there is none
 ```
+
+The TUI serves the API only when asked: `enabled = true`, or one of `--api`, `--port`, `--bind`, `--subsonic` or `--playground`. Before 0.66 it served on 127.0.0.1:4000 unasked; set `enabled = true` to keep that.
 
 Auth is enabled by default. Until an account exists, the web UI's setup page makes the first admin; `koan auth setup` does the same from a shell. `setup_wizard = false` turns the page off, since whoever reaches it first becomes the admin. The page is only offered in headless mode: an API served beside the TUI has a shell to hand, so its first admin comes from `koan auth setup`. Set `auth_enabled = false` if you only use localhost and don't need auth.
 
@@ -579,4 +590,5 @@ apps), which reads every format the guide lists and keeps the result under
 | Config (local) | `~/.config/koan/config.local.toml` |
 | Database | `~/.config/koan/koan.db` |
 | Download cache | `~/.config/koan/cache/` |
+| TUI thumbnails | `~/.config/koan/thumbs/` |
 | Log file | `~/.config/koan/koan.log` |

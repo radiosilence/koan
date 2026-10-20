@@ -4,9 +4,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>kōan: a music player for macOS, iOS and Linux</title>
+  <title>kōan: a music player for macOS, iOS, Android and Linux</title>
   <meta name="description"
-    content="A fast music player for local and Subsonic/Navidrome libraries: native SwiftUI apps on macOS and iOS, a terminal UI on macOS and Linux, and a server with a web UI and a Subsonic API, on one Rust core. Gapless, bit-perfect where the device allows, no Electron.">
+    content="A fast music player for local and Subsonic/Navidrome libraries: native SwiftUI apps on macOS, iOS and Apple TV, an Android app, a terminal UI on macOS and Linux, and a server with a web UI and a Subsonic API, on one Rust core. Gapless, bit-perfect where the device allows, no Electron.">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -114,7 +114,7 @@
           href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg">Download for Mac</a>
         <a class="rounded-full border border-rule px-4 py-2 text-ink no-underline hover:border-muted hover:text-ink"
           href="#install">Other ways to install</a>
-        <span class="text-sm text-muted">macOS and iOS 26+ apps · macOS and Linux terminal UI · server · MIT</span>
+        <span class="text-sm text-muted">macOS, iOS and tvOS 26+ apps · Android APK · macOS and Linux terminal UI · server · MIT</span>
       </p>
 
     </section>
@@ -180,7 +180,7 @@
           playlists that reach every device and even hold places for albums still downloading, filling them in when
           they land. It can never move, rename or delete a file, whatever the account. <a href="#assistants">With an
             assistant</a></li>
-        <li><strong>Inviting someone is one link.</strong> Open it on a phone or Mac with kōan and it signs that device
+        <li><strong>Inviting someone is one link.</strong> Open it, or scan its QR code, on a phone or Mac with kōan and it signs that device
           in with a key of its own and syncs the library, nothing to type. Each device's key can be revoked on its own,
           and changing the password kills every link already sent. <a
             href="/docs/authentication/#invites">Invites</a></li>
@@ -216,7 +216,10 @@
         <li><strong>macOS app.</strong> SwiftUI, for the machine you actually sit and listen at. Plays local folders, a
           server, or both merged into one library.</li>
         <li><strong>iOS app.</strong> The same SwiftUI app in a phone's shell. A phone doesn't have a music folder, so
-          it plays from a server and keeps what it's played in a local cache.</li>
+          it plays from a server and keeps what it's played in a local cache. The Apple TV app is the same again,
+          built around the remote.</li>
+        <li><strong>Android app.</strong> Compose over the same core, with the iPhone's pages, playing from a server
+          the same way.</li>
         <li><strong>Terminal UI and CLI.</strong> <code>koan</code> on macOS and Linux: the player in a terminal, plus
           scanning, search, file organisation and the server itself.</li>
         <li><strong>Server.</strong> <code>koan --headless</code>, or the container image, on whatever machine holds the
@@ -227,7 +230,7 @@
         The apps sync its library, stream what they play and cache it, so a record you've played once plays again with
         no signal. Any Subsonic client works against it too.</p>
       <svg class="my-8 h-auto w-full" viewBox="0 0 640 290" role="img" font-size="13"
-        aria-label="Music feeds a kōan server, which serves its library, web UI, shares, MCP and the OpenSubsonic API to the macOS app, the iOS app, the terminal UI and other Subsonic apps">
+        aria-label="Music feeds a kōan server, which serves its library, web UI, shares, MCP and the OpenSubsonic API to the macOS app, the phone and TV apps, the terminal UI and other Subsonic apps">
         <g fill="none" stroke="var(--rule)" stroke-width="1.5">
           <path d="M320 132 V170 M85 170 H555 M85 170 V206 M235 170 V206 M405 170 V206 M555 170 V206" />
           <rect x="20" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
@@ -245,7 +248,7 @@
           <text x="320" y="88">library · web UI · shares · MCP</text>
           <text x="320" y="110" fill="var(--muted)">OpenSubsonic API</text>
           <text x="85" y="234">macOS app</text>
-          <text x="235" y="234">iOS app</text>
+          <text x="235" y="234">phone and TV apps</text>
           <text x="405" y="234">terminal UI</text>
           <text x="555" y="234">Subsonic apps</text>
         </g>
@@ -270,13 +273,20 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">bre
       <p>You might have to update Homebrew's trust settings to trust the tap.</p>
       <p>Requires macOS 26 or later.</p>
 
-      <h3>iOS app</h3>
-      <p>Build it from source with Xcode and put it on a phone plugged into your Mac, signed with your own
-        (free) Apple developer team:</p>
+      <h3>iOS and Apple TV apps</h3>
+      <p>They're in App Review. Until they're out, <a href="https://testflight.apple.com/join/96w2gjFz">join the
+          TestFlight beta</a> on the iPhone, iPad or Apple TV. Or build the iOS app from source with Xcode and put it on
+        a phone plugged into your Mac, signed with your own (free) Apple developer team:</p>
       <div class="sourceCode"><pre
 class="sourceCode bash"><code class="sourceCode bash"><span><span class="fu">git</span> clone https://github.com/radiosilence/koan.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> koan</span>
 <span><span class="ex">just</span> ios-phone</span></code></pre></div>
-      <p>Needs iOS 26 or later, and a kōan, Navidrome or other Subsonic server to play from.</p>
+      <p>Needs iOS or tvOS 26 or later, and a kōan, Navidrome or other Subsonic server to play from.</p>
+
+      <h3>Android app</h3>
+      <p>Each release carries <a
+          href="https://github.com/radiosilence/koan/releases/latest/download/koan-android-arm64.apk"><code>koan-android-arm64.apk</code></a>.
+        Sideload it on an arm64 phone running Android 10 or later; later releases install over it. It plays from a
+        server, like the iOS app. See <a href="/docs/android/">Android</a>.</p>
 
       <h3>Command line and terminal UI</h3>
       <div class="sourceCode"><pre
@@ -318,8 +328,8 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">koa
 <span><span class="co">#   folders = [&quot;/path/to/your/music&quot;]</span></span>
 <span><span class="ex">koan</span> scan          <span class="co"># index your library</span></span>
 <span><span class="ex">koan</span>               <span class="co"># launch the TUI</span></span></code></pre></div>
-      <p><kbd>space</kbd> pauses, <kbd>&lt;</kbd> and <kbd>&gt;</kbd> skip, <kbd>p</kbd> picks tracks, <kbd>a</kbd>
-        picks albums, <kbd>q</kbd> quits.</p>
+      <p><kbd>space</kbd> pauses, <kbd>&lt;</kbd> and <kbd>&gt;</kbd> skip, <kbd>p</kbd> finds tracks, the number keys
+        switch pages, <kbd>?</kbd> lists every key, <kbd>q</kbd> quits. The mouse works too.</p>
 
       <h3>A server for everything else</h3>
       <p>Run the container on the machine with the music. It doesn't need a sound card, keeps its config, index
@@ -394,9 +404,9 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
           the output's resampled.</li>
         <li><strong>Gapless</strong>: the decoder runs ahead across track boundaries.</li>
         <li><strong>Shuffle and repeat</strong>, of the whole queue or one track. Repeats are gapless and each pass
-          counts in history. Shuffle reorders the queue you can see, and turning it off puts it back in its original
-          order.</li>
-        <li><strong>Network amplifiers and streamers</strong>: the Mac app and the terminal UI play to UPnP/DLNA
+          counts in history. Shuffle plays the queue in a random order without moving it, and turning it off carries on
+          in queue order.</li>
+        <li><strong>Network amplifiers and streamers</strong>: the Mac, iOS and Android apps and the terminal UI play to UPnP/DLNA
           renderers, like a WiiM or an Arcam amp. The queue stays in kōan and the renderer gets sent the original file,
           so it's bit-perfect up to its DAC, and gapless where the renderer can do it. Give an amp its own EQ or
           convolution profile and kōan processes the queue itself and sends one continuous FLAC stream instead, gapless
@@ -424,7 +434,8 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
           streaming, and favourites and playlists synced both ways.</li>
         <li><strong>A download cache with a size limit</strong> that copes with however long the queue is: tracks get
           fetched ahead of the cursor as far as the limit allows, played ones get evicted first, and tracks you
-          downloaded to keep go last. See <a href="/docs/cache-management/">Cache management</a>.</li>
+          downloaded to keep go last. You choose how far ahead it fetches, from nothing to the whole queue, and a limit
+          of zero keeps only what plays next. See <a href="/docs/cache-management/">Cache management</a>.</li>
         <li><strong>Search</strong> across the whole library, with SQLite full-text search.</li>
         <li><strong>Queue</strong> grouped by album, with drag reordering, multi-select, 100 levels of undo and Finder
           drag and drop. It survives restarts.</li>
@@ -551,11 +562,14 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
 
     <section id="tui" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The terminal UI</h2>
-      <p>Where it all started: a full-screen Ratatui interface on macOS and Linux, now shaped like the apps. It has pages
-        (the queue, now playing, albums, artists, favourites and recent) with a sidebar that becomes a tab bar on a narrow
-        terminal, record and artist pages reached by links, cover art drawn as real images where the terminal supports
-        it, a now-playing page that shows the signal path and the EQ in use, an accent that follows the cover, a fuzzy
-        picker, lyrics, mouse support and 22 visualiser modes (because why not).</p>
+      <p>Where it all started: a full-screen Ratatui interface on macOS and Linux, now shaped like the apps. It has
+        their pages (the queue, now playing, the album, artist and track browsers with their filters, favourites,
+        recent, search, playlists, history, downloads, the EQ and settings) with a sidebar that becomes a tab bar on a
+        narrow terminal, record and artist pages reached by links, and an actions menu on every row, so the mouse alone
+        gets you everywhere. Cover art is drawn as real images where the terminal supports it, the now-playing page
+        shows the signal path and the EQ in use, and the accent follows the cover. It's a device like the apps, too:
+        other kōans can control it, and it can control them. Plus lyrics, a fuzzy picker and 22 visualiser modes
+        (because why not).</p>
     </section>
 
     <div class="mx-auto my-8 grid max-w-6xl items-start gap-6 px-5 md:grid-cols-2">
@@ -599,14 +613,14 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
           only sign in with a token. Favourites, ratings, bookmarks and a saved play queue are kept per account, so
           Symfonium or Feishin can pick up a queue another device left, and a stream gets transcoded to Opus, MP3 or AAC
           for an app that asks for a lower bitrate.</li>
-        <li><strong>Scrobbling.</strong> Each account can connect ListenBrainz, from the web UI or the apps' settings,
+        <li><strong>Scrobbling.</strong> Each account can connect ListenBrainz or Last.fm, from the web UI or the apps' settings,
           and the server sends every play its apps report, so you don't have to set it up in each app. See <a
             href="/docs/headless-server/#scrobbling">Scrobbling</a>.</li>
         <li><strong>Accounts.</strong> Admin, user and read-only roles, plus API keys and app passwords you can revoke
           from the web UI's Account page or the apps' settings. Behind Authelia, Authentik or another authenticating
           proxy, the web UI can take the signed-in user from the proxy's header. See <a
             href="/docs/headless-server/#behind-an-authenticating-proxy">Behind an authenticating proxy</a>.</li>
-        <li><strong>Linked apps.</strong> kōan's Mac and iPhone apps keep a connection open to a kōan server, which makes
+        <li><strong>Linked apps.</strong> kōan's apps and terminal UI keep a connection open to a kōan server, which makes
           each one a remote the server can drive: see what it's playing and its queue, start an album on it, queue,
           pause and skip. Playlist edits and library changes reach every device without a sync, and one that's away
           gets them when it next connects. A plain Subsonic server can only answer what an app asks it.</li>
@@ -680,6 +694,8 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         <li><a href="/docs/authentication/">Authentication</a></li>
         <li><a href="/docs/devices/">Playing on another device</a></li>
         <li><a href="/docs/apple-tv/">Apple TV</a></li>
+        <li><a href="/docs/android/">Android</a></li>
+        <li><a href="/docs/shuffle-and-repeat/">Shuffle and repeat</a></li>
         <li><a href="/docs/remote-servers/">Remote servers</a></li>
         <li><a href="/docs/dsp/">Equalisation and convolution</a></li>
         <li><a href="/docs/headphone-eq/">Headphone EQ, explained</a></li>
@@ -693,6 +709,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         <li><a href="/docs/cli/">CLI</a></li>
         <li><a href="/docs/keybindings/">Keybindings</a></li>
         <li><a href="/docs/troubleshooting/">Troubleshooting</a></li>
+        <li><a href="/docs/protocol/">Protocol</a></li>
       </ul>
       <p><a href="/compare/">How kōan compares</a> with other apps, players and servers. Architecture and contributing
         are in the <a href="https://github.com/radiosilence/koan">repository</a>.</p>
