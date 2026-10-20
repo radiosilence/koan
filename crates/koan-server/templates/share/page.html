@@ -1,0 +1,54 @@
+{#- A public share: what was shared, shown the way the app shows it, and the player. Each row carries what the player needs in data attributes; without script, each row is a link. -#}
+{%- macro tracks(rows) %}
+<ol class="grid">
+{%- for r in rows %}
+{#- share.js marks the row playing. #}
+<li class="group flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-hover/30 focus-visible:bg-hover/30 focus-visible:outline-none max-wide:px-0" tabindex="0" data-src="/share/{{ id }}/{{ r.pos }}" data-dur="{{ r.secs }}" data-title="{{ r.track.title }}" data-artist="{{ r.track.artist_name }}" data-album="{{ r.track.album_title }}"><span class="w-[1.5em] text-right text-muted tabular-nums group-[.playing]:text-brand">{{ r.n }}</span>
+<span class="min-w-0 flex-1 truncate group-[.playing]:text-brand">{{ r.track.title }}{% if r.credited %}<small class="block truncate text-meta text-muted">{{ r.track.artist_name }}</small>{% endif %}</span>
+<span class="text-meta text-muted tabular-nums">{{ r.dur }}</span></li>
+{%- endfor %}
+</ol>
+{%- endmacro -%}
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow"><title>{{ title }}</title>
+{%- for (attr, key, content) in preview %}
+<meta {{ attr }}="{{ key }}" content="{{ content }}">
+{%- endfor %}
+{{ crate::share::icon_links("/share/assets")|safe }}<link rel="stylesheet" href="{{ css }}"></head><body>
+<main class="mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12">
+<header class="mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch">
+<img id="cover" class="size-[200px] flex-none bg-surface object-cover max-wide:aspect-square max-wide:h-auto max-wide:w-full" src="/share/{{ id }}/cover" alt="">
+<div class="min-w-0 flex-1"><p class="m-0 text-fine text-muted lowercase">{{ kicker }}</p>
+<h1>{{ title }}</h1><p class="mt-0 mb-3.5 text-muted">{{ sub }}</p>
+{%- if let Some(note) = note %}
+{#- A loose list is titled by its note; a slice keeps the note beside it. #}
+<p class="-mt-1.5 mb-3.5 text-ink italic wrap-anywhere">{{ note }}</p>
+{%- endif %}
+<div class="flex items-center gap-2"><button id="prev" class="size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong" aria-label="Previous">{{ crate::icon::PREVIOUS.svg(18.0, "size-[18px] mx-auto")|safe }}</button>
+<button id="play" class="min-w-24">Play</button>
+<button id="next" class="size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong" aria-label="Next">{{ crate::icon::NEXT.svg(18.0, "size-[18px] mx-auto")|safe }}</button>
+{%- if download %}
+<a class="ml-auto border border-muted px-3 py-1.5 text-meta text-ink lowercase no-underline hover:bg-hover/30" href="/share/{{ id }}/download" download>Download</a>
+{%- endif %}</div>
+<div class="mt-3 flex items-center gap-2.5 text-meta text-muted tabular-nums"><span id="pos">0:00</span>
+<input id="seek" class="min-w-0 flex-1" type="range" min="0" max="0" step="0.1" value="0" aria-label="Position">
+<span id="len">0:00</span></div></div></header>
+<div id="tracks" data-start="{{ start }}">
+{%- match albums %}
+{%- when Some(albums) %}
+{#- An artist's share: one section per album, in the order shared, which is release order. #}
+{%- for a in albums %}
+<section class="mt-7"><header class="mb-2.5 flex items-center gap-3.5">
+<img class="art size-16 flex-none bg-surface object-cover [&.missing]:invisible" src="/share/{{ id }}/{{ a.first }}/cover" alt="" loading="lazy">
+<div><h2 class="m-0 text-title-sm font-light text-strong wrap-anywhere">{{ a.title }}</h2>
+<p class="mt-0.5 mb-0 text-meta text-muted">{{ a.sub }}</p></div></header>
+{%- call tracks(a.rows.as_slice()) %}{% endcall %}
+</section>
+{%- endfor %}
+{%- when None %}
+{%- call tracks(rows.as_slice()) %}{% endcall %}
+{%- endmatch %}
+</div><noscript><p>{% for r in rows %}<a href="/share/{{ id }}/{{ r.pos }}">{{ r.track.title }}</a><br>{% endfor %}</p></noscript></main>
+<script src="{{ engine }}" defer></script>
+<script src="{{ js }}" defer></script></body></html>

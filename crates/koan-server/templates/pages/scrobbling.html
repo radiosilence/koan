@@ -1,0 +1,8 @@
+<h1>Scrobbling</h1><p class="{{ crate::ui::pages::SUB }}">Send what you play to ListenBrainz or Last.fm: every play kōan's apps and other Subsonic clients signed in as you report to this server, as they report it.</p>
+{%- match sections %}
+{%- when None %}
+<p class="{{ crate::ui::pages::EMPTY }}">{{ crate::ui::scrobbling::NO_ACCOUNTS }}</p>
+{%- when Some((brainz, fm)) %}
+<h2>ListenBrainz</h2>{{ brainz|safe }}
+<h2>Last.fm</h2>{{ fm|safe }}
+{%- endmatch %}

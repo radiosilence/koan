@@ -6,6 +6,7 @@
 
 use std::convert::Infallible;
 
+use askama::Template;
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -14,11 +15,9 @@ use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
 
-use super::pages::{COPY_ERROR, SUB};
 use super::{UiState, events, patch};
 use crate::auth::AuthUser;
 use crate::graphql::jobs::{Job, JobRegistry, JobState, REREAD, SCAN, WATCH, start_scan};
-use crate::share::escape;
 
 const KINDS: [&str; 3] = [SCAN, REREAD, WATCH];
 
@@ -30,49 +29,59 @@ fn forbidden() -> Response {
     (StatusCode::FORBIDDEN, "admins only").into_response()
 }
 
+#[derive(Template)]
+#[template(path = "scan/status.html")]
+struct Status {
+    follow: bool,
+    /// The line's colour and text; nothing before any scan.
+    line: Option<(&'static str, String)>,
+}
+
 /// What the current scan is doing, or the last did. On a page as it loads
 /// (`on_load`) it asks to be followed; a stream's own patches never do, or
 /// each would open another stream.
 fn status(job: Option<&Job>, on_load: bool) -> String {
-    let follow = if on_load {
-        " data-init=\"@get('/library/scan')\""
-    } else {
-        ""
-    };
-    let Some(j) = job else {
-        return format!("<div id=scan-status{follow}></div>");
-    };
-    let reason = j.reason.map(|r| format!(" ({r})")).unwrap_or_default();
-    let (class, text) = match j.state {
-        JobState::Running => {
-            let doing = if j.kind == REREAD {
-                "Reading every file again…".to_owned()
-            } else {
-                format!("Scanning{reason}…")
-            };
-            let text = match j.done {
-                Some(_) => format!("{doing} {}", j.message),
-                None => doing,
-            };
-            ("text-muted", text)
+    let line = job.map(|j| {
+        let reason = j.reason.map(|r| format!(" ({r})")).unwrap_or_default();
+        match j.state {
+            JobState::Running => {
+                let doing = if j.kind == REREAD {
+                    "Reading every file again…".to_owned()
+                } else {
+                    format!("Scanning{reason}…")
+                };
+                let text = match j.done {
+                    Some(_) => format!("{doing} {}", j.message),
+                    None => doing,
+                };
+                ("text-muted", text)
+            }
+            JobState::Succeeded => {
+                let what = if j.kind == REREAD {
+                    "Last re-read".to_owned()
+                } else {
+                    format!("Last scan{reason}")
+                };
+                ("text-muted", format!("{what}: {}", j.message))
+            }
+            JobState::Failed => (
+                "text-bad",
+                format!("The scan failed{reason}: {}", j.message),
+            ),
         }
-        JobState::Succeeded => {
-            let what = if j.kind == REREAD {
-                "Last re-read".to_owned()
-            } else {
-                format!("Last scan{reason}")
-            };
-            ("text-muted", format!("{what}: {}", j.message))
-        }
-        JobState::Failed => (
-            "text-bad",
-            format!("The scan failed{reason}: {}", j.message),
-        ),
-    };
-    format!(
-        "<div id=scan-status{follow}><p class=\"{class} text-control\" role=status>{}</p></div>",
-        escape(&text)
-    )
+    });
+    Status {
+        follow: on_load,
+        line,
+    }
+    .render()
+    .unwrap_or_default()
+}
+
+#[derive(Template)]
+#[template(path = "scan/section.html")]
+struct Section {
+    status: String,
 }
 
 /// The section, for an admin; nothing for anyone else.
@@ -80,17 +89,17 @@ pub(super) fn section(s: &UiState, user: &AuthUser) -> String {
     if !allowed(user) {
         return String::new();
     }
-    format!(
-        "<h2>Rescan</h2><p class=\"{SUB}\">Look through the library folders for files added, \
-changed or removed since the last scan. Reading every file again takes longer; it is for after \
-an upgrade that reads more from tags.</p>\
-<form class=\"mb-2 flex max-w-form flex-wrap items-center gap-3\" \
-data-on:submit__prevent=\"@post('/library/scan')\">\
-<label class=\"inline-flex items-center gap-1.5\"><input type=checkbox data-bind:reread>\
-Read every file again</label>\
-<button data-indicator:_scanning data-attr:disabled=\"$_scanning\">Rescan</button></form>{}",
-        status(s.jobs.current(&KINDS).as_ref(), true)
-    )
+    Section {
+        status: status(s.jobs.current(&KINDS).as_ref(), true),
+    }
+    .render()
+    .unwrap_or_default()
+}
+
+#[derive(Template)]
+#[template(path = "scan/error.html")]
+struct Refused<'a> {
+    error: &'a str,
 }
 
 /// Patches the status line as scans move: with `until_idle`, until none is
@@ -140,10 +149,7 @@ pub(super) async fn start(
     match start_scan(&s.jobs, s.pool.clone(), reread) {
         Ok(_) => follow(s.jobs.clone(), true),
         Err(e) => events(vec![patch(
-            &format!(
-                "<div id=scan-status><p class=\"{COPY_ERROR}\" role=alert>{}</p></div>",
-                escape(&e)
-            ),
+            &Refused { error: &e }.render().unwrap_or_default(),
             None,
         )]),
     }

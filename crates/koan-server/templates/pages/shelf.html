@@ -1,0 +1,5 @@
+<h1>{{ title }}</h1>
+{%- match sections %}
+{%- when Some(html) %}{{ html|safe }}
+{%- when None %}<p class="{{ crate::ui::pages::EMPTY }}">{{ empty.title }}</p><p class="{{ crate::ui::pages::EMPTY }}">{{ empty.detail }}</p>
+{%- endmatch %}

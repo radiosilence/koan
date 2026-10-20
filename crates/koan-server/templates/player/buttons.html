@@ -1,0 +1,5 @@
+{#- The transport buttons: in the bar, or larger on a phone on the queue page. `playing` is on the body while music plays. -#}
+{%- let icon = "inline-flex items-center justify-center p-0 text-ink hover:bg-transparent hover:text-strong" -%}
+<div class="{{ row }}"><button class="{{ icon }} {{ small }} {{ prev }} border-transparent" data-ctl="prev" aria-label="Previous">{{ crate::icon::PREVIOUS.svg(18.0, "")|safe }}</button>
+<button class="{{ icon }} {{ big }} border-ink" data-ctl="play" aria-label="Play or pause">{{ crate::icon::PLAY.svg(18.0, "in-[.playing]:hidden")|safe }}{{ crate::icon::PAUSE.svg(18.0, "hidden in-[.playing]:inline")|safe }}</button>
+<button class="{{ icon }} {{ small }} border-transparent" data-ctl="next" aria-label="Next">{{ crate::icon::NEXT.svg(18.0, "")|safe }}</button></div>

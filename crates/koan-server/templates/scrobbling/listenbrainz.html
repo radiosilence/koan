@@ -1,0 +1,19 @@
+{#- The ListenBrainz section: the form to connect, or the connection. -#}
+{%- import "scrobbling/macros.html" as scrobbling -%}
+<div id="listenbrainz">
+{%- match service %}
+{%- when None %}
+<p>Paste your user token from <a href="https://listenbrainz.org/settings/">your ListenBrainz settings</a>. The plays already in your history here are sent when you connect.</p>
+<form class="mb-2 flex max-w-form gap-2" data-on:submit__prevent="@post('/scrobbling/listenbrainz')">
+<input class="flex-1" type="password" name="token" data-bind:lbtoken placeholder="User token" required autocomplete="off" aria-label="ListenBrainz user token"><button class="primary">Connect</button></form>
+{%- if let Some(m) = message %}<p>{{ m }}</p>{% endif %}
+{%- when Some(s) %}
+{% call scrobbling::connected(s) %}{% endcall %}
+{%- if let Some(m) = message %}<p>{{ m }}</p>{% endif %}
+{% call scrobbling::state(s) %}{% endcall %}
+{%- if s.error.is_some() %}
+<p>Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.</p>
+{%- endif %}
+<button class="quiet bad" data-on:click="confirm('Stop sending your plays to ListenBrainz?') && @post('/scrobbling/listenbrainz/disconnect')">Disconnect</button>
+{%- endmatch %}
+<div id="scrobble-result"></div></div>

@@ -1,0 +1,2 @@
+{#- A credit as it reads, each credited artist's name a link to their page and the text joining them plain. `quiet` links are left out of the tab order, as beside a tile's own link. -#}
+{% for p in parts %}{% if let Some(id) = p.artist_id %}<a href="/artist/{{ id }}"{% if quiet %} tabindex="-1"{% endif %}>{{ p.text }}</a>{% else %}{{ p.text }}{% endif %}{% endfor %}

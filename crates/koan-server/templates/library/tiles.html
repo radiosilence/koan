@@ -1,0 +1,4 @@
+{#- Record tiles, each with its heart over the corner where the account may favourite. -#}
+{%- for c in tiles %}
+<div class="relative flex min-w-0 flex-col gap-0.5"><a class="group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline" href="/album/{{ c.album.id }}"><img class="mb-1.5 aspect-square h-auto w-full bg-surface object-cover [&.missing]:visible [&.missing]:text-transparent" loading="lazy" decoding="async" width="{{ crate::covers::GRID }}" height="{{ crate::covers::GRID }}" src="{{ c.src }}" alt=""><span class="truncate group-hover:text-strong">{{ c.album.title }}</span></a><span class="credit truncate self-start max-w-full text-meta text-muted">{{ c.artist|safe }}</span>{{ c.heart|safe }}</div>
+{%- endfor %}

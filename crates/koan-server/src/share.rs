@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
-use crate::icon;
+use askama::Template;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -91,9 +91,6 @@ pub(crate) fn unstyled_classes(html: &str, css: &str, hooks: &[&str]) -> Vec<Str
     missing.dedup();
     missing
 }
-
-/// The track lists' class list, on the page's one list or each album's.
-const TRACKS: &str = "grid";
 
 #[derive(Clone)]
 struct ShareState {
@@ -229,21 +226,6 @@ pub(crate) async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(f).await.ok().flatten()
 }
 
-pub(crate) fn escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 pub(crate) fn duration(ms: Option<i64>) -> String {
     ms.map(|ms| format!("{}:{:02}", ms / 60_000, (ms / 1000) % 60))
         .unwrap_or_default()
@@ -286,9 +268,47 @@ fn year(date: Option<&str>) -> Option<&str> {
     date.and_then(|d| d.get(..4))
 }
 
-/// A `<meta>` for link previews. OpenGraph uses `property`, Twitter `name`.
-fn meta(attr: &str, key: &str, content: &str) -> String {
-    format!("<meta {attr}=\"{key}\" content=\"{}\">", escape(content))
+/// A track row: its place in the share, which addresses its audio, and the
+/// number shown, which is the track number on an album or artist share.
+#[derive(Clone)]
+struct Row<'a> {
+    track: &'a TrackRow,
+    pos: usize,
+    n: usize,
+    secs: i64,
+    dur: String,
+    /// Whether the row names its artist: an album's tracks by the album's
+    /// artist leave it to the heading; a loose list names everyone.
+    credited: bool,
+}
+
+/// One album of an artist's share, headed by its title and year.
+struct AlbumSection<'a> {
+    /// The place of its first track, whose cover heads it.
+    first: usize,
+    title: &'a str,
+    sub: String,
+    rows: Vec<Row<'a>>,
+}
+
+#[derive(Template)]
+#[template(path = "share/page.html")]
+struct SharePage<'a> {
+    id: &'a str,
+    title: String,
+    sub: String,
+    note: Option<String>,
+    kicker: &'a str,
+    /// Link-preview `<meta>`s as attribute, key and content. OpenGraph uses
+    /// `property`, Twitter `name`.
+    preview: Vec<(&'a str, &'a str, String)>,
+    start: i64,
+    download: bool,
+    rows: Vec<Row<'a>>,
+    albums: Option<Vec<AlbumSection<'a>>>,
+    css: &'a str,
+    engine: &'a str,
+    js: &'a str,
 }
 
 /// The page: what was shared, shown the way the app shows it, and the player.
@@ -374,77 +394,50 @@ fn render(
             sub.join(" · "),
         )
     };
-    // A loose list is titled by its note; a slice keeps the note beside it.
-    let note = note
-        .filter(|n| (album.is_some() || artist.is_some()) && *n != title)
-        .map(|n| {
-            format!(
-                "<p class=\"-mt-1.5 mb-3.5 text-ink italic wrap-anywhere\">{}</p>",
-                escape(&n)
-            )
-        })
-        .unwrap_or_default();
+    let note = note.filter(|n| (album.is_some() || artist.is_some()) && *n != title);
 
     let mut preview = vec![
-        meta("property", "og:site_name", "koan"),
-        meta("property", "og:type", og_type),
-        meta("property", "og:title", &og_title),
-        meta("property", "og:description", &og_desc),
-        meta("name", "description", &og_desc),
-        meta("name", "twitter:card", "summary_large_image"),
-        meta("name", "twitter:title", &og_title),
-        meta("name", "twitter:description", &og_desc),
+        ("property", "og:site_name", "koan".to_owned()),
+        ("property", "og:type", og_type.to_owned()),
+        ("property", "og:title", og_title.clone()),
+        ("property", "og:description", og_desc.clone()),
+        ("name", "description", og_desc.clone()),
+        ("name", "twitter:card", "summary_large_image".to_owned()),
+        ("name", "twitter:title", og_title),
+        ("name", "twitter:description", og_desc),
     ];
     if let Some(base) = server_url.map(|u| u.trim_end_matches('/')) {
         let image = format!("{base}/share/{id}/cover");
-        preview.push(meta(
+        preview.push((
             "property",
             "og:url",
-            &koan_core::helpers::share_url(base, id),
+            koan_core::helpers::share_url(base, id),
         ));
-        preview.push(meta("property", "og:image", &image));
-        preview.push(meta("name", "twitter:image", &image));
+        preview.push(("property", "og:image", image.clone()));
+        preview.push(("name", "twitter:image", image));
     }
 
-    // An artist's album shows the album artist once, in its heading; a loose
-    // list names everyone.
-    let row = |i: usize, t: &TrackRow| {
-        let credited = if one_album.is_some() || artist.is_some() {
-            t.artist_name != t.album_artist_name
-        } else {
-            true
-        };
-        let small = if credited {
-            format!(
-                "<small class=\"block truncate text-meta text-muted\">{}</small>",
-                escape(&t.artist_name)
-            )
-        } else {
-            String::new()
-        };
-        let n = match (album.is_some() || artist.is_some(), t.track_number) {
-            (true, Some(n)) => n as usize,
-            _ => i + 1,
-        };
-        // share.js marks the row playing.
-        format!(
-            "<li class=\"group flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-hover/30 \
-             focus-visible:bg-hover/30 focus-visible:outline-none max-wide:px-0\" tabindex=0 \
-             data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" data-artist=\"{art}\" \
-             data-album=\"{alb}\"><span class=\"w-[1.5em] text-right text-muted tabular-nums group-[.playing]:text-brand\">{n}</span>\
-             <span class=\"min-w-0 flex-1 truncate group-[.playing]:text-brand\">{title}{small}</span>\
-             <span class=\"text-meta text-muted tabular-nums\">{dur}</span></li>",
-            pos = i + 1,
-            secs = t.duration_ms.unwrap_or(0) / 1000,
-            title = escape(&t.title),
-            art = escape(&t.artist_name),
-            alb = escape(&t.album_title),
-            dur = duration(t.duration_ms),
-        )
-    };
-    let body = if artist.is_some() {
-        // One section per album, in the order shared, which is release order.
-        let mut out = String::new();
+    let rows: Vec<Row> = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| Row {
+            track: t,
+            pos: i + 1,
+            n: match (album.is_some() || artist.is_some(), t.track_number) {
+                (true, Some(n)) => n as usize,
+                _ => i + 1,
+            },
+            secs: t.duration_ms.unwrap_or(0) / 1000,
+            dur: duration(t.duration_ms),
+            credited: if one_album.is_some() || artist.is_some() {
+                t.artist_name != t.album_artist_name
+            } else {
+                true
+            },
+        })
+        .collect();
+    let albums = artist.is_some().then(|| {
+        let mut out = Vec::new();
         let mut i = 0;
         while i < tracks.len() {
             let album_id = tracks[i].album_id;
@@ -459,85 +452,39 @@ fn render(
                 .into_iter()
                 .collect();
             sub.push(plural(end - i, "track"));
-            let rows: String = (i..end).map(|k| row(k, &tracks[k])).collect();
-            out.push_str(&format!(
-                "<section class=\"mt-7\"><header class=\"mb-2.5 flex items-center gap-3.5\">\
-                 <img class=\"art size-16 flex-none bg-surface object-cover \
-                 [&.missing]:invisible\" src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
-                 <div><h2 class=\"m-0 text-title-sm font-light text-strong wrap-anywhere\">{title}</h2>\
-                 <p class=\"mt-0.5 mb-0 text-meta text-muted\">{sub}</p></div></header>\
-                 <ol class=\"{TRACKS}\">{rows}</ol></section>",
-                first = i + 1,
-                title = escape(&tracks[i].album_title),
-                sub = escape(&sub.join(" · ")),
-            ));
+            out.push(AlbumSection {
+                first: i + 1,
+                title: &tracks[i].album_title,
+                sub: sub.join(" · "),
+                rows: rows[i..end].to_vec(),
+            });
             i = end;
         }
         out
-    } else {
-        let rows: String = tracks.iter().enumerate().map(|(i, t)| row(i, t)).collect();
-        format!("<ol class=\"{TRACKS}\">{rows}</ol>")
-    };
-    let links: String = tracks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            format!(
-                "<a href=\"/share/{id}/{}\">{}</a><br>",
-                i + 1,
-                escape(&t.title)
-            )
-        })
-        .collect();
-    let kicker = if artist.is_some() {
-        "Artist shared from kōan"
-    } else {
-        "Shared from kōan"
-    };
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-<meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
-<meta name=robots content=\"noindex,nofollow\"><title>{title}</title>{preview}\
-{icons}<link rel=stylesheet href=\"{css}\"></head><body>\
-<main class=\"mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12\">\
-<header class=\"mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch\">\
-<img id=cover class=\"size-[200px] flex-none bg-surface object-cover \
-max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover\" alt=\"\">\
-<div class=\"min-w-0 flex-1\"><p class=\"m-0 text-fine text-muted lowercase\">{kicker}</p>\
-<h1>{title}</h1><p class=\"mt-0 mb-3.5 text-muted\">{sub}</p>{note}\
-<div class=\"flex items-center gap-2\"><button id=prev class=\"size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong\" \
-aria-label=Previous>{prev_icon}</button>\
-<button id=play class=\"min-w-24\">Play</button>\
-<button id=next class=\"size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong\" \
-aria-label=Next>{next_icon}</button>{download}</div>\
-<div class=\"mt-3 flex items-center gap-2.5 text-meta text-muted tabular-nums\"><span id=pos>0:00</span>\
-<input id=seek class=\"min-w-0 flex-1\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
-<span id=len>0:00</span></div></div></header>\
-<div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\
-<script src=\"{engine}\" defer></script>\
-<script src=\"{js}\" defer></script></body></html>",
-        prev_icon = icon::PREVIOUS.svg(18.0, "size-[18px] mx-auto"),
-        next_icon = icon::NEXT.svg(18.0, "size-[18px] mx-auto"),
-        title = escape(&title),
-        preview = preview.concat(),
-        icons = icon_links("/share/assets"),
-        css = *SHARE_CSS_URL,
-        engine = *SHARE_ENGINE_URL,
-        js = *SHARE_JS_URL,
-        sub = escape(&sub.join(" · ")),
-        start = start.map_or(-1, |i| i as i64),
-        download = if tracks
-            .iter()
-            .any(|t| crate::subsonic::track_file_path(t).is_some())
-        {
-            format!(
-                "<a class=\"ml-auto border border-muted px-3 py-1.5 text-meta text-ink lowercase no-underline \
-                 hover:bg-hover/30\" href=\"/share/{id}/download\" download>Download</a>"
-            )
+    });
+    SharePage {
+        id,
+        title,
+        sub: sub.join(" · "),
+        note,
+        kicker: if artist.is_some() {
+            "Artist shared from kōan"
         } else {
-            String::new()
+            "Shared from kōan"
         },
-    )
+        preview,
+        start: start.map_or(-1, |i| i as i64),
+        download: tracks
+            .iter()
+            .any(|t| crate::subsonic::track_file_path(t).is_some()),
+        rows,
+        albums,
+        css: &SHARE_CSS_URL,
+        engine: &SHARE_ENGINE_URL,
+        js: &SHARE_JS_URL,
+    }
+    .render()
+    .unwrap_or_default()
 }
 
 async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {

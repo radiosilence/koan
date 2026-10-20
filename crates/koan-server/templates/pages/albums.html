@@ -1,0 +1,7 @@
+{%- import "library/macros.html" as library -%}
+<h1>Albums</h1>{% call library::counted(count, "album", "albums", filtered) %}{% endcall %}{{ toolbar|safe }}
+{%- if count == 0 %}
+<p class="{{ crate::ui::pages::EMPTY }}">No albums match.</p>
+{%- else %}
+<div class="{{ crate::ui::pages::GRID }}" id="albums">{{ tiles|safe }}</div>
+{%- endif %}

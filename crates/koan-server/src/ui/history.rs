@@ -4,8 +4,7 @@
 //! The only grouping is the day, in the browser's own time zone, which the
 //! UI's script leaves in the `koan_tz` cookie as minutes east of UTC.
 
-use std::fmt::Write as _;
-
+use askama::Template;
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
@@ -16,11 +15,11 @@ use koan_core::db::queries::{self, PlayHistoryRow};
 
 use super::favourite::Hearts;
 use super::pages::{
-    Credits, EMPTY, ERROR, MORE, cover_url, credit_data, credit_line, track_versions, unavailable,
+    Credits, ERROR, cover_url, credit_data, credit_line, track_versions, unavailable,
 };
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
-use crate::share::{blocking, duration, escape};
+use crate::share::{blocking, duration};
 
 /// Plays on one page; older ones are a link away.
 const PAGE: u32 = 300;
@@ -55,53 +54,68 @@ fn day_label(day: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
     }
 }
 
-fn plays(
-    rows: &[PlayHistoryRow],
+/// One play's row, with the day's heading before it where the day changes.
+/// The markup fields are the server's own.
+struct Play<'a> {
+    day: Option<String>,
+    id: i64,
+    play: i64,
+    secs: i64,
+    title: &'a str,
+    artist: &'a str,
+    album: &'a str,
+    album_id: i64,
+    artist_id: i64,
+    cover: String,
+    credit: String,
+    sub: String,
+    time: String,
+    dur: String,
+    heart: String,
+    mark: String,
+}
+
+fn plays<'a>(
+    rows: &'a [PlayHistoryRow],
     versions: &super::pages::Versions,
     credits: &Credits,
     zone: FixedOffset,
     hearts: Option<&Hearts>,
-) -> String {
+) -> Vec<Play<'a>> {
     let now = Utc::now().with_timezone(&zone);
-    let mut out = String::new();
     let mut day = None;
-    for p in rows {
-        let at = zone.timestamp_opt(p.played_at, 0).single().unwrap_or(now);
-        if day != Some(at.date_naive()) {
-            day = Some(at.date_naive());
-            let _ = write!(out, "<li class=\"disc\">{}</li>", day_label(at, now));
-        }
-        let t = &p.track;
-        let parts = credits.track(t);
-        let _ = write!(
-            out,
-            "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\"{credit}>\
-<input type=checkbox class=\"flex-none max-wide:hidden\" value={play} aria-label=\"Select this play\">\
-<span class=\"n w-auto max-wide:text-meta\">{time}</span><span class=\"t\">{title}{sub}</span>\
-<span class=\"d\">{dur}</span><span class=\"contents max-wide:hidden\">{heart}\
-<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{mark}{MORE}</li>",
-            id = t.id,
-            play = p.id,
-            secs = t.duration_ms.unwrap_or(0) / 1000,
-            title = escape(&t.title),
-            artist = escape(&t.artist_name),
-            album = escape(&t.album_title),
-            sub = credit_line(t, Some(&parts), true),
-            credit = credit_data(&parts),
-            album_id = t.album_id.unwrap_or(0),
-            artist_id = t.artist_id.unwrap_or(0),
-            cover = t
-                .album_id
-                .map(|a| cover_url(a, crate::covers::LARGE, versions))
-                .unwrap_or_default(),
-            time = at.format("%H:%M"),
-            dur = duration(t.duration_ms),
-            heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
-            mark = hearts.map(Hearts::mark).unwrap_or_default(),
-        );
-    }
-    out
+    rows.iter()
+        .map(|p| {
+            let at = zone.timestamp_opt(p.played_at, 0).single().unwrap_or(now);
+            let heading = (day != Some(at.date_naive())).then(|| {
+                day = Some(at.date_naive());
+                day_label(at, now)
+            });
+            let t = &p.track;
+            let parts = credits.track(t);
+            Play {
+                day: heading,
+                id: t.id,
+                play: p.id,
+                secs: t.duration_ms.unwrap_or(0) / 1000,
+                title: &t.title,
+                artist: &t.artist_name,
+                album: &t.album_title,
+                album_id: t.album_id.unwrap_or(0),
+                artist_id: t.artist_id.unwrap_or(0),
+                cover: t
+                    .album_id
+                    .map(|a| cover_url(a, crate::covers::LARGE, versions))
+                    .unwrap_or_default(),
+                credit: credit_data(&parts),
+                sub: credit_line(t, Some(&parts), true),
+                time: at.format("%H:%M").to_string(),
+                dur: duration(t.duration_ms),
+                heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
+                mark: hearts.map(Hearts::mark).unwrap_or_default(),
+            }
+        })
+        .collect()
 }
 
 /// One page of plays, read for one account.
@@ -139,42 +153,31 @@ fn read(s: &UiState, user: &AuthUser, page: u32) -> Option<Plays> {
     })
 }
 
+#[derive(Template)]
+#[template(path = "history/list.html")]
+struct List<'a> {
+    plays: Vec<Play<'a>>,
+    page: u32,
+    /// There are older ones.
+    more: bool,
+}
+
 /// The list and its paging, as one element the forget action can replace.
 fn list(p: &Plays, page: u32, zone: FixedOffset) -> String {
-    let (rows, more, versions) = (&p.rows, p.more, &p.versions);
-    if rows.is_empty() && page == 0 {
-        return format!(
-            "<div id=history><p class=\"{EMPTY}\">Nothing played yet.</p>\
-<p class=\"{EMPTY}\">What you play here, in the kōan apps or in a Subsonic app signed in as you is listed \
-by day.</p></div>"
-        );
+    List {
+        plays: plays(&p.rows, &p.versions, &p.credits, zone, p.hearts.as_ref()),
+        page,
+        more: p.more,
     }
-    let mut nav = Vec::new();
-    if page > 0 {
-        nav.push(format!(
-            "<a href=\"/history{}\">Newer</a>",
-            if page == 1 {
-                String::new()
-            } else {
-                format!("?page={}", page - 1)
-            }
-        ));
-    }
-    if more {
-        nav.push(format!(
-            "<a href=\"/history?page={}\">Earlier</a>",
-            page + 1
-        ));
-    }
-    let nav = if nav.is_empty() {
-        String::new()
-    } else {
-        format!("<p class=\"mt-5 flex gap-4\">{}</p>", nav.join(""))
-    };
-    format!(
-        "<div id=history><ol class=\"tracks\" data-context=one>{}</ol>{nav}</div>",
-        plays(rows, versions, &p.credits, zone, p.hearts.as_ref())
-    )
+    .render()
+    .unwrap_or_default()
+}
+
+#[derive(Template)]
+#[template(path = "pages/history.html")]
+struct HistoryPage {
+    page: u32,
+    list: String,
 }
 
 pub(super) async fn page(
@@ -187,19 +190,12 @@ pub(super) async fn page(
     let Some(plays) = blocking(move || read(&st, &who, page)).await else {
         return unavailable();
     };
-    // Picked plays collect in `$forget`, read off the boxes ticked whenever
-    // one changes; the bar to forget them shows once there is one.
-    let inner = format!(
-        "<div data-signals:forget=\"[]\" \
-data-on:change=\"$forget = [...el.querySelectorAll('#history input:checked')].map(i => i.value)\"><div class=\"flex flex-wrap items-baseline justify-between gap-2\">\
-<h1>History</h1><div class=\"flex items-center gap-2\" data-show=\"$forget.length > 0\">\
-<span class=\"text-meta text-muted\" data-text=\"$forget.length + ' selected'\"></span>\
-<button data-on:click=\"el.closest('.page').querySelectorAll('#history input:checked').forEach(i => i.checked = false); $forget = []\">Deselect</button>\
-<button class=\"bad\" data-act-forget data-indicator:_forgetting data-attr:disabled=\"$_forgetting\" \
-data-on:click=\"@post('/history/forget?page={page}')\">Forget</button></div></div>\
-<div id=history-result></div>{}</div>",
-        list(&plays, page, zone(&headers))
-    );
+    let inner = HistoryPage {
+        page,
+        list: list(&plays, page, zone(&headers)),
+    }
+    .render()
+    .unwrap_or_default();
     super::pages::respond(&s, &headers, &user, "History", &inner)
 }
 
@@ -244,7 +240,7 @@ pub(super) async fn forget(
         ]),
         None => events(vec![patch(
             &format!(
-                "<div id=history-result class=\"mt-3 {ERROR}\" role=alert>Those plays could not be forgotten.</div>"
+                "<div id=\"history-result\" class=\"mt-3 {ERROR}\" role=\"alert\">Those plays could not be forgotten.</div>"
             ),
             None,
         )]),

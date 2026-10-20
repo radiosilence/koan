@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 
+use askama::Template;
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
@@ -16,7 +17,6 @@ use koan_core::db::queries;
 
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
-use crate::icon;
 use crate::share::blocking;
 use crate::subsonic::EntityKind;
 
@@ -44,13 +44,17 @@ impl Hearts {
         heart(Kind::Song, id, self.tracks.contains(&id))
     }
 
-    /// A record's heart, over the corner of its tile. The placing is the
-    /// wrapper's, so the button inside can be replaced as any other is.
+    /// A record's heart, over the corner of its tile.
     pub fn tile(&self, id: i64) -> String {
-        format!(
-            "<span class=\"absolute top-2 right-2 bg-bg/85\">{}</span>",
-            heart(Kind::Album, id, self.albums.contains(&id))
-        )
+        Heart {
+            kind: Kind::Album.as_str(),
+            id,
+            on: self.albums.contains(&id),
+            label: label(Kind::Album, self.albums.contains(&id)),
+            tile: true,
+        }
+        .render()
+        .unwrap_or_default()
     }
 
     pub fn album(&self, id: i64) -> String {
@@ -66,11 +70,7 @@ impl Hearts {
     /// shows it while the row's hidden heart is pressed, so it follows a
     /// toggle made from the menu.
     pub fn mark(&self) -> String {
-        format!(
-            "<span class=\"fav-mark\" role=img aria-label=Favourite title=Favourite>\
-{heart}</span>",
-            heart = icon::HEART_FILLED.svg(13.0, "")
-        )
+        Mark.render().unwrap_or_default()
     }
 }
 
@@ -108,28 +108,37 @@ impl Kind {
     }
 }
 
+#[derive(Template)]
+#[template(path = "favourite/heart.html")]
+struct Heart {
+    kind: &'static str,
+    id: i64,
+    on: bool,
+    label: String,
+    tile: bool,
+}
+
+#[derive(Template)]
+#[template(path = "favourite/mark.html")]
+struct Mark;
+
+fn label(kind: Kind, on: bool) -> String {
+    let verb = if on { "Unfavourite" } else { "Favourite" };
+    format!("{verb} this {}", kind.noun())
+}
+
 /// A heart for one thing, filled while it is a favourite. Pressing it asks
 /// for the opposite.
 fn heart(kind: Kind, id: i64, on: bool) -> String {
-    let (label, next) = if on {
-        (format!("Unfavourite this {}", kind.noun()), 0)
-    } else {
-        (format!("Favourite this {}", kind.noun()), 1)
-    };
-    format!(
-        "<button class=\"quiet text-muted aria-pressed:text-brand\" data-fav=\"{k}-{id}\" aria-pressed=\"{on}\" \
-aria-label=\"{label}\" title=\"{label}\" data-on:click=\"@post('/favourite/{k}/{id}?on={next}')\">\
-{outline}{filled}</button>",
-        k = kind.as_str(),
-        outline = icon::HEART.svg(
-            15.0,
-            "inline size-[15px] align-[-2px] in-aria-pressed:hidden"
-        ),
-        filled = icon::HEART_FILLED.svg(
-            15.0,
-            "hidden size-[15px] align-[-2px] in-aria-pressed:inline"
-        ),
-    )
+    Heart {
+        kind: kind.as_str(),
+        id,
+        on,
+        label: label(kind, on),
+        tile: false,
+    }
+    .render()
+    .unwrap_or_default()
 }
 
 #[derive(serde::Deserialize)]

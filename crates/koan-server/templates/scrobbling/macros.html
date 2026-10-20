@@ -1,0 +1,10 @@
+{#- A connection's state: its last error, or how many plays are still to send. -#}
+{% macro state(s) %}
+{%- if let Some(e) = s.error %}<p class="{{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>
+{%- else if s.pending > 0 %}<p class="{{ crate::ui::pages::EMPTY }}">{{ crate::ui::scrobbling::plays(*s.pending) }} waiting to be sent.</p>
+{%- else %}<p class="{{ crate::ui::pages::EMPTY }}">Every play has been sent.</p>
+{%- endif %}
+{%- endmacro %}
+
+{#- Since when, and as whom, a service is connected. -#}
+{% macro connected(s) %}<p>Connected as <strong>{{ s.account_name }}</strong> since {{ crate::ui::scrobbling::day(*s.connected_at) }}.</p>{% endmacro %}

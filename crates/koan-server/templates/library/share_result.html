@@ -1,0 +1,3 @@
+{#- A share link made, with a copy button, or why it could not be. -#}
+{% match result %}{% when Ok(url) %}<div id="share-result" class="{{ crate::ui::pages::COPY_ROW }}"><input id="share-url" readonly value="{{ url }}" aria-label="Share link" class="{{ crate::ui::pages::COPY_INPUT }}">
+<button data-on:click="navigator.clipboard.writeText(document.getElementById('share-url').value)">Copy</button></div>{% when Err(e) %}<div id="share-result" class="{{ crate::ui::pages::COPY_ERROR }}" role="alert">{{ e }}</div>{% endmatch %}

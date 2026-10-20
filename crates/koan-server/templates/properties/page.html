@@ -1,0 +1,14 @@
+{#- A track's properties: its tags as the library holds them, the file on the server for an admin, and what each source says. -#}
+{%- let section = crate::ui::properties::SECTION -%}
+<p class="{{ crate::ui::pages::KICKER }}">Properties</p><h2 class="my-1 normal-case">{{ title }}</h2><p class="{{ crate::ui::pages::SUB }}">{{ artist|safe }}</p>
+{%- if let Some(path) = path %}
+<p class="{{ section }}">File on the server</p><div class="flex gap-2">
+<input id="track-path" readonly value="{{ path }}" aria-label="File on the server" class="{{ crate::ui::pages::COPY_INPUT }}">
+<button data-copy="track-path">Copy</button></div>
+{%- endif %}
+{%- for (heading, fields) in lists %}
+<p class="{{ section }}">{{ heading }}</p>
+<dl class="{{ crate::ui::properties::LIST }}">
+{%- for f in fields %}<dt>{{ f.name }}</dt><dd>{% if f.html %}{{ f.value|safe }}{% else %}{{ f.value }}{% endif %}</dd>{% endfor -%}
+</dl>
+{%- endfor %}

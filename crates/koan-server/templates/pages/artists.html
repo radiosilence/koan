@@ -1,0 +1,9 @@
+{%- import "library/macros.html" as library -%}
+<h1>Artists</h1>{% call library::counted(artists.len(), "artist", "artists", filtered) %}{% endcall %}{{ toolbar|safe }}
+{%- if artists.is_empty() %}
+<p class="{{ crate::ui::pages::EMPTY }}">No artists match.</p>
+{%- else %}
+<ul id="artists">
+{%- for a in artists %}{% call library::list_row(format!("/artist/{}", a.id), a.name, format!("{} album{}", a.album_count, if a.album_count == 1 { "" } else { "s" })) %}{% endcall %}{% endfor %}
+</ul>
+{%- endif %}

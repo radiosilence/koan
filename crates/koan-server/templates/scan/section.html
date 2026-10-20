@@ -1,0 +1,5 @@
+{#- The Library page's rescan section, for an admin. -#}
+<h2>Rescan</h2><p class="{{ crate::ui::pages::SUB }}">Look through the library folders for files added, changed or removed since the last scan. Reading every file again takes longer; it is for after an upgrade that reads more from tags.</p>
+<form class="mb-2 flex max-w-form flex-wrap items-center gap-3" data-on:submit__prevent="@post('/library/scan')">
+<label class="inline-flex items-center gap-1.5"><input type="checkbox" data-bind:reread>Read every file again</label>
+<button data-indicator:_scanning data-attr:disabled="$_scanning">Rescan</button></form>{{ status|safe }}

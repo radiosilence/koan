@@ -1,0 +1,8 @@
+{#- The queue lives in the browser, so the page is a frame the script fills. -#}
+<header class="{{ crate::ui::pages::HERO }}"><img class="{{ crate::ui::pages::HERO_COVER }} max-wide:max-w-[360px] max-wide:self-center" data-np="cover" alt="" hidden><div class="min-w-0 flex-1"><p class="{{ crate::ui::pages::KICKER }}">Now playing</p>
+<h1 class="mb-1 normal-case" data-np="title">Nothing playing</h1>
+<p class="{{ crate::ui::pages::SUB }}"><span data-np="artist"></span><span data-np="sep" hidden> · </span><a data-np="album"></a></p>
+{{ crate::ui::pages::buttons(true)|safe }}{{ crate::ui::pages::scrub("max-w-form max-wide:mt-2 max-wide:text-meta", "h-11")|safe }}</div></header>
+<div class="{{ crate::ui::pages::LIST_HEAD }}"><h2>Up next</h2>
+<button class="quiet px-2 py-1" data-act="clear">Clear</button></div>
+<ol id="queue-list" class="tracks"></ol>

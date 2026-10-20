@@ -1,0 +1,20 @@
+{#- The sort and filter controls: a row above the grid on a wide screen, one "Sort · Filter" button that opens them on a phone. A plain GET form, so it works without script; with it, a change applies at once. -#}
+{%- import "browse/macros.html" as m -%}
+{%- let label = crate::ui::browse::LABEL -%}
+{%- let field = crate::ui::browse::FIELD -%}
+<details class="browse group -mt-1 mb-5"><summary class="hidden cursor-pointer list-none items-center gap-1.5 border border-muted px-3 py-[7px] text-control text-ink group-open:border-brand max-wide:inline-flex [&::-webkit-details-marker]:hidden">Sort · Filter{% if active > 0 %} <span class="inline-block min-w-[1.5em] bg-brand px-[5px] text-center text-[11px] font-bold text-bg">{{ active }}</span>{% endif %}</summary>
+<form class="toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-meta text-muted max-wide:mt-2.5 max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:border max-wide:border-rule max-wide:p-3.5 max-wide:text-body" method="get" action="{{ path }}">
+<label class="{{ label }}">Name<input class="{{ name_width }} {{ field }} max-wide:w-auto max-wide:flex-1" type="search" name="q" placeholder="{{ name_hint }}" value="{{ q }}" aria-label="Filter by name"></label>
+{%- call m::select("sort", "Sort", sorts) %}{% endcall %}
+{%- if let Some(seed) = seed %}<input type="hidden" name="seed" value="{{ seed }}">{% endif %}
+{%- if let Some(query) = reshuffle %}<a class="text-muted lowercase" href="{{ path }}?{{ query|safe }}">Reshuffle</a>{% endif %}
+{%- call m::check("fav", "Favourites", fav) %}{% endcall %}
+{%- call m::check("recent", "Recently played", recent) %}{% endcall %}
+{#- A track's codec says as much; the album browsers' lossless means a whole record. #}
+{%- if let Some(on) = lossless %}{% call m::check("lossless", "Lossless", on) %}{% endcall %}{% endif %}
+{%- call m::select("codec", "Codec", codecs) %}{% endcall %}
+<label class="{{ label }}">Years<input class="w-[4.5em] {{ field }}" name="from" inputmode="numeric" maxlength="4" placeholder="From" value="{{ from }}" aria-label="From year"><span>–</span><input class="w-[4.5em] {{ field }}" name="to" inputmode="numeric" maxlength="4" placeholder="To" value="{{ to }}" aria-label="To year"></label>
+{%- call m::select("genre", "Genre", genres) %}{% endcall %}
+<div class="inline-flex items-center gap-2.5 max-wide:justify-between">
+<button class="in-[.js]:hidden max-wide:in-[.js]:inline-block">Apply</button>
+<a class="text-muted lowercase" href="{{ path }}">Reset</a></div></form></details>

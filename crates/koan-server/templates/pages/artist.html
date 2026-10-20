@@ -1,0 +1,7 @@
+<p class="{{ crate::ui::pages::KICKER }}">Artist</p><h1 class="normal-case">{{ artist.name }}</h1><p class="{{ crate::ui::pages::SUB }}">{{ artist.album_count }} album{% if artist.album_count != 1 %}s{% endif %} · {{ artist.track_count }} tracks</p>
+{%- if let Some(heart) = heart %}
+{#- Sharing and favouriting are the same accounts' to do. #}
+<div class="mb-5 {{ crate::ui::pages::ACTIONS }}"><button class="standard" data-indicator:_sharing data-attr:disabled="$_sharing" data-class:busy="$_sharing" data-on:click="@post('/artist/{{ artist.id }}/share')">Share</button>{{ heart|safe }}</div>
+<div id="share-result"></div>
+{%- endif %}
+<div class="{{ crate::ui::pages::GRID }}">{{ tiles|safe }}</div>

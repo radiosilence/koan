@@ -1,0 +1,14 @@
+{#- A row of the artist and playlist lists: the link, its name and, where given, its count. No rules between rows, as in every list of the theme. -#}
+{% macro list_row(href, name, count) %}
+<li><a class="flex min-w-0 items-baseline gap-3 px-2 py-2.5 text-ink hover:bg-hover/30 hover:no-underline max-wide:px-0" href="{{ href }}"><span class="min-w-0 flex-1 truncate">{{ name }}</span>{% if !count.is_empty() %}<span class="text-meta text-muted">{{ count }}</span>{% endif %}</a></li>
+{% endmacro %}
+
+{#- "12 albums", once a filter is on: the count a shelf's heading gave. -#}
+{% macro counted(n, one, many, filtered) %}
+{%- if filtered %}<p class="{{ crate::ui::pages::SUB }}">{{ n }} {% if n == 1 %}{{ one }}{% else %}{{ many }}{% endif %}</p>{% endif -%}
+{% endmacro %}
+
+{#- The play, shuffle and queue buttons over a list of tracks. `kind` is the play button's: primary in a hero, standard in a section. -#}
+{% macro play_buttons(kind) %}
+<button class="{{ kind }}" data-act="play">Play</button><button class="standard" data-act="shuffle">Shuffle</button><button class="standard" data-act="queue">Add to queue</button>
+{%- endmacro %}
