@@ -98,9 +98,10 @@ struct AppState {
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
-    /// `sharing.public_url`, trimmed: where an assistant reaches `/mcp`.
-    /// Without it, MCP's sign-in cannot work, so none is offered.
-    public_url: Option<String>,
+    /// `server.url`: where an assistant reaches `/mcp`, and what `ping` gives
+    /// clients to know the server by. Without it, MCP's sign-in cannot work,
+    /// so none is offered.
+    server_url: Option<String>,
     /// Whether `[push]` holds an APNs key. Apple takes pushes for the app only
     /// when signed by its developer's team, so most servers cannot send them,
     /// and the app asks to show notifications only where one can.
@@ -2085,7 +2086,16 @@ async fn ping(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    offload_response(move || respond(&state, &params, |_, b| Ok(b))).await
+    offload_response(move || {
+        respond(&state, &params, |_, mut b| {
+            // The address clients know this server by: see `server.url`.
+            if let Some(url) = &state.server_url {
+                b.root = b.root.attr("serverUrl", url);
+            }
+            Ok(b)
+        })
+    })
+    .await
 }
 
 async fn get_license(
@@ -4420,7 +4430,7 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
-    let mcp: &[(&str, &[i64])] = if state.public_url.is_some() {
+    let mcp: &[(&str, &[i64])] = if state.server_url.is_some() {
         &[(koan_core::remote::profile::MCP, &[1])]
     } else {
         &[]
@@ -4893,10 +4903,8 @@ fn share_node(
 fn share_base() -> Result<String, SubsonicError> {
     Config::load()
         .unwrap_or_default()
-        .sharing
-        .public_url
-        .filter(|u| !u.trim().is_empty())
-        .ok_or_else(|| SubsonicError::internal("sharing.public_url is not set on this server"))
+        .server_url()
+        .ok_or_else(|| SubsonicError::internal("server.url is not set on this server"))
 }
 
 /// `expires` is milliseconds since the epoch; 0 or absent never expires.
@@ -5285,7 +5293,7 @@ async fn koan_mcp(
     offload_response(move || {
         respond_db_caller(&state, &params, Role::Readonly, |_, _, b| {
             let base = state
-                .public_url
+                .server_url
                 .as_deref()
                 .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
             Ok(b.child(
@@ -6605,12 +6613,7 @@ pub fn subsonic_router(
         covers,
         last_modified: Default::default(),
         transcoder,
-        public_url: cfg
-            .sharing
-            .public_url
-            .as_deref()
-            .map(|u| u.trim().trim_end_matches('/').to_owned())
-            .filter(|u| !u.is_empty()),
+        server_url: cfg.server_url(),
         apns: crate::push::pusher().is_some(),
     });
     // Once per process, though the router may be built for two ports.
@@ -6657,7 +6660,7 @@ mod tests {
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
             transcoder: None,
-            public_url: None,
+            server_url: None,
             apns: false,
         });
         (state, dir)
@@ -8266,7 +8269,7 @@ mod tests {
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.public_url = Some("https://koan.example.com".into());
+        inner.server_url = Some("https://koan.example.com".into());
         let state = Arc::new(inner);
         assert!(extensions(state.clone()).await.contains("koanMcp"));
         let v = mcp(state.clone(), mate).await;
@@ -10641,6 +10644,21 @@ mod tests {
         assert_eq!(r["type"], "koan");
         assert_eq!(r["serverVersion"], env!("CARGO_PKG_VERSION"));
         assert_eq!(r["openSubsonic"], true);
+    }
+
+    /// `ping` gives clients the address to know the server by, once it has one.
+    #[tokio::test]
+    async fn ping_gives_the_server_url() {
+        let (state, _dir) = test_state();
+        let ping = format!("/rest/ping?{}", auth_query("f=json"));
+        let r = json_of(build_test_router(state), &ping).await;
+        assert!(r.get("serverUrl").is_none(), "{r}");
+
+        let (state, _dir) = test_state();
+        let mut inner = Arc::try_unwrap(state).ok().unwrap();
+        inner.server_url = Some("https://koan.example.com".into());
+        let r = json_of(build_test_router(Arc::new(inner)), &ping).await;
+        assert_eq!(r["serverUrl"], "https://koan.example.com", "{r}");
     }
 
     #[tokio::test]

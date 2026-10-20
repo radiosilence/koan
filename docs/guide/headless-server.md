@@ -7,8 +7,11 @@
 ```bash
 koan auth setup                       # signing keys and the first admin account
 koan subsonic setup                   # turn on the Subsonic API
+export KOAN_SERVER__URL=https://music.example.com
 koan --headless --bind 0.0.0.0        # serve on every interface, port 4000
 ```
+
+The server refuses to start without `server.url`, the one address clients reach it at. It cannot tell which of the addresses it answers on another device can reach, and every link it hands out is built on this one: invites, share links, MCP's sign-in, the Last.fm callback. A server used only at home can give its LAN address, such as `http://192.168.1.20:4000`. Signed-in apps learn it from the server and know the server by it, so a phone that reaches it by its domain and a laptop that reaches it by its LAN address still recognise each other as on the same server.
 
 ## Server flags
 
@@ -21,13 +24,17 @@ koan --headless --bind 0.0.0.0        # serve on every interface, port 4000
 | `--bind ADDR` | Bind address (default: 127.0.0.1) |
 | `-d` | Detach and run in the background, logging to `~/.config/koan/koan.log` |
 
-MCP is served at `/mcp` on the same port, with its own OAuth sign-in once `sharing.public_url` is set; see [MCP Integration](mcp-integration.md#connecting-to-a-server).
+MCP is served at `/mcp` on the same port, with its own OAuth sign-in on `server.url`; see [MCP Integration](mcp-integration.md#connecting-to-a-server).
 
 A headless server indexes the library folders when it starts and again whenever they change, as the macOS app does.
 
 ## Configuration
 
 ```toml
+# config.local.toml — where this machine is reached
+[server]
+url = "https://music.example.com"
+
 [graphql]
 port = 4000               # the server's port
 bind = "127.0.0.1"        # bind address
@@ -42,6 +49,7 @@ port = 4040               # and on a port of its own (optional)
 Or via environment variables:
 
 ```bash
+export KOAN_SERVER__URL=https://music.example.com
 export KOAN_GRAPHQL__PORT=8080
 export KOAN_GRAPHQL__BIND=0.0.0.0
 export KOAN_GRAPHQL__PLAYGROUND=true
@@ -194,7 +202,7 @@ Plays wait in the database until ListenBrainz accepts them, so a restart or an o
 
 ### Last.fm
 
-Last.fm needs an API key and shared secret for the server, which its admin registers at <https://www.last.fm/api/account/create> and sets as `lastfm.api_key` and `lastfm.secret` in `config.local.toml` (see [Configuration](../reference/configuration.md#lastfm)), and `sharing.public_url`, so that Last.fm can send people back. The Scrobbling page then offers Connect Last.fm: it sends the person to Last.fm to approve kōan and back, and the server exchanges what Last.fm returns for a session key it keeps, never showing it. The return address carries a one-time code made when the person left, so a link someone else makes cannot connect their Last.fm to your account. Without the key and secret the page says Last.fm is not set up.
+Last.fm needs an API key and shared secret for the server, which its admin registers at <https://www.last.fm/api/account/create> and sets as `lastfm.api_key` and `lastfm.secret` in `config.local.toml` (see [Configuration](../reference/configuration.md#lastfm)), and `server.url`, so that Last.fm can send people back. The Scrobbling page then offers Connect Last.fm: it sends the person to Last.fm to approve kōan and back, and the server exchanges what Last.fm returns for a session key it keeps, never showing it. The return address carries a one-time code made when the person left, so a link someone else makes cannot connect their Last.fm to your account. Without the key and secret the page says Last.fm is not set up.
 
 Plays are sent as they are reported, fifty to a call, with now-playing notices, and wait in the database the same way. Last.fm ignores plays more than two weeks old, so connecting sends only the last two weeks of history, and a play still waiting past that is dropped rather than sent. A session key Last.fm stops accepting (the person revoked kōan there) is shown on the page, and plays are kept until the account connects again. Connecting Last.fm is done in the web UI; the apps show it in `koanScrobbling` as a service named `lastfm` and can disconnect it with `service=lastfm`.
 
@@ -204,14 +212,9 @@ The apps reach this through the `koanScrobbling` extension: `koanScrobbling` rep
 
 ## Sharing
 
-A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `https://<public_url>/share/<id>`, a page anyone can open without an account, with a player for each shared track and a Download button that sends the shared files, untouched, as one zip. Set where the server is reached from outside:
+A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `<server.url>/share/<id>`, a page anyone can open without an account, with a player for each shared track and a Download button that sends the shared files, untouched, as one zip.
 
-```toml
-[sharing]
-public_url = "https://koan.example.com"
-```
-
-A share is a slice of the library, shown the way the app shows it: one track shares its album cued to that track, an album the album, an artist their albums in release order, and several tracks stay a list. What a share covers is fixed when it is made; an artist share does not grow when the library does. Pages carry OpenGraph and Twitter card tags, with the cover as an absolute `og:image` on `public_url`, so a pasted link unfurls with its artwork.
+A share is a slice of the library, shown the way the app shows it: one track shares its album cued to that track, an album the album, an artist their albums in release order, and several tracks stay a list. What a share covers is fixed when it is made; an artist share does not grow when the library does. Pages carry OpenGraph and Twitter card tags, with the cover as an absolute `og:image` on `server.url`, so a pasted link unfurls with its artwork.
 
 The page and its audio answer for the share's own tracks and nothing else, addressed by position in the share rather than by library id. An expired, revoked or made-up id is the same 404. List shares with `shares`, set an expiry with `updateShare`, revoke with `deleteShare`. A kōan TUI or macOS app whose remote server is this kōan shares through it.
 
@@ -243,11 +246,11 @@ An app is linked while it runs. iOS suspends a backgrounded app that is not play
 
 The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first admin on the setup page the web UI shows until one exists, or with `koan auth setup` inside the container (see [The first account](#the-first-account)), and `koan subsonic setup` to enable the Subsonic API.
 
-Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for share links and for MCP clients to sign in at `/mcp`.
+Set `KOAN_SERVER__URL` to the public address; the container does not start without it.
 
 ### Kubernetes
 
-The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica, on one node. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SHARING__PUBLIC_URL` as in the Compose example below, and terminate TLS in front of it.
+The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica, on one node. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SERVER__URL` as in the Compose example below, and terminate TLS in front of it.
 
 #### With Pulumi
 
@@ -285,7 +288,7 @@ export const routes = koan.routes;
 
 | Option | |
 |--------|-|
-| `hostname` | Required. Becomes `allowed_hosts` and `sharing.public_url` (`https://<hostname>`), so TLS is expected in front |
+| `hostname` | Required. Becomes `allowed_hosts` and `server.url` (`https://<hostname>`), so TLS is expected in front |
 | `library` | Required: `existingClaim` or `hostPath`. Mounted read-only at `/music` |
 | `state` | `existingClaim` or `hostPath`, mounted at `/config`. Unset, it is an `emptyDir` and the index and accounts go with the pod |
 | `image` | `repository`, `tag` (defaults to the package's version), `pullPolicy` |
@@ -323,7 +326,7 @@ services:
       KOAN_LIBRARY__FOLDERS: '["/music"]'
       KOAN_GRAPHQL__ALLOWED_HOSTS: '["${KOAN_HOST:?set KOAN_HOST to the server hostname}"]'
       KOAN_GRAPHQL__COOKIE_SECURE: "true"
-      KOAN_SHARING__PUBLIC_URL: https://${KOAN_HOST}
+      KOAN_SERVER__URL: https://${KOAN_HOST}
       KOAN_SUBSONIC__ENABLED: "true"
     volumes:
       # The image runs as uid 1000; a bind mount here has to be writable by it.

@@ -330,15 +330,15 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">doc
 <span>  <span class="at">-v</span> /path/to/music:/music:ro <span class="dt">\</span></span>
 <span>  <span class="at">-e</span> <span class="st">&#39;KOAN_LIBRARY__FOLDERS=[&quot;/music&quot;]&#39;</span> <span class="dt">\</span></span>
 <span>  <span class="at">-e</span> <span class="st">&#39;KOAN_GRAPHQL__ALLOWED_HOSTS=[&quot;music.example.com&quot;]&#39;</span> <span class="dt">\</span></span>
-<span>  <span class="at">-e</span> KOAN_SHARING__PUBLIC_URL=https://music.example.com <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> KOAN_SERVER__URL=https://music.example.com <span class="dt">\</span></span>
 <span>  <span class="at">-e</span> KOAN_SUBSONIC__ENABLED=true <span class="dt">\</span></span>
 <span>  ghcr.io/radiosilence/koan:latest</span>
 <span></span>
 <span><span class="ex">docker</span> exec <span class="at">-it</span> koan koan auth setup   <span class="co"># the admin account</span></span></code></pre></div>
       <p>Stick it behind a reverse proxy with TLS at the hostname you listed, or use the <a
           href="/docs/headless-server/#docker-compose">Docker Compose file</a>, which runs Caddy in front and sorts the
-        certificate out itself. The server refuses any <code>Host</code> it wasn't given, and share links are built on
-        <code>public_url</code>. The first admin can only be made from a shell on the server, like above; after that,
+        certificate out itself. The server refuses any <code>Host</code> it wasn't given, and won't start without
+        <code>KOAN_SERVER__URL</code>, the address every link it hands out is built on. The first admin can only be made from a shell on the server, like above; after that,
         add people from the web UI's Users page or with <code>koan auth create-user</code>. Without a container,
         <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>. <a
           href="/docs/headless-server/">Running a server</a> has the details, and <a
@@ -659,7 +659,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
       <p>Claude opens a page on your server. Sign in with your kōan account, check it says <code>claude.ai</code>, and
         allow it. Other assistants that support OAuth connect the same way, and the server's web UI has an Assistants
         page with the address to copy. There's no gateway or identity provider involved: the server is its own sign-in,
-        it just needs <code>public_url</code> set to the address it's reached at.</p>
+        it just needs <code>server.url</code> set to the address it's reached at.</p>
 
       <h3>What it can and can't do</h3>
       <p>A connection acts as the account that approved it, on that account's devices and playlists. It can never move,

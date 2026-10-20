@@ -16,6 +16,10 @@ Unless an endpoint says otherwise:
 
 Credentials differ in what they may do. An account's **own password** and its **API keys** may manage the account's credentials and its EQ. An **app password** is a credential handed to one third-party app, and the server's **shared secret** (`[subsonic]`) belongs to no account; neither may make keys, approve pairings or reach EQ. See [Authentication](../../guide/authentication.md).
 
+## The server's address
+
+`ping` from a kōan server with `server.url` set carries `serverUrl`, the address it is reached at, beside OpenSubsonic's `type` and `serverVersion`. A client keeps it while signed in and identifies the server by it, as the `library` it announces on the local network, so devices that reach one server at different addresses agree that it is the same one. A server without it, or one that is not kōan, sends none, and the client falls back to the address it signed in with.
+
 ## Sign-in and accounts
 
 ### `koanSignIn`
@@ -72,7 +76,7 @@ Signing in a device with no keyboard: the device waits on a WebSocket at `/rest/
 
 ### `koanMcp`
 
-`/rest/koanMcp` answers `mcp` with `url` (the server's `/mcp` endpoint) and `connect` (the page explaining how to connect an assistant). Listed only when `sharing.public_url` is set, since MCP's OAuth sign-in needs the address the server is reached at. See [MCP integration](../../guide/mcp-integration.md).
+`/rest/koanMcp` answers `mcp` with `url` (the server's `/mcp` endpoint) and `connect` (the page explaining how to connect an assistant). Listed only when `server.url` is set, since MCP's OAuth sign-in needs the address the server is reached at. See [MCP integration](../../guide/mcp-integration.md).
 
 ## Devices
 

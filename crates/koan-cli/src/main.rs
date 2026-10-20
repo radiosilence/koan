@@ -635,7 +635,7 @@ enum AuthCommands {
     Invite {
         /// Username
         username: String,
-        /// Address clients reach this server at (default: sharing.public_url)
+        /// Address clients reach this server at (default: server.url)
         #[arg(long)]
         server: Option<String>,
         /// Also give the account a new password, put in the email, signing its

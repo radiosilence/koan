@@ -33,6 +33,7 @@ pub struct Config {
     pub graphql: GraphqlConfig,
     pub subsonic: SubsonicConfig,
     pub auth: AuthConfig,
+    pub server: ServerConfig,
     pub sharing: SharingConfig,
     pub mcp: McpConfig,
     pub push: PushConfig,
@@ -89,13 +90,25 @@ impl Default for AppearanceConfig {
     }
 }
 
-/// Share links this koan serves itself.
+/// This machine as a koan server.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// The one address clients and strangers reach this server at, e.g.
+    /// `https://koan.example.com`. A server is reached at many (a LAN address,
+    /// `localhost`, a domain) and cannot tell which of them another device can
+    /// reach, so every link it hands out is built on this one: shares, the
+    /// invites it makes, MCP's OAuth, push covers, the Last.fm callback. Clients are told it at
+    /// sign-in and know the server by it. `koan serve` needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// Deprecated: `server.url` replaces `public_url`, which is read only while
+/// that is unset.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SharingConfig {
-    /// Where this server is reached from outside, e.g. `https://koan.example.com`.
-    /// Share links are built on it; without it a server makes no links, since
-    /// it cannot know which of its addresses a stranger can reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
 }
@@ -266,6 +279,12 @@ pub struct RemoteConfig {
     /// kept with the credentials. See `remote::proof`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub device_key: String,
+    /// The address the signed-in server says it is reached at (its
+    /// `server.url`), which may differ from `url`, the one typed here. Devices
+    /// on the same server compare servers by it. Empty for a server that does
+    /// not say.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub server_url: String,
     /// Defaults to config_dir()/cache if empty.
     pub cache_dir: Option<PathBuf>,
     /// Parallel download workers for remote tracks (default: 5).
@@ -384,6 +403,7 @@ impl Default for RemoteConfig {
             password: String::new(),
             api_key: String::new(),
             device_key: String::new(),
+            server_url: String::new(),
             cache_dir: None,
             download_workers: 5,
             cache_limit: None,
@@ -1442,6 +1462,9 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.enabled"
         | "remote.url"
         | "remote.username"
+        | "remote.server_url"
+        // Where this machine is reached as a server.
+        | "server.url"
         | "remote.cache_dir"
         | "remote.cache_limit"
         | "remote.download_ahead"
@@ -1520,6 +1543,26 @@ fn stamp_of(base: &Path, local: &Path) -> (Option<SystemTime>, Option<SystemTime
 }
 
 impl Config {
+    /// `server.url`, trimmed and without a trailing slash; `sharing.public_url`
+    /// while it is unset, with a warning. `None` when neither is set.
+    pub fn server_url(&self) -> Option<String> {
+        let clean = |u: &Option<String>| {
+            u.as_deref()
+                .map(|u| u.trim().trim_end_matches('/').to_owned())
+                .filter(|u| !u.is_empty())
+        };
+        clean(&self.server.url).or_else(|| {
+            let old = clean(&self.sharing.public_url)?;
+            static WARNED: Once = Once::new();
+            WARNED.call_once(|| {
+                log::warn!(
+                    "sharing.public_url is deprecated: set server.url (KOAN_SERVER__URL) instead"
+                );
+            });
+            Some(old)
+        })
+    }
+
     /// Build the figment provider chain:
     /// defaults → config.toml → config.local.toml → KOAN_* env vars.
     ///
@@ -2356,6 +2399,18 @@ pub(crate) mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Off);
         assert!(!cfg.remote.enabled);
+    }
+
+    #[test]
+    fn server_url_falls_back_to_the_old_setting() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.server_url(), None);
+        cfg.sharing.public_url = Some("https://old.example/".into());
+        assert_eq!(cfg.server_url().as_deref(), Some("https://old.example"));
+        cfg.server.url = Some(" https://koan.example/ ".into());
+        assert_eq!(cfg.server_url().as_deref(), Some("https://koan.example"));
+        cfg.server.url = Some("".into());
+        assert_eq!(cfg.server_url().as_deref(), Some("https://old.example"));
     }
 
     #[test]
