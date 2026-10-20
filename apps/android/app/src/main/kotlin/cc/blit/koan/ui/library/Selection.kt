@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
-import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -34,6 +33,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
+import cc.blit.koan.ui.playlists.ConfirmDialog
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanEdge
@@ -175,18 +175,10 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
     // The pick is read when the removal is confirmed, so a page that redrew
     // meanwhile is acted on as it now is.
     if (remove != null && confirming) {
-        AlertDialog(
-            onDismissRequest = { confirming = false },
-            title = { KoanText("${remove.title} ${count(picks.toLong(), remove.noun)}?", role = KoanType.TitleSmall) },
-            confirmButton = {
-                KoanButton(remove.title, {
-                    confirming = false
-                    remove.act(selection.picked.toList())
-                    selection.end()
-                }, destructive = true)
-            },
-            dismissButton = { KoanButton("Cancel", { confirming = false }) },
-        )
+        ConfirmDialog("${remove.title} ${count(picks.toLong(), remove.noun)}?", "This can't be undone.", remove.title, { confirming = false }) {
+            remove.act(selection.picked.toList())
+            selection.end()
+        }
     }
     adding?.let { items ->
         AddToPlaylistSheet({ items.flatMap { it.trackIds(this) } }, onAdded = selection::end) { adding = null }
