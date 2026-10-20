@@ -631,6 +631,7 @@ mod tests {
                         genre: Some("Electronic".into()),
                         duration_ms: Some(240_000),
                         path: Some(format!("/tmp/koan-test/{}/{}/{}.flac", a, al, t)),
+                        server_path: None,
                         codec: Some("FLAC".into()),
                         sample_rate: Some(44100),
                         bit_depth: Some(16),
@@ -672,6 +673,7 @@ mod tests {
                 "/tmp/test/{}.flac",
                 title.to_lowercase().replace(' ', "_")
             )),
+            server_path: None,
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),
             bit_depth: Some(16),

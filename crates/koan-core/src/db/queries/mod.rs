@@ -227,6 +227,10 @@ pub struct TrackMeta {
     pub size_bytes: Option<i64>,
     pub mtime: Option<i64>,
     pub path: Option<String>,
+    /// Where the server keeps the file, relative to its library folder, as
+    /// Subsonic's `path` reports it. A remote entry's only; `path` is always
+    /// a file on this device.
+    pub server_path: Option<String>,
     pub source: String,
     pub remote_id: Option<String>,
     pub remote_url: Option<String>,
@@ -328,6 +332,7 @@ impl TrackMeta {
             ("Size", self.size_bytes.map(|b| format!("{b} bytes"))),
             ("Modified", modified),
             ("Path", text(self.path)),
+            ("Path on server", text(self.server_path)),
             ("Server id", text(self.remote_id)),
             ("Server album id", text(self.album_remote_id)),
             ("Server artist id", text(self.artist_remote_id)),
@@ -364,6 +369,7 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         size_bytes: Some(30_000_000),
         mtime: Some(1700000000),
         path: Some(format!("/music/{}/{}.flac", album, title)),
+        server_path: None,
         source: "local".into(),
         remote_id: None,
         album_remote_id: None,

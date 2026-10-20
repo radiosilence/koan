@@ -127,6 +127,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     for mut source in sources {
         if !admin {
             source.path = None;
+            source.server_path = None;
         }
         let heading = if source.source == "remote" {
             "From the remote server"

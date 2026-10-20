@@ -371,6 +371,7 @@ mod tests {
             size_bytes: Some(1234),
             mtime: None,
             path: Some("/music/a very long path/that wraps/song.flac".into()),
+            server_path: None,
             source: "local".into(),
             remote_id: None,
             remote_url: Some("https://server/rest/stream?p=secret".into()),

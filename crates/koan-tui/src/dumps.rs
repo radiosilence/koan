@@ -47,6 +47,7 @@ fn meta(artist: &str, album: &str, title: &str, n: Option<i32>) -> TrackMeta {
         size_bytes: Some(20_000_000),
         mtime: Some(1_700_000_000),
         path: Some(format!("/nowhere/{album}/{title}.flac")),
+        server_path: None,
         source: "local".into(),
         remote_id: None,
         remote_url: None,
