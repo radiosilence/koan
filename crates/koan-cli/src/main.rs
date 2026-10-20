@@ -120,11 +120,11 @@ struct Cli {
 
     /// Serve the GraphQL/Subsonic API alongside the TUI. Implied by --port,
     /// --bind, --subsonic and --playground
-    #[arg(long, conflicts_with = "no_api")]
+    #[arg(long)]
     api: bool,
 
     /// Do not serve the API alongside the TUI, even if `[graphql] enabled` is set
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["api", "port", "bind", "subsonic", "playground"])]
     no_api: bool,
 
     /// Enable GraphiQL web IDE at GET /graphql
@@ -974,6 +974,12 @@ fn dsp(command: Option<DspCommands>) {
     }
 }
 
+/// A terminal session serves the API only when asked: an unasked-for server
+/// with no accounts offers its /setup to any local process.
+fn api_asked(cli: &Cli) -> bool {
+    cli.api || cli.port.is_some() || cli.bind.is_some() || cli.subsonic.is_some() || cli.playground
+}
+
 /// Launch the player/TUI. Shared by `koan play` and bare `koan` (no subcommand).
 #[allow(clippy::too_many_arguments)]
 fn start_player(
@@ -995,17 +1001,13 @@ fn start_player(
     }
 
     if let Some(ref url) = server {
+        if api_asked(cli) {
+            eprintln!("--server controls another koan; it serves no API of its own");
+            std::process::exit(2);
+        }
         commands::cmd_play_remote(url);
     } else {
-        // A terminal session serves the API only when asked: an unasked-for
-        // server with no accounts offers its /setup to any local process.
-        let api_asked = cli.api
-            || cli.port.is_some()
-            || cli.bind.is_some()
-            || cli.subsonic.is_some()
-            || cli.playground;
-        let api_enabled = !cli.no_api && (api_asked || cfg.graphql.enabled);
-        let api_opts = if api_enabled {
+        let api_opts = if !cli.no_api && (api_asked(cli) || cfg.graphql.enabled) {
             Some(commands::ApiOptions {
                 port: cli.port.or(Some(cfg.graphql.port)),
                 bind: cli.bind.or(Some(cfg.graphql.bind)),
@@ -1054,6 +1056,26 @@ fn complete_albums() -> Vec<CompletionCandidate> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn api_only_when_asked() {
+        let asked = |args: &[&str]| api_asked(&Cli::try_parse_from(args).unwrap());
+        assert!(!asked(&["koan"]));
+        assert!(!asked(&["koan", "--no-api"]));
+        assert!(asked(&["koan", "--api"]));
+        assert!(asked(&["koan", "--port", "8080"]));
+        assert!(asked(&["koan", "--bind", "0.0.0.0"]));
+        assert!(asked(&["koan", "--subsonic", "4040"]));
+        assert!(asked(&["koan", "--playground"]));
+    }
+
+    #[test]
+    fn no_api_conflicts_with_asking_for_one() {
+        for flag in [&["--api"][..], &["--port", "8080"], &["--playground"]] {
+            let args = [&["koan", "--no-api"][..], flag].concat();
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
 
     #[test]
     fn cli_no_args_parses() {
