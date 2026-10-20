@@ -160,10 +160,7 @@ fn adopt_url(auth: &SubsonicAuth, url: Option<&str>) {
     }
     if let Err(e) = Config::persist(|c| c.remote.server_url = url.to_owned()) {
         log::warn!("profile: could not keep the server's address: {e}");
-        return;
     }
-    // The fingerprint this device announces has moved with it.
-    crate::remote::nearby::readvertise();
 }
 
 /// Probe again on next ask: the server may have changed under a dropped link.

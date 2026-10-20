@@ -21,12 +21,16 @@ use crate::auth::routes::{AuthRouteState, RateLimiter, auth_router};
 /// A server hands out links to itself — invites, shares, sign-ins — and is
 /// known to its clients by one address, which it cannot work out for itself.
 fn require_server_url() {
-    if Config::load().unwrap_or_default().server_url().is_none() {
-        let why = "server.url is not set. Set it, or KOAN_SERVER__URL, to the address clients reach this server at, e.g. https://koan.example.com";
-        log::error!("{why}");
-        eprintln!("koan: {why}");
-        std::process::exit(1);
-    }
+    let why = match Config::load().unwrap_or_default().server_url() {
+        None => "server.url is not set. Set it, or KOAN_SERVER__URL, to the address clients reach this server at, e.g. https://koan.example.com".to_owned(),
+        Some(url) if !url.starts_with("https://") && !url.starts_with("http://") => {
+            format!("server.url is {url:?}, which is not an http:// or https:// address")
+        }
+        Some(_) => return,
+    };
+    log::error!("{why}");
+    eprintln!("koan: {why}");
+    std::process::exit(1);
 }
 
 pub fn cmd_serve(

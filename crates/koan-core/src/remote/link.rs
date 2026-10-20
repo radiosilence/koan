@@ -876,7 +876,6 @@ fn run(local: Local) {
         let signed_in = SIGN_IN.load(Ordering::SeqCst);
         let cfg = Config::load().unwrap_or_default();
         let account = crate::remote::proof::account_of(&cfg);
-        let library = library_fingerprint(&cfg);
         let Some(auth) = subsonic_auth(&cfg) else {
             rest(RETRY_MAX);
             continue;
@@ -894,6 +893,8 @@ fn run(local: Local) {
                 continue;
             }
         }
+        // After the probe, which may have just adopted the server's own address.
+        let library = library_fingerprint(&Config::load().unwrap_or_default());
 
         match connect(&auth, &local.identity) {
             Ok((mut socket, fd)) => {

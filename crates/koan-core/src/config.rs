@@ -97,8 +97,8 @@ pub struct ServerConfig {
     /// The one address clients and strangers reach this server at, e.g.
     /// `https://koan.example.com`. A server is reached at many (a LAN address,
     /// `localhost`, a domain) and cannot tell which of them another device can
-    /// reach, so every link it hands out is built on this one: shares, invites,
-    /// pairing, MCP's OAuth, the Last.fm callback. Clients are told it at
+    /// reach, so every link it hands out is built on this one: shares, the
+    /// invites it makes, MCP's OAuth, push covers, the Last.fm callback. Clients are told it at
     /// sign-in and know the server by it. `koan serve` needs it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -2399,6 +2399,18 @@ pub(crate) mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Off);
         assert!(!cfg.remote.enabled);
+    }
+
+    #[test]
+    fn server_url_falls_back_to_the_old_setting() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.server_url(), None);
+        cfg.sharing.public_url = Some("https://old.example/".into());
+        assert_eq!(cfg.server_url().as_deref(), Some("https://old.example"));
+        cfg.server.url = Some(" https://koan.example/ ".into());
+        assert_eq!(cfg.server_url().as_deref(), Some("https://koan.example"));
+        cfg.server.url = Some("".into());
+        assert_eq!(cfg.server_url().as_deref(), Some("https://old.example"));
     }
 
     #[test]
