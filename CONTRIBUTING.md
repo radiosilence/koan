@@ -128,7 +128,7 @@ The macOS job runs on a PR only for what the Linux jobs cannot check: the
 apps, `koan-ffi`, the bindings generator, toolchains, the workflows, or Rust
 changed within a few lines of code for an Apple target. Main runs it for any
 Rust change, so a shared change that breaks only on macOS is caught there. A
-release PR (branch `release-*`, or one that changes the version) runs
+release PR (branch `release-v*`, or one that changes the version) runs
 everything.
 
 CD runs in the same workflow after `Checks` passes on main, and ships what CI
