@@ -116,17 +116,19 @@ fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.
 /**
  * A cover filling `modifier`, on the `rule` ground until it arrives, and the
  * kōan ensō on that ground where there is none: nothing playing, or a record
- * without artwork. `alpha` fades the art and leaves the ground.
+ * without artwork. An artist's photograph that fails stays bare ground, as the
+ * ensō stands for a record. `alpha` fades the art and the ensō, not the ground.
  */
 @Composable
 fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null, alpha: Float = 1f) {
     var missing by remember(art) { mutableStateOf(art == null) }
     Box(modifier.background(KoanTheme.color(KoanTone.Rule))) {
-        if (missing) {
+        if (missing && art?.kind != Art.Kind.Artist) {
             Image(
                 painterResource(R.drawable.koan_enso),
                 null,
                 Modifier.matchParentSize(),
+                alpha = alpha,
                 colorFilter = ColorFilter.tint(KoanTheme.color(KoanTone.Muted).copy(alpha = 0.5f)),
             )
         }
