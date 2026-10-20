@@ -1,0 +1,1 @@
+- **Covers for records without art.** The server answers `getCoverArt` for a song, album or artist without artwork with the kōan ensō on a dark square, at the nearest served size, as Navidrome answers with its own placeholder, so every client has an image to draw; kōan's own apps recognise it and keep drawing their own. An id the library does not hold is still an error.

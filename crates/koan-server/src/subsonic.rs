@@ -3272,19 +3272,37 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
     let size = crate::covers::snap(Some(params.size.unwrap_or(u32::MAX)));
     let groups = cover_tracks(&db, kind, id)?;
     drop(db);
-    let bytes = groups
+    // A record without art is answered with the ensō, as Navidrome answers
+    // its own placeholder, so a client always has an image to draw. It is
+    // marked so koan's own clients can draw theirs instead, and kept only
+    // briefly so a cover added later is picked up.
+    match groups
         .iter()
         .find_map(|tracks| state.covers.cover(tracks, size))
-        .ok_or_else(|| SubsonicError::not_found("Cover art"))?;
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "image/jpeg"),
-            (header::CACHE_CONTROL, "max-age=86400"),
-        ],
-        bytes,
-    )
-        .into_response())
+    {
+        Some(bytes) => Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (header::CACHE_CONTROL, "max-age=86400"),
+            ],
+            bytes,
+        )
+            .into_response()),
+        None => Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "max-age=300"),
+                (
+                    header::HeaderName::from_static(koan_core::remote::client::PLACEHOLDER_HEADER),
+                    "1",
+                ),
+            ],
+            crate::covers::placeholder(size),
+        )
+            .into_response()),
+    }
 }
 
 /// The tracks whose art answers a `getCoverArt` id, as groups tried in turn:
@@ -3319,7 +3337,14 @@ fn cover_tracks(
                 .filter_map(|album| tracks.remove(album))
                 .filter(|tracks| !tracks.is_empty())
                 .collect();
-            if groups.is_empty() {
+            // An artist credited only on others' records has no albums of
+            // their own, and is answered with the placeholder like any
+            // record without art.
+            if groups.is_empty()
+                && queries::get_artist(&db.conn, id)
+                    .map_err(internal)?
+                    .is_none()
+            {
                 return Err(SubsonicError::not_found("Artist"));
             }
             groups
@@ -10583,6 +10608,48 @@ mod tests {
                 .unwrap();
             assert_eq!(&body[..], &jpeg[..], "a small JPEG is served as it is");
         }
+    }
+
+    /// A record that exists but has no art is served the ensō, at the size
+    /// asked for, rather than an error.
+    #[tokio::test]
+    async fn test_cover_art_without_art_is_the_enso() {
+        let (state, dir) = test_state();
+        let track = dir.path().join("01.flac");
+        std::fs::write(&track, b"no tags here").unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
+        queries::upsert_track(
+            &db.conn,
+            &track_meta(track.to_str().unwrap(), "Song", "Album", 1),
+        )
+        .unwrap();
+        let track_id = queries::track_id_by_path(&db.conn, track.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let resp = build_test_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/rest/getCoverArt?{}&id=mf-{track_id}&size=200",
+                        auth_query("")
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "max-age=300");
+        assert_eq!(
+            resp.headers()[koan_core::remote::client::PLACEHOLDER_HEADER],
+            "1"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let img = image::load_from_memory(&body).unwrap();
+        assert_eq!((img.width(), img.height()), (200, 200));
     }
 
     #[tokio::test]

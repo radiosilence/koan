@@ -183,6 +183,80 @@ fn encode(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The ensō on a `surface` square, as PNG: what a record without art is
+/// served, so every client draws an image. The apps' placeholder geometry —
+/// the mark fitted inside a 26% inset, stroked at 4.5% of the side — in the
+/// dark appearance's `muted` on `surface`, which reads as a dark sleeve in a
+/// light client too. Drawn once per size and kept.
+pub(crate) fn placeholder(size: u32) -> Bytes {
+    static DRAWN: [std::sync::OnceLock<Bytes>; SIZES.len()] =
+        [const { std::sync::OnceLock::new() }; SIZES.len()];
+    let size = snap(Some(size));
+    let slot = SIZES
+        .iter()
+        .position(|s| *s == size)
+        .expect("snap answers one of SIZES");
+    DRAWN[slot].get_or_init(|| draw_placeholder(size)).clone()
+}
+
+fn draw_placeholder(size: u32) -> Bytes {
+    // The dark appearance's `--surface` (#2a2a2a) and `--muted` (#919191),
+    // from site/src/theme.css.
+    const SURFACE: [f32; 3] = [42.0, 42.0, 42.0];
+    const MUTED: [f32; 3] = [145.0, 145.0, 145.0];
+    // `just icons` writes each glyph as absolute `M`/`L` polylines, which is
+    // all this reads; the test below fails if that changes.
+    // The glyph's 24-unit box, with the ring spanning 2.5–21.5, scaled so the
+    // ring is as wide as the apps' (60% of the inset box).
+    let side = size as f32;
+    let scale = side * 0.48 * 0.6 / 19.0;
+    let points: Vec<(f32, f32)> = crate::icon::ENSO
+        .strokes
+        .split(['M', 'L'])
+        .filter_map(|p| {
+            let (x, y) = p.split_once(' ')?;
+            let (x, y): (f32, f32) = (x.trim().parse().ok()?, y.trim().parse().ok()?);
+            Some((
+                side / 2.0 + (x - 12.0) * scale,
+                side / 2.0 + (y - 12.0) * scale,
+            ))
+        })
+        .collect();
+    let radius = side * 0.045 / 2.0;
+    let mut img = image::RgbImage::from_pixel(size, size, image::Rgb(SURFACE.map(|c| c as u8)));
+    // Only the pixels the stroke can reach are measured.
+    let (mut lo, mut hi) = (side, 0.0f32);
+    for &(x, y) in &points {
+        lo = lo.min(x.min(y) - radius - 1.0);
+        hi = hi.max(x.max(y) + radius + 1.0);
+    }
+    let span = (lo.max(0.0) as u32)..(hi.min(side) as u32);
+    for y in span.clone() {
+        for x in span.clone() {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let distance = points
+                .windows(2)
+                .map(|w| {
+                    let ((ax, ay), (bx, by)) = (w[0], w[1]);
+                    let (dx, dy) = (bx - ax, by - ay);
+                    let t =
+                        (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+                    (px - ax - t * dx).hypot(py - ay - t * dy)
+                })
+                .fold(f32::INFINITY, f32::min);
+            let cover = (radius + 0.5 - distance).clamp(0.0, 1.0);
+            if cover > 0.0 {
+                let mix = |i: usize| (SURFACE[i] + (MUTED[i] - SURFACE[i]) * cover).round() as u8;
+                img.put_pixel(x, y, image::Rgb([mix(0), mix(1), mix(2)]));
+            }
+        }
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png)
+        .expect("PNG encodes in memory");
+    Bytes::from(out.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +268,40 @@ mod tests {
         assert_eq!(snap(Some(401)), 800);
         assert_eq!(snap(Some(99_999)), 1200);
         assert_eq!(snap(None), LARGE);
+    }
+
+    #[test]
+    fn the_enso_is_one_absolute_polyline() {
+        let strokes = crate::icon::ENSO.strokes;
+        assert!(strokes.starts_with('M'));
+        assert_eq!(strokes.matches('M').count(), 1);
+        assert!(
+            strokes
+                .chars()
+                .all(|c| matches!(c, 'M' | 'L' | ' ' | '.' | '-' | '0'..='9'))
+        );
+    }
+
+    #[test]
+    fn the_placeholder_is_the_size_asked_with_the_mark_inside_the_inset() {
+        let png = placeholder(300);
+        let img = image::load_from_memory(&png).unwrap().to_rgb8();
+        assert_eq!(img.dimensions(), (400, 400));
+        let surface = image::Rgb([42, 42, 42]);
+        assert_eq!(*img.get_pixel(0, 0), surface);
+        assert_eq!(*img.get_pixel(200, 200), surface, "the ring is open");
+        let inked: Vec<_> = img
+            .enumerate_pixels()
+            .filter(|(_, _, p)| **p != surface)
+            .collect();
+        assert!(!inked.is_empty());
+        let inset = (400.0 * 0.26) as u32;
+        assert!(
+            inked
+                .iter()
+                .all(|(x, y, _)| (inset..400 - inset).contains(x)
+                    && (inset..400 - inset).contains(y))
+        );
     }
 
     #[test]
