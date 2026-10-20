@@ -11,7 +11,7 @@ const ResourceQuantities = z.strictObject({
 
 export const KoanConfSchema = z.strictObject({
   /**
-   * Fed to KOAN_GRAPHQL__ALLOWED_HOSTS and KOAN_SHARING__PUBLIC_URL: koan
+   * Fed to KOAN_GRAPHQL__ALLOWED_HOSTS and KOAN_SERVER__URL: koan
    * refuses a Host it was not told about, and share links are built on it.
    */
   hostname: z.string().min(1),

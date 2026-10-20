@@ -1062,7 +1062,7 @@ pub(super) struct GqlShare {
 #[graphql(name = "ShareLink", complex)]
 pub(super) struct GqlShareLink {
     pub id: String,
-    /// `None` when `sharing.public_url` is not set.
+    /// `None` when `server.url` is not set.
     pub url: Option<String>,
     pub description: Option<String>,
     /// Unix seconds.

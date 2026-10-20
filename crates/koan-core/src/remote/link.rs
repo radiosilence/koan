@@ -702,10 +702,16 @@ pub struct LinkHello {
 }
 
 /// The server this client plays from, as something two devices can compare
-/// without either saying its address to the network.
+/// without either saying its address to the network. Taken from the address
+/// the server gives for itself, so devices that reach it at different
+/// addresses agree; from the one typed here for a server that gives none.
 pub fn library_fingerprint(cfg: &Config) -> Option<String> {
     let auth = subsonic_auth(cfg)?;
-    let url = auth.base_url.trim_end_matches('/').to_ascii_lowercase();
+    let url = match cfg.remote.server_url.as_str() {
+        "" => auth.base_url.as_str(),
+        published => published,
+    };
+    let url = url.trim_end_matches('/').to_ascii_lowercase();
     Some(format!("{:x}", md5::compute(url.as_bytes())))
 }
 

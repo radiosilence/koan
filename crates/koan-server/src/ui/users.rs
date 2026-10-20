@@ -182,10 +182,6 @@ fn list(s: &UiState) -> Vec<UserRow> {
         .unwrap_or_default()
 }
 
-fn origin_of(s: &UiState, headers: &HeaderMap) -> Option<String> {
-    crate::origin::origin(headers, s.public_url.as_deref())
-}
-
 pub(super) async fn page(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
@@ -252,9 +248,9 @@ pub(super) async fn create(
     };
     let username = field("newuser");
     let role: Role = field("newrole").parse().unwrap_or(Role::Readonly);
-    let Some(server) = origin_of(&s, &headers) else {
+    let Some(server) = s.server_url.clone() else {
         return events(vec![failure(
-            "The server's address is unknown: set sharing.public_url.",
+            "The server's address is unknown: set server.url.",
         )]);
     };
     let me = user.user_id;
@@ -297,9 +293,9 @@ pub(super) async fn invite(
     if !usable(&s, &user) {
         return forbidden();
     }
-    let Some(server) = origin_of(&s, &headers) else {
+    let Some(server) = s.server_url.clone() else {
         return events(vec![failure(
-            "The server's address is unknown: set sharing.public_url.",
+            "The server's address is unknown: set server.url.",
         )]);
     };
     let made = blocking(move || {

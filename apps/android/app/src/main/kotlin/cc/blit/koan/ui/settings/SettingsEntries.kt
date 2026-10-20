@@ -222,7 +222,7 @@ internal const val ASSISTANTS = "koanMcp"
 /**
  * Whether the Integrations page has anything on it: scrobbling, or
  * assistants, which a koan server lists only once it knows the public address
- * it is reached at (`sharing.public_url`), since MCP's sign-in goes through it.
+ * it is reached at (`server.url`), since MCP's sign-in goes through it.
  */
 internal fun integrationsShown(c: ConnectionInfo?) = c?.scrobbling == true || c.offers(ASSISTANTS)
 

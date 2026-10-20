@@ -61,14 +61,14 @@ fn setup(auth_enabled: bool) -> Fixture {
     setup_at(auth_enabled, None)
 }
 
-/// `setup`, with `sharing.public_url` set when OAuth needs one.
-fn setup_at(auth_enabled: bool, public_url: Option<&str>) -> Fixture {
-    setup_full(auth_enabled, public_url, None)
+/// `setup`, with `server.url` set when OAuth needs one.
+fn setup_at(auth_enabled: bool, server_url: Option<&str>) -> Fixture {
+    setup_full(auth_enabled, server_url, None)
 }
 
 fn setup_full(
     auth_enabled: bool,
-    public_url: Option<&str>,
+    server_url: Option<&str>,
     proxy_auth: Option<super::ProxyAuth>,
 ) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
@@ -101,7 +101,7 @@ fn setup_full(
             auth_enabled,
             true,
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
-            public_url.map(str::to_owned),
+            server_url.map(str::to_owned),
             Vec::new(),
             proxy_auth,
             jobs.clone(),
@@ -1272,7 +1272,7 @@ async fn an_app_password_does_not_sign_in_to_the_web_ui() {
 async fn admins_create_invite_and_remove_accounts() {
     static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     koan_core::config::set_config_dir(CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path());
-    let f = setup(true);
+    let f = setup_at(true, Some(ORIGIN));
     let db = Database::open(f.state.pool.path()).unwrap();
     let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
     let token = |id: i64, name: &str, role: Role| {
@@ -1332,7 +1332,7 @@ async fn admins_create_invite_and_remove_accounts() {
         .unwrap_or_else(|| panic!("no link in {}", r.body))
         .replace("&amp;", "&");
     let invite = koan_core::invite::Invite::parse(&link).unwrap();
-    assert_eq!(invite.server, format!("http://{HOST}"));
+    assert_eq!(invite.server, ORIGIN);
     assert_eq!(invite.username, "sarita");
     assert_eq!(invite.password, None);
     let password = r
@@ -1880,7 +1880,7 @@ mod oauth {
     }
 
     #[tokio::test]
-    async fn without_a_public_url_there_is_no_oauth() {
+    async fn without_a_server_url_there_is_no_oauth() {
         let f = setup(true);
         for uri in [
             "/.well-known/oauth-authorization-server",

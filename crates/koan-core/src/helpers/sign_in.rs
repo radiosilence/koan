@@ -175,6 +175,10 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
 fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
+        // Another server's own address; this one's comes with its profile.
+        if cfg.remote.url.trim_end_matches('/') != url {
+            cfg.remote.server_url = String::new();
+        }
         cfg.remote.url = url.to_string();
         cfg.remote.username = username.to_string();
         (cfg.remote.password, cfg.remote.api_key) = match &credential {

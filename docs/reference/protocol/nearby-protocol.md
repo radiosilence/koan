@@ -31,7 +31,7 @@ The listening end reports and the dialling end commands.
     "library":"5d41402abc4b2a76b9719d911017c592","acks":true,"nonce":"reports.…"}
    ```
 
-   `library` is the hex MD5 of the signed-in server's address, lowercased and without a trailing `/`, or `null` when signed out. Two devices with the same `library` share track ids, so music can move between them. `acks` says the listener answers commands sent with an id ([acks](link-protocol.md#acks)). `nonce` is base64 of 32 random bytes; prefixed with `reports.`, it also says the listener signs its reports.
+   `library` is the hex MD5 of the signed-in server's address, lowercased and without a trailing `/`: the address the server gives as `serverUrl` on `ping` (see [Server extensions](server-extensions.md#the-servers-address)), else the one the device signed in with, or `null` when signed out. Two devices with the same `library` share track ids, so music can move between them. `acks` says the listener answers commands sent with an id ([acks](link-protocol.md#acks)). `nonce` is base64 of 32 random bytes; prefixed with `reports.`, it also says the listener signs its reports.
 
 2. A dialler that is signed in with an API key, and so holds a device keypair, proves itself with `nearbyAuth`: `{"type":"nearbyAuth","id":…,"nonce":…,"sig":…}`. It sends no commands until answered.
 

@@ -9,7 +9,6 @@ pub mod covers;
 pub mod graphql;
 pub mod icon;
 pub mod mcp;
-pub mod origin;
 pub mod pair;
 pub mod push;
 pub mod share;

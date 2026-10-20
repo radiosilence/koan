@@ -750,14 +750,13 @@ fn prompt_password(message: &str) -> String {
 
 /// `koan auth invite` — the invite link and email for an account.
 pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
-    let configured = Config::load().ok().and_then(|c| c.sharing.public_url);
     let Some(server) = server
         .map(str::to_owned)
-        .or(configured)
         .filter(|s| !s.trim().is_empty())
+        .or_else(|| Config::load().ok()?.server_url())
     else {
         eprintln!(
-            "{} Pass --server, or set sharing.public_url, to the address clients reach this server at.",
+            "{} Pass --server, or set server.url, to the address clients reach this server at.",
             "✗".red().bold()
         );
         std::process::exit(1);
