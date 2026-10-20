@@ -712,6 +712,33 @@ async fn artists_and_albums_are_linked_wherever_they_are_named() {
 }
 
 #[tokio::test]
+async fn an_artist_page_lists_the_records_they_feature_on() {
+    let f = setup(true);
+    let artist = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let file = f.dir.path().join("guest.flac");
+        std::fs::write(&file, b"0123456789").unwrap();
+        let mut m = meta(&file, "Guest Spot", 1);
+        m.album = "Other People".into();
+        m.album_artist = Some("Bob Ostertag".into());
+        queries::upsert_track(&db.conn, &m).unwrap();
+        queries::tracks_by_ids(&db.conn, &[f.track_id]).unwrap()[0]
+            .artist_id
+            .unwrap()
+    };
+    let req = authed(&f.state, &format!("/artist/{artist}"))
+        .body(Body::empty())
+        .unwrap();
+    let html = send(&f.app, req).await.body;
+    let (own, features) = html
+        .split_once(">Features on</h2>")
+        .unwrap_or_else(|| panic!("a Features on section: {html}"));
+    assert!(own.contains("Hymn &#60;to&#62; Moisture"), "{html}");
+    assert!(!own.contains("Other People"), "{html}");
+    assert!(features.contains("Other People"), "{html}");
+}
+
+#[tokio::test]
 async fn each_credited_artist_is_its_own_link() {
     let f = setup(true);
     let (track, album) = {
@@ -2982,14 +3009,24 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
             .unwrap()
     };
 
+    // The sidebar links the Library page for an admin, who finds the scan
+    // there; for anyone else it is the phone's tab alone.
+    const WIDE_LINK: &str = r#"href="/library" data-nav="library">"#;
     let r = send(&f.app, library(&access_token(&f.state))).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains("/library/scan"), "{}", r.body);
+    assert!(!r.body.contains(WIDE_LINK), "{}", r.body);
     let r = send(&f.app, scan(&access_token(&f.state), "{}")).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     let r = send(&f.app, library(&admin)).await;
     assert!(r.body.contains("@post('/library/scan')"), "{}", r.body);
+    assert!(r.body.contains(WIDE_LINK), "{}", r.body);
+    assert!(
+        !r.body.contains(r#"aria-label="Scan progress""#),
+        "no bar while idle: {}",
+        r.body
+    );
     // The stream follows the scan to its end, so the whole body is its story.
     let r = send(&f.app, scan(&admin, r#"{"reread":false}"#)).await;
     assert_eq!(r.status, StatusCode::OK);
@@ -3020,6 +3057,12 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     // A scan the folder watcher runs shows with what started it.
     let record = crate::graphql::jobs::record_watch(&f.jobs);
     record(&koan_core::helpers::WatchScan::Started("start-up"));
+    let r = send(&f.app, library(&admin)).await;
+    assert!(
+        r.body.contains(r#"aria-label="Scan progress"></progress>"#),
+        "a bar with no value until the files are counted: {}",
+        r.body
+    );
     record(&koan_core::helpers::WatchScan::Read {
         done: 50,
         total: 1200,
@@ -3031,4 +3074,5 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         "{}",
         r.body
     );
+    assert!(r.body.contains(r#"value="50" max="1200""#), "{}", r.body);
 }

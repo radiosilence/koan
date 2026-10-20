@@ -25,6 +25,10 @@
 <a class="{{ nav }} mt-3 max-wide:hidden" href="/recent" data-nav="recent">Recently played</a>
 <a class="{{ nav }} max-wide:hidden" href="/favourites" data-nav="favourites">Favourites</a>
 <a class="{{ nav }} max-wide:hidden" href="/history" data-nav="history">History</a>
+{%- if admin %}
+{#- The Library page holds the rescan and the progress of every scan, which a wide screen otherwise has no link to. #}
+<a class="{{ nav }} max-wide:hidden" href="/library" data-nav="library">Library</a>
+{%- endif %}
 <a class="{{ nav }} wide:hidden" href="/account" data-nav="account">Account</a>
 {#- On a wide screen the sidebar ends with who is signed in and the version; the account page has everything else. A phone has an Account tab instead. #}
 <div class="mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden">
