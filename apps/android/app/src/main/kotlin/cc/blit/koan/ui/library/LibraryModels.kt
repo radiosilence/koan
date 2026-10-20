@@ -223,7 +223,16 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
         if (held.tracks.size < held.total && wanted.value <= held.tracks.size) wanted.update { it + PAGE }
     }
 
+    val choices: StateFlow<BrowseChoices?> = held(
+        mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() },
+        null,
+    )
+
     fun sort(sort: TrackBrowseSort) = query.update { it.copy(sort = sort) }
+
+    fun filter(filter: BrowseFilter) = query.update { it.copy(filter = filter) }
+
+    fun search(text: String) = query.update { it.copy(search = text) }
 
     private companion object {
         const val PAGE = 500
@@ -232,6 +241,9 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
 
 /** A shelf's page: the first few artists, records and tracks on it, and how many there are of each. */
 class ShelfModel(mirror: EngineMirror, shelf: Shelf) : ViewModel() {
+    /** Things picked to play or queue together; ends with the page. */
+    val selection = playableSelection()
+
     val summary: StateFlow<ShelfSummary?> = held(
         mirror.versions(flowOf(shelf == Shelf.Recent))
             .mapLatest { runCatching { mirror.engine().shelfSummary(shelf.kind) }.getOrNull() },

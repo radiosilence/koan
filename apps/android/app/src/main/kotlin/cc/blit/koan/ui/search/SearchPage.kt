@@ -47,7 +47,9 @@ import cc.blit.koan.ffi.ShelfSummary
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.AlbumsRoute
+import cc.blit.koan.ui.library.ArtistPill
 import cc.blit.koan.ui.library.ArtistsRoute
+import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.SectionHead
 import cc.blit.koan.ui.library.Selection
@@ -114,6 +116,9 @@ fun SearchPage() {
                 }
             }
         }
+        // Under the field rather than over it, so the field stays put as the
+        // first letter is typed.
+        if (query.isNotBlank()) PageBar("${KoanTheme.label("Results for")} “${query.trim()}”", back = false, appText = false)
         Box(Modifier.weight(1f)) {
             val shelf = shown?.shelf
             when {
