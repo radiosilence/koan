@@ -1,0 +1,1 @@
+- **The image's `main` tag no longer moves on a registry or API error.** Only a missing tag, label or commit lets it retag without the ancestry check.
