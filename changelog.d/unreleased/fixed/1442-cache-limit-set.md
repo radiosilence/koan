@@ -1,0 +1,1 @@
+- **The iOS cache limit can be set.** Its number pad has no return key, so a Set button above the keyboard commits the limit and puts the keyboard away.
