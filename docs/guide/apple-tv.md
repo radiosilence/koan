@@ -6,7 +6,10 @@ menu. The tabs show at a tab's root and fade out on a page opened from it, as
 the system's tab bar does, keeping their room so the page does not move; Menu
 goes back to them. It is mostly something your phone or Mac plays to, through
 [Control](devices.md), and it plays gaplessly from your server through HDMI.
-It needs tvOS 26.
+It needs tvOS 26, and is in public beta on
+[TestFlight](https://testflight.apple.com/join/96w2gjFz), with the iOS app,
+until it is on the App Store; `just tv-device` builds it onto an Apple TV
+paired with Xcode.
 
 ![Now Playing on the TV: the sleeve, the track, its controls, and what comes next](../../site/public/screens/tv-now-playing.webp)
 

@@ -14,7 +14,7 @@
    [playback]
    output_device = "Your DAC Name"
    ```
-   Or press `Shift+D` in the TUI to switch live.
+   Or press `D` in the TUI to switch live.
 
 3. If the device name changed (e.g. after a macOS update), kōan falls back to the system default. Update the config or re-select in the TUI.
 
@@ -33,8 +33,14 @@ WARN: Failed to bind to 127.0.0.1:4000
 ```
 
 Another kōan instance (or another process) is using port 4000. Either:
-- Kill the other process: `lsof -i :4000`
+- Find the other process: `lsof -i :4000`
 - Use a different port: `koan --port 8080` or `KOAN_GRAPHQL__PORT=8080`
+
+The TUI serves the API only with `--api`, `--port`, `--bind`, `--subsonic`, `--playground` or `[graphql] enabled = true`; `koan --no-api` starts it without, whatever the config says.
+
+### A server will not start: server.url is not set
+
+`koan --headless` needs `server.url` (or `KOAN_SERVER__URL`), the `http://` or `https://` address clients reach it at. Share links, invites, MCP's sign-in and push covers are built on it. A server that had `sharing.public_url` keeps working with a warning until `server.url` is set; see [Configuration](../reference/configuration.md#server).
 
 ## Library
 
@@ -47,6 +53,7 @@ Check that `[library] folders` names the top-level directory (scans are recursiv
 kōan merges a local file with the server's copy when their artist, album, disc, track number and title agree, or when both carry the same MusicBrainz recording and release ids. If you see duplicates:
 - Tags might differ between local files and the remote server (e.g. different artist spelling)
 - Fix the tags, then `koan scan --force` — a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge
+- In the apps, Info… on a track's menu shows what each source says; signed in to a kōan server as an admin, it also shows the file's path on the server, which says where a duplicate comes from
 
 ### Search returns nothing
 
@@ -78,11 +85,11 @@ A sync walks the whole library, which takes minutes for 50,000 tracks or more. T
 
 ### Album art not showing
 
-Art is drawn with Unicode half-block characters in truecolor or 256 colours. Garbled art means the terminal or its font lacks one of those.
+Where the terminal supports the kitty or iTerm2 graphics protocol, covers are drawn as images; elsewhere they are Unicode half blocks in truecolor or 256 colours. `I` switches between the two, and `playback.art_graphics = false` keeps half blocks. Garbled half blocks mean the terminal or its font lacks one of those.
 
 ### Visualizer not showing
 
-The visualizer draws in the transport area beside the album art, so it needs a window wide enough for both. `V` toggles it, and it stays off while `[visualizer] enabled = false`.
+The visualizer draws in the transport area beside the album art, so it needs a window wide enough for both. `V` opens the picker, whose first choice is off, and `F` shows the visualizer full screen.
 
 ### Terminal not restored after crash
 
