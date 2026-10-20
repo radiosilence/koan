@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
@@ -47,7 +48,7 @@ fun ArtworkViewer(art: Art, title: String, subtitle: String?, onDismiss: () -> U
                 AsyncImage(
                     art,
                     null,
-                    Modifier.weight(1f, fill = false).padding(bottom = KoanSpace.l),
+                    Modifier.weight(1f).fillMaxWidth().padding(bottom = KoanSpace.l),
                     contentScale = ContentScale.Fit,
                 )
                 KoanText(title, role = KoanType.TitleSmall, tone = KoanTone.Strong, textAlign = TextAlign.Center, maxLines = 2)

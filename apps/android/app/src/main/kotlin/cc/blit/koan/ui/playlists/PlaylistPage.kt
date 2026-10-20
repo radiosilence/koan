@@ -327,7 +327,6 @@ private fun PlaylistHeader(
 ) {
     val app = koanApp()
     val any = entries.isNotEmpty()
-    val ids = entries.map { it.track.id }
     PageHeader(
         playlist.name,
         Modifier.padding(horizontal = LocalKoanTokens.current.gutter, vertical = KoanSpace.s),
@@ -340,8 +339,8 @@ private fun PlaylistHeader(
         below = {
             // The lesser verbs on the whole playlist, compact beside its one Play.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
-                KoanButton("Play Next", { app.player.playNext(ids) }, kind = KoanButtonKind.Compact, icon = KoanIcons.playNext, enabled = any)
-                KoanButton("Add to Queue", { app.player.enqueue(ids) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue, enabled = any)
+                KoanButton("Play Next", { app.player.playNext(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.playNext, enabled = any)
+                KoanButton("Add to Queue", { app.player.enqueue(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue, enabled = any)
                 Spacer(Modifier.weight(1f))
                 if (showLayout && any) KoanIconToggle(KoanIcons.album, "Group by album", grouped) { edits.setGrouped(playlist.id, it) }
             }
@@ -433,8 +432,6 @@ private fun EntryRow(
     val track = entry.track
     var menu by remember { mutableStateOf(false) }
     val showInfo = LocalShowTrackInfo.current
-    val store = favourites()
-    val favourite = track.id in store.tracks.collectAsStateWithLifecycle().value
 
     Box(modifier) {
         CollectionRow(
@@ -471,6 +468,9 @@ private fun EntryRow(
             KoanMenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
             KoanMenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
             KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(listOf(track.id)) }
+            // Read here, in the menu, so a favourite toggled elsewhere recomposes no closed rows.
+            val store = favourites()
+            val favourite = track.id in store.tracks.collectAsStateWithLifecycle().value
             KoanMenuItem(if (favourite) "Remove Favourite" else "Favourite Track", if (favourite) KoanIcons.favourited else KoanIcons.favourite) {
                 menu = false
                 store.toggleTrack(track.id)
