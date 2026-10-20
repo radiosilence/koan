@@ -10,10 +10,10 @@
 {%- if let Some(day) = p.day %}
 <li class="disc">{{ day }}</li>
 {%- endif %}
-{% call library::track_open(p.id, p.secs, p.title, p.artist, p.album, p.album_id, p.artist_id, p.cover, p.credit) %}{% endcall %}
+{% call library::track_open(p.row) %}{% endcall %}
 <input type="checkbox" class="flex-none max-wide:hidden" value="{{ p.play }}" aria-label="Select this play">
-<span class="n w-auto max-wide:text-meta">{{ p.time }}</span><span class="t">{{ p.title }}{{ p.sub }}</span>
-<span class="d">{{ p.dur }}</span>{% call library::track_close(p.heart, p.mark) %}{% endcall %}
+<span class="n w-auto max-wide:text-meta">{{ p.time }}</span><span class="t">{{ p.row.t.title }}{{ p.row.sub }}</span>
+<span class="d">{{ crate::share::duration(p.row.t.duration_ms.clone()) }}</span>{% call library::track_close(p.row) %}{% endcall %}
 {%- endfor %}
 </ol>
 {%- if page > 0 || more %}

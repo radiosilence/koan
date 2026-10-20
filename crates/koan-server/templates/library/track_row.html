@@ -1,7 +1,7 @@
 {#- A track row. The player reads the track from its data attributes. -#}
 {%- import "library/macros.html" as library -%}
-{% call library::track_open(t.id, t.duration_ms.unwrap_or(0) / 1000, t.title, t.artist_name, t.album_title, t.album_id.unwrap_or(0), t.artist_id.unwrap_or(0), cover, credit) %}{% endcall -%}
-<span class="n">{{ n }}</span><span class="t">{{ t.title }}{{ sub }}</span><span class="d">{{ crate::share::duration(t.duration_ms.clone()) }}</span>
-{%- call library::track_close(heart, mark) -%}
-{%- if share %}{% if let Some(album) = t.album_id %}<button class="quiet" data-act-share data-indicator:_sharing data-attr:disabled="$_sharing" data-on:click="@post('/album/{{ album }}/share?track={{ t.id }}')" aria-label="Share this track" title="Share this track">{{ crate::icon::EXPORT.svg(15.0, "") }}</button>{% endif %}{% endif -%}
+{% call library::track_open(row) %}{% endcall -%}
+<span class="n">{{ n }}</span><span class="t">{{ row.t.title }}{{ row.sub }}</span><span class="d">{{ crate::share::duration(row.t.duration_ms.clone()) }}</span>
+{%- call library::track_close(row) -%}
+{%- if share %}{% if let Some(album) = row.t.album_id %}<button class="quiet" data-act-share data-indicator:_sharing data-attr:disabled="$_sharing" data-on:click="@post('/album/{{ album }}/share?track={{ row.t.id }}')" aria-label="Share this track" title="Share this track">{{ crate::icon::EXPORT.svg(15.0, "") }}</button>{% endif %}{% endif -%}
 {%- endcall %}

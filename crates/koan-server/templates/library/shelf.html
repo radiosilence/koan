@@ -10,11 +10,11 @@
 {%- for a in summary.artists.preview %}<a class="inline-flex max-w-full border border-muted px-3 py-1.5 text-control text-ink hover:bg-hover/30 hover:no-underline" href="/artist/{{ a.id }}"><span class="truncate">{{ a.name }}</span></a>{% endfor -%}
 </div>
 {%- endif %}
-{%- if let Some((total, href)) = albums %}
+{%- if let Some((total, href, tiles)) = albums %}
 {% call head("Albums", total, href, false) %}{% endcall %}
 <div class="mb-6 {{ crate::ui::pages::GRID }}">{{ tiles }}</div>
 {%- endif %}
-{%- if let Some((total, href)) = tracks %}
+{%- if let Some((total, href, rows)) = tracks %}
 {% call head("Tracks", total, href, true) %}{% endcall %}
 <ol class="tracks" data-context="album">{{ rows }}</ol>
 {%- endif %}

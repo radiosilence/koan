@@ -16,12 +16,12 @@
 {#- A heading with its buttons, above a track list. The row keeps the space a heading would, above and below, since buttons beside it are taller than it and would otherwise sit on the list. -#}
 {% macro list_head() %}mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0{% endmacro %}
 
-{#- A track row's opening tag, carrying what the player and the track menu read from it (assets/ui.js). -#}
-{% macro track_open(id, secs, title, artist, album, album_id, artist_id, cover, credit) %}
-<li tabindex="0" data-id="{{ id }}" data-dur="{{ secs }}" data-title="{{ title }}" data-artist="{{ artist }}" data-album="{{ album }}" data-album-id="{{ album_id }}" data-artist-id="{{ artist_id }}" data-cover="{{ cover }}"{{ credit }}>
+{#- A track row's opening tag, carrying what the player and the track menu read from it (assets/ui.js). `row` is a `TrackData`. -#}
+{% macro track_open(row) %}
+<li tabindex="0" data-id="{{ row.t.id }}" data-dur="{{ row.t.duration_ms.unwrap_or(0) / 1000 }}" data-title="{{ row.t.title }}" data-artist="{{ row.t.artist_name }}" data-album="{{ row.t.album_title }}" data-album-id="{{ row.t.album_id.unwrap_or(0) }}" data-artist-id="{{ row.t.artist_id.unwrap_or(0) }}" data-cover="{{ row.cover }}"{{ row.credit }}>
 {%- endmacro %}
 
 {#- A track row's actions and its closing tag: the heart, anything the row adds (the caller's body), add to queue, the favourite mark, and on a narrow screen one button opening the row's menu, which right-click and long-press open on any screen. -#}
-{% macro track_close(heart, mark) %}
-<span class="contents max-wide:hidden">{{ heart }}{{ caller() }}<button class="quiet" data-act="add" aria-label="Add to queue" title="Add to queue">+</button></span>{{ mark }}<button class="quiet wide:hidden" data-act="menu" aria-haspopup="menu" aria-label="More" title="More">⋯</button></li>
+{% macro track_close(row) %}
+<span class="contents max-wide:hidden">{{ row.heart }}{{ caller() }}<button class="quiet" data-act="add" aria-label="Add to queue" title="Add to queue">+</button></span>{{ row.mark }}<button class="quiet wide:hidden" data-act="menu" aria-haspopup="menu" aria-label="More" title="More">⋯</button></li>
 {%- endmacro %}

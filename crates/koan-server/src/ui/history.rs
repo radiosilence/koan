@@ -14,13 +14,11 @@ use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 use koan_core::db::queries::{self, PlayHistoryRow};
 
 use super::favourite::Hearts;
-use super::pages::{
-    Credits, ERROR, Failed, cover_url, credit_data, credit_line, track_versions, unavailable,
-};
+use super::pages::{Credits, ERROR, Failed, TrackData, track_versions, unavailable};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
-use crate::html::{Html, NOTHING, Render};
-use crate::share::{blocking, duration};
+use crate::html::{Html, Render};
+use crate::share::blocking;
 
 /// Plays on one page; older ones are a link away.
 const PAGE: u32 = 300;
@@ -58,21 +56,9 @@ fn day_label(day: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
 /// One play's row, with the day's heading before it where the day changes.
 struct Play<'a> {
     day: Option<String>,
-    id: i64,
     play: i64,
-    secs: i64,
-    title: &'a str,
-    artist: &'a str,
-    album: &'a str,
-    album_id: i64,
-    artist_id: i64,
-    cover: String,
-    credit: Html,
-    sub: Html,
     time: String,
-    dur: String,
-    heart: Html,
-    mark: &'a Html,
+    row: TrackData<'a>,
 }
 
 fn plays<'a>(
@@ -80,7 +66,7 @@ fn plays<'a>(
     versions: &super::pages::Versions,
     credits: &Credits,
     zone: FixedOffset,
-    hearts: Option<&Hearts>,
+    hearts: Option<&'a Hearts>,
 ) -> Vec<Play<'a>> {
     let now = Utc::now().with_timezone(&zone);
     let mut day = None;
@@ -91,28 +77,11 @@ fn plays<'a>(
                 day = Some(at.date_naive());
                 day_label(at, now)
             });
-            let t = &p.track;
-            let parts = credits.track(t);
             Play {
                 day: heading,
-                id: t.id,
                 play: p.id,
-                secs: t.duration_ms.unwrap_or(0) / 1000,
-                title: &t.title,
-                artist: &t.artist_name,
-                album: &t.album_title,
-                album_id: t.album_id.unwrap_or(0),
-                artist_id: t.artist_id.unwrap_or(0),
-                cover: t
-                    .album_id
-                    .map(|a| cover_url(a, crate::covers::LARGE, versions))
-                    .unwrap_or_default(),
-                credit: credit_data(&parts),
-                sub: credit_line(t, Some(&parts), true),
                 time: at.format("%H:%M").to_string(),
-                dur: duration(t.duration_ms),
-                heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
-                mark: hearts.map_or(&NOTHING, Hearts::mark),
+                row: TrackData::new(&p.track, versions, credits, hearts, true, true),
             }
         })
         .collect()

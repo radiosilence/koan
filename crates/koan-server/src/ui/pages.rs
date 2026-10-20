@@ -409,16 +409,49 @@ pub(super) struct RowData<'a> {
 #[derive(Template)]
 #[template(path = "library/track_row.html")]
 struct TrackRowView<'a> {
-    t: &'a TrackRow,
+    row: TrackData<'a>,
     n: usize,
-    cover: String,
-    credit: Html,
-    sub: Html,
-    heart: Html,
-    mark: &'a Html,
     /// Share this track: its album, cued to it. Only where the page has a
     /// `#share-result` to show the link in.
     share: bool,
+}
+
+/// What every track row carries, in the library and in history: the track,
+/// and what the player and the track menu read from its data attributes
+/// (`library::track_open`) and its actions (`library::track_close`).
+pub(super) struct TrackData<'a> {
+    pub(super) t: &'a TrackRow,
+    pub(super) cover: String,
+    pub(super) credit: Html,
+    /// The credit and record under the title.
+    pub(super) sub: Html,
+    pub(super) heart: Html,
+    pub(super) mark: &'a Html,
+}
+
+impl<'a> TrackData<'a> {
+    /// `artist` and `album` choose what the line under the title names.
+    pub(super) fn new(
+        t: &'a TrackRow,
+        versions: &Versions,
+        credits: &Credits,
+        hearts: Option<&'a Hearts>,
+        artist: bool,
+        album: bool,
+    ) -> Self {
+        let parts = credits.track(t);
+        Self {
+            t,
+            cover: t
+                .album_id
+                .map(|a| cover_url(a, crate::covers::LARGE, versions))
+                .unwrap_or_default(),
+            credit: credit_data(&parts),
+            sub: credit_line(t, artist.then_some(&parts[..]), album),
+            heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
+            mark: hearts.map_or(&NOTHING, Hearts::mark),
+        }
+    }
 }
 
 /// A track row. `album` is set where the row stands alone (search) and names
@@ -436,18 +469,9 @@ fn track_row(
         credits,
         hearts,
     } = *data;
-    let parts = credits.track(t);
     TrackRowView {
-        t,
+        row: TrackData::new(t, versions, credits, hearts, show_artist, album),
         n,
-        cover: t
-            .album_id
-            .map(|a| cover_url(a, crate::covers::LARGE, versions))
-            .unwrap_or_default(),
-        credit: credit_data(&parts),
-        sub: credit_line(t, show_artist.then_some(&parts[..]), album),
-        heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
-        mark: hearts.map_or(&NOTHING, Hearts::mark),
         share,
     }
     .html()
@@ -1023,33 +1047,33 @@ fn shelf_credits(conn: &rusqlite::Connection, s: &Summary) -> Credits {
 #[template(path = "library/shelf.html")]
 struct ShelfView<'a> {
     summary: &'a Summary,
-    /// Each section's total and the browser it links to, where it has a
-    /// preview to show.
+    /// Each section's total and the browser it links to, and for records and
+    /// tracks the preview drawn, where it has a preview to show.
     artists: Option<(u64, String)>,
-    albums: Option<(u64, String)>,
-    tracks: Option<(u64, String)>,
-    tiles: Html,
-    rows: Html,
+    albums: Option<(u64, String, Html)>,
+    tracks: Option<(u64, String, Html)>,
 }
 
 /// The previews of a shelf.
 fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> Html {
-    let section = |empty: bool, total: u64, kind: Kind| {
-        (!empty).then(|| (total, browse::shelf_browser(shelf, kind)))
-    };
+    let browser = |kind| browse::shelf_browser(shelf, kind);
     ShelfView {
         summary: s,
-        artists: section(s.artists.preview.is_empty(), s.artists.total, Kind::Artists),
-        albums: section(s.albums.preview.is_empty(), s.albums.total, Kind::Albums),
-        tracks: section(s.tracks.preview.is_empty(), s.tracks.total, Kind::Tracks),
-        tiles: cells(&s.albums.preview, data.versions, data.credits, data.hearts),
-        rows: s
-            .tracks
-            .preview
-            .iter()
-            .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, false, data))
-            .collect(),
+        artists: (!s.artists.preview.is_empty()).then(|| (s.artists.total, browser(Kind::Artists))),
+        albums: (!s.albums.preview.is_empty()).then(|| {
+            let tiles = cells(&s.albums.preview, data.versions, data.credits, data.hearts);
+            (s.albums.total, browser(Kind::Albums), tiles)
+        }),
+        tracks: (!s.tracks.preview.is_empty()).then(|| {
+            let rows = s
+                .tracks
+                .preview
+                .iter()
+                .enumerate()
+                .map(|(i, t)| track_row(t, i + 1, true, true, false, data))
+                .collect();
+            (s.tracks.total, browser(Kind::Tracks), rows)
+        }),
     }
     .html()
 }

@@ -40,33 +40,29 @@ fn user_list(rows: &[UserRow], me: i64) -> Html {
     UserList { rows, me }.html()
 }
 
-/// What the result area under the form shows: rendered markup, or a message,
-/// which is an error when the flag is set.
+/// What the result area under the form shows.
+enum Shown<'a> {
+    Html(&'a Html),
+    Message(&'a str),
+    Error(&'a str),
+}
+
 #[derive(Template)]
 #[template(path = "users/result.html")]
 struct UserResult<'a> {
-    html: &'a Html,
-    message: Option<(&'a str, bool)>,
+    shown: Shown<'a>,
+}
+
+fn show(shown: Shown) -> Event {
+    patch(&UserResult { shown }.html(), None)
 }
 
 fn result(html: &Html) -> Event {
-    let html = UserResult {
-        html,
-        message: None,
-    };
-    patch(&html.html(), None)
-}
-
-fn message(text: &str, error: bool) -> Event {
-    let html = UserResult {
-        html: &NOTHING,
-        message: Some((text, error)),
-    };
-    patch(&html.html(), None)
+    show(Shown::Html(html))
 }
 
 fn failure(text: &str) -> Event {
-    message(text, true)
+    show(Shown::Error(text))
 }
 
 /// The invite link as a QR code, for a phone to scan off the screen. Dark on
@@ -97,6 +93,9 @@ struct InvitePanel<'a> {
     invite: &'a Invite,
     link: String,
     qr: Option<Html>,
+    /// The email as rich text, for the clipboard. koan-core escapes every
+    /// value it writes into it.
+    email: Html,
 }
 
 fn invite_panel(invite: &Invite) -> Html {
@@ -104,6 +103,7 @@ fn invite_panel(invite: &Invite) -> Html {
     InvitePanel {
         invite,
         qr: invite_qr(&link),
+        email: Html::trusted(invite.email_html()),
         link,
     }
     .html()
@@ -324,13 +324,10 @@ pub(super) async fn set_password(
     .await;
     match done {
         Some((row, Ok(_))) => events(vec![
-            message(
-                &format!(
-                    "{}'s password is changed, and their devices are signed out.",
-                    row.username
-                ),
-                false,
-            ),
+            show(Shown::Message(&format!(
+                "{}'s password is changed, and their devices are signed out.",
+                row.username
+            ))),
             clear_password_signal(),
         ]),
         Some((_, Err(e))) => events(vec![failure(&e.to_string())]),
