@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -28,7 +29,6 @@ import cc.blit.koan.ffi.DeletedDsp
 import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspProfileSummary
 import cc.blit.koan.ffi.DspRole
-import cc.blit.koan.ffi.DspTuningEntry
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
@@ -75,8 +75,9 @@ fun ManageEqPage(device: String?, model: SettingsModel) {
     var deleting by remember { mutableStateOf<String?>(null) }
     val shown by produceState<DspOverview?>(null, device, state.version, library) { value = dsp.overviewFor(device) }
     val offered = connection.offers(DSP_DELETED) && connection?.offline != true
-    // A failed read is not an empty one: nothing is said until one answers.
-    val deleted by produceState<List<DeletedDsp>?>(null, offered, state.version, library) { value = if (offered) dsp.deleted() else null }
+    // Read again only when something here is deleted or restored. A failed read is not an empty one: nothing is said until one answers.
+    var deletions by remember { mutableIntStateOf(0) }
+    val deleted by produceState<List<DeletedDsp>?>(null, offered, deletions) { value = if (offered) dsp.deleted() else null }
     var restoring by remember { mutableStateOf<String?>(null) }
     var restoreError by remember { mutableStateOf<String?>(null) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -123,6 +124,7 @@ fun ManageEqPage(device: String?, model: SettingsModel) {
                             scope.launch {
                                 restoreError = dsp.restore(profile.uid)
                                 restoring = null
+                                deletions++
                             }
                         }, kind = KoanButtonKind.Bordered, enabled = restoring == null)
                     }
@@ -174,7 +176,7 @@ fun ManageEqPage(device: String?, model: SettingsModel) {
             confirmButton = {
                 KoanButton("Delete", {
                     deleting = null
-                    dsp.delete(name)
+                    dsp.delete(name) { deletions++ }
                 }, destructive = true)
             },
             dismissButton = { KoanButton("Cancel", { deleting = null }) },
@@ -205,8 +207,7 @@ private class ProfileActions(
 
     fun addToFilters(names: List<String>) {
         val device = device ?: return
-        val added = names.filter { n -> o.chain.none { it.name == n } }
-        dsp.setTunings(o.chain + added.map { DspTuningEntry(it, true) }, device)
+        dsp.setTunings(names.fold(o.chain) { chain, name -> chain.added(name) }, device)
     }
 }
 

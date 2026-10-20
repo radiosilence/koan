@@ -43,6 +43,7 @@ import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.ffi.DspEarKind
 import cc.blit.koan.ffi.DspImpulse
 import cc.blit.koan.ffi.DspLayerInfo
+import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspPoint
 import cc.blit.koan.ffi.DspProfileDetail
 import cc.blit.koan.ffi.DspProfileSummary
@@ -70,6 +71,8 @@ import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -119,29 +122,47 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
     val addTarget = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch { copyIn(context, listOf(uri)).firstOrNull()?.let(dsp::addTarget) }
     }
-    // Read again whenever a change lands, here or synced.
-    LaunchedEffect(name, state.version, library) {
-        val snapshot = dsp.snapshot(name)
-        now = snapshot
-        val edits = dsp.edits(name)
-        if (before == null || editsAtBefore == edits) {
-            before = snapshot
-            editsAtBefore = edits
-        }
-        val d = dsp.detail(name)
-        detail = d
-        response = dsp.response(name)
-        targets = dsp.targets(name)
-        madeForChoices = TargetGroups.of(dsp.targetsFor(DspEarKind.OVER_EAR), dsp.targetsFor(DspEarKind.IN_EAR), state.overview?.inEar)
-        if (d?.role == DspRole.TUNING) {
-            suggestion = dsp.suggestMadeAgainst(name)
-            previews = dsp.madeAgainstPreviews(name)
-        } else {
-            suggestion = null
-            previews = emptyMap()
+    val inUse = state.overview?.device
+    // The device whose filters and correction Used for acts on: the one the EQ page showed, else the output in use.
+    val target = device ?: inUse
+    var targetOverview by remember { mutableStateOf<DspOverview?>(null) }
+    // The targets there are, read once: they change only when one is added.
+    LaunchedEffect(Unit) {
+        coroutineScope {
+            val over = async { dsp.targetsFor(DspEarKind.OVER_EAR) }
+            val inEar = async { dsp.targetsFor(DspEarKind.IN_EAR) }
+            madeForChoices = TargetGroups.of(over.await(), inEar.await(), state.overview?.inEar)
         }
     }
-    val inUse = state.overview?.device
+    // Read again whenever a change lands, here or synced.
+    LaunchedEffect(name, state.version, library) {
+        coroutineScope {
+            val snapshot = async { dsp.snapshot(name) }
+            val d = async { dsp.detail(name) }
+            val r = async { dsp.response(name) }
+            val t = async { dsp.targets(name) }
+            val o = async { target?.let { dsp.overviewFor(it) } }
+            now = snapshot.await()
+            val edits = dsp.edits(name)
+            if (before == null || editsAtBefore == edits) {
+                before = now
+                editsAtBefore = edits
+            }
+            detail = d.await()
+            response = r.await()
+            targets = t.await()
+            targetOverview = o.await()
+            if (detail?.role == DspRole.TUNING) {
+                val s = async { dsp.suggestMadeAgainst(name) }
+                val p = async { dsp.madeAgainstPreviews(name) }
+                suggestion = s.await()
+                previews = p.await()
+            } else {
+                suggestion = null
+                previews = emptyMap()
+            }
+        }
+    }
     val label = { d: String -> state.overview?.names?.get(d) ?: d }
     val ink = KoanTheme.color(KoanTone.Ink)
 
@@ -222,13 +243,25 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
         header("Used for")
         if (d.devices.isEmpty()) item { KoanText("No output yet", inset.padding(vertical = KoanSpace.s), tone = KoanTone.Muted, appText = true) }
         d.devices.forEach { line(label(it)) }
-        inUse?.let { output ->
+        val shown = targetOverview
+        if (target != null && shown != null) {
+            val action = deviceAction(d.name, d.role, shown.active, shown.chain.any { it.name == d.name })
             item {
                 ButtonRow {
-                    if (output in d.devices) {
-                        KoanButton({ dsp.use(null) }, kind = KoanButtonKind.Bordered) { KoanText("${KoanTheme.label("Stop using for")} ${label(output)}", role = KoanType.Meta) }
-                    } else {
-                        KoanButton({ dsp.use(d.name) }, kind = KoanButtonKind.Bordered) { KoanText("${KoanTheme.label("Use for")} ${label(output)}", role = KoanType.Meta) }
+                    KoanButton({
+                        when (action) {
+                            DeviceAction.StopCorrecting -> dsp.assign(null, target)
+                            DeviceAction.MoveToFilters -> {
+                                dsp.assign(null, target)
+                                dsp.setTunings(shown.chain.added(d.name), target)
+                            }
+                            DeviceAction.TakeOutOfFilters -> dsp.setTunings(shown.chain.filter { it.name != d.name }, target)
+                            DeviceAction.AddToFilters -> dsp.setTunings(shown.chain.added(d.name), target)
+                            DeviceAction.Correct -> dsp.assign(d.name, target)
+                        }
+                    }, kind = KoanButtonKind.Bordered) {
+                        // The app's words follow the theme; the device's name keeps its case.
+                        KoanText("${KoanTheme.label(action.words)} ${label(target)}", role = KoanType.Meta)
                     }
                 }
             }
@@ -568,6 +601,25 @@ private fun ImpulseRow(ir: DspImpulse) {
         KoanText(shape, role = KoanType.Fine, tone = KoanTone.Muted)
         KoanText(ir.file, role = KoanType.Fine, tone = KoanTone.Muted)
     }
+}
+
+/** What a profile's page offers to do with it on a device. A tuning goes into the filters; it never takes the correction's place. */
+enum class DeviceAction(val words: String) {
+    StopCorrecting("Stop using for"),
+    /** Correcting with it, though it is now said to be a tuning: play it as one. */
+    MoveToFilters("Play it in the filters instead on"),
+    TakeOutOfFilters("Take out of the filters on"),
+    AddToFilters("Add to the filters on"),
+    Correct("Use for"),
+}
+
+/** The one thing `name`'s page offers on a device, by what it is and what the device plays. */
+fun deviceAction(name: String, role: DspRole, active: String?, inChain: Boolean) = when {
+    name == active && role == DspRole.TUNING -> DeviceAction.MoveToFilters
+    name == active -> DeviceAction.StopCorrecting
+    inChain -> DeviceAction.TakeOutOfFilters
+    role == DspRole.TUNING -> DeviceAction.AddToFilters
+    else -> DeviceAction.Correct
 }
 
 /**

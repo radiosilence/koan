@@ -26,7 +26,6 @@ import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspProfileSummary
 import cc.blit.koan.ffi.DspRole
 import cc.blit.koan.ffi.DspTargets
-import cc.blit.koan.ffi.DspTuningEntry
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
@@ -121,7 +120,7 @@ fun EqStagePage(device: String, stage: Stage, model: SettingsModel) {
                                 madeFor = p.madeFor.takeUnless { o.filtersOnly },
                                 matched = p.join == DspJoin.Matched,
                                 chosen = false,
-                            ) { chosen { dsp.setTunings(o.chain + DspTuningEntry(p.name, true), device) } }
+                            ) { chosen { dsp.setTunings(o.chain.added(p.name), device) } }
                         }
                     }
                 }

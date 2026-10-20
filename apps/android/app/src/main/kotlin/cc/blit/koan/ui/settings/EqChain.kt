@@ -166,7 +166,7 @@ fun EqChain(
                 outline = outline,
                 action = { open(entry.name) },
             ) {
-                KoanToggle("On", entry.on, { on -> set(o.chain.mapIndexed { j, e -> if (j == i) DspTuningEntry(e.name, on) else e }) }, Modifier.width(76.dp))
+                KoanToggle("On", entry.on, { set(o.chain.toggled(i)) }, Modifier.width(76.dp))
                 Box {
                     KoanButton("Options for ${entry.name}", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
                     KoanMenu(menu, { menu = false }) {

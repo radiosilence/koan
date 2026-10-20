@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import cc.blit.koan.ffi.DspLayerCurve
 import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspResponse
+import cc.blit.koan.ffi.DspRole
 import cc.blit.koan.ffi.DspTuningEntry
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
@@ -92,6 +93,15 @@ class EqGraphTest {
             frame()
         }
         assertEquals("each frame copies the graph it drew", 1, builds)
+    }
+
+    @Test
+    fun aTuningGoesIntoTheFiltersAndNeverTakesTheCorrectionsPlace() {
+        assertEquals(DeviceAction.MoveToFilters, deviceAction("Warm", DspRole.TUNING, active = "Warm", inChain = false))
+        assertEquals(DeviceAction.StopCorrecting, deviceAction("HD 650", DspRole.CORRECTION, active = "HD 650", inChain = false))
+        assertEquals(DeviceAction.TakeOutOfFilters, deviceAction("Warm", DspRole.TUNING, active = null, inChain = true))
+        assertEquals(DeviceAction.AddToFilters, deviceAction("Warm", DspRole.TUNING, active = "HD 650", inChain = false))
+        assertEquals(DeviceAction.Correct, deviceAction("HD 650", DspRole.BAKED, active = null, inChain = false))
     }
 
     @Test

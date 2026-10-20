@@ -100,6 +100,8 @@ fun MeasurementPage(initial: String, model: SettingsModel) {
     var reading by remember { mutableStateOf<DspMeasurementReading?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // A step's checks are under way: Next waits for them.
+    var advancing by remember { mutableStateOf(false) }
     var hits by remember { mutableStateOf(emptyList<SquigHit>()) }
     var searching by remember { mutableStateOf(false) }
     var searchNote by remember { mutableStateOf<String?>(null) }
@@ -127,8 +129,10 @@ fun MeasurementPage(initial: String, model: SettingsModel) {
         } catch (e: KoanException) {
             hits = emptyList()
             searchNote = e.describe()
+        } finally {
+            // Cancelled by newer typing too: the next search sets it again.
+            searching = false
         }
-        searching = false
     }
 
     val choose = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -154,10 +158,12 @@ fun MeasurementPage(initial: String, model: SettingsModel) {
         MeasureStep.Review -> false
     }
 
-    fun next() = scope.launch {
+    // From the step it began on, so a step taken meanwhile is not taken twice.
+    suspend fun advance() {
+        val from = step
         problem = null
         try {
-            when (step) {
+            when (from) {
                 MeasureStep.File -> {
                     // Checked now, so a file that is not a measurement is said so before the questions after it.
                     reading = dsp.describeMeasurement(text)
@@ -165,21 +171,33 @@ fun MeasurementPage(initial: String, model: SettingsModel) {
                         targets = dsp.targetsFor(DspEarKind.SPEAKER)
                         target = (targets.firstOrNull { it.id == "flat" } ?: targets.firstOrNull())?.id
                         step = MeasureStep.Target
-                        return@launch
+                        return
                     }
                 }
                 MeasureStep.Ear -> {
                     targets = dsp.targetsFor(if (inEar) DspEarKind.IN_EAR else DspEarKind.OVER_EAR)
                     if (targets.none { it.id == target }) target = (targets.firstOrNull { it.id == harman(inEar) } ?: targets.firstOrNull())?.id
                 }
-                MeasureStep.Target -> preview = dsp.previewMeasurement(text, target ?: return@launch)
+                MeasureStep.Target -> preview = dsp.previewMeasurement(text, target ?: return)
                 else -> {}
             }
         } catch (e: KoanException) {
             problem = e.describe()
-            return@launch
+            return
         }
-        step = MeasureStep.entries[step.ordinal + 1]
+        step = MeasureStep.entries[from.ordinal + 1]
+    }
+
+    fun next() {
+        if (advancing) return
+        advancing = true
+        scope.launch {
+            try {
+                advance()
+            } finally {
+                advancing = false
+            }
+        }
     }
 
     fun back() {
@@ -207,12 +225,12 @@ fun MeasurementPage(initial: String, model: SettingsModel) {
         item {
             ButtonRow {
                 KoanButton("Cancel", { nav.pop() }, kind = KoanButtonKind.Text)
-                if (step != MeasureStep.Learn) KoanButton("Back", ::back, kind = KoanButtonKind.Text)
+                if (step != MeasureStep.Learn) KoanButton("Back", ::back, kind = KoanButtonKind.Text, enabled = !advancing)
                 Spacer(Modifier.weight(1f))
                 if (step == MeasureStep.Review) {
                     KoanButton("Save", ::save, kind = KoanButtonKind.Prominent, enabled = name.isNotBlank() && !saving)
                 } else {
-                    KoanButton("Next", { next() }, kind = KoanButtonKind.Prominent, enabled = canGoOn())
+                    KoanButton("Next", ::next, kind = KoanButtonKind.Prominent, enabled = canGoOn() && !advancing)
                 }
             }
         }

@@ -87,7 +87,9 @@ fun EqPane(model: SettingsModel) {
     }
     val inUse = state.overview?.device
     val o = shown?.overview
-    val device = picked ?: o?.device
+    // Every write goes to the device whose chain is shown: until a newly picked one's has loaded, the last one's.
+    val device = o?.device
+    val selected = picked ?: device
     val label = { d: String -> o?.names?.get(d) ?: d }
 
     SettingsPage(Pane.Eq.title, settings) {
@@ -101,8 +103,8 @@ fun EqPane(model: SettingsModel) {
             item {
                 KoanFormRow("Device", inset) {
                     KoanPicker(
-                        devices(o, inUse, device).map { d -> (if (d == inUse) "${label(d)} (${KoanTheme.label("In use")})" else label(d)) to d },
-                        device,
+                        devices(o, inUse, selected).map { d -> (if (d == inUse) "${label(d)} (${KoanTheme.label("In use")})" else label(d)) to d },
+                        selected,
                         { picked = it.takeUnless { d -> d == inUse } },
                         keepsCase = true,
                     )
@@ -502,11 +504,7 @@ fun DspPrompts(dsp: DspModel) {
                     ask.into?.let { into ->
                         val device = state.overview?.names?.get(into.device) ?: into.device
                         KoanText(
-                            if (into.stage == Stage.Eq) {
-                                "A tuning is added to $device's filters; a correction becomes its correction."
-                            } else {
-                                "A correction becomes $device's correction."
-                            },
+                            "A tuning is added to $device's filters; a correction becomes its correction.",
                             role = KoanType.Fine,
                             tone = KoanTone.Muted,
                         )

@@ -241,7 +241,7 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
      * Say what the imported profiles are for, or with `null` leave them
      * tunings. One started from a device's chain then goes into it: a
      * correction as the device's correction, a tuning on the end of its
-     * tuning.
+     * filters.
      */
     fun answer(ask: RoleAsk, role: DspRole?) {
         _state.update { it.copy(askRole = null) }
@@ -251,10 +251,11 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
             val into = ask.into ?: return@act
             if (role == DspRole.CORRECTION || role == DspRole.BAKED) {
                 dspAssignDevice(into.device, ask.profiles.firstOrNull())
-            } else if (into.stage == Stage.Eq) {
+            } else {
+                // A tuning goes on the end of the filters, whichever stage the import began from.
                 val chain = dspOverviewFor(into.device).chain
-                val added = ask.profiles.filter { name -> chain.none { it.name == name } }
-                if (added.isNotEmpty()) dspSetTunings(into.device, chain + added.map { DspTuningEntry(it, true) })
+                val added = ask.profiles.fold(chain) { c, name -> c.added(name) }
+                if (added != chain) dspSetTunings(into.device, added)
             }
         }
     }
@@ -503,6 +504,8 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
         viewModelScope.launch {
             val ok = try {
                 engine().dspRename(old, new.trim())
+                // A page that follows the profile under its new name still knows its own edits.
+                edits.remove(old)?.let { edits[new.trim()] = it }
                 _state.update { it.copy(error = null) }
                 true
             } catch (e: KoanException) {
@@ -520,11 +523,12 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
     /** Put `name` back as it was imported. */
     fun revert(name: String) = act { dspRevert(name) }
 
-    fun delete(name: String) = act { dspDelete(name) }
+    /** Delete `name` everywhere it is kept; `then` once it is gone, or was refused. */
+    fun delete(name: String, then: () -> Unit = {}) = act(then) { dspDelete(name) }
 
     fun dismissError() = _state.update { it.copy(error = null) }
 
-    private fun act(work: suspend KoanEngineInterface.() -> Unit) {
+    private fun act(then: () -> Unit = {}, work: suspend KoanEngineInterface.() -> Unit) {
         viewModelScope.launch {
             try {
                 engine().work()
@@ -533,6 +537,7 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
                 failed(e)
             }
             changed()
+            then()
         }
     }
 
