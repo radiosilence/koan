@@ -37,6 +37,10 @@ struct RoleAsk: Identifiable {
 @MainActor
 @Observable
 final class DspModel {
+    /// What a server lists when it keeps the account's EQs on every device.
+    /// Without it, where a profile is kept is not a choice there is to make.
+    static let syncExtension = "koanDspProfiles"
+
     private let engine: KoanEngine
 
     private(set) var overview: DspOverview?

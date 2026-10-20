@@ -182,6 +182,21 @@ pub fn current() -> Option<ServerProfile> {
         .map(|(_, p, _)| p.clone())
 }
 
+/// Why the server cannot do what `to` names ("invite people"), for a person
+/// to read: a koan server older than the feature is told apart from a server
+/// that is not koan, which no update brings it to.
+pub fn lacking(profile: Option<&ServerProfile>, to: &str) -> String {
+    match profile {
+        None => format!("could not reach the server to see whether it can {to}"),
+        Some(p) if p.kind.as_deref() == Some("koan") => {
+            format!("this server is older than this app: update it to {to}")
+        }
+        // Older than OpenSubsonic, so it does not say what it is.
+        Some(p) if p.kind.is_none() => format!("this server cannot {to}"),
+        Some(_) => format!("only a kōan server can {to}"),
+    }
+}
+
 /// Whether the configured server is koan, probing it if it has not been.
 pub fn is_koan(auth: &SubsonicAuth) -> bool {
     for_auth(auth).is_some_and(|p| p.kind.as_deref() == Some("koan"))
@@ -207,5 +222,30 @@ mod tests {
         };
         assert!(hub.links() && hub.offers(DEVICES));
         assert!(!ServerProfile::default().links());
+    }
+
+    #[test]
+    fn a_missing_feature_names_its_cause() {
+        let koan = ServerProfile {
+            kind: Some("koan".into()),
+            ..Default::default()
+        };
+        let navidrome = ServerProfile {
+            kind: Some("navidrome".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            lacking(Some(&koan), "invite people"),
+            "this server is older than this app: update it to invite people"
+        );
+        assert_eq!(
+            lacking(Some(&navidrome), "invite people"),
+            "only a kōan server can invite people"
+        );
+        assert_eq!(
+            lacking(Some(&ServerProfile::default()), "invite people"),
+            "this server cannot invite people"
+        );
+        assert!(lacking(None, "invite people").starts_with("could not reach"));
     }
 }

@@ -7,6 +7,7 @@ import SwiftUI
 /// shows one device; this shows them all.
 struct ManageEq: View {
     @Environment(AppState.self) private var app
+    @Environment(EngineMirror.self) private var mirror
     /// The device the EQ page shows, which Add to Tuning adds to, with its
     /// correction and tuning.
     let device: String?
@@ -256,15 +257,17 @@ struct ManageEq: View {
         }
         // A button rather than a toggle: a menu draws a toggle in the
         // environment's style, and the theme's box comes apart there.
-        if let why = p.scopeLocked {
-            Button {} label: {
-                Text(p.everywhere ? "Kept on Every Device" : "Kept on This Device")
-                Text(why)
-            }
-            .disabled(true)
-        } else {
-            Button(p.everywhere ? "Keep on This Device Only" : "Keep on Every Device") {
-                dsp.setScope(p.name, everywhere: !p.everywhere)
+        if mirror.offers(DspModel.syncExtension) {
+            if let why = p.scopeLocked {
+                Button {} label: {
+                    Text(p.everywhere ? "Kept on Every Device" : "Kept on This Device")
+                    Text(why)
+                }
+                .disabled(true)
+            } else {
+                Button(p.everywhere ? "Keep on This Device Only" : "Keep on Every Device") {
+                    dsp.setScope(p.name, everywhere: !p.everywhere)
+                }
             }
         }
         Divider()
