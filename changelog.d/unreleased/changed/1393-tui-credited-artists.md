@@ -1,0 +1,1 @@
+- **The TUI reaches each credited artist.** Where a record or track is credited to several artists, its menu offers "Go to" each of them, and `A`, the queue's "Go to artist" and the artist link of a track or record ask which, rather than opening the combined credit's page.

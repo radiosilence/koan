@@ -38,7 +38,7 @@ pub fn queue_items(of: MenuFor, share: bool) -> Vec<(ContextAction, &'static str
                 RULE,
                 (Organize, "Organize files\u{2026}", 'o'),
                 (GoToAlbum, "Go to album", 'a'),
-                (GoToArtist, "Go to artist", 'r'),
+                (GoToAlbumArtist, "Go to artist", 'r'),
             ]);
             if share {
                 items.push((CopyShareLink, "Copy album share link", 's'));

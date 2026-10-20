@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{Local, NaiveDate, TimeZone};
 use crossbeam_channel::{Receiver, Sender};
-use koan_core::db::queries::{self, PlayHistoryRow};
+use koan_core::db::queries::{self, CreditsOf, PlayHistoryRow};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -17,6 +17,7 @@ use ratatui::style::{Modifier, Style};
 use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::browse::Action;
+use super::browse::track_playable;
 use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::text::{fit, width};
 use super::theme::Theme;
@@ -512,8 +513,10 @@ impl HistoryPage {
             KeyCode::Char('A') => {
                 return Some(
                     self.track_at(self.cursor)
-                        .and_then(|t| t.artist_id)
-                        .map_or(Action::None, Action::OpenArtist),
+                        .filter(|t| t.artist_id.is_some())
+                        .map_or(Action::None, |t| {
+                            Action::OpenCredited(CreditsOf::Tracks, t.id)
+                        }),
                 );
             }
             KeyCode::Char('O') => {
@@ -547,14 +550,10 @@ impl HistoryPage {
             [] => return Action::None,
             [one] => {
                 let t = &one.track;
-                let thing = Playable::Track {
-                    id: t.id,
-                    favourite: favourites.contains(&t.id),
-                    on_disk: t.path.is_some() || t.cached_path.is_some(),
-                    album: t.album_id,
-                    artist: t.artist_id,
-                };
-                (t.title.clone(), thing)
+                (
+                    t.title.clone(),
+                    track_playable(t, favourites.contains(&t.id)),
+                )
             }
             many => (
                 format!("{} plays", many.len()),
@@ -860,7 +859,7 @@ impl HistoryPage {
                 &t.artist_name,
                 artist_x,
                 artist_w,
-                t.artist_id.map(Link::Artist),
+                t.artist_id.map(|_| Link::ArtistOfTrack(t.id)),
             ),
             (
                 &t.album_title,
@@ -946,7 +945,9 @@ mod tests {
     /// Where the artist link of each line starts.
     fn artist_links(links: &Links, w: u16, h: u16) -> Vec<u16> {
         (0..h)
-            .filter_map(|y| (0..w).find(|&x| matches!(links.at(x, y), Some(Link::Artist(_)))))
+            .filter_map(|y| {
+                (0..w).find(|&x| matches!(links.at(x, y), Some(Link::ArtistOfTrack(_))))
+            })
             .collect()
     }
 
@@ -990,7 +991,7 @@ mod tests {
         let links = Links::default();
         draw_with(&mut p, 100, 12, &links);
         let x = artist_links(&links, 100, 12)[0];
-        assert_eq!(links.at(x, 1), Some(Link::Artist(2)));
+        assert_eq!(links.at(x, 1), Some(Link::ArtistOfTrack(1)));
         let album = (x..100).find(|&cx| links.at(cx, 1) == Some(Link::Album(1)));
         assert!(album.is_some(), "the album is a link too");
     }

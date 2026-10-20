@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use koan_core::db::queries;
+use koan_core::db::queries::{self, CreditsOf};
 use koan_core::shelves::{self, Shelf, Summary};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -20,7 +20,7 @@ use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::browse::{
     Action, Favourites, SeeAll, Source, Thumbs, Tile, View, album_tracks, album_year,
-    artist_tracks, tile_grid, track_playable,
+    artist_tracks, credited_track, tile_grid, track_playable,
 };
 use super::cover_art::Gfx;
 use super::rows::{self, Columns, Emphasis, Row, Target};
@@ -628,6 +628,21 @@ impl ShelfPage {
         }
     }
 
+    /// What `A` opens: the artist at `idx`, or the artists its credit names.
+    fn open_artist_at(&self, idx: usize) -> Action {
+        let Some(s) = &self.summary else {
+            return Action::None;
+        };
+        match self.item(idx) {
+            Some(Item::Artist(i)) => Action::OpenArtist(s.artists.preview[i].id),
+            Some(Item::Album(i)) => Action::OpenCredited(CreditsOf::Albums, s.albums.preview[i].id),
+            Some(Item::Track(i)) if s.tracks.preview[i].artist_id.is_some() => {
+                Action::OpenCredited(CreditsOf::Tracks, s.tracks.preview[i].id)
+            }
+            _ => Action::None,
+        }
+    }
+
     fn favourite_at(&self, idx: usize) -> Action {
         let Some(s) = &self.summary else {
             return Action::None;
@@ -665,7 +680,6 @@ impl ShelfPage {
                     id: a.id,
                     tracks: ids,
                     favourite: self.fav_albums.contains(&a.id),
-                    artist: a.artist_id,
                 };
                 (a.title.clone(), thing)
             }
@@ -751,12 +765,7 @@ impl ShelfPage {
                         .map_or(Action::None, Action::OpenAlbum),
                 );
             }
-            KeyCode::Char('A') => {
-                return Some(
-                    self.artist_of(self.cursor)
-                        .map_or(Action::None, Action::OpenArtist),
-                );
-            }
+            KeyCode::Char('A') => return Some(self.open_artist_at(self.cursor)),
             KeyCode::Char('P') => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
@@ -842,7 +851,7 @@ impl ShelfPage {
                 Action::None
             }
             ShelfHit::Link(Target::Album(id)) => Action::OpenAlbum(id),
-            ShelfHit::Link(Target::Artist(id)) => Action::OpenArtist(id),
+            ShelfHit::Link(Target::Credited(of, id)) => Action::OpenCredited(of, id),
             ShelfHit::Item(i) => {
                 self.typing = false;
                 let double = self
@@ -1154,7 +1163,10 @@ impl ShelfPage {
                                 favourite: self.fav_albums.contains(&a.id),
                                 lead: "",
                                 name: &a.title,
-                                artist: Some((&a.artist_name, Some(a.artist_id))),
+                                artist: Some((
+                                    &a.artist_name,
+                                    Some(Target::Credited(CreditsOf::Albums, a.id)),
+                                )),
                                 detail: Some((&year, None)),
                                 tail: &codec,
                             }
@@ -1173,7 +1185,7 @@ impl ShelfPage {
                         favourite: favourites.contains(&t.id),
                         lead: "",
                         name: &t.title,
-                        artist: Some((&t.artist_name, t.artist_id)),
+                        artist: Some((&t.artist_name, credited_track(t))),
                         detail: Some((&t.album_title, t.album_id.map(Target::Album))),
                         tail: &time,
                     }
@@ -1365,7 +1377,7 @@ mod tests {
             .geom
             .links
             .iter()
-            .filter(|(_, t)| matches!(t, Target::Artist(_)))
+            .filter(|(_, t)| matches!(t, Target::Credited(..)))
             .map(|(r, _)| r.x)
             .collect();
         assert_eq!(xs.len(), 6);

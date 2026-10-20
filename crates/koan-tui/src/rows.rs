@@ -3,6 +3,7 @@
 //! wherever it appears on the page. Text is measured in cells, not chars, and
 //! cut with an ellipsis.
 
+use koan_core::db::queries::CreditsOf;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -180,7 +181,8 @@ impl Emphasis {
 /// What a row's links lead to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    Artist(i64),
+    /// The artist a track's or album's credit names, or one of several.
+    Credited(CreditsOf, i64),
     Album(i64),
 }
 
@@ -189,7 +191,7 @@ pub struct Row<'a> {
     pub favourite: bool,
     pub lead: &'a str,
     pub name: &'a str,
-    pub artist: Option<(&'a str, Option<i64>)>,
+    pub artist: Option<(&'a str, Option<Target>)>,
     pub detail: Option<(&'a str, Option<Target>)>,
     pub tail: &'a str,
 }
@@ -239,10 +241,10 @@ impl Row<'_> {
                 links.push((rect, target));
             }
         };
-        if let Some((artist, id)) = self.artist
+        if let Some((artist, target)) = self.artist
             && cols.artist.w > 0
         {
-            linked(buf, cols.artist, artist, id.map(Target::Artist));
+            linked(buf, cols.artist, artist, target);
         }
         if let Some((detail, target)) = self.detail
             && cols.detail.w > 0
