@@ -366,7 +366,7 @@ width={size} height={size} src=\"{src}\" alt=\"\">\
             size = crate::covers::GRID,
             src = cover_url(a.id, crate::covers::GRID, versions),
             title = escape(&a.title),
-            artist = credit_links(&credits.album(a.id, &a.artist_name, Some(a.artist_id)), true),
+            artist = credit_links(&credits.album(Some(a.id), &a.artist_name, Some(a.artist_id)), true),
         );
         out
     })
@@ -445,8 +445,16 @@ impl Credits {
     }
 
     /// An album's artist credit, `credit` as the row names it.
-    pub(super) fn album(&self, id: i64, credit: &str, filed: Option<i64>) -> Vec<CreditPart> {
-        let artists = self.albums.get(&id).map(Vec::as_slice).unwrap_or(&[]);
+    pub(super) fn album(
+        &self,
+        id: Option<i64>,
+        credit: &str,
+        filed: Option<i64>,
+    ) -> Vec<CreditPart> {
+        let artists = id
+            .and_then(|id| self.albums.get(&id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         credit_parts(credit, filed, artists)
     }
 }
@@ -486,8 +494,9 @@ pub(super) fn credit_data(parts: &[CreditPart]) -> String {
 /// where asked for, each named part linked to its page.
 pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bool) -> String {
     let mut sub = Vec::new();
-    if let Some(parts) = artist.filter(|_| !t.artist_name.is_empty()) {
-        sub.push(credit_links(parts, false));
+    let artist = artist.map(|parts| credit_links(parts, false));
+    if let Some(links) = artist.filter(|l| !l.is_empty()) {
+        sub.push(links);
     }
     if album && !t.album_title.is_empty() {
         sub.push(link("album", t.album_id, &t.album_title));
@@ -499,19 +508,28 @@ pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bo
     }
 }
 
+/// What a page read once for all its rows: covers, credits and hearts.
+pub(super) struct RowData<'a> {
+    pub versions: &'a Versions,
+    pub credits: &'a Credits,
+    pub hearts: Option<&'a Hearts>,
+}
+
 /// A track row. `album` is set where the row stands alone (search) and names
 /// the record it comes from.
-#[allow(clippy::too_many_arguments)]
 fn track_row(
     t: &TrackRow,
     n: usize,
     show_artist: bool,
     album: bool,
-    versions: &Versions,
-    credits: &Credits,
     share: bool,
-    hearts: Option<&Hearts>,
+    data: &RowData,
 ) -> String {
+    let RowData {
+        versions,
+        credits,
+        hearts,
+    } = *data;
     let parts = credits.track(t);
     let sub = credit_line(t, show_artist.then_some(&parts[..]), album);
     format!(
@@ -631,6 +649,11 @@ pub(super) async fn album(
         .iter()
         .map(|t| t.disc.unwrap_or(1))
         .collect::<std::collections::BTreeSet<_>>();
+    let data = RowData {
+        versions: &versions,
+        credits: &credits,
+        hearts: hearts.as_ref(),
+    };
     let mut rows = String::new();
     let mut disc = None;
     for (i, t) in tracks.iter().enumerate() {
@@ -644,15 +667,13 @@ pub(super) async fn album(
             n,
             t.artist_name != album.artist_name,
             false,
-            &versions,
-            &credits,
             can_share,
-            hearts.as_ref(),
+            &data,
         ));
     }
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
     let mut sub = vec![credit_links(
-        &credits.album(album.id, &album.artist_name, Some(album.artist_id)),
+        &credits.album(Some(album.id), &album.artist_name, Some(album.artist_id)),
         false,
     )];
     let y = year(album.date.as_deref());
@@ -834,21 +855,15 @@ pub(super) async fn tracks(
     let list = if rows.is_empty() {
         format!("<p class=\"{EMPTY}\">No tracks match.</p>")
     } else {
+        let data = RowData {
+            versions: &versions,
+            credits: &credits,
+            hearts: hearts.as_ref(),
+        };
         let items: String = rows
             .iter()
             .enumerate()
-            .map(|(i, t)| {
-                track_row(
-                    t,
-                    first + i + 1,
-                    true,
-                    true,
-                    &versions,
-                    &credits,
-                    false,
-                    hearts.as_ref(),
-                )
-            })
+            .map(|(i, t)| track_row(t, first + i + 1, true, true, false, &data))
             .collect();
         format!("<ol class=\"tracks\" data-context=album>{items}</ol>")
     };
@@ -997,21 +1012,15 @@ pub(super) async fn playlist(
     let Some((list, tracks, versions, credits, hearts)) = found else {
         return not_found();
     };
+    let data = RowData {
+        versions: &versions,
+        credits: &credits,
+        hearts: hearts.as_ref(),
+    };
     let rows: String = tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| {
-            track_row(
-                t,
-                i + 1,
-                true,
-                true,
-                &versions,
-                &credits,
-                false,
-                hearts.as_ref(),
-            )
-        })
+        .map(|(i, t)| track_row(t, i + 1, true, true, false, &data))
         .collect();
     let cover = tracks
         .iter()
@@ -1078,7 +1087,15 @@ fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
     }
     format!(
         "<div id=results>{}</div>",
-        shelf_sections(&summary, shelf, &versions, &credits, hearts.as_ref())
+        shelf_sections(
+            &summary,
+            shelf,
+            &RowData {
+                versions: &versions,
+                credits: &credits,
+                hearts: hearts.as_ref(),
+            },
+        )
     )
 }
 
@@ -1203,13 +1220,7 @@ hover:text-brand hover:no-underline\" href=\"{href}\">{title}\
 /// The previews of a shelf, as the apps' shelf lays them out: artists as
 /// pills, records as tiles, and the tracks as a list that plays on from the
 /// row picked.
-fn shelf_sections(
-    s: &Summary,
-    shelf: Shelf,
-    versions: &Versions,
-    credits: &Credits,
-    hearts: Option<&Hearts>,
-) -> String {
+fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> String {
     let mut out = String::new();
     if !s.artists.preview.is_empty() {
         let _ = write!(
@@ -1224,7 +1235,7 @@ fn shelf_sections(
             out,
             "{}<div class=\"mb-6 {GRID}\">{}</div>",
             section_head("Albums", s.albums.total, shelf, Kind::Albums, ""),
-            cells(&s.albums.preview, versions, credits, hearts)
+            cells(&s.albums.preview, data.versions, data.credits, data.hearts)
         );
     }
     if !s.tracks.preview.is_empty() {
@@ -1233,7 +1244,7 @@ fn shelf_sections(
             .preview
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, versions, credits, false, hearts))
+            .map(|(i, t)| track_row(t, i + 1, true, true, false, data))
             .collect();
         let _ = write!(
             out,
@@ -1280,7 +1291,15 @@ async fn shelf_page(
     } else {
         format!(
             "<h1>{title}</h1>{}",
-            shelf_sections(&summary, shelf, &versions, &credits, hearts.as_ref())
+            shelf_sections(
+                &summary,
+                shelf,
+                &RowData {
+                    versions: &versions,
+                    credits: &credits,
+                    hearts: hearts.as_ref(),
+                },
+            )
         )
     };
     respond(&s, &headers, &user, title, &inner)

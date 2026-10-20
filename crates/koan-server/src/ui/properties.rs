@@ -63,15 +63,11 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         None => None,
     };
     let sources = queries::sources_of_track(conn, id).ok()?;
-    let credits = Credits::load(
-        conn,
-        std::slice::from_ref(&t),
-        &t.album_id.into_iter().collect::<Vec<_>>(),
-    );
+    let credits = Credits::load(conn, std::slice::from_ref(&t), t.album_id.as_slice());
     let artist = credit_links(&credits.track(&t), false);
     let album_artist = credit_links(
         &credits.album(
-            t.album_id.unwrap_or(0),
+            t.album_id,
             &t.album_artist_name,
             album.as_ref().map(|a| a.artist_id),
         ),
@@ -88,7 +84,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let mut out = format!(
         "<p class=\"{KICKER}\">Properties</p><h2 class=\"my-1 normal-case\">{}</h2><p class=\"{SUB}\">{}</p>",
         escape(&t.title),
-        artist,
+        &artist,
     );
     if admin && let Some(path) = crate::subsonic::track_file_path(&t) {
         out.push_str(&format!(
@@ -103,14 +99,10 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let text = |v: Option<String>| v.map(|v| escape(&v));
     // Names that have a page are linked to it.
     let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
-    let credited = |name: &str, links: &String| (!name.is_empty()).then(|| links.clone());
     let track = [
         ("Title", text(Some(t.title.clone()))),
-        ("Artist", credited(&t.artist_name, &artist)),
-        (
-            "Album artist",
-            credited(&t.album_artist_name, &album_artist),
-        ),
+        ("Artist", Some(artist)),
+        ("Album artist", Some(album_artist)),
         ("Album", linked("album", t.album_id, &t.album_title)),
         ("Disc", number(t.disc)),
         ("Track", number(t.track_number)),
