@@ -67,7 +67,6 @@ import cc.blit.koan.ffi.RepeatMode
 import cc.blit.koan.ffi.SleepState
 import cc.blit.koan.ffi.SleepTimer
 import cc.blit.koan.ffi.Track
-import cc.blit.koan.ffi.TrackDetails
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.ArtistRoute
@@ -265,13 +264,9 @@ private fun Titles(entry: QueueItem?) {
     val track by produceState<Track?>(null, trackId, library) {
         value = trackId?.let { id -> runCatching { mirror.engine().track(id) }.getOrNull() }
     }
-    // What the library knows of the track, for its info sheet: the titles
-    // open it, the artist and the record being links of their own.
-    val details by produceState<TrackDetails?>(null, trackId, library) {
-        value = trackId?.let { id -> runCatching { mirror.engine().trackDetails(id) }.getOrNull() }
-    }
+    // The titles open the track's info sheet, the artist and the record being links of their own.
+    val showInfo = LocalShowTrackInfo.current
     var menu by remember { mutableStateOf(false) }
-    var info by remember { mutableStateOf(false) }
     // A play still finding its tracks, named from the tap rather than leaving
     // the paused track it replaces on show.
     val resolving by app.player.resolving.collectAsStateWithLifecycle()
@@ -284,7 +279,7 @@ private fun Titles(entry: QueueItem?) {
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(
-            Modifier.weight(1f).link(details != null, label = "Track info") { info = true },
+            Modifier.weight(1f).link(trackId != null, label = "Track info") { trackId?.let(showInfo) },
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             KoanText(entry?.title ?: "Nothing playing", role = KoanType.TitleSmall, tone = KoanTone.Strong, maxLines = 1)
@@ -303,7 +298,6 @@ private fun Titles(entry: QueueItem?) {
                 }
             }
         }
-        details?.takeIf { info }?.let { TrackInfoSheet(it) { info = false } }
         trackId?.let { TrackHeart(it) }
         track?.let {
             Box {

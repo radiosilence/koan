@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.ffi.InfoField
@@ -33,6 +34,7 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
+import kotlinx.coroutines.CancellationException
 
 /** Opens a track's info sheet from any menu. Provided by `TrackInfoHost`. */
 val LocalShowTrackInfo = staticCompositionLocalOf<(Long) -> Unit> { error("no TrackInfoHost: compose inside AppShell") }
@@ -49,8 +51,19 @@ fun TrackInfoHost(content: @Composable () -> Unit) {
     val show = remember { { trackId: Long -> shown = trackId } }
     CompositionLocalProvider(LocalShowTrackInfo provides show, content = content)
     shown?.let { trackId ->
-        val details by produceState<TrackDetails?>(null, trackId) {
-            value = runCatching { mirror.engine().trackDetails(trackId) }.getOrNull()
+        // Read again when the library changes, so a rescan or sync shows in the open sheet.
+        val library by mirror.library.collectAsStateWithLifecycle()
+        val details by produceState<TrackDetails?>(null, trackId, library) {
+            try {
+                value = mirror.engine().trackDetails(trackId)
+                // Gone from the library: there is nothing to show.
+                if (value == null) shown = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                mirror.report(e)
+                shown = null
+            }
         }
         details?.let { TrackInfoSheet(it) { shown = null } }
     }

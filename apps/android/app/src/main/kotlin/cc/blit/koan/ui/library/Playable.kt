@@ -122,15 +122,15 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
                 is Playable.OfAlbum -> playable.album.artistId
                 is Playable.OfArtist -> null
             }
-            if (playable is Playable.OfTrack) {
-                val showInfo = LocalShowTrackInfo.current
-                KoanMenuItem("Info…", KoanIcons.info) { onDismiss(); showInfo(playable.track.id) }
-            }
-            if (albumId != null || artistId != null) KoanDivider()
+            if (albumId != null || artistId != null || playable is Playable.OfTrack) KoanDivider()
             if (albumId != null && playable !is Playable.OfAlbum) {
                 KoanMenuItem("Go to Album", KoanIcons.album) { onDismiss(); nav.push(AlbumRoute(albumId, (playable as? Playable.OfTrack)?.track?.id)) }
             }
             if (artistId != null) KoanMenuItem("Go to Artist", KoanIcons.artist) { onDismiss(); nav.push(ArtistRoute(artistId)) }
+            if (playable is Playable.OfTrack) {
+                val showInfo = LocalShowTrackInfo.current
+                KoanMenuItem("Info…", KoanIcons.info) { onDismiss(); showInfo(playable.track.id) }
+            }
         }
     }
 }

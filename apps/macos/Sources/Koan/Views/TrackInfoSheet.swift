@@ -36,6 +36,9 @@ struct TrackInfoButton: View {
 /// track's info, as Now Playing does, sets `showTrackInfo` for itself.
 struct TrackInfoHost: ViewModifier {
     @State private var shown: Shown?
+    /// Apart from `shown` on iOS, which keeps the tray's content while it
+    /// slides away.
+    @State private var presented = false
 
     struct Shown: Identifiable {
         let id: Int64
@@ -46,9 +49,12 @@ struct TrackInfoHost: ViewModifier {
         content
         #else
         content
-            .environment(\.showTrackInfo, ShowTrackInfo { shown = Shown(id: $0) })
+            .environment(\.showTrackInfo, ShowTrackInfo {
+                shown = Shown(id: $0)
+                presented = true
+            })
             #if os(iOS)
-            .tray(isPresented: Binding(get: { shown != nil }, set: { if !$0 { shown = nil } })) {
+            .tray(isPresented: $presented) {
                 if let shown { TrackInfoLoader(trackId: shown.id) }
             }
             #else
@@ -74,24 +80,31 @@ private struct TrackInfoLoader: View {
     let trackId: Int64
 
     @Environment(LibraryModel.self) private var library
-    @State private var info: TrackDetails?
-    @State private var loaded = false
+    @State private var loaded: Result<TrackDetails?, Error>?
 
     var body: some View {
         Group {
-            if let info {
-                TrackInfoView(info: info)
-            } else if loaded {
-                Text("This track is no longer in the library.")
-                    .koanText(.fine, .muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
+            switch loaded {
+            case .success(let info?): TrackInfoView(info: info)
+            case .success(nil): note("This track is no longer in the library.")
+            case .failure(let error): note("Couldn't read this track — \(error.localizedDescription)")
+            case nil: EmptyView()
             }
         }
         .task(id: trackId) {
-            info = (try? await library.engine.trackDetails(trackId: trackId)) ?? nil
-            loaded = true
+            do {
+                loaded = .success(try await library.engine.trackDetails(trackId: trackId))
+            } catch {
+                loaded = .failure(error)
+            }
         }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .koanText(.fine, .muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
     }
 }
 
