@@ -1698,7 +1698,8 @@ android-walk avd="koan-walk" search="Long":
     sdk="{{android_sdk}}"
     adb() { "${sdk:+$sdk/platform-tools/}adb" "$@"; }
     cleanup=()
-    trap 'for ((i=${#cleanup[@]}-1; i>=0; i--)); do eval "${cleanup[$i]}"; done' EXIT
+    # Every cleanup runs, whichever fails.
+    trap 'set +e; for ((i=${#cleanup[@]}-1; i>=0; i--)); do eval "${cleanup[$i]}"; done' EXIT
     serial=$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')
     if [ -z "$serial" ]; then
         "$sdk/emulator/emulator" -avd "{{avd}}" -gpu host -memory 4096 -cores 6 -no-window -no-audio \
@@ -1722,7 +1723,8 @@ android-walk avd="koan-walk" search="Long":
     key=$(cat "$out/server.key")
     port=${url##*:}
     just _bar-seed "$url" "$key"
-    (cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:installDebug :app:installDebugAndroidTest -Pabis=arm64-v8a)
+    abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
+    (cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:installDebug :app:installDebugAndroidTest -Pabis=$abi)
     # The server as the emulator's own loopback, as the share links name it.
     adb reverse tcp:$port tcp:$port
     cleanup+=("adb reverse --remove tcp:$port || true")
@@ -1751,7 +1753,7 @@ android-walk avd="koan-walk" search="Long":
                 | put shared_prefs/appearance.xml
             adb shell cmd uimode night $([ $appearance = dark ] && echo yes || echo no) >/dev/null
             # `am instrument` exits 0 whatever the test did; its report says.
-            report=$(adb shell am instrument -w -e class {{bundle_id}}.WalkTest -e settle 20 -e search '{{search}}' \
+            report=$(adb shell am instrument -w -e class {{bundle_id}}.WalkTest -e settle 20 -e search "'{{search}}'" \
                 {{bundle_id}}.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r')
             if ! grep -q '^OK (1 test)' <<<"$report"; then
                 echo "$look-$appearance: the walk failed" >&2

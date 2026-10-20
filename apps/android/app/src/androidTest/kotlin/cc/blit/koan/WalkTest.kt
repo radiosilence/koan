@@ -1,6 +1,7 @@
 package cc.blit.koan
 
 import android.content.Intent
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -61,7 +62,7 @@ class WalkTest {
                 pause(3)
                 snap("04-album")
                 // What the queue, the mini player and Now Playing show from here on.
-                find(label("Play"))?.click()
+                tap { find(label("Play")) }
                 pause(2)
                 back()
             }
@@ -95,12 +96,12 @@ class WalkTest {
             if (find(By.desc("Show lyrics"), 5_000) != null) {
                 pause(2)
                 snap("06-now-playing")
-                find(By.desc("Show lyrics"))?.click()
+                tap { find(By.desc("Show lyrics")) }
                 pause(4)
                 snap("07-lyrics")
-                find(By.desc("Show artwork"))?.click()
+                tap { find(By.desc("Show artwork")) }
                 pause(1)
-                find(By.desc("Close"))?.click() ?: back()
+                if (!tap { find(By.desc("Close")) }) back()
                 pause(1)
             }
         }
@@ -160,7 +161,7 @@ class WalkTest {
 
     /** A tab: the lowest of the matches, since a page can carry its tab's name as its title. */
     private fun tab(name: String) {
-        device.wait(Until.findObjects(label(name)), 3_000)?.maxByOrNull { it.visibleBounds.top }?.click()
+        tap { device.wait(Until.findObjects(label(name)), 3_000)?.maxByOrNull { it.visibleBounds.top } }
         pause(1)
     }
 
@@ -172,10 +173,12 @@ class WalkTest {
 
     private fun scrollable() = device.findObjects(By.scrollable(true)).maxByOrNull { it.visibleBounds.height() }
 
-    /** Taps what matches, finding it again if the list recomposed under it. */
-    private fun open(selector: BySelector): Boolean {
+    private fun open(selector: BySelector) = tap { find(selector) }
+
+    /** Taps what `locate` finds, finding it again if the page recomposed under it. */
+    private fun tap(locate: () -> UiObject2?): Boolean {
         repeat(3) {
-            val found = find(selector) ?: return false
+            val found = locate() ?: return false
             try {
                 found.click()
                 return true
@@ -191,7 +194,8 @@ class WalkTest {
         pause(1)
     }
 
-    private fun keyboardShown() = device.executeShellCommand("dumpsys input_method").contains("mInputShown=true")
+    private fun keyboardShown() =
+        instrumentation.uiAutomation.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
 
     private fun pause(seconds: Double) = Thread.sleep((seconds * 1000).toLong())
 
