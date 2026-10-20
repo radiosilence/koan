@@ -1,0 +1,1 @@
+- **Every album has a disc total.** It is the highest disc among the album's tracks, or a larger total the files are tagged with, so the web UI, GraphQL and the terminal UI report it for synced libraries and for files tagged without one. The first launch rereads every file's tags.
