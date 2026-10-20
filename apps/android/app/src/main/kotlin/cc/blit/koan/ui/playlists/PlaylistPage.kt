@@ -8,14 +8,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +46,7 @@ import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.PageBar
+import cc.blit.koan.ui.library.PageHeader
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.Removal
 import cc.blit.koan.ui.library.SelectButton
@@ -54,6 +58,7 @@ import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.GoToArtists
 import cc.blit.koan.ui.library.artistCredit
+import cc.blit.koan.ui.library.favourites
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.nowplaying.LocalShowTrackInfo
 import cc.blit.koan.ui.nowplaying.clock
@@ -107,10 +112,13 @@ fun PlaylistPage(playlistId: Long) {
     // Entries, not tracks: the same song twice is two rows to pick.
     val selection = remember { Selection<PlaylistEntry> { it.entryId } }
     SelectMode(selection)
+    val list = rememberLazyListState()
+    // The name moves into the bar once the header has scrolled away.
+    val scrolled by remember { derivedStateOf { list.firstVisibleItemIndex > 0 } }
 
     PlaylistAccent(contents?.covers?.firstOrNull()) {
         Column {
-            PageBar(playlist?.name ?: "Playlist", appText = playlist == null) {
+            PageBar(if (scrolled) playlist?.name.orEmpty() else "", appText = false) {
                 if (entries.isNotEmpty() && !editing) SelectButton(selection)
                 if (fillable && entries.isNotEmpty() && !selection.active) {
                     KoanButton(if (editing) "Done" else "Edit", { editing = !editing }, kind = KoanButtonKind.Text)
@@ -136,6 +144,7 @@ fun PlaylistPage(playlistId: Long) {
                     contents == null -> Unit
                     playlist == null -> KoanUnavailable("Playlist not found", KoanIcons.playlist, "It may have been deleted here or on your server.")
                     else -> PlaylistList(
+                        listState = list,
                         playlist = playlist,
                         entries = entries,
                         covers = contents?.covers.orEmpty(),
@@ -174,6 +183,7 @@ fun PlaylistPage(playlistId: Long) {
 
 @Composable
 private fun PlaylistList(
+    listState: LazyListState,
     playlist: Playlist,
     entries: List<PlaylistEntry>,
     covers: List<Long>,
@@ -184,7 +194,6 @@ private fun PlaylistList(
     onAdd: (List<Long>) -> Unit,
 ) {
     val grouped = playlist.grouped ?: false
-    val listState = rememberLazyListState()
     // One state object for the page's life: each row's gesture outlives a
     // recomposition and keeps the state it started with.
     val latest by rememberUpdatedState(entries)
@@ -311,24 +320,28 @@ private fun PlaylistHeader(
     showLayout: Boolean,
     edits: PlaylistEdits,
 ) {
-    val gutter = LocalKoanTokens.current.gutter
-    Column(Modifier.padding(horizontal = gutter, vertical = KoanSpace.s), verticalArrangement = Arrangement.spacedBy(KoanSpace.l)) {
-        Row(verticalAlignment = Alignment.Top) {
-            PlaylistMosaic(covers, 112.dp)
-            Spacer(Modifier.width(KoanSpace.l))
-            Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
-                KoanText(playlist.name, role = KoanType.Title, tone = KoanTone.Strong, maxLines = 2)
-                KoanText(contentsSummary(playlist, entries), role = KoanType.Meta, tone = KoanTone.Muted)
+    val app = koanApp()
+    val any = entries.isNotEmpty()
+    val ids = entries.map { it.track.id }
+    PageHeader(
+        playlist.name,
+        Modifier.padding(horizontal = LocalKoanTokens.current.gutter, vertical = KoanSpace.s),
+        art = { PlaylistMosaic(covers, 112.dp) },
+        detail = { KoanText(contentsSummary(playlist, entries), role = KoanType.Meta, tone = KoanTone.Muted) },
+        actions = {
+            KoanButton("Play", { edits.play(playlist.id) }, kind = KoanButtonKind.Prominent, icon = KoanIcons.play, enabled = any)
+            KoanButton("Shuffle", { edits.play(playlist.id, shuffled = true) }, icon = KoanIcons.shuffle, enabled = any)
+        },
+        below = {
+            // The lesser verbs on the whole playlist, compact beside its one Play.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
+                KoanButton("Play Next", { app.player.playNext(ids) }, kind = KoanButtonKind.Compact, icon = KoanIcons.playNext, enabled = any)
+                KoanButton("Add to Queue", { app.player.enqueue(ids) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue, enabled = any)
+                Spacer(Modifier.weight(1f))
+                if (showLayout && any) KoanIconToggle(KoanIcons.album, "Group by album", grouped) { edits.setGrouped(playlist.id, it) }
             }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.l), verticalAlignment = Alignment.CenterVertically) {
-            KoanButton("Play", { edits.play(playlist.id) }, kind = KoanButtonKind.Prominent, icon = KoanIcons.play, enabled = entries.isNotEmpty())
-            KoanButton("Shuffle", { edits.play(playlist.id, shuffled = true) }, icon = KoanIcons.shuffle, enabled = entries.isNotEmpty())
-        }
-        if (showLayout && entries.isNotEmpty()) {
-            KoanIconToggle(KoanIcons.album, "Group by album", grouped) { edits.setGrouped(playlist.id, it) }
-        }
-    }
+        },
+    )
 }
 
 /**
@@ -415,6 +428,8 @@ private fun EntryRow(
     val track = entry.track
     var menu by remember { mutableStateOf(false) }
     val showInfo = LocalShowTrackInfo.current
+    val store = favourites()
+    val favourite = track.id in store.tracks.collectAsStateWithLifecycle().value
 
     Box(modifier) {
         CollectionRow(
@@ -451,6 +466,10 @@ private fun EntryRow(
             KoanMenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
             KoanMenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
             KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(listOf(track.id)) }
+            KoanMenuItem(if (favourite) "Remove Favourite" else "Favourite Track", if (favourite) KoanIcons.favourited else KoanIcons.favourite) {
+                menu = false
+                store.toggleTrack(track.id)
+            }
             DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
             track.albumId?.let { albumId ->
                 KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }

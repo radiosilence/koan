@@ -143,7 +143,8 @@ private fun SettingsRoot() {
     val version = appVersion(context)
     val appearance by app.mirror.appearance.collectAsStateWithLifecycle()
     val taps = remember { SecretTaps() }
-    SettingsPage("Settings", state) {
+    // No title: the tab beneath already says "settings".
+    SettingsPage(null, state) {
         panes.forEach { pane ->
             item(pane.name) { KoanNavRow(pane.title, pane.icon, selected = false, onClick = { nav.push(SettingsPaneRoute(pane)) }) }
         }

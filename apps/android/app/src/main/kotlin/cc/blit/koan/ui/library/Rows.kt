@@ -316,7 +316,8 @@ fun TrackRow(
         },
         trailing = {
             TrackAvailability(track)
-            TrackHeart(track.id, showing = false)
+            // Always drawn, as on the iPhone: a phone has no hover to reveal it.
+            TrackHeart(track.id)
             track.durationMs?.let { KoanText(duration(it), role = KoanType.Fine, tone = KoanTone.Muted) }
         },
     ) {

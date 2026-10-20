@@ -1,19 +1,14 @@
 package cc.blit.koan.ui.library
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -22,17 +17,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.ffi.Album
-import cc.blit.koan.ffi.CreditPart
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -159,56 +150,37 @@ private const val RevealOffsetPx = 160
 @Composable
 private fun Header(album: Album, tracks: List<Track>) {
     val app = koanApp()
-    val nav = LocalNavigator.current
     var menu by remember { mutableStateOf(false) }
+    var viewing by remember { mutableStateOf(false) }
     val playable = Playable.OfAlbum(album)
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = LocalKoanTokens.current.gutter),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(KoanSpace.xs),
-    ) {
-        Sleeve(
-            Art.album(album.id, ArtSize.Full),
-            Modifier
-                .padding(bottom = KoanSpace.l)
-                .widthIn(max = 320.dp)
-                .fillMaxWidth(0.72f)
-                .aspectRatio(1f),
-            size = 320.dp,
-        )
-        KoanText(album.title, role = KoanType.Title, textAlign = TextAlign.Center, maxLines = 3)
-        // Each credited artist a link button; the artists' names as the library has them,
-        // where the text overload would lowercase them as the app's own words.
-        FlowRow(horizontalArrangement = Arrangement.Center) {
-            album.artistCredit.ifEmpty { listOf(CreditPart(album.artistName, album.artistId)) }.forEach { part ->
-                val id = part.artistId
-                if (id != null) {
-                    KoanButton({ nav.push(ArtistRoute(id)) }, Modifier.align(Alignment.CenterVertically), kind = KoanButtonKind.Link) {
-                        Text(part.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                } else {
-                    KoanText(part.text, Modifier.align(Alignment.CenterVertically), role = KoanType.Control, tone = KoanTone.Muted, maxLines = 1)
-                }
-            }
-        }
-        val total = tracks.sumOf { it.durationMs ?: 0 }
-        KoanText(
-            listOfNotNull(album.year?.toString(), album.codec?.uppercase(), length(total).takeIf { total > 0 }).joinToString(" · "),
-            role = KoanType.Fine,
-            tone = KoanTone.Muted,
-        )
-        Row(
-            Modifier.padding(vertical = KoanSpace.m),
-            horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    val total = tracks.sumOf { it.durationMs ?: 0 }
+    val details = listOfNotNull(album.year?.toString(), album.codec?.uppercase(), length(total).takeIf { total > 0 }).joinToString(" · ")
+    val credit = artistCredit(album.artistCredit, album.artistName, album.artistId)
+    PageHeader(
+        album.title,
+        Modifier.padding(horizontal = LocalKoanTokens.current.gutter),
+        art = {
+            Sleeve(
+                Art.album(album.id, ArtSize.Full),
+                Modifier.clickable(remember { MutableInteractionSource() }, indication = null, onClickLabel = "Show artwork") { viewing = true },
+                size = 200.dp,
+            )
+        },
+        detail = {
+            NameLine(listOf(credit), maxLines = 2)
+            if (details.isNotEmpty()) KoanText(details, role = KoanType.Fine, tone = KoanTone.Muted)
+        },
+        actions = {
             KoanButton("Play", { app.play(playable) }, kind = KoanButtonKind.Prominent, icon = KoanIcons.play)
             KoanButton("Shuffle", { app.play(playable, shuffled = true) }, icon = KoanIcons.shuffle)
-            AlbumHeart(album.id)
+            AlbumHeart(album.id, labelled = true)
             Box {
                 KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
                 PlayableMenu(playable, menu) { menu = false }
             }
-        }
+        },
+    )
+    if (viewing) {
+        ArtworkViewer(Art.album(album.id, ArtSize.Full), album.title, listOf(credit.text, details).filter { it.isNotEmpty() }.joinToString(" · ")) { viewing = false }
     }
 }
