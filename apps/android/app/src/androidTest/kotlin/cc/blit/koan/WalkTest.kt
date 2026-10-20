@@ -50,14 +50,18 @@ class WalkTest {
         if (open(label("Albums"))) {
             pause(3)
             snap("03-albums")
-            // The first sleeve, by where it sits, as the iPhone's walk finds it.
-            device.click(device.displayWidth * 27 / 100, device.displayHeight * 30 / 100)
-            pause(3)
-            snap("04-album")
-            // What the queue, the mini player and Now Playing show from here on.
-            find(label("Play"))?.click()
-            pause(2)
-            back()
+            // The first sleeve: the topmost, leftmost of the library's record titles.
+            val sleeve = device.wait(Until.findObjects(By.text(Pattern.compile("(?i)album \\d+|record \\d+|thirty rooms"))), 3_000)
+                ?.minWithOrNull(compareBy({ it.visibleBounds.top }, { it.visibleBounds.left }))
+            if (sleeve != null) {
+                sleeve.click()
+                pause(3)
+                snap("04-album")
+                // What the queue, the mini player and Now Playing show from here on.
+                find(label("Play"))?.click()
+                pause(2)
+                back()
+            }
             back()
         }
         if (open(label("Artists"))) {
@@ -67,8 +71,8 @@ class WalkTest {
         }
         for ((name, shot) in listOf(
             "Favourites" to "05b-favourites", "Playlists" to "05c-playlists",
-            "Recently Played" to "05d-recently-played", "History" to "05e-history",
-            "Downloads" to "05f-downloads", "Downloaded" to "05g-downloaded",
+            "Recently Played" to "05d-recently-played", "Downloaded" to "05g-downloaded",
+            "History" to "05e-history", "Downloads" to "05f-downloads",
         )) {
             if (!open(label(name))) continue
             pause(3)
@@ -101,30 +105,27 @@ class WalkTest {
         tab("Settings")
         pause(1)
         snap("09-settings")
-        if (open(label("Server"))) {
-            pause(1)
-            repeat(2) { scrollable()?.scroll(Direction.DOWN, 1f) }
-            pause(1)
-            snap("09b-server-end")
-            back()
-        }
-        if (open(label("EQ"))) {
-            pause(2)
-            snap("09h-eq")
-            scrollable()?.scroll(Direction.DOWN, 0.6f)
-            pause(1)
-            snap("09i-eq-more")
-            back()
-        }
+        // In the order Settings lists them, so each is found scrolling down from the last.
         for ((name, shot) in listOf(
-            "Account" to "09d-account", "People" to "09e-people",
+            "Server" to "09b-server-end", "Account" to "09d-account", "People" to "09e-people",
+            "Playback" to "09j-playback", "EQ" to "09h-eq", "Downloads" to "09k-downloads",
             "Devices" to "09f-devices", "Integrations" to "09g-server-capabilities",
-            "Appearance" to "09c-appearance", "Playback" to "09j-playback",
-            "Downloads" to "09k-downloads", "About" to "09l-about",
+            "Appearance" to "09c-appearance", "About" to "09l-about",
         )) {
             if (!open(label(name))) continue
-            pause(1)
-            snap(shot)
+            pause(if (name == "EQ") 2 else 1)
+            when (name) {
+                "Server" -> {
+                    repeat(2) { scrollable()?.scroll(Direction.DOWN, 1f) }
+                    pause(1)
+                }
+                "EQ" -> {
+                    snap(shot)
+                    scrollable()?.scroll(Direction.DOWN, 0.6f)
+                    pause(1)
+                }
+            }
+            snap(if (name == "EQ") "09i-eq-more" else shot)
             back()
         }
 
@@ -160,10 +161,11 @@ class WalkTest {
         pause(1)
     }
 
-    /** What matches, scrolled to if the page has to be moved to show it. */
+    /** What matches, scrolled to, either way, if the page has to be moved to show it. */
     private fun find(selector: BySelector, timeout: Long = 3_000): UiObject2? =
         device.wait(Until.findObject(selector), timeout)
             ?: scrollable()?.scrollUntil(Direction.DOWN, Until.findObject(selector))
+            ?: scrollable()?.scrollUntil(Direction.UP, Until.findObject(selector))
 
     private fun scrollable() = device.findObjects(By.scrollable(true)).maxByOrNull { it.visibleBounds.height() }
 
