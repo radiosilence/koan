@@ -646,8 +646,14 @@ impl QueueItem {
             QueueEntryStatus::Playing if state == PlaybackState::Stopped => EntryStatus::Queued,
             status => status.into(),
         };
-        let credits =
-            crate::queue_slice::Joins::default().credits(None, &item.artist, &item.album_artist);
+        let credits: crate::queue_slice::Credits = helpers::RowCredits::new::<&str>(
+            &item.artist,
+            &item.album_artist,
+            Default::default(),
+            None,
+            &[],
+        )
+        .into();
         Self {
             queue_item_id: item.id.0.to_string(),
             track_id: item.db_id,
