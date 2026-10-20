@@ -785,7 +785,10 @@ pub struct Lyrics {
     pub content: String,
     /// LRC with timestamps, as opposed to a plain text dump.
     pub synced: bool,
-    pub source: String,
+    /// Where the words came from, as a credit to show beside them: "LRCLIB",
+    /// "Embedded" or "Sidecar". Absent when the cache names a source this
+    /// build does not know.
+    pub source: Option<String>,
     /// Parsed LRC lines, empty when unsynced. Parsing lives here so clients
     /// don't each reimplement the timestamp format.
     pub lines: Vec<LyricLine>,
@@ -804,17 +807,10 @@ impl From<koan_core::lyrics::Lyrics> for Lyrics {
         } else {
             Vec::new()
         };
-        // `LyricsSource::as_str` is private to koan-core, so name them here.
-        let source = match l.source {
-            koan_core::lyrics::LyricsSource::Embedded => "embedded",
-            koan_core::lyrics::LyricsSource::Sidecar => "sidecar",
-            koan_core::lyrics::LyricsSource::Lrclib => "lrclib",
-            koan_core::lyrics::LyricsSource::Cache => "cache",
-        };
         Self {
+            source: l.source.map(|s| s.credit().into()),
             content: l.content,
             synced: l.synced,
-            source: source.into(),
             lines,
         }
     }

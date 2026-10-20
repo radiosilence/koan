@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +26,6 @@ import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
-import cc.blit.koan.ui.library.ArtistRoute
 import cc.blit.koan.ui.library.NameLine
 import cc.blit.koan.ui.library.Named
 import cc.blit.koan.ui.library.Playable
@@ -51,35 +49,12 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
-import cc.blit.koan.ui.theme.koanChip
 import cc.blit.koan.ui.theme.koanRow
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
 
 /** The narrowest a record tile goes, as the Apple apps' result grid. */
 internal val TileMinimum = 140.dp
-
-/** An artist among other results: a chip going to the artist. */
-@Composable
-internal fun ArtistPill(id: Long, name: String, selection: Selection<Playable>) {
-    val nav = LocalNavigator.current
-    val playable = Playable.OfArtist(id, name)
-    var menu by remember { mutableStateOf(false) }
-    Box {
-        Row(
-            Modifier
-                .widthIn(max = 260.dp)
-                .koanChip()
-                .pickable(playable, selection, { menu = true }) { nav.push(ArtistRoute(id)) },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs),
-        ) {
-            if (selection.active) Tick(selection.contains(playable))
-            KoanText(name, role = KoanType.Control, maxLines = 1)
-        }
-        PlayableMenu(playable, menu) { menu = false }
-    }
-}
 
 /**
  * A record: the sleeve plays it, the words under it open it, the artist's name

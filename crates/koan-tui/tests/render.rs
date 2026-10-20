@@ -457,7 +457,7 @@ fn lyrics_survives_every_size() {
         result: Some(Lyrics {
             content: NASTY.join("\n"),
             synced: true,
-            source: LyricsSource::Lrclib,
+            source: Some(LyricsSource::Lrclib),
         }),
         lrc_lines: NASTY
             .iter()
@@ -474,7 +474,7 @@ fn lyrics_survives_every_size() {
         result: Some(Lyrics {
             content: NASTY.join("\n"),
             synced: false,
-            source: LyricsSource::Lrclib,
+            source: Some(LyricsSource::Lrclib),
         }),
         lrc_lines: Vec::new(),
         track_path: Some(PathBuf::from("/music/a.flac")),

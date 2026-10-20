@@ -1,0 +1,1 @@
+- **Settings shows koan's accounts and EQ sync only on a server that has them.** People and an EQ's Sync choice no longer appear against Navidrome and other servers, and a feature a server lacks is explained as an old kōan server or as one that is not kōan, rather than always as an old one.

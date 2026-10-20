@@ -94,8 +94,8 @@ pub struct UiState {
     auth_enabled: bool,
     /// `graphql.setup_wizard`: whether `/setup` may make the first admin.
     setup_wizard: bool,
-    /// `sharing.public_url`, the address invites point clients at.
-    public_url: Option<String>,
+    /// `server.url`, the address invites point clients at.
+    server_url: Option<String>,
     /// OAuth codes awaiting their token request.
     codes: oauth::Codes,
     /// `mcp.redirect_hosts`.
@@ -113,7 +113,7 @@ pub(crate) fn router(
     auth_enabled: bool,
     setup_wizard: bool,
     covers: Arc<Covers>,
-    public_url: Option<String>,
+    server_url: Option<String>,
     redirect_hosts: Vec<String>,
     proxy_auth: Option<ProxyAuth>,
     jobs: crate::graphql::jobs::JobRegistry,
@@ -125,7 +125,7 @@ pub(crate) fn router(
         auth,
         auth_enabled,
         setup_wizard,
-        public_url,
+        server_url,
         codes: oauth::Codes::default(),
         redirect_hosts: Arc::new(redirect_hosts),
         proxy_auth,

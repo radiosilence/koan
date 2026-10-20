@@ -430,10 +430,6 @@ fn send_cmd_via(tx: &Sender<PlayerCommand>, cmd: PlayerCommand) -> async_graphql
         .map_err(|_| async_graphql::Error::new("player busy — command not accepted"))
 }
 
-/// The address the request came in on, for links that point back at it.
-#[derive(Clone)]
-pub(crate) struct RequestOrigin(pub String);
-
 /// The authenticated user, or an anonymous admin when there is none (auth
 /// disabled, or an in-process caller).
 fn get_auth_user(ctx: &Context<'_>) -> AuthUser {
@@ -1549,13 +1545,14 @@ mod tests {
     #[tokio::test]
     async fn accounts_are_made_and_invited_through_graphql() {
         let (schema, _rx, _tmp) = test_schema();
-        let run = |q: &str| {
-            schema.execute(
-                async_graphql::Request::new(q)
-                    .data(RequestOrigin("https://music.example.com".into())),
-            )
-        };
+        let run = |q: &str| schema.execute(async_graphql::Request::new(q));
         let r = run(r#"mutation { createUser(username: "sarita", role: READONLY) { username link password emailText } }"#).await;
+        assert!(
+            r.errors[0].message.contains("server.url"),
+            "no address to invite to: {:?}",
+            r.errors
+        );
+        let r = run(r#"mutation { createUser(username: "sarita", role: READONLY, server: "https://music.example.com") { username link password emailText } }"#).await;
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         let v = r.data.into_json().unwrap();
         let link = v["createUser"]["link"].as_str().unwrap();

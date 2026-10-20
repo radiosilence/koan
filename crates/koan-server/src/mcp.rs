@@ -51,8 +51,8 @@ pub struct KoanMcpServer {
     /// A headless server: its own player is heard by nobody, and the music
     /// plays on the devices linked to it.
     headless: bool,
-    /// `sharing.public_url`, where an MCP client fetches koan's icon from.
-    public_url: Option<String>,
+    /// `server.url`, where an MCP client fetches koan's icon from.
+    server_url: Option<String>,
 }
 
 impl KoanMcpServer {
@@ -66,7 +66,7 @@ impl KoanMcpServer {
             tool_router: Self::tool_router(),
             graphql_schema,
             headless: false,
-            public_url: None,
+            server_url: None,
         }
     }
 
@@ -206,7 +206,7 @@ impl KoanMcpServer {
     fn implementation(&self) -> rmcp::model::Implementation {
         let info =
             rmcp::model::Implementation::new("koan", env!("CARGO_PKG_VERSION")).with_title("kōan");
-        match self.public_url.as_deref().map(|u| u.trim_end_matches('/')) {
+        match self.server_url.as_deref().map(|u| u.trim_end_matches('/')) {
             Some(base) => info.with_website_url(base).with_icons(vec![
                 rmcp::model::Icon::new(format!("{base}/ui/assets/icon-192.png"))
                     .with_mime_type("image/png")
@@ -365,7 +365,7 @@ pub fn router(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     auth: crate::auth::middleware::AuthState,
-    public_url: Option<String>,
+    server_url: Option<String>,
     headless: bool,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
@@ -374,7 +374,7 @@ pub fn router(
     };
     let mut template = KoanMcpServer::new(state, cmd_tx, auth.pool.clone());
     template.headless = headless;
-    template.public_url = public_url.clone();
+    template.server_url = server_url.clone();
     let service = StreamableHttpService::new(
         move || Ok(template.clone()),
         Arc::new(LocalSessionManager::default()),
@@ -390,7 +390,7 @@ pub fn router(
         .layer(tower_http::catch_panic::CatchPanicLayer::new())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(
-            (auth, public_url),
+            (auth, server_url),
             bearer_gate,
         ))
         .layer(
@@ -409,7 +409,7 @@ pub fn router(
 /// one, the 401 names the resource metadata, which is how a client finds where
 /// to sign in.
 async fn bearer_gate(
-    axum::extract::State((auth, public_url)): axum::extract::State<(
+    axum::extract::State((auth, server_url)): axum::extract::State<(
         crate::auth::middleware::AuthState,
         Option<String>,
     )>,
@@ -456,8 +456,8 @@ async fn bearer_gate(
             next.run(req).await
         }
         None => {
-            // Without `public_url` there is no OAuth to point the client at.
-            let challenge = match public_url.as_deref().map(|u| u.trim_end_matches('/')) {
+            // Without `server_url` there is no OAuth to point the client at.
+            let challenge = match server_url.as_deref().map(|u| u.trim_end_matches('/')) {
                 Some(base) => format!(
                     "Bearer resource_metadata=\"{base}{}\"",
                     crate::ui::RESOURCE_METADATA
@@ -616,7 +616,7 @@ mod tests {
     fn a_server_with_an_address_names_its_icon() {
         let (mut server, _ch, _tmp) = test_server();
         assert!(server.get_info().server_info.icons.is_none());
-        server.public_url = Some("https://koan.test/".into());
+        server.server_url = Some("https://koan.test/".into());
         let icons = server.get_info().server_info.icons.unwrap();
         assert_eq!(icons[0].src, "https://koan.test/ui/assets/icon-192.png");
     }

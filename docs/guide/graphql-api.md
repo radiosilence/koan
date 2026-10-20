@@ -1,12 +1,12 @@
 # GraphQL API
 
-The GraphQL API runs alongside the TUI by default (port 4000, localhost only), or standalone in headless mode.
+The GraphQL API runs standalone in headless mode, or alongside the TUI when asked for with `--api` or `[graphql] enabled = true` (port 4000, localhost only). The TUI does not serve it unasked, because a server with no accounts makes whoever opens `/setup` first its admin.
 
 ## Quick start
 
 ```bash
-# TUI + API (default)
-koan
+# TUI + API
+koan --api
 
 # Headless with GraphiQL web IDE
 koan --headless --playground
@@ -53,7 +53,7 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ```toml
 [graphql]
-enabled = true                # run alongside TUI (default: true, --no-api disables)
+enabled = false               # run alongside TUI (default: false, same as --api)
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false             # GraphiQL IDE at GET /graphql (default: false)

@@ -148,8 +148,7 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
     let url = url.trim_end_matches('/');
     let replaced = Config::load()
         .ok()
-        .filter(|c| c.remote.url.trim_end_matches('/') == url)
-        .filter(|c| c.remote.username == username)
+        .filter(|c| same_account(&c.remote, url, username))
         .map(|c| c.remote.api_key)
         .filter(|k| !k.is_empty() && k != api_key);
     // Revoked best-effort: a key signs in to give itself up.
@@ -173,8 +172,13 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
 /// Store a credential already checked against the server, replacing whichever
 /// kind was there.
 fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
+    let switching = Config::load().is_ok_and(|c| !same_account(&c.remote, url, username));
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
+        // Another server's own address; this one's comes with its profile.
+        if cfg.remote.url.trim_end_matches('/') != url {
+            cfg.remote.server_url = String::new();
+        }
         cfg.remote.url = url.to_string();
         cfg.remote.username = username.to_string();
         (cfg.remote.password, cfg.remote.api_key) = match &credential {
@@ -188,13 +192,32 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(_) => String::new(),
         };
     })?;
+    if switching {
+        let forgotten = crate::db::pool::shared()
+            .get()
+            .and_then(|db| Ok(crate::helpers::forget_account_state(&db.conn)?));
+        if let Err(e) = forgotten {
+            log::warn!("sign in: could not drop what waited for the last account: {e}");
+        }
+    }
     // Whatever account was here before, its devices are not this one's, and
     // the link it had open closes, to open again as this one.
     crate::remote::proof::forget();
+    // The server at this address may not be the one probed last.
+    crate::remote::profile::forget();
     crate::remote::link::relink();
     // This device's announcement names the server it is signed in to.
     crate::remote::nearby::readvertise();
     Ok(())
+}
+
+/// Whether signing in as `username` at `url` is the account already kept,
+/// whose waiting plays and hearts are still its own. Usernames are compared
+/// as servers do, without case: a server may answer with another spelling of
+/// the one typed.
+fn same_account(kept: &crate::config::RemoteConfig, url: &str, username: &str) -> bool {
+    kept.url.trim_end_matches('/') == url.trim_end_matches('/')
+        && kept.username.eq_ignore_ascii_case(username)
 }
 
 /// Shared secret for koan's own Subsonic API.
@@ -516,6 +539,47 @@ mod refusal_tests {
             }
         });
         url
+    }
+
+    #[test]
+    fn another_server_or_account_is_not_the_one_kept() {
+        let kept = crate::config::RemoteConfig {
+            url: "https://music.example.com/".into(),
+            username: "mate".into(),
+            ..Default::default()
+        };
+        assert!(same_account(&kept, "https://music.example.com", "mate"));
+        assert!(!same_account(&kept, "https://other.example.com", "mate"));
+        assert!(same_account(&kept, "https://music.example.com", "Mate"));
+        assert!(!same_account(&kept, "https://music.example.com", "owner"));
+    }
+
+    /// Waiting plays, forgettings and hearts name one server's ids: none of
+    /// them, a clear above all, may reach the next server signed in to.
+    #[test]
+    fn forgetting_the_account_leaves_nothing_for_the_next_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        crate::db::queries::queue_scrobble(&db.conn, "tr-1", 1_000).unwrap();
+        crate::db::queries::queue_clear(&db.conn, 2_000).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO favourite_outbox (kind, remote_id, star) VALUES ('track', 'tr-1', 1)",
+                [],
+            )
+            .unwrap();
+
+        forget_account_state(&db.conn).unwrap();
+        assert!(
+            crate::db::queries::history_outbox(&db.conn, 10)
+                .unwrap()
+                .is_empty()
+        );
+        let hearts: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM favourite_outbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hearts, 0);
     }
 
     /// Offline mode is from a server: signing out of it ends it, so the next

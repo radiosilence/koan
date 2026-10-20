@@ -165,7 +165,7 @@ export function createKoan(
                   { name: "KOAN_GRAPHQL__COOKIE_SECURE", value: "true" },
                   // Share links and MCP's OAuth are built on the address
                   // strangers reach.
-                  { name: "KOAN_SHARING__PUBLIC_URL", value: `https://${conf.hostname}` },
+                  { name: "KOAN_SERVER__URL", value: `https://${conf.hostname}` },
                   ...(conf.push.existingSecret
                     ? [
                         {

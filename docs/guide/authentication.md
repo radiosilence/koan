@@ -179,9 +179,8 @@ The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send
 themselves.
 
-The link points at `sharing.public_url` when it is set, and otherwise at the
-address the admin reached the server on (honouring `X-Forwarded-Host` and
-`X-Forwarded-Proto` from a proxy).
+The link points at the server's `server.url`, or at the address passed as
+`server` (GraphQL) or `--server` (`koan auth invite`).
 
 ```bash
 # List users
@@ -253,7 +252,7 @@ curl -s https://koan.example/graphql \
 
 ## OAuth, for MCP clients
 
-With `sharing.public_url` set, the server is an OAuth 2.1 authorization server for its own `/mcp`: discovery at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, open registration at `/oauth/register`, consent at `/oauth/authorize` behind the web UI's sign-in, and `/oauth/token` (authorization code with PKCE S256, and refresh). What it issues are kōan access and refresh tokens scoped to MCP (`"scope": "mcp"` in the JWT): `/mcp` accepts only those, and GraphQL and the web UI refuse them, so a connection cannot do more through GraphQL than MCP allows it. The account is looked up on every request, as for any session.
+With `server.url` set, the server is an OAuth 2.1 authorization server for its own `/mcp`: discovery at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, open registration at `/oauth/register`, consent at `/oauth/authorize` behind the web UI's sign-in, and `/oauth/token` (authorization code with PKCE S256, and refresh). What it issues are kōan access and refresh tokens scoped to MCP (`"scope": "mcp"` in the JWT): `/mcp` accepts only those, and GraphQL and the web UI refuse them, so a connection cannot do more through GraphQL than MCP allows it. The account is looked up on every request, as for any session.
 
 Two things differ from an app's session. A client id is a JWT signed with the server's key, carrying the client's redirect URIs, so registrations need no storage and rotating the keys sends every client back to register. And each connection's refresh tokens are one grant: a spent refresh token presented again more than 30 seconds later, or a code exchanged twice, means a copy is in other hands, and revokes the whole grant. App and browser sessions are exempt, since tabs and tasks sharing one session may race a refresh.
 
@@ -325,7 +324,7 @@ koan auth reset
 ```toml
 # config.toml
 [graphql]
-enabled = true            # default: true — API starts with TUI
+enabled = false           # default: false — true serves the API with the TUI
 auth_enabled = true       # default: true
 access_token_ttl = "15m"  # access token lifetime
 refresh_token_ttl = "30d" # refresh token lifetime

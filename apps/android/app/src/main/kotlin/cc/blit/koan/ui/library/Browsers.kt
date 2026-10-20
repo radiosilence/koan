@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.Album
+import cc.blit.koan.ffi.AlbumSort
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -80,6 +81,8 @@ fun AlbumsPage(shelf: Shelf?) {
                 kind = KoanButtonKind.Icon,
                 icon = if (grid) KoanIcons.queueSection else KoanIcons.album,
             )
+            // Its own button, since it is pressed again and again.
+            if (query.sort == AlbumSort.RANDOM) KoanButton("Shuffle", { model.sort(AlbumSort.RANDOM) }, kind = KoanButtonKind.Icon, icon = KoanIcons.reshuffle)
             SortButton(query.sort, query.offered(), { it.label }, model::sort)
             FilterButton(query.filter, choices, model::filter)
             if (!albums.isNullOrEmpty()) SelectButton(selection)
@@ -167,6 +170,7 @@ fun TracksPage(shelf: Shelf) {
     val model = viewModel { TracksModel(app.mirror, shelf) }
     val page by model.page.collectAsStateWithLifecycle()
     val query by model.query.collectAsStateWithLifecycle()
+    val choices by model.choices.collectAsStateWithLifecycle()
     val selection = model.selection
     SelectMode(selection)
     val (current, playing) = nowPlayingTrack()
@@ -184,11 +188,17 @@ fun TracksPage(shelf: Shelf) {
             appText = shelf !is Shelf.Search,
         ) {
             SortButton(query.sort, query.offered(), { it.label }, model::sort)
+            FilterButton(query.filter, choices, model::filter)
             if (!page?.tracks.isNullOrEmpty()) SelectButton(selection)
         }
+        FilterField(query.search, "Filter tracks", model::search)
         Box(Modifier.weight(1f)) {
             val shown = page ?: return@Box
-            if (shown.tracks.isEmpty()) return@Box KoanUnavailable("No tracks", KoanIcons.track, null)
+            if (shown.tracks.isEmpty()) {
+                // Narrowed beyond what the shelf itself is.
+                val narrowed = shelf.trackQuery().let { query.filter != it.filter || query.search != it.search }
+                return@Box KoanUnavailable(if (narrowed) "Nothing matches" else "No tracks", KoanIcons.track, if (narrowed) "Try a different filter." else null)
+            }
             val ids = remember(shown) { shown.tracks.map { it.id } }
             LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {
                 itemsIndexed(shown.tracks, key = { _, t -> t.id }, contentType = { _, _ -> "track" }) { index, track ->

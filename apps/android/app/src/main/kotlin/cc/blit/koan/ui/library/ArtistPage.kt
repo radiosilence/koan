@@ -1,6 +1,5 @@
 package cc.blit.koan.ui.library
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -128,31 +127,28 @@ private fun Header(artistId: Long, artist: Artist, counts: String, info: ArtistI
     val app = koanApp()
     var menu by remember { mutableStateOf(false) }
     val playable = Playable.OfArtist(artist.id, artist.name)
-    Column(modifier.fillMaxWidth().animateContentSize(), verticalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
-        AnimatedVisibility(info?.hasImage == true) {
-            Sleeve(Art.artist(artistId), Modifier.padding(bottom = KoanSpace.m), size = 160.dp)
-        }
-        KoanText(artist.name, role = KoanType.Title, maxLines = 3)
-        KoanText(counts, role = KoanType.Fine, tone = KoanTone.Muted)
-        Row(
-            Modifier.padding(vertical = KoanSpace.m),
-            horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    PageHeader(
+        artist.name,
+        modifier.animateContentSize(),
+        art = if (info?.hasImage == true) ({ Sleeve(Art.artist(artistId), size = 160.dp) }) else null,
+        detail = { KoanText(counts, role = KoanType.Fine, tone = KoanTone.Muted) },
+        actions = {
             KoanButton("Play", { app.play(playable) }, kind = KoanButtonKind.Prominent, icon = KoanIcons.play)
             KoanButton("Shuffle", { app.play(playable, shuffled = true) }, icon = KoanIcons.shuffle)
-            ArtistHeart(artist.id)
+            ArtistHeart(artist.id, labelled = true)
             Box {
                 KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
                 PlayableMenu(playable, menu) { menu = false }
             }
-        }
-        val bio = info?.bio
-        when {
-            bio != null -> Bio(bio, info.bioUrl, info.imageCredit)
-            looking -> KoanText("Looking up biography…", Modifier.padding(bottom = KoanSpace.m), role = KoanType.Meta, tone = KoanTone.Muted, appText = true)
-        }
-    }
+        },
+        below = {
+            val bio = info?.bio
+            when {
+                bio != null -> Bio(bio, info.bioUrl, info.imageCredit)
+                looking -> KoanText("Looking up biography…", Modifier.padding(bottom = KoanSpace.m), role = KoanType.Meta, tone = KoanTone.Muted, appText = true)
+            }
+        },
+    )
 }
 
 /**

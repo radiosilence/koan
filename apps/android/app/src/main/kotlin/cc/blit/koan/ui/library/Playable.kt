@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.library
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,10 +57,11 @@ fun KoanApp.play(playable: Playable, shuffled: Boolean = false) =
 /**
  * The long-press menu for a playable thing, anchored where it is placed.
  * Play, Play Next, Add to Queue and Shuffle; the heart; fetching or removing
- * downloads; and the record and artist it belongs to.
+ * downloads; the record and artist it belongs to; then whatever the page
+ * adds for it in `more`.
  */
 @Composable
-fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
+fun PlayableMenu(playable: Playable, expanded: Boolean, more: @Composable ColumnScope.() -> Unit = {}, onDismiss: () -> Unit) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val context = LocalContext.current
@@ -137,6 +139,7 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
                 val showInfo = LocalShowTrackInfo.current
                 KoanMenuItem("Info…", KoanIcons.info) { onDismiss(); showInfo(playable.track.id) }
             }
+            more()
         }
     }
 }

@@ -181,16 +181,29 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
     // of the server copy they matched: without it the next sync pulls them
     // whole again, rather than reading them as unchanged and leaving them
     // empty.
-    tx.execute_batch(
-        "UPDATE playlists SET remote_changed = NULL WHERE remote_id IS NOT NULL;
-         DELETE FROM history_outbox;
+    forget_account_state(&tx)?;
+    tx.execute(
+        "UPDATE playlists SET remote_changed = NULL WHERE remote_id IS NOT NULL",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(removed)
+}
+
+/// Drop what waited for the account signed in to, and how far its history and
+/// EQ profiles were read. The plays, forgettings and hearts name its ids and
+/// its account, so they mean nothing to another: a clear meant for one
+/// account's history must never run against the next one's. The cursors are
+/// kept per server, not per account, so another account on the same server
+/// would start reading where this one stopped.
+pub fn forget_account_state(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DELETE FROM history_outbox;
          DELETE FROM favourite_outbox;
          UPDATE remote_servers SET history_cursor = NULL;
          DELETE FROM dsp_synced;
          DELETE FROM dsp_sync_cursor;",
-    )?;
-    tx.commit()?;
-    Ok(removed)
+    )
 }
 
 #[cfg(test)]
