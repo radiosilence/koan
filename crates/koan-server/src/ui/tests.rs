@@ -2982,14 +2982,19 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
             .unwrap()
     };
 
+    // A wide screen's sidebar links the Library page for an admin only.
+    let wide_link = "href=\"/library\" data-nav=\"library\"";
     let r = send(&f.app, library(&access_token(&f.state))).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains("/library/scan"), "{}", r.body);
+    assert!(!r.body.contains(wide_link), "{}", r.body);
     let r = send(&f.app, scan(&access_token(&f.state), "{}")).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     let r = send(&f.app, library(&admin)).await;
     assert!(r.body.contains("@post('/library/scan')"), "{}", r.body);
+    assert!(r.body.contains(wide_link), "{}", r.body);
+    assert!(!r.body.contains("<progress class=\"h-1.5"), "no bar while idle: {}", r.body);
     // The stream follows the scan to its end, so the whole body is its story.
     let r = send(&f.app, scan(&admin, r#"{"reread":false}"#)).await;
     assert_eq!(r.status, StatusCode::OK);
@@ -3020,6 +3025,13 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     // A scan the folder watcher runs shows with what started it.
     let record = crate::graphql::jobs::record_watch(&f.jobs);
     record(&koan_core::helpers::WatchScan::Started("start-up"));
+    let r = send(&f.app, library(&admin)).await;
+    assert!(
+        r.body.contains("aria-label=\"Scan progress\"></progress>")
+            && !r.body.contains("max=\"1200\""),
+        "indeterminate until the files are counted: {}",
+        r.body
+    );
     record(&koan_core::helpers::WatchScan::Read {
         done: 50,
         total: 1200,
@@ -3029,6 +3041,11 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         r.body
             .contains("Scanning (start-up)… 50 of 1200 files read"),
         "{}",
+        r.body
+    );
+    assert!(
+        r.body.contains("max=\"1200\" value=\"50\""),
+        "the bar follows the count: {}",
         r.body
     );
 }

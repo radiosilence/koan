@@ -36,6 +36,8 @@ struct Status {
     follow: bool,
     /// The line's colour and text; nothing before any scan.
     line: Option<(&'static str, String)>,
+    /// A running scan's files read and files to read, once it knows how many.
+    bar: Option<Option<(u64, u64)>>,
 }
 
 /// What the current scan is doing, or the last did. On a page as it loads
@@ -71,9 +73,13 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
             ),
         }
     });
+    let bar = job
+        .filter(|j| j.state == JobState::Running)
+        .map(|j| j.done.zip(j.total).filter(|&(_, total)| total > 0));
     Status {
         follow: on_load,
         line,
+        bar,
     }
     .html()
 }

@@ -1,4 +1,6 @@
 {%- import "library/macros.html" as library -%}
-<h1>Library</h1><ul>
+<h1>Library</h1>
+{#- The sidebar lists these on a wide screen. #}
+<ul class="wide:hidden">
 {%- for (href, name) in [("/playlists", "Playlists"), ("/tracks", "Tracks"), ("/recent", "Recently played"), ("/favourites", "Favourites"), ("/history", "History")] %}{% call library::list_row(href, name, "") %}{% endcall %}{% endfor %}
 </ul>{{ scan }}

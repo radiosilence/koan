@@ -107,6 +107,8 @@ struct Shell<'a> {
     title: &'a str,
     content: &'a Html,
     username: &'a str,
+    /// Admins have a Library link on a wide screen too, for the rescan.
+    admin: bool,
     auth_enabled: bool,
     proxied: bool,
 }
@@ -136,6 +138,7 @@ pub(super) fn respond(
                 title,
                 content: &content,
                 username: &user.username,
+                admin: user.role == Role::Admin,
                 auth_enabled: s.auth_enabled,
                 proxied: s.proxy_auth.is_some(),
             }
