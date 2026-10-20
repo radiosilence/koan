@@ -195,7 +195,8 @@ fun TracksPage(shelf: Shelf) {
         Box(Modifier.weight(1f)) {
             val shown = page ?: return@Box
             if (shown.tracks.isEmpty()) {
-                val narrowed = query.filter.activeCount > 0 || query.search.isNotBlank()
+                // Narrowed beyond what the shelf itself is.
+                val narrowed = shelf.trackQuery().let { query.filter != it.filter || query.search != it.search }
                 return@Box KoanUnavailable(if (narrowed) "Nothing matches" else "No tracks", KoanIcons.track, if (narrowed) "Try a different filter." else null)
             }
             val ids = remember(shown) { shown.tracks.map { it.id } }

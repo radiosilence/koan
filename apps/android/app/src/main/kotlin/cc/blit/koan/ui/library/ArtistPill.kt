@@ -43,7 +43,7 @@ fun ArtistPill(id: Long, name: String, selection: Selection<Playable>) {
             if (selection.active) {
                 Tick(selection.contains(playable))
             } else {
-                KoanIcon(KoanIcons.artist, null, size = KoanType.Fine.koan.fontSize, color = KoanTheme.color(KoanTone.Muted))
+                KoanIcon(KoanIcons.artist, null, color = KoanTheme.color(KoanTone.Muted))
             }
             KoanText(name, role = KoanType.Control, maxLines = 1)
         }

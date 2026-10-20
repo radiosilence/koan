@@ -118,7 +118,7 @@ fun SearchPage() {
         }
         // Under the field rather than over it, so the field stays put as the
         // first letter is typed.
-        if (query.isNotBlank()) PageBar("${KoanTheme.label("Results for")} “${query.trim()}”", back = false, appText = false)
+        shown?.query?.let { PageBar("${KoanTheme.label("Results for")} “$it”", back = false, appText = false) }
         Box(Modifier.weight(1f)) {
             val shelf = shown?.shelf
             when {

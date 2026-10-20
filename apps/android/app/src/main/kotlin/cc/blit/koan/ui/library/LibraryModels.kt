@@ -193,7 +193,7 @@ class ArtistsModel(private val mirror: EngineMirror, shelf: Shelf?) : ViewModel(
     fun search(text: String) = query.update { it.copy(search = text) }
 }
 
-data class TrackPage(val tracks: List<Track>, val total: Long)
+data class TrackPage(val tracks: List<Track>, val total: Long, val query: BrowseQuery<TrackBrowseSort>)
 
 /**
  * The track browser, read a page at a time: a shelf can hold tens of
@@ -211,7 +211,7 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
             .mapLatest { (q, n) ->
                 runCatching {
                     val listing = mirror.engine().trackListing(q.sort, q.search.ifBlank { null }, q.filter, n.toUInt(), 0u)
-                    TrackPage(listing.tracks, listing.total.toLong())
+                    TrackPage(listing.tracks, listing.total.toLong(), q)
                 }.getOrNull()
             },
         null,
@@ -219,7 +219,8 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
 
     /** Read the next page, once the rows read so far are nearly all on screen. */
     fun more() {
-        val held = page.value ?: return
+        // Not until the new query's first page has arrived.
+        val held = page.value?.takeIf { it.query == query.value } ?: return
         if (held.tracks.size < held.total && wanted.value <= held.tracks.size) wanted.update { it + PAGE }
     }
 
