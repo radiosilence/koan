@@ -330,10 +330,12 @@ private enum HistoryDate {
 
     /// A minute in each hour of a day, as the time column prints it. Digits
     /// are monospaced in both looks, so the hour and its period ("PM",
-    /// "a.m.", "下午") are what make one time wider than another.
+    /// "a.m.", "下午") are what make one time wider than another. On a fixed
+    /// day, so a clock change never drops an hour.
     static var everyHour: [String] {
-        (0..<24).compactMap { hour in
-            Calendar.current.date(bySettingHour: hour, minute: 59, second: 0, of: Date()).map { timeFormatter.string(from: $0) }
+        let day = Date(timeIntervalSinceReferenceDate: 0)
+        return (0..<24).compactMap { hour in
+            Calendar.current.date(bySettingHour: hour, minute: 59, second: 0, of: day).map { timeFormatter.string(from: $0) }
         }
     }
 }
