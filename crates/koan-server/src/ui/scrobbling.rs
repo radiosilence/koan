@@ -157,10 +157,10 @@ apps and other Subsonic clients signed in as you report to this server, as they 
         .await
         .unwrap_or((None, None));
         // Without the address Last.fm sends a person back to, it cannot be offered.
-        let offered = lastfm::configured() && s.public_url.is_some();
+        let offered = lastfm::configured() && s.server_url.is_some();
         let message = match lastfm_message {
-            None if lastfm::configured() && s.public_url.is_none() => {
-                Some(lastfm::LastfmError::NoPublicUrl.to_string())
+            None if lastfm::configured() && s.server_url.is_none() => {
+                Some(lastfm::LastfmError::NoServerUrl.to_string())
             }
             other => other.map(str::to_owned),
         };
@@ -179,7 +179,7 @@ pub(super) async fn lastfm_connect(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(public) = s.public_url.as_deref().filter(|_| s.auth_enabled) else {
+    let Some(public) = s.server_url.as_deref().filter(|_| s.auth_enabled) else {
         return render(&s, &user, &headers, Some(NO_ADDRESS)).await;
     };
     let public = public.trim_end_matches('/').to_owned();
@@ -191,7 +191,7 @@ pub(super) async fn lastfm_connect(
     }
 }
 
-const NO_ADDRESS: &str = "This server does not know where it is reached from outside, which Last.fm needs to send you back. Its admin needs to set sharing.public_url.";
+const NO_ADDRESS: &str = "This server does not know where it is reached from outside, which Last.fm needs to send you back. Its admin needs to set server.url.";
 
 /// Where Last.fm sends the person back, with the `token` to exchange.
 pub(super) async fn lastfm_return(

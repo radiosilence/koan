@@ -32,6 +32,7 @@ use koan_core::player::state::{
     PlaybackState, PlaylistItem, QueueItemId, QueueMode, SharedPlayerState,
 };
 use koan_core::remote::client::SubsonicError;
+use koan_core::remote::profile;
 use uuid::Uuid;
 
 use koan_core::db::queries::RECENT_LIMIT;
@@ -1510,25 +1511,7 @@ impl KoanEngine {
             let db = self.db()?;
             Ok(queries::get_cached_lyrics(&db.conn, track_id)
                 .map_err(db_err)?
-                .map(|(content, synced)| {
-                    let lines = if synced {
-                        koan_core::lyrics::parse_lrc(&content)
-                            .into_iter()
-                            .map(|l| LyricLine {
-                                time_secs: l.time_secs,
-                                text: l.text,
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                    Lyrics {
-                        content,
-                        synced,
-                        source: "cache".into(),
-                        lines,
-                    }
-                }))
+                .map(|cached| koan_core::lyrics::Lyrics::from(cached).into()))
         })
         .await
     }
@@ -3381,7 +3364,7 @@ impl KoanEngine {
         offload::offload(move || {
             const DAY_MS: i64 = 24 * 60 * 60 * 1000;
             let now = chrono::Utc::now().timestamp_millis();
-            Ok(dsp_deleted_client()?
+            Ok(client_offering(profile::DSP_DELETED, "restore EQs")?
                 .koan_dsp_deleted()
                 .map_err(remote_error)?
                 .into_iter()
@@ -3399,7 +3382,7 @@ impl KoanEngine {
     pub async fn dsp_restore(self: Arc<Self>, uid: String) -> Result<(), KoanError> {
         // Off the player's lane: the sync may fetch impulse files.
         offload::offload(move || {
-            dsp_deleted_client()?
+            client_offering(profile::DSP_DELETED, "restore EQs")?
                 .koan_dsp_restore(&uid)
                 .map_err(remote_error)?;
             let db = self.db()?;
@@ -4398,20 +4381,23 @@ impl KoanEngine {
 
     // -- Accounts on the signed-in server: koan servers, admins only --
 
-    /// The server's accounts. Fails on a server that is not koan, or for an
-    /// account that is not an admin, which is how the app knows to offer none
-    /// of this.
+    /// The server's accounts, on a server that lists `koanInvite`: accounts
+    /// and their invites arrived together, and making one answers with its
+    /// invite. Fails for an account that is not an admin, which is how the
+    /// app knows to offer none of this.
     pub async fn server_accounts(self: Arc<Self>) -> Result<Vec<ServerAccount>, KoanError> {
         offload::offload(move || {
-            Ok(account_client()?
-                .koan_users()
-                .map_err(remote_error)?
-                .into_iter()
-                .map(|u| ServerAccount {
-                    role: AccountRole::parse(&u.role),
-                    username: u.username,
-                })
-                .collect())
+            Ok(
+                client_offering(profile::INVITE, "manage its accounts here")?
+                    .koan_users()
+                    .map_err(remote_error)?
+                    .into_iter()
+                    .map(|u| ServerAccount {
+                        role: AccountRole::parse(&u.role),
+                        username: u.username,
+                    })
+                    .collect(),
+            )
         })
         .await
     }
@@ -4423,7 +4409,7 @@ impl KoanEngine {
         role: AccountRole,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = invite_client()?;
+            let client = client_offering(profile::INVITE, "invite people")?;
             let made = client
                 .koan_create_user(&username, role.as_str())
                 .map_err(remote_error)?;
@@ -4440,7 +4426,7 @@ impl KoanEngine {
         reset: bool,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = invite_client()?;
+            let client = client_offering(profile::INVITE, "invite people")?;
             let made = client.koan_invite(&username, reset).map_err(remote_error)?;
             Ok(account_invite(client.base_url(), made).into())
         })
@@ -4453,7 +4439,7 @@ impl KoanEngine {
         role: AccountRole,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            account_client()?
+            client_offering(profile::INVITE, "manage its accounts here")?
                 .koan_set_user_role(&username, role.as_str())
                 .map_err(remote_error)
         })
@@ -4463,14 +4449,7 @@ impl KoanEngine {
     /// Where an assistant connects to the signed-in server.
     pub async fn assistants(self: Arc<Self>) -> Result<Assistants, KoanError> {
         offload::offload(move || {
-            let client = account_client()?;
-            let offers = koan_core::remote::profile::for_auth(client.auth())
-                .is_some_and(|p| p.offers(koan_core::remote::profile::MCP));
-            if !offers {
-                return Err(KoanError::NotFound {
-                    message: "this server does not offer assistants".into(),
-                });
-            }
+            let client = client_offering(profile::MCP, "connect assistants")?;
             let mcp = client.koan_mcp().map_err(remote_error)?;
             Ok(Assistants {
                 mcp_url: mcp.url,
@@ -4487,7 +4466,7 @@ impl KoanEngine {
                 iso.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                     .map(|t| t.timestamp())
             };
-            Ok(api_keys_client()?
+            Ok(client_offering(profile::API_KEYS, "manage API keys here")?
                 .koan_api_keys()
                 .map_err(remote_error)?
                 .into_iter()
@@ -4507,7 +4486,7 @@ impl KoanEngine {
     /// else, ever.
     pub async fn create_api_key(self: Arc<Self>, name: String) -> Result<NewApiKey, KoanError> {
         offload::offload(move || {
-            let made = api_keys_client()?
+            let made = client_offering(profile::API_KEYS, "manage API keys here")?
                 .koan_create_api_key(&name)
                 .map_err(remote_error)?;
             Ok(NewApiKey {
@@ -4524,7 +4503,7 @@ impl KoanEngine {
     /// signing out.
     pub async fn revoke_api_key(self: Arc<Self>, id: i64) -> Result<(), KoanError> {
         offload::offload(move || {
-            api_keys_client()?
+            client_offering(profile::API_KEYS, "manage API keys here")?
                 .koan_revoke_api_key(id)
                 .map_err(remote_error)
         })
@@ -4538,17 +4517,19 @@ impl KoanEngine {
                 iso.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                     .map(|t| t.timestamp())
             };
-            Ok(app_passwords_client()?
-                .koan_app_passwords()
-                .map_err(remote_error)?
-                .into_iter()
-                .map(|p| AppPasswordInfo {
-                    id: p.id,
-                    name: p.name,
-                    created: seconds(p.created),
-                    last_used: seconds(p.last_used),
-                })
-                .collect())
+            Ok(
+                client_offering(profile::APP_PASSWORDS, "manage app passwords here")?
+                    .koan_app_passwords()
+                    .map_err(remote_error)?
+                    .into_iter()
+                    .map(|p| AppPasswordInfo {
+                        id: p.id,
+                        name: p.name,
+                        created: seconds(p.created),
+                        last_used: seconds(p.last_used),
+                    })
+                    .collect(),
+            )
         })
         .await
     }
@@ -4560,7 +4541,7 @@ impl KoanEngine {
         name: String,
     ) -> Result<NewAppPassword, KoanError> {
         offload::offload(move || {
-            let made = app_passwords_client()?
+            let made = client_offering(profile::APP_PASSWORDS, "manage app passwords here")?
                 .koan_create_app_password(&name)
                 .map_err(remote_error)?;
             Ok(NewAppPassword {
@@ -4576,7 +4557,7 @@ impl KoanEngine {
     /// Revoke one of the account's app passwords.
     pub async fn revoke_app_password(self: Arc<Self>, id: i64) -> Result<(), KoanError> {
         offload::offload(move || {
-            app_passwords_client()?
+            client_offering(profile::APP_PASSWORDS, "manage app passwords here")?
                 .koan_revoke_app_password(id)
                 .map_err(remote_error)
         })
@@ -4590,7 +4571,7 @@ impl KoanEngine {
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            passwords_client()?
+            client_offering(profile::PASSWORDS, "change passwords here")?
                 .koan_set_user_password(&username, &password)
                 .map_err(remote_error)
         })
@@ -4605,7 +4586,7 @@ impl KoanEngine {
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            passwords_client()?;
+            client_offering(profile::PASSWORDS, "change passwords here")?;
             koan_core::helpers::change_own_password(&current, &password).map_err(|e| {
                 KoanError::BadArgument {
                     message: e.to_string(),
@@ -4617,7 +4598,7 @@ impl KoanEngine {
 
     pub async fn delete_server_account(self: Arc<Self>, username: String) -> Result<(), KoanError> {
         offload::offload(move || {
-            account_client()?
+            client_offering(profile::INVITE, "manage its accounts here")?
                 .koan_delete_user(&username)
                 .map_err(remote_error)
         })
@@ -6577,7 +6558,7 @@ fn play_state(state: &koan_core::remote::link::LinkState) -> PlayState {
 
 /// The server and the network, for Settings.
 fn connection_info() -> ConnectionInfo {
-    use koan_core::remote::{devices, nearby, profile};
+    use koan_core::remote::{devices, nearby};
     let p = profile::current();
     ConnectionInfo {
         server_kind: p.as_ref().and_then(|p| p.kind.clone()),
@@ -6675,73 +6656,22 @@ fn saved_by(changed_by: &str) -> String {
     }
 }
 
-/// The account client, on a server whose invites this app can open. Checked
-/// before anything is made: a server older than invite tokens would create
-/// the account and answer with nothing this app reads.
-fn invite_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+/// The account client, on a server that lists `extension`. Checked before
+/// anything is sent: a koan server older than the extension would answer with
+/// nothing this app reads, and a server that is not koan with an error that
+/// says nothing about why. `to` names what was wanted, for the message.
+fn client_offering(
+    extension: &str,
+    to: &str,
+) -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
     let client = account_client()?;
-    let offers = koan_core::remote::profile::for_auth(client.auth())
-        .is_some_and(|p| p.offers(koan_core::remote::profile::INVITE));
-    if !offers {
-        return Err(KoanError::BadArgument {
-            message: "this server is older than this app: update it to invite people".into(),
-        });
+    let found = profile::for_auth(client.auth());
+    if found.as_ref().is_some_and(|p| p.offers(extension)) {
+        return Ok(client);
     }
-    Ok(client)
-}
-
-/// The signed-in server's client, when it lists and makes API keys.
-fn api_keys_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
-    let client = account_client()?;
-    let offers = koan_core::remote::profile::for_auth(client.auth())
-        .is_some_and(|p| p.offers(koan_core::remote::profile::API_KEYS));
-    if !offers {
-        return Err(KoanError::BadArgument {
-            message: "this server is older than this app: update it to manage API keys here".into(),
-        });
-    }
-    Ok(client)
-}
-
-/// The signed-in server's client, when it keeps deleted EQs.
-fn dsp_deleted_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
-    let client = account_client()?;
-    let offers = koan_core::remote::profile::for_auth(client.auth())
-        .is_some_and(|p| p.offers(koan_core::remote::profile::DSP_DELETED));
-    if !offers {
-        return Err(KoanError::BadArgument {
-            message: "this server is older than this app: update it to restore EQs".into(),
-        });
-    }
-    Ok(client)
-}
-
-/// The signed-in server's client, when it lists and makes app passwords.
-fn app_passwords_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
-    let client = account_client()?;
-    let offers = koan_core::remote::profile::for_auth(client.auth())
-        .is_some_and(|p| p.offers(koan_core::remote::profile::APP_PASSWORDS));
-    if !offers {
-        return Err(KoanError::BadArgument {
-            message: "this server is older than this app: update it to manage app passwords here"
-                .into(),
-        });
-    }
-    Ok(client)
-}
-
-/// The signed-in server's client, when it sets passwords.
-fn passwords_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
-    let client = account_client()?;
-    let offers = koan_core::remote::profile::for_auth(client.auth())
-        .is_some_and(|p| p.offers(koan_core::remote::profile::PASSWORDS));
-    if !offers {
-        return Err(KoanError::BadArgument {
-            message: "this server is older than this app: update it to change passwords here"
-                .into(),
-        });
-    }
-    Ok(client)
+    Err(KoanError::BadArgument {
+        message: profile::lacking(found.as_ref(), to),
+    })
 }
 
 /// The invite a koan server answered with, as a link to the address this

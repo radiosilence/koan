@@ -59,6 +59,10 @@ private fun EngineMirror.versions(readsHistory: Flow<Boolean>) =
 private fun <T> ViewModel.held(flow: Flow<T>, initial: T): StateFlow<T> =
     flow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
 
+/** The values the browsers' filters offer, read again when the library moves. */
+private fun ViewModel.choicesOf(mirror: EngineMirror): StateFlow<BrowseChoices?> =
+    held(mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() }, null)
+
 /** What a browser is narrowed and ordered by. */
 data class BrowseQuery<S>(val sort: S, val filter: BrowseFilter, val search: String = "", val seed: Long = 0)
 
@@ -145,10 +149,7 @@ class AlbumsModel(private val mirror: EngineMirror, private val shelf: Shelf?, p
         null,
     )
 
-    val choices: StateFlow<BrowseChoices?> = held(
-        mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() },
-        null,
-    )
+    val choices = choicesOf(mirror)
 
     /** Choosing Random again deals a new shuffle. */
     fun sort(sort: AlbumSort) {
@@ -183,17 +184,14 @@ class ArtistsModel(private val mirror: EngineMirror, shelf: Shelf?) : ViewModel(
         null,
     )
 
-    val choices: StateFlow<BrowseChoices?> = held(
-        mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() },
-        null,
-    )
+    val choices = choicesOf(mirror)
 
     fun filter(filter: BrowseFilter) = query.update { it.copy(filter = filter) }
 
     fun search(text: String) = query.update { it.copy(search = text) }
 }
 
-data class TrackPage(val tracks: List<Track>, val total: Long)
+data class TrackPage(val tracks: List<Track>, val total: Long, val query: BrowseQuery<TrackBrowseSort>)
 
 /**
  * The track browser, read a page at a time: a shelf can hold tens of
@@ -211,7 +209,7 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
             .mapLatest { (q, n) ->
                 runCatching {
                     val listing = mirror.engine().trackListing(q.sort, q.search.ifBlank { null }, q.filter, n.toUInt(), 0u)
-                    TrackPage(listing.tracks, listing.total.toLong())
+                    TrackPage(listing.tracks, listing.total.toLong(), q)
                 }.getOrNull()
             },
         null,
@@ -219,11 +217,28 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
 
     /** Read the next page, once the rows read so far are nearly all on screen. */
     fun more() {
-        val held = page.value ?: return
+        // Not until the new query's first page has arrived.
+        val held = page.value?.takeIf { it.query == query.value } ?: return
         if (held.tracks.size < held.total && wanted.value <= held.tracks.size) wanted.update { it + PAGE }
     }
 
-    fun sort(sort: TrackBrowseSort) = query.update { it.copy(sort = sort) }
+    val choices = choicesOf(mirror)
+
+    fun sort(sort: TrackBrowseSort) = requery { it.copy(sort = sort) }
+
+    fun filter(filter: BrowseFilter) = requery { it.copy(filter = filter) }
+
+    fun search(text: String) = requery { it.copy(search = text) }
+
+    /**
+     * A new query starts again from its first page, however far the last one
+     * was read, and leaves a sort it no longer offers, such as Best Match once
+     * the search is cleared.
+     */
+    private fun requery(change: (BrowseQuery<TrackBrowseSort>) -> BrowseQuery<TrackBrowseSort>) {
+        wanted.value = PAGE
+        query.update { change(it).let { q -> if (q.sort in q.offered()) q else q.copy(sort = q.offered().first()) } }
+    }
 
     private companion object {
         const val PAGE = 500
@@ -232,6 +247,9 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
 
 /** A shelf's page: the first few artists, records and tracks on it, and how many there are of each. */
 class ShelfModel(mirror: EngineMirror, shelf: Shelf) : ViewModel() {
+    /** Things picked to play or queue together; ends with the page. */
+    val selection = playableSelection()
+
     val summary: StateFlow<ShelfSummary?> = held(
         mirror.versions(flowOf(shelf == Shelf.Recent))
             .mapLatest { runCatching { mirror.engine().shelfSummary(shelf.kind) }.getOrNull() },

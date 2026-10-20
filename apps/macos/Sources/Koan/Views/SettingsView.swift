@@ -253,15 +253,20 @@ struct SettingsView: View {
                 model = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
             }
         }
-        // Asked again for each account signed in as; an account that is not
-        // an admin's gets no list, and so no People section. A television
-        // manages no accounts, and asks for none.
+        // Asked again for each account signed in as, of a server that has
+        // koan's accounts; an account that is not an admin's gets no list,
+        // and so no People section. The last account's list goes first, so
+        // none shows under another server. A television manages no accounts,
+        // and asks for none.
         #if !os(tvOS)
-        .task(id: model.map { "\($0.settings.remoteSignedIn) \($0.settings.remoteUrl) \($0.settings.remoteUsername)" }) {
-            guard let model, model.settings.remoteSignedIn else { return }
-            let people = people ?? PeopleModel(engine: library.engine)
-            self.people = people
+        .task(id: model.map { "\($0.settings.remoteSignedIn) \($0.settings.remoteUrl) \($0.settings.remoteUsername) \(mirror.offers(PeopleModel.extensionName))" }) {
+            people = nil
+            guard let model, model.settings.remoteSignedIn, mirror.offers(PeopleModel.extensionName) else { return }
+            let people = PeopleModel(engine: library.engine)
             await people.load()
+            // Signed in elsewhere while it loaded: that account's task sets its own.
+            guard !Task.isCancelled else { return }
+            self.people = people
         }
         #endif
         // The CLI and TUI write the same file; coming back to this window is
@@ -912,8 +917,9 @@ private struct AccountSettings: View {
 
 // MARK: - People
 
-/// The server's accounts, for its admins. Shown only once the list has
-/// loaded, which the server allows an admin alone.
+/// The server's accounts, for its admins. Shown only where the server has
+/// koan's accounts and once the list has loaded, which the server allows an
+/// admin alone.
 private struct PeoplePane: View {
     @Bindable var model: SettingsModel
     let people: PeopleModel
@@ -1681,7 +1687,10 @@ private struct DevicesSettings: View {
             } header: {
                 KoanSectionHeader("Connected now")
             } footer: {
-                Text("A device that can control this one uses its battery while it does. Disconnect hangs up a device on this network and keeps it from connecting again, and this device from connecting to it, until you allow it back here, play on it, pick it in Play on, or kōan restarts. Refuse keeps a device that has not proved it is yours out for good, by its address. Your account's devices reach this one through the server for as long as they are signed in; revoke one under Server.")
+                Text("A device that can control this one uses its battery while it does. Disconnect hangs up a device on this network and keeps it from connecting again, and this device from connecting to it, until you allow it back here, play on it, pick it in Play on, or kōan restarts. Refuse keeps a device that has not proved it is yours out for good, by its address."
+                     + (mirror.connection?.devices == true
+                        ? " Your account's devices reach this one through the server for as long as they are signed in; revoke one under Server."
+                        : ""))
                     .koanText(.fine, .muted)
             }
         }

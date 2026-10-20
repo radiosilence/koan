@@ -1,5 +1,6 @@
 package cc.blit.koan.ui.settings
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.graphics.Bitmap
@@ -8,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -42,6 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.AccountRole
@@ -75,10 +78,21 @@ fun AccountPane(model: SettingsModel) {
     val app = koanApp()
     val state by model.state.collectAsStateWithLifecycle()
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
-    val keys = viewModel(key = "keys") { CredentialsModel.apiKeys(app.mirror::engine) }
-    val passwords = viewModel(key = "app-passwords") { CredentialsModel.appPasswords(app.mirror::engine) }
-    val keysState by keys.state.collectAsStateWithLifecycle()
-    val passwordsState by passwords.state.collectAsStateWithLifecycle()
+    // Made only where the server has them, and afresh for each account.
+    val account = state.settings?.let { "${it.remoteUrl}-${it.remoteUsername}" }
+    val keys = if (account != null && connection.offers(API_KEYS)) {
+        viewModel(key = "keys-$account") { CredentialsModel.apiKeys(app.mirror::engine) }
+    } else {
+        null
+    }
+    // Only while the server can be reached, as on the iPhone.
+    val passwords = if (account != null && connection.offers(APP_PASSWORDS) && connection?.offline != true) {
+        viewModel(key = "app-passwords-$account") { CredentialsModel.appPasswords(app.mirror::engine) }
+    } else {
+        null
+    }
+    val keysState = keys?.state?.collectAsStateWithLifecycle()?.value
+    val passwordsState = passwords?.state?.collectAsStateWithLifecycle()?.value
     var changing by remember { mutableStateOf(false) }
     var revoking by remember { mutableStateOf<Pair<CredentialsModel, Credential>?>(null) }
     var keyName by rememberSaveable { mutableStateOf("") }
@@ -92,7 +106,7 @@ fun AccountPane(model: SettingsModel) {
             item { ButtonRow { KoanButton("Change password", { changing = true }, kind = KoanButtonKind.Bordered) } }
             footer(PASSWORD_NOTE)
         }
-        if (connection.offers(API_KEYS)) {
+        if (keys != null && keysState != null) {
             credentials(
                 "API keys",
                 keysState,
@@ -105,8 +119,7 @@ fun AccountPane(model: SettingsModel) {
                     "has one too; revoking it signs that device out.",
             )
         }
-        // Only while the server can be reached, as on the iPhone.
-        if (connection.offers(APP_PASSWORDS) && connection?.offline != true) {
+        if (passwords != null && passwordsState != null) {
             credentials(
                 "App passwords",
                 passwordsState,
@@ -136,8 +149,8 @@ fun AccountPane(model: SettingsModel) {
             dismissButton = { KoanButton("Cancel", { revoking = null }) },
         )
     }
-    keysState.made?.let { NewSecret("Key", it, keys::dismissMade) }
-    passwordsState.made?.let { NewSecret("App password", it, passwords::dismissMade) }
+    if (keys != null) keysState?.made?.let { NewSecret("Key", it, keys::dismissMade) }
+    if (passwords != null) passwordsState?.made?.let { NewSecret("App password", it, passwords::dismissMade) }
 }
 
 private fun LazyListScope.credentials(
@@ -246,7 +259,9 @@ fun PeoplePane(model: SettingsModel) {
     val app = koanApp()
     val state by model.state.collectAsStateWithLifecycle()
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
-    val people = viewModel { PeopleModel(app.mirror::engine) }
+    val people = viewModel(key = "people-${state.settings?.remoteUrl}-${state.settings?.remoteUsername}") {
+        PeopleModel(app.mirror::engine)
+    }
     val p by people.state.collectAsStateWithLifecycle()
     var newName by rememberSaveable { mutableStateOf("") }
     var newRole by rememberSaveable { mutableStateOf(AccountRole.READONLY) }
@@ -380,13 +395,23 @@ private fun Confirm(title: String, message: String, action: String, destructive:
     )
 }
 
+private enum class InviteCopy { Email, Link }
+
 /** An invite, ready to send. The server sends no mail; this hands it to whatever the admin sends with. */
 @Composable
 private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    var copied by remember { mutableStateOf(false) }
+    // What was copied last, so only its button says so.
+    var copied by remember { mutableStateOf<InviteCopy?>(null) }
+    val share = {
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, invite.emailSubject)
+            .putExtra(Intent.EXTRA_TEXT, invite.emailText)
+        context.startActivity(Intent.createChooser(send, null))
+    }
     AlertDialog(
         onDismissRequest = dismiss,
         title = { KoanText("Invite for ${invite.username}", role = KoanType.TitleSmall) },
@@ -398,18 +423,31 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
                     tone = KoanTone.Muted,
                 )
                 InviteCode(invite.link)
-                Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
-                    KoanButton("Send invite…", {
-                        val send = Intent(Intent.ACTION_SEND)
-                            .setType("text/plain")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
+                    KoanButton("Send invite…", share, kind = KoanButtonKind.Prominent)
+                    // Only mail apps answer a mailto:. The subject and body go as extras alone,
+                    // since some apps would show both copies; with no mail app, the share sheet.
+                    KoanButton("Open in Mail", {
+                        val mail = Intent(Intent.ACTION_SENDTO, "mailto:".toUri())
                             .putExtra(Intent.EXTRA_SUBJECT, invite.emailSubject)
                             .putExtra(Intent.EXTRA_TEXT, invite.emailText)
-                        context.startActivity(Intent.createChooser(send, null))
-                    }, kind = KoanButtonKind.Prominent)
-                    KoanButton(if (copied) "Copied" else "Copy link", {
+                        try {
+                            context.startActivity(mail)
+                        } catch (e: ActivityNotFoundException) {
+                            share()
+                        }
+                    })
+                    // The formatted email, for pasting into a message composed elsewhere.
+                    KoanButton(if (copied == InviteCopy.Email) "Copied" else "Copy email", {
+                        scope.launch {
+                            clipboard.setClipEntry(ClipEntry(ClipData.newHtmlText("Invite", invite.emailText, invite.emailHtml)))
+                            copied = InviteCopy.Email
+                        }
+                    }, kind = KoanButtonKind.Bordered)
+                    KoanButton(if (copied == InviteCopy.Link) "Copied" else "Copy link", {
                         scope.launch {
                             clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Invite", invite.link)))
-                            copied = true
+                            copied = InviteCopy.Link
                         }
                     }, kind = KoanButtonKind.Bordered)
                 }

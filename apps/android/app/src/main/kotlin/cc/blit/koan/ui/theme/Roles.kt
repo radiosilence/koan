@@ -227,8 +227,8 @@ fun KoanBadge(text: String, modifier: Modifier = Modifier, accent: Boolean = fal
 }
 
 /**
- * A chip that is a choice (a device, a preset, an artist): a `muted`
- * outline, square, in the theme. A filled capsule in the platform's look.
+ * A chip that is a choice (a device, a preset): a `muted` outline, square, in
+ * the theme. A filled capsule in the platform's look.
  */
 @Composable
 fun Modifier.koanChip(): Modifier =
@@ -237,6 +237,15 @@ fun Modifier.koanChip(): Modifier =
     } else {
         background(MaterialTheme.colorScheme.surfaceVariant, CircleShape).padding(horizontal = 12.dp, vertical = 6.dp)
     }
+
+/**
+ * A pill among results, going somewhere (an artist): a plain `rule` fill,
+ * square, in the theme, since an outline marks a prominent button. The
+ * platform's look draws it as a chip.
+ */
+@Composable
+fun Modifier.koanPill(): Modifier =
+    if (KoanTheme.isOn) background(KoanTheme.colors.rule).padding(horizontal = 12.dp, vertical = 6.dp) else koanChip()
 
 /** An empty page: its glyph in `muted`, what is missing in `body`, and why in `meta`. */
 @Composable

@@ -383,7 +383,7 @@ Named patterns for organize, in [format string](../format-strings.md) syntax. Se
 
 ```toml
 [graphql]
-enabled = true                # run API alongside TUI (default: true, false = --no-api)
+enabled = false               # run API alongside TUI (default: false, true = --api)
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false            # enable GraphiQL IDE at GET /graphql (default: false)
@@ -396,10 +396,10 @@ cookie_secure = false         # mark cookies Secure — only with HTTPS in front
 proxy_auth_header = ""        # header an authenticating proxy names the user in
 proxy_auth_from = []          # addresses or ranges that proxy connects from
 allow_organize = false        # expose the organize* mutations, which move files
-setup_wizard = true           # web UI /setup makes the first admin while there is none
+setup_wizard = true           # headless: web UI /setup makes the first admin while there is none
 ```
 
-Auth is enabled by default. Until an account exists, the web UI's setup page makes the first admin; `koan auth setup` does the same from a shell. `setup_wizard = false` turns the page off, since whoever reaches it first becomes the admin. Set `auth_enabled = false` if you only use localhost and don't need auth.
+Auth is enabled by default. Until an account exists, the web UI's setup page makes the first admin; `koan auth setup` does the same from a shell. `setup_wizard = false` turns the page off, since whoever reaches it first becomes the admin. The page is only offered in headless mode: an API served beside the TUI has a shell to hand, so its first admin comes from `koan auth setup`. Set `auth_enabled = false` if you only use localhost and don't need auth.
 
 ### Browser access
 
@@ -435,14 +435,17 @@ A client that asks `stream` for a `maxBitRate` below the file's bitrate, or for 
 
 ---
 
-## `[sharing]`
+## `[server]`
 
 ```toml
-[sharing]
-public_url = "https://music.example.com"
+# config.local.toml -- this machine's address
+[server]
+url = "https://music.example.com"
 ```
 
-The address the server is reached at from outside. Share links, invite links and MCP sign-in are built on it; without it the server makes no share links and offers MCP clients no sign-in, since an address taken from request headers could be chosen by whoever sends them.
+The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, the invites it makes, MCP's OAuth, push covers and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
+
+`sharing.public_url`, which this replaces, is still read while `server.url` is unset, with a warning in the log. It will be removed in a later release.
 
 ---
 
@@ -457,7 +460,7 @@ secret  = "..."
 
 The API account the server scrobbles to Last.fm through. Last.fm gives one key and shared secret to each application, so the server's admin registers kōan at <https://www.last.fm/api/account/create> and sets both here, or as `KOAN_LASTFM__API_KEY` and `KOAN_LASTFM__SECRET`. Every account on the server then connects its own Last.fm. Without both, Last.fm is not offered.
 
-Connecting also needs `sharing.public_url` (above), since Last.fm sends the person back to `<public_url>/scrobbling/lastfm/return/...`. See [Scrobbling](../guide/headless-server.md#scrobbling).
+Connecting also needs `server.url` (above), since Last.fm sends the person back to `<server.url>/scrobbling/lastfm/return/...`. See [Scrobbling](../guide/headless-server.md#scrobbling).
 
 ---
 
@@ -493,7 +496,7 @@ what waits in its outbox (syncs, evictions), and turns a request to play on it
 into a notification the person taps: iOS does not let a suspended app start
 playing on its own. GraphQL's `playOnClient` says which happened.
 
-With `sharing.public_url` set, that notification shows the album's cover. It
+With `server.url` set, that notification shows the album's cover. It
 carries a link to `/push/cover/…` that opens that one cover for ten minutes,
 signed with a key the server mints at start-up and never stores, so the app's
 notification extension can fetch it without a login.

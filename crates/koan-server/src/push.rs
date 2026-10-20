@@ -48,9 +48,9 @@ pub struct Pusher {
     /// client runs a runtime, and building one inside the server's async
     /// runtime panics.
     http: std::sync::OnceLock<reqwest::blocking::Client>,
-    /// `sharing.public_url`, which cover links are built on. Without it
+    /// `server.url`, which cover links are built on. Without it
     /// notifications carry no art.
-    public_url: Option<String>,
+    server_url: Option<String>,
 }
 
 /// What became of a push.
@@ -110,13 +110,13 @@ impl Pusher {
             topic: cfg.topic.clone(),
             bearer: Mutex::new(None),
             http: std::sync::OnceLock::new(),
-            public_url: None,
+            server_url: None,
         })
     }
 
     /// A link that opens the cover of `track_id`'s album for `COVER_LIFE`.
     pub fn cover_link(&self, track_id: i64) -> Option<String> {
-        let base = self.public_url.as_deref()?.trim_end_matches('/');
+        let base = self.server_url.as_deref()?.trim_end_matches('/');
         let expires = unix_now() + COVER_LIFE;
         let sig = cover_sig(track_id, expires);
         Some(format!("{base}/push/cover/{track_id}/{expires}/{sig}"))
@@ -418,7 +418,7 @@ pub fn pusher() -> Option<&'static Pusher> {
     static PUSHER: std::sync::LazyLock<Option<Pusher>> = std::sync::LazyLock::new(|| {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let pusher = Pusher::from_config(&cfg.push).map(|p| Pusher {
-            public_url: cfg.sharing.public_url.filter(|u| !u.trim().is_empty()),
+            server_url: cfg.server_url(),
             ..p
         });
         if pusher.is_some() {

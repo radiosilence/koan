@@ -356,6 +356,7 @@ impl SubsonicClient {
             version: ping.server_version,
             open_subsonic: ping.open_subsonic,
             extensions,
+            url: ping.server_url,
         })
     }
 
@@ -1219,6 +1220,8 @@ struct SubsonicResponse {
     #[serde(rename = "type")]
     server_type: Option<String>,
     server_version: Option<String>,
+    /// koan's: the address the server is reached at, on `ping`.
+    server_url: Option<String>,
     #[serde(default)]
     open_subsonic: bool,
     open_subsonic_extensions: Option<Vec<SubsonicExtension>>,

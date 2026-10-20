@@ -32,6 +32,7 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.Rainbow
+import cc.blit.koan.ui.theme.rainbowShimmer
 import cc.blit.koan.ui.theme.SecretTaps
 import kotlinx.serialization.Serializable
 
@@ -130,12 +131,17 @@ private fun SettingsRoot() {
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
     val nav = LocalNavigator.current
     val signedIn = state.settings?.remoteSignedIn == true
-    // Asked for each account signed in as: the list loading is what says
-    // the account is an admin's, and so whether there is a People page.
-    val people = viewModel(key = "people-${state.settings?.remoteUrl}-${state.settings?.remoteUsername}") {
-        PeopleModel(app.mirror::engine)
+    // Asked for each account signed in as, of a server that has koan's
+    // accounts: the list loading is what says the account is an admin's, and
+    // so whether there is a People page.
+    val people = if (signedIn && connection.offers(INVITE)) {
+        viewModel(key = "people-${state.settings?.remoteUrl}-${state.settings?.remoteUsername}") {
+            PeopleModel(app.mirror::engine)
+        }
+    } else {
+        null
     }
-    val admin = people.state.collectAsStateWithLifecycle().value.accounts != null
+    val admin = people?.state?.collectAsStateWithLifecycle()?.value?.accounts != null
     val panes = Pane.entries.filter {
         when (it) {
             Pane.Account -> signedIn && accountShown(connection)
@@ -148,7 +154,8 @@ private fun SettingsRoot() {
     val version = appVersion(context)
     val appearance by app.mirror.appearance.collectAsStateWithLifecycle()
     val taps = remember { SecretTaps() }
-    SettingsPage("Settings", state) {
+    // No title: the tab beneath already says "settings".
+    SettingsPage(null, state) {
         panes.forEach { pane ->
             item(pane.name) { KoanNavRow(pane.title, pane.icon, selected = false, onClick = { nav.push(SettingsPaneRoute(pane)) }) }
         }
@@ -162,6 +169,8 @@ private fun SettingsRoot() {
                         app.mirror.setAppearance { setRainbow(on) }
                         Toast.makeText(context, (if (on) Rainbow.on else Rainbow.off).random(), Toast.LENGTH_SHORT).show()
                     }
+                    // The page has no title to shimmer, so the line tapped does.
+                    .rainbowShimmer()
                     .padding(KoanSpace.page),
                 role = KoanType.Fine,
                 tone = KoanTone.Muted,
@@ -224,10 +233,13 @@ internal const val PASSWORDS = "koanPasswords"
 /** The extension a koan server lists when it serves assistants over MCP. */
 internal const val ASSISTANTS = "koanMcp"
 
+/** Accounts arrived with invites, and making one answers with its invite. */
+internal const val INVITE = "koanInvite"
+
 /**
  * Whether the Integrations page has anything on it: scrobbling, or
  * assistants, which a koan server lists only once it knows the public address
- * it is reached at (`sharing.public_url`), since MCP's sign-in goes through it.
+ * it is reached at (`server.url`), since MCP's sign-in goes through it.
  */
 internal fun integrationsShown(c: ConnectionInfo?) = c?.scrobbling == true || c.offers(ASSISTANTS)
 

@@ -250,16 +250,14 @@ fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection<P
 @Composable
 fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, selection: Selection<Playable>? = null) {
     val nav = LocalNavigator.current
-    val playable = Playable.OfArtist(artist.id, artist.name)
-    val play = rememberPlayNow(playable)
     LibraryRow(
-        playable,
+        Playable.OfArtist(artist.id, artist.name),
         selection,
         { nav.push(ArtistRoute(artist.id)) },
         modifier,
-        // No hover on a phone, so the play button the Mac shows on hover is
-        // always there; a tap on the rest of the row opens the artist.
-        lead = { if (selection?.active != true) KoanButton("Play ${artist.name}", play, kind = KoanButtonKind.Icon, icon = KoanIcons.play) },
+        // The Mac's play button shows on hover, which a phone has none of; the
+        // menu plays the artist.
+        lead = { if (selection?.active != true) KoanIcon(KoanIcons.artist, null, size = KoanType.Fine.koan.fontSize, color = KoanTheme.color(KoanTone.Muted)) },
         trailing = { ArtistHeart(artist.id, showing = false) },
     ) {
         TitleAndDetail(
@@ -316,7 +314,8 @@ fun TrackRow(
         },
         trailing = {
             TrackAvailability(track)
-            TrackHeart(track.id, showing = false)
+            // Always drawn, as on the iPhone: a phone has no hover to reveal it.
+            TrackHeart(track.id)
             track.durationMs?.let { KoanText(duration(it), role = KoanType.Fine, tone = KoanTone.Muted) }
         },
     ) {
