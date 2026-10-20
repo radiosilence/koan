@@ -3156,6 +3156,12 @@ pub(crate) mod tests {
             vec![away("tv"), away("phone"), device("mac", false)],
             here(),
         );
+        // Heard from a moment ago, so listed though not linked.
+        with(|s| {
+            let now = chrono::Utc::now().timestamp();
+            s.live.insert("tv".into(), now);
+            s.live.insert("phone".into(), now);
+        });
         assert!(same(here(), "tv"));
         assert!(
             !same(Some("elsewhere".into()), "tv"),
