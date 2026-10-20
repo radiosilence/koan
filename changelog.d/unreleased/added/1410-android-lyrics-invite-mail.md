@@ -1,0 +1,1 @@
+- **Android: lyrics source and invite mail.** The lyrics panel names where its words came from, and the invite dialog adds Open in Mail and Copy email, the formatted email for pasting into a message written elsewhere.
