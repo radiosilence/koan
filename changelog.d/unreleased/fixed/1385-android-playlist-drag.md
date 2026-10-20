@@ -1,0 +1,1 @@
+- **Android playlist rows reorder more than once.** After one drag in a playlist, the next moved nothing on screen and could undo the first move on drop; every drag now lands, and a cancelled drag leaves the order as it was.
