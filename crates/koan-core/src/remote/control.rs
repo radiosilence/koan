@@ -543,6 +543,10 @@ pub enum Moved {
 /// Move the music of the device being controlled (this one, when none is)
 /// to `to` (this one with `None`), and control `to` from then on. `None` when
 /// there was nothing to move: `to` is already the one controlled.
+///
+/// Wake `to` first with `devices::wake_to_send`, off any lane commands wait
+/// on: it can take half a minute, and the music plays on where it is till
+/// then.
 pub fn move_music(
     to: Option<String>,
     tx: &Sender<PlayerCommand>,

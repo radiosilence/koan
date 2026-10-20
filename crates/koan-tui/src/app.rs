@@ -2271,6 +2271,9 @@ impl App {
                 }
                 let said = format!("moved the music to {}", choice.name);
                 self.run_control(said, move |tx, state| {
+                    if let Some(to) = &choice.id {
+                        koan_core::remote::devices::wake_to_send(to);
+                    }
                     koan_core::remote::control::move_music(choice.id, tx, state, None).map(|_| ())
                 });
             }

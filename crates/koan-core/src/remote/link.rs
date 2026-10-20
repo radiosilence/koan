@@ -870,6 +870,7 @@ fn run(local: Local) {
         let signed_in = SIGN_IN.load(Ordering::SeqCst);
         let cfg = Config::load().unwrap_or_default();
         let account = crate::remote::proof::account_of(&cfg);
+        let library = library_fingerprint(&cfg);
         let Some(auth) = subsonic_auth(&cfg) else {
             rest(RETRY_MAX);
             continue;
@@ -897,7 +898,7 @@ fn run(local: Local) {
                     client.outage().retry_now();
                 }
                 wait = RETRY_MIN;
-                if let Err(e) = serve(&mut socket, fd, &local, signed_in, account) {
+                if let Err(e) = serve(&mut socket, fd, &local, signed_in, account, library) {
                     log::info!("link: closed: {e}");
                 }
                 *LINK.lock() = None;
@@ -1020,6 +1021,7 @@ fn serve(
     local: &Local,
     signed_in: u64,
     account: Option<String>,
+    library: Option<String>,
 ) -> Result<(), String> {
     let waker = Waker::new().map_err(|e| e.to_string())?;
     let watcher = waker.clone();
@@ -1038,6 +1040,7 @@ fn serve(
         levels: None,
         signed_in,
         account,
+        library,
     };
     wire::drive(socket, fd, &waker, &mut session)
 }
@@ -1056,6 +1059,8 @@ struct LinkSession<'a> {
     /// The account it signed in as, which the device keys it is sent are
     /// for (`proof::account_of`).
     account: Option<String>,
+    /// The server it is linked to, as `library_fingerprint` gives it.
+    library: Option<String>,
 }
 
 impl wire::Session for LinkSession<'_> {
@@ -1127,7 +1132,7 @@ impl wire::Session for LinkSession<'_> {
                 crate::remote::acks::resolve(ack, &from, outcome);
             }
             LinkCommand::Devices { devices } => {
-                crate::remote::devices::set_account(devices);
+                crate::remote::devices::set_account(devices, self.library.clone());
             }
             LinkCommand::DeviceKeys { keys } => {
                 crate::remote::proof::keep(keys, self.account.clone());

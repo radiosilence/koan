@@ -57,7 +57,11 @@ pub struct Device {
     pub last_seen: Option<i64>,
     /// How far waking it has got, while it is being woken or once it failed.
     pub waking: Option<Waking>,
-    /// Plays from the same library, so music can be handed between the two.
+    /// Plays from the same server as this device, so the tracks one names the
+    /// other can find, and music can be handed between the two. The account's
+    /// devices are on it as long as the list came from the server this one is
+    /// signed in to and, met on the network, they say so there too: a device
+    /// signed in elsewhere since is still the account's on the old server.
     pub same_library: bool,
     /// What it last reported.
     pub state: Option<LinkState>,
@@ -140,6 +144,9 @@ struct Store {
     /// When the link that is up came up, in Unix seconds.
     linked_at: Option<i64>,
     account: Vec<(LinkDevice, Instant)>,
+    /// The server `account` came from, as `link::library_fingerprint` gives
+    /// it. `None` for a list kept before this was.
+    account_library: Option<String>,
     nearby: Vec<Nearby>,
     seen: Vec<SeenNearby>,
     target: Option<Remembered>,
@@ -248,7 +255,9 @@ struct Departed {
     name: String,
     platform: String,
     account: bool,
-    same_library: bool,
+    /// The server it was on, as `link::library_fingerprint` gives it.
+    #[serde(default)]
+    library: Option<String>,
     /// Another account's, shared with this one.
     shared: bool,
 }
@@ -263,6 +272,8 @@ pub const STALE_SECS: i64 = super::wire::IDLE.as_secs() as i64;
 struct Saved {
     target: Option<Remembered>,
     account: Vec<LinkDevice>,
+    #[serde(default)]
+    account_library: Option<String>,
     #[serde(default)]
     nearby: Vec<SeenNearby>,
     /// When each device was last reachable, Unix seconds: kept so a device
@@ -379,6 +390,7 @@ impl Store {
         let saved = Saved {
             target: self.target.clone(),
             account: self.account.iter().map(|(d, _)| d.clone()).collect(),
+            account_library: self.account_library.clone(),
             nearby: self.seen.clone(),
             live: self.live.clone(),
             departed: self.departed.clone(),
@@ -429,6 +441,7 @@ fn restore() {
             .collect();
         // Not linked until the server says so, and doing nothing anyone
         // knows of: what it was playing then is not what it is playing now.
+        s.account_library = saved.account_library;
         s.account = saved
             .account
             .into_iter()
@@ -516,7 +529,9 @@ pub fn name_of(id: &str) -> Option<String> {
     })
 }
 
-pub fn set_account(devices: Vec<LinkDevice>) {
+/// The account's devices, as the server whose fingerprint is `library` lists
+/// them.
+pub fn set_account(devices: Vec<LinkDevice>, library: Option<String>) {
     let now = Instant::now();
     let unix = chrono::Utc::now().timestamp();
     changed(|s| {
@@ -552,7 +567,7 @@ pub fn set_account(devices: Vec<LinkDevice>) {
                 platform: old.platform.clone(),
                 account: old.owner.is_none(),
                 shared: old.owner.is_some(),
-                same_library: true,
+                library: s.account_library.clone(),
             })
             .collect();
         for d in leaving {
@@ -566,6 +581,7 @@ pub fn set_account(devices: Vec<LinkDevice>) {
             s.departed.push(d);
         }
         s.account = devices.into_iter().map(|d| (d, now)).collect();
+        s.account_library = library;
         s.fresh = s.linked;
         s.save();
     });
@@ -792,8 +808,6 @@ pub fn nearby_state(id: &str, state: LinkState) {
 }
 
 pub fn nearby_gone(id: &str) {
-    let cfg = Config::load().unwrap_or_default();
-    let ours = link::library_fingerprint(&cfg);
     changed(|s| {
         let Some(at) = s.nearby.iter().position(|n| n.hello.id == id) else {
             return;
@@ -813,7 +827,7 @@ pub fn nearby_gone(id: &str) {
             name: gone.hello.name.clone(),
             platform: gone.hello.platform.clone(),
             account: false,
-            same_library: ours.is_some() && gone.hello.library == ours,
+            library: gone.hello.library.clone(),
             shared: false,
         });
         s.save();
@@ -896,8 +910,24 @@ pub fn list() -> Vec<Device> {
 /// `list` as of `now`, Unix seconds.
 fn list_at(now: i64) -> Vec<Device> {
     let cfg = Config::load().unwrap_or_default();
-    let ours = link::library_fingerprint(&cfg);
+    list_from(now, link::library_fingerprint(&cfg))
+}
+
+/// Whether a device on the server `theirs` plays from this device's, on
+/// `ours`: a device on none, or this one on none, shares nothing.
+fn same_server(ours: &Option<String>, theirs: &Option<String>) -> bool {
+    ours.is_some() && theirs == ours
+}
+
+/// `list_at` for this device on the server `ours`.
+fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
     with(|s| {
+        // A list kept from before the server was recorded is taken as this
+        // one's: the next link replaces it.
+        let account_here = s
+            .account_library
+            .as_ref()
+            .is_none_or(|l| ours.as_ref() == Some(l));
         let live = |id: &str| s.live.get(id).copied();
         // Missed for less than a heartbeat.
         let fresh = |id: &str| live(id).is_some_and(|at| now - at <= STALE_SECS);
@@ -926,7 +956,9 @@ fn list_at(now: i64) -> Vec<Device> {
                     wakeable: d.wakeable.unwrap_or(true),
                     last_seen: live(&d.id),
                     waking: None,
-                    same_library: true,
+                    // Met on the network, its own word is the latest.
+                    same_library: account_here
+                        && near.is_none_or(|n| same_server(&ours, &n.hello.library)),
                     // The network's state is fresher, but only the server's
                     // carries the outputs: the network is told none.
                     state: match (near.and_then(|n| n.state.clone()), &d.state) {
@@ -958,7 +990,7 @@ fn list_at(now: i64) -> Vec<Device> {
                 wakeable: false,
                 last_seen: live(&n.hello.id),
                 waking: None,
-                same_library: ours.is_some() && n.hello.library == ours,
+                same_library: same_server(&ours, &n.hello.library),
                 state: n.state.clone(),
                 heard: n.at,
                 problem: None,
@@ -986,7 +1018,7 @@ fn list_at(now: i64) -> Vec<Device> {
                 wakeable: !g.account && s.linked,
                 last_seen: last,
                 waking: None,
-                same_library: g.same_library,
+                same_library: same_server(&ours, &g.library),
                 // What it was doing is not what it is doing now.
                 state: None,
                 heard: Instant::now(),
@@ -1199,6 +1231,45 @@ fn cancel_wake(keep: Option<&str>) {
 /// It does not wait for the device to be labelled asleep: a phone suspended
 /// seconds ago is the one most worth waking.
 pub fn wake(id: &str) {
+    start_wake(id, true);
+}
+
+/// Wake `id` as choosing it does, short of the notification to tap, and wait
+/// for that to end: music sent to a device woken goes over its connection,
+/// where sent to one asleep it is a notification of its own. Whether `id` is
+/// reachable now. A device that did not wake is not marked so: what is sent
+/// to it next says what became of it.
+pub fn wake_to_send(id: &str) -> bool {
+    if reachable(id) {
+        return true;
+    }
+    start_wake(id, false);
+    let waking = || {
+        with(|s| {
+            s.attempt.as_ref().is_some_and(|(_, d)| d == id)
+                && !matches!(
+                    s.waking.get(id),
+                    Some(Waking::Notification | Waking::Failed(_))
+                )
+        })
+    };
+    await_until(|| reachable(id) || !waking(), WAKE_TO_SEND);
+    changed(|s| {
+        if matches!(s.waking.get(id), Some(Waking::Failed(_))) {
+            s.waking.remove(id);
+        }
+    });
+    reachable(id)
+}
+
+/// The longest `wake_to_send` waits: every stage before the notification,
+/// an Apple TV's knock included.
+const WAKE_TO_SEND: Duration = Duration::from_secs(
+    TV_KNOCK.as_secs() + TV_WAIT.as_secs() + NETWORK_WAIT.as_secs() + PUSH_WAIT.as_secs() + 1,
+);
+
+/// `wake`, with the notification to tap as its last stage when `notify`.
+fn start_wake(id: &str, notify: bool) {
     let id = id.to_string();
     if reachable(&id) {
         return;
@@ -1209,7 +1280,8 @@ pub fn wake(id: &str) {
     let now = chrono::Utc::now().timestamp();
     // A stranger on the network has nothing to answer a push with.
     let tv = (device.platform == "tvos").then(|| tv_of(&id)).flatten();
-    let plan = wake_plan(tv.is_some(), recently_on_network(&id, now), device.wakeable);
+    let mut plan = wake_plan(tv.is_some(), recently_on_network(&id, now), device.wakeable);
+    plan.retain(|(stage, _)| notify || *stage != Waking::Notification);
     if plan.is_empty() {
         return;
     }
@@ -2361,7 +2433,7 @@ pub(crate) mod tests {
         phone.linked = false;
         phone.last_seen = Some(now - week);
         phone.wakeable = Some(true);
-        set_account(vec![phone]);
+        set_account(vec![phone], None);
         used("phone");
         let phone = list_at(now).into_iter().find(|d| d.id == "phone").unwrap();
         assert!(phone.asleep && phone.wakeable);
@@ -2371,9 +2443,9 @@ pub(crate) mod tests {
         // An account device that unlinks without a push token: reconnecting
         // for a heartbeat, then asleep, and kept.
         set_linked(true);
-        set_account(vec![device("mac", false)]);
+        set_account(vec![device("mac", false)], None);
         used("mac");
-        set_account(Vec::new());
+        set_account(Vec::new(), None);
         let left = with(|s| s.live["mac"]);
         let mac = |t: i64| list_at(t).into_iter().find(|d| d.id == "mac");
         let reconnecting = mac(left + 1).unwrap();
@@ -2410,7 +2482,7 @@ pub(crate) mod tests {
         let mut phone = device("old-phone", false);
         phone.linked = false;
         phone.last_seen = Some(left - 3600);
-        set_account(vec![phone]);
+        set_account(vec![phone], None);
         assert!(!listed(left, "old-phone"));
 
         with(|s| *s = Store::default());
@@ -2447,7 +2519,7 @@ pub(crate) mod tests {
             name: id.into(),
             platform: "ios".into(),
             account: false,
-            same_library: false,
+            library: None,
             shared: false,
         };
         let old = serde_json::json!({
@@ -2518,7 +2590,7 @@ pub(crate) mod tests {
         phone.linked = false;
         phone.wakeable = Some(true);
         phone.last_seen = Some(chrono::Utc::now().timestamp() - 3600);
-        set_account(vec![phone]);
+        set_account(vec![phone], None);
         used("phone");
         assert!(
             forget("phone").is_err(),
@@ -2694,12 +2766,12 @@ pub(crate) mod tests {
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
         set_linked(true);
-        set_account(vec![device("phone", false)]);
+        set_account(vec![device("phone", false)], None);
         let mut phone = device("phone", false);
         phone.linked = false;
         phone.wakeable = Some(true);
         phone.last_seen = Some(chrono::Utc::now().timestamp() - 10);
-        set_account(vec![phone]);
+        set_account(vec![phone], None);
         let listed = list().into_iter().find(|d| d.id == "phone").unwrap();
         assert!(!listed.asleep && !listed.awake, "reconnecting, not asleep");
         wake("phone");
@@ -2783,7 +2855,7 @@ pub(crate) mod tests {
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
         set_linked(true);
-        set_account(vec![device("mac", false)]);
+        set_account(vec![device("mac", false)], None);
         let play = LinkCommand::Play {
             track_ids: vec!["t".into()],
             start_at: 0,
@@ -2807,7 +2879,7 @@ pub(crate) mod tests {
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
         set_linked(true);
-        set_account(vec![device("mac", false)]);
+        set_account(vec![device("mac", false)], None);
         let play = || LinkCommand::Play {
             track_ids: vec!["t".into()],
             start_at: 0,
@@ -2839,12 +2911,12 @@ pub(crate) mod tests {
         set_linked(true);
         let mut theirs = device("their-phone", false);
         theirs.owner = Some("k".into());
-        set_account(vec![theirs]);
+        set_account(vec![theirs], None);
         let listed = list().into_iter().find(|d| d.id == "their-phone").unwrap();
         assert_eq!(listed.owner.as_deref(), Some("k"));
         assert!(!listed.account, "not this account's own");
         assert!(send("their-phone", LinkCommand::Sync { full: false }).is_err());
-        set_account(Vec::new());
+        set_account(Vec::new(), None);
         assert!(!list().iter().any(|d| d.id == "their-phone"));
         with(|s| *s = Store::default());
     }
@@ -2873,7 +2945,7 @@ pub(crate) mod tests {
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
         set_linked(true);
-        set_account(vec![device("phone", true)]);
+        set_account(vec![device("phone", true)], None);
         used("phone");
         // Suspended for hours; the phone left meanwhile.
         with(|s| *s.live.get_mut("phone").unwrap() -= 4 * 60 * 60);
@@ -2883,7 +2955,7 @@ pub(crate) mod tests {
         let mut phone = device("phone", false);
         phone.linked = false;
         phone.last_seen = Some(hours_ago);
-        set_account(vec![phone]);
+        set_account(vec![phone], None);
         let phone = list().into_iter().find(|d| d.id == "phone").unwrap();
         assert!(phone.asleep, "not reconnecting: it went hours ago");
         // The stamp from when it was linked is earlier than the server's, so
@@ -2920,7 +2992,7 @@ pub(crate) mod tests {
         let mut phone = device("phone", false);
         phone.linked = false;
         phone.wakeable = Some(true);
-        set_account(vec![phone]);
+        set_account(vec![phone], None);
         assert!(
             !list().iter().any(|d| d.id == "mac"),
             "never seen here, and not listed: dropped"
@@ -2939,7 +3011,7 @@ pub(crate) mod tests {
         phone.linked = false;
         phone.wakeable = Some(false);
         phone.last_seen = Some(chrono::Utc::now().timestamp() - 3600);
-        set_account(vec![phone]);
+        set_account(vec![phone], None);
         used("phone");
         let phone = list().into_iter().find(|d| d.id == "phone").unwrap();
         assert!(phone.asleep && !phone.wakeable);
@@ -2952,7 +3024,10 @@ pub(crate) mod tests {
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
-        set_account(vec![device("mac", false), device("phone", true)]);
+        set_account(
+            vec![device("mac", false), device("phone", true)],
+            Some("here".into()),
+        );
         let listed = list();
         assert_eq!(listed[0].id, "phone", "playing first");
         assert_eq!(listed.len(), 2);
@@ -2962,7 +3037,7 @@ pub(crate) mod tests {
                 id: "mac".into(),
                 name: "Mac".into(),
                 platform: "macos".into(),
-                library: None,
+                library: Some("here".into()),
                 acks: false,
                 nonce: None,
             },
@@ -2979,7 +3054,8 @@ pub(crate) mod tests {
             },
             "10.0.0.9:5626",
         );
-        let listed = list();
+        let now = chrono::Utc::now().timestamp();
+        let listed = list_from(now, Some("here".into()));
         assert_eq!(listed.len(), 3);
         let mac = listed.iter().find(|d| d.id == "mac").unwrap();
         assert!(mac.account && mac.nearby && mac.same_library);
@@ -3027,12 +3103,100 @@ pub(crate) mod tests {
         assert!(send_nearby("mac", play).is_err());
 
         set_target(None);
-        set_account(Vec::new());
+        set_account(Vec::new(), None);
         nearby_gone("mac");
         assert!(
             list().iter().all(|d| d.last_seen.is_some()),
             "only what has just left, kept for a heartbeat"
         );
+        with(|s| *s = Store::default());
+    }
+
+    /// Music moves only between devices on the same server: the account's
+    /// devices as the server this one is signed in to lists them, unless one
+    /// met on the network says it is signed in elsewhere now.
+    #[test]
+    fn music_moves_only_between_devices_on_the_same_server() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let here = || Some("here".to_string());
+        let same = |ours: Option<String>, id: &str| {
+            list_from(chrono::Utc::now().timestamp(), ours)
+                .into_iter()
+                .find(|d| d.id == id)
+                .unwrap()
+                .same_library
+        };
+        set_account(vec![device("tv", false), device("phone", false)], here());
+        assert!(same(here(), "tv"));
+        assert!(
+            !same(Some("elsewhere".into()), "tv"),
+            "signed in elsewhere since"
+        );
+        assert!(!same(None, "tv"), "signed in nowhere");
+
+        // The TV signed in to another server: still the account's here, but
+        // what it names is that server's.
+        let on = |id: &str, library: Option<&str>| LinkHello {
+            id: id.into(),
+            name: id.into(),
+            platform: "tvos".into(),
+            library: library.map(Into::into),
+            acks: false,
+            nonce: None,
+        };
+        nearby_hello(on("tv", Some("elsewhere")), "10.0.0.7:5626");
+        nearby_hello(on("phone", Some("here")), "10.0.0.8:5626");
+        assert!(!same(here(), "tv"));
+        assert!(same(here(), "phone"));
+        nearby_hello(on("tv", None), "10.0.0.7:5626");
+        assert!(!same(here(), "tv"), "signed out");
+
+        // A stranger that left keeps the server it was on.
+        nearby_hello(on("stranger", Some("elsewhere")), "10.0.0.9:5626");
+        set_target(Some("stranger".into()));
+        nearby_gone("stranger");
+        assert!(!same(here(), "stranger"));
+        assert!(same(Some("elsewhere".into()), "stranger"));
+
+        // Kept across a relaunch, with the server it came from.
+        with(|s| s.save());
+        with(|s| *s = Store::default());
+        restore();
+        assert!(!same(Some("elsewhere".into()), "phone"));
+        assert!(same(here(), "phone"));
+
+        set_target(None);
+        with(|s| *s = Store::default());
+    }
+
+    /// Moving music wakes the destination as choosing it does, but leaves no
+    /// failure on its row: what is sent next says what became of it.
+    #[test]
+    fn waking_to_send_returns_at_once_and_leaves_no_failure() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_account(vec![device("mac", false)], None);
+        let started = Instant::now();
+        assert!(wake_to_send("mac"), "linked: nothing to wake");
+
+        let asleep = LinkDevice {
+            linked: false,
+            wakeable: Some(true),
+            ..device("phone", false)
+        };
+        set_account(vec![asleep], None);
+        with(|s| {
+            s.live
+                .insert("phone".into(), chrono::Utc::now().timestamp() - 3600);
+        });
+        // No link to push through: the wake fails at its first stage.
+        assert!(!wake_to_send("phone"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(with(|s| s.waking.get("phone").cloned()), None);
+        assert!(with(|s| s.attempt.is_none()));
         with(|s| *s = Store::default());
     }
 }

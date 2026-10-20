@@ -3105,17 +3105,20 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         let _r = rig(&[("phone", None), ("mac", None)]);
         let id = "unproven-mac";
-        devices::set_account(vec![crate::remote::link::LinkDevice {
-            id: id.into(),
-            name: id.into(),
-            platform: "macos".into(),
-            linked: true,
-            state: None,
-            last_seen: None,
-            wakeable: None,
-            owner: None,
-            acks: false,
-        }]);
+        devices::set_account(
+            vec![crate::remote::link::LinkDevice {
+                id: id.into(),
+                name: id.into(),
+                platform: "macos".into(),
+                linked: true,
+                state: None,
+                last_seen: None,
+                wakeable: None,
+                owner: None,
+                acks: false,
+            }],
+            None,
+        );
         let stop = Stop::new().unwrap();
         let mut c = controlling(&stop);
         let hello = LinkHello {
@@ -3135,7 +3138,7 @@ mod tests {
         c.incoming(&serde_json::to_string(&LinkReport::State(forged)).unwrap());
         assert_eq!(devices::last_report(id), None);
         CONNS.lock().as_mut().unwrap().remove(id);
-        devices::set_account(Vec::new());
+        devices::set_account(Vec::new(), None);
     }
 
     #[test]
