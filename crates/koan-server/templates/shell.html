@@ -45,4 +45,8 @@
 <a class="max-w-full truncate text-meta text-strong hover:no-underline" href="/queue" data-np="title">Nothing playing</a>
 <span class="credit max-w-full truncate text-fine text-muted" data-np="artist"></span></span></div>
 <div class="flex min-w-0 flex-col items-center gap-1">{{ crate::ui::pages::buttons(false) }}{{ crate::ui::pages::scrub("max-wide:hidden", "h-4") }}</div></footer>
-{{ crate::ui::pages::TRACK_MENU|safe }}{{ crate::ui::pages::TRACK_PROPERTIES|safe }}</body></html>
+{#- The menu every track row opens, filled for the row by the UI's script. Beside the pointer on a wide screen, a sheet above the bar on a phone. #}
+<div id="track-menu" popover="manual" role="menu" class="fixed inset-auto m-0 hidden min-w-52 flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]" aria-label="Track"></div>
+{#- A track's properties, filled from `/track/{id}/properties` by the UI's script. #}
+<dialog id="track-properties" class="m-auto max-h-[85dvh] w-[calc(100%-24px)] max-w-panel overflow-y-auto border border-rule bg-bg px-5 pt-4 pb-5 text-ink backdrop:bg-bg/70" aria-label="Properties"><div id="track-properties-body"></div>
+<form method="dialog" class="mt-6 flex justify-end"><button>Close</button></form></dialog></body></html>

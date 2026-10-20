@@ -13,7 +13,7 @@ use koan_core::auth::Role;
 use koan_core::db::queries::api_keys::{self, ApiKeyRow};
 use koan_core::db::queries::app_passwords::{self, AppPasswordRow};
 
-use super::pages::{COPY_ERROR, respond};
+use super::pages::{COPY_ERROR, Failed, respond};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
@@ -139,10 +139,13 @@ fn posted_name(body: &[u8], signal: &str) -> Option<String> {
 }
 
 fn refused(result: &str, message: &str) -> Response {
-    events(vec![patch(
-        &format!("<div id={result} class=\"{COPY_ERROR}\" role=alert>{message}</div>"),
-        None,
-    )])
+    let html = Failed {
+        id: result,
+        class: COPY_ERROR,
+        message,
+    }
+    .html();
+    events(vec![patch(&html, None)])
 }
 
 #[derive(Template)]

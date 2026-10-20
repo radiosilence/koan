@@ -15,7 +15,7 @@ use koan_core::db::queries::{self, PlayHistoryRow};
 
 use super::favourite::Hearts;
 use super::pages::{
-    Credits, ERROR, cover_url, credit_data, credit_line, track_versions, unavailable,
+    Credits, ERROR, Failed, cover_url, credit_data, credit_line, track_versions, unavailable,
 };
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
@@ -236,12 +236,15 @@ pub(super) async fn forget(
                 .event("datastar-patch-signals")
                 .data("signals {\"forget\":[]}"),
         ]),
-        None => events(vec![patch(
-            &format!(
-                "<div id=\"history-result\" class=\"mt-3 {ERROR}\" role=\"alert\">Those plays could not be forgotten.</div>"
-            ),
-            None,
-        )]),
+        None => {
+            let html = Failed {
+                id: "history-result",
+                class: &format!("mt-3 {ERROR}"),
+                message: "Those plays could not be forgotten.",
+            }
+            .html();
+            events(vec![patch(&html, None)])
+        }
     }
 }
 

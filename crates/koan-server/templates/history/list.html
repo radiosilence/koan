@@ -1,4 +1,5 @@
 {#- The account's plays, grouped by day, and links to newer and earlier pages: one element the forget action can replace. -#}
+{%- import "library/macros.html" as library -%}
 <div id="history">
 {%- if plays.is_empty() && page == 0 %}
 <p class="{{ crate::ui::pages::EMPTY }}">Nothing played yet.</p>
@@ -9,11 +10,10 @@
 {%- if let Some(day) = p.day %}
 <li class="disc">{{ day }}</li>
 {%- endif %}
-<li tabindex="0" data-id="{{ p.id }}" data-dur="{{ p.secs }}" data-title="{{ p.title }}" data-artist="{{ p.artist }}" data-album="{{ p.album }}" data-album-id="{{ p.album_id }}" data-artist-id="{{ p.artist_id }}" data-cover="{{ p.cover }}"{{ p.credit }}>
+{% call library::track_open(p.id, p.secs, p.title, p.artist, p.album, p.album_id, p.artist_id, p.cover, p.credit) %}{% endcall %}
 <input type="checkbox" class="flex-none max-wide:hidden" value="{{ p.play }}" aria-label="Select this play">
 <span class="n w-auto max-wide:text-meta">{{ p.time }}</span><span class="t">{{ p.title }}{{ p.sub }}</span>
-<span class="d">{{ p.dur }}</span><span class="contents max-wide:hidden">{{ p.heart }}
-<button class="quiet" data-act="add" aria-label="Add to queue" title="Add to queue">+</button></span>{{ p.mark }}{{ crate::ui::pages::MORE|safe }}</li>
+<span class="d">{{ p.dur }}</span>{% call library::track_close(p.heart, p.mark) %}{% endcall %}
 {%- endfor %}
 </ol>
 {%- if page > 0 || more %}

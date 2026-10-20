@@ -11,7 +11,7 @@ use axum::response::sse::Event;
 use koan_core::db::queries::scrobbling::{self, LASTFM, LISTENBRAINZ, ScrobbleService};
 use koan_core::scrobbling::lastfm;
 
-use super::pages::respond;
+use super::pages::{COPY_ERROR, Failed, respond};
 use super::{UiState, events, open, patch, see_other};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
@@ -198,15 +198,13 @@ fn failed(message: &str) -> Response {
     failed_in("scrobble-result", message)
 }
 
-#[derive(Template)]
-#[template(path = "scrobbling/failed.html")]
-struct Failed<'a> {
-    id: &'a str,
-    message: &'a str,
-}
-
 fn failed_in(id: &str, message: &str) -> Response {
-    let html = Failed { id, message }.html();
+    let html = Failed {
+        id,
+        class: COPY_ERROR,
+        message,
+    }
+    .html();
     events(vec![patch(&html, None)])
 }
 

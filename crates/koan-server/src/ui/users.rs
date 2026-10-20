@@ -73,13 +73,13 @@ fn failure(text: &str) -> Event {
 /// white whatever the theme, since scanners expect that contrast; each module
 /// a whole 4px, so edges stay crisp. The code carries the invite's token, as
 /// the link beside it does.
-fn invite_qr(link: &str) -> Html {
+fn invite_qr(link: &str) -> Option<Html> {
     use qrcode::render::svg;
     let code = match qrcode::QrCode::new(link) {
         Ok(code) => code,
         Err(e) => {
             log::warn!("web UI: invite link too long for a QR code: {e}");
-            return Html::default();
+            return None;
         }
     };
     let svg = code
@@ -88,13 +88,7 @@ fn invite_qr(link: &str) -> Html {
         .dark_color(svg::Color("#000"))
         .light_color(svg::Color("#fff"))
         .build();
-    match svg.find("<svg") {
-        Some(at) => Html::trusted(format!(
-            "<div class=\"mt-3\" role=\"img\" aria-label=\"Invite link as a QR code\">{}</div>",
-            &svg[at..]
-        )),
-        None => Html::default(),
-    }
+    svg.find("<svg").map(|at| Html::trusted(&svg[at..]))
 }
 
 #[derive(Template)]
@@ -102,7 +96,7 @@ fn invite_qr(link: &str) -> Html {
 struct InvitePanel<'a> {
     invite: &'a Invite,
     link: String,
-    qr: Html,
+    qr: Option<Html>,
 }
 
 fn invite_panel(invite: &Invite) -> Html {

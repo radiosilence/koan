@@ -27,34 +27,20 @@ use koan_core::shelves::{self, Shelf, Summary};
 
 const GENRES_OFFERED: u32 = 80;
 
-/// A track row's actions on a narrow screen: one button opening the row's
-/// menu, which right-click and long-press open on any screen. The row's own
-/// buttons stand beside it on a wide screen only.
-pub(super) const MORE: &str = "<button class=\"quiet wide:hidden\" data-act=menu aria-haspopup=menu \
-aria-label=\"More\" title=\"More\">⋯</button>";
-
-/// The menu every track row opens, filled for the row by the UI's script.
-/// Beside the pointer on a wide screen, a sheet above the bar on a phone.
-pub(super) const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
-flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto \
-max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
-
-/// A track's properties, filled from `/track/{id}/properties` by the UI's script.
-pub(super) const TRACK_PROPERTIES: &str = "<dialog id=track-properties class=\"m-auto max-h-[85dvh] w-[calc(100%-24px)] \
-max-w-panel overflow-y-auto border border-rule bg-bg px-5 pt-4 pb-5 text-ink backdrop:bg-bg/70\" \
-aria-label=Properties><div id=track-properties-body></div>\
-<form method=dialog class=\"mt-6 flex justify-end\"><button>Close</button></form></dialog>";
+/// Why an action failed, drawn where its result would have gone.
+#[derive(Template)]
+#[template(path = "failed.html")]
+pub(super) struct Failed<'a> {
+    pub(super) id: &'a str,
+    pub(super) class: &'a str,
+    pub(super) message: &'a str,
+}
 
 pub(super) const KICKER: &str = "m-0 text-fine text-muted lowercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
 pub(super) const ERROR: &str = "text-bad";
 const ACTIONS: &str = "flex flex-wrap items-center gap-2";
-/// A heading with its buttons, above a track list. The row keeps the space a
-/// heading would, above and below, since buttons beside it are taller than it
-/// and would otherwise sit on the list.
-pub(super) const LIST_HEAD: &str =
-    "mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0";
 /// Top-aligned, so the cover's top meets the kicker's first line.
 const HERO: &str =
     "mb-6 flex items-start gap-6 max-wide:flex-col max-wide:items-stretch max-wide:gap-4";

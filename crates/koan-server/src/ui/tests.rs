@@ -2618,7 +2618,7 @@ async fn track_rows_carry_what_the_track_menu_needs() {
     )
     .await;
     assert!(
-        r.body.contains("<div id=track-menu popover"),
+        r.body.contains("<div id=\"track-menu\" popover"),
         "the shell's one menu"
     );
     let row = r
@@ -2629,7 +2629,7 @@ async fn track_rows_carry_what_the_track_menu_needs() {
     let row = &row[..row.find("</li>").unwrap()];
     assert!(row.contains(&format!("data-album-id=\"{}\"", f.album_id)));
     assert!(row.contains("data-artist-id="), "for Go to Artist");
-    assert!(row.contains("data-act=menu"), "the phone's way in");
+    assert!(row.contains("data-act=\"menu\""), "the phone's way in");
     assert!(row.contains("data-fav="), "the heart the menu presses");
     assert!(row.contains("data-act-share"), "the share the menu presses");
 }

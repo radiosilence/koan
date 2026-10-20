@@ -21,8 +21,6 @@ use crate::auth::AuthUser;
 use crate::html::{Html, Render};
 use crate::share::{blocking, duration, not_found};
 
-pub(super) const LIST: &str = "m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control \
-[&_dd]:m-0 [&_dd]:wrap-anywhere [&_dd]:select-text [&_dt]:text-muted";
 pub(super) const SECTION: &str = "mt-5 mb-2 text-meta";
 
 /// One row of a definition list: text, or links to the artist and album

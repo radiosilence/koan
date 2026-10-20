@@ -7,6 +7,8 @@
 
 mod glyphs;
 
+use crate::html::Html;
+
 pub use glyphs::*;
 
 /// One glyph: its stroked outline, and the outline of its fill layer (the
@@ -22,7 +24,7 @@ impl Glyph {
     /// stylesheet's `class` on it. The stroke is the rule's, 0.6 + 0.04 × the
     /// point size beside which it stands, where the glyph's square is 1.2 times
     /// that size.
-    pub fn svg(&self, px: f32, class: &str) -> String {
+    pub(crate) fn svg(&self, px: f32, class: &str) -> Html {
         let points = px / 1.2;
         let width = (0.6 + 0.04 * points) * 24.0 / px;
         let mut out = format!(
@@ -39,7 +41,7 @@ stroke-width=\"{width:.2}\" stroke-linecap=square stroke-linejoin=miter aria-hid
             ));
         }
         out.push_str("</svg>");
-        out
+        Html::trusted(out)
     }
 }
 
