@@ -1,8 +1,9 @@
 # Formatting is fixed before a commit, so a push never carries unformatted
-# code. Lint and tests are left to CI; `just check` runs them by hand.
+# code. Only the staged files are formatted, so work not yet staged is left
+# alone. Lint and tests are left to CI; `just check` runs them by hand.
 pre-commit:
   commands:
     fmt:
       glob: "*.rs"
-      run: cargo fmt --all
+      run: rustfmt --edition 2024 {staged_files}
       stage_fixed: true
