@@ -1,5 +1,6 @@
 package cc.blit.koan.ui.settings
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.graphics.Bitmap
@@ -390,9 +391,12 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     // What was copied last, so only its button says so.
     var copied by remember { mutableStateOf<String?>(null) }
-    // Only mail apps answer a mailto:, so this is absent where none is installed.
-    val mail = remember(invite.mailto) {
-        Intent(Intent.ACTION_SENDTO, invite.mailto.toUri()).takeIf { it.resolveActivity(context.packageManager) != null }
+    val share = {
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, invite.emailSubject)
+            .putExtra(Intent.EXTRA_TEXT, invite.emailText)
+        context.startActivity(Intent.createChooser(send, null))
     }
     AlertDialog(
         onDismissRequest = dismiss,
@@ -406,14 +410,19 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
                 )
                 InviteCode(invite.link)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
-                    KoanButton("Send invite…", {
-                        val send = Intent(Intent.ACTION_SEND)
-                            .setType("text/plain")
+                    KoanButton("Send invite…", share, kind = KoanButtonKind.Prominent)
+                    // Only mail apps answer a mailto:. Some read the subject and body from the
+                    // extras rather than the address; with no mail app at all, the share sheet.
+                    KoanButton("Open in Mail", {
+                        val mail = Intent(Intent.ACTION_SENDTO, invite.mailto.toUri())
                             .putExtra(Intent.EXTRA_SUBJECT, invite.emailSubject)
                             .putExtra(Intent.EXTRA_TEXT, invite.emailText)
-                        context.startActivity(Intent.createChooser(send, null))
-                    }, kind = KoanButtonKind.Prominent)
-                    mail?.let { KoanButton("Open in Mail", { context.startActivity(it) }) }
+                        try {
+                            context.startActivity(mail)
+                        } catch (e: ActivityNotFoundException) {
+                            share()
+                        }
+                    })
                     // The formatted email, for pasting into a message composed elsewhere.
                     KoanButton(if (copied == "email") "Copied" else "Copy email", {
                         scope.launch {

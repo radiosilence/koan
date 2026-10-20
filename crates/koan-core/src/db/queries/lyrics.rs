@@ -2,18 +2,29 @@ use rusqlite::{Connection, params};
 
 use crate::db::connection::DbError;
 
-/// Retrieve cached lyrics for a track. Returns (content, is_synced) if found.
+/// A track's cached lyrics, as they were stored.
+#[derive(Debug, Clone)]
+pub struct CachedLyrics {
+    pub content: String,
+    pub synced: bool,
+    /// Where the words came from, as `cache_lyrics` was told.
+    pub source: String,
+}
+
+/// Retrieve cached lyrics for a track.
 pub fn get_cached_lyrics(
     conn: &Connection,
     track_id: i64,
-) -> Result<Option<(String, bool)>, DbError> {
+) -> Result<Option<CachedLyrics>, DbError> {
     let result = conn.query_row(
-        "SELECT content, synced FROM lyrics_cache WHERE track_id = ?1",
+        "SELECT content, synced, source FROM lyrics_cache WHERE track_id = ?1",
         params![track_id],
         |row| {
-            let content: String = row.get(0)?;
-            let synced: bool = row.get::<_, i32>(1)? != 0;
-            Ok((content, synced))
+            Ok(CachedLyrics {
+                content: row.get(0)?,
+                synced: row.get::<_, i32>(1)? != 0,
+                source: row.get(2)?,
+            })
         },
     );
 
@@ -96,9 +107,10 @@ mod tests {
         )
         .unwrap();
 
-        let (content, synced) = get_cached_lyrics(&db.conn, track_id).unwrap().unwrap();
-        assert_eq!(content, "Hello world\nSecond line");
-        assert!(!synced);
+        let cached = get_cached_lyrics(&db.conn, track_id).unwrap().unwrap();
+        assert_eq!(cached.content, "Hello world\nSecond line");
+        assert!(!cached.synced);
+        assert_eq!(cached.source, "lrclib");
 
         // Overwrite with synced lyrics.
         cache_lyrics(
@@ -110,8 +122,8 @@ mod tests {
         )
         .unwrap();
 
-        let (content, synced) = get_cached_lyrics(&db.conn, track_id).unwrap().unwrap();
-        assert!(content.contains("[00:12.00]"));
-        assert!(synced);
+        let cached = get_cached_lyrics(&db.conn, track_id).unwrap().unwrap();
+        assert!(cached.content.contains("[00:12.00]"));
+        assert!(cached.synced);
     }
 }

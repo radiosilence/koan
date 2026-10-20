@@ -2719,8 +2719,7 @@ async fn get_lyrics_by_song_id(
                 .ok_or_else(|| SubsonicError::not_found("Song"))?;
             let cached = queries::get_cached_lyrics(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            let entries =
-                cached.map(|(content, synced)| structured_lyrics(&track, &content, synced));
+            let entries = cached.map(|c| structured_lyrics(&track, &c.content, c.synced));
             Ok(b.child(XmlNode::new("lyricsList").list("structuredLyrics", entries)))
         })
     })

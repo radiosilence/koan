@@ -1510,25 +1510,7 @@ impl KoanEngine {
             let db = self.db()?;
             Ok(queries::get_cached_lyrics(&db.conn, track_id)
                 .map_err(db_err)?
-                .map(|(content, synced)| {
-                    let lines = if synced {
-                        koan_core::lyrics::parse_lrc(&content)
-                            .into_iter()
-                            .map(|l| LyricLine {
-                                time_secs: l.time_secs,
-                                text: l.text,
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                    Lyrics {
-                        content,
-                        synced,
-                        source: "cache".into(),
-                        lines,
-                    }
-                }))
+                .map(|cached| koan_core::lyrics::Lyrics::from(cached).into()))
         })
         .await
     }
