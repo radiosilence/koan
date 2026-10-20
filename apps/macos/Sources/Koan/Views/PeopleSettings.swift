@@ -228,11 +228,10 @@ struct InviteSheet: View {
                 Section {
                     Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
                         .koanText(.body, .muted)
-                    VStack(spacing: 8) {
-                        QRCodeView(text: invite.link, side: 168, margin: 12, radius: 8)
-                        Text("Scan with a phone's camera to open it there.")
-                            .koanText(.meta, .muted)
-                    }
+                    QRCodeView(
+                        text: invite.link, side: 168, margin: 12, radius: 8,
+                        caption: "Scan with a phone's camera to open it there."
+                    )
                     .frame(maxWidth: .infinity)
                     #if !os(tvOS)
                     ShareLink(
