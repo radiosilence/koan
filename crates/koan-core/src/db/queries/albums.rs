@@ -165,7 +165,6 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
                  label = COALESCE(label, (SELECT label FROM albums WHERE id = ?2)),
                  codec = COALESCE(codec, (SELECT codec FROM albums WHERE id = ?2)),
                  sort_name = COALESCE(sort_name, (SELECT sort_name FROM albums WHERE id = ?2)),
-                 total_discs = COALESCE(total_discs, (SELECT total_discs FROM albums WHERE id = ?2)),
                  total_tracks = COALESCE(total_tracks, (SELECT total_tracks FROM albums WHERE id = ?2)),
                  added_at = MIN(COALESCE(added_at, (SELECT added_at FROM albums WHERE id = ?2)),
                                 COALESCE((SELECT added_at FROM albums WHERE id = ?2), added_at))
@@ -189,6 +188,7 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         }
         // The tracks it gave up count towards the album they joined.
         super::sources::recount_album_credits(conn, keep)?;
+        super::sources::derive_disc_total(conn, keep)?;
         for artist in credited {
             super::tracks::prune_if_empty(conn, None, Some(artist))?;
         }

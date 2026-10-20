@@ -630,6 +630,7 @@ mod tests {
             album: album.to_string(),
             track_number: Some(1),
             disc: Some(1),
+            disc_total: None,
             date: Some("2024".into()),
             genre: Some("Electronic".into()),
             duration_ms: Some(240000),

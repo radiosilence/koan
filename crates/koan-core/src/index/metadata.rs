@@ -139,6 +139,7 @@ fn read_metadata_lofty(
     let mbid = musicbrainz(ItemKey::MusicBrainzRecordingId);
     let album_mbid = musicbrainz(ItemKey::MusicBrainzReleaseId);
     let credits = tag.map(credits_of).unwrap_or_default();
+    let disc_total = tag.and_then(|t| t.disk_total()).map(|d| d as i32);
 
     let (title, artist, album_artist, album, date, disc, track_number, genre, label) =
         if let Some(tag) = tag {
@@ -190,6 +191,7 @@ fn read_metadata_lofty(
         album,
         date,
         disc,
+        disc_total,
         track_number,
         genre,
         label,
@@ -305,6 +307,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         album,
         date: tags.date,
         disc: tags.disc,
+        disc_total: tags.disc_total,
         track_number: tags.track_number,
         genre: tags.genre,
         label: None,
@@ -462,6 +465,7 @@ struct SymphoniaTags {
     date: Option<String>,
     track_number: Option<i32>,
     disc: Option<i32>,
+    disc_total: Option<i32>,
     genre: Option<String>,
 }
 
@@ -517,6 +521,7 @@ fn probe_symphonia_tags(path: &Path) -> SymphoniaTags {
                     Some(StandardTag::RecordingYear(v)) => tags.date = Some(v.to_string()),
                     Some(StandardTag::TrackNumber(v)) => tags.track_number = Some(*v as i32),
                     Some(StandardTag::DiscNumber(v)) => tags.disc = Some(*v as i32),
+                    Some(StandardTag::DiscTotal(v)) => tags.disc_total = Some(*v as i32),
                     _ => {}
                 }
             }
@@ -605,6 +610,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
     let mut album: Option<String> = None;
     let mut date: Option<String> = None;
     let mut disc: Option<i32> = None;
+    let mut disc_total: Option<i32> = None;
     let mut track_number: Option<i32> = None;
     let mut genre: Option<String> = None;
     let mut label: Option<String> = None;
@@ -640,6 +646,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
             }
             StandardTag::TrackNumber(n) => track_number = Some(*n as i32),
             StandardTag::DiscNumber(n) => disc = Some(*n as i32),
+            StandardTag::DiscTotal(n) => disc_total = Some(*n as i32),
             StandardTag::Genre(v) => set_text(&mut genre, v),
             StandardTag::Label(v) => set_text(&mut label, v),
             _ => {}
@@ -653,6 +660,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         album: album.unwrap_or_else(|| "Unknown Album".to_string()),
         date,
         disc,
+        disc_total,
         track_number,
         genre,
         label,

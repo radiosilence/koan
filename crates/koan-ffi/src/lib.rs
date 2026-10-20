@@ -6906,6 +6906,7 @@ mod restore_tests {
             album: "Album".into(),
             date: Some("2024".into()),
             disc: Some(1),
+            disc_total: None,
             track_number: Some(1),
             genre: None,
             label: None,

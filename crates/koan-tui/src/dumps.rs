@@ -34,6 +34,7 @@ fn meta(artist: &str, album: &str, title: &str, n: Option<i32>) -> TrackMeta {
         album: album.into(),
         date: Some("2007-05-01".into()),
         disc: Some(1),
+        disc_total: None,
         track_number: n,
         genre: Some("Electronic".into()),
         label: None,

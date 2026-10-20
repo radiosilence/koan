@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 24;
+pub const SCHEMA_VERSION: i64 = 25;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -753,6 +753,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("local_files", "credits", "TEXT"),
     ("remote_entries", "credits", "TEXT"),
     ("tracks", "credits", "TEXT"),
+    // A file's tagged disc total, which an album's disc total never falls below.
+    ("local_files", "disc_total", "INTEGER"),
+    ("remote_entries", "disc_total", "INTEGER"),
     // The device a key signed in, and the public key that device proves
     // itself with to the account's other devices on the local network. On the
     // key's row, so revoking the key drops it. See `api_keys::device_keys`.
@@ -1075,6 +1078,20 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             "DELETE FROM scan_cache;
              UPDATE remote_servers SET library_version = NULL;",
         )?;
+    }
+
+    // Disc totals were taken from no tag and derived from nothing. Derived
+    // now from the discs the tracks are on; the files' tagged totals arrive
+    // as the next scan reads every file again.
+    if found < 25 {
+        conn.execute(
+            &format!(
+                "UPDATE albums SET total_discs = {}",
+                crate::db::queries::sources::DISC_TOTAL
+            ),
+            [],
+        )?;
+        conn.execute("DELETE FROM scan_cache", [])?;
     }
 
     Ok(())

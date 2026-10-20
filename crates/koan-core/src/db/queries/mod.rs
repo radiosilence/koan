@@ -213,6 +213,8 @@ pub struct TrackMeta {
     pub album: String,
     pub date: Option<String>,
     pub disc: Option<i32>,
+    /// How many discs the release has, where the file's tags say.
+    pub disc_total: Option<i32>,
     pub track_number: Option<i32>,
     pub genre: Option<String>,
     pub label: Option<String>,
@@ -349,6 +351,7 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         album: album.into(),
         date: Some("2024".into()),
         disc: Some(1),
+        disc_total: None,
         track_number: Some(1),
         genre: Some("Electronic".into()),
         label: None,

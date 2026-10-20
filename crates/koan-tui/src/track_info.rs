@@ -358,6 +358,7 @@ mod tests {
             album: "album".into(),
             date: Some("2007".into()),
             disc: Some(1),
+            disc_total: None,
             track_number: Some(3),
             genre: Some(String::new()),
             label: None,

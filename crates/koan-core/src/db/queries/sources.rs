@@ -71,6 +71,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         album            TEXT NOT NULL,
         date             TEXT,
         disc             INTEGER,
+        disc_total       INTEGER,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -102,6 +103,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         album            TEXT NOT NULL,
         date             TEXT,
         disc             INTEGER,
+        disc_total       INTEGER,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -134,7 +136,7 @@ pub(crate) const SOURCE_TABLES: &str = "
 const COLUMNS: &str = "title, artist, album_artist, album, date, disc, track_number, genre,
     label, duration_ms, codec, sample_rate, bit_depth, channels, bitrate, size_bytes, mtime,
     path, remote_id, remote_url, album_remote_id, artist_remote_id, mbid, album_mbid,
-    album_added_at, credits";
+    album_added_at, credits, disc_total";
 
 /// A source row as stored, in `COLUMNS` order from `at`.
 fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<TrackMeta> {
@@ -173,6 +175,7 @@ fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<Tra
             .get::<_, Option<String>>(at + 25)?
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default(),
+        disc_total: row.get(at + 26)?,
     })
 }
 
@@ -395,7 +398,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
     conn.prepare_cached(&format!(
         "INSERT INTO {} (track_id, slot_key, artist_key, {COLUMNS})
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
+                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)
          ON CONFLICT({}) DO UPDATE SET
              track_id = excluded.track_id, slot_key = excluded.slot_key,
              artist_key = excluded.artist_key, title = excluded.title,
@@ -410,7 +413,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
              remote_url = excluded.remote_url, album_remote_id = excluded.album_remote_id,
              artist_remote_id = excluded.artist_remote_id, mbid = excluded.mbid,
              album_mbid = excluded.album_mbid, album_added_at = excluded.album_added_at,
-             credits = excluded.credits",
+             credits = excluded.credits, disc_total = excluded.disc_total",
         kind.table(),
         kind.key()
     ))?
@@ -445,6 +448,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
         meta.album_added_at,
         (!meta.credits.is_empty())
             .then(|| serde_json::to_string(&meta.credits).expect("credits serialise")),
+        meta.disc_total,
     ])?;
     Ok(())
 }
@@ -722,6 +726,10 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
         before.album_id.filter(|a| Some(*a) != after.album_id),
         before.artist_id.filter(|a| Some(*a) != after.artist_id),
     )?;
+    derive_disc_total(conn, album_id)?;
+    if let Some(left) = before.album_id.filter(|a| *a != album_id) {
+        derive_disc_total(conn, left)?;
+    }
     Ok(None)
 }
 
@@ -883,6 +891,27 @@ pub(crate) fn recount_album_credits(conn: &Connection, album: i64) -> rusqlite::
         DbError::Sqlite(e) => e,
         other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
     })
+}
+
+/// An album's disc total as a correlated subquery on `albums`: the highest
+/// disc its tracks are on, or a larger total one of their sources is tagged
+/// with, for a disc the library does not hold. One for any album with tracks.
+pub(crate) const DISC_TOTAL: &str =
+    "(SELECT MAX(1, COALESCE(MAX(t.disc), 0), COALESCE(MAX(s.disc_total), 0))
+       FROM tracks t
+       LEFT JOIN (SELECT track_id, disc_total FROM local_files
+                  UNION ALL SELECT track_id, disc_total FROM remote_entries) s
+         ON s.track_id = t.id
+      WHERE t.album_id = albums.id)";
+
+/// Derive an album's disc total again after its tracks changed.
+pub(crate) fn derive_disc_total(conn: &Connection, album: i64) -> rusqlite::Result<()> {
+    conn.prepare_cached(&format!(
+        "UPDATE albums SET total_discs = {DISC_TOTAL}
+          WHERE id = ?1 AND total_discs IS NOT {DISC_TOTAL}"
+    ))?
+    .execute(params![album])?;
+    Ok(())
 }
 
 fn resolve_credits(conn: &Connection, list: &[super::Credit]) -> Result<Vec<i64>, DbError> {
@@ -1121,6 +1150,7 @@ fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError
     super::tracks::prune_if_empty(conn, album, artist)?;
     if let Some(album) = album {
         derive_album_credits(conn, album)?;
+        derive_disc_total(conn, album)?;
     }
     for artist in credited {
         super::tracks::prune_if_empty(conn, None, Some(artist))?;

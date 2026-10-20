@@ -835,6 +835,7 @@ mod tests {
             album_artist: Some("Rrose".into()),
             track_number: Some(n),
             disc: Some(1),
+            disc_total: None,
             duration_ms: Some(125_000),
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),
