@@ -101,6 +101,31 @@ impl From<helpers::CreditPart> for CreditPart {
     }
 }
 
+impl PartialEq<helpers::CreditPart> for CreditPart {
+    fn eq(&self, other: &helpers::CreditPart) -> bool {
+        let helpers::CreditPart { text, artist_id } = other;
+        self.text == *text && self.artist_id == *artist_id
+    }
+}
+
+/// A row's credits as a `QueueItem` carries them.
+#[derive(Clone)]
+pub(crate) struct Credits {
+    pub artist: Vec<CreditPart>,
+    pub album_artist: Vec<CreditPart>,
+    pub differ: bool,
+}
+
+impl From<helpers::RowCredits> for Credits {
+    fn from(c: helpers::RowCredits) -> Self {
+        Self {
+            differ: c.differ(),
+            artist: c.artist.into_iter().map(Into::into).collect(),
+            album_artist: c.album_artist.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 pub(crate) fn credit_parts(
     credit: &str,
     filed: Option<i64>,
@@ -646,7 +671,7 @@ impl QueueItem {
             QueueEntryStatus::Playing if state == PlaybackState::Stopped => EntryStatus::Queued,
             status => status.into(),
         };
-        let credits: crate::queue_slice::Credits = helpers::RowCredits::new::<&str>(
+        let credits: Credits = helpers::RowCredits::new::<&str>(
             &item.artist,
             &item.album_artist,
             Default::default(),
@@ -697,8 +722,7 @@ impl QueueItem {
     pub(crate) fn from_entry(e: &QueueEntry, joins: &crate::queue_slice::Joins) -> Self {
         let place = joins.place(e.db_id);
         let (on_server, on_disk) = joins.sources(e.db_id);
-        let credits: crate::queue_slice::Credits =
-            joins.credits(e.db_id, &e.artist, &e.album_artist).into();
+        let credits: Credits = joins.credits(e.db_id, &e.artist, &e.album_artist).into();
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,

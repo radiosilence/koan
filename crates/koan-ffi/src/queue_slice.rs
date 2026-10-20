@@ -20,7 +20,7 @@ use koan_core::helpers::{QueueCredits, RowCredits};
 use koan_core::player::state::{QueueItemId, QueueReading, SharedPlayerState};
 
 use crate::state::StateSlice;
-use crate::types::{CreditPart, EntryStatus, QueueItem};
+use crate::types::{CreditPart, Credits, EntryStatus, QueueItem};
 
 /// Past this many differing rows, the whole queue again: a client applies
 /// that as cheaply as a patch the size of the queue, and a base that has
@@ -61,24 +61,6 @@ impl Joins {
             .and_then(|id| self.sources.get(&id))
             .copied()
             .unwrap_or((false, false))
-    }
-}
-
-/// A row's credits as a `QueueItem` carries them.
-#[derive(Clone)]
-pub(crate) struct Credits {
-    pub artist: Vec<CreditPart>,
-    pub album_artist: Vec<CreditPart>,
-    pub differ: bool,
-}
-
-impl From<RowCredits> for Credits {
-    fn from(c: RowCredits) -> Self {
-        Self {
-            differ: c.differ(),
-            artist: c.artist.into_iter().map(Into::into).collect(),
-            album_artist: c.album_artist.into_iter().map(Into::into).collect(),
-        }
     }
 }
 
@@ -123,16 +105,8 @@ impl Library {
         let (on_server, on_disk) = joins.sources(track);
         let credits = sent.and_then(|sent| {
             let now = joins.credits(track, &sent.artist, &sent.album_artist);
-            let same = |now: &[koan_core::helpers::CreditPart], sent: &[CreditPart]| {
-                now.len() == sent.len()
-                    && now
-                        .iter()
-                        .zip(sent)
-                        .all(|(a, b)| a.text == b.text && a.artist_id == b.artist_id)
-            };
-            (!same(&now.artist, &sent.artist_credit)
-                || !same(&now.album_artist, &sent.album_artist_credit))
-            .then(|| now.into())
+            (sent.artist_credit != now.artist || sent.album_artist_credit != now.album_artist)
+                .then(|| now.into())
         });
         Self {
             place: joins.place(track),

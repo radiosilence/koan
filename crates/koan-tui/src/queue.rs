@@ -192,8 +192,10 @@ impl Facts {
                 let id = e.db_id?;
                 let place = places.get(&id).copied().unwrap_or_default();
                 let row = credits.row(Some(id), place, &e.artist, &e.album_artist);
-                let text = row.artist.iter().map(|p| p.text.as_str()).collect();
-                Some((id, row.differ().then_some(text)))
+                let own = row
+                    .differ()
+                    .then(|| row.artist.iter().map(|p| p.text.as_str()).collect());
+                Some((id, own))
             })
             .collect();
         Self {
@@ -428,7 +430,8 @@ fn track_of<'e>(
     } else {
         match e.db_id.and_then(|id| look?.facts?.own_credits.get(&id)) {
             Some(own) => own.as_deref(),
-            // With no credited artists, the credits are the tags.
+            // Not a library track, or no reading of the library: the tags
+            // are all there is to go on.
             None => (e.artist != e.album_artist).then_some(e.artist.as_str()),
         }
         .filter(|a| !a.is_empty())
