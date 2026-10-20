@@ -39,10 +39,14 @@ pub(crate) struct Joins {
 
 impl Joins {
     /// A row's artist and record artist with each credited artist linked.
-    pub(crate) fn credits(&self, track: Option<i64>, artist: &str, album_artist: &str) -> Credits {
+    pub(crate) fn credits(
+        &self,
+        track: Option<i64>,
+        artist: &str,
+        album_artist: &str,
+    ) -> RowCredits {
         self.credits
             .row(track, self.place(track), artist, album_artist)
-            .into()
     }
 
     pub(crate) fn place(&self, track: Option<i64>) -> Place {
@@ -119,8 +123,16 @@ impl Library {
         let (on_server, on_disk) = joins.sources(track);
         let credits = sent.and_then(|sent| {
             let now = joins.credits(track, &sent.artist, &sent.album_artist);
-            (now.artist != sent.artist_credit || now.album_artist != sent.album_artist_credit)
-                .then_some(now)
+            let same = |now: &[koan_core::helpers::CreditPart], sent: &[CreditPart]| {
+                now.len() == sent.len()
+                    && now
+                        .iter()
+                        .zip(sent)
+                        .all(|(a, b)| a.text == b.text && a.artist_id == b.artist_id)
+            };
+            (!same(&now.artist, &sent.artist_credit)
+                || !same(&now.album_artist, &sent.album_artist_credit))
+            .then(|| now.into())
         });
         Self {
             place: joins.place(track),
@@ -422,12 +434,12 @@ mod tests {
         };
         // A track naming no artists of its own, credited as its record is,
         // takes the record's.
-        let row = joins.credits(Some(1), "A × B", "A × B");
+        let row: Credits = joins.credits(Some(1), "A × B", "A × B").into();
         let ids: Vec<_> = row.artist.iter().map(|p| p.artist_id).collect();
         assert_eq!(ids, [Some(1), None, Some(2)]);
         assert_eq!(row.artist, row.album_artist);
         // Credited otherwise, it leads where it is filed.
-        let row = joins.credits(Some(1), "A", "A × B");
+        let row: Credits = joins.credits(Some(1), "A", "A × B").into();
         assert_eq!(
             row.artist,
             [CreditPart {

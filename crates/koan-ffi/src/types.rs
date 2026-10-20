@@ -691,7 +691,8 @@ impl QueueItem {
     pub(crate) fn from_entry(e: &QueueEntry, joins: &crate::queue_slice::Joins) -> Self {
         let place = joins.place(e.db_id);
         let (on_server, on_disk) = joins.sources(e.db_id);
-        let credits = joins.credits(e.db_id, &e.artist, &e.album_artist);
+        let credits: crate::queue_slice::Credits =
+            joins.credits(e.db_id, &e.artist, &e.album_artist).into();
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,

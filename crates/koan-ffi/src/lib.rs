@@ -5554,7 +5554,9 @@ impl KoanEngine {
                 let row = e.track_id.as_ref().and_then(|r| rows.get(r));
                 let album_artist =
                     row.map_or_else(|| e.artist.clone(), |r| r.album_artist_name.clone());
-                let credits = joins.credits(row.map(|r| r.id), &e.artist, &album_artist);
+                let credits: queue_slice::Credits = joins
+                    .credits(row.map(|r| r.id), &e.artist, &album_artist)
+                    .into();
                 QueueItem {
                     queue_item_id: e.id.clone().unwrap_or_else(|| format!("remote-{n}")),
                     track_id: row.map(|r| r.id),
