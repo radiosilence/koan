@@ -539,9 +539,8 @@ mixes or delays channels, any bands, the headroom, and where it was imported
 from. Changes apply straight away, where playback is.
 
 On iOS, the route is the device: AirPods, wired headphones and the speaker are
-each their own output. Now Playing shows the preset of the output playing, beside
-the AirPlay button: the route's, or a UPnP renderer's while the phone plays to
-one. Tapping it picks another preset for that output, which applies at once.
+each their own output. Now Playing shows the route's preset beside the AirPlay
+button. Tapping it picks another preset for that output, which applies at once.
 It changes when the output does. On Apple TV the same menu has no Edit….
 
 ```bash

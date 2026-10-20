@@ -1,0 +1,1 @@
+- **Release jobs read one answer for whether a run releases.** The Mac build and the publishing steps can no longer disagree, which could skip a release without a failure.
