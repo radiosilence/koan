@@ -66,7 +66,14 @@ class PlaylistEdits(private val mirror: EngineMirror) {
     /** Where the playlists sit in the list. This device's alone: a server has nowhere to keep it. */
     fun arrange(playlistIds: List<Long>) = mirror.launch { reorderPlaylists(playlistIds) }
 
-    fun reorder(playlistId: Long, entryIds: List<Long>) = mirror.launch { reorderPlaylist(playlistId, entryIds) }
+    fun reorder(playlistId: Long, entryIds: List<Long>, failed: () -> Unit) = mirror.launch {
+        try {
+            reorderPlaylist(playlistId, entryIds)
+        } catch (e: Exception) {
+            failed()
+            throw e
+        }
+    }
 
     fun remove(playlistId: Long, entryIds: List<Long>) {
         if (entryIds.isNotEmpty()) mirror.launch { removeFromPlaylist(playlistId, entryIds) }
