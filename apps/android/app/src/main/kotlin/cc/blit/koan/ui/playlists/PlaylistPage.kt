@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -182,10 +183,16 @@ private fun PlaylistList(
 ) {
     val grouped = playlist.grouped ?: false
     val listState = rememberLazyListState()
-    // The order shown while a row is dragged; the engine's again once the drop lands and the library moves.
-    var order by remember(entries) { mutableStateOf(entries) }
+    // One state object for the page's life: each row's gesture outlives a
+    // recomposition and keeps the state it started with, so a fresh one per
+    // emission would leave the next drag moving a copy nobody draws.
+    val latest by rememberUpdatedState(entries)
+    var order by remember { mutableStateOf(entries) }
     var dragging by remember { mutableStateOf<Long?>(null) }
     var offset by remember { mutableFloatStateOf(0f) }
+    // The engine's order, except under a drag: a library update landing then
+    // must not move rows out from under the finger. The drop is written and comes back.
+    LaunchedEffect(entries) { if (dragging == null) order = entries }
 
     fun dragBy(delta: Float) {
         offset += delta
@@ -205,7 +212,7 @@ private fun PlaylistList(
     }
 
     fun drop() {
-        if (dragging != null && order.map { it.entryId } != entries.map { it.entryId }) {
+        if (dragging != null && order.map { it.entryId } != latest.map { it.entryId }) {
             edits.reorder(playlist.id, order.map { it.entryId })
         }
         dragging = null
@@ -263,7 +270,7 @@ private fun PlaylistList(
                             detectDragGestures(
                                 onDragStart = { dragging = id; offset = 0f },
                                 onDragEnd = { drop() },
-                                onDragCancel = { drop() },
+                                onDragCancel = { order = latest; dragging = null; offset = 0f },
                                 onDrag = { change, amount -> change.consume(); dragBy(amount.y) },
                             )
                         },
