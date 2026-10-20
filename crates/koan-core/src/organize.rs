@@ -1652,6 +1652,7 @@ mod tests {
             size_bytes: Some(30_000_000),
             mtime: Some(1700000000),
             path: None,
+            server_path: None,
             source: "local".into(),
             remote_id: None,
             remote_url: None,

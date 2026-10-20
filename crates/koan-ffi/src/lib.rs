@@ -6918,6 +6918,7 @@ mod restore_tests {
             size_bytes: None,
             mtime: None,
             path: Some(path.to_string_lossy().into_owned()),
+            server_path: None,
             source: "local".into(),
             remote_id: None,
             album_remote_id: None,

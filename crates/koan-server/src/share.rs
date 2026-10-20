@@ -843,6 +843,7 @@ mod tests {
             bitrate: Some(1000),
             genre: None,
             path: Some(path.to_string_lossy().into_owned()),
+            server_path: None,
             date: Some("2019".into()),
             label: None,
             size_bytes: None,

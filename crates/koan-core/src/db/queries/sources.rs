@@ -156,7 +156,14 @@ fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<Tra
         bitrate: row.get(at + 14)?,
         size_bytes: row.get(at + 15)?,
         mtime: row.get(at + 16)?,
-        path: row.get(at + 17)?,
+        path: match kind {
+            Kind::Local => row.get(at + 17)?,
+            Kind::Remote => None,
+        },
+        server_path: match kind {
+            Kind::Local => None,
+            Kind::Remote => row.get(at + 17)?,
+        },
         remote_id: row.get(at + 18)?,
         remote_url: row.get(at + 19)?,
         album_remote_id: row.get(at + 20)?,
@@ -435,7 +442,10 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
         meta.bitrate,
         meta.size_bytes,
         meta.mtime,
-        meta.path,
+        match kind {
+            Kind::Local => &meta.path,
+            Kind::Remote => &meta.server_path,
+        },
         meta.remote_id,
         meta.remote_url,
         meta.album_remote_id,
@@ -1285,7 +1295,9 @@ pub(crate) fn link(conn: &Connection, kind: Kind, key: &str) -> Result<i64, DbEr
 }
 
 /// What a `TrackMeta` says as a source of `kind`: a file knows nothing of the
-/// server's ids, and an entry nothing of a path or the file's size and mtime.
+/// server's ids or paths, and an entry nothing of a local path or the file's
+/// size and mtime. An entry's own path, where the server keeps the file, is
+/// stored in its row's `path`.
 fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
     let mut meta = meta.clone();
     match kind {
@@ -1295,6 +1307,7 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
             meta.remote_url = None;
             meta.album_remote_id = None;
             meta.artist_remote_id = None;
+            meta.server_path = None;
         }
         Kind::Remote => {
             meta.source = "remote".into();

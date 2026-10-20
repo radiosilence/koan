@@ -637,6 +637,7 @@ mod tests {
                 "/tmp/test/{}.flac",
                 title.to_lowercase().replace(' ', "_")
             )),
+            server_path: None,
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),
             bit_depth: Some(16),

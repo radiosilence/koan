@@ -1372,6 +1372,15 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             extras.mbid.get(&track.id).map_or("", String::as_str),
         )
         .attr_opt(
+            "path",
+            extras
+                .library
+                .as_deref()
+                .zip(track.path.as_deref())
+                .map(|(folders, path)| library_path(path, folders))
+                .as_deref(),
+        )
+        .attr_opt(
             "played",
             extras.played.get(&track.id).map(|&at| iso(at)).as_deref(),
         )
@@ -1574,6 +1583,9 @@ struct SongExtras {
     rating: HashMap<i64, u8>,
     /// When the caller favourited it, seconds since the epoch.
     starred: HashMap<i64, i64>,
+    /// The library folders, for an admin: songs then carry `path`. Paths
+    /// describe the server's filesystem, which is no one else's business.
+    library: Option<Vec<PathBuf>>,
 }
 
 /// The caller's own history: when someone else last played a track is theirs
@@ -1584,7 +1596,7 @@ fn history_user(db: &Database, user: i64) -> Result<i64, SubsonicError> {
 
 fn song_extras<'a>(
     db: &Database,
-    user: i64,
+    caller: &Caller,
     tracks: impl IntoIterator<Item = &'a queries::TrackRow>,
 ) -> Result<SongExtras, SubsonicError> {
     let tracks: Vec<_> = tracks.into_iter().collect();
@@ -1592,7 +1604,7 @@ fn song_extras<'a>(
         return Ok(SongExtras::default());
     }
     let ids = json_ids(tracks.iter().map(|t| t.id));
-    let user = history_user(db, user)?;
+    let user = history_user(db, caller.user_id)?;
     let credits = credits_of(db, CreditsOf::Tracks, tracks.iter().map(|t| t.id))?;
     let album_credits = credits_of(
         db,
@@ -1640,6 +1652,8 @@ fn song_extras<'a>(
             tracks.iter().map(|t| t.id),
         )?,
         starred: starred(db, user, Favourite::Track, &ids)?,
+        library: (caller.role == Role::Admin)
+            .then(|| Config::load().unwrap_or_default().library.folders),
     })
 }
 
@@ -1980,6 +1994,19 @@ pub(crate) fn extension_to_mime(ext: &str) -> &str {
 }
 
 /// Resolve a track's file path (local preferred, then cached).
+/// A file as Subsonic's `path`: relative to the library folder that holds it,
+/// as Navidrome sends it, or whole for a file imported from elsewhere.
+fn library_path(path: &str, folders: &[PathBuf]) -> String {
+    let path = std::path::Path::new(path);
+    folders
+        .iter()
+        .filter_map(|folder| path.strip_prefix(folder).ok())
+        .min_by_key(|rest| rest.components().count())
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub(crate) fn track_file_path(track: &queries::TrackRow) -> Option<&str> {
     track.path.as_deref().or(track.cached_path.as_deref())
 }
@@ -2171,7 +2198,8 @@ async fn get_music_directory(
     Query(params): Query<IdParam>,
 ) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+        respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
+            let user = caller.user_id;
             let (kind, id) = require_entity(db, params.id.as_deref())?;
 
             // A bare row id is ambiguous — artists and albums number separately —
@@ -2209,7 +2237,7 @@ async fn get_music_directory(
                 .attr("parent", &uids.artist(album.artist_id))
                 .attr("name", &album.title)
                 .array_of("child");
-            let extras = song_extras(db, user, &tracks)?;
+            let extras = song_extras(db, caller, &tracks)?;
             for track in &tracks {
                 dir = dir.child(track_node(track, "child", &extras));
             }
@@ -2248,7 +2276,8 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
 
 async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+        respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
+            let user = caller.user_id;
             let album_id = require_id(db, params.id.as_deref(), EntityKind::Album)?;
 
             let album = queries::get_album(&db.conn, album_id)
@@ -2258,7 +2287,7 @@ async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdPa
             let tracks = queries::tracks_for_album(&db.conn, album_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             let albums = album_extras(db, user, [&album], Some(&tracks))?;
-            let songs = song_extras(db, user, &tracks)?;
+            let songs = song_extras(db, caller, &tracks)?;
             Ok(b.child(
                 album_to_xml_node(&album, &albums)
                     .list("song", tracks.iter().map(|t| track_to_xml_node(t, &songs))),
@@ -2393,12 +2422,13 @@ async fn get_album_list2(
 
 async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+        respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
+            let user = caller.user_id;
             let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
             let track = queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Song"))?;
-            let extras = song_extras(db, user, [&track])?;
+            let extras = song_extras(db, caller, [&track])?;
             Ok(b.child(track_to_xml_node(&track, &extras)))
         })
     })
@@ -2421,7 +2451,7 @@ async fn get_bookmarks(
                 .into_iter()
                 .map(|t| (t.id, t))
                 .collect();
-            let extras = song_extras(db, caller.user_id, tracks.values())?;
+            let extras = song_extras(db, caller, tracks.values())?;
             Ok(b.child(XmlNode::new("bookmarks").list(
                 "bookmark",
                 marks.iter().filter_map(|m| {
@@ -2527,7 +2557,7 @@ fn play_queue_response(state: &AppState, params: &RawParams, by_index: bool) -> 
                 .into_iter()
                 .map(|t| (t.id, t))
                 .collect();
-        let extras = song_extras(db, user, rows.values())?;
+        let extras = song_extras(db, caller, rows.values())?;
         let tag = if by_index {
             "playQueueByIndex"
         } else {
@@ -2737,7 +2767,8 @@ async fn search3(
     Query(params): Query<Search3Params>,
 ) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+        respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
+            let user = caller.user_id;
             let query = params
                 .query
                 .as_deref()
@@ -2852,7 +2883,7 @@ async fn search3(
 
             let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
             let album_extras = album_extras(db, user, &albums, None)?;
-            let song_extras = song_extras(db, user, &songs)?;
+            let song_extras = song_extras(db, caller, &songs)?;
             let result_node = XmlNode::new("searchResult3")
                 .list(
                     "artist",
@@ -3451,11 +3482,12 @@ async fn get_starred2(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+        respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
+            let user = caller.user_id;
             // A query per kind, not per favourite: clients read this on every sync.
             let tracks = queries::favourite_tracks(&db.conn, user, None)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            let extras = song_extras(db, user, &tracks)?;
+            let extras = song_extras(db, caller, &tracks)?;
 
             let albums = queries::list_albums(
                 &db.conn,
@@ -4293,7 +4325,8 @@ async fn get_random_songs(
     Query(params): Query<RandomSongsParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+        respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
+            let user = caller.user_id;
             // Capped as getAlbumList is: every song is built in memory.
             let size = params.size.unwrap_or(10).min(500);
             let filter = queries::RandomFilter {
@@ -4304,7 +4337,7 @@ async fn get_random_songs(
             };
             let tracks = queries::random_tracks_where(&db.conn, size, &filter)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            let extras = song_extras(db, user, &tracks)?;
+            let extras = song_extras(db, caller, &tracks)?;
             Ok(b.child(
                 XmlNode::new("randomSongs")
                     .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
@@ -4550,7 +4583,7 @@ fn playlist_attrs(node: XmlNode, list: &queries::PlaylistRow, username: &str) ->
 /// A playlist as a `<playlist>` with its members resolved, for `user`.
 fn playlist_node(
     db: &Database,
-    user: i64,
+    caller: &Caller,
     list: &queries::PlaylistRow,
     owner: &str,
 ) -> Result<XmlNode, SubsonicError> {
@@ -4560,7 +4593,7 @@ fn playlist_node(
     // `<song>` sees an empty playlist.
     let tracks = queries::playlist_tracks(&db.conn, list.id)
         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-    let extras = song_extras(db, user, &tracks)?;
+    let extras = song_extras(db, caller, &tracks)?;
     for track in &tracks {
         node = node.child(track_node(track, "entry", &extras));
     }
@@ -4632,7 +4665,8 @@ async fn get_playlist(
     Query(params): Query<IdParam>,
 ) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+        respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
+            let user = caller.user_id;
             let id = playlist_id(db, params.id.as_deref())?;
             playlist_for(db, user, id, false)?;
             match queries::smart::refresh_if_due(&db.conn, id) {
@@ -4641,7 +4675,7 @@ async fn get_playlist(
                 Err(e) => log::warn!("smart playlist {id} not refreshed: {e}"),
             }
             let list = playlist_for(db, user, id, false)?;
-            Ok(b.child(playlist_node(db, user, &list, &state.username)?))
+            Ok(b.child(playlist_node(db, caller, &list, &state.username)?))
         })
     })
     .await
@@ -4655,7 +4689,8 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
 
-        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
+            let user = caller.user_id;
             let track_ids = song_ids(db, params.all("songId"));
 
             // One transaction, so no reader sees the name without the tracks.
@@ -4687,7 +4722,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             // Since 1.14.0 the response carries the playlist that was created;
             // clients read the id back off it rather than guessing.
             let list = playlist_for(db, user, id, false)?;
-            Ok(b.child(playlist_node(db, user, &list, &state.username)?))
+            Ok(b.child(playlist_node(db, caller, &list, &state.username)?))
         })
     })
     .await
@@ -4817,7 +4852,7 @@ fn iso(secs: i64) -> String {
 
 fn share_node(
     db: &Database,
-    user: i64,
+    caller: &Caller,
     share: &queries::shares::ShareRow,
     base: &str,
     username: &str,
@@ -4838,7 +4873,7 @@ fn share_node(
     if let Some(v) = share.last_visited {
         node = node.attr("lastVisited", &iso(v));
     }
-    let extras = song_extras(db, user, &rows)?;
+    let extras = song_extras(db, caller, &rows)?;
     for id in &share.track_ids {
         if let Some(t) = rows.iter().find(|t| t.id == *id) {
             node = node.child(track_node(t, "entry", &extras));
@@ -4906,7 +4941,8 @@ async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
+            let user = caller.user_id;
             let base = share_base()?;
             let ids: Vec<_> = params
                 .all("id")
@@ -4934,7 +4970,7 @@ async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
             Ok(
                 b.child(XmlNode::new("shares").array_of("share").child(share_node(
                     db,
-                    user,
+                    caller,
                     &share,
                     &base,
                     &state.username,
@@ -4956,13 +4992,7 @@ async fn get_shares(
             for share in queries::shares::list_shares(&db.conn, caller.share_owner())
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
             {
-                node = node.child(share_node(
-                    db,
-                    caller.user_id,
-                    &share,
-                    &base,
-                    &state.username,
-                )?);
+                node = node.child(share_node(db, caller, &share, &base, &state.username)?);
             }
             Ok(b.child(node))
         })
@@ -7095,6 +7125,7 @@ mod tests {
             bitrate: Some(1411),
             genre: Some("Rock".into()),
             path: Some(path.into()),
+            server_path: None,
             date: Some("2020".into()),
             label: None,
             size_bytes: None,
@@ -8556,6 +8587,39 @@ mod tests {
         .await;
         assert!(body.contains("Test Song"));
         assert!(body.contains("Test Artist"));
+    }
+
+    /// A song's `path` describes the server's filesystem: an admin is told
+    /// it, anyone else is not.
+    #[tokio::test]
+    async fn song_paths_go_to_admins_only() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let track = queries::all_tracks(&db.conn).unwrap()[0].id;
+        let app = build_test_router(state);
+        let song = |auth: &str| {
+            let app = app.clone();
+            let uri = format!("/rest/getSong?{auth}&v=1.16.1&c=test&id={track}");
+            async move { get_response(app, &uri).await.1 }
+        };
+
+        let admin = song("u=owner&p=sesame").await;
+        assert!(admin.contains(r#"path="/music/test.flac""#), "{admin}");
+        for other in ["u=mate&p=hunter22", &auth_query("")] {
+            let body = song(other).await;
+            assert!(body.contains("Test Song"), "{body}");
+            assert!(!body.contains("test.flac"), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_library_path_is_relative_to_the_folder_holding_it() {
+        let folders = [PathBuf::from("/music"), PathBuf::from("/music/classical")];
+        let path = |p| library_path(p, &folders);
+        assert_eq!(path("/music/classical/Bach/01.flac"), "Bach/01.flac");
+        assert_eq!(path("/music/Burial/01.flac"), "Burial/01.flac");
+        assert_eq!(path("/imported/01.flac"), "/imported/01.flac");
     }
 
     /// Typed attributes must not change the XML wire format: every attribute is
