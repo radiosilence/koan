@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
@@ -50,11 +51,13 @@ class WalkTest {
         if (open(label("Albums"))) {
             pause(3)
             snap("03-albums")
-            // The first sleeve: the topmost, leftmost of the library's record titles.
-            val sleeve = device.wait(Until.findObjects(By.text(Pattern.compile("(?i)album \\d+|record \\d+|thirty rooms"))), 3_000)
+            // The first sleeve: above the topmost, leftmost of the library's
+            // record titles, since the title's line also links the artist.
+            val title = device.wait(Until.findObjects(By.text(Pattern.compile("(?i)album \\d+|record \\d+|thirty rooms"))), 3_000)
                 ?.minWithOrNull(compareBy({ it.visibleBounds.top }, { it.visibleBounds.left }))
-            if (sleeve != null) {
-                sleeve.click()
+                ?.visibleBounds
+            if (title != null) {
+                device.click(title.centerX(), title.top - title.height() * 3)
                 pause(3)
                 snap("04-album")
                 // What the queue, the mini player and Now Playing show from here on.
@@ -169,10 +172,18 @@ class WalkTest {
 
     private fun scrollable() = device.findObjects(By.scrollable(true)).maxByOrNull { it.visibleBounds.height() }
 
+    /** Taps what matches, finding it again if the list recomposed under it. */
     private fun open(selector: BySelector): Boolean {
-        val found = find(selector) ?: return false
-        found.click()
-        return true
+        repeat(3) {
+            val found = find(selector) ?: return false
+            try {
+                found.click()
+                return true
+            } catch (_: StaleObjectException) {
+                pause(1)
+            }
+        }
+        return false
     }
 
     private fun back() {
