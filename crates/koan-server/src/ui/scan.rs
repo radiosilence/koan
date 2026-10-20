@@ -83,7 +83,10 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
     });
     let bar = job
         .filter(|j| j.state == JobState::Running)
-        .map(|j| j.done.zip(j.total).filter(|&(_, total)| total > 0));
+        .map(|j| match (j.done, j.total) {
+            (Some(done), Some(total)) if total > 0 => Bar::Read(done, total),
+            _ => Bar::Counting,
+        });
     Status {
         follow: on_load,
         line,
