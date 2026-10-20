@@ -4,14 +4,14 @@
 
 use std::time::{Duration, Instant};
 
-use koan_core::db::queries::{PlaylistEntry, PlaylistRow};
+use koan_core::db::queries::{CreditsOf, PlaylistEntry, PlaylistRow};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use super::actions_menu::Item;
+use super::actions_menu::{Item, credited, go_to_artists};
 use super::app::PickerAction;
 use super::playlist_ops as ops;
 use super::shell::{Link, Links, ToolItem, Toolbar};
@@ -32,7 +32,8 @@ pub enum PlAction {
     /// Put tracks in the queue as the pickers do.
     Tracks(Vec<i64>, PickerAction),
     OpenAlbum(i64),
-    OpenArtist(i64),
+    /// The artist a track's credit names, or one of several, asked for.
+    ArtistOfTrack(i64),
     Info(i64),
     /// Ask for a name, then make a playlist.
     New,
@@ -863,9 +864,17 @@ impl PlaylistPage {
         if let Some(album) = e.track.album_id {
             items.push(("Go to album".into(), Browse(Action::OpenAlbum(album))));
         }
-        if let Some(artist) = e.track.artist_id {
-            items.push(("Go to artist".into(), Browse(Action::OpenArtist(artist))));
-        }
+        let artists = credited(
+            CreditsOf::Tracks,
+            e.track.id,
+            &e.track.artist_name,
+            e.track.artist_id,
+        );
+        items.extend(
+            go_to_artists(&artists)
+                .into_iter()
+                .map(|(label, action)| (label, Browse(action))),
+        );
         PlAction::Menu(e.track.title.clone(), items)
     }
 
@@ -922,10 +931,7 @@ impl PlaylistPage {
                 return Some(here.map_or(PlAction::None, |(_, t)| PlAction::Info(t.id)));
             }
             KeyCode::Char('A') => {
-                return Some(
-                    here.and_then(|(_, t)| t.artist_id)
-                        .map_or(PlAction::None, PlAction::OpenArtist),
-                );
+                return Some(here.map_or(PlAction::None, |(_, t)| PlAction::ArtistOfTrack(t.id)));
             }
             KeyCode::Char('O') => {
                 return Some(

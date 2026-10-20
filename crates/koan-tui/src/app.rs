@@ -84,6 +84,8 @@ pub enum ContextAction {
     CopyShareLink,
     GoToAlbum,
     GoToArtist,
+    /// The artist an album heading is filed under.
+    GoToAlbumArtist,
     AddToPlaylist,
     Download,
     RemoveDownload,
@@ -1207,9 +1209,7 @@ impl App {
                 Some(Link::Album(id)) => self.go_page(Page::Album(id)),
                 Some(Link::ArtistOfTrack(id)) => self.open_entry_link(Some(id), false),
                 Some(Link::AlbumOfTrack(id)) => self.open_entry_link(Some(id), true),
-                Some(Link::AlbumArtistOfTrack(id)) => {
-                    self.open_track_page(Some(id), |_, album| Page::Artist(album.artist_id))
-                }
+                Some(Link::AlbumArtistOfTrack(id)) => self.open_credited_artist(Some(id), true),
                 None => return false,
             },
         }
@@ -1427,7 +1427,7 @@ impl App {
             }
             PlAction::Tracks(ids, how) => self.enqueue(ids, how),
             PlAction::OpenAlbum(id) => self.go_page(Page::Album(id)),
-            PlAction::OpenArtist(id) => self.go_page(Page::Artist(id)),
+            PlAction::ArtistOfTrack(id) => self.open_credited_artist(Some(id), false),
             PlAction::Info(id) => self.open_track_details(id),
             PlAction::New => self.open_name_prompt(Purpose::New(Vec::new()), String::new()),
             PlAction::Rename(id, name) => self.open_name_prompt(Purpose::Rename(id), name),
@@ -1926,6 +1926,7 @@ impl App {
             }
             browse::Action::OpenAlbum(id) => self.go_page(Page::Album(id)),
             browse::Action::OpenArtist(id) => self.go_page(Page::Artist(id)),
+            browse::Action::OpenCredited(of, id) => self.open_credited(of, id),
             browse::Action::Shuffle(ids) => self.enqueue(ids, PickerAction::Shuffle),
             browse::Action::ToggleAlbum(id) => {
                 self.toggle_collection_favourite(koan_core::helpers::FavouriteKind::Album, id)
@@ -2778,13 +2779,18 @@ impl App {
                 let ids = self.queue_choice();
                 self.open_chooser(ids);
             }
-            ContextAction::GoToAlbum | ContextAction::GoToArtist => {
-                let link = action == ContextAction::GoToAlbum;
+            ContextAction::GoToAlbum
+            | ContextAction::GoToArtist
+            | ContextAction::GoToAlbumArtist => {
                 let db_id = self
                     .visible_queue()
                     .get(self.queue.cursor)
                     .and_then(|e| e.db_id);
-                self.open_entry_link(db_id, link);
+                match action {
+                    ContextAction::GoToAlbum => self.open_entry_link(db_id, true),
+                    ContextAction::GoToArtist => self.open_entry_link(db_id, false),
+                    _ => self.open_credited_artist(db_id, true),
+                }
             }
             ContextAction::Download => {
                 let ids = self.queue_choice();
@@ -3100,13 +3106,69 @@ impl App {
 
     /// Opens the album, or the artist, of the library track `db_id`.
     pub fn open_entry_link(&mut self, db_id: Option<i64>, album_page: bool) {
-        self.open_track_page(db_id, |track, album| {
-            if album_page {
-                Page::Album(album.id)
-            } else {
-                Page::Artist(track.artist_id.unwrap_or(album.artist_id))
+        if album_page {
+            self.open_track_page(db_id, |_, album| Page::Album(album.id));
+        } else {
+            self.open_credited_artist(db_id, false);
+        }
+    }
+
+    /// Opens the page of the artist a library track's credit names, or its
+    /// album's credit when `album`.
+    pub fn open_credited_artist(&mut self, db_id: Option<i64>, album: bool) {
+        use koan_core::db::queries::CreditsOf;
+        let target = if album {
+            db_id
+                .and_then(|id| {
+                    let db = koan_core::db::pool::shared().get().ok()?;
+                    koan_core::db::queries::get_track_row(&db.conn, id)
+                        .ok()
+                        .flatten()?
+                        .album_id
+                })
+                .map(|a| (CreditsOf::Albums, a))
+        } else {
+            db_id.map(|id| (CreditsOf::Tracks, id))
+        };
+        match target {
+            Some((of, id)) => self.open_credited(of, id),
+            None => self.say("that track is not in the library"),
+        }
+    }
+
+    /// Opens the page of the artist a track's or album's credit names. A
+    /// credit naming several artists asks which, as a menu of them. A track
+    /// filed under no artist goes to its album's.
+    pub fn open_credited(&mut self, of: koan_core::db::queries::CreditsOf, id: i64) {
+        use koan_core::db::queries::{self, CreditsOf};
+        let found = (|| {
+            let db = koan_core::db::pool::shared().get().ok()?;
+            match of {
+                CreditsOf::Albums => {
+                    let a = queries::get_album(&db.conn, id).ok().flatten()?;
+                    Some((a.artist_name, Some(a.artist_id)))
+                }
+                CreditsOf::Tracks => {
+                    let t = queries::get_track_row(&db.conn, id).ok().flatten()?;
+                    let filed = t.artist_id.or_else(|| {
+                        let a = queries::get_album(&db.conn, t.album_id?).ok().flatten()?;
+                        Some(a.artist_id)
+                    });
+                    Some((t.artist_name, filed))
+                }
             }
-        });
+        })();
+        let artists = found
+            .map(|(credit, filed)| super::actions_menu::credited(of, id, &credit, filed))
+            .unwrap_or_default();
+        match artists.as_slice() {
+            [] => self.say("that is not in the library"),
+            [(artist, _)] => self.go_page(Page::Artist(*artist)),
+            _ => self.apply_browse(browse::Action::Menu(
+                "Go to artist".into(),
+                super::actions_menu::go_to_artists(&artists),
+            )),
+        }
     }
 
     /// Opens the page `to` picks from a library track and its album.

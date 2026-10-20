@@ -9,14 +9,14 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use koan_core::db::queries;
+use koan_core::db::queries::{self, CreditsOf};
 use koan_core::shelves::{self, Shelf, Summary};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use unicode_width::UnicodeWidthStr;
 
-use super::actions_menu::{Playable, playable};
+use super::actions_menu::{Playable, credited, playable};
 use super::app::PickerAction;
 use super::browse::{
     Action, Favourites, SeeAll, Source, Thumbs, Tile, View, album_tracks, album_year,
@@ -628,6 +628,19 @@ impl ShelfPage {
         }
     }
 
+    /// What `A` opens: the artist at `idx`, or the artists its credit names.
+    fn open_artist_at(&self, idx: usize) -> Action {
+        let Some(s) = &self.summary else {
+            return Action::None;
+        };
+        match self.item(idx) {
+            Some(Item::Artist(i)) => Action::OpenArtist(s.artists.preview[i].id),
+            Some(Item::Album(i)) => Action::OpenCredited(CreditsOf::Albums, s.albums.preview[i].id),
+            Some(Item::Track(i)) => Action::OpenCredited(CreditsOf::Tracks, s.tracks.preview[i].id),
+            _ => Action::None,
+        }
+    }
+
     fn favourite_at(&self, idx: usize) -> Action {
         let Some(s) = &self.summary else {
             return Action::None;
@@ -665,7 +678,7 @@ impl ShelfPage {
                     id: a.id,
                     tracks: ids,
                     favourite: self.fav_albums.contains(&a.id),
-                    artist: a.artist_id,
+                    artists: credited(CreditsOf::Albums, a.id, &a.artist_name, Some(a.artist_id)),
                 };
                 (a.title.clone(), thing)
             }
@@ -751,12 +764,7 @@ impl ShelfPage {
                         .map_or(Action::None, Action::OpenAlbum),
                 );
             }
-            KeyCode::Char('A') => {
-                return Some(
-                    self.artist_of(self.cursor)
-                        .map_or(Action::None, Action::OpenArtist),
-                );
-            }
+            KeyCode::Char('A') => return Some(self.open_artist_at(self.cursor)),
             KeyCode::Char('P') => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),

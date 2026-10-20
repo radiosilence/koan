@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use koan_core::db::queries::{self, AlbumRow, TrackRow};
+use koan_core::db::queries::{self, AlbumRow, CreditsOf, TrackRow};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -201,10 +201,12 @@ impl AlbumPage {
             KeyCode::Char('S') => return Some(Action::Shuffle(self.all())),
             KeyCode::Char('A') => {
                 // The track's own artist on a compilation, else the album's.
-                let artist = track
-                    .and_then(|t| t.artist_id)
-                    .unwrap_or(self.album.artist_id);
-                return Some(Action::OpenArtist(artist));
+                return Some(match track {
+                    Some(t) if t.artist_id.is_some() => {
+                        Action::OpenCredited(CreditsOf::Tracks, t.id)
+                    }
+                    _ => Action::OpenCredited(CreditsOf::Albums, self.album.id),
+                });
             }
             KeyCode::Char('H') => return Some(Action::ToggleAlbum(self.album.id)),
             KeyCode::Char('m') => return Some(self.menu(self.cursor)),

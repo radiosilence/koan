@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{Local, NaiveDate, TimeZone};
 use crossbeam_channel::{Receiver, Sender};
-use koan_core::db::queries::{self, PlayHistoryRow};
+use koan_core::db::queries::{self, CreditsOf, PlayHistoryRow};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -17,6 +17,7 @@ use ratatui::style::{Modifier, Style};
 use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::browse::Action;
+use super::browse::track_playable;
 use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::text::{fit, width};
 use super::theme::Theme;
@@ -510,11 +511,9 @@ impl HistoryPage {
                 );
             }
             KeyCode::Char('A') => {
-                return Some(
-                    self.track_at(self.cursor)
-                        .and_then(|t| t.artist_id)
-                        .map_or(Action::None, Action::OpenArtist),
-                );
+                return Some(self.track_at(self.cursor).map_or(Action::None, |t| {
+                    Action::OpenCredited(CreditsOf::Tracks, t.id)
+                }));
             }
             KeyCode::Char('O') => {
                 return Some(
@@ -547,14 +546,10 @@ impl HistoryPage {
             [] => return Action::None,
             [one] => {
                 let t = &one.track;
-                let thing = Playable::Track {
-                    id: t.id,
-                    favourite: favourites.contains(&t.id),
-                    on_disk: t.path.is_some() || t.cached_path.is_some(),
-                    album: t.album_id,
-                    artist: t.artist_id,
-                };
-                (t.title.clone(), thing)
+                (
+                    t.title.clone(),
+                    track_playable(t, favourites.contains(&t.id)),
+                )
             }
             many => (
                 format!("{} plays", many.len()),

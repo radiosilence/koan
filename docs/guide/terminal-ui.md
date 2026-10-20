@@ -31,7 +31,7 @@ As in the apps, an album and an artist can be favourites as well as tracks. `f` 
 
 ## The actions menu
 
-Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on, with the items the apps' menus have, in their order: play (which replaces the queue), play next, add to queue and, for an album or an artist, shuffle; add to playlist; favourite or remove the favourite, download to cache or remove the downloaded file, track info; go to the album and the artist. Lines between them group them as the apps do, and the cursor steps over the lines. `Enter` or a click does one; `Esc` or a click outside closes it.
+Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on, with the items the apps' menus have, in their order: play (which replaces the queue), play next, add to queue and, for an album or an artist, shuffle; add to playlist; favourite or remove the favourite, download to cache or remove the downloaded file, track info; go to the album and the artist. A record or track credited to several artists has an item for each, "Go to" and the name as the credit spells it. Lines between them group them as the apps do, and the cursor steps over the lines. `Enter` or a click does one; `Esc` or a click outside closes it.
 
 ## The queue
 
@@ -140,7 +140,7 @@ On the album page `Enter` plays the album from the track under the cursor, the t
 
 ### Links
 
-As in the apps, names that lead somewhere are links. Under a tile, the title opens the album and the artist opens the artist; in a row of tracks the artist and the album do; on the album page the artist's name does; and in the queue the artist and album in each album heading do. A link is underlined while the pointer is over it. Each has a key too: `O` opens the album and `A` the artist of whatever is selected, in the queue, the shelves and the browsing pages.
+As in the apps, names that lead somewhere are links. Under a tile, the title opens the album and the artist opens the artist; in a row of tracks the artist and the album do; on the album page the artist's name does; and in the queue the artist and album in each album heading do. A link is underlined while the pointer is over it. Each has a key too: `O` opens the album and `A` the artist of whatever is selected, in the queue, the shelves and the browsing pages. Where a credit names several artists, `A`, the queue's "Go to artist" and the artist links in the queue, the transport bar and Now Playing open a menu of them to choose from.
 
 ### Without a right button
 

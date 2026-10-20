@@ -16,12 +16,14 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use image::DynamicImage;
 use koan_core::browse::{self as core_browse, AlbumSort, BrowseFilter, TrackSort};
-use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistRow, TrackRow};
+use koan_core::db::queries::{
+    self, AlbumOrder, AlbumQuery, AlbumRow, ArtistRow, CreditsOf, TrackRow,
+};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use super::actions_menu::{Playable, playable};
+use super::actions_menu::{Playable, credited, playable};
 use super::app::PickerAction;
 use super::artist_header::{ArtistHeader, HeaderHit};
 use super::cover_art::{Gfx, album_key};
@@ -116,6 +118,9 @@ pub enum Action {
     Favourite(i64),
     OpenAlbum(i64),
     OpenArtist(i64),
+    /// The artist a track's or album's credit names; one of them, asked
+    /// for, when it names several.
+    OpenCredited(CreditsOf, i64),
     /// Replace the queue with these, shuffled.
     Shuffle(Vec<i64>),
     /// A link out of the terminal.
@@ -320,7 +325,7 @@ pub(super) fn track_playable(t: &TrackRow, favourite: bool) -> Playable {
         favourite,
         on_disk: t.path.is_some() || t.cached_path.is_some(),
         album: t.album_id,
-        artist: t.artist_id,
+        artists: credited(CreditsOf::Tracks, t.id, &t.artist_name, t.artist_id),
     }
 }
 
@@ -958,6 +963,17 @@ impl Browse {
         }
     }
 
+    /// What `A` opens: the artist at `idx`, or the artists its credit names.
+    fn open_artist_at(&self, idx: usize) -> Action {
+        let credited =
+            |of, id: Option<i64>| id.map_or(Action::None, |id| Action::OpenCredited(of, id));
+        match self.kind() {
+            Kind::Albums => credited(CreditsOf::Albums, self.album_at(idx)),
+            Kind::Artists => self.artist_at(idx).map_or(Action::None, Action::OpenArtist),
+            Kind::Tracks => credited(CreditsOf::Tracks, self.tracks.get(idx).map(|t| t.id)),
+        }
+    }
+
     /// The track under the cursor when the page lists tracks, for hearting.
     pub fn track_at_cursor(&self) -> Option<i64> {
         if self.kind() != Kind::Tracks {
@@ -998,7 +1014,7 @@ impl Browse {
                     id: a.id,
                     tracks: ids,
                     favourite: self.fav_albums.contains(&a.id),
-                    artist: a.artist_id,
+                    artists: credited(CreditsOf::Albums, a.id, &a.artist_name, Some(a.artist_id)),
                 };
                 (a.title.clone(), thing)
             }
@@ -1068,10 +1084,7 @@ impl Browse {
                 );
             }
             KeyCode::Char('A') => {
-                return Some(
-                    self.artist_at(self.cursor)
-                        .map_or(Action::None, Action::OpenArtist),
-                );
+                return Some(self.open_artist_at(self.cursor));
             }
             KeyCode::Char('P') => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('r') if ctrl => {
