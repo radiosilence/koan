@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -24,7 +23,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -157,7 +155,6 @@ private const val RevealOffsetPx = 160
 @Composable
 private fun Header(album: Album, tracks: List<Track>) {
     val app = koanApp()
-    val nav = LocalNavigator.current
     var menu by remember { mutableStateOf(false) }
     val playable = Playable.OfAlbum(album)
     Column(
@@ -175,10 +172,14 @@ private fun Header(album: Album, tracks: List<Track>) {
             size = 320.dp,
         )
         KoanText(album.title, role = KoanType.Title, textAlign = TextAlign.Center, maxLines = 3)
-        // The artist's name as the library has it: the text overload would lowercase it as the app's own word.
-        KoanButton({ nav.push(ArtistRoute(album.artistId)) }, kind = KoanButtonKind.Link) {
-            Text(album.artistName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        NameLine(
+            listOf(artistCredit(album.artistCredit, album.artistName, album.artistId)),
+            Modifier.padding(vertical = KoanSpace.xs),
+            role = KoanType.Control,
+            maxLines = 2,
+            underlined = true,
+            textAlign = TextAlign.Center,
+        )
         val total = tracks.sumOf { it.durationMs ?: 0 }
         KoanText(
             listOfNotNull(album.year?.toString(), album.codec?.uppercase(), length(total).takeIf { total > 0 }).joinToString(" · "),

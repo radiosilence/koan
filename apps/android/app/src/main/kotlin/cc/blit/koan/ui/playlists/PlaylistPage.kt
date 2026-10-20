@@ -51,7 +51,8 @@ import cc.blit.koan.ui.library.SelectionBar
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.library.albumName
-import cc.blit.koan.ui.library.artistName
+import cc.blit.koan.ui.library.GoToArtists
+import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.theme.KoanButton
@@ -355,7 +356,7 @@ private fun RecordHeading(heading: PlaylistRow.Heading, selection: Selection<Pla
     CollectionRow(
         heading.album,
         null,
-        names = listOf(artistName(heading.artist, heading.entries.first().albumArtistId)),
+        names = listOf(heading.entries.first().let { artistCredit(it.albumArtistCredit, heading.artist, it.albumArtistId) }),
         linked = !selection.active,
         modifier = Modifier.padding(top = KoanSpace.m),
         titleTone = KoanTone.Strong,
@@ -398,7 +399,7 @@ private fun EntryRow(
             null,
             // Under a heading the record is named already, and so is its artist.
             names = listOfNotNull(
-                artistName(track.artistName, track.artistId).takeIf { artwork || track.artistName != track.albumArtistName },
+                artistCredit(track.artistCredit, track.artistName, track.artistId).takeIf { artwork || track.artistName != track.albumArtistName },
                 albumName(track.albumTitle, track.albumId, track.id).takeIf { artwork },
             ),
             linked = !selection.active && !editing,
@@ -431,6 +432,7 @@ private fun EntryRow(
             track.albumId?.let { albumId ->
                 KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
             }
+            GoToArtists(track.artistCredit, track.artistId) { menu = false }
             if (playlist.fillable) {
                 KoanMenuItem("Remove from Playlist", KoanIcons.remove, destructive = true) {
                     menu = false

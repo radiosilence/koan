@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
 import cc.blit.koan.ffi.Album
+import cc.blit.koan.ffi.CreditPart
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
@@ -121,11 +122,32 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
                 is Playable.OfAlbum -> playable.album.artistId
                 is Playable.OfArtist -> null
             }
+            val credit = when (playable) {
+                is Playable.OfTrack -> playable.track.artistCredit
+                is Playable.OfAlbum -> playable.album.artistCredit
+                is Playable.OfArtist -> emptyList()
+            }
             if (albumId != null || artistId != null) KoanDivider()
             if (albumId != null && playable !is Playable.OfAlbum) {
                 KoanMenuItem("Go to Album", KoanIcons.album) { onDismiss(); nav.push(AlbumRoute(albumId, (playable as? Playable.OfTrack)?.track?.id)) }
             }
-            if (artistId != null) KoanMenuItem("Go to Artist", KoanIcons.artist) { onDismiss(); nav.push(ArtistRoute(artistId)) }
+            GoToArtists(credit, artistId, onDismiss)
+        }
+    }
+}
+
+/**
+ * "Go to Artist" for each artist a credit links, each named when there are
+ * more than one. A credit the engine has not split goes to `id`.
+ */
+@Composable
+fun GoToArtists(credit: List<CreditPart>, id: Long?, onDismiss: () -> Unit) {
+    val nav = LocalNavigator.current
+    val linked = creditedArtists(credit).ifEmpty { listOfNotNull(id?.let { CreditPart("", it) }) }
+    linked.forEach { part ->
+        KoanMenuItem(if (linked.size == 1) "Go to Artist" else "Go to ${part.text}", KoanIcons.artist) {
+            onDismiss()
+            nav.push(ArtistRoute(part.artistId!!))
         }
     }
 }
