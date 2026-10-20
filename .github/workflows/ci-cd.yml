@@ -35,9 +35,9 @@ env:
 # A run that may release is in a group of its own and is never cancelled,
 # notarisation included, and nor is a manual run, which is how a failed
 # release is retried. The group is chosen before any job runs, so it cannot
-# ask `check-version`. A push may release when its head commit is titled
+# ask `changes`. A push may release when its head commit is titled
 # `release: ` (as `just release` names its pull request) or changes
-# `Cargo.toml`, which `check-version` compares with the commit before: the
+# `Cargo.toml`, which `changes` compares with the commit before: the
 # second catches a version bump merged under any other title, at the cost of
 # also keeping a dependency change from being cancelled.
 concurrency:
@@ -54,6 +54,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       web: ${{ steps.filter.outputs.web }}
@@ -127,9 +128,17 @@ jobs:
               release=$bumped
               ;;
             *)
-              if { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; } \
-                && ! gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-                release=true
+              # Only a 404 means the version is not out. Any other failure
+              # stops the run: guessing either way releases twice or never.
+              if [ "$GITHUB_REF" = refs/heads/main ] && { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; }; then
+                if ! out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$version" 2>&1); then
+                  if printf '%s' "$out" | grep -q 'HTTP 404'; then
+                    release=true
+                  else
+                    echo "::error::cannot tell whether v$version is released: $out"
+                    exit 1
+                  fi
+                fi
               fi
               ;;
           esac
@@ -157,7 +166,7 @@ jobs:
             # the image only when the recipe changed; main whenever what they
             # contain did, since CD ships them.
             if [ "$EVENT" = "pull_request" ] || [ "$rust" = false ]; then
-              touches '^(Dockerfile|\.dockerignore)$|^\.github/' || docker=false
+              touches '^Dockerfile$|^\.github/' || docker=false
             fi
             if [ "$EVENT" = "pull_request" ]; then
               # A new advisory can land on any day; main audits every push.
@@ -226,7 +235,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.release == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.release == 'true'
     permissions:
       actions: write
     steps:
@@ -451,6 +460,7 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}.tar.gz
+          retention-days: ${{ needs.changes.outputs.release == 'true' && 90 || 7 }}
 
   # The binaries above in a runtime image, for both architectures. A pull
   # request builds it to prove it builds. Main pushes it under the commit, in
@@ -729,10 +739,7 @@ jobs:
       version: ${{ needs.changes.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 2
       - name: Version pins
-        id: check
         env:
           CURRENT_VERSION: ${{ needs.changes.outputs.version }}
         run: |
@@ -840,8 +847,8 @@ jobs:
     name: Release (macOS)
     runs-on: macos-latest
     timeout-minutes: 90
-    needs: changes
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.release == 'true'
+    needs: [changes, make-room]
+    if: ${{ !cancelled() && needs.make-room.result == 'success' }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "26.0"
     steps:
