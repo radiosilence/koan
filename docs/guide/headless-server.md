@@ -245,7 +245,7 @@ An app is linked while it runs. iOS suspends a backgrounded app that is not play
 
 ## In a container
 
-The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first admin on the setup page the web UI shows until one exists, or with `koan auth setup` inside the container (see [The first account](#the-first-account)), and `koan subsonic setup` to enable the Subsonic API.
+The image at `ghcr.io/radiosilence/koan`, for amd64 and arm64, runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first admin on the setup page the web UI shows until one exists, or with `koan auth setup` inside the container (see [The first account](#the-first-account)), and `koan subsonic setup` to enable the Subsonic API.
 
 Set `KOAN_SERVER__URL` to the public address; the container does not start without it.
 
