@@ -13,6 +13,8 @@
 //
 // A track is { src, dur (seconds), title, artist, album, cover }; any other
 // fields ride along untouched.
+//
+// Both pages also get the tooltips at the end of this file.
 window.KoanPlayer = (opts = {}) => {
   const LONG = 900; // seconds
   const changed = opts.onChange || (() => {});
@@ -291,3 +293,34 @@ window.KoanPlayer = (opts = {}) => {
   };
   return api;
 };
+
+// Text cut short by an ellipsis or a line clamp has the whole of it as its
+// tooltip, on every page, with nothing in the markup asking for it. Decided as
+// the pointer or focus arrives, so it follows the width the text has now, and
+// never put over a title the page gave the element itself.
+(() => {
+  const given = new WeakSet();
+  const cut = (el) => {
+    const s = getComputedStyle(el);
+    if (s.textOverflow === "ellipsis") return el.scrollWidth > el.clientWidth;
+    if (s.webkitLineClamp && s.webkitLineClamp !== "none") return el.scrollHeight > el.clientHeight;
+    return null;
+  };
+  const show = (e) => {
+    for (let el = e.target; el instanceof Element && el !== document.body; el = el.parentElement) {
+      const c = cut(el);
+      if (c === null) continue;
+      if (el.title && !given.has(el)) return;
+      if (c) {
+        el.title = el.textContent.trim();
+        given.add(el);
+      } else if (given.has(el)) {
+        el.removeAttribute("title");
+        given.delete(el);
+      }
+      return;
+    }
+  };
+  document.addEventListener("pointerover", show, { passive: true });
+  document.addEventListener("focusin", show);
+})();
