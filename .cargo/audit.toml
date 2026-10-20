@@ -14,4 +14,9 @@ ignore = [
     # async-graphql 7.2.1, which is its own latest release. Drop this the
     # moment async-graphql ships one that has moved.
     "RUSTSEC-2026-0253",
+    # webpki-roots, the distrusted emSign root. Fixed in 1.0.10, which the
+    # lockfile holds; the version flagged is 0.26.11, a shim that re-exports
+    # 1.x and so carries 1.0.10's roots. tungstenite 0.30, its own latest
+    # release, requires ^0.26. Drop this when tungstenite moves to 1.x.
+    "RUSTSEC-2026-0381",
 ]
