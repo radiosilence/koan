@@ -38,10 +38,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.R
 import cc.blit.koan.art.Art
-import cc.blit.koan.art.ArtMisses
+import cc.blit.koan.art.NoArt
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.Track
@@ -60,8 +59,6 @@ import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRow
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 
 /** `3:07`, or `1:02:45` past an hour. */
 fun duration(ms: Long): String {
@@ -119,19 +116,15 @@ fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.
 
 /**
  * A cover filling `modifier`, on the `rule` ground until it arrives, and the
- * kōan ensō on that ground where there is none: nothing playing, a record the
- * engine has no artwork for, or one it could not fetch, which is asked for
- * again the next time the cover is shown.
+ * kōan ensō on that ground where there is none: nothing playing, or a record
+ * the engine has no artwork for. A cover that could not be fetched stays bare
+ * ground, as does an artist without a photograph: the ensō stands for a record.
  */
 @Composable
 fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null) {
-    val record = art?.record
-    // Each cover follows its own record, so a miss recomposes only the covers it is about.
-    val known by remember(record) { ArtMisses.misses.map { record != null && record in it }.distinctUntilChanged() }
-        .collectAsStateWithLifecycle(ArtMisses.has(record))
-    var failed by remember(art) { mutableStateOf(false) }
+    var missing by remember(art) { mutableStateOf(false) }
     Box(modifier.background(KoanTheme.color(KoanTone.Rule))) {
-        if (art == null || known || failed) {
+        if (art == null || missing) {
             Image(
                 painterResource(R.drawable.koan_enso),
                 description,
@@ -144,7 +137,7 @@ fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null)
                 description,
                 Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
-                onState = { if (it is AsyncImagePainter.State.Error) failed = true },
+                onState = { if (it is AsyncImagePainter.State.Error && it.result.throwable is NoArt && art.kind != Art.Kind.Artist) missing = true },
             )
         }
     }

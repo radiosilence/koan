@@ -10,11 +10,7 @@ import coil3.fetch.Fetcher
 import coil3.fetch.SourceFetchResult
 import coil3.key.Keyer
 import coil3.request.Options
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okio.Buffer
 
@@ -37,9 +33,6 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
 
     val key get() = "${kind.name.lowercase()}:$id:${size.name.lowercase()}"
 
-    /** The record, whichever size is asked for. */
-    val record get() = Miss(kind, id)
-
     companion object {
         fun album(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Album, id, size)
 
@@ -53,29 +46,6 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
 /** What a fetch fails with when the engine has no cover, as against one it could not get. */
 class NoArt : Exception("no artwork")
 
-/** A record the engine has no cover for, at any size. */
-data class Miss(val kind: Art.Kind, val id: Long)
-
-/**
- * The records the engine answered for with no cover, as the Apple apps'
- * `CoverArtCache.absent` keeps them: asked once, so a grid of them neither
- * asks again nor waits to draw the placeholder. A failed fetch is not kept,
- * and the next request tries again. A record leaves it when `art_evictions`
- * names it.
- */
-object ArtMisses {
-    private val held = MutableStateFlow<Set<Miss>>(emptySet())
-    val misses: StateFlow<Set<Miss>> = held.asStateFlow()
-
-    fun has(miss: Miss?) = miss != null && miss in held.value
-
-    internal fun add(miss: Miss) = held.update { it + miss }
-
-    internal fun forget(gone: List<Miss>) {
-        if (gone.isNotEmpty()) held.update { it - gone.toSet() }
-    }
-}
-
 class ArtKeyer : Keyer<Art> {
     override fun key(data: Art, options: Options) = data.key
 }
@@ -86,7 +56,6 @@ class ArtFetcher(
     private val mirror: EngineMirror,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
-        if (ArtMisses.has(art.record)) throw NoArt()
         val disk = loader.diskCache
         disk?.openSnapshot(art.key)?.let { snapshot ->
             return SourceFetchResult(
@@ -95,7 +64,7 @@ class ArtFetcher(
                 DataSource.DISK,
             )
         }
-        val cover = cover() ?: throw NoArt().also { ArtMisses.add(art.record) }
+        val cover = cover() ?: throw NoArt()
         disk?.openEditor(art.key)?.let { editor ->
             try {
                 disk.fileSystem.write(editor.data) { write(cover.data) }
@@ -138,8 +107,7 @@ class ArtFetcher(
  * SQLite reuses a freed row id, so a cover cached under a deleted album's id
  * would show for the next album given it; a rescanned folder may have a new
  * cover beside its tracks. Each time the library moves, ask the engine what
- * went (`art_evictions`) and forget those covers at every size, and that
- * they had none.
+ * went (`art_evictions`) and forget those covers at every size.
  */
 fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
     mirror.launch {
@@ -147,9 +115,7 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
         mirror.library.drop(1).collect {
             val gone = artEvictions(seq)
             seq = gone.seq
-            val arts = gone.albums.map { Art.Kind.Album to it } + gone.artists.map { Art.Kind.Artist to it } +
-                gone.tracks.map { Art.Kind.Track to it }
-            ArtMisses.forget(arts.map { (kind, id) -> Miss(kind, id) })
+            val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
             for ((kind, id) in arts) {
                 for (size in ArtSize.entries) {
                     val key = Art(kind, id, size).key
