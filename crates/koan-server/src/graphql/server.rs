@@ -178,6 +178,11 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
 
     let cfg = Config::load().unwrap_or_default();
     let port = port.unwrap_or(cfg.graphql.port);
+    // The wizard is for a server with no shell to hand, in a container. One
+    // beside a terminal session would open its /setup to any local process
+    // with nothing on screen to say so; its first admin comes from
+    // `koan auth setup`.
+    let setup_wizard = cfg.graphql.setup_wizard && headless;
     let bind = bind.unwrap_or(cfg.graphql.bind);
     let subsonic_port = subsonic_port.or(cfg.subsonic.port);
     let playground_enabled = playground || cfg.graphql.playground;
@@ -274,7 +279,7 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
             .ok()
             .and_then(|db| koan_core::db::queries::auth::has_users(&db.conn).ok())
             == Some(false);
-        if no_accounts && cfg.graphql.setup_wizard {
+        if no_accounts && setup_wizard {
             log::warn!(
                 "No accounts yet: whoever opens /setup first becomes the admin. \
                  Set graphql.setup_wizard = false to make it with `koan auth setup` instead."
@@ -329,7 +334,7 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
             pool.clone(),
             auth_route_state.clone(),
             auth_enabled,
-            cfg.graphql.setup_wizard,
+            setup_wizard,
             covers.clone(),
             cfg.sharing.public_url.clone(),
             cfg.mcp.redirect_hosts.clone(),

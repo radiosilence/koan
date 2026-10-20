@@ -114,7 +114,7 @@ struct Cli {
 
     /// Also serve the Subsonic API on a dedicated port (e.g. --subsonic 4040), for
     /// clients that expect one. Once enabled (`koan subsonic setup`) it is always
-    /// on the API port as well.
+    /// on the API port as well, whenever the API is served.
     #[arg(long)]
     subsonic: Option<u16>,
 
@@ -124,7 +124,7 @@ struct Cli {
     api: bool,
 
     /// Do not serve the API alongside the TUI, even if `[graphql] enabled` is set
-    #[arg(long, conflicts_with_all = ["api", "port", "bind", "subsonic", "playground"])]
+    #[arg(long, conflicts_with_all = ["api", "port", "bind", "subsonic", "playground", "headless", "daemonize"])]
     no_api: bool,
 
     /// Enable GraphiQL web IDE at GET /graphql
@@ -980,6 +980,10 @@ fn api_asked(cli: &Cli) -> bool {
     cli.api || cli.port.is_some() || cli.bind.is_some() || cli.subsonic.is_some() || cli.playground
 }
 
+fn serves_api(cli: &Cli, configured: bool) -> bool {
+    !cli.no_api && (api_asked(cli) || configured)
+}
+
 /// Launch the player/TUI. Shared by `koan play` and bare `koan` (no subcommand).
 #[allow(clippy::too_many_arguments)]
 fn start_player(
@@ -1002,12 +1006,15 @@ fn start_player(
 
     if let Some(ref url) = server {
         if api_asked(cli) {
-            eprintln!("--server controls another koan; it serves no API of its own");
+            eprintln!(
+                "{} --server controls another koan; it serves no API of its own",
+                "error:".red().bold()
+            );
             std::process::exit(2);
         }
         commands::cmd_play_remote(url);
     } else {
-        let api_opts = if !cli.no_api && (api_asked(cli) || cfg.graphql.enabled) {
+        let api_opts = if serves_api(cli, cfg.graphql.enabled) {
             Some(commands::ApiOptions {
                 port: cli.port.or(Some(cfg.graphql.port)),
                 bind: cli.bind.or(Some(cfg.graphql.bind)),
@@ -1059,19 +1066,29 @@ mod tests {
 
     #[test]
     fn api_only_when_asked() {
-        let asked = |args: &[&str]| api_asked(&Cli::try_parse_from(args).unwrap());
-        assert!(!asked(&["koan"]));
-        assert!(!asked(&["koan", "--no-api"]));
-        assert!(asked(&["koan", "--api"]));
-        assert!(asked(&["koan", "--port", "8080"]));
-        assert!(asked(&["koan", "--bind", "0.0.0.0"]));
-        assert!(asked(&["koan", "--subsonic", "4040"]));
-        assert!(asked(&["koan", "--playground"]));
+        let serves =
+            |args: &[&str], configured| serves_api(&Cli::try_parse_from(args).unwrap(), configured);
+        assert!(!serves(&["koan"], false));
+        assert!(serves(&["koan"], true));
+        assert!(!serves(&["koan", "--no-api"], true));
+        assert!(serves(&["koan", "--api"], false));
+        assert!(serves(&["koan", "--port", "8080"], false));
+        assert!(serves(&["koan", "--bind", "0.0.0.0"], false));
+        assert!(serves(&["koan", "--subsonic", "4040"], false));
+        assert!(serves(&["koan", "--playground"], false));
     }
 
     #[test]
     fn no_api_conflicts_with_asking_for_one() {
-        for flag in [&["--api"][..], &["--port", "8080"], &["--playground"]] {
+        for flag in [
+            &["--api"][..],
+            &["--port", "8080"],
+            &["--bind", "0.0.0.0"],
+            &["--subsonic", "4040"],
+            &["--playground"],
+            &["--headless"],
+            &["--daemonize"],
+        ] {
             let args = [&["koan", "--no-api"][..], flag].concat();
             assert!(Cli::try_parse_from(args).is_err());
         }
