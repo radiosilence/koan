@@ -118,7 +118,12 @@ fun PlaylistPage(playlistId: Long) {
 
     PlaylistAccent(contents?.covers?.firstOrNull()) {
         Column {
-            PageBar(if (scrolled) playlist?.name.orEmpty() else "", appText = false) {
+            val title = when {
+                playlist == null -> if (contents == null) "" else "Playlist"
+                scrolled -> playlist.name
+                else -> ""
+            }
+            PageBar(title, appText = playlist == null) {
                 if (entries.isNotEmpty() && !editing) SelectButton(selection)
                 if (fillable && entries.isNotEmpty() && !selection.active) {
                     KoanButton(if (editing) "Done" else "Edit", { editing = !editing }, kind = KoanButtonKind.Text)

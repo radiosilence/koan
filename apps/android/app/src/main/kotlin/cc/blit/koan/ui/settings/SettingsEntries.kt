@@ -32,6 +32,7 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.Rainbow
+import cc.blit.koan.ui.theme.rainbowShimmer
 import cc.blit.koan.ui.theme.SecretTaps
 import kotlinx.serialization.Serializable
 
@@ -158,6 +159,8 @@ private fun SettingsRoot() {
                         app.mirror.setAppearance { setRainbow(on) }
                         Toast.makeText(context, (if (on) Rainbow.on else Rainbow.off).random(), Toast.LENGTH_SHORT).show()
                     }
+                    // The page has no title to shimmer, so the line tapped does.
+                    .rainbowShimmer()
                     .padding(KoanSpace.page),
                 role = KoanType.Fine,
                 tone = KoanTone.Muted,
