@@ -163,6 +163,8 @@ struct NowPlayingSheet: View {
             if let info {
                 Menu {
                     PlayableMenu(playable: .track(info.track))
+                        // Its own tray: a sheet cannot open another from the window under it.
+                        .environment(\.showTrackInfo, ShowTrackInfo { _ in showingInfo = true })
                 } label: {
                     KoanIcon(Icon.more)
                         .font(.role(.body, system: .body))

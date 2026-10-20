@@ -36,6 +36,7 @@ import cc.blit.koan.ui.navigation.Shell
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.navigation.resetting
 import cc.blit.koan.ui.nowplaying.MiniPlayer
+import cc.blit.koan.ui.nowplaying.TrackInfoHost
 import cc.blit.koan.ui.nowplaying.nowPlayingEntries
 import cc.blit.koan.ui.playlists.playlistsEntries
 import cc.blit.koan.ui.queue.queueEntries
@@ -109,17 +110,19 @@ private fun Signed() {
     val selected = rememberSaveable { mutableIntStateOf(Tab.all.indexOf(Tab.Library)) }
     val navigator = remember(stacks, root) { Navigator(stacks, selected, root) }
     CompositionLocalProvider(LocalNavigator provides navigator) {
-        // Every page sits on the record's wash: pages leave their ground bare.
-        NavDisplay(
-            modifier = Modifier.fillMaxSize().recordWash(),
-            backStack = root,
-            onBack = { navigator.closeNowPlaying() },
-            entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
-            entryProvider = entryProvider {
-                entry<Shell> { Tabs(navigator, stacks) }
-                nowPlayingEntries()
-            },
-        )
+        TrackInfoHost {
+            // Every page sits on the record's wash: pages leave their ground bare.
+            NavDisplay(
+                modifier = Modifier.fillMaxSize().recordWash(),
+                backStack = root,
+                onBack = { navigator.closeNowPlaying() },
+                entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
+                entryProvider = entryProvider {
+                    entry<Shell> { Tabs(navigator, stacks) }
+                    nowPlayingEntries()
+                },
+            )
+        }
     }
 }
 

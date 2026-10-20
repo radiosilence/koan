@@ -162,6 +162,13 @@ struct PlayableMenu: View {
             }
             goToArtists(track.artistCredit)
         }
+        // A television hosts no info view, and would be left a stray divider.
+        #if !os(tvOS)
+        if case .track(let track) = playable {
+            if track.albumId == nil { Divider() }
+            TrackInfoButton(trackId: track.id)
+        }
+        #endif
         if case .album(let album) = playable {
             Divider()
             Button { nav.open(album: album.id) } label: {

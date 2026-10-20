@@ -55,6 +55,7 @@ import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.GoToArtists
 import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.nowplaying.LocalShowTrackInfo
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -413,6 +414,7 @@ private fun EntryRow(
     val nav = LocalNavigator.current
     val track = entry.track
     var menu by remember { mutableStateOf(false) }
+    val showInfo = LocalShowTrackInfo.current
 
     Box(modifier) {
         CollectionRow(
@@ -454,6 +456,7 @@ private fun EntryRow(
                 KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
             }
             GoToArtists(track.artistCredit, track.artistId) { menu = false }
+            KoanMenuItem("Info…", KoanIcons.info) { menu = false; showInfo(track.id) }
             if (playlist.fillable) {
                 KoanMenuItem("Remove from Playlist", KoanIcons.remove, destructive = true) {
                     menu = false

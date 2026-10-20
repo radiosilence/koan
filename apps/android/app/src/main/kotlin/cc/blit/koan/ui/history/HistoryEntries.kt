@@ -47,6 +47,7 @@ import cc.blit.koan.ui.library.GoToArtists
 import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
+import cc.blit.koan.ui.nowplaying.LocalShowTrackInfo
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.playlists.CollectionRow
@@ -180,6 +181,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
     val forget = { app.mirror.launch { deletePlays(listOf(entry.id)) } }
     val swipe = rememberSwipeToDismissBoxState()
     var menu by remember { mutableStateOf(false) }
+    val showInfo = LocalShowTrackInfo.current
     // A play another client scrobbled in did not happen here, and saying so stops it reading as a phantom.
     val elsewhere = if (entry.source != "local") "scrobbled by another client" else ""
 
@@ -228,6 +230,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
                     KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
                 }
                 GoToArtists(track.artistCredit, track.artistId) { menu = false }
+                KoanMenuItem("Info…", KoanIcons.info) { menu = false; showInfo(track.id) }
                 KoanMenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
             }
         }

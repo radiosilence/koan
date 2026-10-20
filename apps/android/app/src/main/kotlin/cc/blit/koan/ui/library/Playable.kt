@@ -17,6 +17,7 @@ import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
 import cc.blit.koan.ui.navigation.Tab
+import cc.blit.koan.ui.nowplaying.LocalShowTrackInfo
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.theme.KoanDivider
 import cc.blit.koan.ui.theme.KoanIcons
@@ -127,11 +128,15 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
                 is Playable.OfAlbum -> playable.album.artistCredit
                 is Playable.OfArtist -> emptyList()
             }
-            if (albumId != null || artistId != null || creditedArtists(credit).isNotEmpty()) KoanDivider()
+            if (albumId != null || artistId != null || creditedArtists(credit).isNotEmpty() || playable is Playable.OfTrack) KoanDivider()
             if (albumId != null && playable !is Playable.OfAlbum) {
                 KoanMenuItem("Go to Album", KoanIcons.album) { onDismiss(); nav.push(AlbumRoute(albumId, (playable as? Playable.OfTrack)?.track?.id)) }
             }
             GoToArtists(credit, artistId, onDismiss)
+            if (playable is Playable.OfTrack) {
+                val showInfo = LocalShowTrackInfo.current
+                KoanMenuItem("Info…", KoanIcons.info) { onDismiss(); showInfo(playable.track.id) }
+            }
         }
     }
 }

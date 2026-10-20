@@ -1,0 +1,1 @@
+- **Track info from any track's menu.** On the Mac, iPhone and Android, the menu of every track row (library, search, album pages, history, the queue and playlists) has Info…, which shows what each of the track's sources says, as Now Playing's info view does, with every value selectable for copying.
