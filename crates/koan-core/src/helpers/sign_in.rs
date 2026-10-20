@@ -45,7 +45,6 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
         cfg.remote.device_key = String::new();
     })?;
     crate::remote::proof::forget();
-    crate::remote::profile::forget();
     crate::remote::offline::set_manual(false);
     crate::remote::link::relink();
     crate::remote::nearby::readvertise();
@@ -149,8 +148,7 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
     let url = url.trim_end_matches('/');
     let replaced = Config::load()
         .ok()
-        .filter(|c| c.remote.url.trim_end_matches('/') == url)
-        .filter(|c| c.remote.username == username)
+        .filter(|c| same_account(&c.remote, url, username))
         .map(|c| c.remote.api_key)
         .filter(|k| !k.is_empty() && k != api_key);
     // Revoked best-effort: a key signs in to give itself up.
@@ -174,16 +172,7 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
 /// Store a credential already checked against the server, replacing whichever
 /// kind was there.
 fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
-    if !same_account(&Config::load().unwrap_or_default().remote, url, username) {
-        match crate::db::pool::shared().get() {
-            Ok(db) => {
-                if let Err(e) = crate::helpers::forget_outboxes(&db.conn) {
-                    log::warn!("sign in: could not drop the last account's outboxes: {e}");
-                }
-            }
-            Err(e) => log::warn!("sign in: could not drop the last account's outboxes: {e}"),
-        }
-    }
+    let switching = Config::load().is_ok_and(|c| !same_account(&c.remote, url, username));
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
         cfg.remote.url = url.to_string();
@@ -199,6 +188,14 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(_) => String::new(),
         };
     })?;
+    if switching {
+        let forgotten = crate::db::pool::shared()
+            .get()
+            .and_then(|db| Ok(crate::helpers::forget_account_state(&db.conn)?));
+        if let Err(e) = forgotten {
+            log::warn!("sign in: could not drop what waited for the last account: {e}");
+        }
+    }
     // Whatever account was here before, its devices are not this one's, and
     // the link it had open closes, to open again as this one.
     crate::remote::proof::forget();
@@ -211,9 +208,12 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
 }
 
 /// Whether signing in as `username` at `url` is the account already kept,
-/// whose waiting plays and hearts are still its own.
+/// whose waiting plays and hearts are still its own. Usernames are compared
+/// as servers do, without case: a server may answer with another spelling of
+/// the one typed.
 fn same_account(kept: &crate::config::RemoteConfig, url: &str, username: &str) -> bool {
-    kept.url.trim_end_matches('/') == url.trim_end_matches('/') && kept.username == username
+    kept.url.trim_end_matches('/') == url.trim_end_matches('/')
+        && kept.username.eq_ignore_ascii_case(username)
 }
 
 /// Shared secret for koan's own Subsonic API.
@@ -546,13 +546,14 @@ mod refusal_tests {
         };
         assert!(same_account(&kept, "https://music.example.com", "mate"));
         assert!(!same_account(&kept, "https://other.example.com", "mate"));
+        assert!(same_account(&kept, "https://music.example.com", "Mate"));
         assert!(!same_account(&kept, "https://music.example.com", "owner"));
     }
 
     /// Waiting plays, forgettings and hearts name one server's ids: none of
     /// them, a clear above all, may reach the next server signed in to.
     #[test]
-    fn forgetting_the_outboxes_leaves_nothing_for_the_next_server() {
+    fn forgetting_the_account_leaves_nothing_for_the_next_one() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         crate::db::queries::queue_scrobble(&db.conn, "tr-1", 1_000).unwrap();
@@ -564,7 +565,7 @@ mod refusal_tests {
             )
             .unwrap();
 
-        forget_outboxes(&db.conn).unwrap();
+        forget_account_state(&db.conn).unwrap();
         assert!(
             crate::db::queries::history_outbox(&db.conn, 10)
                 .unwrap()
