@@ -22,7 +22,7 @@ use crate::html::{Html, Render};
 
 const KINDS: [&str; 3] = [SCAN, REREAD, WATCH];
 
-fn allowed(user: &AuthUser) -> bool {
+pub(super) fn allowed(user: &AuthUser) -> bool {
     user.role == Role::Admin
 }
 
@@ -36,9 +36,16 @@ struct Status {
     follow: bool,
     /// The line's colour and text; nothing before any scan.
     line: Option<(&'static str, String)>,
-    /// While a scan runs: how many of how many files it has read, or nothing
-    /// before the walk has counted them.
-    bar: Option<Option<(u64, u64)>>,
+    /// Only while a scan runs.
+    bar: Option<Bar>,
+}
+
+/// How far a running scan has got.
+enum Bar {
+    /// The walk is still counting the files to read.
+    Counting,
+    /// Files read, of how many.
+    Read(u64, u64),
 }
 
 /// What the current scan is doing, or the last did. On a page as it loads

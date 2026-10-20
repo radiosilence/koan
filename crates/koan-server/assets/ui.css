@@ -1297,7 +1297,7 @@
   input[type="checkbox"]:checked {
     background: var(--brand) var(--tick) center / 100% no-repeat;
   }
-  #scan-status progress {
+  progress.meter {
     display: block;
     height: 3px;
     width: 100%;
@@ -1308,23 +1308,24 @@
     background-color: transparent;
     background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
   }
-  #scan-status progress::-webkit-progress-bar {
+  progress.meter::-webkit-progress-bar {
     background-color: transparent;
   }
-  #scan-status progress::-webkit-progress-value {
+  progress.meter::-webkit-progress-value {
     background-color: var(--brand);
   }
-  #scan-status progress::-moz-progress-bar {
+  progress.meter::-moz-progress-bar {
     background-color: var(--brand);
   }
-  #scan-status progress:indeterminate {
+  progress.meter:indeterminate {
     animation: var(--animate-sweep);
+    background: linear-gradient(var(--brand), var(--brand)) 0 50% / 25% 3px no-repeat, linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
     @media (prefers-reduced-motion: reduce) {
       animation: none;
+      background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 3px no-repeat;
     }
-    background: linear-gradient(var(--brand), var(--brand)) 0 50% / 25% 3px no-repeat, linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
   }
-  #scan-status progress:indeterminate::-moz-progress-bar {
+  progress.meter:indeterminate::-moz-progress-bar {
     background-color: transparent;
   }
   input[type="checkbox"], input[type="range"] {

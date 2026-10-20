@@ -2996,7 +2996,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     assert!(r.body.contains("@post('/library/scan')"), "{}", r.body);
     assert!(r.body.contains(WIDE_LINK), "{}", r.body);
     assert!(
-        !r.body.contains("<progress class=\"mb-2\""),
+        !r.body.contains(r#"aria-label="Scan progress""#),
         "no bar while idle: {}",
         r.body
     );
@@ -3032,8 +3032,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     record(&koan_core::helpers::WatchScan::Started("start-up"));
     let r = send(&f.app, library(&admin)).await;
     assert!(
-        r.body
-            .contains(r#"<progress class="mb-2" aria-label="Scan progress"></progress>"#),
+        r.body.contains(r#"aria-label="Scan progress"></progress>"#),
         "a bar with no value until the files are counted: {}",
         r.body
     );

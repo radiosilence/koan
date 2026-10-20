@@ -120,32 +120,38 @@
   }
 
   /* The theme's progress bar: the slider's hairline, the part done thicker in the accent. Without a value, before
-   * the work is counted, a short length of the accent moves along it. The transport's own bar is drawn with utilities. */
-  #scan-status progress {
+   * the work is counted, a short length of the accent moves along it. Under reduced motion it is the thicker track alone, in `rule`, which no amount done looks like. The
+   * transport's own bar is drawn with utilities. */
+  progress.meter {
     @apply block h-[3px] w-full max-w-form appearance-none border-0 bg-transparent;
     background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
   }
 
-  #scan-status progress::-webkit-progress-bar {
+  progress.meter::-webkit-progress-bar {
     @apply bg-transparent;
   }
 
-  #scan-status progress::-webkit-progress-value {
+  progress.meter::-webkit-progress-value {
     @apply bg-brand;
   }
 
-  #scan-status progress::-moz-progress-bar {
+  progress.meter::-moz-progress-bar {
     @apply bg-brand;
   }
 
-  #scan-status progress:indeterminate {
-    @apply animate-sweep motion-reduce:animate-none;
+  progress.meter:indeterminate {
+    @apply animate-sweep;
     background:
       linear-gradient(var(--brand), var(--brand)) 0 50% / 25% 3px no-repeat,
       linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+      background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 3px no-repeat;
+    }
   }
 
-  #scan-status progress:indeterminate::-moz-progress-bar {
+  progress.meter:indeterminate::-moz-progress-bar {
     @apply bg-transparent;
   }
 

@@ -137,7 +137,7 @@ pub(super) fn respond(
                 title,
                 content: &content,
                 username: &user.username,
-                admin: user.role == Role::Admin,
+                admin: super::scan::allowed(user),
                 auth_enabled: s.auth_enabled,
                 proxied: s.proxy_auth.is_some(),
             }
