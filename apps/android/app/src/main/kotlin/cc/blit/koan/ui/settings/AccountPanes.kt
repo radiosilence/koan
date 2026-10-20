@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.AccountRole
@@ -386,7 +388,12 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    var copied by remember { mutableStateOf(false) }
+    // What was copied last, so only its button says so.
+    var copied by remember { mutableStateOf<String?>(null) }
+    // Only mail apps answer a mailto:, so this is absent where none is installed.
+    val mail = remember(invite.mailto) {
+        Intent(Intent.ACTION_SENDTO, invite.mailto.toUri()).takeIf { it.resolveActivity(context.packageManager) != null }
+    }
     AlertDialog(
         onDismissRequest = dismiss,
         title = { KoanText("Invite for ${invite.username}", role = KoanType.TitleSmall) },
@@ -398,7 +405,7 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
                     tone = KoanTone.Muted,
                 )
                 InviteCode(invite.link)
-                Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
                     KoanButton("Send invite…", {
                         val send = Intent(Intent.ACTION_SEND)
                             .setType("text/plain")
@@ -406,10 +413,18 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
                             .putExtra(Intent.EXTRA_TEXT, invite.emailText)
                         context.startActivity(Intent.createChooser(send, null))
                     }, kind = KoanButtonKind.Prominent)
-                    KoanButton(if (copied) "Copied" else "Copy link", {
+                    mail?.let { KoanButton("Open in Mail", { context.startActivity(it) }) }
+                    // The formatted email, for pasting into a message composed elsewhere.
+                    KoanButton(if (copied == "email") "Copied" else "Copy email", {
+                        scope.launch {
+                            clipboard.setClipEntry(ClipEntry(ClipData.newHtmlText("Invite", invite.emailText, invite.emailHtml)))
+                            copied = "email"
+                        }
+                    }, kind = KoanButtonKind.Bordered)
+                    KoanButton(if (copied == "link") "Copied" else "Copy link", {
                         scope.launch {
                             clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Invite", invite.link)))
-                            copied = true
+                            copied = "link"
                         }
                     }, kind = KoanButtonKind.Bordered)
                 }
