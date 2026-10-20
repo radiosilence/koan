@@ -37,7 +37,8 @@ android {
         applicationId = "cc.blit.koan"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
+        // CI passes the time, since Google Play takes each version code once.
+        versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
         versionName = "0.66.0"
         // Which build a tester's log came from.
         buildConfigField("String", "COMMIT", "\"${commit.get()}\"")
