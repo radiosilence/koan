@@ -48,9 +48,6 @@ struct PlaylistView: View {
         false
         #endif
     }
-    /// Where a drop would land, so the gesture says what it will do. See
-    /// `insertionLine(showing:)`.
-    @State private var dropBefore: Int?
     @State private var renaming = false
     @State private var renameTo = ""
 
@@ -116,7 +113,7 @@ struct PlaylistView: View {
                     ForEach(rows) { row in
                         rowView(row)
                     }
-                    endOfList
+                    .onMove(perform: mover)
                 }
                 .insetList()
                 .washedGround()
@@ -235,19 +232,26 @@ struct PlaylistView: View {
                 changed: { $0 != $1 },
                 menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
                 primaryAction: { play(rowIds: $0) },
-                // Carries where it came from, so dropping it back into this
-                // playlist is a move of *this* row rather than of its track —
-                // and dropping it anywhere else is just a track.
+                // Out of the playlist a row is its track. A heading carries
+                // nothing out, since the record would be more than the run
+                // the playlist holds; within the table it moves the run.
+                // Where a row came from keeps it from being added back here.
                 drag: { line in
-                    guard case .entry(let entry, let at) = rows.first(where: { $0.id == line.id }) else { return nil }
+                    guard case .entry(let entry, _) = rows.first(where: { $0.id == line.id }) else { return nil }
                     return PlayableTransfer(
                         kind: .track, id: entry.track.id, name: entry.track.title,
-                        origin: .init(playlistId: playlistId, position: at)
+                        origin: .init(playlistId: playlistId)
                     )
                 },
                 delete: { _ in removeSelected() },
                 selectAllToken: ui.selectAllToken,
-                accept: { dropped, index in accept(dropped, before: position(index)) },
+                move: mover.map { mover in
+                    { ids, before in mover(IndexSet(ids.compactMap { id in rows.firstIndex { $0.id == id } }), before) }
+                },
+                accept: { dropped, index in
+                    playlists.insert(dropped: dropped, into: playlistId, at: position(index))
+                    return true
+                },
                 insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: insets.trailing)
             )
         }
@@ -414,59 +418,20 @@ struct PlaylistView: View {
     private func rowView(_ row: Row) -> some View {
         switch row {
         case .album(_, let group):
-            dropTarget(
-                PlaylistAlbumHeader(group: group).rowBehaviour(),
-                before: group.positions.first ?? 0
-            )
+            PlaylistAlbumHeader(group: group).rowBehaviour()
         case .entry(let entry, let position):
-            dropTarget(
-                PlaylistEntryRow(entry: entry, position: position, count: entries.count, artwork: !grouped)
-                    .rowBehaviour()
-                    .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
-                    // Carries where it came from, so dropping it back into this
-                    // playlist is a move of *this* row rather than of its track —
-                    // and dropping it anywhere else is just a track.
-                    .dragSource(PlayableTransfer(
-                        kind: .track,
-                        id: entry.track.id,
-                        name: entry.track.title,
-                        origin: .init(playlistId: playlistId, position: position)
-                    )),
-                before: position
-            )
+            PlaylistEntryRow(entry: entry, position: position, count: entries.count, artwork: !grouped)
+                .rowBehaviour()
+                .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
         }
     }
 
-    /// Somewhere to drop that means "after everything".
-    ///
-    /// Every other target is a row, and a row can only mean "before this one" —
-    /// so without this there is no gesture for the end of the list, which is
-    /// where most things are added.
-    private var endOfList: some View {
-        dropTarget(
-            Color.clear
-                .frame(height: 28)
-                .rowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .selectionDisabled(),
-            before: entries.count
-        )
-    }
-
-    /// A row that takes drops landing before `position`, with the line that
-    /// says so.
-    private func dropTarget(_ row: some View, before position: Int) -> some View {
-        row
-            .insertionLine(showing: dropBefore == position)
-            .dropTarget(for: PlayableTransfer.self) { dropped, _ in
-                dropBefore = nil
-                return accept(dropped, before: position)
-            } isTargeted: { targeted in
-                dropBefore = targeted ? position : (dropBefore == position ? nil : dropBefore)
-            }
-    }
-
     private var grouped: Bool { playlist?.grouped ?? false }
+
+    /// Smart and read-only playlists keep their order.
+    private var mover: ((IndexSet, Int) -> Void)? {
+        playlists.fillable(playlistId) ? { move(from: $0, to: $1) } : nil
+    }
 
     // MARK: - Actions
 
@@ -582,36 +547,28 @@ struct PlaylistView: View {
 
     // MARK: - Reordering
 
-    /// A drop landed on `position`: either rows of this playlist being moved,
-    /// or tracks from elsewhere being added.
+    /// Rows moved to before the row at `destination`. A heading moves its
+    /// whole run, and the entries keep their relative order.
     ///
-    /// Drop-based rather than `ForEach.onMove`, because `onMove` claims the
-    /// drag — rows could be shuffled within the list but never dragged *out* of
-    /// it, so a playlist could not feed the queue. The payload says where it
-    /// came from, so one gesture covers both readings.
-    @discardableResult
-    private func accept(_ dropped: [PlayableTransfer], before position: Int) -> Bool {
-        let mine = dropped.compactMap { $0.origin }.filter { $0.playlistId == playlistId }
-        let foreign = dropped.filter { $0.origin?.playlistId != playlistId }
-
-        if !mine.isEmpty {
-            let moving = Set(mine.map(\.position))
-            // The row dropped onto, by identity: its index shifts once the
-            // moved rows are lifted out of the list.
-            let anchor = entries[safe: position]?.entryId
-            var order = entries.enumerated()
-                .filter { !moving.contains($0.offset) }
-                .map(\.element.entryId)
-            let lifted = moving.sorted().compactMap { entries[safe: $0]?.entryId }
-            let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
-            order.insert(contentsOf: lifted, at: at)
-            playlists.reorder(entryIds: order, in: playlistId)
-        }
-
-        if !foreign.isEmpty {
-            playlists.insert(dropped: foreign, into: playlistId, at: position)
-        }
-        return true
+    /// `ForEach.onMove` on a phone and the table's own move on the Mac: a
+    /// drag within the list belongs to the list, and a drop target on each
+    /// row never sees it there.
+    private func move(from source: IndexSet, to destination: Int) {
+        let rows = self.rows
+        var seen = Set<Int>()
+        // Indices from the rows as drawn, which a reload can have shortened.
+        let moving = source.sorted().filter(rows.indices.contains)
+            .flatMap { rows[$0].positions }.filter { seen.insert($0).inserted }
+        guard !moving.isEmpty else { return }
+        // The first entry at or after the drop that stays put, by identity:
+        // its index shifts once the moved entries are lifted out. None is the end.
+        let anchor = rows[min(destination, rows.count)...]
+            .lazy.flatMap(\.positions).first { !seen.contains($0) }
+            .flatMap { entries[safe: $0]?.entryId }
+        var order = entries.enumerated().filter { !seen.contains($0.offset) }.map(\.element.entryId)
+        let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
+        order.insert(contentsOf: moving.compactMap { entries[safe: $0]?.entryId }, at: at)
+        playlists.reorder(entryIds: order, in: playlistId)
     }
 }
 
@@ -795,22 +752,3 @@ extension Array {
     }
 }
 
-
-private extension View {
-    /// The line that says where a drop will land.
-    ///
-    /// Drawn on the row it would land *before*, which is what a drop on a row
-    /// means here. `ForEach.onMove` would draw one of these, but it claims the
-    /// drag, so nothing could be dragged out of the playlist.
-    func insertionLine(showing: Bool) -> some View {
-        overlay(alignment: .top) {
-            if showing {
-                Capsule()
-                    .fill(.tint)
-                    .frame(height: 2)
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.12), value: showing)
-    }
-}
