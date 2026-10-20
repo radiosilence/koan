@@ -1,0 +1,1 @@
+- **Records without artwork show the kōan ensō on Android.** The album grid, rows, album page, Now Playing, the mini player and the queue draw it on the sleeve's ground, as the Apple apps do, where Now Playing and the mini player drew nothing. The grid's heart sits on a small square so it reads over any cover.

@@ -1,0 +1,1 @@
+- **A tap on a record's title in the Android album grid opens the record.** The artist link under it had a touch target reaching up over the title, which opened the artist instead; the same held for the line under any row's title.
