@@ -629,7 +629,9 @@ mod tests {
     /// took it.
     fn device(mut o: Opened<'static>, sent: bool) -> std::thread::JoinHandle<PairMessage> {
         std::thread::spawn(move || {
-            let settled = o.outcome.blocking_recv().unwrap();
+            // `Opened` is `Drop`, so its receiver is swapped out, not moved.
+            let outcome = std::mem::replace(&mut o.outcome, oneshot::channel().1);
+            let settled = outcome.blocking_recv().unwrap();
             if let Some(done) = settled.sent {
                 done.send(sent).unwrap();
             }
