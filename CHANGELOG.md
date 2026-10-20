@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.66.2
+
+### Fixed
+
+- **Number pads on iOS can be closed.** The cache limit and the browse filters' years use the number pad, which has no return key; a bar above the keyboard now commits the figure and puts the keyboard away.
+- **Queue rows keep their artist line steady and show featured artists.** In a grouped queue a track names its artists whenever its credit differs from the record's, so "Big Data, Kimbra" shows under a Big Data record, and hovering a row on the Mac no longer reveals an artist the row leaves out.
+
+### Internal
+
+- **The image's `main` tag no longer moves on a registry or API error.** Only a missing tag, label or commit lets it retag without the ancestry check.
+
 ## 0.66.1
 
 ### Added
