@@ -1,0 +1,1 @@
+- **The site and guides describe 0.66.** Android and the Apple TV app are on the homepage and in the install steps, with the TestFlight beta for iOS and tvOS; the terminal UI's pages and keys, the configuration and CLI references, and how local and server tracks are merged now match what the code does.
