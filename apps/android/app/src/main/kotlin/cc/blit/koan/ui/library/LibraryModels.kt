@@ -59,6 +59,10 @@ private fun EngineMirror.versions(readsHistory: Flow<Boolean>) =
 private fun <T> ViewModel.held(flow: Flow<T>, initial: T): StateFlow<T> =
     flow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
 
+/** The values the browsers' filters offer, read again when the library moves. */
+private fun ViewModel.choicesOf(mirror: EngineMirror): StateFlow<BrowseChoices?> =
+    held(mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() }, null)
+
 /** What a browser is narrowed and ordered by. */
 data class BrowseQuery<S>(val sort: S, val filter: BrowseFilter, val search: String = "", val seed: Long = 0)
 
@@ -145,10 +149,7 @@ class AlbumsModel(private val mirror: EngineMirror, private val shelf: Shelf?, p
         null,
     )
 
-    val choices: StateFlow<BrowseChoices?> = held(
-        mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() },
-        null,
-    )
+    val choices = choicesOf(mirror)
 
     /** Choosing Random again deals a new shuffle. */
     fun sort(sort: AlbumSort) {
@@ -183,10 +184,7 @@ class ArtistsModel(private val mirror: EngineMirror, shelf: Shelf?) : ViewModel(
         null,
     )
 
-    val choices: StateFlow<BrowseChoices?> = held(
-        mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() },
-        null,
-    )
+    val choices = choicesOf(mirror)
 
     fun filter(filter: BrowseFilter) = query.update { it.copy(filter = filter) }
 
@@ -224,10 +222,7 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
         if (held.tracks.size < held.total && wanted.value <= held.tracks.size) wanted.update { it + PAGE }
     }
 
-    val choices: StateFlow<BrowseChoices?> = held(
-        mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() },
-        null,
-    )
+    val choices = choicesOf(mirror)
 
     fun sort(sort: TrackBrowseSort) = requery { it.copy(sort = sort) }
 
@@ -235,10 +230,14 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
 
     fun search(text: String) = requery { it.copy(search = text) }
 
-    /** A new query starts again from its first page, however far the last one was read. */
+    /**
+     * A new query starts again from its first page, however far the last one
+     * was read, and leaves a sort it no longer offers, such as Best Match once
+     * the search is cleared.
+     */
     private fun requery(change: (BrowseQuery<TrackBrowseSort>) -> BrowseQuery<TrackBrowseSort>) {
         wanted.value = PAGE
-        query.update(change)
+        query.update { change(it).let { q -> if (q.sort in q.offered()) q else q.copy(sort = q.offered().first()) } }
     }
 
     private companion object {

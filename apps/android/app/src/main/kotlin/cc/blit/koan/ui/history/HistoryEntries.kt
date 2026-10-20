@@ -252,7 +252,9 @@ private fun rememberPlayClock(): PlayClock {
     val style = KoanType.Fine.style
     val density = LocalDensity.current
     val hours24 = DateFormat.is24HourFormat(context)
-    return remember(context, hours24, style, density) {
+    // The format holds the zone it was made in, and the days are grouped in the current one.
+    val zone = ZoneId.systemDefault()
+    return remember(context, hours24, zone, style, density) {
         val format = DateFormat.getTimeFormat(context)
         val zero = DecimalFormatSymbols.getInstance().zeroDigit
         val widest = (0..23).maxOf { hour ->

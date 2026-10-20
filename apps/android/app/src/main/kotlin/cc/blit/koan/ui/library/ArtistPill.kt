@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,10 +42,13 @@ fun ArtistPill(id: Long, name: String, selection: Selection<Playable>) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs),
         ) {
-            if (selection.active) {
-                Tick(selection.contains(playable))
-            } else {
-                KoanIcon(KoanIcons.artist, null, color = KoanTheme.color(KoanTone.Muted))
+            // Glyph and tick at one size, so starting a pick does not reflow the pills.
+            CompositionLocalProvider(LocalTextStyle provides KoanType.Fine.style) {
+                if (selection.active) {
+                    Tick(selection.contains(playable))
+                } else {
+                    KoanIcon(KoanIcons.artist, null, color = KoanTheme.color(KoanTone.Muted))
+                }
             }
             KoanText(name, role = KoanType.Control, maxLines = 1)
         }
