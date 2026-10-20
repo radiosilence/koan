@@ -11,7 +11,7 @@ Playing, make the two choices:
   mini player's button.
 - **Output** (a speaker) is where the device in view plays. For this device,
   that is each of its audio devices (built-in speakers, a USB DAC, a display;
-  on a phone, the route iOS chose) and the UPnP amplifiers it can see. Picking
+  on a phone, the route the system chose) and, on the Mac and Android, the UPnP amplifiers it can see. Picking
   one keeps the queue and transport where they are and moves only the sound.
   On a phone, AirPlay has its own button beside it: the system's picker, since
   no app may pick a speaker itself. On the Mac, choose an AirPlay speaker in
@@ -232,7 +232,7 @@ each is checked as the app comes to the front.
 
 Network amplifiers and streamers that act as UPnP/DLNA renderers (WiiM,
 Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
-player" amps) are listed under **Output** in the Mac, iPhone and Android
+player" amps) are listed under **Output** in the Mac and Android
 apps, and in the output device list (`D`) in the TUI, where they are marked
 `· UPnP`. Kodi with
 "Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
@@ -283,9 +283,7 @@ so nothing else in the library can be fetched from it. On a Mac the first
 connection from the amplifier may bring up the firewall prompt. macOS also
 asks whether kōan may use the local network, the first time it looks; if
 no amplifier or other kōan appears, check System Settings → Privacy &
-Security → Local Network and turn kōan on. A phone searches when Now Playing
-opens, and Android also once a minute while the app is on screen; see
-[Android](android.md).
+Security → Local Network and turn kōan on. Android searches when Now Playing opens and once a minute while the app is on screen; see [Android](android.md). The iOS app cannot search for renderers yet, because Apple requires a multicast entitlement for it.
 
 ## Controlling and moving
 

@@ -39,7 +39,7 @@ When you have both local files and a remote server, each file and each server en
 2. **The same position, whatever the artist** -- only where there is a track number
 3. **MusicBrainz ids** -- recording on the same release, with the position as a tie-break
 
-Names are compared case-insensitively and in one Unicode form. Where a tier matches more than one track, the match is declined rather than guessed, and the two stay separate tracks.
+Names are compared case-insensitively and in one Unicode form. Where a position tier matches more than one track, the MusicBrainz recording decides; where that too names no single track, the match is declined rather than guessed, and the two stay separate tracks.
 
 A track's names come whole from the file while it has one, so a server's tagging never mixes into a local track's. Playback priority:
 
@@ -80,7 +80,13 @@ cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cac
 
 ## Favourites and playlists
 
-Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync. A favourite changed while the server cannot be reached waits on the device and is sent with the next sync, and the server's older list does not undo it in the meantime. A playlist the server marks read-only, such as a [smart playlist](smart-playlists.md), comes down like any other and is never edited or pushed back. A server playlist may name songs the library has not synced; they are kept in their places whenever kōan pushes the playlist back, so an edit here never deletes them there, and they appear in the playlist, in the server's order, with the first sync after the library gains them. A playlist the server stops listing is deleted locally only once the server, asked for it directly, says it does not have it, so an empty or short listing from a server in trouble deletes nothing.
+Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync. A favourite changed while the server cannot be reached waits on the device and is sent with the next sync, and the server's older list does not undo it in the meantime.
+
+A playlist the server marks read-only, such as a [smart playlist](smart-playlists.md), comes down like any other and is never edited or pushed back.
+
+A server playlist may name songs the library has not synced; they are kept in their places whenever kōan pushes the playlist back, so an edit here never deletes them there, and they appear in the playlist, in the server's order, with the first sync after the library gains them.
+
+A playlist the server stops listing is deleted locally only once the server, asked for it directly, says it does not have it, so an empty or short listing from a server in trouble deletes nothing.
 
 ## Play history
 
@@ -92,7 +98,9 @@ Signed in to a kōan server, history is shared. The server keeps the account's p
 
 Off by default, Settings → Devices → **Keep the queue on the server** (on the Apple TV, Settings → Server) keeps this device's queue in the account's play queue on the server, where Subsonic clients such as Feishin or Symfonium save theirs. A queue started in another client can then be picked up in kōan, and the reverse. Between kōan devices it is not needed: [Play on and Move here](devices.md#controlling-and-moving) move the queue live.
 
-Turning it on replaces this device's queue with the one the server holds, after asking; with nothing saved there, this device's queue is saved instead. While it is on, queue edits are saved a second after they stop, and a change of track, a pause, and the app going to the background save the queue with the playhead. When kōan starts it takes the server's queue in place of its own only if another client saved one since this device did. Tracks only this device has are left out of what it saves, and a queue of more than 1,500 tracks is not saved, since the server cannot take one that long yet. Turning it off leaves both queues as they are. The setting is this device's own (`remote.play_queue` in `config.local.toml`).
+Turning it on replaces this device's queue with the one the server holds, after asking; with nothing saved there, this device's queue is saved instead. While it is on, queue edits are saved a second after they stop, and a change of track, a pause, and the app going to the background save the queue with the playhead.
+
+When kōan starts it takes the server's queue in place of its own only if another client saved one since this device did. Tracks only this device has are left out of what it saves, and a queue of more than 1,500 tracks is not saved, since the server cannot take one that long yet. Turning it off leaves both queues as they are. The setting is this device's own (`remote.play_queue` in `config.local.toml`).
 
 ## Configuration reference
 
