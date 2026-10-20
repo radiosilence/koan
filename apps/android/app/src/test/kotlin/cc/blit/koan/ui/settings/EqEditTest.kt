@@ -41,6 +41,7 @@ class EqEditTest {
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
         fake.answers["dspOverview"] = { overview() }
+        fake.answers["dspOverviewFor"] = { overview() }
         fake.answers["dspOutputResponseFor"] = { null }
         fake.answers["autoeqSuggestion"] = { null }
     }
@@ -87,22 +88,17 @@ class EqEditTest {
         assertTrue(wide.all { abs(it * 100 - Math.rint(it * 100)) < 1e-9 })
     }
 
-    @Test fun theCorrectionPlayingIsAlwaysAChoice() {
-        fun profile(name: String, role: DspRole) = DspProfileSummary(
-            name = name, devices = emptyList(), bands = 10u, layers = 0u, rates = emptyList(), problem = null, members = emptyList(),
-            playing = null, role = role, measured = false, preset = false, edited = false, usedOn = emptyList(),
+    @Test fun theDevicesAreTheOneInUseThenTheOneShownThenTheEqs() {
+        fun profile(name: String, devices: List<String>, preset: Boolean = false) = DspProfileSummary(
+            name = name, devices = devices, bands = 10u, layers = 0u, rates = emptyList(), problem = null, members = emptyList(),
+            playing = null, role = DspRole.CORRECTION, measured = false, preset = preset, edited = false, usedOn = emptyList(),
             everywhere = false, heldBy = emptyList(), scopeLocked = null, graphics = 0u, points = 0u, madeFor = null, join = null,
         )
-        val hd650 = "Sennheiser HD 650 (AutoEQ, oratory1990)"
-        fun choices(active: String?, vararg profiles: DspProfileSummary) =
-            correctionOptions(overview().copy(active = active, profiles = profiles.toList())).map { it.second }
-        // Said to be a tuning, yet correcting: still shown as the choice made.
-        assertEquals(listOf(null, hd650), choices(hd650, profile(hd650, DspRole.TUNING)))
-        // Not listed at all.
-        assertEquals(listOf(null, "Other", hd650), choices(hd650, profile("Other", DspRole.CORRECTION)))
-        // Listed as a correction: once.
-        assertEquals(listOf(null, hd650), choices(hd650, profile(hd650, DspRole.CORRECTION)))
-        assertEquals(listOf<String?>(null), choices(null, profile("Warm", DspRole.TUNING)))
+        val o = overview().copy(
+            profiles = listOf(profile("HD 600", listOf("dac", "speaker")), profile("Evening", listOf("tv"), preset = true)),
+            tunings = mapOf("car" to "Warm"),
+        )
+        assertEquals(listOf("speaker", "usb", "dac", "car"), devices(o, inUse = "speaker", shown = "usb"))
     }
 
     @Test fun aChainIsReorderedSwitchedAndTrimmed() {
@@ -221,10 +217,10 @@ class EqEditTest {
         model.reload()
         advanceUntilIdle()
         val chain = listOf(DspTuningEntry("Warm", true))
-        model.setTunings(chain)
-        model.applyPreset(null)
+        model.setTunings(chain, "speaker")
+        model.applyPreset(null, "speaker")
         var saved: Boolean? = null
-        model.savePreset(" Evening ") { saved = it }
+        model.savePreset(" Evening ", "speaker") { saved = it }
         advanceUntilIdle()
         assertEquals(listOf(listOf<Any?>("speaker", chain)), fake.called("dspSetTunings"))
         assertEquals(listOf(listOf<Any?>("speaker", null)), fake.called("dspApplyPreset"))

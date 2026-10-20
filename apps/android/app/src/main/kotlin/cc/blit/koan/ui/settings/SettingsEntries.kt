@@ -69,7 +69,12 @@ data class SettingsPaneRoute(val pane: Pane, val nonce: String = nonce()) : NavK
 
 fun EntryProviderScope<NavKey>.settingsEntries() {
     entry<Tab.Settings> { SettingsRoot() }
-    entry<DspProfileRoute> { key -> DspProfilePage(key.name, settingsModel()) }
+    entry<DspProfileRoute> { key -> DspProfilePage(key.name, key.device, settingsModel()) }
+    entry<EqStageRoute> { key -> EqStagePage(key.device, key.stage, settingsModel()) }
+    entry<EqExplainerRoute> { EqExplainerPage(settingsModel()) }
+    entry<ManageEqRoute> { key -> ManageEqPage(key.device, settingsModel()) }
+    entry<MeasurementRoute> { key -> MeasurementPage(key.name, settingsModel()) }
+    entry<SplitRoute> { key -> SplitPage(key.name, settingsModel()) }
     entry<AutoEqRoute> { key -> AutoEqPage(key.query, settingsModel()) }
     entry<AutoEqMakerRoute> { key -> AutoEqMakerPage(key.maker, settingsModel()) }
     entry<SettingsPaneRoute> { key ->
