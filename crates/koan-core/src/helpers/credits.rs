@@ -105,9 +105,10 @@ impl RowCredits {
     pub fn differ(&self) -> bool {
         // `credit_parts` normalises a credit it cuts and not one it leaves
         // whole, so the two sides are compared normalised.
-        let text =
-            |parts: &[CreditPart]| parts.iter().flat_map(|p| p.text.nfc()).collect::<String>();
-        text(&self.artist) != text(&self.album_artist)
+        fn text(parts: &[CreditPart]) -> impl Iterator<Item = char> + '_ {
+            parts.iter().flat_map(|p| p.text.nfc())
+        }
+        !text(&self.artist).eq(text(&self.album_artist))
     }
 }
 
