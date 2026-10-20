@@ -1,0 +1,1 @@
+- **A track's path on the server.** A kōan server sends admin accounts each song's `path`, relative to its library folder, as Navidrome does, and the apps keep it with the server's copy of the track, listed in its info as "Path on server". When a track plays the wrong file or appears twice, the path says where it comes from. Other accounts are not sent paths.

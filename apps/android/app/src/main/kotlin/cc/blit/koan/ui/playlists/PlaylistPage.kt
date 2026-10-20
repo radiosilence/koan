@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -51,7 +52,8 @@ import cc.blit.koan.ui.library.SelectionBar
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.library.albumName
-import cc.blit.koan.ui.library.artistName
+import cc.blit.koan.ui.library.GoToArtists
+import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.theme.KoanButton
@@ -182,10 +184,15 @@ private fun PlaylistList(
 ) {
     val grouped = playlist.grouped ?: false
     val listState = rememberLazyListState()
-    // The order shown while a row is dragged; the engine's again once the drop lands and the library moves.
-    var order by remember(entries) { mutableStateOf(entries) }
+    // One state object for the page's life: each row's gesture outlives a
+    // recomposition and keeps the state it started with.
+    val latest by rememberUpdatedState(entries)
+    var order by remember { mutableStateOf(entries) }
     var dragging by remember { mutableStateOf<Long?>(null) }
     var offset by remember { mutableFloatStateOf(0f) }
+    // The engine's order, except under a drag: a library update landing then
+    // must not move rows out from under the finger. The drop is written and comes back.
+    LaunchedEffect(entries) { if (dragging == null) order = entries }
 
     fun dragBy(delta: Float) {
         offset += delta
@@ -204,12 +211,27 @@ private fun PlaylistList(
         offset += current.offset - target.offset
     }
 
-    fun drop() {
-        if (dragging != null && order.map { it.entryId } != entries.map { it.entryId }) {
-            edits.reorder(playlist.id, order.map { it.entryId })
-        }
+    // The move is applied to the entries as they are now, not as they were
+    // when the drag began: the dragged row goes after the row it was dropped
+    // below, so anything added, removed or moved meanwhile is kept.
+    fun drop(commit: Boolean) {
+        val moved = dragging
+        val shown = order
         dragging = null
         offset = 0f
+        order = latest
+        if (!commit || moved == null) return
+        val at = shown.indexOfFirst { it.entryId == moved }
+        val entry = latest.firstOrNull { it.entryId == moved } ?: return
+        val above = shown.take(at.coerceAtLeast(0)).lastOrNull { prior -> latest.any { it.entryId == prior.entryId } }
+        val rest = latest.filter { it.entryId != moved }
+        val arranged = rest.toMutableList().apply {
+            add(if (above == null) 0 else rest.indexOfFirst { it.entryId == above.entryId } + 1, entry)
+        }
+        if (arranged.map { it.entryId } == latest.map { it.entryId }) return
+        order = arranged
+        // A failed write brings no new entries, so nothing else would undo the move shown.
+        edits.reorder(playlist.id, arranged.map { it.entryId }) { if (dragging == null) order = latest }
     }
 
     // Near an edge, a dragged row scrolls the list a frame at a time, and the
@@ -262,8 +284,8 @@ private fun PlaylistList(
                         handle = Modifier.pointerInput(id) {
                             detectDragGestures(
                                 onDragStart = { dragging = id; offset = 0f },
-                                onDragEnd = { drop() },
-                                onDragCancel = { drop() },
+                                onDragEnd = { drop(commit = true) },
+                                onDragCancel = { drop(commit = false) },
                                 onDrag = { change, amount -> change.consume(); dragBy(amount.y) },
                             )
                         },
@@ -355,7 +377,7 @@ private fun RecordHeading(heading: PlaylistRow.Heading, selection: Selection<Pla
     CollectionRow(
         heading.album,
         null,
-        names = listOf(artistName(heading.artist, heading.entries.first().albumArtistId)),
+        names = listOf(heading.entries.first().let { artistCredit(it.albumArtistCredit, heading.artist, it.albumArtistId) }),
         linked = !selection.active,
         modifier = Modifier.padding(top = KoanSpace.m),
         titleTone = KoanTone.Strong,
@@ -398,7 +420,7 @@ private fun EntryRow(
             null,
             // Under a heading the record is named already, and so is its artist.
             names = listOfNotNull(
-                artistName(track.artistName, track.artistId).takeIf { artwork || track.artistName != track.albumArtistName },
+                artistCredit(track.artistCredit, track.artistName, track.artistId).takeIf { artwork || track.artistName != track.albumArtistName },
                 albumName(track.albumTitle, track.albumId, track.id).takeIf { artwork },
             ),
             linked = !selection.active && !editing,
@@ -431,6 +453,7 @@ private fun EntryRow(
             track.albumId?.let { albumId ->
                 KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
             }
+            GoToArtists(track.artistCredit, track.artistId) { menu = false }
             if (playlist.fillable) {
                 KoanMenuItem("Remove from Playlist", KoanIcons.remove, destructive = true) {
                     menu = false

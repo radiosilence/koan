@@ -877,17 +877,7 @@ ios-bars phone="koan-dev" pad="koan-ipad": (ios-ffi "iphonesimulator") ios-proje
     url=$(just _demo-server "$out/library" "$out")
     cleanup+=("just _demo-server-stop '$out'")
     key=$(cat "$out/server.key")
-    api() { curl -sfG "$url/rest/$1" --data-urlencode "apiKey=$key" -d f=json -d v=1.16.1 -d c=bars "${@:2}"; }
-    ids() { python3 -c "import json,sys; r=json.load(sys.stdin)['subsonic-response']; print(' '.join(str(x['id']) for x in $1))"; }
-    albums=$(api getAlbumList2 -d type=alphabeticalByName -d size=500 | ids "r['albumList2']['album']")
-    artists=$(api getArtists | ids "[a for i in r['artists']['index'] for a in i['artist']]")
-    long=$(api search3 --data-urlencode "query=Thirty Rooms" -d songCount=0 -d artistCount=0 | ids "r['searchResult3']['album']")
-    songs=$(api getAlbum -d id="$long" | ids "r['album']['song']")
-    api star $(for a in $albums; do echo -d albumId=$a; done) $(for a in $artists; do echo -d artistId=$a; done) \
-        $(for s in $songs; do echo -d id=$s; done) >/dev/null
-    for n in $(seq 20); do
-        api createPlaylist --data-urlencode "name=Playlist $n" $(for s in $songs; do echo -d songId=$s; done) >/dev/null
-    done
+    just _bar-seed "$url" "$key"
     export TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
         TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY=$key
     status=0
@@ -935,6 +925,24 @@ _bar-library dir:
     for a in $(seq 40); do for n in 1 2; do put "Artist $a" "Album $a" "$n" "Song $a.$n"; done; done
     rm -r "$(dirname "$seed")"
 
+# What `ios-bars` and `android-walk` add to the `_bar-library` a server
+# serves: every record, artist and the long record's tracks favourited, and
+# twenty playlists of the long record.
+_bar-seed url key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    api() { curl -sfG "{{url}}/rest/$1" --data-urlencode "apiKey={{key}}" -d f=json -d v=1.16.1 -d c=seed "${@:2}"; }
+    ids() { python3 -c "import json,sys; r=json.load(sys.stdin)['subsonic-response']; print(' '.join(str(x['id']) for x in $1))"; }
+    albums=$(api getAlbumList2 -d type=alphabeticalByName -d size=500 | ids "r['albumList2']['album']")
+    artists=$(api getArtists | ids "[a for i in r['artists']['index'] for a in i['artist']]")
+    long=$(api search3 --data-urlencode "query=Thirty Rooms" -d songCount=0 -d artistCount=0 | ids "r['searchResult3']['album']")
+    songs=$(api getAlbum -d id="$long" | ids "r['album']['song']")
+    api star $(for a in $albums; do echo -d albumId=$a; done) $(for a in $artists; do echo -d artistId=$a; done) \
+        $(for s in $songs; do echo -d id=$s; done) >/dev/null
+    for n in $(seq 20); do
+        api createPlaylist --data-urlencode "name=Playlist $n" $(for s in $songs; do echo -d songId=$s; done) >/dev/null
+    done
+
 # Walk the app on a simulator and export a screenshot of every page.
 #
 # Runs `WalkTests` against whatever library that simulator holds, so sign it in
@@ -979,6 +987,37 @@ ios-signin device url user password: (ios-ffi "iphonesimulator") ios-project
             -destination "id=$udid" \
             -only-testing:KoanUITests/SignInTests
     echo "{{device}} is signed in to {{url}}"
+
+# Make an invite from Settings → People on a simulator signed in as a throwaway
+# server's admin: the sheet stays up, and its QR code reads back as the link.
+ios-invite-sheet: (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/ios-invite-sheet
+    rm -rf "$out" && mkdir -p "$out"
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    phone=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k for d in v if d["isAvailable"] and "iPhone" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$phone" ] || { echo "Needs an iPhone simulator." >&2; exit 1; }
+    url=$(just _demo-server "" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    xcrun simctl boot "$phone" 2>/dev/null || true
+    xcrun simctl bootstatus "$phone" -b >/dev/null
+    cleanup+=("xcrun simctl shutdown '$phone'")
+    xcrun simctl uninstall "$phone" {{bundle_id}} 2>/dev/null || true
+    TEST_RUNNER_KOAN_INVITE_SHEET=1 \
+    TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
+    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY="$(cat "$out/server.key")" \
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$phone" -derivedDataPath target/ios-build \
+        -only-testing:KoanUITests/InviteSheetTests \
+        -resultBundlePath "$out/test.xcresult"
+    xcrun xcresulttool export attachments --path "$out/test.xcresult" --output-path "$out" >/dev/null
+    shot=$(find "$out" -name '*.png' | head -1)
+    link=$(swift apps/ios/tools/qrdecode.swift "$shot" | head -1)
+    echo "QR code reads: $link"
+    case "$link" in https://koan.rocks/join/*) ;; *) echo "FAIL: the QR code is not an invite link" >&2; exit 1 ;; esac
 
 # Open an invite link on a simulator and wait for its library, as a listener
 # tapping it would. `koan auth invite` prints one.
@@ -1673,6 +1712,91 @@ android-run abis="arm64-v8a":
 android-apk abis="arm64-v8a":
     cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:assembleRelease -Pabis={{abis}}
     @echo "$PWD/apps/android/app/build/outputs/apk/release/app-release.apk"
+
+# Walk the Android app on an emulator and screenshot every page, in both looks
+# (the kōan theme and the system's) and both appearances, into
+# target/android-walk/<look>-<appearance>. Serves the `ios-bars` library from
+# a throwaway koan server, seeded as `ios-bars` seeds it, and signs the app in
+# to it. Uses the emulator adb already sees, else boots `avd` headless with the
+# host's GPU (software rendering runs the wash too slowly to judge) and shuts
+# it down afterwards. The app's data is cleared before each pass, so every
+# look starts from the same signed-in, empty queue.
+android-walk avd="koan-walk" search="Long":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=$(pwd)/target/android-walk
+    rm -rf "$out" && mkdir -p "$out"
+    sdk="{{android_sdk}}"
+    adb() { "${sdk:+$sdk/platform-tools/}adb" "$@"; }
+    cleanup=()
+    # Every cleanup runs, whichever fails.
+    trap 'set +e; for ((i=${#cleanup[@]}-1; i>=0; i--)); do eval "${cleanup[$i]}"; done' EXIT
+    serial=$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')
+    if [ -z "$serial" ]; then
+        "$sdk/emulator/emulator" -avd "{{avd}}" -gpu host -memory 4096 -cores 6 -no-window -no-audio \
+            -no-snapshot -no-boot-anim -port 5570 >"$out/emulator.log" 2>&1 &
+        emulator=$!
+        cleanup+=("kill $emulator 2>/dev/null; wait $emulator 2>/dev/null || true")
+        serial=emulator-5570
+        # Three minutes, and only while the emulator lives: a missing AVD exits at once.
+        for _ in $(seq 90); do
+            kill -0 $emulator 2>/dev/null || { echo "the emulator exited; see $out/emulator.log" >&2; exit 1; }
+            [ "$(adb -s $serial shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break
+            sleep 2
+        done
+        [ "$(adb -s $serial shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] \
+            || { echo "{{avd}} did not boot in three minutes; see $out/emulator.log" >&2; exit 1; }
+    fi
+    export ANDROID_SERIAL=$serial
+    just _bar-library "$out/library"
+    url=$(just _demo-server "$out/library" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    key=$(cat "$out/server.key")
+    port=${url##*:}
+    just _bar-seed "$url" "$key"
+    abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
+    (cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:installDebug :app:installDebugAndroidTest -Pabis=$abi)
+    # The server as the emulator's own loopback, as the share links name it.
+    adb reverse tcp:$port tcp:$port
+    cleanup+=("adb reverse --remove tcp:$port || true")
+    # A still status bar, so the screenshots differ only where the app does.
+    demo=$(adb shell settings get global sysui_demo_allowed | tr -d '\r')
+    was=$(adb shell cmd uimode night | awk '{ print $NF }' | tr -d '\r')
+    cleanup+=("adb shell am broadcast -a com.android.systemui.demo -e command exit >/dev/null; \
+        if [ '$demo' = null ]; then adb shell settings delete global sysui_demo_allowed >/dev/null; else adb shell settings put global sysui_demo_allowed '$demo'; fi; \
+        adb shell cmd uimode night '$was' >/dev/null")
+    adb shell settings put global sysui_demo_allowed 1
+    for c in "clock -e hhmm 0941" "battery -e level 100 -e plugged false" "network -e wifi show -e level 4" "notifications -e visible false"; do
+        adb shell am broadcast -a com.android.systemui.demo -e command $c >/dev/null
+    done
+    put() { adb shell "run-as {{bundle_id}} sh -c 'mkdir -p \$(dirname $1) && cat > $1'"; }
+    status=0
+    for look in koan system; do
+        for appearance in light dark; do
+            adb shell pm clear {{bundle_id}} >/dev/null
+            adb shell pm grant {{bundle_id}} android.permission.POST_NOTIFICATIONS || true
+            # Silent, blind to renderers and the network's devices, and signed in.
+            printf '[library]\nfolders = []\n\n[remote]\nenabled = true\nurl = "%s"\nusername = "owner"\napi_key = "%s"\n\n[playback]\nmuted = true\nrenderers = false\n\n[devices]\nnearby = false\n' \
+                "$url" "$key" | put files/koan/config.local.toml
+            printf '[appearance]\ntheme = "%s"\n' $look | put files/koan/config.toml
+            # The wash held still, as the iPhone's walk holds it: a still frame of a drift looks the same.
+            printf '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map><int name="graphics" value="1" /></map>\n' \
+                | put shared_prefs/appearance.xml
+            adb shell cmd uimode night $([ $appearance = dark ] && echo yes || echo no) >/dev/null
+            # `am instrument` exits 0 whatever the test did; its report says.
+            report=$(adb shell am instrument -w -e class {{bundle_id}}.WalkTest -e settle 20 -e search "'{{search}}'" \
+                {{bundle_id}}.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r')
+            if ! grep -q '^OK (1 test)' <<<"$report"; then
+                echo "$look-$appearance: the walk failed" >&2
+                echo "$report" >&2
+                status=1
+            fi
+            adb pull /sdcard/Android/data/{{bundle_id}}/files/walk "$out/$look-$appearance" >/dev/null || true
+        done
+    done
+    adb shell am force-stop {{bundle_id}}
+    echo "$(find "$out" -name '*.png' | wc -l | tr -d ' ') screenshots in $out"
+    exit $status
 
 # Create the Android release key, keep it in 1Password (VAULT, default Claude)
 # and set the secrets CI signs with. Once only: a new key cannot update an APK

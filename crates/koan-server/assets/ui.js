@@ -83,18 +83,28 @@
       id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
       title: d.title, artist: d.artist, album: d.album, albumId,
       artistId: Number(d.artistId) || 0, cover: d.cover || null,
+      credit: d.credit ? JSON.parse(d.credit) : null,
     };
   }
+
+  // A track's artist credit as it reads: each credited artist's name a link to
+  // them, the text joining the names plain. A track whose credit is one name
+  // carries no parts, only its artist.
+  const creditOf = (t) => t.credit ?? (t.artist ? [[t.artist, t.artistId]] : []);
+  function linkNode(path, text) {
+    const a = document.createElement("a");
+    a.href = path;
+    a.textContent = text;
+    return a;
+  }
+  const creditNodes = (t) =>
+    creditOf(t).map(([text, id]) => (id ? linkNode(`/artist/${id}`, text) : document.createTextNode(text)));
 
   function render({ queue, cur, playing, track }) {
     document.body.classList.toggle("playing", playing);
     for (const el of all("[data-np=title]")) el.textContent = track ? track.title : "Nothing playing";
-    for (const el of all("[data-np=artist]")) {
-      el.textContent = track ? track.artist : "";
-      if (track && track.artistId) el.href = `/artist/${track.artistId}`;
-      else el.removeAttribute("href");
-    }
-    for (const el of all("[data-np=sep]")) el.hidden = !(track && track.artist && track.album);
+    for (const el of all("[data-np=artist]")) el.replaceChildren(...(track ? creditNodes(track) : []));
+    for (const el of all("[data-np=sep]")) el.hidden = !(track && creditOf(track).length && track.album);
     for (const el of all("[data-np=album]")) {
       el.textContent = track ? track.album : "";
       if (track && track.albumId) el.href = `/album/${track.albumId}`;
@@ -139,6 +149,7 @@
         id: t.id, dur: t.dur, title: t.title, artist: t.artist ?? "", album: t.album ?? "",
         albumId: t.albumId || 0, artistId: t.artistId || 0, cover: t.cover ?? "",
       });
+      if (t.credit) li.dataset.credit = JSON.stringify(t.credit);
       li.classList.toggle("playing", i === cur);
       const n = document.createElement("span");
       n.className = "n";
@@ -147,15 +158,12 @@
       title.className = "t";
       title.textContent = t.title;
       const small = document.createElement("small");
-      const names = [[t.artist, t.artistId, "artist"], [t.album, t.albumId, "album"]].filter(([name]) => name);
-      names.forEach(([name, id, kind], j) => {
-        if (j) small.append(" · ");
-        if (!id) return small.append(name);
-        const a = document.createElement("a");
-        a.href = `/${kind}/${id}`;
-        a.textContent = name;
-        small.append(a);
-      });
+      const credit = creditNodes(t);
+      small.append(...credit);
+      if (t.album) {
+        if (credit.length) small.append(" · ");
+        small.append(t.albumId ? linkNode(`/album/${t.albumId}`, t.album) : t.album);
+      }
       title.append(small);
       const d = document.createElement("span");
       d.className = "d";
@@ -284,7 +292,11 @@
       : [];
     const go = [];
     if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
-    if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
+    // Each artist a collaboration credits, by name where there are several.
+    const artists = creditOf(t).filter(([, id]) => id);
+    for (const [name, id] of artists) {
+      go.push(item(artists.length === 1 ? "Go to Artist" : `Go to ${name}`, () => navigate(`/artist/${id}`, true)));
+    }
     const about = [item("Properties…", () => showProperties(d.id))];
     const head = document.createElement("p");
     head.textContent = [t.title, t.artist].filter(Boolean).join(" · ");

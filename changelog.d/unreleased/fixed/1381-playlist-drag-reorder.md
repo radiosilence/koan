@@ -1,0 +1,1 @@
+- **Playlists reorder by dragging again.** On the Mac and iOS a row dragged within a playlist was added as a copy rather than moved; it now moves as a queue row does, a heading taking its whole run.

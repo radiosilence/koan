@@ -1,0 +1,1 @@
+- **History's times fit.** The time column in History is sized to the widest time the current locale prints, measured in its font, so 12-hour times are no longer cut off in the kōan theme or at larger text sizes, on the Mac, iPhone, iPad and Apple TV.

@@ -1,0 +1,1 @@
+- **Each artist of a collaboration is its own link on Android.** Album headers, tiles, track, queue, playlist and history rows, record headings and Now Playing link every credited artist separately, as the Apple apps do, and Go to Artist menus list each of them. The playlist and history menus gain Go to Artist.

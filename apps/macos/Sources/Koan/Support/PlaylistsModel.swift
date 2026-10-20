@@ -183,7 +183,11 @@ final class PlaylistsModel {
 
     /// Resolve dropped playables and append them. Order is preserved, so
     /// dropping three albums at once adds them in the order they were dragged.
+    /// The playlist's own rows are left out: dropped back on it, wherever
+    /// they land, they are a drag abandoned rather than copies wanted.
     func add(dropped: [PlayableTransfer], to id: Int64) {
+        let dropped = dropped.filter { $0.origin?.playlistId != id }
+        guard !dropped.isEmpty else { return }
         Task {
             let ids = await resolve(dropped)
             guard !ids.isEmpty else { return }
@@ -195,7 +199,8 @@ final class PlaylistsModel {
     /// engine adds and reorders in one go — doing it in two from here would be
     /// reordering against the list as it was before the add landed.
     func insert(dropped: [PlayableTransfer], into id: Int64, at position: Int) {
-        guard fillable(id) else { return }
+        let dropped = dropped.filter { $0.origin?.playlistId != id }
+        guard !dropped.isEmpty, fillable(id) else { return }
         Task {
             let ids = await resolve(dropped)
             guard !ids.isEmpty else { return }
@@ -209,8 +214,15 @@ final class PlaylistsModel {
 
     /// Put the entries in this order. Ids survive, so the queue keeps knowing
     /// which row each of its items came from.
+    ///
+    /// Applied locally first, so the rows stay where they were dropped and a
+    /// second move is made against the first rather than a round trip behind.
     func reorder(entryIds: [Int64], in id: Int64) {
         guard fillable(id) else { return }
+        if openId == id {
+            let byId = Dictionary(entries.map { ($0.entryId, $0) }, uniquingKeysWith: { a, _ in a })
+            entries = entryIds.compactMap { byId[$0] }
+        }
         act {
             try await $0.reorderPlaylist(playlistId: id, entryIds: entryIds)
         }

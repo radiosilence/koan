@@ -92,7 +92,7 @@ struct HistoryView: View {
                 context: TrackTableRow.Context(
                     showsAlbum: true,
                     columns: [],
-                    leadWidth: 46,
+                    leadWidth: TrackTableRow.leadWidth(fitting: HistoryDate.shapes),
                     currentTrackId: nil,
                     isPlaying: false,
                     barsLive: false,
@@ -249,16 +249,24 @@ private struct HistoryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Group {
+            // The widest time the locale prints holds the column, in
+            // whichever face and size it is drawn, so every title lines up.
+            ZStack(alignment: .trailing) {
+                ForEach(HistoryDate.shapes, id: \.self) { Text($0).hidden() }
+            }
+            .lineLimit(1)
+            .fixedSize()
+            .overlay(alignment: .trailing) {
                 if hovering {
                     RowPlayButton(playable: .track(track), visible: true)
                 } else {
                     Text(HistoryDate.time(entry.playedAt))
                         .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                        .lineLimit(1)
+                        .fixedSize()
                 }
             }
             .font(.role(.fine, system: .caption.monospacedDigit()))
-            .frame(width: HistoryColumns.time, alignment: .trailing)
 
             // The cover is what you recognise a record by, and scanning back
             // through a week of listening is exactly that job.
@@ -327,15 +335,31 @@ private enum HistoryDate {
     static func time(_ unixSeconds: Int64) -> String {
         timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
     }
+
+    /// Every shape a time in the column can take, its digits as the locale's
+    /// zero: a minute in each hour of a day, deduplicated. Digits are
+    /// monospaced, so the number of them and the period ("PM", "a.m.",
+    /// "下午") are what make one time wider than another. On a fixed day, so
+    /// a clock change never drops an hour.
+    static let shapes: [String] = {
+        let day = Date(timeIntervalSinceReferenceDate: 0)
+        let numbers = NumberFormatter()
+        numbers.locale = timeFormatter.locale
+        let zero = numbers.string(from: 0)?.first ?? "0"
+        var seen = Set<String>()
+        return (0..<24).compactMap { hour in
+            Calendar.current.date(bySettingHour: hour, minute: 59, second: 0, of: day)
+                .map { String(timeFormatter.string(from: $0).map { $0.isNumber ? zero : $0 }) }
+        }
+        .filter { seen.insert($0).inserted }
+    }()
 }
 
-/// The time and length columns, at a width television type fits in.
+/// The length column, at a width television type fits in.
 private enum HistoryColumns {
     #if os(tvOS)
-    static let time = 96.0
     static let duration = 96.0
     #else
-    static let time = 46.0
     static let duration = 48.0
     #endif
 }

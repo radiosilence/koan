@@ -312,6 +312,14 @@ paused source arrives paused. On a phone, **Move here** on *This iPhone* brings
 the Mac's music to the phone. Tracks only on the source device, with no server
 id, stay behind, and the app says how many.
 
+**Move here** is offered only on devices signed in to the same server as this
+one, since the music goes by the server's ids for its tracks. One of the
+account's devices that has since signed in to another server, as it says when
+met on the local network, is controlled but not moved to. A destination asleep
+is woken first, as choosing it does: on the network, then with a background
+push, while the music plays on where it is. Woken, it takes the music at once;
+still asleep, it gets a notification to tap.
+
 A command counts as delivered only once the other device answers that it has
 acted on it. Until then the Mac and iOS apps say so: "Waiting for Phone to
 wake" while it is queued for a device asleep, and "Couldn't reach Phone", with

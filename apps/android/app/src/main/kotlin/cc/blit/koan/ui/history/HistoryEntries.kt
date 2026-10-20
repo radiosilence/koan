@@ -43,7 +43,8 @@ import cc.blit.koan.ui.library.SelectionBar
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.library.albumName
-import cc.blit.koan.ui.library.artistName
+import cc.blit.koan.ui.library.GoToArtists
+import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.nowplaying.clock
@@ -205,7 +206,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
                 null,
                 names = listOf(
                     Named(timeOf(entry.playedAt, zone)),
-                    artistName(track.artistName, track.artistId),
+                    artistCredit(track.artistCredit, track.artistName, track.artistId),
                     albumName(track.albumTitle, track.albumId, track.id),
                     Named(elsewhere),
                 ),
@@ -226,6 +227,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
                 track.albumId?.let { albumId ->
                     KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
                 }
+                GoToArtists(track.artistCredit, track.artistId) { menu = false }
                 KoanMenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
             }
         }

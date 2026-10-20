@@ -56,7 +56,7 @@ extension AppState {
                 username: current.remoteUsername, host: host
             )
         } catch {
-            player.report("No device is waiting with that code: \(SettingsModel.describe(error))")
+            player.report(SettingsModel.describe(error))
         }
     }
 
@@ -72,7 +72,8 @@ extension AppState {
                     try await engine.declinePairing(pair: request.pair)
                 }
             } catch {
-                player.report("Could not sign \(request.device) in: \(SettingsModel.describe(error))")
+                let what = approve ? "sign \(request.device) in" : "decline \(request.device)"
+                player.report("Could not \(what): \(SettingsModel.describe(error))")
             }
         }
     }

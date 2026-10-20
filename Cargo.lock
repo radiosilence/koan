@@ -3008,6 +3008,7 @@ dependencies = [
  "log",
  "nucleo",
  "parking_lot",
+ "qrcode",
  "rusqlite",
  "rustls-platform-verifier",
  "tempfile",

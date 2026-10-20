@@ -3,6 +3,7 @@ package cc.blit.koan.ui.library
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +32,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.ffi.Album
+import cc.blit.koan.ffi.CreditPart
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -175,9 +177,19 @@ private fun Header(album: Album, tracks: List<Track>) {
             size = 320.dp,
         )
         KoanText(album.title, role = KoanType.Title, textAlign = TextAlign.Center, maxLines = 3)
-        // The artist's name as the library has it: the text overload would lowercase it as the app's own word.
-        KoanButton({ nav.push(ArtistRoute(album.artistId)) }, kind = KoanButtonKind.Link) {
-            Text(album.artistName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // Each credited artist a link button; the artists' names as the library has them,
+        // where the text overload would lowercase them as the app's own words.
+        FlowRow(horizontalArrangement = Arrangement.Center) {
+            album.artistCredit.ifEmpty { listOf(CreditPart(album.artistName, album.artistId)) }.forEach { part ->
+                val id = part.artistId
+                if (id != null) {
+                    KoanButton({ nav.push(ArtistRoute(id)) }, Modifier.align(Alignment.CenterVertically), kind = KoanButtonKind.Link) {
+                        Text(part.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                } else {
+                    KoanText(part.text, Modifier.align(Alignment.CenterVertically), role = KoanType.Control, tone = KoanTone.Muted, maxLines = 1)
+                }
+            }
         }
         val total = tracks.sumOf { it.durationMs ?: 0 }
         KoanText(

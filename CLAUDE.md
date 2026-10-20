@@ -126,6 +126,7 @@ just ios-walk       # UI test that screenshots every page, into target/ios-walk
 just ios-bars       # every scrolling page clears the kōan bar, on an iPhone and an iPad, against a generated library
 just ios-testflight BUILD # archive, sign and upload to TestFlight (needs the ASC key)
 just ios-signin DEV URL USER PASS # sign a simulator in through Settings, as App Review does
+just ios-invite-sheet # an admin's invite sheet stays up and its QR code reads back as the link
 just ios-use DEV      # use the app like a listener and check each step; run before submitting
 just ios-store-shots SRC OUT [captions-ipad] # frame a walk's screenshots for the App Store
 just ios-store [iphone=DIR ipad=DIR] # push apps/ios/store/listing.toml (+ screenshots) to App Store Connect
@@ -142,6 +143,7 @@ just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (
 just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bindings
 just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
+just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.

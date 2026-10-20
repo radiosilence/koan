@@ -193,7 +193,7 @@ class AccountModel(
                 )
                 _state.update { it.copy(pendingPairing = request) }
             } catch (e: KoanException) {
-                notice("No device is waiting with that code: ${e.describe()}")
+                notice(e.describe())
             }
         }
     }
@@ -210,7 +210,8 @@ class AccountModel(
                     engine.declinePairing(request.pair)
                 }
             } catch (e: KoanException) {
-                notice("Could not sign ${request.device} in: ${e.describe()}")
+                val what = if (approve) "sign ${request.device} in" else "decline ${request.device}"
+                notice("Could not $what: ${e.describe()}")
             }
         }
     }

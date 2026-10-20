@@ -1,0 +1,1 @@
+- **The invite sheet on iOS stays open.** It could close as soon as it appeared, when the account list reloaded behind it; it now hangs off the page rather than a list row.

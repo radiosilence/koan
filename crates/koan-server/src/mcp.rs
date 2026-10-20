@@ -630,6 +630,7 @@ mod tests {
             album: album.to_string(),
             track_number: Some(1),
             disc: Some(1),
+            disc_total: None,
             date: Some("2024".into()),
             genre: Some("Electronic".into()),
             duration_ms: Some(240000),
@@ -637,6 +638,7 @@ mod tests {
                 "/tmp/test/{}.flac",
                 title.to_lowercase().replace(' ', "_")
             )),
+            server_path: None,
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),
             bit_depth: Some(16),
