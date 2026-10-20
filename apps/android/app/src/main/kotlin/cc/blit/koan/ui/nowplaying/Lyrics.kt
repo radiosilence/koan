@@ -59,27 +59,32 @@ private data class Loaded(val trackId: Long, val lyrics: Lyrics?)
 fun LyricsPanel(trackId: Long?, durationMs: Long, modifier: Modifier = Modifier) {
     val mirror = koanApp().mirror
     var loaded by remember { mutableStateOf<Loaded?>(null) }
-    var fetching by remember { mutableStateOf(false) }
+    // The track LRCLIB is being asked about: a cancelled ask for the last one
+    // must not clear the next one's.
+    var fetching by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(trackId) {
         if (trackId == null) return@LaunchedEffect
         val engine = mirror.engine()
         val cached = runCatching { engine.lyrics(trackId) }.getOrNull()
         loaded = Loaded(trackId, cached)
         if (cached?.synced == true) return@LaunchedEffect
-        fetching = true
+        fetching = trackId
         try {
             val fetched = runCatching { engine.fetchLyrics(trackId) }.getOrNull()
             loaded = Loaded(trackId, fetched ?: cached)
         } finally {
-            fetching = false
+            if (fetching == trackId) fetching = null
         }
     }
-    val lyrics = loaded?.takeIf { it.trackId == trackId }?.lyrics
+    // Nothing is said about a track until the cache has answered for it.
+    val answered = loaded?.trackId == trackId
+    val lyrics = loaded?.takeIf { answered }?.lyrics
+    val loading = trackId != null && (fetching == trackId || !answered)
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(vertical = KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
             KoanText("Lyrics", Modifier.weight(1f).semantics { heading() }, appText = true)
             when {
-                fetching -> CircularProgressIndicator(Modifier.size(14.dp), color = KoanTheme.color(KoanTone.Muted), strokeWidth = 2.dp)
+                loading -> CircularProgressIndicator(Modifier.size(14.dp), color = KoanTheme.color(KoanTone.Muted), strokeWidth = 2.dp)
                 lyrics != null -> KoanText(lyrics.source, role = KoanType.Fine, tone = KoanTone.Muted)
             }
         }
@@ -93,7 +98,7 @@ fun LyricsPanel(trackId: Long?, durationMs: Long, modifier: Modifier = Modifier)
                         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = KoanSpace.l),
                         role = KoanType.Control,
                     )
-                fetching -> Unit
+                loading -> Unit
                 else -> KoanUnavailable(if (trackId == null) "Nothing playing" else "No lyrics found", KoanIcons.lyricsText, null)
             }
         }

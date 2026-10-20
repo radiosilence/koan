@@ -411,10 +411,10 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
                 InviteCode(invite.link)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
                     KoanButton("Send invite…", share, kind = KoanButtonKind.Prominent)
-                    // Only mail apps answer a mailto:. Some read the subject and body from the
-                    // extras rather than the address; with no mail app at all, the share sheet.
+                    // Only mail apps answer a mailto:. The subject and body go as extras alone,
+                    // since some apps would show both copies; with no mail app, the share sheet.
                     KoanButton("Open in Mail", {
-                        val mail = Intent(Intent.ACTION_SENDTO, invite.mailto.toUri())
+                        val mail = Intent(Intent.ACTION_SENDTO, "mailto:".toUri())
                             .putExtra(Intent.EXTRA_SUBJECT, invite.emailSubject)
                             .putExtra(Intent.EXTRA_TEXT, invite.emailText)
                         try {

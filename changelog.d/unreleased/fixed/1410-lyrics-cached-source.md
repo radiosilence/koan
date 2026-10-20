@@ -1,1 +1,1 @@
-- **Lyrics credit their source after caching.** Lyrics read back from the cache were credited to "cache"; they now keep the source they were fetched from, shown as LRCLIB on the Mac, iPhone and Android, and in GraphQL's `source`.
+- **Lyrics credit their source after caching.** Lyrics read back from the cache were credited to "cache"; they now keep the source they were fetched from, shown as LRCLIB on the Mac, iPhone and Android. GraphQL's `source` reads `Lrclib` for them where it read `Cache`.
