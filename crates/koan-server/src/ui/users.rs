@@ -231,7 +231,6 @@ autocomplete=off autocapitalize=none spellcheck=false aria-label=Username>\
 pub(super) async fn create(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     if !usable(&s, &user) {
@@ -286,7 +285,6 @@ pub(super) struct InviteQuery {
 pub(super) async fn invite(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
-    headers: HeaderMap,
     Path(id): Path<i64>,
     Query(q): Query<InviteQuery>,
 ) -> Response {
