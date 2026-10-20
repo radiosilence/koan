@@ -3043,6 +3043,13 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         "indeterminate until the files are counted: {}",
         r.body
     );
+    // Counted before any file is read, so the bar has its end from the start.
+    record(&koan_core::helpers::WatchScan::Read {
+        done: 0,
+        total: 1200,
+    });
+    let r = send(&f.app, library(&admin)).await;
+    assert!(r.body.contains("max=\"1200\" value=\"0\""), "{}", r.body);
     record(&koan_core::helpers::WatchScan::Read {
         done: 50,
         total: 1200,

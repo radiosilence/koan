@@ -22,7 +22,9 @@ use crate::html::{Html, Render};
 
 const KINDS: [&str; 3] = [SCAN, REREAD, WATCH];
 
-fn allowed(user: &AuthUser) -> bool {
+/// Who may rescan: an admin. The one test for the section, its routes, and
+/// the wide sidebar's link to the Library page that holds it.
+pub(super) fn allowed(user: &AuthUser) -> bool {
     user.role == Role::Admin
 }
 
@@ -42,7 +44,8 @@ struct Status {
 
 /// How far a running scan has got, as its bar shows it.
 enum Bar {
-    /// The walk is still counting the files to read.
+    /// Walking the folders and checking the scan cache: the files to read
+    /// are not counted yet.
     Counting,
     Reading {
         done: u64,
@@ -83,7 +86,7 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
             ),
         }
     });
-    // A scan that found nothing to read has no bar: it is about to end.
+    // A scan whose count came to nothing has no bar: it is about to end.
     let bar =
         job.filter(|j| j.state == JobState::Running)
             .and_then(|j| match j.done.zip(j.total) {
