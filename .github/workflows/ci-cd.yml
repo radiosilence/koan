@@ -118,7 +118,7 @@ jobs:
             fi
           fi
           # Whether this run releases, the one answer every release job reads.
-          # A pull request: a release PR (branch `release-*`, or a version
+          # A pull request: a release PR (branch `release-v*`, or a version
           # change), which runs everything. A push: it changes the version
           # and that version is not out yet; comparing with the latest release
           # alone let a push landing while a release ran release it again. A
@@ -131,7 +131,7 @@ jobs:
           fi
           case "$EVENT" in
             pull_request)
-              case "$HEAD_REF" in release-*) bumped=true ;; esac
+              case "$HEAD_REF" in release-v*) bumped=true ;; esac
               release=$bumped
               ;;
             *)
