@@ -2431,7 +2431,6 @@ async fn get_album_list2(
 async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     offload_response(move || {
         respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
-            let user = caller.user_id;
             let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
             let track = queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
@@ -4334,7 +4333,6 @@ async fn get_random_songs(
 ) -> Response {
     offload_response(move || {
         respond_db_caller(&state, &params.auth, Role::Readonly, |db, caller, b| {
-            let user = caller.user_id;
             // Capped as getAlbumList is: every song is built in memory.
             let size = params.size.unwrap_or(10).min(500);
             let filter = queries::RandomFilter {
