@@ -1,0 +1,1 @@
+- **The container image is built from the release binaries, for amd64 and arm64.** Linux binaries are compiled once per architecture and both the image and the release downloads are made from them. The image now runs on Debian 13 (trixie), whose glibc those binaries need. The Mac release build starts alongside the checks, so a release finishes sooner.

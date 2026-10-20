@@ -65,7 +65,14 @@ def lock_reaches_ffi(old, new):
     return bool(changed & seen)
 
 
-RECIPE = re.compile(r"^@?([A-Za-z_][\w-]*)[^:=]*:(?!=)(.*)$")
+# A recipe header, matched with its quoted strings emptied: parameter defaults
+# and dependency arguments may hold `:` and `=`.
+RECIPE = re.compile(r"^@?([A-Za-z_][\w-]*)[^:]*:(?!=)(.*)$")
+QUOTED = re.compile(r'"[^"]*"|\'[^\']*\'')
+
+
+def header(line):
+    return RECIPE.match(QUOTED.sub('""', line))
 
 
 def recipes(text):
@@ -73,7 +80,7 @@ def recipes(text):
     units, current = {}, None
     for line in text.splitlines():
         if line and not line[0].isspace() and not line.startswith("#"):
-            m = RECIPE.match(line)
+            m = header(line)
             current = ("recipe", m.group(1)) if m else ("other", line)
             units[current] = [line]
         elif current and line.strip() and not line.startswith("#"):
@@ -82,8 +89,10 @@ def recipes(text):
 
 
 def depends(body):
-    header, _, rest = body.partition("\n")
-    deps = set(re.findall(r"\(?([a-z][\w-]*)", RECIPE.match(header).group(2)))
+    first, _, rest = body.partition("\n")
+    # `(name args)` is a dependency called with arguments; keep the name.
+    listed = re.sub(r"\(([\w-]+)[^)]*\)", r"\1", header(first).group(2))
+    deps = set(re.findall(r"[a-z][\w-]*", listed))
     deps |= set(re.findall(r"\bjust\s+(?:--?\S+\s+)*([a-z][\w-]*)", rest))
     return deps
 

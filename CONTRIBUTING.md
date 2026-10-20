@@ -131,9 +131,13 @@ Rust change, so a shared change that breaks only on macOS is caught there. A
 release PR (branch `release-*`, or one that changes the version) runs
 everything.
 
-CD runs in the same workflow after `Checks` passes on main, and uses what CI
-built: every push uploads the apps to TestFlight and Google Play's internal
-track when it changes them, and a push that changes the version releases.
+CD runs in the same workflow after `Checks` passes on main, and ships what CI
+built: the Linux binaries are built once, on the runners, and both the
+container image and the release are made from them. Every push uploads the
+apps to TestFlight and Google Play's internal track when it changes them, and
+a push that changes the version releases. The Mac app's release build starts
+alongside the checks, since it is the longest part of a release and publishes
+nothing on its own.
 
 ## Releasing
 
