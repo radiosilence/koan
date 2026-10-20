@@ -4,4 +4,9 @@
 <div class="mb-5 {{ crate::ui::pages::ACTIONS }}"><button class="standard" data-indicator:_sharing data-attr:disabled="$_sharing" data-class:busy="$_sharing" data-on:click="@post('/artist/{{ artist.id }}/share')">Share</button>{{ heart }}</div>
 <div id="share-result"></div>
 {%- endif %}
+{%- import "library/macros.html" as library %}
 <div class="{{ crate::ui::pages::GRID }}">{{ tiles }}</div>
+{%- if let Some(features) = features %}
+<div class="{% call library::list_head() %}{% endcall %}"><h2>Features on</h2></div>
+<div class="{{ crate::ui::pages::GRID }}">{{ features }}</div>
+{%- endif %}
