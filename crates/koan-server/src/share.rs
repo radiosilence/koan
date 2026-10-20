@@ -225,7 +225,13 @@ pub(crate) fn not_found() -> Response {
 pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Option<T> + Send + 'static,
 ) -> Option<T> {
-    tokio::task::spawn_blocking(f).await.ok().flatten()
+    match tokio::task::spawn_blocking(f).await {
+        Ok(v) => v,
+        // A panic carries on in the handler, where `CatchPanicLayer` answers
+        // 500, rather than reading as "nothing found".
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        Err(_) => None,
+    }
 }
 
 pub(crate) fn duration(ms: Option<i64>) -> String {
