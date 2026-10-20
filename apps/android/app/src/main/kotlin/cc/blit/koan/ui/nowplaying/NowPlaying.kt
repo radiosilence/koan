@@ -69,10 +69,11 @@ import cc.blit.koan.ffi.SleepTimer
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
-import cc.blit.koan.ui.library.ArtistRoute
+import cc.blit.koan.ui.library.NameLine
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.TrackHeart
+import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.settings.OutputButton
 import cc.blit.koan.ui.settings.PresetButton
@@ -284,9 +285,12 @@ private fun Titles(entry: QueueItem?) {
         ) {
             KoanText(entry?.title ?: "Nothing playing", role = KoanType.TitleSmall, tone = KoanTone.Strong, maxLines = 1)
             entry?.let {
-                val artistId = track?.artistId
                 val albumId = track?.albumId ?: it.albumId
-                KoanText(it.artist, Modifier.link(artistId != null) { nav.push(ArtistRoute(artistId!!)) }, maxLines = 1)
+                NameLine(
+                    listOf(artistCredit(it.artistCredit, it.artist, it.artistId)),
+                    role = KoanType.Body,
+                    tone = KoanTone.Ink,
+                )
                 if (it.album.isNotEmpty()) {
                     KoanText(
                         it.album,

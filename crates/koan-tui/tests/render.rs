@@ -347,6 +347,7 @@ fn empty_queue_panics_with_no_inner_row() {
 /// the names hold.
 #[test]
 fn list_rows_survive_every_size() {
+    use koan_core::db::queries::CreditsOf;
     use koan_tui::rows::{Columns, Emphasis, Row, Target};
     let theme = Theme::default();
     for &(w, _) in SIZES {
@@ -360,7 +361,7 @@ fn list_rows_survive_every_size() {
                     favourite: true,
                     lead: "12",
                     name,
-                    artist: Some((name, Some(1))),
+                    artist: Some((name, Some(Target::Credited(CreditsOf::Tracks, 1)))),
                     detail: Some((name, Some(Target::Album(1)))),
                     tail: "1:02:03",
                 }
@@ -368,7 +369,7 @@ fn list_rows_survive_every_size() {
                 // Each link ends before the next column starts.
                 for (r, target) in links {
                     let next = match target {
-                        Target::Artist(_) => cols.detail.x,
+                        Target::Credited(..) => cols.detail.x,
                         Target::Album(_) => cols.tail.x,
                     };
                     assert!(r.x + r.width <= next.max(r.x), "{w}: {name} at {r:?}");

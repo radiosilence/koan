@@ -1338,6 +1338,42 @@ mod tests {
         );
     }
 
+    /// The server's path for its copy is the entry's own: it is listed among
+    /// the entry's fields and never becomes the track's file.
+    #[test]
+    fn a_server_path_stays_with_its_entry() {
+        let db = test_db();
+        let mut remote = sample_meta("Archangel", "Burial", "Untrue");
+        remote.path = None;
+        remote.server_path = Some("Burial/Untrue/02 Archangel.flac".into());
+        remote.source = "remote".into();
+        remote.remote_id = Some("song-1".into());
+        let id = upsert_track(&db.conn, &remote).unwrap();
+
+        let sources = crate::db::queries::sources_of_track(&db.conn, id).unwrap();
+        assert_eq!(sources.len(), 1, "a server path is not a file here");
+        assert_eq!(sources[0].path, None);
+        assert_eq!(sources[0].server_path, remote.server_path);
+        assert!(
+            sources[0]
+                .clone()
+                .info_fields()
+                .contains(&("Path on server", "Burial/Untrue/02 Archangel.flac".into()))
+        );
+        let path: Option<String> = db
+            .conn
+            .query_row("SELECT path FROM tracks WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(path, None, "the track has no file");
+
+        let mut local = sample_meta("Archangel", "Burial", "Untrue");
+        local.server_path = Some("leaks into the file".into());
+        assert_eq!(upsert_track(&db.conn, &local).unwrap(), id);
+        let sources = crate::db::queries::sources_of_track(&db.conn, id).unwrap();
+        assert_eq!(sources[0].server_path, None, "a file has no server path");
+        assert_eq!(sources[1].server_path, remote.server_path);
+    }
+
     /// A resync passes every track through the upsert, and nearly all of them
     /// are as they were. None of that should reach the disk.
     #[test]
@@ -1575,6 +1611,45 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert_eq!(paths, vec![cd1.path.unwrap(), cd2.path.unwrap()]);
+    }
+
+    #[test]
+    fn an_albums_disc_total_follows_its_tracks() {
+        let db = test_db();
+        let total = |album: &str| -> Option<i32> {
+            db.conn
+                .query_row(
+                    "SELECT total_discs FROM albums WHERE title = ?1",
+                    params![album],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        let mut untagged = sample_meta("Intro", "Burial", "Untrue");
+        untagged.path = Some("/music/Untrue/01.flac".into());
+        upsert_track(&db.conn, &untagged).unwrap();
+        assert_eq!(total("Untrue"), Some(1), "an album with tracks has a disc");
+
+        let mut cd1 = sample_meta("Overture", "Wagner", "Ring Cycle");
+        cd1.disc = Some(1);
+        cd1.path = Some("/music/Ring Cycle/CD1/01.flac".into());
+        let mut cd2 = cd1.clone();
+        cd2.disc = Some(2);
+        cd2.path = Some("/music/Ring Cycle/CD2/01.flac".into());
+        upsert_track(&db.conn, &cd1).unwrap();
+        upsert_track(&db.conn, &cd2).unwrap();
+        assert_eq!(total("Ring Cycle"), Some(2), "the highest disc held");
+
+        let mut boxed = sample_meta("Prelude", "Wagner", "Parsifal");
+        boxed.disc = Some(1);
+        boxed.disc_total = Some(4);
+        boxed.path = Some("/music/Parsifal/CD1/01.flac".into());
+        upsert_track(&db.conn, &boxed).unwrap();
+        assert_eq!(total("Parsifal"), Some(4), "a tag names discs not held");
+
+        remove_stale_tracks(&db.conn, Path::new("/music/Ring Cycle/CD2"), true).unwrap();
+        assert_eq!(total("Ring Cycle"), Some(1), "disc 2 gone");
     }
 
     #[test]

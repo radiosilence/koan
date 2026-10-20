@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use image::DynamicImage;
 use koan_core::browse::{self as core_browse, AlbumSort, BrowseFilter, TrackSort};
-use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistRow, TrackRow};
+use koan_core::db::queries::{
+    self, AlbumOrder, AlbumQuery, AlbumRow, ArtistRow, CreditsOf, TrackRow,
+};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -116,6 +118,9 @@ pub enum Action {
     Favourite(i64),
     OpenAlbum(i64),
     OpenArtist(i64),
+    /// The artist a track's or album's credit names; one of them, asked
+    /// for, when it names several.
+    OpenCredited(CreditsOf, i64),
     /// Replace the queue with these, shuffled.
     Shuffle(Vec<i64>),
     /// A link out of the terminal.
@@ -322,6 +327,12 @@ pub(super) fn track_playable(t: &TrackRow, favourite: bool) -> Playable {
         album: t.album_id,
         artist: t.artist_id,
     }
+}
+
+/// Where a track row's artist links: the artists its credit names.
+pub(super) fn credited_track(t: &TrackRow) -> Option<Target> {
+    t.artist_id
+        .map(|_| Target::Credited(CreditsOf::Tracks, t.id))
 }
 
 /// The tracks of `albums`, album by album in the order given, in one read.
@@ -958,6 +969,22 @@ impl Browse {
         }
     }
 
+    /// What `A` opens: the artist at `idx`, or the artists its credit names.
+    fn open_artist_at(&self, idx: usize) -> Action {
+        let open = |of, id: Option<i64>| id.map_or(Action::None, |id| Action::OpenCredited(of, id));
+        match self.kind() {
+            Kind::Albums => open(CreditsOf::Albums, self.album_at(idx)),
+            Kind::Artists => self.artist_at(idx).map_or(Action::None, Action::OpenArtist),
+            Kind::Tracks => open(
+                CreditsOf::Tracks,
+                self.tracks
+                    .get(idx)
+                    .filter(|t| t.artist_id.is_some())
+                    .map(|t| t.id),
+            ),
+        }
+    }
+
     /// The track under the cursor when the page lists tracks, for hearting.
     pub fn track_at_cursor(&self) -> Option<i64> {
         if self.kind() != Kind::Tracks {
@@ -998,7 +1025,6 @@ impl Browse {
                     id: a.id,
                     tracks: ids,
                     favourite: self.fav_albums.contains(&a.id),
-                    artist: a.artist_id,
                 };
                 (a.title.clone(), thing)
             }
@@ -1068,10 +1094,7 @@ impl Browse {
                 );
             }
             KeyCode::Char('A') => {
-                return Some(
-                    self.artist_at(self.cursor)
-                        .map_or(Action::None, Action::OpenArtist),
-                );
+                return Some(self.open_artist_at(self.cursor));
             }
             KeyCode::Char('P') => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('r') if ctrl => {
@@ -1188,7 +1211,7 @@ impl Browse {
                 }
             }
             Hit::Link(Target::Album(id)) => Action::OpenAlbum(id),
-            Hit::Link(Target::Artist(id)) => Action::OpenArtist(id),
+            Hit::Link(Target::Credited(of, id)) => Action::OpenCredited(of, id),
             Hit::Item(idx) => {
                 let double = self
                     .last_click
@@ -1498,7 +1521,7 @@ impl Browse {
                         favourite: favourites.contains(&t.id),
                         lead: &lead,
                         name: &t.title,
-                        artist: Some((&t.artist_name, t.artist_id)),
+                        artist: Some((&t.artist_name, credited_track(t))),
                         detail: Some((&t.album_title, t.album_id.map(Target::Album))),
                         tail: &time,
                     }
@@ -1510,7 +1533,10 @@ impl Browse {
                         favourite: self.fav_albums.contains(&a.id),
                         lead: "",
                         name: &a.title,
-                        artist: Some((&a.artist_name, Some(a.artist_id))),
+                        artist: Some((
+                            &a.artist_name,
+                            Some(Target::Credited(CreditsOf::Albums, a.id)),
+                        )),
                         detail: None,
                         tail: "",
                     }
@@ -1692,7 +1718,7 @@ impl Tile<'_> {
             let year = year(album);
             if self.name_artist {
                 // The artist is a link; the year after it is not.
-                let target = Target::Artist(album.artist_id);
+                let target = Target::Credited(CreditsOf::Albums, album.id);
                 let drawn = rows::put(
                     buf,
                     x + 1,
@@ -1943,7 +1969,10 @@ pub(super) mod tests {
         assert_eq!(b.hit(x, y), Some(Hit::Link(Target::Album(0))));
         assert_eq!(b.click(Hit::Link(Target::Album(0))), Action::OpenAlbum(0));
         let (x, y) = first_tile(&b, 2, art_h + 1);
-        assert_eq!(b.hit(x, y), Some(Hit::Link(Target::Artist(0))));
+        assert_eq!(
+            b.hit(x, y),
+            Some(Hit::Link(Target::Credited(CreditsOf::Albums, 0)))
+        );
         // Past the end of the text it is the tile again.
         let (x, y) = first_tile(&b, b.geom.tile_w - 1, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
@@ -2164,7 +2193,12 @@ pub(super) mod tests {
             ))
         );
         // Each row's artist and album are links.
-        assert!(b.geom.links.iter().any(|(_, t)| *t == Target::Artist(0)));
+        assert!(
+            b.geom
+                .links
+                .iter()
+                .any(|(_, t)| matches!(t, Target::Credited(..)))
+        );
         assert!(b.geom.links.iter().any(|(_, t)| *t == Target::Album(0)));
     }
 
@@ -2209,7 +2243,7 @@ pub(super) mod tests {
             .geom
             .links
             .iter()
-            .filter(|(_, t)| matches!(t, Target::Artist(_)))
+            .filter(|(_, t)| matches!(t, Target::Credited(..)))
             .map(|(r, _)| r.x)
             .collect();
         assert_eq!(artists.len(), 2);

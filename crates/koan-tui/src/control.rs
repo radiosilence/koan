@@ -55,6 +55,7 @@ type Work = Box<dyn FnOnce() + Send>;
 
 /// Work done in order with the commands around it: choosing a device, or
 /// moving the music, which change where every command after them goes.
+#[derive(Clone)]
 pub struct Lane {
     tx: Sender<PlayerCommand>,
     work: Sender<(Sender<()>, Work)>,

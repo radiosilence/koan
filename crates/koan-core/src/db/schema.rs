@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 24;
+pub const SCHEMA_VERSION: i64 = 25;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -753,6 +753,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("local_files", "credits", "TEXT"),
     ("remote_entries", "credits", "TEXT"),
     ("tracks", "credits", "TEXT"),
+    // A file's tagged disc total, which an album's disc total never falls below.
+    ("local_files", "disc_total", "INTEGER"),
+    ("remote_entries", "disc_total", "INTEGER"),
     // The device a key signed in, and the public key that device proves
     // itself with to the account's other devices on the local network. On the
     // key's row, so revoking the key drops it. See `api_keys::device_keys`.
@@ -1075,6 +1078,20 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             "DELETE FROM scan_cache;
              UPDATE remote_servers SET library_version = NULL;",
         )?;
+    }
+
+    // Disc totals were taken from no tag and derived from nothing. Derived
+    // now from the discs the tracks are on; the files' tagged totals arrive
+    // as the next scan reads every file again.
+    if found < 25 {
+        conn.execute(
+            &format!(
+                "UPDATE albums SET total_discs = {}",
+                crate::db::queries::sources::DISC_TOTAL
+            ),
+            [],
+        )?;
+        conn.execute("DELETE FROM scan_cache", [])?;
     }
 
     Ok(())
@@ -2692,6 +2709,33 @@ mod tests {
         conn.execute("DELETE FROM tracks WHERE id = 7", []).unwrap();
         assert_eq!(count("SELECT COUNT(*) FROM scan_cache"), 0);
         assert_eq!(count("SELECT COUNT(*) FROM lyrics_cache"), 0);
+    }
+
+    #[test]
+    fn upgrading_derives_every_albums_disc_total() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO artists (id, name) VALUES (1, 'A');
+             INSERT INTO albums (id, title, artist_id) VALUES (1, 'Two', 1), (2, 'One', 1);
+             INSERT INTO tracks (id, album_id, artist_id, disc, title, source)
+                 VALUES (1, 1, 1, 1, 'a', 'local'), (2, 1, 1, 2, 'b', 'local'),
+                        (3, 2, 1, NULL, 'c', 'local');",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
+            .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let totals: Vec<Option<i32>> = conn
+            .prepare("SELECT total_discs FROM albums ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(totals, [Some(2), Some(1)]);
     }
 
     #[test]

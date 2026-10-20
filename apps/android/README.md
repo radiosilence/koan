@@ -5,6 +5,7 @@ A Compose app over the same engine as the Apple apps: `libkoan_ffi.so`, loaded t
 ```bash
 just android-run              # build, install on the device adb sees, open
 just android-ffi arm64-v8a    # only the core and the bindings
+just android-walk             # screenshot every page on an emulator
 ```
 
 The `just` recipes find the SDK at `ANDROID_HOME` when it holds one, else where Android Studio or Homebrew's `android-commandlinetools` install it; `local.properties` overrides them. mise provides the JDK and cargo-ndk.
@@ -16,6 +17,10 @@ The `just` recipes find the SDK at `ANDROID_HOME` when it holds one, else where 
 CI builds the same APK on every pull request and push to main that touches the app or the core, and attaches it to the run as `koan-android-<commit>`; download the artifact from the run's page and unzip it. CI signs with the release key in the `ANDROID_RELEASE_KEYSTORE` and `ANDROID_RELEASE_KEYSTORE_PASSWORD` secrets (kept in 1Password too), as do releases, so each build installs over the last. Gradle uses it when `KOAN_ANDROID_KEYSTORE` and `KOAN_ANDROID_KEYSTORE_PASSWORD` are set, and the debug key otherwise. `just android-release-key` created it, once: it is in 1Password as "koan Android release keystore", and losing it means every installed copy has to be uninstalled to update. Android refuses an update signed with a different key, which is what a local build over a CI one is; uninstall first, which signs the app out and deletes its downloads.
 
 The APK carries arm64-v8a only: phones, and emulators on Apple silicon.
+
+## The walk
+
+`just android-walk` is the Android counterpart of `just ios-walk`: `WalkTest` (under `androidTest`) opens every page with UI Automator and screenshots it, once for each look and appearance, into `target/android-walk/<look>-<appearance>`, under the iPhone walk's names so the two can be compared page for page. The recipe serves the generated library `ios-bars` uses from a throwaway koan server, reaches it through `adb reverse`, and signs the app in by writing its configuration with `run-as`, so nothing on the machine's own koan is touched. It runs on an emulator only, because it clears the app's data: the one adb already sees, or an AVD booted headless with `-gpu host` (`koan-walk` unless named; create it once with `avdmanager create avd -n koan-walk -d pixel_9 -k "system-images;android-36.1;google_apis_playstore;arm64-v8a"`), since software rendering is too slow to judge the wash by.
 
 ## Layout
 

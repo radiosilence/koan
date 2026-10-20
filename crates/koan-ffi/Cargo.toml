@@ -31,6 +31,8 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync"] 
 uniffi = "0.32"
 uuid = { version = "1", features = ["v7"] }
 chrono = "0.4"
+# Invite links as QR codes, on Android, which has no encoder of its own.
+qrcode = { version = "0.14.1", default-features = false }
 
 # The app's Context, handed to reqwest's certificate verification: see
 # `android.rs`.

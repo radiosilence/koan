@@ -127,7 +127,14 @@ private fun Modifier.tap(playable: Playable, selection: Selection<Playable>?, on
  * it while picking; a long press offers the rest.
  */
 @Composable
-fun AlbumTile(album: Album, modifier: Modifier = Modifier, selection: Selection<Playable>? = null, showArtist: Boolean = true) {
+fun AlbumTile(
+    album: Album,
+    modifier: Modifier = Modifier,
+    selection: Selection<Playable>? = null,
+    showArtist: Boolean = true,
+    /** The artist whose page this tile is on, whose name it leaves as text. */
+    onArtistPage: Long? = null,
+) {
     val nav = LocalNavigator.current
     val playable = Playable.OfAlbum(album)
     val picked = selection?.contains(playable) == true
@@ -156,7 +163,7 @@ fun AlbumTile(album: Album, modifier: Modifier = Modifier, selection: Selection<
         }
         KoanText(album.title, role = KoanType.Control, maxLines = 1)
         NameLine(
-            listOfNotNull(artistName(album.artistName, album.artistId).takeIf { showArtist }, album.year?.let { Named("$it") }),
+            listOfNotNull(artistCredit(album.artistCredit, album.artistName, album.artistId, except = onArtistPage).takeIf { showArtist }, album.year?.let { Named("$it") }),
             role = KoanType.Fine,
             linked = selection?.active != true,
         )
@@ -234,7 +241,7 @@ fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection<P
     ) {
         TitleAndDetail(
             album.title,
-            listOfNotNull(artistName(album.artistName, album.artistId), album.year?.let { Named("$it") }, album.codec?.let { Named(it.uppercase()) }),
+            listOfNotNull(artistCredit(album.artistCredit, album.artistName, album.artistId), album.year?.let { Named("$it") }, album.codec?.let { Named(it.uppercase()) }),
             linked = selection?.active != true,
         )
     }
@@ -316,7 +323,7 @@ fun TrackRow(
         TitleAndDetail(
             track.title,
             listOfNotNull(
-                artistName(track.artistName, track.artistId?.takeIf { it != onArtistPage })
+                artistCredit(track.artistCredit, track.artistName, track.artistId, except = onArtistPage)
                     .takeIf { mixed || track.artistName != track.albumArtistName },
                 albumName(track.albumTitle, track.albumId, track.id).takeIf { mixed },
             ),

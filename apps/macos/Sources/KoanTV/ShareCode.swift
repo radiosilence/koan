@@ -1,4 +1,3 @@
-import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// A share link, as a code for a phone to scan.
@@ -12,14 +11,7 @@ struct ShareCode: View {
 
     var body: some View {
         HStack(spacing: 80) {
-            if let code = qrImage(link) {
-                Image(decorative: code, scale: 1)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: 440, height: 440)
-                    .padding(28)
-                    .background(.white, in: .rect(cornerRadius: KoanTheme.radius(24))) // theme: raw — a QR code needs a white ground to scan
-            }
+            QRCodeView(text: link, side: 440, margin: 28, radius: 24)
             VStack(alignment: .leading, spacing: 24) {
                 Text("Scan to open").koanCase()
                     .koanText(.titleSmall, .strong)
@@ -38,16 +30,6 @@ struct ShareCode: View {
         .padding(80)
     }
 
-}
-
-/// `text` as a QR code, one pixel to a module: drawn with interpolation off,
-/// it scales to any size without blurring.
-func qrImage(_ text: String) -> CGImage? {
-    let filter = CIFilter.qrCodeGenerator()
-    filter.message = Data(text.utf8)
-    filter.correctionLevel = "M"
-    guard let image = filter.outputImage else { return nil }
-    return CIContext().createCGImage(image, from: image.extent)
 }
 
 extension View {

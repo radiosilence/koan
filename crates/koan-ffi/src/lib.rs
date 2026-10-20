@@ -379,6 +379,21 @@ pub fn set_config_dir(path: String) {
     config::set_config_dir(path);
 }
 
+/// `text` as a QR code, for a platform with no encoder of its own: Android.
+/// Absent when the text is too long for one.
+#[uniffi::export]
+pub fn qr_code(text: String) -> Option<QrCode> {
+    let code = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::M).ok()?;
+    Some(QrCode {
+        width: code.width() as u32,
+        dark: code
+            .to_colors()
+            .into_iter()
+            .map(|c| c == qrcode::Color::Dark)
+            .collect(),
+    })
+}
+
 impl Drop for KoanEngine {
     /// Wake the state watcher so it notices there is nothing left to watch.
     ///
@@ -2653,12 +2668,16 @@ impl KoanEngine {
 
     /// Move the music of the device being controlled to `to` (this device
     /// with `None`): its queue and playhead go there, it pauses, and `to` is
-    /// controlled from then on. Says how many tracks were left out because
-    /// the server does not have them, which only this device can say, and
-    /// whether `to` has said it has the music.
+    /// controlled from then on. `to` asleep is woken first, as choosing it
+    /// does, while the music plays on where it is. Says how many tracks were
+    /// left out because the server does not have them, which only this device
+    /// can say, and whether `to` has said it has the music.
     pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<MoveResult, KoanError> {
         use koan_core::remote::control::{self, Moved};
         use koan_core::remote::devices;
+        // Off the lane: commands meanwhile are for the music where it is.
+        let waking = to.clone();
+        let asked = offload::offload(move || control::wake_for_move(waking.as_deref())).await;
         let engine = self.clone();
         // Sent on the lane, in order with every other command; waited for off
         // it, so the transport does not stall behind a device that is slow to
@@ -2672,8 +2691,9 @@ impl KoanEngine {
             let before = to.as_deref().and_then(devices::last_report);
             let cursor_before = engine.state.cursor();
             let (then, answer) = outcome_channel();
-            let moved = control::move_music(to.clone(), &engine.tx, &engine.state, Some(then))
-                .map_err(|message| KoanError::Remote { message })?;
+            let moved =
+                control::move_music(to.clone(), asked, &engine.tx, &engine.state, Some(then))
+                    .map_err(|message| KoanError::Remote { message })?;
             Ok(moved.map(|moved| match moved {
                 Moved::Sent(sent) => HandedOff {
                     left_out: sent.left_out,
@@ -6906,6 +6926,7 @@ mod restore_tests {
             album: "Album".into(),
             date: Some("2024".into()),
             disc: Some(1),
+            disc_total: None,
             track_number: Some(1),
             genre: None,
             label: None,
@@ -6918,6 +6939,7 @@ mod restore_tests {
             size_bytes: None,
             mtime: None,
             path: Some(path.to_string_lossy().into_owned()),
+            server_path: None,
             source: "local".into(),
             remote_id: None,
             album_remote_id: None,

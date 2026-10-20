@@ -103,9 +103,10 @@ Opening a link again on a device that already joined replaces that device's key
 and revokes the old one, through `/rest/koanRevokeKey`, which revokes the key
 the request signs in with.
 
-The web UI shows the link as a QR code above it, so a phone beside the screen
-can scan it rather than receive an email. The code carries the invite's token,
-so anyone who can see the screen can join with it until the invite lapses.
+The web UI and the Mac, iOS and Android apps show the link as a QR code, so a
+phone beside the screen can scan it rather than receive an email. The code
+carries the invite's token, so anyone who can see the screen can join with it
+until the invite lapses.
 
 Creating an account generates its password, and the email carries it once, for
 the web UI and other Subsonic apps. Inviting an existing account sends only the
@@ -164,8 +165,9 @@ on your network visits could open a pairing from their address and read the key
 sent when they approve it. One address, or one IPv6 /64, can have three
 pairings waiting at a time.
 
-Approving needs the account's own password or an API key, not an app password
-or the shared secret;
+Approving, declining and looking up a pairing need the account's own password
+or an API key, not an app password or the shared secret, and an account that
+tries too many codes no device is waiting with is refused for a minute;
 [Pairing and invites](../reference/protocol/pairing-and-invites.md#the-approver)
 has the full rules.
 

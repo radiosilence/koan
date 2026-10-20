@@ -15,7 +15,9 @@ use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 use koan_core::db::queries::{self, PlayHistoryRow};
 
 use super::favourite::Hearts;
-use super::pages::{EMPTY, ERROR, MORE, cover_url, credit_line, track_versions, unavailable};
+use super::pages::{
+    Credits, EMPTY, ERROR, MORE, cover_url, credit_data, credit_line, track_versions, unavailable,
+};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape};
@@ -56,6 +58,7 @@ fn day_label(day: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
 fn plays(
     rows: &[PlayHistoryRow],
     versions: &super::pages::Versions,
+    credits: &Credits,
     zone: FixedOffset,
     hearts: Option<&Hearts>,
 ) -> String {
@@ -69,10 +72,11 @@ fn plays(
             let _ = write!(out, "<li class=\"disc\">{}</li>", day_label(at, now));
         }
         let t = &p.track;
+        let parts = credits.track(t);
         let _ = write!(
             out,
             "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
+data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\"{credit}>\
 <input type=checkbox class=\"flex-none max-wide:hidden\" value={play} aria-label=\"Select this play\">\
 <span class=\"n w-auto max-wide:text-meta\">{time}</span><span class=\"t\">{title}{sub}</span>\
 <span class=\"d\">{dur}</span><span class=\"contents max-wide:hidden\">{heart}\
@@ -83,7 +87,8 @@ data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-
             title = escape(&t.title),
             artist = escape(&t.artist_name),
             album = escape(&t.album_title),
-            sub = credit_line(t, true, true),
+            sub = credit_line(t, Some(&parts), true),
+            credit = credit_data(&parts),
             album_id = t.album_id.unwrap_or(0),
             artist_id = t.artist_id.unwrap_or(0),
             cover = t
@@ -105,6 +110,7 @@ struct Plays {
     /// There are older ones.
     more: bool,
     versions: super::pages::Versions,
+    credits: Credits,
     hearts: Option<Hearts>,
 }
 
@@ -122,11 +128,13 @@ fn read(s: &UiState, user: &AuthUser, page: u32) -> Option<Plays> {
     rows.truncate(PAGE as usize);
     let tracks: Vec<_> = rows.iter().map(|r| r.track.clone()).collect();
     let versions = track_versions(&db.conn, &tracks);
+    let credits = Credits::load(&db.conn, &tracks, &[]);
     let hearts = Hearts::load(&db.conn, user);
     Some(Plays {
         rows,
         more,
         versions,
+        credits,
         hearts,
     })
 }
@@ -165,7 +173,7 @@ by day.</p></div>"
     };
     format!(
         "<div id=history><ol class=\"tracks\" data-context=one>{}</ol>{nav}</div>",
-        plays(rows, versions, zone, p.hearts.as_ref())
+        plays(rows, versions, &p.credits, zone, p.hearts.as_ref())
     )
 }
 

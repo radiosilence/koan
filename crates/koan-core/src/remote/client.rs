@@ -1712,6 +1712,10 @@ pub struct SubsonicSong {
     pub codec: Option<String>,
     pub album_id: Option<String>,
     pub artist_id: Option<String>,
+    /// Where the server keeps the file, relative to its library folder. A
+    /// koan server sends it to admin accounts only.
+    #[serde(default, deserialize_with = "non_empty")]
+    pub path: Option<String>,
     // OpenSubsonic. Absent on a plain Subsonic server, which is why they are
     // Options rather than defaults — a missing sample rate is not 0 Hz.
     pub sampling_rate: Option<i32>,

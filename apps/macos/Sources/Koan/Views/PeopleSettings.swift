@@ -88,8 +88,12 @@ struct PeopleSettings: View {
     @State private var password = ""
     @Environment(EngineMirror.self) private var mirror
 
+    /// Presentations hang off the form, never off its sections: on iOS a
+    /// section is hosted in a list cell, which the list reconfigures when the
+    /// accounts reload after an invite, and a sheet presented from a cell goes
+    /// with it.
     var body: some View {
-        Group {
+        KoanForm {
             if let accounts = model.accounts {
                 Section {
                     ForEach(accounts, id: \.username) { account in
@@ -119,56 +123,56 @@ struct PeopleSettings: View {
                     Text(model.error ?? "Adding someone makes their invite: one link that sets kōan up with the account.")
                         .koanText(.fine, model.error == nil ? .muted : .bad)
                 }
-                .sheet(item: Binding(
-                    get: { model.invite.map(InviteItem.init) },
-                    set: { if $0 == nil { model.invite = nil } }
-                )) { item in
-                    InviteSheet(invite: item.invite)
-                }
-                .alert(
-                    "Give \(model.resetting ?? "") a new password?",
-                    isPresented: Binding(
-                        get: { model.resetting != nil },
-                        set: { if !$0 { model.resetting = nil } }
-                    )
-                ) {
-                    Button("New Password") {
-                        if let name = model.resetting { Task { await model.invite(name, reset: true) } }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("The invite carries the new password. Their devices will have to sign in again.")
-                }
-                .alert(
-                    "Set a password for \(settingPassword ?? "")",
-                    isPresented: Binding(
-                        get: { settingPassword != nil },
-                        set: { if !$0 { settingPassword = nil } }
-                    )
-                ) {
-                    SecureField("New password", text: $password)
-                    Button("Set") {
-                        if let name = settingPassword {
-                            let chosen = password
-                            Task { await model.setPassword(name, chosen) }
-                        }
-                        password = ""
-                    }
-                    Button("Cancel", role: .cancel) { password = "" }
-                } message: {
-                    Text("Their devices will have to sign in again with it.")
-                }
-                .confirmationDialog(
-                    "Delete \(deleting ?? "")?",
-                    isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
-                ) {
-                    Button("Delete", role: .destructive) {
-                        if let name = deleting { Task { await model.delete(name) } }
-                    }
-                } message: {
-                    Text("Their devices stop working, and their playlists and favourites go.")
-                }
             }
+        }
+        .sheet(item: Binding(
+            get: { model.invite.map(InviteItem.init) },
+            set: { if $0 == nil { model.invite = nil } }
+        )) { item in
+            InviteSheet(invite: item.invite)
+        }
+        .alert(
+            "Give \(model.resetting ?? "") a new password?",
+            isPresented: Binding(
+                get: { model.resetting != nil },
+                set: { if !$0 { model.resetting = nil } }
+            )
+        ) {
+            Button("New Password") {
+                if let name = model.resetting { Task { await model.invite(name, reset: true) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The invite carries the new password. Their devices will have to sign in again.")
+        }
+        .alert(
+            "Set a password for \(settingPassword ?? "")",
+            isPresented: Binding(
+                get: { settingPassword != nil },
+                set: { if !$0 { settingPassword = nil } }
+            )
+        ) {
+            SecureField("New password", text: $password)
+            Button("Set") {
+                if let name = settingPassword {
+                    let chosen = password
+                    Task { await model.setPassword(name, chosen) }
+                }
+                password = ""
+            }
+            Button("Cancel", role: .cancel) { password = "" }
+        } message: {
+            Text("Their devices will have to sign in again with it.")
+        }
+        .confirmationDialog(
+            "Delete \(deleting ?? "")?",
+            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+        ) {
+            Button("Delete", role: .destructive) {
+                if let name = deleting { Task { await model.delete(name) } }
+            }
+        } message: {
+            Text("Their devices stop working, and their playlists and favourites go.")
         }
         .task { await model.load() }
     }
@@ -224,6 +228,11 @@ struct InviteSheet: View {
                 Section {
                     Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
                         .koanText(.body, .muted)
+                    QRCodeView(
+                        text: invite.link, side: 168, margin: 12, radius: 8,
+                        caption: "Scan with a phone's camera to open it there."
+                    )
+                    .frame(maxWidth: .infinity)
                     #if !os(tvOS)
                     ShareLink(
                         item: invite.emailText,

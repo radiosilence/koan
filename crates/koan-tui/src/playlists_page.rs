@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use koan_core::db::queries::{PlaylistEntry, PlaylistRow};
+use koan_core::db::queries::{CreditsOf, PlaylistEntry, PlaylistRow};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus};
 use ratatui::buffer::Buffer;
@@ -32,7 +32,8 @@ pub enum PlAction {
     /// Put tracks in the queue as the pickers do.
     Tracks(Vec<i64>, PickerAction),
     OpenAlbum(i64),
-    OpenArtist(i64),
+    /// The artist a track's credit names, or one of several, asked for.
+    ArtistOfTrack(i64),
     Info(i64),
     /// Ask for a name, then make a playlist.
     New,
@@ -863,8 +864,11 @@ impl PlaylistPage {
         if let Some(album) = e.track.album_id {
             items.push(("Go to album".into(), Browse(Action::OpenAlbum(album))));
         }
-        if let Some(artist) = e.track.artist_id {
-            items.push(("Go to artist".into(), Browse(Action::OpenArtist(artist))));
+        if e.track.artist_id.is_some() {
+            items.push((
+                "Go to artist".into(),
+                Browse(Action::OpenCredited(CreditsOf::Tracks, e.track.id)),
+            ));
         }
         PlAction::Menu(e.track.title.clone(), items)
     }
@@ -923,8 +927,8 @@ impl PlaylistPage {
             }
             KeyCode::Char('A') => {
                 return Some(
-                    here.and_then(|(_, t)| t.artist_id)
-                        .map_or(PlAction::None, PlAction::OpenArtist),
+                    here.filter(|(_, t)| t.artist_id.is_some())
+                        .map_or(PlAction::None, |(_, t)| PlAction::ArtistOfTrack(t.id)),
                 );
             }
             KeyCode::Char('O') => {
@@ -1168,7 +1172,10 @@ impl PlaylistPage {
                         status,
                         number: Some(format!("{}", i + 1)),
                         title: &t.title,
-                        artist: Some((&t.artist_name, t.artist_id.map(Link::Artist))),
+                        artist: Some((
+                            &t.artist_name,
+                            t.artist_id.map(|_| Link::ArtistOfTrack(t.id)),
+                        )),
                         album: (!grouped)
                             .then_some((t.album_title.as_str(), t.album_id.map(Link::Album))),
                         avail,
@@ -1384,7 +1391,7 @@ pub(crate) mod tests {
         assert_eq!(p.toolbar().title, "mix");
         let row: String = (0..100).map(|x| buf[(x, 0)].symbol()).collect();
         let x = row.find("artist").expect("the artist is drawn") as u16;
-        assert_eq!(links.at(x, 0), Some(Link::Artist(2)));
+        assert_eq!(links.at(x, 0), Some(Link::ArtistOfTrack(1)));
     }
 
     #[test]

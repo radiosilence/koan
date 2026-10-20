@@ -204,8 +204,10 @@
     @apply block truncate text-meta text-muted;
   }
 
-  /* A row is mostly names; linked in the brand colour they would shout over its title. */
-  .tracks .t small a {
+  /* A row is mostly names; linked in the brand colour they would shout over its title.
+     The same holds for the credit under a tile and in the playback bar. */
+  .tracks .t small a,
+  .credit a {
     @apply text-inherit hover:text-strong;
     /* A long press opens the row's menu, not the browser's link preview. */
     -webkit-touch-callout: none;
