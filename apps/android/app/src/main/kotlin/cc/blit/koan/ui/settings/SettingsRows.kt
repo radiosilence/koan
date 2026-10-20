@@ -28,21 +28,25 @@ import cc.blit.koan.ui.theme.koanSurface
 import cc.blit.koan.ui.theme.rainbowShimmer
 
 /**
- * A settings page: its title, its sections, and the status line beneath them
+ * A settings page: its title (none for the tab's own page), its sections, and the status line beneath them
  * saying what the last action came to.
  */
 @Composable
-fun SettingsPage(title: String, state: SettingsState, content: LazyListScope.() -> Unit) {
+fun SettingsPage(title: String?, state: SettingsState, content: LazyListScope.() -> Unit) {
     Column(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
             item {
-                KoanText(
-                    title,
-                    Modifier.padding(horizontal = KoanSpace.page, vertical = KoanSpace.m).rainbowShimmer(),
-                    role = KoanType.Title,
-                    tone = KoanTone.Strong,
-                    appText = true,
-                )
+                if (title == null) {
+                    Spacer(Modifier.height(KoanSpace.m))
+                } else {
+                    KoanText(
+                        title,
+                        Modifier.padding(horizontal = KoanSpace.page, vertical = KoanSpace.m).rainbowShimmer(),
+                        role = KoanType.Title,
+                        tone = KoanTone.Strong,
+                        appText = true,
+                    )
+                }
             }
             content()
             item { Spacer(Modifier.height(KoanSpace.xl)) }
