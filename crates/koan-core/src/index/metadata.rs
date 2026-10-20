@@ -799,6 +799,7 @@ mod tests {
             StandardTag::TrackNumber(3),
             StandardTag::TrackTotal(12),
             StandardTag::DiscNumber(2),
+            StandardTag::DiscTotal(3),
         ]);
         let meta = metadata_from_probe_result(&rev, "fallback");
         assert_eq!(
@@ -807,6 +808,7 @@ mod tests {
             "track number should come from the track number tag, not the total"
         );
         assert_eq!(meta.disc, Some(2));
+        assert_eq!(meta.disc_total, Some(3));
     }
 
     #[test]

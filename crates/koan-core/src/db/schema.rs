@@ -2712,6 +2712,34 @@ mod tests {
     }
 
     #[test]
+    fn upgrading_derives_every_albums_disc_total() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO artists (id, name) VALUES (1, 'A');
+             INSERT INTO albums (id, title, artist_id) VALUES (1, 'Two', 1), (2, 'One', 1),
+                                                              (3, 'Empty', 1);
+             INSERT INTO tracks (id, album_id, artist_id, disc, title, source)
+                 VALUES (1, 1, 1, 1, 'a', 'local'), (2, 1, 1, 2, 'b', 'local'),
+                        (3, 2, 1, NULL, 'c', 'local');",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
+            .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let totals: Vec<Option<i32>> = conn
+            .prepare("SELECT total_discs FROM albums ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(totals, [Some(2), Some(1), None]);
+    }
+
+    #[test]
     fn play_history_from_before_the_cascade_is_rebuilt_keeping_its_rows() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
