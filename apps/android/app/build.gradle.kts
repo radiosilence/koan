@@ -44,6 +44,8 @@ android {
         // Only what the core is built for: a device would otherwise pick a
         // 32-bit ABI that JNA ships and koan does not, and fail to load.
         ndk { abiFilters += koanAbis.get() }
+        // The walk (`just android-walk`): pages driven and screenshotted on a device.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     // The release key when the build is given it, as CI is: every APK it
@@ -193,4 +195,7 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.uiautomator)
 }

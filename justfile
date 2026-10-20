@@ -1674,6 +1674,80 @@ android-apk abis="arm64-v8a":
     cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:assembleRelease -Pabis={{abis}}
     @echo "$PWD/apps/android/app/build/outputs/apk/release/app-release.apk"
 
+# Walk the Android app on an emulator and screenshot every page, in both looks
+# (the kōan theme and the system's) and both appearances, into
+# target/android-walk/<look>-<appearance>. Serves the `ios-bars` library from
+# a throwaway koan server, with favourites and playlists, and signs the app in
+# to it. Uses the emulator adb already sees, else boots `avd` headless with the
+# host's GPU (software rendering runs the wash too slowly to judge) and shuts
+# it down afterwards. The app is reinstalled on the emulator, its data with it.
+android-walk avd="koan-walk" search="Long":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=$(pwd)/target/android-walk
+    rm -rf "$out" && mkdir -p "$out"
+    sdk="{{android_sdk}}"
+    adb() { "${sdk:+$sdk/platform-tools/}adb" "$@"; }
+    cleanup=()
+    trap 'for ((i=${#cleanup[@]}-1; i>=0; i--)); do eval "${cleanup[$i]}"; done' EXIT
+    serial=$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')
+    if [ -z "$serial" ]; then
+        "$sdk/emulator/emulator" -avd "{{avd}}" -gpu host -memory 4096 -cores 6 -no-window -no-audio \
+            -no-snapshot -no-boot-anim -port 5570 >"$out/emulator.log" 2>&1 &
+        cleanup+=("kill $! 2>/dev/null; wait $! 2>/dev/null || true")
+        serial=emulator-5570
+        adb -s $serial wait-for-device
+        until [ "$(adb -s $serial shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 2; done
+    fi
+    export ANDROID_SERIAL=$serial
+    just _bar-library "$out/library"
+    url=$(just _demo-server "$out/library" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    key=$(cat "$out/server.key")
+    port=${url##*:}
+    api() { curl -sfG "$url/rest/$1" --data-urlencode "apiKey=$key" -d f=json -d v=1.16.1 -d c=walk "${@:2}"; }
+    ids() { python3 -c "import json,sys; r=json.load(sys.stdin)['subsonic-response']; print(' '.join(str(x['id']) for x in $1))"; }
+    long=$(api search3 --data-urlencode "query=Thirty Rooms" -d songCount=0 -d artistCount=0 | ids "r['searchResult3']['album']")
+    songs=$(api getAlbum -d id="$long" | ids "r['album']['song']")
+    api star -d albumId="$long" $(for s in $(echo $songs | cut -d' ' -f1-5); do echo -d id=$s; done) >/dev/null
+    for n in 1 2 3; do
+        api createPlaylist --data-urlencode "name=Playlist $n" $(for s in $songs; do echo -d songId=$s; done) >/dev/null
+    done
+    (cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:installDebug :app:installDebugAndroidTest -Pabis=arm64-v8a)
+    # The server as the emulator's own loopback, as the share links name it.
+    adb reverse tcp:$port tcp:$port
+    cleanup+=("adb reverse --remove tcp:$port || true")
+    adb shell pm clear {{bundle_id}} >/dev/null
+    adb shell pm grant {{bundle_id}} android.permission.POST_NOTIFICATIONS || true
+    # A still status bar, so the screenshots differ only where the app does.
+    adb shell settings put global sysui_demo_allowed 1
+    for c in "clock -e hhmm 0941" "battery -e level 100 -e plugged false" "network -e wifi show -e level 4" "notifications -e visible false"; do
+        adb shell am broadcast -a com.android.systemui.demo -e command $c >/dev/null
+    done
+    was=$(adb shell cmd uimode night | awk '{ print $NF }' | tr -d '\r')
+    cleanup+=("adb shell am broadcast -a com.android.systemui.demo -e command exit >/dev/null; adb shell cmd uimode night '$was' >/dev/null")
+    put() { adb shell "run-as {{bundle_id}} sh -c 'mkdir -p \$(dirname $1) && cat > $1'"; }
+    # Silent, blind to renderers and the network's devices, and signed in.
+    printf '[library]\nfolders = []\n\n[remote]\nenabled = true\nurl = "%s"\nusername = "owner"\napi_key = "%s"\n\n[playback]\nmuted = true\nrenderers = false\n\n[devices]\nnearby = false\n' \
+        "$url" "$key" | put files/koan/config.local.toml
+    # The wash held still, as the iPhone's walk holds it: a still frame of a drift looks the same.
+    printf '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map><int name="graphics" value="1" /></map>\n' \
+        | put shared_prefs/appearance.xml
+    settle=20
+    for look in koan system; do
+        for appearance in light dark; do
+            adb shell am force-stop {{bundle_id}}
+            printf '[appearance]\ntheme = "%s"\n' $look | put files/koan/config.toml
+            adb shell cmd uimode night $([ $appearance = dark ] && echo yes || echo no) >/dev/null
+            adb shell am instrument -w -e class {{bundle_id}}.WalkTest -e settle $settle -e search '{{search}}' \
+                {{bundle_id}}.test/androidx.test.runner.AndroidJUnitRunner | tail -3
+            adb pull /sdcard/Android/data/{{bundle_id}}/files/walk "$out/$look-$appearance" >/dev/null
+            settle=0
+        done
+    done
+    adb shell am force-stop {{bundle_id}}
+    echo "$(find "$out" -name '*.png' | wc -l | tr -d ' ') screenshots in $out"
+
 # Create the Android release key, keep it in 1Password (VAULT, default Claude)
 # and set the secrets CI signs with. Once only: a new key cannot update an APK
 # signed with the old one.

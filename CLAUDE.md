@@ -142,6 +142,7 @@ just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (
 just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bindings
 just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
+just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
