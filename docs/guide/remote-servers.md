@@ -39,7 +39,7 @@ When you have both local files and a remote server, each file and each server en
 2. **The same position, whatever the artist** -- only where there is a track number
 3. **MusicBrainz ids** -- recording on the same release, with the position as a tie-break
 
-Names are compared case-insensitively and in one Unicode form. Where a tier matches more than one track, the match is declined rather than guessed, and the two stay separate tracks.
+Names are compared case-insensitively and in one Unicode form. Where a position tier matches more than one track, the MusicBrainz recording decides; where that too names no single track, the match is declined rather than guessed, and the two stay separate tracks.
 
 A track's names come whole from the file while it has one, so a server's tagging never mixes into a local track's. Playback priority:
 

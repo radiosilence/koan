@@ -35,7 +35,7 @@ The Android app plays from a server, as the iOS app does, and needs Android 10 o
 
 ## The Apple TV app
 
-The Apple TV app is in the same TestFlight beta as the iOS app and needs tvOS 26. It is signed in from a phone or Mac that already is, rather than with a password typed on the remote; see [Apple TV](guide/apple-tv.md).
+The Apple TV app is in the same TestFlight beta as the iOS app and needs tvOS 26. It is most easily signed in from a phone or Mac that already is, or with a code a browser approves, though it also takes a password or API key typed with the remote; see [Apple TV](guide/apple-tv.md).
 
 ## History and Recently played
 
