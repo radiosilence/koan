@@ -1,0 +1,1 @@
+- **Web UI: the library scan from a wide screen.** Admins find the Library page, with Rescan and the progress of every scan, in the sidebar as well as the phone's tab bar, and a running scan shows a bar that fills as files are read.
