@@ -24,12 +24,6 @@ pub(super) const MAX_NAME: usize = 100;
 const REVOKE_KEY: &str = "Revoke this key? Clients using it will stop working.";
 const REVOKE_APP_PASSWORD: &str = "Revoke this app password? The app using it will stop working.";
 
-fn day(secs: i64) -> String {
-    chrono::DateTime::from_timestamp(secs, 0)
-        .map(|t| t.format("%-d %b %Y").to_string())
-        .unwrap_or_default()
-}
-
 struct Credential<'a> {
     id: i64,
     name: &'a str,
@@ -42,8 +36,8 @@ impl<'a> Credential<'a> {
         Self {
             id,
             name,
-            created: day(created),
-            used: used.map(day),
+            created: super::scrobbling::day(created),
+            used: used.map(super::scrobbling::day),
         }
     }
 }

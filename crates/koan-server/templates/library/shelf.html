@@ -4,10 +4,10 @@
 <div class="{% call library::list_head() %}{% endcall %}"><h2><a class="inline-flex items-center gap-1.5 text-[inherit] hover:text-brand hover:no-underline" href="{{ href }}">{{ title }}<span class="text-muted tabular-nums">{{ total }}</span>{{ crate::icon::CHEVRON_RIGHT.svg(14.0, "size-[0.8em]") }}</a></h2>
 <div class="{{ crate::ui::pages::ACTIONS }}">{% if play %}{% call library::play_buttons("standard") %}{% endcall %}{% endif %}</div></div>
 {%- endmacro %}
-{%- if let Some((total, href)) = artists %}
+{%- if let Some((total, href, preview)) = artists %}
 {% call head("Artists", total, href, false) %}{% endcall %}
 <div class="mb-6 flex flex-wrap gap-2">
-{%- for a in summary.artists.preview %}<a class="inline-flex max-w-full border border-muted px-3 py-1.5 text-control text-ink hover:bg-hover/30 hover:no-underline" href="/artist/{{ a.id }}"><span class="truncate">{{ a.name }}</span></a>{% endfor -%}
+{%- for a in preview %}<a class="inline-flex max-w-full border border-muted px-3 py-1.5 text-control text-ink hover:bg-hover/30 hover:no-underline" href="/artist/{{ a.id }}"><span class="truncate">{{ a.name }}</span></a>{% endfor -%}
 </div>
 {%- endif %}
 {%- if let Some((total, href, tiles)) = albums %}

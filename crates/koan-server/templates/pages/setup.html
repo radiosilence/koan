@@ -1,6 +1,6 @@
 {% extends "signin.html" %}
 {% block body %}
-{%- let label = "grid gap-1.5 text-meta text-muted" -%}
+{%- let label = crate::ui::pages::SIGNIN_LABEL -%}
 <p class="text-meta text-muted">This server has no accounts yet. Choose the admin's name and password; this page closes once it exists.</p>
 <form class="grid gap-3.5" method="post" action="/setup">
 <label class="{{ label }}">Username<input class="text-input" name="username" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>

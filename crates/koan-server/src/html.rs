@@ -51,8 +51,9 @@ impl From<Html> for String {
 
 /// Rendering a template. askama fails only when a value's `Display` does,
 /// which for the text, numbers and [`Html`] these templates hold is a bug, so
-/// it panics: the web UI and share routes sit behind `CatchPanicLayer`, which
-/// answers 500 rather than a page or an event drawn as nothing.
+/// it panics. The web UI and share routes sit behind `CatchPanicLayer`, which
+/// answers 500 rather than a page or an event drawn as nothing; a render in an
+/// SSE stream that has already begun ends the stream instead.
 pub(crate) trait Render {
     fn html(&self) -> Html;
 }

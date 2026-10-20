@@ -3,7 +3,7 @@
 <form class="{{ crate::ui::users::FORM }}" data-on:submit__prevent="@post('/users')">
 <input class="flex-1" name="username" data-bind:newuser placeholder="Username" maxlength="64" required autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Username">
 <select class="px-2 py-1.5" data-bind:newrole aria-label="Access">
-{%- for (role, label) in crate::ui::users::ROLES %}<option value="{{ role.as_str() }}"{% if loop.first %} selected{% endif %}>{{ label }}</option>{% endfor -%}
+{%- for (role, label) in crate::ui::users::ROLES %}<option value="{{ role.as_str() }}"{% if role == koan_core::auth::Role::Readonly %} selected{% endif %}>{{ label }}</option>{% endfor -%}
 </select>
 <button class="primary">Create and invite</button></form>
 <div id="user-result"></div>{{ list }}

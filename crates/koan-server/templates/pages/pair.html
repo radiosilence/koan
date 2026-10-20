@@ -6,7 +6,7 @@
 <h2>Sign in a device</h2>
 <p>Type the code the device shows.</p>
 <form class="grid gap-3.5" method="get" action="/pair">
-<label class="grid gap-1.5 text-meta text-muted">Code<input class="text-input" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="20" required autofocus></label>
+<label class="{{ crate::ui::pages::SIGNIN_LABEL }}">Code<input class="text-input" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="20" required autofocus></label>
 {% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
 <button class="primary">Continue</button></form>
 {%- when View::NoAccounts %}

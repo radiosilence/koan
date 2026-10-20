@@ -56,6 +56,7 @@ pub(super) const COPY_ERROR: &str = "mt-3 max-w-form text-control text-bad";
 pub(super) const SIGNIN_BODY: &str = "pb-0";
 pub(super) const SIGNIN_MAIN: &str = "mx-auto max-w-[360px] px-4 py-16";
 pub(super) const SIGNIN_TITLE: &str = "text-brand";
+pub(super) const SIGNIN_LABEL: &str = "grid gap-1.5 text-meta text-muted";
 
 #[derive(Template)]
 #[template(path = "player/buttons.html")]
@@ -1046,10 +1047,9 @@ fn shelf_credits(conn: &rusqlite::Connection, s: &Summary) -> Credits {
 #[derive(Template)]
 #[template(path = "library/shelf.html")]
 struct ShelfView<'a> {
-    summary: &'a Summary,
-    /// Each section's total and the browser it links to, and for records and
-    /// tracks the preview drawn, where it has a preview to show.
-    artists: Option<(u64, String)>,
+    /// Each section's total, the browser it links to and its preview, where it
+    /// has a preview to show.
+    artists: Option<(u64, String, &'a [queries::ArtistRow])>,
     albums: Option<(u64, String, Html)>,
     tracks: Option<(u64, String, Html)>,
 }
@@ -1058,8 +1058,13 @@ struct ShelfView<'a> {
 fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> Html {
     let browser = |kind| browse::shelf_browser(shelf, kind);
     ShelfView {
-        summary: s,
-        artists: (!s.artists.preview.is_empty()).then(|| (s.artists.total, browser(Kind::Artists))),
+        artists: (!s.artists.preview.is_empty()).then(|| {
+            (
+                s.artists.total,
+                browser(Kind::Artists),
+                &s.artists.preview[..],
+            )
+        }),
         albums: (!s.albums.preview.is_empty()).then(|| {
             let tiles = cells(&s.albums.preview, data.versions, data.credits, data.hearts);
             (s.albums.total, browser(Kind::Albums), tiles)
