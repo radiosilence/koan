@@ -337,7 +337,7 @@ private fun PlaylistHeader(
             KoanButton("Shuffle", { edits.play(playlist.id, shuffled = true) }, icon = KoanIcons.shuffle, enabled = any)
         },
         below = {
-            // The lesser verbs on the whole playlist, compact beside its one Play.
+            // The lesser verbs on the whole playlist, compact, under its one Play.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
                 KoanButton("Play Next", { app.player.playNext(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.playNext, enabled = any)
                 KoanButton("Add to Queue", { app.player.enqueue(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue, enabled = any)
