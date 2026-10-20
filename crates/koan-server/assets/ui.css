@@ -25,6 +25,7 @@
     --container-form: 520px;
     --container-panel: 560px;
     --animate-busy: busy 0.7s linear infinite;
+    --animate-sweep: sweep 1.6s ease-in-out infinite alternate;
   }
 }
 @layer base {
@@ -1296,6 +1297,36 @@
   input[type="checkbox"]:checked {
     background: var(--brand) var(--tick) center / 100% no-repeat;
   }
+  #scan-status progress {
+    display: block;
+    height: 3px;
+    width: 100%;
+    max-width: var(--container-form);
+    appearance: none;
+    border-style: var(--tw-border-style);
+    border-width: 0px;
+    background-color: transparent;
+    background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+  }
+  #scan-status progress::-webkit-progress-bar {
+    background-color: transparent;
+  }
+  #scan-status progress::-webkit-progress-value {
+    background-color: var(--brand);
+  }
+  #scan-status progress::-moz-progress-bar {
+    background-color: var(--brand);
+  }
+  #scan-status progress:indeterminate {
+    animation: var(--animate-sweep);
+    @media (prefers-reduced-motion: reduce) {
+      animation: none;
+    }
+    background: linear-gradient(var(--brand), var(--brand)) 0 50% / 25% 3px no-repeat, linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+  }
+  #scan-status progress:indeterminate::-moz-progress-bar {
+    background-color: transparent;
+  }
   input[type="checkbox"], input[type="range"] {
     margin: revert;
   }
@@ -1638,6 +1669,14 @@
 @keyframes busy {
   to {
     transform: rotate(360deg);
+  }
+}
+@keyframes sweep {
+  from {
+    background-position: 0 50%, 0 50%;
+  }
+  to {
+    background-position: 100% 50%, 0 50%;
   }
 }
 @layer properties {

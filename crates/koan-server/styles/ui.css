@@ -17,10 +17,20 @@
   /* Wider than this, a sidebar and a transport bar; narrower, a tab bar. ui.js matches on the same width. */
   --breakpoint-wide: 721px;
   --animate-busy: busy 0.7s linear infinite;
+  --animate-sweep: sweep 1.6s ease-in-out infinite alternate;
 
   @keyframes busy {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  @keyframes sweep {
+    from {
+      background-position: 0 50%, 0 50%;
+    }
+    to {
+      background-position: 100% 50%, 0 50%;
     }
   }
 }
@@ -107,6 +117,36 @@
 
   input[type="checkbox"]:checked {
     background: var(--brand) var(--tick) center / 100% no-repeat;
+  }
+
+  /* The theme's progress bar: the slider's hairline, the part done thicker in the accent. Without a value, before
+   * the work is counted, a short length of the accent moves along it. The transport's own bar is drawn with utilities. */
+  #scan-status progress {
+    @apply block h-[3px] w-full max-w-form appearance-none border-0 bg-transparent;
+    background: linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+  }
+
+  #scan-status progress::-webkit-progress-bar {
+    @apply bg-transparent;
+  }
+
+  #scan-status progress::-webkit-progress-value {
+    @apply bg-brand;
+  }
+
+  #scan-status progress::-moz-progress-bar {
+    @apply bg-brand;
+  }
+
+  #scan-status progress:indeterminate {
+    @apply animate-sweep motion-reduce:animate-none;
+    background:
+      linear-gradient(var(--brand), var(--brand)) 0 50% / 25% 3px no-repeat,
+      linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+  }
+
+  #scan-status progress:indeterminate::-moz-progress-bar {
+    @apply bg-transparent;
   }
 
   /* Browser defaults that preflight removes, which the pages are drawn with. */
