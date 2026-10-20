@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.queue
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -170,16 +171,10 @@ private fun QueuePage() {
 
     // What the last removal took, offered back for a few seconds.
     var removed by remember { mutableStateOf<Removal?>(null) }
-    // Timed here rather than in the bar, which moves when selecting starts or ends.
-    LaunchedEffect(removed) {
-        if (removed == null) return@LaunchedEffect
-        delay(5_000)
-        removed = null
-    }
     // Over the foot of the list, or above the selection bar while there is one.
     val undoBar: @Composable (Modifier) -> Unit = { modifier ->
         removed?.let { removal ->
-            UndoBar(removal, modifier) {
+            UndoBar(removal, modifier, onTimeout = { if (removed === removal) removed = null }) {
                 removed = null
                 mirror.launch { undo(null) }
             }
@@ -683,8 +678,12 @@ private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) ->
     }
 }
 
-/** One removal, by identity, so a second one restarts the bar's time. */
-class Removal(val what: String)
+/**
+ * One removal, by identity, so a second one restarts the bar's time. It
+ * carries when it happened, so a bar drawn again elsewhere (selecting starts
+ * or ends) keeps the time it had left.
+ */
+class Removal(val what: String, val at: Long = SystemClock.uptimeMillis())
 
 /**
  * "Removed X · Undo" along the foot of the queue for a few seconds after a
@@ -692,7 +691,11 @@ class Removal(val what: String)
  * `surface` with a top rule in the theme, no shadow.
  */
 @Composable
-fun UndoBar(removal: Removal, modifier: Modifier = Modifier, onUndo: () -> Unit) {
+fun UndoBar(removal: Removal, modifier: Modifier = Modifier, onTimeout: () -> Unit, onUndo: () -> Unit) {
+    LaunchedEffect(removal) {
+        delay(5_000 - (SystemClock.uptimeMillis() - removal.at))
+        onTimeout()
+    }
     Row(
         modifier.fillMaxWidth().koanSurface(KoanSurface.Surface).systemGround(true).koanRule(KoanEdge.Top)
             .padding(start = KoanSpace.l, end = KoanSpace.xs),
