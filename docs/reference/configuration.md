@@ -176,7 +176,9 @@ With `fade_on_pause`, pause ramps the output down over 150ms before the audio un
 
 ### Rate switch lead-in
 
-When a track needs the output device at a different sample rate, the device relocks its clock, and many interfaces mute until it has. koan cannot see that happen: CoreAudio reports the new rate as soon as it is accepted, and no property says when the clock has locked. Audio sent in that window is lost, so the start of the track goes missing. `rate_switch_lead_in_ms` plays that much silence first, through the running output so devices that only relock on a live stream do so, and the playhead stays at the start until the track itself is heard. Only a rate change adds it; a resume clears it. How long the relock takes depends on the device, so the setting lives in `config.local.toml`. 0 turns it off.
+When a track needs the output device at a different sample rate, the device relocks its clock, and many interfaces mute until it has. koan cannot see that happen: CoreAudio reports the new rate as soon as it is accepted, and no property says when the clock has locked. Audio sent in that window is lost, so the start of the track goes missing.
+
+`rate_switch_lead_in_ms` plays that much silence first, through the running output so devices that only relock on a live stream do so, and the playhead stays at the start until the track itself is heard. Only a rate change adds it; a resume clears it. How long the relock takes depends on the device, so the setting lives in `config.local.toml`. 0 turns it off.
 
 ### Render FPS
 
@@ -188,7 +190,11 @@ When a track needs the output device at a different sample rate, the device relo
 
 ### Cover graphics
 
-With `art_graphics` on, the TUI asks the terminal at startup whether it draws images (the kitty or iTerm2 protocol; sixel is not used) and uses them for covers and album tiles. While the album grid scrolls its tiles are half blocks, turning back into images when it stops: terminals draw a kitty image as a placeholder in every cell, and a screen of those moving every frame is slow. iTerm2-protocol terminals keep their images. Covers are shaped by the cell size the terminal reports. Terminals that do not answer get half blocks, which is also what `art_graphics = false` gives, and skips the question. `I` in the TUI switches for the session and saves the choice. It lives in `config.local.toml`: whether images work is a property of the terminal at hand.
+With `art_graphics` on, the TUI asks the terminal at startup whether it draws images (the kitty or iTerm2 protocol; sixel is not used) and uses them for covers and album tiles.
+
+While the album grid scrolls its tiles are half blocks, turning back into images when it stops: terminals draw a kitty image as a placeholder in every cell, and a screen of those moving every frame is slow. iTerm2-protocol terminals keep their images. Covers are shaped by the cell size the terminal reports.
+
+Terminals that do not answer get half blocks, which is also what `art_graphics = false` gives, and skips the question. `I` in the TUI switches for the session and saves the choice. It lives in `config.local.toml`: whether images work is a property of the terminal at hand.
 
 ### TUI palette
 
@@ -442,7 +448,11 @@ ffmpeg = "ffmpeg"             # the ffmpeg transcoding runs, on PATH or a path (
 
 `koan subsonic setup` enables it and generates a shared secret, written to `config.local.toml` and printed once. The secret signs in as `username` with `user` rights, for a client that has no account of its own; `koan play --server` streams with it. It is generated rather than chosen because Subsonic token auth sends `md5(secret + salt)` with every request, and a captured digest of a human-chosen password can be cracked offline.
 
-A client that asks `stream` for a `maxBitRate` below the file's bitrate, or for `format=opus`, `format=mp3` or `format=aac` (also `m4a`), gets a transcode made by `ffmpeg`: Opus unless another format was asked for, at the requested bitrate or 128 kbps (Opus) and 192 kbps (MP3, AAC). AAC is AAC-LC from ffmpeg's built-in encoder, sent as ADTS (`audio/aac`); a file already in the requested format and within the limit is sent as it is. `format=raw`, and `download`, always return the original. A transcode has no length until it ends, so it is sent without one, unless the client passes `estimateContentLength=true` (the body is then cut or padded to the bitrate times the duration), and without Range support; clients seek with `timeOffset`, offered as the OpenSubsonic `transcodeOffset` extension. The server runs at most one transcode per CPU core and three per account; beyond that, and whenever ffmpeg produces nothing, the original is served. Where `ffmpeg` does not run or has none of `libopus`, `libmp3lame` and `aac`, the server logs it once at startup and serves originals. The container image includes it.
+A client that asks `stream` for a `maxBitRate` below the file's bitrate, or for `format=opus`, `format=mp3` or `format=aac` (also `m4a`), gets a transcode made by `ffmpeg`: Opus unless another format was asked for, at the requested bitrate or 128 kbps (Opus) and 192 kbps (MP3, AAC). AAC is AAC-LC from ffmpeg's built-in encoder, sent as ADTS (`audio/aac`); a file already in the requested format and within the limit is sent as it is. `format=raw`, and `download`, always return the original.
+
+A transcode has no length until it ends, so it is sent without one, unless the client passes `estimateContentLength=true` (the body is then cut or padded to the bitrate times the duration), and without Range support; clients seek with `timeOffset`, offered as the OpenSubsonic `transcodeOffset` extension.
+
+The server runs at most one transcode per CPU core and three per account; beyond that, and whenever ffmpeg produces nothing, the original is served. Where `ffmpeg` does not run or has none of `libopus`, `libmp3lame` and `aac`, the server logs it once at startup and serves originals. The container image includes it.
 
 ---
 

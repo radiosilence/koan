@@ -50,8 +50,8 @@ Check that `[library] folders` names the top-level directory (scans are recursiv
 
 ### Duplicate tracks after remote sync
 
-kōan merges a local file with the server's copy when their artist, album, disc, track number and title agree, or when both carry the same MusicBrainz recording and release ids. If you see duplicates:
-- Tags might differ between local files and the remote server (e.g. different artist spelling)
+kōan merges a local file with the server's copy when their album, album artist, disc, track number and title agree (the track artist breaks a tie), or when both carry the same MusicBrainz recording and release ids. If you see duplicates:
+- Tags might differ between local files and the remote server (e.g. a different album or album artist spelling, or a missing track number)
 - Fix the tags, then `koan scan --force` — a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge
 - In the apps, Info… on a track's menu shows what each source says; signed in to a kōan server as an admin, it also shows the file's path on the server, which says where a duplicate comes from
 

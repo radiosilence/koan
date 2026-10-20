@@ -6,7 +6,7 @@ kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default
 
 ```bash
 koan auth setup               # signing keys and the first admin account
-koan --headless --port 4000
+KOAN_SERVER__URL=http://localhost:4000 koan --headless --port 4000
 
 # Sign in: returns an access token, a refresh token and its lifetime
 curl -s -X POST http://localhost:4000/auth/login \
@@ -255,7 +255,9 @@ curl -s https://koan.example/graphql \
 
 ## OAuth, for MCP clients
 
-With `server.url` set, the server is an OAuth 2.1 authorization server for its own `/mcp`: discovery at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, open registration at `/oauth/register`, consent at `/oauth/authorize` behind the web UI's sign-in, and `/oauth/token` (authorization code with PKCE S256, and refresh). What it issues are kōan access and refresh tokens scoped to MCP (`"scope": "mcp"` in the JWT): `/mcp` accepts only those, and GraphQL and the web UI refuse them, so a connection cannot do more through GraphQL than MCP allows it. The account is looked up on every request, as for any session.
+With `server.url` set, the server is an OAuth 2.1 authorization server for its own `/mcp`: discovery at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, open registration at `/oauth/register`, consent at `/oauth/authorize` behind the web UI's sign-in, and `/oauth/token` (authorization code with PKCE S256, and refresh).
+
+What it issues are kōan access and refresh tokens scoped to MCP (`"scope": "mcp"` in the JWT): `/mcp` accepts only those, and GraphQL and the web UI refuse them, so a connection cannot do more through GraphQL than MCP allows it. The account is looked up on every request, as for any session.
 
 Two things differ from an app's session. A client id is a JWT signed with the server's key, carrying the client's redirect URIs, so registrations need no storage and rotating the keys sends every client back to register. And each connection's refresh tokens are one grant: a spent refresh token presented again more than 30 seconds later, or a code exchanged twice, means a copy is in other hands, and revokes the whole grant. App and browser sessions are exempt, since tabs and tasks sharing one session may race a refresh.
 
@@ -264,7 +266,7 @@ Two things differ from an app's session. A client id is a JWT signed with the se
 ## GraphQL Playground
 
 ```bash
-koan --headless --playground
+KOAN_SERVER__URL=http://localhost:4000 koan --headless --playground
 # Prints: GraphiQL: http://127.0.0.1:4000/graphql?introspection-key=<uuid>
 # Auto-opens the browser. The introspection key is injected into all requests.
 # Key is process-scoped — dies when the server exits.
@@ -349,7 +351,9 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 ## Sockets
 
-A socket is authenticated once, when it opens, so `/graphql/ws` and an app's link at `/rest/koanLink` close whenever something about their account changes that can narrow what it may do: its role, its password, its deletion, a key or app password revoked, or a device's key replaced when it signs in again. Signing out does not: no socket rests on a refresh token, so the account's other devices stay connected. A subscription socket also closes when the token it opened with expires. The client reconnects and is authenticated as things then stand. A change made by another process, such as `koan auth` at a terminal while the server runs, reaches sockets when they next reconnect.
+A socket is authenticated once, when it opens, so `/graphql/ws` and an app's link at `/rest/koanLink` close whenever something about their account changes that can narrow what it may do: its role, its password, its deletion, a key or app password revoked, or a device's key replaced when it signs in again.
+
+Signing out does not: no socket rests on a refresh token, so the account's other devices stay connected. A subscription socket also closes when the token it opened with expires. The client reconnects and is authenticated as things then stand. A change made by another process, such as `koan auth` at a terminal while the server runs, reaches sockets when they next reconnect.
 
 ## Subsonic API
 
@@ -371,9 +375,17 @@ Which credential a client should use:
 
 ### Sign-in limits
 
-Every request carries its credential, so failed password sign-ins are limited three ways: per address and username (10 a minute), per address (30), and per username from every address together (60). The last is shared with `/auth/login` and the web UI's sign-in, so spreading guesses across addresses or doors gains nothing. Since anyone can spend that budget, it does not apply to a network the account signed in from in the last week, by password or by a browser refreshing its session: an outsider cannot lock the account's own people out. Only failures count, so a client syncing a library is never slowed. API keys and the shared secret's token are random and not worth guessing, so they are never limited, and a flood of wrong passwords for an account cannot lock out the apps signed in with either. An IPv6 address counts as its /64.
+Every request carries its credential, so failed password sign-ins are limited three ways: per address and username (10 a minute), per address (30), and per username from every address together (60). The last is shared with `/auth/login` and the web UI's sign-in, so spreading guesses across addresses or doors gains nothing.
 
-Subsonic token auth (`t = md5(password + salt)`) cannot be checked against the account's own password, because the server keeps only its argon2 hash; a password the server can read back is one its admins and anyone with the database can read too. App passwords are the exception made for token-only clients. Each is random, never the account's password, and stored sealed with ChaCha20-Poly1305 under a key derived (HKDF) from the server's Ed25519 signing key and bound to its account, so a copy of the database alone does not yield them, and regenerating the keypair retires them with every session. An account without app passwords gets error 41 for a token, which tells a client to fall back to a password or a key. Token auth still protects little in transit — a captured token replays — so use HTTPS.
+Since anyone can spend that budget, it does not apply to a network the account signed in from in the last week, by password or by a browser refreshing its session: an outsider cannot lock the account's own people out. Only failures count, so a client syncing a library is never slowed.
+
+API keys and the shared secret's token are random and not worth guessing, so they are never limited, and a flood of wrong passwords for an account cannot lock out the apps signed in with either. An IPv6 address counts as its /64.
+
+Subsonic token auth (`t = md5(password + salt)`) cannot be checked against the account's own password, because the server keeps only its argon2 hash; a password the server can read back is one its admins and anyone with the database can read too. App passwords are the exception made for token-only clients.
+
+Each is random, never the account's password, and stored sealed with ChaCha20-Poly1305 under a key derived (HKDF) from the server's Ed25519 signing key and bound to its account, so a copy of the database alone does not yield them, and regenerating the keypair retires them with every session.
+
+An account without app passwords gets error 41 for a token, which tells a client to fall back to a password or a key. Token auth still protects little in transit — a captured token replays — so use HTTPS.
 
 ```bash
 koan auth api-key create --username alice --name phone   # prints the key once
