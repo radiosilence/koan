@@ -4,7 +4,7 @@ The keys of the terminal UI, page by page, and of the macOS app. The hint bar al
 
 ## Every page
 
-These work on any page, unless a text field has the keys.
+These work on any page whose own keys leave them free, and never while a text field has the keys. A page takes some of them for itself: `S` shuffles an album or playlist page, `D` on History forgets every play (after asking), `X` on a playlist's page deletes it, and `D` and `R` on the EQ page delete and reset the profile.
 
 ### Playback
 
@@ -13,8 +13,8 @@ These work on any page, unless a text field has the keys.
 | `space` | Pause / resume |
 | `<` | Previous track |
 | `>` or `n` | Next track |
-| `,` or `←` | Seek back 10 seconds (the queue and Now playing; elsewhere `←` moves the cursor) |
-| `.` or `→` | Seek forward 10 seconds |
+| `,` or `←` | Seek back 10 seconds (`←` only where the page does not move its cursor with it) |
+| `.` or `→` | Seek forward 10 seconds (likewise) |
 | `s` | Shuffle on / off ([plays the tracks not yet played in a random order](../guide/shuffle-and-repeat.md); the queue keeps its order) |
 | `R` | Repeat: off, the queue, one track |
 | `T` | Sleep timer: 15, 30, 45, 60 minutes, end of track, end of record, off |
@@ -33,7 +33,6 @@ See [The terminal UI](../guide/terminal-ui.md).
 | `Tab` / `Shift+Tab` | Next / previous page in the sidebar's order |
 | `[` / `]` or `Alt+←` / `Alt+→` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
-| `l` | Artists |
 | `I` | Draw covers as images or in half blocks |
 
 Tracks, Downloaded, Downloads and the EQ page have no number; they are reached from the sidebar, or `E` for the EQ.
@@ -42,9 +41,7 @@ Tracks, Downloaded, Downloads and the EQ page have no number; they are reached f
 
 | Key | Action |
 |-----|--------|
-| `p` / `a` / `r` | Track / album / artist picker (fuzzy search) |
-| `/` | Jump to a track in the queue (on the queue; other pages filter with it) |
-| `i` | Track info |
+| `p` | Track picker (fuzzy search) |
 | `z` | Zoom the cover |
 | `L` | Lyrics panel |
 | `V` | Visualiser picker: off, or one of 22 modes, with a live preview |
@@ -52,9 +49,7 @@ Tracks, Downloaded, Downloads and the EQ page have no number; they are reached f
 | `F` | Visualiser full screen |
 | `S` | Bass shake on / off (on an album or playlist page, `S` shuffles) |
 | `X` | Matrix overlay on / off |
-| `f` | Favourite the track under the cursor |
-| `w` / `W` | Put the selection in a playlist / save the queue as one |
-| `A` / `O` | Open the artist / the record of the selection |
+| `w` / `W` | On Now playing: put the playing track in a playlist (other pages' `w` uses what they show) |
 | `?` | Help |
 | `q` | Quit |
 
@@ -80,6 +75,13 @@ There is no mode to enter: the cursor and the selection are always live, and the
 | `Ctrl+X` | Clear the queue |
 | `g` / `G` | Jump to start / end |
 | `PgUp` / `PgDn`, `Ctrl+U` / `Ctrl+D` | Page up / page down |
+| `a` / `r` | Album / artist picker |
+| `l` | The Artists page |
+| `/` | Jump to a track in the queue |
+| `i` | Track info |
+| `f` | Favourite the track under the cursor |
+| `A` / `O` | Open the artist / the record of the selection |
+| `w` / `W` | Put the selection in a playlist / save the queue as one |
 
 | Action | Effect |
 |--------|--------|

@@ -233,7 +233,7 @@ each is checked as the app comes to the front.
 Network amplifiers and streamers that act as UPnP/DLNA renderers (WiiM,
 Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
 player" amps) are listed under **Output** in the Mac, iPhone and Android
-apps, and in the output device list (`o`) in the TUI, where they are marked
+apps, and in the output device list (`D`) in the TUI, where they are marked
 `· UPnP`. Kodi with
 "Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
 are renderers too.

@@ -268,7 +268,7 @@ username = "admin"
 # password is prompted by `koan remote login` and saved here
 
 # config.local.toml -- this machine's disk
-cache_limit = "50GB"             # max cache size, LRU eviction at startup and as downloads land; "0" keeps no cache (default: unlimited)
+cache_limit = "50GB"             # max cache size, LRU eviction at startup and as downloads land; "0" keeps only what plays next (default: unlimited)
 download_ahead = 3               # tracks past the playing one to fetch; 0 gives up gapless (default: the whole queue)
 cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)
 play_queue = false               # keep this device's queue on the server (default: false)
