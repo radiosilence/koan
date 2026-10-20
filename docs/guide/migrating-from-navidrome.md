@@ -4,7 +4,7 @@ Navidrome is fantastic, incredible software, and I owe a huge amount for bringin
 
 A kōan server does the job Navidrome does: it indexes a music folder, serves it over the Subsonic API with OpenSubsonic extensions, and gives each person an account. Subsonic apps that work with Navidrome work with kōan.
 
-You do not have to switch to use kōan's apps. The macOS and iOS apps and the terminal UI play from a Navidrome server as they do from a kōan one, so a move can be gradual: run kōan beside Navidrome on the same read-only music folder, try it, and move clients one at a time.
+You do not have to switch to use kōan's apps. The macOS, iOS, Android and Apple TV apps and the terminal UI play from a Navidrome server as they do from a kōan one, so a move can be gradual: run kōan beside Navidrome on the same read-only music folder, try it, and move clients one at a time.
 
 ## What you gain
 
@@ -17,8 +17,8 @@ You do not have to switch to use kōan's apps. The macOS and iOS apps and the te
 
 These Navidrome features have no kōan equivalent today:
 
-- **Serving under a sub-path** (`ND_BASEURL`, [#760](https://github.com/radiosilence/koan/issues/760)). kōan expects its own hostname.
-- **Per-library permissions** ([#762](https://github.com/radiosilence/koan/issues/762)). Every account sees the whole library.
+- **Serving under a sub-path** (`ND_BASEURL`). kōan expects its own hostname.
+- **Per-library permissions**. Every account sees the whole library.
 - **Internet radio**, which is not planned. Clients that use it lose the feature against kōan; the rest of the client works.
 
 ## Translating a Navidrome setup
@@ -106,7 +106,7 @@ Change the server URL and sign in with the kōan account. kōan accepts every wa
 - **Token and salt**, which most clients use by default, with an app password in place of the account's password.
 - **API key** (OpenSubsonic `apiKeyAuthentication`).
 
-Make API keys and app passwords on the web UI's Account page, one per client; kōan's Mac and iOS apps make and revoke both under Settings → Account too. A client that reports error 41 is using token auth with the account's own password, which kōan cannot check because it keeps only a hash: give it an app password instead. See [Authentication](authentication.md#subsonic-api).
+Make API keys and app passwords on the web UI's Account page, one per client; kōan's Mac, iOS and Android apps make and revoke both under Settings → Account too. A client that reports error 41 is using token auth with the account's own password, which kōan cannot check because it keeps only a hash: give it an app password instead. See [Authentication](authentication.md#subsonic-api).
 
 ### Favourites, play counts and playlists
 

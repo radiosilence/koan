@@ -33,14 +33,15 @@ koan remote sync          # sync now
 
 ## How merging works
 
-When you have both local files and a remote server, kōan deduplicates tracks by trying, in order:
+When you have both local files and a remote server, each file and each server entry is a source of its own, and a track holds at most one of each. A file and an entry are the same track when they match on one key, tried in order:
 
-1. **File path** -- exact local path match
-2. **Remote ID** -- Subsonic server ID
-3. **Content match** -- artist + album + disc + track number + title, then the same without the artist
-4. **MusicBrainz ids** -- recording + release
+1. **Position on the release** -- album, album artist, disc, track number and title, with the track artist as a tie-break
+2. **The same position, whatever the artist** -- only where there is a track number
+3. **MusicBrainz ids** -- recording on the same release, with the position as a tie-break
 
-If the same track exists in both sources, it becomes a single database entry. Playback priority:
+Names are compared case-insensitively and in one Unicode form. Where a tier matches more than one track, the match is declined rather than guessed, and the two stay separate tracks.
+
+A track's names come whole from the file while it has one, so a server's tagging never mixes into a local track's. Playback priority:
 
 1. **Local file** -- always preferred (bit-perfect from disk)
 2. **Cached download** -- previously downloaded remote tracks

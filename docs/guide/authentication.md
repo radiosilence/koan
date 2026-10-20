@@ -143,7 +143,10 @@ makes an API key on the approver's account, named after the device, and the
 server sends it down the waiting socket. The device is told the moment it is
 approved or declined; nothing polls. A pairing lasts ten minutes
 (`KOAN_PAIR_TTL_SECS` in the server's environment changes that, for trying
-expiry out) and lives only in the server's memory. Approving signs the device in as you, so approve only a
+expiry out) and lives only in the server's memory; a device that stops answering
+the server's pings is dropped after 75 seconds rather than holding its pairing
+open. An approval counts only once the key has reached the device: otherwise the
+key is revoked and the approver is told it failed. Approving signs the device in as you, so approve only a
 device you are setting up yourself: the name it shows is whatever it chose to
 call itself. Every approval screen also says where the request came from: the
 address the server saw (behind a trusted proxy, the client's, as the rate limits

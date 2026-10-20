@@ -66,7 +66,9 @@ sudo dnf install alsa-lib-devel dbus-devel
 sudo pacman -S alsa-lib dbus
 ```
 
-The iOS app is built from source for now: `just ios-phone` installs it on a plugged-in iPhone, signed with your own (free) Apple developer team. It needs iOS 26 and a kōan, Navidrome or other Subsonic server to play from.
+The iOS and Apple TV apps are in App Review; until they are released, the [TestFlight beta](https://testflight.apple.com/join/96w2gjFz) installs them on an iPhone, iPad or Apple TV. The iOS app can also be built from source: `just ios-phone` installs it on a plugged-in iPhone, signed with your own (free) Apple developer team. Both need iOS or tvOS 26 and a kōan, Navidrome or other Subsonic server to play from.
+
+The Android app is sideloaded from [`koan-android-arm64.apk`](https://github.com/radiosilence/koan/releases/latest/download/koan-android-arm64.apk) on each release, and needs Android 10 or later on a 64-bit ARM phone. See [Android](https://koan.rocks/docs/android/).
 
 ## Quickstart (CLI)
 
@@ -99,7 +101,7 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 ### Devices
 
 - **Any kōan app controls any other**, on the same network directly or anywhere through a kōan server, and moves what is playing to it, saying when a device has not woken or the music has not arrived. The device it moves to plays its own copy, so it carries on when the phone sleeps. With *Keep running in the menu bar*, a closed Mac app stays reachable.
-- **A cache built for losing signal**: the queue is fetched ahead of the playhead as far as the cache limit allows, so it keeps playing underground. See [Cache management](https://koan.rocks/docs/cache-management/).
+- **A cache built for losing signal**: the queue is fetched ahead of the playhead, as many tracks as you choose or all of it, within the cache limit, so it keeps playing underground. A limit of zero keeps only what plays next. See [Cache management](https://koan.rocks/docs/cache-management/).
 - **Signing in without a password**: invite links, approving another device by code, and app passwords for Subsonic apps that only sign in with a token. See [Authentication](https://koan.rocks/docs/authentication/).
 
 ### Library
@@ -127,7 +129,7 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 
 ### The terminal UI
 
-A full-screen Ratatui player on macOS and Linux, shaped like the apps: pages for the queue, now playing, albums, artists, favourites and recent, linked record and artist pages, cover art drawn as real images where the terminal supports it, a now-playing page with the signal path and the EQ in use, an accent that follows the cover, mouse support and 22 visualiser modes. See [the terminal UI guide](https://koan.rocks/docs/terminal-ui/).
+A full-screen Ratatui player on macOS and Linux, shaped like the apps: the queue, now playing, the album, artist and track browsers, favourites, recent, search, playlists, history, downloads, the EQ and settings as pages, linked record and artist pages, an actions menu on every row, cover art drawn as real images where the terminal supports it, a now-playing page with the signal path and the EQ in use, an accent that follows the cover, full mouse support and 22 visualiser modes. Like the apps, it can control other kōan devices and be controlled by them. See [the terminal UI guide](https://koan.rocks/docs/terminal-ui/).
 
 <img alt="The terminal UI's album grid" src="site/public/screens/tui-albums.webp" width="49%" /> <img alt="The terminal UI's now-playing page" src="site/public/screens/tui-now-playing.webp" width="49%" />
 
@@ -148,7 +150,7 @@ A full-screen Ratatui player on macOS and Linux, shaped like the apps: pages for
 | **Subsonic/Navidrome** | **Yes** | No | No | No | No | No | **Yes** |
 | **Local library** | **Yes** | Via MPD | Yes | Yes | Yes | Via MPD | No |
 | **Local + remote unified** | **Yes** | -- | -- | -- | -- | -- | -- |
-| **Album art** | **Halfblock** | Kitty | No | No | Kitty/Sixel | Kitty/Sixel | No |
+| **Album art** | **Kitty/iTerm2, halfblock elsewhere** | Kitty | No | No | Kitty/Sixel | Kitty/Sixel | No |
 | **ReplayGain** | **Yes** | Via MPD | Yes | Yes | No | Via MPD | No |
 | **fb2k format strings** | **59 functions** | Column fmt | Basic | No | No | Basic | No |
 | **File organization** | **Yes** | No | No | No | No | No | No |
@@ -184,7 +186,7 @@ File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback 
 
 Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
-The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; it asks iOS for each track's sample rate, so a USB DAC that supports the rate is switched to it and there is no resampling in koan or iOS; on any other route iOS resamples, and the format badge shows the rate the hardware runs at. The Apple TV app is the same again, built around the remote and mostly played to from a phone or a Mac; tvOS keeps app files only in a cache it may empty, so the configuration is mirrored into the app's preferences, which survive.
+The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; it asks iOS for each track's sample rate, so a USB DAC that supports the rate is switched to it and there is no resampling in koan or iOS; on any other route iOS resamples, and the format badge shows the rate the hardware runs at. The Apple TV app is the same again, built around the remote and mostly played to from a phone or a Mac; tvOS keeps app files only in a cache it may empty, so the configuration is mirrored into the app's preferences, which survive. The Android app ([`apps/android`](apps/android)) is Compose over the same core, loading `koan-ffi` through uniffi's Kotlin bindings.
 
 ## Dev
 
