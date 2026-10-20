@@ -2,12 +2,15 @@ package cc.blit.koan.ui.settings
 
 import android.content.ClipData
 import android.content.Intent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -23,15 +26,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.AccountRole
 import cc.blit.koan.ffi.Invite
+import cc.blit.koan.ffi.qrCode
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -43,6 +53,7 @@ import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
+import kotlin.math.floor
 import kotlinx.coroutines.launch
 
 /** The extensions a koan server lists for an account's own keys to it. */
@@ -381,6 +392,7 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
                         "each device, for a week.",
                     tone = KoanTone.Muted,
                 )
+                InviteCode(invite.link)
                 Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
                     KoanButton("Send invite…", {
                         val send = Intent(Intent.ACTION_SEND)
@@ -410,4 +422,39 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
         },
         confirmButton = { KoanButton("Done", dismiss) },
     )
+}
+
+/**
+ * The invite link as a QR code, for a phone beside this one to scan. Dark on white whatever the theme, since
+ * scanners expect that contrast; each module a whole number of pixels, so the edges stay crisp.
+ */
+@Composable
+private fun InviteCode(link: String) {
+    val code = remember(link) { qrCode(link) } ?: return
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(KoanSpace.s),
+    ) {
+        Canvas(
+            Modifier.size(192.dp)
+                .background(Color.White)
+                .padding(KoanSpace.m)
+                .semantics { contentDescription = "QR code" },
+        ) {
+            val width = code.width.toInt()
+            val module = floor(size.minDimension / width)
+            val inset = (size.minDimension - module * width) / 2
+            code.dark.forEachIndexed { i, dark ->
+                if (dark) {
+                    drawRect(
+                        Color.Black,
+                        topLeft = Offset(inset + (i % width) * module, inset + (i / width) * module),
+                        size = Size(module, module),
+                    )
+                }
+            }
+        }
+        KoanText("Scan with a phone's camera to open it there.", role = KoanType.Meta, tone = KoanTone.Muted)
+    }
 }

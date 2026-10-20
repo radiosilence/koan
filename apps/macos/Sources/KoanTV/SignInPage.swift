@@ -178,14 +178,7 @@ struct SignInPage: View {
 
     private func waitingCard(_ pairing: PairingCode) -> some View {
         HStack(spacing: 80) {
-            if let code = qrImage(pairing.link) {
-                Image(decorative: code, scale: 1)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: 400, height: 400)
-                    .padding(24)
-                    .background(.white, in: .rect(cornerRadius: KoanTheme.radius(24))) // theme: raw — a QR code needs a white ground to scan
-            }
+            QRCodeView(text: pairing.link, side: 400, margin: 24, radius: 24)
             VStack(alignment: .leading, spacing: 20) {
                 Text(host)
                     .koanText(.titleSmall, .strong)
