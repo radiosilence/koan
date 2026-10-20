@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::actions_menu::playable;
 use super::app::PickerAction;
-use super::browse::{Action, Thumbs, album_year, track_playable};
+use super::browse::{Action, Thumbs, album_year, credited_track, track_playable};
 use super::cover_art::{Gfx, album_key};
 use super::rows::{self, Columns, Emphasis, Row, Target};
 use super::theme::Theme;
@@ -248,7 +248,7 @@ impl AlbumPage {
 
     pub fn click(&mut self, hit: AlbumHit) -> Action {
         match hit {
-            AlbumHit::Link(Target::Artist(id)) => Action::OpenArtist(id),
+            AlbumHit::Link(Target::Credited(of, id)) => Action::OpenCredited(of, id),
             AlbumHit::Link(Target::Album(id)) => Action::OpenAlbum(id),
             AlbumHit::Heart => Action::ToggleAlbum(self.album.id),
             AlbumHit::Play => self.play_all(PickerAction::ReplaceQueue),
@@ -364,7 +364,7 @@ impl AlbumPage {
         if in_header(body.y + 1) {
             // "Artist · 2007 · FLAC · 59:10", the artist a link.
             let y = body.y + 1;
-            let target = Target::Artist(self.album.artist_id);
+            let target = Target::Credited(CreditsOf::Albums, self.album.id);
             let artist = rows::put(
                 buf,
                 tx,
@@ -483,7 +483,7 @@ impl AlbumPage {
                         favourite: favourites.contains(&t.id),
                         lead: &number,
                         name: &t.title,
-                        artist: mixed.then_some((t.artist_name.as_str(), t.artist_id)),
+                        artist: mixed.then_some((t.artist_name.as_str(), credited_track(t))),
                         detail: None,
                         tail: &time,
                     }
@@ -586,12 +586,10 @@ mod tests {
     fn the_artist_and_the_buttons_are_links() {
         let mut p = page(5);
         draw(&mut p, 80, 30);
-        let a = hit_of(&p, AlbumHit::Link(Target::Artist(9)));
-        assert_eq!(p.hit(a.x, a.y), Some(AlbumHit::Link(Target::Artist(9))));
-        assert_eq!(
-            p.click(AlbumHit::Link(Target::Artist(9))),
-            Action::OpenArtist(9)
-        );
+        let artist = AlbumHit::Link(Target::Credited(CreditsOf::Albums, 1));
+        let a = hit_of(&p, artist);
+        assert_eq!(p.hit(a.x, a.y), Some(artist));
+        assert_eq!(p.click(artist), Action::OpenCredited(CreditsOf::Albums, 1));
         for b in [
             AlbumHit::Play,
             AlbumHit::Shuffle,

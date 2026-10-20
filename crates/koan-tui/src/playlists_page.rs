@@ -11,7 +11,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use super::actions_menu::{Item, credited, go_to_artists};
+use super::actions_menu::Item;
 use super::app::PickerAction;
 use super::playlist_ops as ops;
 use super::shell::{Link, Links, ToolItem, Toolbar};
@@ -864,17 +864,12 @@ impl PlaylistPage {
         if let Some(album) = e.track.album_id {
             items.push(("Go to album".into(), Browse(Action::OpenAlbum(album))));
         }
-        let artists = credited(
-            CreditsOf::Tracks,
-            e.track.id,
-            &e.track.artist_name,
-            e.track.artist_id,
-        );
-        items.extend(
-            go_to_artists(&artists)
-                .into_iter()
-                .map(|(label, action)| (label, Browse(action))),
-        );
+        if e.track.artist_id.is_some() {
+            items.push((
+                "Go to artist".into(),
+                Browse(Action::OpenCredited(CreditsOf::Tracks, e.track.id)),
+            ));
+        }
         PlAction::Menu(e.track.title.clone(), items)
     }
 
@@ -931,7 +926,10 @@ impl PlaylistPage {
                 return Some(here.map_or(PlAction::None, |(_, t)| PlAction::Info(t.id)));
             }
             KeyCode::Char('A') => {
-                return Some(here.map_or(PlAction::None, |(_, t)| PlAction::ArtistOfTrack(t.id)));
+                return Some(
+                    here.filter(|(_, t)| t.artist_id.is_some())
+                        .map_or(PlAction::None, |(_, t)| PlAction::ArtistOfTrack(t.id)),
+                );
             }
             KeyCode::Char('O') => {
                 return Some(
@@ -1174,7 +1172,10 @@ impl PlaylistPage {
                         status,
                         number: Some(format!("{}", i + 1)),
                         title: &t.title,
-                        artist: Some((&t.artist_name, t.artist_id.map(Link::Artist))),
+                        artist: Some((
+                            &t.artist_name,
+                            t.artist_id.map(|_| Link::ArtistOfTrack(t.id)),
+                        )),
                         album: (!grouped)
                             .then_some((t.album_title.as_str(), t.album_id.map(Link::Album))),
                         avail,

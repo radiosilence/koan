@@ -140,7 +140,7 @@ On the album page `Enter` plays the album from the track under the cursor, the t
 
 ### Links
 
-As in the apps, names that lead somewhere are links. Under a tile, the title opens the album and the artist opens the artist; in a row of tracks the artist and the album do; on the album page the artist's name does; and in the queue the artist and album in each album heading do. A link is underlined while the pointer is over it. Each has a key too: `O` opens the album and `A` the artist of whatever is selected, in the queue, the shelves and the browsing pages. Where a credit names several artists, `A`, the queue's "Go to artist" and the artist links in the queue, the transport bar and Now Playing open a menu of them to choose from.
+As in the apps, names that lead somewhere are links. Under a tile, the title opens the album and the artist opens the artist; in a row of tracks the artist and the album do; on the album page the artist's name does; and in the queue the artist and album in each album heading do. A link is underlined while the pointer is over it. Each has a key too: `O` opens the album and `A` the artist of whatever is selected, in the queue, the shelves and the browsing pages. Where a credit names several artists, `A`, the queue's "Go to artist" and the artist link of a track or record open a menu of them to choose from.
 
 ### Without a right button
 

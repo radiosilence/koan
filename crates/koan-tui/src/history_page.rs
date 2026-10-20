@@ -511,9 +511,13 @@ impl HistoryPage {
                 );
             }
             KeyCode::Char('A') => {
-                return Some(self.track_at(self.cursor).map_or(Action::None, |t| {
-                    Action::OpenCredited(CreditsOf::Tracks, t.id)
-                }));
+                return Some(
+                    self.track_at(self.cursor)
+                        .filter(|t| t.artist_id.is_some())
+                        .map_or(Action::None, |t| {
+                            Action::OpenCredited(CreditsOf::Tracks, t.id)
+                        }),
+                );
             }
             KeyCode::Char('O') => {
                 return Some(
@@ -855,7 +859,7 @@ impl HistoryPage {
                 &t.artist_name,
                 artist_x,
                 artist_w,
-                t.artist_id.map(Link::Artist),
+                t.artist_id.map(|_| Link::ArtistOfTrack(t.id)),
             ),
             (
                 &t.album_title,

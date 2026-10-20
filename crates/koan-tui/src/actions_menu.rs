@@ -8,7 +8,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
-use koan_core::db::queries::CreditsOf;
+use koan_core::db::connection::Database;
+use koan_core::db::queries::{self, CreditsOf};
 use koan_core::helpers::{credit_parts, credits_by_id};
 
 use super::app::PickerAction;
@@ -25,15 +26,12 @@ pub enum Playable {
         /// Whether its file is on this device.
         on_disk: bool,
         album: Option<i64>,
-        /// The artists its credit links, from `credited`.
-        artists: Vec<(i64, String)>,
+        artist: Option<i64>,
     },
     Album {
         id: i64,
         tracks: Vec<i64>,
         favourite: bool,
-        /// The artists its credit links, from `credited`.
-        artists: Vec<(i64, String)>,
     },
     Artist {
         id: i64,
@@ -49,20 +47,57 @@ fn rule() -> (String, Action) {
     (String::new(), Action::None)
 }
 
-/// The artists `credit` links, in credit order: id and the name as the
-/// credit spells it. A credit naming one artist, or none, links `filed`.
-/// Read when a menu opens, for the one thing it is about.
-pub fn credited(of: CreditsOf, id: i64, credit: &str, filed: Option<i64>) -> Vec<(i64, String)> {
-    let artists = koan_core::db::pool::shared()
-        .get()
+/// The artists a track's or album's credit links, in credit order: id and
+/// the name as the credit spells it. A credit naming one artist, or none,
+/// links the artist it is filed under.
+pub fn credited(db: &Database, of: CreditsOf, id: i64) -> Vec<(i64, String)> {
+    let conn = &db.conn;
+    let filed = match of {
+        CreditsOf::Tracks => queries::get_track_row(conn, id)
+            .ok()
+            .flatten()
+            .map(|t| (t.artist_name, t.artist_id)),
+        CreditsOf::Albums => queries::get_album(conn, id)
+            .ok()
+            .flatten()
+            .map(|a| (a.artist_name, Some(a.artist_id))),
+    };
+    let Some((credit, filed)) = filed else {
+        return Vec::new();
+    };
+    let artists = credits_by_id(conn, of, &[id])
         .ok()
-        .and_then(|db| credits_by_id(&db.conn, of, &[id]).ok())
         .and_then(|mut by| by.remove(&id))
         .unwrap_or_default();
-    credit_parts(credit, filed, &artists)
+    credit_parts(&credit, filed, &artists)
         .into_iter()
         .filter_map(|p| Some((p.artist_id?, p.text)))
         .collect()
+}
+
+/// `items` with each item going to a credit's artists made one per artist
+/// `resolve` finds: "Go to artist" for one, a named item each for several,
+/// none for none. Pages build menus without reading the library; the app
+/// resolves them as one opens.
+pub fn resolve_credits(
+    items: Vec<(String, Item)>,
+    mut resolve: impl FnMut(CreditsOf, i64) -> Vec<(i64, String)>,
+) -> Vec<(String, Item)> {
+    let mut out: Vec<(String, Item)> = Vec::with_capacity(items.len());
+    for (label, item) in items {
+        match item {
+            Item::Browse(Action::OpenCredited(of, id)) => out.extend(
+                go_to_artists(&resolve(of, id))
+                    .into_iter()
+                    .map(|(label, action)| (label, Item::Browse(action))),
+            ),
+            item => out.push((label, item)),
+        }
+    }
+    while out.last().is_some_and(is_rule) {
+        out.pop();
+    }
+    out
 }
 
 /// A way to each artist, as the apps' menu offers them: "Go to artist" for
@@ -132,13 +167,13 @@ pub fn playable(thing: &Playable) -> Vec<(String, Action)> {
             format!("Favourite {noun}")
         }
     };
-    match thing {
-        &Playable::Track {
+    match *thing {
+        Playable::Track {
             id,
             favourite,
             on_disk,
             album,
-            ref artists,
+            artist,
         } => {
             items.push((unfavourite(favourite, "track"), Action::Favourite(id)));
             items.push(if on_disk {
@@ -150,20 +185,20 @@ pub fn playable(thing: &Playable) -> Vec<(String, Action)> {
                 ("Download to cache".into(), Action::Download(ids.clone()))
             });
             items.push(("Track info".into(), Action::Info(id)));
-            if album.is_some() || !artists.is_empty() {
+            if album.is_some() || artist.is_some() {
                 items.push(rule());
             }
             if let Some(album) = album {
                 items.push(("Go to album".into(), Action::OpenAlbum(album)));
             }
-            items.extend(go_to_artists(artists));
+            if artist.is_some() {
+                items.push((
+                    "Go to artist".into(),
+                    Action::OpenCredited(CreditsOf::Tracks, id),
+                ));
+            }
         }
-        &Playable::Album {
-            id,
-            favourite,
-            ref artists,
-            ..
-        } => {
+        Playable::Album { id, favourite, .. } => {
             items.extend([
                 (unfavourite(favourite, "album"), Action::ToggleAlbum(id)),
                 (
@@ -176,11 +211,14 @@ pub fn playable(thing: &Playable) -> Vec<(String, Action)> {
                 ),
                 rule(),
                 ("Go to album".into(), Action::OpenAlbum(id)),
+                (
+                    "Go to artist".into(),
+                    Action::OpenCredited(CreditsOf::Albums, id),
+                ),
             ]);
-            items.extend(go_to_artists(artists));
         }
         Playable::Tracks(_) => unreachable!("answered above"),
-        &Playable::Artist { id, favourite, .. } => {
+        Playable::Artist { id, favourite, .. } => {
             items.extend([
                 (unfavourite(favourite, "artist"), Action::ToggleArtist(id)),
                 (
@@ -365,7 +403,6 @@ mod tests {
             id: 1,
             tracks: vec![1, 2],
             favourite: false,
-            artists: vec![(3, "a".into())],
         });
         let mut m = ActionsMenu::new(
             "x".into(),
@@ -394,7 +431,7 @@ mod tests {
                 favourite: true,
                 on_disk,
                 album: None,
-                artists: Vec::new(),
+                artist: None,
             })
             .into_iter()
             .map(|(l, _)| l)
@@ -412,24 +449,45 @@ mod tests {
 
     #[test]
     fn a_credit_naming_several_artists_offers_each() {
-        let menu = |artists: Vec<(i64, String)>| -> Vec<(String, Action)> {
+        let items = || {
             playable(&Playable::Album {
-                id: 1,
+                id: 7,
                 tracks: vec![1],
                 favourite: false,
-                artists,
             })
             .into_iter()
-            .skip_while(|(l, _)| l != "Go to album")
-            .skip(1)
-            .collect()
+            .map(|(l, a)| (l, Item::Browse(a)))
+            .collect::<Vec<_>>()
+        };
+        let artists_of = |items: Vec<(String, Item)>| -> Vec<(String, Action)> {
+            items
+                .into_iter()
+                .skip_while(|(l, _)| l != "Go to album")
+                .skip(1)
+                .map(|(l, i)| match i {
+                    Item::Browse(a) => (l, a),
+                    Item::Playlist(_) => panic!("a browse item"),
+                })
+                .collect()
         };
         assert_eq!(
-            menu(vec![(3, "Solo".into())]),
+            artists_of(items()),
+            [(
+                "Go to artist".to_string(),
+                Action::OpenCredited(CreditsOf::Albums, 7)
+            )]
+        );
+        let resolved = resolve_credits(items(), |of, id| {
+            assert_eq!((of, id), (CreditsOf::Albums, 7));
+            vec![(3, "Solo".into())]
+        });
+        assert_eq!(
+            artists_of(resolved),
             [("Go to artist".to_string(), Action::OpenArtist(3))]
         );
+        let resolved = resolve_credits(items(), |_, _| vec![(3, "A".into()), (4, "B".into())]);
         assert_eq!(
-            menu(vec![(3, "A".into()), (4, "B".into())]),
+            artists_of(resolved),
             [
                 ("Go to A".to_string(), Action::OpenArtist(3)),
                 ("Go to B".to_string(), Action::OpenArtist(4)),

@@ -23,7 +23,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use super::actions_menu::{Playable, credited, playable};
+use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::artist_header::{ArtistHeader, HeaderHit};
 use super::cover_art::{Gfx, album_key};
@@ -325,8 +325,14 @@ pub(super) fn track_playable(t: &TrackRow, favourite: bool) -> Playable {
         favourite,
         on_disk: t.path.is_some() || t.cached_path.is_some(),
         album: t.album_id,
-        artists: credited(CreditsOf::Tracks, t.id, &t.artist_name, t.artist_id),
+        artist: t.artist_id,
     }
+}
+
+/// Where a track row's artist links: the artists its credit names.
+pub(super) fn credited_track(t: &TrackRow) -> Option<Target> {
+    t.artist_id
+        .map(|_| Target::Credited(CreditsOf::Tracks, t.id))
 }
 
 /// The tracks of `albums`, album by album in the order given, in one read.
@@ -965,12 +971,17 @@ impl Browse {
 
     /// What `A` opens: the artist at `idx`, or the artists its credit names.
     fn open_artist_at(&self, idx: usize) -> Action {
-        let credited =
-            |of, id: Option<i64>| id.map_or(Action::None, |id| Action::OpenCredited(of, id));
+        let open = |of, id: Option<i64>| id.map_or(Action::None, |id| Action::OpenCredited(of, id));
         match self.kind() {
-            Kind::Albums => credited(CreditsOf::Albums, self.album_at(idx)),
+            Kind::Albums => open(CreditsOf::Albums, self.album_at(idx)),
             Kind::Artists => self.artist_at(idx).map_or(Action::None, Action::OpenArtist),
-            Kind::Tracks => credited(CreditsOf::Tracks, self.tracks.get(idx).map(|t| t.id)),
+            Kind::Tracks => open(
+                CreditsOf::Tracks,
+                self.tracks
+                    .get(idx)
+                    .filter(|t| t.artist_id.is_some())
+                    .map(|t| t.id),
+            ),
         }
     }
 
@@ -1014,7 +1025,6 @@ impl Browse {
                     id: a.id,
                     tracks: ids,
                     favourite: self.fav_albums.contains(&a.id),
-                    artists: credited(CreditsOf::Albums, a.id, &a.artist_name, Some(a.artist_id)),
                 };
                 (a.title.clone(), thing)
             }
@@ -1201,7 +1211,7 @@ impl Browse {
                 }
             }
             Hit::Link(Target::Album(id)) => Action::OpenAlbum(id),
-            Hit::Link(Target::Artist(id)) => Action::OpenArtist(id),
+            Hit::Link(Target::Credited(of, id)) => Action::OpenCredited(of, id),
             Hit::Item(idx) => {
                 let double = self
                     .last_click
@@ -1511,7 +1521,7 @@ impl Browse {
                         favourite: favourites.contains(&t.id),
                         lead: &lead,
                         name: &t.title,
-                        artist: Some((&t.artist_name, t.artist_id)),
+                        artist: Some((&t.artist_name, credited_track(t))),
                         detail: Some((&t.album_title, t.album_id.map(Target::Album))),
                         tail: &time,
                     }
@@ -1523,7 +1533,10 @@ impl Browse {
                         favourite: self.fav_albums.contains(&a.id),
                         lead: "",
                         name: &a.title,
-                        artist: Some((&a.artist_name, Some(a.artist_id))),
+                        artist: Some((
+                            &a.artist_name,
+                            Some(Target::Credited(CreditsOf::Albums, a.id)),
+                        )),
                         detail: None,
                         tail: "",
                     }
@@ -1705,7 +1718,7 @@ impl Tile<'_> {
             let year = year(album);
             if self.name_artist {
                 // The artist is a link; the year after it is not.
-                let target = Target::Artist(album.artist_id);
+                let target = Target::Credited(CreditsOf::Albums, album.id);
                 let drawn = rows::put(
                     buf,
                     x + 1,
@@ -1956,7 +1969,10 @@ pub(super) mod tests {
         assert_eq!(b.hit(x, y), Some(Hit::Link(Target::Album(0))));
         assert_eq!(b.click(Hit::Link(Target::Album(0))), Action::OpenAlbum(0));
         let (x, y) = first_tile(&b, 2, art_h + 1);
-        assert_eq!(b.hit(x, y), Some(Hit::Link(Target::Artist(0))));
+        assert_eq!(
+            b.hit(x, y),
+            Some(Hit::Link(Target::Credited(CreditsOf::Albums, 0)))
+        );
         // Past the end of the text it is the tile again.
         let (x, y) = first_tile(&b, b.geom.tile_w - 1, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
@@ -2177,7 +2193,12 @@ pub(super) mod tests {
             ))
         );
         // Each row's artist and album are links.
-        assert!(b.geom.links.iter().any(|(_, t)| *t == Target::Artist(0)));
+        assert!(
+            b.geom
+                .links
+                .iter()
+                .any(|(_, t)| matches!(t, Target::Credited(..)))
+        );
         assert!(b.geom.links.iter().any(|(_, t)| *t == Target::Album(0)));
     }
 
@@ -2222,7 +2243,7 @@ pub(super) mod tests {
             .geom
             .links
             .iter()
-            .filter(|(_, t)| matches!(t, Target::Artist(_)))
+            .filter(|(_, t)| matches!(t, Target::Credited(..)))
             .map(|(r, _)| r.x)
             .collect();
         assert_eq!(artists.len(), 2);

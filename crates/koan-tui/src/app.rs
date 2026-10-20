@@ -1427,7 +1427,9 @@ impl App {
             }
             PlAction::Tracks(ids, how) => self.enqueue(ids, how),
             PlAction::OpenAlbum(id) => self.go_page(Page::Album(id)),
-            PlAction::ArtistOfTrack(id) => self.open_credited_artist(Some(id), false),
+            PlAction::ArtistOfTrack(id) => {
+                self.open_credited(koan_core::db::queries::CreditsOf::Tracks, id)
+            }
             PlAction::Info(id) => self.open_track_details(id),
             PlAction::New => self.open_name_prompt(Purpose::New(Vec::new()), String::new()),
             PlAction::Rename(id, name) => self.open_name_prompt(Purpose::Rename(id), name),
@@ -1436,10 +1438,7 @@ impl App {
             PlAction::Favourite(id) => {
                 self.toggle_favourite(id);
             }
-            PlAction::Menu(title, items) => {
-                self.actions_menu = Some(ActionsMenu::new(title, items));
-                self.push_mode(Mode::ActionsMenu);
-            }
+            PlAction::Menu(title, items) => self.open_actions_menu(title, items),
             PlAction::Export(id, name) => {
                 let file = name.replace('/', "-");
                 self.open_name_prompt(Purpose::Export(id), format!("~/{file}.m3u8"));
@@ -1969,8 +1968,7 @@ impl App {
                     .into_iter()
                     .map(|(label, action)| (label, super::actions_menu::Item::Browse(action)))
                     .collect();
-                self.actions_menu = Some(ActionsMenu::new(title, items));
-                self.push_mode(Mode::ActionsMenu);
+                self.open_actions_menu(title, items);
             }
             browse::Action::Download(ids) => {
                 let wanted: Vec<i64> = koan_core::db::pool::shared()
@@ -3113,56 +3111,70 @@ impl App {
         }
     }
 
-    /// Opens the page of the artist a library track's credit names, or its
-    /// album's credit when `album`.
-    pub fn open_credited_artist(&mut self, db_id: Option<i64>, album: bool) {
-        use koan_core::db::queries::CreditsOf;
-        let target = if album {
-            db_id
-                .and_then(|id| {
-                    let db = koan_core::db::pool::shared().get().ok()?;
-                    koan_core::db::queries::get_track_row(&db.conn, id)
-                        .ok()
-                        .flatten()?
-                        .album_id
-                })
-                .map(|a| (CreditsOf::Albums, a))
-        } else {
-            db_id.map(|id| (CreditsOf::Tracks, id))
-        };
-        match target {
-            Some((of, id)) => self.open_credited(of, id),
-            None => self.say("that track is not in the library"),
-        }
+    /// Opens a menu, its items going to a credit's artists resolved into one
+    /// item per artist.
+    fn open_actions_menu(
+        &mut self,
+        title: String,
+        items: Vec<(String, super::actions_menu::Item)>,
+    ) {
+        let credits = items.iter().any(|(_, i)| {
+            matches!(
+                i,
+                super::actions_menu::Item::Browse(browse::Action::OpenCredited(..))
+            )
+        });
+        let db = credits
+            .then(|| koan_core::db::pool::shared().get().ok())
+            .flatten();
+        let items = super::actions_menu::resolve_credits(items, |of, id| {
+            db.as_ref()
+                .map(|db| super::actions_menu::credited(db, of, id))
+                .unwrap_or_default()
+        });
+        drop(db);
+        self.actions_menu = Some(ActionsMenu::new(title, items));
+        self.push_mode(Mode::ActionsMenu);
     }
 
-    /// Opens the page of the artist a track's or album's credit names. A
-    /// credit naming several artists asks which, as a menu of them. A track
-    /// filed under no artist goes to its album's.
-    pub fn open_credited(&mut self, of: koan_core::db::queries::CreditsOf, id: i64) {
+    /// Opens the page of the artist a library track's credit names, or its
+    /// album's credit when `album` or when the track is filed under no
+    /// artist.
+    pub fn open_credited_artist(&mut self, db_id: Option<i64>, album: bool) {
         use koan_core::db::queries::{self, CreditsOf};
-        let found = (|| {
-            let db = koan_core::db::pool::shared().get().ok()?;
-            match of {
-                CreditsOf::Albums => {
-                    let a = queries::get_album(&db.conn, id).ok().flatten()?;
-                    Some((a.artist_name, Some(a.artist_id)))
-                }
-                CreditsOf::Tracks => {
-                    let t = queries::get_track_row(&db.conn, id).ok().flatten()?;
-                    let filed = t.artist_id.or_else(|| {
-                        let a = queries::get_album(&db.conn, t.album_id?).ok().flatten()?;
-                        Some(a.artist_id)
-                    });
-                    Some((t.artist_name, filed))
-                }
-            }
-        })();
-        let artists = found
-            .map(|(credit, filed)| super::actions_menu::credited(of, id, &credit, filed))
-            .unwrap_or_default();
+        let Some(db) = koan_core::db::pool::shared().get().ok() else {
+            self.say("the library could not be opened");
+            return;
+        };
+        let Some(track) = db_id.and_then(|id| queries::get_track_row(&db.conn, id).ok().flatten())
+        else {
+            self.say("that track is not in the library");
+            return;
+        };
+        let artists = match (album || track.artist_id.is_none(), track.album_id) {
+            (false, _) => super::actions_menu::credited(&db, CreditsOf::Tracks, track.id),
+            (true, Some(a)) => super::actions_menu::credited(&db, CreditsOf::Albums, a),
+            (true, None) => Vec::new(),
+        };
+        drop(db);
+        self.go_to_artists(artists);
+    }
+
+    /// Opens the page of the artist a track's or album's credit names.
+    pub fn open_credited(&mut self, of: koan_core::db::queries::CreditsOf, id: i64) {
+        let Some(db) = koan_core::db::pool::shared().get().ok() else {
+            self.say("the library could not be opened");
+            return;
+        };
+        let artists = super::actions_menu::credited(&db, of, id);
+        drop(db);
+        self.go_to_artists(artists);
+    }
+
+    /// Opens the one artist's page, or asks which of several.
+    fn go_to_artists(&mut self, artists: Vec<(i64, String)>) {
         match artists.as_slice() {
-            [] => self.say("that is not in the library"),
+            [] => self.say("no artist to go to"),
             [(artist, _)] => self.go_page(Page::Artist(*artist)),
             _ => self.apply_browse(browse::Action::Menu(
                 "Go to artist".into(),
