@@ -443,7 +443,7 @@ A client that asks `stream` for a `maxBitRate` below the file's bitrate, or for 
 url = "https://music.example.com"
 ```
 
-The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, invites, pairing links, MCP's OAuth and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
+The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, the invites it makes, MCP's OAuth, push covers and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
 
 `sharing.public_url`, which this replaces, is still read while `server.url` is unset, with a warning in the log. It will be removed in a later release.
 
