@@ -112,6 +112,23 @@ pub struct Opened<'a> {
     pairings: &'a Pairings,
 }
 
+#[cfg(test)]
+impl Opened<'static> {
+    /// Stands in for the device's session, on a thread of its own: takes the
+    /// outcome and says whether the socket took it, as `sent`.
+    pub(crate) fn device(mut self, sent: bool) -> std::thread::JoinHandle<PairMessage> {
+        std::thread::spawn(move || {
+            // `Opened` is `Drop`, so its receiver is swapped out, not moved.
+            let outcome = std::mem::replace(&mut self.outcome, oneshot::channel().1);
+            let settled = outcome.blocking_recv().unwrap();
+            if let Some(done) = settled.sent {
+                done.send(sent).unwrap();
+            }
+            settled.message
+        })
+    }
+}
+
 impl Drop for Opened<'_> {
     fn drop(&mut self) {
         self.pairings.entries.lock().remove(&self.id);
@@ -625,27 +642,13 @@ mod tests {
         (dir, db, id)
     }
 
-    /// A device's session: takes its outcome, and says whether the socket
-    /// took it.
-    fn device(mut o: Opened<'static>, sent: bool) -> std::thread::JoinHandle<PairMessage> {
-        std::thread::spawn(move || {
-            // `Opened` is `Drop`, so its receiver is swapped out, not moved.
-            let outcome = std::mem::replace(&mut o.outcome, oneshot::channel().1);
-            let settled = outcome.blocking_recv().unwrap();
-            if let Some(done) = settled.sent {
-                done.send(sent).unwrap();
-            }
-            settled.message
-        })
-    }
-
     #[test]
     fn approving_mints_a_key_for_the_approver() {
         let (_dir, db, alice) = database();
         let p = leaked(TTL);
         let o = p.open("Living room TV", LAN).unwrap();
         let (id, code) = (o.id.clone(), o.code.clone());
-        let device = device(o, true);
+        let device = o.device(true);
         let settled = p.settle(&db.conn, &code, alice, "alice", false).unwrap();
         assert_eq!(
             settled,
@@ -677,7 +680,7 @@ mod tests {
         let p = leaked(TTL);
         let o = p.open("tv", LAN).unwrap();
         let id = o.id.clone();
-        let device = device(o, false);
+        let device = o.device(false);
         // The approver is told, rather than shown a sign-in that never happened.
         assert_eq!(
             p.settle(&db.conn, &id, alice, "alice", false),

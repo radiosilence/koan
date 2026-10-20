@@ -7541,7 +7541,11 @@ mod tests {
         let opened = crate::pair::pairings()
             .open("Den TV", "198.51.100.7".parse().unwrap())
             .unwrap();
-        let code = opened.code.replace('-', "").to_lowercase();
+        let (id, code) = (
+            opened.id.clone(),
+            opened.code.replace('-', "").to_lowercase(),
+        );
+        let device = opened.device(true);
 
         let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
         assert!(body.contains("code=\"10\""), "{body}");
@@ -7551,13 +7555,16 @@ mod tests {
             "{body}"
         );
 
-        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        let body = call(format!("/rest/koanPairApprove?pair={id}&{mate}")).await;
         assert!(body.contains("\"device\":\"Den TV\""), "{body}");
-        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        assert!(matches!(
+            device.join().unwrap(),
+            koan_core::remote::pair::PairMessage::Approved { .. }
+        ));
+        let body = call(format!("/rest/koanPairApprove?pair={id}&{mate}")).await;
         assert!(body.contains("\"code\":70"), "{body}");
         let body = call(format!("/rest/koanPairInfo?pair=ABCD-EFGH&{mate}")).await;
         assert!(body.contains("\"code\":70"), "{body}");
-        drop(opened);
     }
 
     #[tokio::test]
@@ -7747,12 +7754,14 @@ mod tests {
             "no key made"
         );
         // Still waiting for someone who may approve it.
+        let id = opened.id.clone();
+        let device = opened.device(true);
         let body = call(format!(
-            "/rest/koanPairApprove?pair={}&u=mate&p=hunter22&v=1.16.1&c=test",
-            opened.id
+            "/rest/koanPairApprove?pair={id}&u=mate&p=hunter22&v=1.16.1&c=test"
         ))
         .await;
         assert!(body.contains("Den TV"), "{body}");
+        device.join().unwrap();
     }
 
     #[tokio::test]
