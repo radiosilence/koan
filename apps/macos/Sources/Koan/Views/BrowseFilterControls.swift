@@ -163,10 +163,10 @@ struct BrowseFilterForm: View {
         )
         LabeledContent("Years") {
             HStack(spacing: 4) {
-                YearField(prompt: "From", value: $library.browseFilter.yearFrom)
+                YearField(prompt: "From", value: $library.browseFilter.yearFrom, focused: year == .from)
                     .focused($year, equals: .from)
                 Text("–").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                YearField(prompt: "To", value: $library.browseFilter.yearTo)
+                YearField(prompt: "To", value: $library.browseFilter.yearTo, focused: year == .to)
                     .focused($year, equals: .to)
             }
         }
@@ -204,10 +204,13 @@ private enum YearBound: Hashable {
 /// A year, applied as it is typed rather than on Return: the phone's number
 /// pad has none, and closing the sheet or popover with the field focused would
 /// otherwise drop it. Only a whole year or an empty field is applied, so
-/// typing 1990 is one query rather than four.
+/// typing 1990 is one query rather than four. A part-typed year left behind
+/// goes back to the year applied, so the field never shows a filter that is
+/// not on.
 private struct YearField: View {
     let prompt: String
     @Binding var value: Int32?
+    let focused: Bool
     @State private var text = ""
 
     var body: some View {
@@ -237,6 +240,9 @@ private struct YearField: View {
                 } else if digits.count == 4 {
                     value = Int32(digits)
                 }
+            }
+            .onChange(of: focused) { _, now in
+                if !now, !text.isEmpty, text.count < 4 { text = value.map(String.init) ?? "" }
             }
             // Reset, from outside the field.
             .onChange(of: value) { _, now in
