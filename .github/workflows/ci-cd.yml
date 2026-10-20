@@ -126,7 +126,7 @@ jobs:
           # version is not out yet.
           version=$(version_of < Cargo.toml)
           bumped=false
-          if [ "$(git show "${base:-HEAD^1}:Cargo.toml" 2>/dev/null | version_of)" != "$version" ]; then
+          if [ "$(git show HEAD^1:Cargo.toml 2>/dev/null | version_of)" != "$version" ]; then
             bumped=true
           fi
           case "$EVENT" in
@@ -260,7 +260,7 @@ jobs:
           done | sort -u | while read -r id event sha; do
             [ "$id" = "$SELF" ] && continue
             if [ "$event" = push ]; then
-              files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.files[].filename' || echo Cargo.toml)
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.files[].filename' || echo Cargo.toml)
               printf '%s\n' "$files" | grep -qx Cargo.toml && continue
             fi
             echo "cancelling run $id"
@@ -526,6 +526,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ env.IMAGE }}:${{ github.sha }}
+          # What `container-main` reads to keep `main` moving forward.
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           # The layer cache lives beside the image in GHCR rather than in the
           # repository's Actions cache, which the Rust caches need. Written
           # from main only; anything else reads it.
@@ -797,14 +799,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # A release run is never cancelled and can finish after a later push's
-      # run: `main` moves only while this commit is still main's head.
+      # run, so `main` moves only forward: to this commit when it descends
+      # from the one the tag holds now. Main's head is no guide, since a
+      # later push that builds no image moves it without retagging.
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
-          if [ "$head" != "$GITHUB_SHA" ]; then
-            echo "::notice::main has moved on to $head; leaving the main tag"
-            exit 0
+          current=$(docker buildx imagetools inspect "$IMAGE:main" --format '{{json .Image}}' 2>/dev/null \
+            | jq -r '[.. | objects | .config.Labels?["org.opencontainers.image.revision"]? // empty][0] // empty' || true)
+          if [ -n "$current" ] && [ "$current" != "$GITHUB_SHA" ]; then
+            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$current...$GITHUB_SHA" --jq .status)
+            if [ "$status" != ahead ]; then
+              echo "::notice::main holds $current, which this commit does not descend from ($status); leaving it"
+              exit 0
+            fi
           fi
           docker buildx imagetools create -t "$IMAGE:main" "$IMAGE:$GITHUB_SHA"
 
