@@ -102,12 +102,19 @@ jobs:
           if [ "$EVENT" = "pull_request" ]; then
             state=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state --jq .state 2>/dev/null || echo OPEN)
           fi
+          # Empty when it cannot be found: then everything runs, since a
+          # narrower diff could leave a cancelled push's changes undelivered.
           base=HEAD^1
           if [ "$EVENT" = "push" ]; then
+            base=
             passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci-cd.yml --branch main --event push \
-              --status success --limit 1 --json headSha --jq '.[0].headSha' 2>/dev/null || true)
-            if [ -n "$passed" ] && [ "$passed" != "$(git rev-parse HEAD)" ] && git fetch -q --deepen=100 origin main && git merge-base --is-ancestor "$passed" HEAD; then
+              --status success --limit 1 --json headSha --jq '.[0].headSha // empty' || true)
+            if [ "$passed" = "$(git rev-parse HEAD)" ]; then
+              base=HEAD^1
+            elif [ -n "$passed" ] && git fetch -q --deepen=200 origin main && git merge-base --is-ancestor "$passed" HEAD; then
               base=$passed
+            else
+              echo "::notice::no passed run on main within reach -- running everything"
             fi
           fi
           # Whether this run releases, the one answer every release job reads.
@@ -119,7 +126,7 @@ jobs:
           # version is not out yet.
           version=$(version_of < Cargo.toml)
           bumped=false
-          if [ "$(git show HEAD^1:Cargo.toml 2>/dev/null | version_of)" != "$version" ]; then
+          if [ "$(git show "${base:-HEAD^1}:Cargo.toml" 2>/dev/null | version_of)" != "$version" ]; then
             bumped=true
           fi
           case "$EVENT" in
@@ -146,7 +153,7 @@ jobs:
           if [ "$state" != "OPEN" ]; then
             echo "pull request #$PR is no longer open -- skipping everything"
             rust=false web=false deps=false docker=false package=false apple=false apple_apps=false android=false release=false
-          elif [ "$EVENT" != "workflow_dispatch" ] && files=$(git diff --name-only "$base" HEAD); then
+          elif [ "$EVENT" != "workflow_dispatch" ] && [ -n "$base" ] && files=$(git diff --name-only "$base" HEAD); then
             echo "changes since $(git rev-parse --short "$base"):"
             printf '%s\n' "$files" | sed 's/^/  /'
             # Shared build inputs -- the lockfile, the justfile, mise.toml --
@@ -242,13 +249,20 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           SELF: ${{ github.run_id }}
+        # Best effort: a run it cannot list or cancel only waits longer for a
+        # runner. A push that changes Cargo.toml may release, as the
+        # concurrency rule above has it, so it is left alone whatever its title.
         run: |
           for status in requested queued pending waiting in_progress; do
             gh run list --repo "$GITHUB_REPOSITORY" --workflow ci-cd.yml --status "$status" --limit 100 \
-              --json databaseId,event,headBranch,displayTitle \
-              --jq '.[] | select(.event == "pull_request" or (.event == "push" and .headBranch == "main" and (.displayTitle | startswith("release: ") | not))) | .databaseId'
-          done | sort -u | while read -r id; do
+              --json databaseId,event,headBranch,headSha,displayTitle \
+              --jq '.[] | select(.event == "pull_request" or (.event == "push" and .headBranch == "main" and (.displayTitle | startswith("release: ") | not))) | "\(.databaseId) \(.event) \(.headSha)"' || true
+          done | sort -u | while read -r id event sha; do
             [ "$id" = "$SELF" ] && continue
+            if [ "$event" = push ]; then
+              files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.files[].filename' || echo Cargo.toml)
+              printf '%s\n' "$files" | grep -qx Cargo.toml && continue
+            fi
             echo "cancelling run $id"
             gh run cancel "$id" --repo "$GITHUB_REPOSITORY" || true
           done
@@ -782,7 +796,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: docker buildx imagetools create -t "$IMAGE:main" "$IMAGE:$GITHUB_SHA"
+      # A release run is never cancelled and can finish after a later push's
+      # run: `main` moves only while this commit is still main's head.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::main has moved on to $head; leaving the main tag"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:main" "$IMAGE:$GITHUB_SHA"
 
   # Every push that changes what the Apple apps contain uploads an iOS build,
   # a release or not: the workspace version stays and the build number (the
@@ -1004,9 +1028,21 @@ jobs:
           cache: npm
           cache-dependency-path: deploy/pulumi/package-lock.json
       - run: npm ci
-      - run: npm publish
-        env:
+      # A version cannot be published twice, so a release retried after this
+      # step passed finds it out and moves on. Only a 404 means it is not.
+      - env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          spec="$(node -p 'const p = require("./package.json"); `${p.name}@${p.version}`')"
+          if out=$(npm view "$spec" version 2>&1); then
+            echo "$spec is already published"
+            exit 0
+          fi
+          if ! printf '%s' "$out" | grep -q E404; then
+            echo "::error::cannot tell whether $spec is published: $out"
+            exit 1
+          fi
+          npm publish
 
   publish-release:
     name: Publish GitHub Release
