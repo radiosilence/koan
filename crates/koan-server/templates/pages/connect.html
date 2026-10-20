@@ -1,10 +1,10 @@
-{%- import "macros.html" as m -%}
+{%- import "copy.html" as copy -%}
 <h1>Assistants</h1><p class="{{ crate::ui::pages::SUB }}">Claude, ChatGPT and other assistants that speak MCP can search your library, make playlists and play music on your devices, as you.</p>
 {%- match url %}
 {%- when None %}
 <p class="{{ crate::ui::pages::EMPTY }}">Assistants sign in through this server, so it needs to know its own address first. {% if admin %}Set <code>server.url</code> to the address this server is reached at{% else %}Its admin needs to set the address this server is reached at{% endif %}.</p>
 {%- when Some(url) %}
-<div class="{{ crate::ui::pages::COPY_ROW }}">{% call m::copy("mcp-url", url, "MCP address", "Copy") %}{% endcall %}</div>
+<div class="{{ crate::ui::pages::COPY_ROW }}">{% call copy::field("mcp-url", url, "MCP address", "Copy") %}{% endcall %}</div>
 <h2>Claude</h2><ol class="my-[1em] list-decimal ps-10"><li>Settings → Connectors → Add custom connector.</li>
 <li>Paste the address above.</li>
 <li>Claude opens a kōan page. Sign in if asked, check it says <em>Connect kōan to claude.ai</em>, and Allow.</li></ol>

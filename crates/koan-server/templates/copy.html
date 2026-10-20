@@ -1,5 +1,5 @@
 {#- A read-only field holding something to copy, and its button. The field selects itself when focused, so it can be copied by hand too. -#}
-{% macro copy(id, value, label, button) %}
+{% macro field(id, value, label, button) %}
 <input id="{{ id }}" readonly value="{{ value }}" aria-label="{{ label }}" class="{{ crate::ui::pages::COPY_INPUT }}" data-on:focus="el.select()">
 <button data-on:click="navigator.clipboard.writeText(document.getElementById('{{ id }}').value).then(() => el.textContent = 'Copied')">{{ button }}</button>
 {%- endmacro %}

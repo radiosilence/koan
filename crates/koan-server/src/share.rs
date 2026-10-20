@@ -190,9 +190,9 @@ pub(crate) fn binary_asset(name: &str) -> Option<Response> {
 /// `<link>`s for the icons, served under `base` (`/ui/assets` or `/share/assets`).
 pub(crate) fn icon_links(base: &str) -> String {
     format!(
-        "<link rel=icon type=image/png sizes=32x32 href=\"{base}/icon-32.png\">\
-<link rel=icon type=image/png sizes=192x192 href=\"{base}/icon-192.png\">\
-<link rel=apple-touch-icon href=\"{base}/apple-touch-icon.png\">"
+        "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"{base}/icon-32.png\">\
+<link rel=\"icon\" type=\"image/png\" sizes=\"192x192\" href=\"{base}/icon-192.png\">\
+<link rel=\"apple-touch-icon\" href=\"{base}/apple-touch-icon.png\">"
     )
 }
 
@@ -892,7 +892,7 @@ mod tests {
         let (status, headers, body) = get(&app, &format!("/share/{id}"), None).await;
         assert_eq!(status, StatusCode::OK);
         let html = String::from_utf8(body).unwrap();
-        assert!(html.contains("Wet &lt;Moss&gt; &amp; Stone"));
+        assert!(html.contains("Wet &#60;Moss&#62; &#38; Stone"));
         assert!(!html.contains("<Moss>"));
         assert!(!html.contains("Unshared"));
         assert!(html.contains(&format!("data-src=\"/share/{id}/1\"")));
@@ -1057,17 +1057,17 @@ mod tests {
         let [_, t2, _] = lib.tracks;
         let id = lib.share(ShareTarget::Tracks(vec![t2]));
         let html = lib.page(&id).await;
-        assert!(html.contains("<h1>Hymn &lt;to&gt; &quot;Moisture&quot;</h1>"));
+        assert!(html.contains("<h1>Hymn &#60;to&#62; &#34;Moisture&#34;</h1>"));
         assert!(
             html.contains("data-start=\"1\""),
             "cued to the second track"
         );
         assert_eq!(html.matches("data-src=").count(), 2, "the whole album");
         assert_eq!(og(&html, "og:type"), "music.song");
-        assert_eq!(og(&html, "og:title"), "Stone &amp; Salt · Rrose");
+        assert_eq!(og(&html, "og:title"), "Stone &#38; Salt · Rrose");
         assert_eq!(
             og(&html, "og:description"),
-            "From Hymn &lt;to&gt; &quot;Moisture&quot; by Rrose"
+            "From Hymn &#60;to&#62; &#34;Moisture&#34; by Rrose"
         );
         assert_eq!(
             og(&html, "og:image"),
@@ -1096,7 +1096,7 @@ mod tests {
         assert_eq!(og(&html, "og:type"), "music.album");
         assert_eq!(
             og(&html, "og:title"),
-            "Hymn &lt;to&gt; &quot;Moisture&quot; · Rrose"
+            "Hymn &#60;to&#62; &#34;Moisture&#34; · Rrose"
         );
         assert_eq!(og(&html, "og:description"), "2019 · 2 tracks · 4:10");
     }
@@ -1110,7 +1110,7 @@ mod tests {
         assert_eq!(og(&html, "og:title"), "Rrose");
         assert_eq!(og(&html, "og:description"), "2 albums · 3 tracks · 6:15");
         assert_eq!(html.matches("<section ").count(), 2);
-        let first = html.find("Hymn &lt;to&gt;").unwrap();
+        let first = html.find("Hymn &#60;to&#62;").unwrap();
         assert!(first < html.find(">Later</h2>").unwrap());
         // Each album heading's art is addressed through the share, by position.
         assert!(html.contains(&format!("src=\"/share/{id}/3/cover\"")));

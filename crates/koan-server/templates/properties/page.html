@@ -1,14 +1,14 @@
-{%- import "macros.html" as m -%}
+{%- import "copy.html" as copy -%}
 {#- A track's properties: its tags as the library holds them, the file on the server for an admin, and what each source says. -#}
 {%- let section = crate::ui::properties::SECTION -%}
 <p class="{{ crate::ui::pages::KICKER }}">Properties</p><h2 class="my-1 normal-case">{{ title }}</h2><p class="{{ crate::ui::pages::SUB }}">{{ artist|safe }}</p>
 {%- if let Some(path) = path %}
 <p class="{{ section }}">File on the server</p><div class="flex gap-2">
-{% call m::copy("track-path", path, "File on the server", "Copy") %}{% endcall %}</div>
+{% call copy::field("track-path", path, "File on the server", "Copy") %}{% endcall %}</div>
 {%- endif %}
 {%- for (heading, fields) in lists %}
 <p class="{{ section }}">{{ heading }}</p>
-<dl class="{{ crate::ui::properties::LIST }}">
+<dl class="{{ crate::ui::properties::LIST|safe }}">
 {%- for f in fields %}<dt>{{ f.name }}</dt><dd>{% if f.html %}{{ f.value|safe }}{% else %}{{ f.value }}{% endif %}</dd>{% endfor -%}
 </dl>
 {%- endfor %}

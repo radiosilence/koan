@@ -1,9 +1,9 @@
-{%- import "macros.html" as m -%}
+{%- import "copy.html" as copy -%}
 {#- An invite: the link, as text and a QR code, and the email to send it in. -#}
 {%- let sub = crate::ui::pages::SUB -%}
 <div class="mt-2 mb-4 max-w-panel border border-rule px-4 pt-1 pb-4">
 <h2>Invite for <span class="normal-case">{{ invite.username }}</span></h2><p class="{{ sub }}">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan installed signs in and loads the library, on each device, for a week.</p>{{ qr|safe }}
-<div class="{{ crate::ui::pages::COPY_ROW }}">{% call m::copy("invite-link", link, "Invite link", "Copy link") %}{% endcall %}</div>
+<div class="{{ crate::ui::pages::COPY_ROW }}">{% call copy::field("invite-link", link, "Invite link", "Copy link") %}{% endcall %}</div>
 <div class="mt-2.5 flex flex-wrap gap-2"><a class="inline-block border border-muted px-3 py-1.5 text-meta text-ink lowercase hover:bg-hover/30 hover:no-underline" href="{{ invite.mailto() }}">Open in Mail</a>
 <button data-copy-email>Copy email</button>
 <button data-show="'share' in navigator" data-on:click="navigator.share({title: document.getElementById('invite-text').dataset.subject, text: document.getElementById('invite-text').value}).catch(() => {})">Share…</button></div>
