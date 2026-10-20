@@ -11,14 +11,54 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
-use super::oauth::page;
-use super::pages::ERROR;
 use super::{UiState, encode, html, open, see_other};
 use crate::auth::AuthUser;
-use crate::share::{blocking, escape};
+use crate::html::Render;
+use crate::share::blocking;
+use askama::Template;
 
 const LIMITED: &str =
     "Too many codes were tried that no device was waiting with. Try again in a minute.";
+
+enum View<'a> {
+    Code {
+        error: Option<&'a str>,
+    },
+    NoAccounts,
+    Confirm {
+        device: &'a str,
+        from: String,
+        local: bool,
+        user: &'a str,
+        action: String,
+    },
+    Declined {
+        device: &'a str,
+    },
+    Approved {
+        device: &'a str,
+        user: &'a str,
+    },
+    Message {
+        heading: &'a str,
+        text: &'a str,
+    },
+}
+
+#[derive(Template)]
+#[template(path = "pages/pair.html")]
+struct PairPage<'a> {
+    title: &'a str,
+    view: View<'a>,
+}
+
+fn page(status: StatusCode, view: View<'_>) -> Response {
+    let page = PairPage {
+        title: "Sign in a device",
+        view,
+    };
+    html(status, page.html())
+}
 
 #[derive(serde::Deserialize, Default)]
 #[serde(default)]
@@ -39,33 +79,16 @@ fn code_page(s: &UiState, error: Option<&str>) -> Response {
     if !s.auth_enabled {
         return without_accounts();
     }
-    let error = error
-        .map(|e| format!("<p class=\"m-0 {ERROR}\" role=alert>{}</p>", escape(e)))
-        .unwrap_or_default();
-    let status = if error.is_empty() {
+    let status = if error.is_none() {
         StatusCode::OK
     } else {
         StatusCode::NOT_FOUND
     };
-    let body = format!(
-        "<h2>Sign in a device</h2>\
-<p>Type the code the device shows.</p>\
-<form class=\"grid gap-3.5\" method=get action=\"/pair\">\
-<label class=\"grid gap-1.5 text-meta text-muted\">Code<input class=\"text-input\" name=code \
-autocomplete=off autocapitalize=characters spellcheck=false placeholder=\"XXXX-XXXX\" maxlength=20 \
-required autofocus></label>{error}<button class=\"primary\">Continue</button></form>"
-    );
-    html(status, page("Sign in a device", &body))
+    page(status, View::Code { error })
 }
 
 fn without_accounts() -> Response {
-    html(
-        StatusCode::OK,
-        page(
-            "Sign in a device",
-            "<p>Devices sign in to accounts, and this server runs without sign-in.</p>",
-        ),
-    )
+    page(StatusCode::OK, View::NoAccounts)
 }
 
 /// "Sign in this device as you?", for the pairing an id or a code names.
@@ -89,39 +112,14 @@ pub(super) async fn confirm(
             );
         }
     };
-    let action = format!("/pair/{}", encode(&pair));
-    let body = format!(
-        "<h2>Sign in <span class=\"normal-case\">{device}</span>?</h2>{origin}\
-<p>It will be signed in as <strong>{user}</strong>, and can do anything your account can until you \
-revoke its key.</p>\
-<p><small>Approve only a device you are setting up yourself, just now. Anyone can give a device \
-any name.</small></p>\
-<form class=\"grid gap-3.5\" method=post action=\"{action}/approve\">\
-<button class=\"primary\">Approve</button></form>\
-<form class=\"grid gap-3.5\" method=post action=\"{action}/decline\">\
-<button class=\"quiet\">Decline</button></form>\
-<form class=\"grid gap-3.5\" method=post action=\"/auth/signout\">\
-<input type=hidden name=next value=\"{action}\"><button class=\"quiet\">Not <span class=\"normal-case\">{user}</span>? Sign out</button></form>",
-        device = escape(&info.device),
-        origin = origin(&info),
-        user = escape(&user.username),
-        action = escape(&action),
-    );
-    html(StatusCode::OK, page("Sign in a device", &body))
-}
-
-/// Where the request came from, in plain words. One from outside a private
-/// network is marked: a device in the room is on the approver's network.
-fn origin(info: &crate::pair::PairInfo) -> String {
-    let from = escape(&info.from.to_string());
-    if info.local() {
-        format!("<p>Requested from {from}, on your network.</p>")
-    } else {
-        format!(
-            "<p class=\"{ERROR}\"><strong>Requested from {from}, from the internet.</strong> \
-A device in the room with you is usually on your network.</p>"
-        )
-    }
+    let view = View::Confirm {
+        device: &info.device,
+        from: info.from.to_string(),
+        local: info.local(),
+        user: &user.username,
+        action: format!("/pair/{}", encode(&pair)),
+    };
+    page(StatusCode::OK, view)
 }
 
 pub(super) async fn approve(
@@ -161,29 +159,26 @@ async fn settle(
         Some(crate::pair::pairings().settle(&db.conn, &pair, user.user_id, &user.username, decline))
     })
     .await;
-    let body = match settled {
-        Some(Ok(info)) if decline => format!(
-            "<h2>Declined</h2><p>{} was not signed in.</p>",
-            escape(&info.device)
-        ),
-        Some(Ok(info)) => format!(
-            "<h2>Signed in</h2><p>{} is signed in as <strong>{}</strong>. Its key is listed under \
-API keys, where it can be revoked.</p>",
-            escape(&info.device),
-            escape(&username)
-        ),
-        Some(Err(crate::pair::PairError::Limited)) => {
-            format!("<h2>Wait a minute</h2><p>{LIMITED}</p>")
-        }
-        Some(Err(crate::pair::PairError::NotFound)) => {
-            "<h2>Nothing to sign in</h2><p>The device stopped waiting, or its code lapsed. \
-Check the device for a new code.</p>"
-                .to_owned()
-        }
-        Some(Err(crate::pair::PairError::Internal(_))) | None => {
-            "<h2>Something went wrong</h2><p>The device could not be signed in. Try again.</p>"
-                .to_owned()
-        }
+    let view = match &settled {
+        Some(Ok(info)) if decline => View::Declined {
+            device: &info.device,
+        },
+        Some(Ok(info)) => View::Approved {
+            device: &info.device,
+            user: &username,
+        },
+        Some(Err(crate::pair::PairError::Limited)) => View::Message {
+            heading: "Wait a minute",
+            text: LIMITED,
+        },
+        Some(Err(crate::pair::PairError::NotFound)) => View::Message {
+            heading: "Nothing to sign in",
+            text: "The device stopped waiting, or its code lapsed. Check the device for a new code.",
+        },
+        Some(Err(crate::pair::PairError::Internal(_))) | None => View::Message {
+            heading: "Something went wrong",
+            text: "The device could not be signed in. Try again.",
+        },
     };
-    html(StatusCode::OK, page("Sign in a device", &body))
+    page(StatusCode::OK, view)
 }

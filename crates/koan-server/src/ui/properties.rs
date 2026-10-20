@@ -7,6 +7,7 @@
 //! A page like any other; the UI's script shows its content in the shell's
 //! dialog.
 
+use askama::Template;
 use axum::Extension;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -14,14 +15,46 @@ use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
-use super::pages::{COPY_INPUT, Credits, KICKER, SUB, credit_links, link, respond, unavailable};
+use super::pages::{Credits, credit_links, link, respond, unavailable};
 use super::{UiState, open};
 use crate::auth::AuthUser;
-use crate::share::{blocking, duration, escape, not_found};
+use crate::html::{Html, Render};
+use crate::share::{blocking, duration, not_found};
 
-const LIST: &str = "m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control \
-[&_dd]:m-0 [&_dd]:wrap-anywhere [&_dd]:select-text [&_dt]:text-muted";
-const SECTION: &str = "mt-5 mb-2 text-meta";
+pub(super) const SECTION: &str = "mt-5 mb-2 text-meta";
+
+/// One row of a definition list: text, or links to the artist and album
+/// pages.
+struct Field {
+    name: &'static str,
+    value: Value,
+}
+
+enum Value {
+    Text(String),
+    Links(Html),
+}
+
+impl Value {
+    fn is_empty(&self) -> bool {
+        match self {
+            Value::Text(t) => t.is_empty(),
+            Value::Links(h) => h.is_empty(),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "properties/page.html")]
+struct Properties<'a> {
+    title: &'a str,
+    /// The artist credit, as links.
+    artist: &'a Html,
+    /// The file on the server, for an admin.
+    path: Option<&'a str>,
+    /// Each list under its heading: the track's, then each source's.
+    lists: Vec<(&'static str, Vec<Field>)>,
+}
 
 pub(super) async fn page(
     State(s): State<UiState>,
@@ -40,7 +73,7 @@ pub(super) async fn page(
 
 /// `None` when the library cannot be read, `Some(None)` for a track it does
 /// not have.
-fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
+fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
     let db = open(&s.pool)?;
     let conn = &db.conn;
     let Some(t) = queries::tracks_by_ids(conn, &[id]).ok()?.pop() else {
@@ -81,49 +114,46 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         .and_then(|a| a.date.clone())
         .or_else(|| first(|m| m.date.clone()));
 
-    let mut out = format!(
-        "<p class=\"{KICKER}\">Properties</p><h2 class=\"my-1 normal-case\">{}</h2><p class=\"{SUB}\">{}</p>",
-        escape(&t.title),
-        artist,
-    );
-    if admin && let Some(path) = crate::subsonic::track_file_path(&t) {
-        out.push_str(&format!(
-            "<p class=\"{SECTION}\">File on the server</p><div class=\"flex gap-2\">\
-<input id=track-path readonly value=\"{path}\" aria-label=\"File on the server\" class=\"{COPY_INPUT}\">\
-<button data-copy=track-path>Copy</button></div>",
-            path = escape(path)
-        ));
-    }
-
+    let path = if admin {
+        crate::subsonic::track_file_path(&t)
+    } else {
+        None
+    };
     let number = |v: Option<i32>| v.map(|v| v.to_string());
-    let text = |v: Option<String>| v.map(|v| escape(&v));
+    let text = |name, value: Option<String>| (name, value.map(Value::Text));
+    let html = |name, value: Option<Html>| (name, value.map(Value::Links));
     // Names that have a page are linked to it.
     let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
     let track = [
-        ("Title", text(Some(t.title.clone()))),
-        ("Artist", Some(artist)),
-        ("Album artist", Some(album_artist)),
-        ("Album", linked("album", t.album_id, &t.album_title)),
-        ("Disc", number(t.disc)),
-        ("Track", number(t.track_number)),
-        ("Discs", album.as_ref().and_then(|a| number(a.total_discs))),
-        ("Date", text(date)),
-        ("Genre", text(t.genre.clone())),
-        ("Codec", text(t.codec.clone())),
-        ("Sample rate", t.sample_rate.map(|r| format!("{r} Hz"))),
-        ("Bit depth", t.bit_depth.map(|b| format!("{b} bit"))),
-        ("Length", Some(duration(t.duration_ms))),
-        ("Size", size),
-        ("Track uid", text(track_uid)),
-        ("Album uid", text(album_uid)),
-        ("MusicBrainz recording", text(first(|m| m.mbid.clone()))),
-        ("MusicBrainz release", text(first(|m| m.album_mbid.clone()))),
+        text("Title", Some(t.title.clone())),
+        html("Artist", Some(artist.clone())),
+        html("Album artist", Some(album_artist)),
+        html("Album", linked("album", t.album_id, &t.album_title)),
+        text("Disc", number(t.disc)),
+        text("Track", number(t.track_number)),
+        text("Discs", album.as_ref().and_then(|a| number(a.total_discs))),
+        text("Date", date),
+        text("Genre", t.genre.clone()),
+        text("Codec", t.codec.clone()),
+        text("Sample rate", t.sample_rate.map(|r| format!("{r} Hz"))),
+        text("Bit depth", t.bit_depth.map(|b| format!("{b} bit"))),
+        text("Length", Some(duration(t.duration_ms))),
+        text("Size", size),
+        text("Track uid", track_uid),
+        text("Album uid", album_uid),
+        text("MusicBrainz recording", first(|m| m.mbid.clone())),
+        text("MusicBrainz release", first(|m| m.album_mbid.clone())),
     ];
-    out.push_str(&format!("<p class=\"{SECTION}\">Track</p>"));
-    out.push_str(&list(track.into_iter().filter_map(|(name, value)| {
-        Some((name, value.filter(|v| !v.is_empty())?))
-    })));
-
+    let mut lists = vec![(
+        "Track",
+        track
+            .into_iter()
+            .filter_map(|(name, value)| {
+                let value = value.filter(|v| !v.is_empty())?;
+                Some(Field { name, value })
+            })
+            .collect(),
+    )];
     for mut source in sources {
         if !admin {
             source.path = None;
@@ -134,21 +164,21 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         } else {
             "From the file"
         };
-        out.push_str(&format!("<p class=\"{SECTION}\">{heading}</p>"));
-        out.push_str(&list(
-            source
-                .info_fields()
-                .into_iter()
-                .map(|(name, value)| (name, escape(&value))),
-        ));
+        let fields = source
+            .info_fields()
+            .into_iter()
+            .map(|(name, value)| Field {
+                name,
+                value: Value::Text(value),
+            })
+            .collect();
+        lists.push((heading, fields));
     }
-    Some(Some(out))
-}
-
-/// A definition list of `fields`, whose values are HTML.
-fn list(fields: impl Iterator<Item = (&'static str, String)>) -> String {
-    let rows: String = fields
-        .map(|(name, value)| format!("<dt>{name}</dt><dd>{value}</dd>"))
-        .collect();
-    format!("<dl class=\"{LIST}\">{rows}</dl>")
+    let page = Properties {
+        title: &t.title,
+        artist: &artist,
+        path,
+        lists,
+    };
+    Some(Some(page.html()))
 }

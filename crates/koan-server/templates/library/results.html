@@ -1,0 +1,9 @@
+{#- What a search found, as a shelf. -#}
+<div id="results">
+{%- match found %}
+{%- when Results::Blank %}
+{%- when Results::Unavailable %}<p class="{{ crate::ui::pages::ERROR }}">The library is unavailable.</p>
+{%- when Results::Nothing(q) %}<p class="{{ crate::ui::pages::EMPTY }}">Nothing matches “{{ q }}”.</p>
+{%- when Results::Shelf(html) %}{{ html }}
+{%- endmatch -%}
+</div>

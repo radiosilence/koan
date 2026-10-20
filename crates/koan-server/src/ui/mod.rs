@@ -390,8 +390,8 @@ fn see_other(location: &str) -> Response {
 }
 
 /// An HTML page with the UI's security headers.
-fn html(status: StatusCode, body: String) -> Response {
-    let mut resp = (status, body).into_response();
+fn html(status: StatusCode, body: impl Into<String>) -> Response {
+    let mut resp = (status, body.into()).into_response();
     let h = resp.headers_mut();
     h.insert(
         header::CONTENT_TYPE,

@@ -1,0 +1,1 @@
+<div id="user-result">{% match shown %}{% when Shown::Html(html) %}{{ html }}{% when Shown::Message(text) %}<p class="{{ crate::ui::pages::COPY_ROW }}">{{ text }}</p>{% when Shown::Error(text) %}<p class="{{ crate::ui::pages::COPY_ERROR }}" role="alert">{{ text }}</p>{% endmatch %}</div>

@@ -21,6 +21,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use askama::Template;
 use axum::Extension;
 use axum::Form;
 use axum::Json;
@@ -36,10 +37,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::pages::{SIGNIN_BODY, SIGNIN_MAIN, SIGNIN_TITLE};
 use super::{UiState, html, open};
 use crate::auth::AuthUser;
-use crate::share::{escape, not_found};
+use crate::html::Render;
+use crate::share::not_found;
 
 const CODE_TTL_SECS: u64 = 60;
 const CLIENT_TYP: &str = "koan-client";
@@ -250,10 +251,11 @@ fn resource_ok(base: &str, resource: &str) -> bool {
 /// The client's registered redirect URI is returned as the string it registered.
 fn check(s: &UiState, q: &AuthorizeParams) -> Result<(String, Client, String, Url), Box<Response>> {
     let refuse = |why: &str| {
-        Box::new(html(
-            StatusCode::BAD_REQUEST,
-            page("Cannot connect", &format!("<p>{}</p>", escape(why))),
-        ))
+        let page = Refused {
+            title: "Cannot connect",
+            why,
+        };
+        Box::new(html(StatusCode::BAD_REQUEST, page.html()))
     };
     let base = public_base(s).ok_or_else(|| Box::new(not_found()))?;
     let c = client(s, &q.client_id).ok_or_else(|| refuse("This app is not registered here."))?;
@@ -306,12 +308,25 @@ fn request_error(base: &str, q: &AuthorizeParams) -> Option<(&'static str, &'sta
     None
 }
 
-pub(super) fn page(title: &str, body: &str) -> String {
-    format!(
-        "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\">\
-<h1 class=\"{SIGNIN_TITLE}\">kōan</h1>{body}</main></body></html>",
-        head = super::pages::head(title),
-    )
+#[derive(Template)]
+#[template(path = "oauth/refused.html")]
+struct Refused<'a> {
+    title: &'a str,
+    why: &'a str,
+}
+
+/// The consent page. `fields` carries the request on to the approval, and
+/// `here` brings the person back to it after signing in as someone else.
+#[derive(Template)]
+#[template(path = "oauth/consent.html")]
+struct Consent<'a> {
+    title: &'a str,
+    host: &'a str,
+    name: &'a str,
+    abilities: &'a str,
+    user: &'a str,
+    fields: [(&'a str, &'a str); 8],
+    here: String,
 }
 
 /// What a grant lets the client do, at the role `/mcp` caps it to.
@@ -344,23 +359,6 @@ pub(super) async fn authorize(
             &[("error", error), ("error_description", why)],
         );
     }
-    let hidden = |name: &str, value: &str| {
-        format!(
-            "<input type=hidden name={name} value=\"{}\">",
-            escape(value)
-        )
-    };
-    let fields = [
-        hidden("response_type", &q.response_type),
-        hidden("client_id", &q.client_id),
-        hidden("redirect_uri", &q.redirect_uri),
-        hidden("code_challenge", &q.code_challenge),
-        hidden("code_challenge_method", &q.code_challenge_method),
-        hidden("state", &q.state),
-        hidden("scope", &q.scope),
-        hidden("resource", &q.resource),
-    ]
-    .concat();
     let here = format!(
         "/oauth/authorize?{}",
         serde_urlencoded_pairs(&[
@@ -374,24 +372,25 @@ pub(super) async fn authorize(
             ("resource", &q.resource),
         ])
     );
-    let host = to.host_str().unwrap_or_default();
-    let body = format!(
-        "<h2>Connect kōan to <span class=\"normal-case\">{host}</span>?</h2>\
-<p>An app calling itself <em>{name}</em> wants to {abilities}, as <strong>{user}</strong>. \
-Anyone can give an app any name: {host} is where it really goes.</p>\
-<p><small>Approve only a connection you started yourself, just now. \
-Approving connects whichever account started it.</small></p>\
-<form class=\"grid gap-3.5\" method=post action=\"/oauth/authorize\">{fields}\
-<button class=\"primary\" name=decision value=allow>Allow</button>\
-<button class=\"quiet\" name=decision value=deny>Deny</button></form>\
-<form class=\"grid gap-3.5\" method=post action=\"/auth/signout\">{next}<button class=\"quiet\">Not <span class=\"normal-case\">{user}</span>? Sign out</button></form>",
-        host = escape(host),
-        name = escape(&c.client_name),
-        abilities = abilities(&user),
-        user = escape(&user.username),
-        next = hidden("next", &here),
-    );
-    let mut resp = html(StatusCode::OK, page("Connect an app", &body));
+    let page = Consent {
+        title: "Connect an app",
+        host: to.host_str().unwrap_or_default(),
+        name: &c.client_name,
+        abilities: abilities(&user),
+        user: &user.username,
+        fields: [
+            ("response_type", &q.response_type),
+            ("client_id", &q.client_id),
+            ("redirect_uri", &q.redirect_uri),
+            ("code_challenge", &q.code_challenge),
+            ("code_challenge_method", &q.code_challenge_method),
+            ("state", &q.state),
+            ("scope", &q.scope),
+            ("resource", &q.resource),
+        ],
+        here,
+    };
+    let mut resp = html(StatusCode::OK, page.html());
     // The approval answers with a redirect to the client, which a browser
     // holds the form's `form-action` to as well.
     let csp = super::PAGE_CSP.replace(

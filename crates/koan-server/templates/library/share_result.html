@@ -1,0 +1,3 @@
+{%- import "copy.html" as copy -%}
+{#- A share link made, with a copy button, or why it could not be. -#}
+{% match result %}{% when Ok(url) %}<div id="share-result" class="{{ crate::ui::pages::COPY_ROW }}">{% call copy::field("share-url", url, "Share link", "Copy") %}{% endcall %}</div>{% when Err(e) %}<div id="share-result" class="{{ crate::ui::pages::COPY_ERROR }}" role="alert">{{ e }}</div>{% endmatch %}

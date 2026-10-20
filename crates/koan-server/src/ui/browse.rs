@@ -8,15 +8,14 @@
 //! exactly as `koan_core::shelves` narrows a shelf, so a shelf page's section
 //! heading (`shelf_browser`) opens the listing its preview is the head of.
 
-use std::fmt::Write as _;
-
+use askama::Template;
 use koan_core::db::queries::{
     AlbumFilter, AlbumOrder, AlbumQuery, ArtistOrder, ArtistQuery, TrackFilter, TrackOrder,
 };
 use koan_core::shelves::{Shelf, Tracks};
 use serde::Deserialize;
 
-use crate::share::escape;
+use crate::html::{Html, Render};
 
 /// A browser's query string. Blank values, as an unfilled form field sends
 /// them, mean unset.
@@ -294,40 +293,64 @@ pub(super) fn shelf_browser(shelf: Shelf, kind: Kind) -> String {
 
 /// A labelled control in the toolbar; on a phone, label and control at either
 /// end of a row of the sheet.
-const LABEL: &str = "inline-flex items-center gap-1.5 max-wide:justify-between";
+pub(super) const LABEL: &str = "inline-flex items-center gap-1.5 max-wide:justify-between";
 /// The toolbar's selects and year fields, smaller than a form's.
-const FIELD: &str = "px-2 py-[5px] text-meta max-wide:text-input";
+pub(super) const FIELD: &str = "px-2 py-[5px] text-meta max-wide:text-input";
 
-fn select(name: &str, label: &str, options: &[(String, String)], current: &str) -> String {
-    let mut out = format!(
-        "<label class=\"{LABEL}\">{label}<select class=\"max-w-[12em] {FIELD}\" name={name}>"
-    );
-    for (value, text) in options {
-        let _ = write!(
-            out,
-            "<option value=\"{v}\"{sel}>{t}</option>",
-            v = escape(value),
-            t = escape(text),
-            sel = if value == current { " selected" } else { "" },
-        );
-    }
-    out.push_str("</select></label>");
-    out
+/// A select's options: value, text, and whether it is the one chosen.
+type Options = Vec<(String, String, bool)>;
+
+#[derive(Template)]
+#[template(path = "browse/toolbar.html")]
+struct Toolbar<'a> {
+    path: &'static str,
+    /// How many filters are on, shown on the phone's button.
+    active: usize,
+    sorts: Options,
+    /// Kept with a random order, so applying a filter keeps the shuffle.
+    seed: Option<i64>,
+    /// The query for a fresh shuffle, on the album browser's random order.
+    reshuffle: Option<String>,
+    fav: bool,
+    recent: bool,
+    /// Whether lossless is on; `None` on the track browser, which has none.
+    lossless: Option<bool>,
+    codecs: Options,
+    genres: Options,
+    name_hint: &'static str,
+    name_width: &'static str,
+    q: &'a str,
+    from: &'a str,
+    to: &'a str,
 }
 
-fn check(name: &str, label: &str, on: &str) -> String {
-    format!(
-        "<label class=\"inline-flex items-center gap-1.5\"><input type=checkbox name={name} \
-value=1{}>{label}</label>",
-        if set(on).is_some() { " checked" } else { "" }
-    )
+/// "Any", then each value offered, then the current one if a link set one
+/// that is not offered, so it still shows.
+fn options(offered: &[String], current: &str) -> Options {
+    let mut out = vec![(String::new(), "Any".to_owned())];
+    out.extend(offered.iter().map(|v| (v.clone(), v.clone())));
+    if let Some(c) = set(current)
+        && !out.iter().any(|(v, _)| v == c)
+    {
+        out.push((c.to_owned(), c.to_owned()));
+    }
+    chosen(out, current)
+}
+
+fn chosen(options: Vec<(String, String)>, current: &str) -> Options {
+    options
+        .into_iter()
+        .map(|(v, t)| {
+            let on = v == current;
+            (v, t, on)
+        })
+        .collect()
 }
 
 /// The sort and filter controls: a row above the grid on a wide screen, one
 /// "Sort · Filter" button that opens them on a phone. A plain GET form, so it
 /// works without script; with it, a change applies at once.
-pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[String]) -> String {
-    let path = kind.path();
+pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[String]) -> Html {
     let mut sorts: Vec<(String, String)> = match kind {
         Kind::Albums => &ALBUM_SORTS[..],
         Kind::Artists => &ARTIST_SORTS[..],
@@ -343,88 +366,39 @@ pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[Strin
         sorts.insert(0, (BEST.0.into(), BEST.1.into()));
     }
     let sort = b.sort_or(kind.default_sort()).to_owned();
-    let any = || vec![(String::new(), "Any".to_string())];
-    let mut codec_options = any();
-    codec_options.extend(codecs.iter().map(|c| (c.clone(), c.clone())));
-    let mut genre_options = any();
-    genre_options.extend(genres.iter().map(|g| (g.clone(), g.clone())));
-    // A filter set by a link that is not among the offered values still shows.
-    for (current, options) in [
-        (&b.codec, &mut codec_options),
-        (&b.genre, &mut genre_options),
-    ] {
-        if let Some(c) = set(current)
-            && !options.iter().any(|(v, _)| v == c)
-        {
-            options.push((c.to_owned(), c.to_owned()));
-        }
-    }
-    let seed = match (sort.as_str(), b.seed) {
-        ("random", Some(seed)) => format!("<input type=hidden name=seed value={seed}>"),
-        _ => String::new(),
-    };
-    let reshuffle = if sort == "random" && kind == Kind::Albums {
-        let fresh = Browse {
-            seed: None,
-            ..b.clone()
-        };
-        format!(
-            "<a class=\"text-muted lowercase\" href=\"{path}?{}\">Reshuffle</a>",
-            fresh.query()
-        )
-    } else {
-        String::new()
-    };
-    let active = b.active();
-    let label = if active > 0 {
-        format!(
-            "Sort · Filter <span class=\"inline-block min-w-[1.5em] bg-brand px-[5px] text-center \
-text-[11px] font-bold text-bg\">{active}</span>"
-        )
-    } else {
-        "Sort · Filter".into()
-    };
-    format!(
-        "<details class=\"browse group -mt-1 mb-5\"><summary class=\"hidden cursor-pointer list-none items-center gap-1.5 \
-border border-muted px-3 py-[7px] text-control text-ink group-open:border-brand \
-max-wide:inline-flex [&::-webkit-details-marker]:hidden\">{label}</summary>\
-<form class=\"toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-meta text-muted max-wide:mt-2.5 \
-max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:border \
-max-wide:border-rule max-wide:p-3.5 max-wide:text-body\" method=get action=\"{path}\">\
-<label class=\"{LABEL}\">Name<input class=\"{name_width} {FIELD} max-wide:w-auto max-wide:flex-1\" type=search \
-name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{recent}{lossless}{codec}\
-<label class=\"{LABEL}\">Years<input class=\"w-[4.5em] {FIELD}\" name=from inputmode=numeric maxlength=4 \
-placeholder=From value=\"{from}\" aria-label=\"From year\"><span>–</span><input class=\"w-[4.5em] {FIELD}\" \
-name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\"To year\"></label>\
-{genre}<div class=\"inline-flex items-center gap-2.5 max-wide:justify-between\">\
-<button class=\"in-[.js]:hidden max-wide:in-[.js]:inline-block\">Apply</button>\
-<a class=\"text-muted lowercase\" href=\"{path}\">Reset</a></div></form></details>",
-        sort_select = select("sort", "Sort", &sorts, &sort),
-        fav = check("fav", "Favourites", &b.fav),
-        recent = check("recent", "Recently played", &b.recent),
-        // A track's codec says as much; the album browsers' lossless means a
-        // whole record.
-        lossless = if kind == Kind::Tracks {
-            String::new()
-        } else {
-            check("lossless", "Lossless", &b.lossless)
-        },
-        codec = select("codec", "Codec", &codec_options, &b.codec),
-        genre = select("genre", "Genre", &genre_options, &b.genre),
-        name_hint = match kind {
+    let random = sort == "random";
+    Toolbar {
+        path: kind.path(),
+        active: b.active(),
+        seed: b.seed.filter(|_| random),
+        reshuffle: (random && kind == Kind::Albums).then(|| {
+            Browse {
+                seed: None,
+                ..b.clone()
+            }
+            .query()
+        }),
+        sorts: chosen(sorts, &sort),
+        fav: set(&b.fav).is_some(),
+        recent: b.recent_on(),
+        lossless: (kind != Kind::Tracks).then(|| set(&b.lossless).is_some()),
+        codecs: options(codecs, &b.codec),
+        genres: options(genres, &b.genre),
+        name_hint: match kind {
             Kind::Albums => "Album or artist",
             Kind::Artists => "Artist",
             Kind::Tracks => "Title, artist or record",
         },
         // Wide enough for the hint.
-        name_width = match kind {
+        name_width: match kind {
             Kind::Tracks => "w-[17em]",
             Kind::Albums | Kind::Artists => "w-[12em]",
         },
-        q = escape(&b.q),
-        from = escape(&b.from),
-        to = escape(&b.to),
-    )
+        q: &b.q,
+        from: &b.from,
+        to: &b.to,
+    }
+    .html()
 }
 
 #[cfg(test)]

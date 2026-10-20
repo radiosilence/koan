@@ -19,6 +19,9 @@ just check
 
 # format
 just fmt
+
+# format before every commit (lefthook, from mise)
+just hooks
 ```
 
 ### Measuring the macOS app

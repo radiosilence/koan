@@ -1,0 +1,6 @@
+{%- import "library/macros.html" as library -%}
+<header class="{{ crate::ui::pages::HERO }}"><img class="{{ crate::ui::pages::HERO_COVER }}" src="{{ cover }}" width="{{ crate::covers::LARGE }}" height="{{ crate::covers::LARGE }}" alt="">
+<div class="min-w-0 flex-1"><p class="{{ crate::ui::pages::KICKER }}">Album</p><h1 class="mb-1 normal-case">{{ album.title }}</h1><p class="{{ crate::ui::pages::SUB }}">{{ credit }}{% for part in sub %} · {{ part }}{% endfor %}</p>
+<div class="{{ crate::ui::pages::ACTIONS }}">{% call library::play_buttons("primary") %}{% endcall %}
+{%- if can_share %}<button class="standard" data-indicator:_sharing data-attr:disabled="$_sharing" data-class:busy="$_sharing" data-on:click="@post('/album/{{ album.id }}/share')">Share</button>{% endif %}{{ heart }}</div><div id="share-result"></div></div></header>
+<ol class="tracks" data-context="album">{% for (disc, row) in rows %}{% if let Some(disc) = disc %}<li class="disc">Disc {{ disc }}</li>{% endif %}{{ row }}{% endfor %}</ol>

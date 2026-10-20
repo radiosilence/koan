@@ -1,0 +1,10 @@
+{#- A labelled control in the browse toolbar. `options` are value, text and whether it is the one chosen. -#}
+{% macro select(name, label, options) %}
+<label class="{{ crate::ui::browse::LABEL }}">{{ label }}<select class="max-w-[12em] {{ crate::ui::browse::FIELD }}" name="{{ name }}">
+{%- for (value, text, chosen) in options %}<option value="{{ value }}"{% if *chosen %} selected{% endif %}>{{ text }}</option>{% endfor -%}
+</select></label>
+{% endmacro %}
+
+{% macro check(name, label, on) %}
+<label class="inline-flex items-center gap-1.5"><input type="checkbox" name="{{ name }}" value="1"{% if on %} checked{% endif %}>{{ label }}</label>
+{% endmacro %}

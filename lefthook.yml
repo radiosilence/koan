@@ -1,0 +1,11 @@
+# Formatting is fixed before a commit, so a push never carries unformatted
+# code. Each staged file goes through rustfmt on stdin, which formats that file
+# alone: given a path, rustfmt also rewrites the modules it declares, which may
+# hold work not yet staged. Lint and tests are left to CI; `just check` runs
+# them by hand.
+pre-commit:
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: for f in {staged_files}; do rustfmt --edition 2024 < "$f" > "$f.fmt" && mv "$f.fmt" "$f" || { rm -f "$f.fmt"; exit 1; }; done
+      stage_fixed: true

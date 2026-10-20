@@ -494,7 +494,7 @@ async fn track_properties_show_the_file_path_to_admins_only() {
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.body.contains(&path), "{}", r.body);
-    assert!(r.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
+    assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
 
     let r = send(
         &f.app,
@@ -507,7 +507,7 @@ async fn track_properties_show_the_file_path_to_admins_only() {
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains(&path), "{}", r.body);
     assert!(!r.body.contains("a.flac"));
-    assert!(r.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
+    assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
     assert!(r.body.contains("FLAC"));
 
     let r = send(
@@ -528,10 +528,13 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     let full = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
     assert_eq!(full.status, StatusCode::OK);
     assert!(full.body.starts_with("<!doctype html>"));
-    assert!(full.body.contains("rel=icon"), "pages carry the favicon");
-    assert!(full.body.contains("aria-label=Library>"));
-    assert!(full.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
-    assert!(full.body.contains("Hymn &lt;to&gt; Moisture"));
+    assert!(
+        full.body.contains("rel=\"icon\""),
+        "pages carry the favicon"
+    );
+    assert!(full.body.contains("aria-label=\"Library\">"));
+    assert!(full.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
+    assert!(full.body.contains("Hymn &#60;to&#62; Moisture"));
     assert!(!full.body.contains("<Moss>") && !full.body.contains("<to>"));
     assert!(!full.body.contains("<script>") && !full.body.contains(" style="));
     let csp = full.headers[header::CONTENT_SECURITY_POLICY]
@@ -565,7 +568,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     assert!(
         partial
             .body
-            .contains("data-title=\"Hymn &lt;to&gt; Moisture\"")
+            .contains("data-title=\"Hymn &#60;to&#62; Moisture\"")
     );
     assert!(!partial.body.contains("<nav"));
 
@@ -587,7 +590,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
             .unwrap(),
     )
     .await;
-    assert!(r.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
+    assert!(r.body.contains("Wet &#60;Moss&#62; &#38; Stone"));
 }
 
 #[tokio::test]
@@ -606,7 +609,7 @@ async fn live_fragments_are_datastar_events_and_posts_need_datastar() {
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.body.starts_with("event: datastar-patch-elements\n"));
-    assert!(r.body.contains("data: elements <div id=results>"));
+    assert!(r.body.contains("data: elements <div id=\"results\">"));
 
     let share = format!("/album/{}/share", f.album_id);
     let bare = Request::post(&share)
@@ -628,7 +631,7 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
         authed(&f.state, "/albums").body(Body::empty()).unwrap(),
     )
     .await;
-    let src = format!("src=\"/ui/cover/{}?size=400&amp;v=", f.album_id);
+    let src = format!("src=\"/ui/cover/{}?size=400&#38;v=", f.album_id);
     let src_raw = format!("src=\"/ui/cover/{}?size=400&v=", f.album_id);
     assert!(
         page.body.contains(&src) || page.body.contains(&src_raw),
@@ -637,7 +640,7 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
     );
     assert!(
         page.body
-            .contains("loading=lazy decoding=async width=400 height=400")
+            .contains("loading=\"lazy\" decoding=\"async\" width=\"400\" height=\"400\"")
     );
 
     let uri = format!("/ui/cover/{}?size=300&v=1", f.album_id);
@@ -681,7 +684,7 @@ async fn artists_and_albums_are_linked_wherever_they_are_named() {
     };
     let artist = ">Rrose</a>";
     let album = format!(
-        "<a href=\"/album/{}\">Hymn &lt;to&gt; Moisture</a>",
+        "<a href=\"/album/{}\">Hymn &#60;to&#62; Moisture</a>",
         f.album_id
     );
 
@@ -753,7 +756,10 @@ async fn each_credited_artist_is_its_own_link() {
 
     let tiles = page("/albums".into()).await;
     split(&tiles);
-    assert!(tiles.contains("tabindex=-1>Bob Ostertag</a>"), "{tiles}");
+    assert!(
+        tiles.contains("tabindex=\"-1\">Bob Ostertag</a>"),
+        "{tiles}"
+    );
 
     let search = page("/search?q=Duet".into()).await;
     let row = search
@@ -763,7 +769,7 @@ async fn each_credited_artist_is_its_own_link() {
         .unwrap_or_else(|| panic!("a track row: {search}"));
     split(row);
     assert!(
-        search.contains("data-credit=\"[[&quot;Rrose&quot;,"),
+        search.contains("data-credit=\"[[&#34;Rrose&#34;,"),
         "the queue is drawn from the row's parts: {search}"
     );
 
@@ -787,11 +793,11 @@ async fn sorting_and_filtering_live_in_the_query_string() {
     let r = page("/albums?sort=title&lossless=1&genre=").await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(
-        r.body.contains("Hymn &lt;to&gt; Moisture"),
+        r.body.contains("Hymn &#60;to&#62; Moisture"),
         "FLAC is lossless"
     );
     assert!(r.body.contains("<option value=\"title\" selected>"));
-    assert!(r.body.contains("name=lossless value=1 checked"));
+    assert!(r.body.contains("name=\"lossless\" value=\"1\" checked"));
     assert!(r.body.contains(">1</span></summary>"));
 
     let r = page("/albums?codec=MP3").await;
@@ -799,13 +805,13 @@ async fn sorting_and_filtering_live_in_the_query_string() {
     let r = page("/albums?from=2020").await;
     assert!(r.body.contains("No albums match."), "released 2019");
     let r = page("/albums?from=2015&to=2019").await;
-    assert!(r.body.contains("Hymn &lt;to&gt; Moisture"));
+    assert!(r.body.contains("Hymn &#60;to&#62; Moisture"));
 
     // A value from a link, not among those offered, is still shown and kept.
     let r = page("/albums?genre=%22%3E%3Cscript%3E").await;
     assert!(
         r.body
-            .contains("<option value=\"&quot;&gt;&lt;script&gt;\" selected>")
+            .contains("<option value=\"&#34;&#62;&#60;script&#62;\" selected>")
     );
     assert!(!r.body.contains("\"><script>"));
 
@@ -818,14 +824,15 @@ async fn sorting_and_filtering_live_in_the_query_string() {
     }
     let r = page("/albums?sort=random").await;
     assert!(
-        r.body.contains("<input type=hidden name=seed value="),
+        r.body
+            .contains("<input type=\"hidden\" name=\"seed\" value=\""),
         "the shuffle is pinned"
     );
 }
 
 /// The `data-id`s of the track rows on a page, in order.
 fn row_ids(body: &str) -> Vec<String> {
-    body.split("<li tabindex=0 data-id=")
+    body.split("<li tabindex=\"0\" data-id=\"")
         .skip(1)
         .map(|r| r.split(' ').next().unwrap().to_owned())
         .collect()
@@ -863,7 +870,7 @@ async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
         .split('"')
         .next()
         .unwrap()
-        .replace("&amp;", "&");
+        .replace("&#38;", "&");
     assert!(link.starts_with("/tracks?"), "{link}");
 
     let browser = send(&f.app, get(&link)).await.body;
@@ -874,7 +881,7 @@ async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
         "the same tracks, in the same order"
     );
     assert!(
-        browser.contains("name=fav value=1 checked"),
+        browser.contains("name=\"fav\" value=\"1\" checked"),
         "the filter shows, to be cleared"
     );
 }
@@ -916,9 +923,9 @@ async fn favourites_are_the_callers_own_as_a_shelf() {
         "the record, as a tile"
     );
     assert!(
-        r.body.contains(&format!("data-id={}", f.track_id))
-            && r.body.contains("data-context=album")
-            && r.body.contains("Wet &lt;Moss&gt; &amp; Stone"),
+        r.body.contains(&format!("data-id=\"{}\"", f.track_id))
+            && r.body.contains("data-context=\"album\"")
+            && r.body.contains("Wet &#60;Moss&#62; &#38; Stone"),
         "the track, in a list that plays on"
     );
 
@@ -953,12 +960,13 @@ async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.body.contains(">Today</li>"), "grouped by day");
     assert_eq!(
-        r.body.matches("type=checkbox").count(),
+        r.body.matches("type=\"checkbox\"").count(),
         2,
         "alice's two plays, not bob's"
     );
     assert!(
-        r.body.contains(&format!("value={mine}")) && !r.body.contains(&format!("value={theirs}"))
+        r.body.contains(&format!("value=\"{mine}\""))
+            && !r.body.contains(&format!("value=\"{theirs}\""))
     );
 
     let forget = |ids: &str| {
@@ -1027,7 +1035,9 @@ async fn recently_played_is_the_callers_own_each_once() {
     }
     let r = send(&f.app, page()).await;
     assert_eq!(
-        r.body.matches(&format!("data-id={}", f.track_id)).count(),
+        r.body
+            .matches(&format!("data-id=\"{}\"", f.track_id))
+            .count(),
         1,
         "three plays, one track"
     );
@@ -1051,7 +1061,7 @@ async fn playlists_list_the_callers_own_and_play_like_albums() {
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
-    assert!(r.body.contains("Damp &lt;Mix&gt;") && r.body.contains("1 track"));
+    assert!(r.body.contains("Damp &#60;Mix&#62;") && r.body.contains("1 track"));
     assert!(
         !r.body.contains("Bob"),
         "another account's private playlist is not listed"
@@ -1060,8 +1070,8 @@ async fn playlists_list_the_callers_own_and_play_like_albums() {
     let uri = format!("/playlist/{mine}");
     let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert!(r.body.contains("data-act=queue") && r.body.contains("data-context=album"));
-    assert!(r.body.contains(&format!("data-id={}", f.track_id)));
+    assert!(r.body.contains("data-act=\"queue\"") && r.body.contains("data-context=\"album\""));
+    assert!(r.body.contains(&format!("data-id=\"{}\"", f.track_id)));
 
     let uri = format!("/playlist/{theirs}");
     let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
@@ -1126,7 +1136,7 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
     .await;
     let key = r
         .body
-        .split("id=key-result-value readonly value=\"")
+        .split("id=\"key-result-value\" readonly value=\"")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .unwrap_or_else(|| panic!("no key in {}", r.body))
@@ -1192,7 +1202,7 @@ async fn app_passwords_are_shown_once_sealed_and_revoked() {
     .await;
     let password = r
         .body
-        .split("id=app-password-result-value readonly value=\"")
+        .split("id=\"app-password-result-value\" readonly value=\"")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .unwrap_or_else(|| panic!("no app password in {}", r.body))
@@ -1326,11 +1336,11 @@ async fn admins_create_invite_and_remove_accounts() {
     .await;
     let link = r
         .body
-        .split("id=invite-link readonly value=\"")
+        .split("id=\"invite-link\" readonly value=\"")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .unwrap_or_else(|| panic!("no link in {}", r.body))
-        .replace("&amp;", "&");
+        .replace("&#38;", "&");
     let invite = koan_core::invite::Invite::parse(&link).unwrap();
     assert_eq!(invite.server, ORIGIN);
     assert_eq!(invite.username, "sarita");
@@ -1364,7 +1374,7 @@ async fn admins_create_invite_and_remove_accounts() {
         post(&format!("/users/{}/invite", row.id), "{}", &admin),
     )
     .await;
-    assert!(r.body.contains("id=invite-link"), "{}", r.body);
+    assert!(r.body.contains("id=\"invite-link\""), "{}", r.body);
     assert!(
         r.body
             .contains("aria-label=\"Invite link as a QR code\"><svg"),
@@ -1507,7 +1517,7 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
     assert_eq!(r.status, StatusCode::OK);
     assert!(
         r.body
-            .contains("Sign in <span class=\"normal-case\">Living &lt;room&gt; TV</span>?"),
+            .contains("Sign in <span class=\"normal-case\">Living &#60;room&#62; TV</span>?"),
         "{}",
         r.body
     );
@@ -2608,18 +2618,18 @@ async fn track_rows_carry_what_the_track_menu_needs() {
     )
     .await;
     assert!(
-        r.body.contains("<div id=track-menu popover"),
+        r.body.contains("<div id=\"track-menu\" popover"),
         "the shell's one menu"
     );
     let row = r
         .body
-        .split("<li tabindex=0 data-id=")
+        .split("<li tabindex=\"0\" data-id=\"")
         .nth(1)
         .expect("a track row");
     let row = &row[..row.find("</li>").unwrap()];
-    assert!(row.contains(&format!("data-album-id={}", f.album_id)));
+    assert!(row.contains(&format!("data-album-id=\"{}\"", f.album_id)));
     assert!(row.contains("data-artist-id="), "for Go to Artist");
-    assert!(row.contains("data-act=menu"), "the phone's way in");
+    assert!(row.contains("data-act=\"menu\""), "the phone's way in");
     assert!(row.contains("data-fav="), "the heart the menu presses");
     assert!(row.contains("data-act-share"), "the share the menu presses");
 }

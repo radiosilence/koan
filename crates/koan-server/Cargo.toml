@@ -48,6 +48,7 @@ uuid = { version = "1.22.0", features = ["v7"] }
 zip = { version = "9.0.4", default-features = false }
 chrono = "0.4"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+askama = "0.16"
 
 [dev-dependencies]
 tempfile = "3"

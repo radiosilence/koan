@@ -1,0 +1,12 @@
+{#- Whether to let an assistant reach /mcp as this account. The host is named, since a client may give itself any name. -#}
+{%- extends "signin.html" %}
+{% block body %}
+<h2>Connect kōan to <span class="normal-case">{{ host }}</span>?</h2>
+<p>An app calling itself <em>{{ name }}</em> wants to {{ abilities }}, as <strong>{{ user }}</strong>. Anyone can give an app any name: {{ host }} is where it really goes.</p>
+<p><small>Approve only a connection you started yourself, just now. Approving connects whichever account started it.</small></p>
+<form class="grid gap-3.5" method="post" action="/oauth/authorize">
+{%- for (field, value) in fields %}<input type="hidden" name="{{ field }}" value="{{ value }}">{% endfor %}
+<button class="primary" name="decision" value="allow">Allow</button>
+<button class="quiet" name="decision" value="deny">Deny</button></form>
+<form class="grid gap-3.5" method="post" action="/auth/signout"><input type="hidden" name="next" value="{{ here }}"><button class="quiet">Not <span class="normal-case">{{ user }}</span>? Sign out</button></form>
+{% endblock %}

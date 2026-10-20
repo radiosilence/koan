@@ -5,9 +5,9 @@
 //! them from the page rather than asking the server again.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::sync::Arc;
 
+use askama::Template;
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -21,40 +21,26 @@ use super::browse::{self, Browse, Kind};
 use super::favourite::Hearts;
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
-use crate::icon;
-use crate::share::{blocking, duration, escape, not_found};
+use crate::html::{Html, NOTHING, Render};
+use crate::share::{blocking, duration, not_found};
 use koan_core::shelves::{self, Shelf, Summary};
 
 const GENRES_OFFERED: u32 = 80;
 
-/// A track row's actions on a narrow screen: one button opening the row's
-/// menu, which right-click and long-press open on any screen. The row's own
-/// buttons stand beside it on a wide screen only.
-pub(super) const MORE: &str = "<button class=\"quiet wide:hidden\" data-act=menu aria-haspopup=menu \
-aria-label=\"More\" title=\"More\">⋯</button>";
-
-/// The menu every track row opens, filled for the row by the UI's script.
-/// Beside the pointer on a wide screen, a sheet above the bar on a phone.
-const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
-flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto \
-max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
-
-/// A track's properties, filled from `/track/{id}/properties` by the UI's script.
-const TRACK_PROPERTIES: &str = "<dialog id=track-properties class=\"m-auto max-h-[85dvh] w-[calc(100%-24px)] \
-max-w-panel overflow-y-auto border border-rule bg-bg px-5 pt-4 pb-5 text-ink backdrop:bg-bg/70\" \
-aria-label=Properties><div id=track-properties-body></div>\
-<form method=dialog class=\"mt-6 flex justify-end\"><button>Close</button></form></dialog>";
+/// Why an action failed, drawn where its result would have gone.
+#[derive(Template)]
+#[template(path = "failed.html")]
+pub(super) struct Failed<'a> {
+    pub(super) id: &'a str,
+    pub(super) class: &'a str,
+    pub(super) message: &'a str,
+}
 
 pub(super) const KICKER: &str = "m-0 text-fine text-muted lowercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
 pub(super) const ERROR: &str = "text-bad";
 const ACTIONS: &str = "flex flex-wrap items-center gap-2";
-/// A heading with its buttons, above a track list. The row keeps the space a
-/// heading would, above and below, since buttons beside it are taller than it
-/// and would otherwise sit on the list.
-pub(super) const LIST_HEAD: &str =
-    "mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0";
 /// Top-aligned, so the cover's top meets the kicker's first line.
 const HERO: &str =
     "mb-6 flex items-start gap-6 max-wide:flex-col max-wide:items-stretch max-wide:gap-4";
@@ -62,12 +48,6 @@ const HERO_COVER: &str = "size-[220px] flex-none bg-surface object-cover \
 max-wide:aspect-square max-wide:h-auto max-wide:w-full";
 const GRID: &str = "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-4 gap-y-5 \
 max-wide:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-wide:gap-x-3 max-wide:gap-y-4";
-/// A row of the artist and playlist lists: the link, its name and its count.
-/// No rules between rows, as in every list of the theme.
-const LIST_ROW: &str = "flex min-w-0 items-baseline gap-3 px-2 py-2.5 text-ink hover:bg-hover/30 \
-hover:no-underline max-wide:px-0";
-const LIST_NAME: &str = "min-w-0 flex-1 truncate";
-const LIST_COUNT: &str = "text-meta text-muted";
 /// A copyable link: the share, the new key, an invite, the MCP address.
 pub(super) const COPY_ROW: &str = "mt-3 flex max-w-form gap-2";
 pub(super) const COPY_INPUT: &str = "flex-1 text-control";
@@ -76,150 +56,66 @@ pub(super) const COPY_ERROR: &str = "mt-3 max-w-form text-control text-bad";
 pub(super) const SIGNIN_BODY: &str = "pb-0";
 pub(super) const SIGNIN_MAIN: &str = "mx-auto max-w-[360px] px-4 py-16";
 pub(super) const SIGNIN_TITLE: &str = "text-brand";
+pub(super) const SIGNIN_LABEL: &str = "grid gap-1.5 text-meta text-muted";
+
+#[derive(Template)]
+#[template(path = "player/buttons.html")]
+struct Buttons {
+    row: &'static str,
+    small: &'static str,
+    big: &'static str,
+    prev: &'static str,
+}
 
 /// The transport buttons: in the bar, or larger on a phone on the queue page.
-fn buttons(page: bool) -> String {
-    let icon = "inline-flex items-center justify-center p-0 text-ink hover:bg-transparent hover:text-strong";
-    let (row, small, big, prev) = if page {
-        (
-            "flex flex-wrap items-center gap-2 max-wide:justify-center",
-            "size-11 *:size-[18px] max-wide:size-12 max-wide:*:size-6",
-            "size-11 *:size-[18px] max-wide:size-15 max-wide:*:size-6",
-            "",
-        )
+pub(super) fn buttons(page: bool) -> Html {
+    let b = if page {
+        Buttons {
+            row: "flex flex-wrap items-center gap-2 max-wide:justify-center",
+            small: "size-11 *:size-[18px] max-wide:size-12 max-wide:*:size-6",
+            big: "size-11 *:size-[18px] max-wide:size-15 max-wide:*:size-6",
+            prev: "",
+        }
     } else {
-        (
-            "flex items-center gap-1.5",
-            "size-11 *:size-[18px]",
-            "size-11 *:size-[18px]",
-            "max-wide:hidden",
-        )
+        Buttons {
+            row: "flex items-center gap-1.5",
+            small: "size-11 *:size-[18px]",
+            big: "size-11 *:size-[18px]",
+            prev: "max-wide:hidden",
+        }
     };
-    // `playing` is on the body while music plays.
-    let (prev_icon, next_icon) = (icon::PREVIOUS.svg(18.0, ""), icon::NEXT.svg(18.0, ""));
-    let play_icon = icon::PLAY.svg(18.0, "in-[.playing]:hidden");
-    let pause_icon = icon::PAUSE.svg(18.0, "hidden in-[.playing]:inline");
-    format!(
-        "<div class=\"{row}\"><button class=\"{icon} {small} {prev} border-transparent\" data-ctl=prev aria-label=Previous>{prev_icon}</button>\
-<button class=\"{icon} {big} border-ink\" data-ctl=play aria-label=\"Play or pause\">{play_icon}{pause_icon}</button>\
-<button class=\"{icon} {small} border-transparent\" data-ctl=next aria-label=Next>{next_icon}</button></div>"
-    )
+    b.html()
 }
 
-/// Position and length around the seek bar. `extra` places it; `height` is the
-/// slider's hit area, which the transport bar has no room to make 44 px.
-fn scrub(extra: &str, height: &str) -> String {
-    format!(
-        "<div class=\"flex w-full items-center gap-2.5 text-fine text-muted tabular-nums {extra}\">\
-<span data-np=pos>0:00</span>\
-<input type=range class=\"{height} min-w-0 flex-1\" data-ctl=seek min=0 max=0 step=0.1 value=0 aria-label=Position>\
-<span data-np=len>0:00</span></div>"
-    )
+#[derive(Template)]
+#[template(path = "player/scrub.html")]
+struct Scrub<'a> {
+    extra: &'a str,
+    height: &'a str,
 }
 
-pub(super) fn head(title: &str) -> String {
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-<meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
-<meta name=color-scheme content=\"dark light\">\
-<meta name=theme-color content=\"#1e1e1e\" media=\"(prefers-color-scheme: dark)\">\
-<meta name=theme-color content=\"#ffffff\" media=\"(prefers-color-scheme: light)\"><meta name=robots content=\"noindex,nofollow\">\
-<title>{} · kōan</title>{}<link rel=stylesheet href=\"{}\">",
-        escape(title),
-        crate::share::icon_links("/ui/assets"),
-        super::ASSETS.css,
-    )
+/// Position and length around the seek bar.
+pub(super) fn scrub(extra: &str, height: &str) -> Html {
+    Scrub { extra, height }.html()
 }
-
-/// The sidebar's links, which become the tab bar on a phone: six tabs, each as
-/// wide as its label, which fit a 360 px screen at the meta size. A phone has
-/// no room for a seventh, so there Playlists becomes Library, a page of the
-/// library's own lists; the sidebar lists them directly.
-///
-/// The theme's navigation row: lowercase in `muted`, the page shown in the
-/// accent with a rule on its leading edge, and no fill. On a phone, the tab
-/// bar's: the page shown in the accent and underlined.
-const NAV_LINK: &str = "border-l-2 border-transparent px-2.5 py-1.5 text-muted lowercase hover:text-ink \
-hover:no-underline aria-[current=page]:border-brand aria-[current=page]:text-brand max-wide:flex \
-max-wide:flex-auto max-wide:items-center max-wide:justify-center max-wide:border-l-0 max-wide:px-0 \
-max-wide:text-meta max-wide:underline-offset-4 max-wide:aria-[current=page]:underline";
-
-/// The account's links in the sidebar.
-const ACCOUNT_LINK: &str = "px-1.5 py-1 text-meta whitespace-nowrap text-muted lowercase hover:text-ink \
-hover:no-underline aria-[current=page]:text-brand";
 
 /// `proxied`: an authenticating proxy is trusted, so the page renews its
 /// session from the proxy rather than a refresh cookie.
-fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool, proxied: bool) -> String {
-    // On a wide screen the sidebar ends with who is signed in and the version;
-    // the account page has everything else. A phone has an Account tab instead.
-    let signed_in = if auth_enabled {
-        format!(
-            "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
-method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
-<a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
-<button class=\"quiet px-1.5 py-1 text-meta\">Sign out</button></form>",
-            escape(&user.username)
-        )
-    } else {
-        format!(
-            "<a class=\"{ACCOUNT_LINK} self-start\" href=\"/account\" data-nav=account>Account</a>"
-        )
-    };
-    let account = format!(
-        "<div class=\"mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden\">{signed_in}\
-<a class=\"px-1.5 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
-href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
-        v = env!("CARGO_PKG_VERSION")
-    );
-    format!(
-        "{head}<script type=module src=\"{datastar}\"></script>\
-<script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
-</head><body{proxied}><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
-border-rule bg-bg px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
-max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
-max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 \
-max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
-<a class=\"mb-3 px-3 py-2 text-[22px] font-extralight text-brand hover:text-ink hover:no-underline \
-max-wide:hidden\" href=\"/\">kōan</a>\
-<a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
-<a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/tracks\" data-nav=tracks>Tracks</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
-<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists recent favourites history tracks\">Library</a>\
-<a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
-<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
-<a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/recent\" data-nav=recent>Recently played</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/history\" data-nav=history>History</a>\
-<a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
-<main id=content class=\"ml-(--side-w) min-w-0 px-7 \
-pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
-max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
-\
-<footer class=\"fixed inset-x-0 bottom-(--tabs-h) z-5 grid h-[calc(var(--bar-h)+env(safe-area-inset-bottom))] \
-grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-bg px-4 \
-pb-[env(safe-area-inset-bottom)] max-wide:bottom-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] \
-max-wide:h-(--bar-h) max-wide:grid-cols-[minmax(0,1fr)_auto] max-wide:gap-2 max-wide:pr-2 max-wide:pb-0 \
-max-wide:pl-3\">\
-<progress class=\"absolute inset-x-0 -top-px hidden h-0.5 w-full appearance-none border-0 bg-rule \
-max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule \
-[&::-webkit-progress-value]:bg-brand\" data-np=progress max=1 value=0></progress>\
-<div class=\"flex min-w-0 items-center gap-2.5\">\
-<a class=\"flex-none hover:no-underline\" href=\"/queue\" tabindex=-1 aria-hidden=true>\
-<img class=\"size-10 bg-surface object-cover\" data-np=cover alt=\"\" hidden></a>\
-<span class=\"flex min-w-0 flex-col items-start\">\
-<a class=\"max-w-full truncate text-meta text-strong hover:no-underline\" href=\"/queue\" data-np=title>Nothing playing</a>\
-<span class=\"credit max-w-full truncate text-fine text-muted\" data-np=artist></span></span></div>\
-<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}{TRACK_PROPERTIES}</body></html>",
-        head = head(title),
-        datastar = super::ASSETS.datastar_js,
-        player = super::ASSETS.player_js,
-        ui = super::ASSETS.ui_js,
-        buttons = buttons(false),
-        scrub = scrub("max-wide:hidden", "h-4"),
-        proxied = if proxied { " data-proxied" } else { "" },
-    )
+#[derive(Template)]
+#[template(path = "shell.html")]
+struct Shell<'a> {
+    title: &'a str,
+    content: &'a Html,
+    username: &'a str,
+    auth_enabled: bool,
+    proxied: bool,
+}
+
+#[derive(Template)]
+#[template(path = "page.html")]
+struct Page<'a> {
+    title: &'a str,
+    inner: &'a Html,
 }
 
 /// The whole page, or only its content when the UI's script asked for that.
@@ -228,24 +124,22 @@ pub(super) fn respond(
     headers: &HeaderMap,
     user: &AuthUser,
     title: &str,
-    inner: &str,
+    inner: &Html,
 ) -> Response {
-    let content = format!(
-        "<section class=\"page\" data-title=\"{}\">{inner}</section>",
-        escape(title)
-    );
+    let content = Page { title, inner }.html();
     if headers.contains_key(PARTIAL) {
         html(StatusCode::OK, content)
     } else {
         html(
             StatusCode::OK,
-            shell(
+            Shell {
                 title,
-                &content,
-                user,
-                s.auth_enabled,
-                s.proxy_auth.is_some(),
-            ),
+                content: &content,
+                username: &user.username,
+                auth_enabled: s.auth_enabled,
+                proxied: s.proxy_auth.is_some(),
+            }
+            .html(),
         )
     }
 }
@@ -258,45 +152,39 @@ pub(super) fn unavailable() -> Response {
         .into_response()
 }
 
-pub(super) fn login(next: &str, error: Option<&str>) -> String {
-    let error = error
-        .map(|e| format!("<p class=\"m-0 {ERROR}\" role=alert>{}</p>", escape(e)))
-        .unwrap_or_default();
-    let label = "grid gap-1.5 text-meta text-muted";
-    format!(
-        "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\"><h1 class=\"{SIGNIN_TITLE}\">kōan</h1>\
-<form class=\"grid gap-3.5\" method=post action=\"/login\"><input type=hidden name=next value=\"{next}\">\
-<label class=\"{label}\">Username<input class=\"text-input\" name=username autocomplete=username autocapitalize=none \
-spellcheck=false required autofocus></label>\
-<label class=\"{label}\">Password<input class=\"text-input\" name=password type=password \
-autocomplete=current-password required></label>\
-{error}<button class=\"primary\">Sign in</button></form></main></body></html>",
-        head = head("Sign in"),
-        next = escape(next),
-    )
+#[derive(Template)]
+#[template(path = "pages/login.html")]
+struct Login<'a> {
+    title: &'a str,
+    next: &'a str,
+    error: Option<&'a str>,
+}
+
+pub(super) fn login(next: &str, error: Option<&str>) -> Html {
+    Login {
+        title: "Sign in",
+        next,
+        error,
+    }
+    .html()
 }
 
 /// The setup page: the first admin's name and password, chosen here.
-pub(super) fn setup(username: &str, error: Option<&str>) -> String {
-    let error = error
-        .map(|e| format!("<p class=\"m-0 {ERROR}\" role=alert>{}</p>", escape(e)))
-        .unwrap_or_default();
-    let label = "grid gap-1.5 text-meta text-muted";
-    format!(
-        "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\"><h1 class=\"{SIGNIN_TITLE}\">kōan</h1>\
-<p class=\"text-meta text-muted\">This server has no accounts yet. Choose the admin's name and password; \
-this page closes once it exists.</p>\
-<form class=\"grid gap-3.5\" method=post action=\"/setup\">\
-<label class=\"{label}\">Username<input class=\"text-input\" name=username value=\"{username}\" autocomplete=username \
-autocapitalize=none spellcheck=false required autofocus></label>\
-<label class=\"{label}\">Password<input class=\"text-input\" name=password type=password minlength=8 \
-autocomplete=new-password required></label>\
-<label class=\"{label}\">Confirm password<input class=\"text-input\" name=confirm type=password minlength=8 \
-autocomplete=new-password required></label>\
-{error}<button class=\"primary\">Create admin</button></form></main></body></html>",
-        head = head("Set up"),
-        username = escape(username),
-    )
+#[derive(Template)]
+#[template(path = "pages/setup.html")]
+struct Setup<'a> {
+    title: &'a str,
+    username: &'a str,
+    error: Option<&'a str>,
+}
+
+pub(super) fn setup(username: &str, error: Option<&str>) -> Html {
+    Setup {
+        title: "Set up",
+        username,
+        error,
+    }
+    .html()
 }
 
 fn year(date: Option<&str>) -> &str {
@@ -344,6 +232,19 @@ pub(super) fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -
     cover_versions(conn, &ids)
 }
 
+struct Tile<'a> {
+    album: &'a AlbumRow,
+    src: String,
+    artist: Html,
+    heart: Html,
+}
+
+#[derive(Template)]
+#[template(path = "library/tiles.html")]
+struct Tiles<'a> {
+    tiles: Vec<Tile<'a>>,
+}
+
 /// Record tiles, each with its heart over the corner where the account may
 /// favourite.
 fn cells(
@@ -351,25 +252,20 @@ fn cells(
     versions: &Versions,
     credits: &Credits,
     hearts: Option<&Hearts>,
-) -> String {
-    albums.iter().fold(String::new(), |mut out, a| {
-        let _ = write!(
-            out,
-            "<div class=\"relative flex min-w-0 flex-col gap-0.5\"><a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
-<img class=\"mb-1.5 aspect-square h-auto w-full bg-surface object-cover \
-[&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
-width={size} height={size} src=\"{src}\" alt=\"\">\
-<span class=\"truncate group-hover:text-strong\">{title}</span></a>\
-<span class=\"credit truncate self-start max-w-full text-meta text-muted\">{artist}</span>{heart}</div>",
-            id = a.id,
-            heart = hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
-            size = crate::covers::GRID,
-            src = cover_url(a.id, crate::covers::GRID, versions),
-            title = escape(&a.title),
-            artist = credit_links(&credits.album(Some(a.id), &a.artist_name, Some(a.artist_id)), true),
-        );
-        out
-    })
+) -> Html {
+    let tiles = albums
+        .iter()
+        .map(|a| Tile {
+            album: a,
+            src: cover_url(a.id, crate::covers::GRID, versions),
+            artist: credit_links(
+                &credits.album(Some(a.id), &a.artist_name, Some(a.artist_id)),
+                true,
+            ),
+            heart: hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
+        })
+        .collect();
+    Tiles { tiles }.html()
 }
 
 /// The codecs and genres the filters offer.
@@ -395,28 +291,18 @@ fn filter_options(s: &UiState) -> Option<Options> {
     Some(options)
 }
 
-/// Share this track: its album, cued to it. Only where the page has a
-/// `#share-result` to show the link in.
-fn share_track_button(t: &TrackRow) -> String {
-    let share_icon = icon::EXPORT.svg(15.0, "");
-    match t.album_id {
-        Some(album) => format!(
-            "<button class=\"quiet\" data-act-share data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
-data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
-title=\"Share this track\">{share_icon}</button>",
-            id = t.id
-        ),
-        None => String::new(),
-    }
+#[derive(Template)]
+#[template(path = "library/link.html")]
+struct Link<'a> {
+    kind: &'a str,
+    id: Option<i64>,
+    name: &'a str,
 }
 
 /// A name linked to its artist or album page (`kind`), or the name alone
 /// where the row has no id for it.
-pub(super) fn link(kind: &str, id: Option<i64>, name: &str) -> String {
-    match id {
-        Some(id) => format!("<a href=\"/{kind}/{id}\">{}</a>", escape(name)),
-        None => escape(name),
-    }
+pub(super) fn link(kind: &str, id: Option<i64>, name: &str) -> Html {
+    Link { kind, id, name }.html()
 }
 
 /// The artists credited on a page's tracks and albums, read once for the
@@ -459,53 +345,59 @@ impl Credits {
     }
 }
 
-/// A credit as it reads, each credited artist's name a link to their page and
-/// the text joining them plain. `quiet` links are left out of the tab order,
-/// as beside a tile's own link.
-pub(super) fn credit_links(parts: &[CreditPart], quiet: bool) -> String {
-    let tab = if quiet { " tabindex=-1" } else { "" };
-    parts
-        .iter()
-        .map(|p| match p.artist_id {
-            Some(id) => format!("<a href=\"/artist/{id}\"{tab}>{}</a>", escape(&p.text)),
-            None => escape(&p.text),
-        })
-        .collect()
+#[derive(Template)]
+#[template(path = "library/credit.html")]
+struct Credit<'a> {
+    parts: &'a [CreditPart],
+    quiet: bool,
+}
+
+/// A credit as it reads, each credited artist's name a link to their page.
+pub(super) fn credit_links(parts: &[CreditPart], quiet: bool) -> Html {
+    Credit { parts, quiet }.html()
+}
+
+#[derive(Template)]
+#[template(source = " data-credit=\"{{ json }}\"", ext = "html")]
+struct CreditData {
+    json: String,
 }
 
 /// A row's credit for the player, which draws the queue and Now Playing from
 /// the row's data: `[text, artist id or 0]` for each part. Nothing where the
 /// credit is one name, which `data-artist` and `data-artist-id` already say.
-pub(super) fn credit_data(parts: &[CreditPart]) -> String {
+pub(super) fn credit_data(parts: &[CreditPart]) -> Html {
     if parts.len() < 2 {
-        return String::new();
+        return Html::default();
     }
     let parts: Vec<_> = parts
         .iter()
         .map(|p| serde_json::json!([p.text, p.artist_id.unwrap_or(0)]))
         .collect();
-    format!(
-        " data-credit=\"{}\"",
-        escape(&serde_json::Value::Array(parts).to_string())
-    )
+    CreditData {
+        json: serde_json::Value::Array(parts).to_string(),
+    }
+    .html()
+}
+
+#[derive(Template)]
+#[template(path = "library/credit_line.html")]
+struct CreditLine {
+    artist: Html,
+    album: Option<Html>,
 }
 
 /// A track row's subtitle: its artist credit, where given, and its album,
-/// where asked for, each named part linked to its page.
-pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bool) -> String {
-    let mut sub = Vec::new();
-    let artist = artist.map(|parts| credit_links(parts, false));
-    if let Some(links) = artist.filter(|l| !l.is_empty()) {
-        sub.push(links);
+/// where asked for.
+pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bool) -> Html {
+    CreditLine {
+        artist: artist
+            .map(|parts| credit_links(parts, false))
+            .unwrap_or_default(),
+        album: (album && !t.album_title.is_empty())
+            .then(|| link("album", t.album_id, &t.album_title)),
     }
-    if album && !t.album_title.is_empty() {
-        sub.push(link("album", t.album_id, &t.album_title));
-    }
-    if sub.is_empty() {
-        String::new()
-    } else {
-        format!("<small>{}</small>", sub.join(" · "))
-    }
+    .html()
 }
 
 /// What a page read once for all its rows: covers, credits and hearts.
@@ -513,6 +405,54 @@ pub(super) struct RowData<'a> {
     pub versions: &'a Versions,
     pub credits: &'a Credits,
     pub hearts: Option<&'a Hearts>,
+}
+
+#[derive(Template)]
+#[template(path = "library/track_row.html")]
+struct TrackRowView<'a> {
+    row: TrackData<'a>,
+    n: usize,
+    /// Share this track: its album, cued to it. Only where the page has a
+    /// `#share-result` to show the link in.
+    share: bool,
+}
+
+/// What every track row carries, in the library and in history: the track,
+/// and what the player and the track menu read from its data attributes
+/// (`library::track_open`) and its actions (`library::track_close`).
+pub(super) struct TrackData<'a> {
+    pub(super) t: &'a TrackRow,
+    pub(super) cover: String,
+    pub(super) credit: Html,
+    /// The credit and record under the title.
+    pub(super) sub: Html,
+    pub(super) heart: Html,
+    pub(super) mark: &'a Html,
+}
+
+impl<'a> TrackData<'a> {
+    /// `artist` and `album` choose what the line under the title names.
+    pub(super) fn new(
+        t: &'a TrackRow,
+        versions: &Versions,
+        credits: &Credits,
+        hearts: Option<&'a Hearts>,
+        artist: bool,
+        album: bool,
+    ) -> Self {
+        let parts = credits.track(t);
+        Self {
+            t,
+            cover: t
+                .album_id
+                .map(|a| cover_url(a, crate::covers::LARGE, versions))
+                .unwrap_or_default(),
+            credit: credit_data(&parts),
+            sub: credit_line(t, artist.then_some(&parts[..]), album),
+            heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
+            mark: hearts.map_or(&NOTHING, Hearts::mark),
+        }
+    }
 }
 
 /// A track row. `album` is set where the row stands alone (search) and names
@@ -524,41 +464,18 @@ fn track_row(
     album: bool,
     share: bool,
     data: &RowData,
-) -> String {
+) -> Html {
     let RowData {
         versions,
         credits,
         hearts,
     } = *data;
-    let parts = credits.track(t);
-    let sub = credit_line(t, show_artist.then_some(&parts[..]), album);
-    format!(
-        "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\"{credit}>\
-<span class=\"n\">{n}</span><span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>\
-<span class=\"contents max-wide:hidden\">{heart}{share}\
-<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{mark}{MORE}</li>",
-        id = t.id,
-        secs = t.duration_ms.unwrap_or(0) / 1000,
-        title = escape(&t.title),
-        artist = escape(&t.artist_name),
-        album_title = escape(&t.album_title),
-        album_id = t.album_id.unwrap_or(0),
-        artist_id = t.artist_id.unwrap_or(0),
-        cover = t
-            .album_id
-            .map(|a| cover_url(a, crate::covers::LARGE, versions))
-            .unwrap_or_default(),
-        credit = credit_data(&parts),
-        dur = duration(t.duration_ms),
-        heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
-        mark = hearts.map(Hearts::mark).unwrap_or_default(),
-        share = if share {
-            share_track_button(t)
-        } else {
-            String::new()
-        },
-    )
+    TrackRowView {
+        row: TrackData::new(t, versions, credits, hearts, show_artist, album),
+        n,
+        share,
+    }
+    .html()
 }
 
 /// Every album `b` lets through, in its order. Whole, as the apps list them:
@@ -579,16 +496,13 @@ fn album_ids(albums: &[AlbumRow]) -> Vec<i64> {
     albums.iter().map(|a| a.id).collect()
 }
 
-/// "12 albums", once a filter is on: the count a shelf's heading gave.
-fn counted(n: usize, one: &str, many: &str, b: &Browse) -> String {
-    if b.filtered() {
-        format!(
-            "<p class=\"{SUB}\">{n} {}</p>",
-            if n == 1 { one } else { many }
-        )
-    } else {
-        String::new()
-    }
+#[derive(Template)]
+#[template(path = "pages/albums.html")]
+struct AlbumsPage {
+    count: usize,
+    filtered: bool,
+    toolbar: Html,
+    tiles: Html,
 }
 
 pub(super) async fn albums(
@@ -603,20 +517,28 @@ pub(super) async fn albums(
     let Some(((albums, versions, credits, hearts), options)) = found else {
         return unavailable();
     };
-    let grid = if albums.is_empty() {
-        format!("<p class=\"{EMPTY}\">No albums match.</p>")
-    } else {
-        format!(
-            "<div class=\"{GRID}\" id=albums>{}</div>",
-            cells(&albums, &versions, &credits, hearts.as_ref())
-        )
-    };
-    let inner = format!(
-        "<h1>Albums</h1>{}{}{grid}",
-        counted(albums.len(), "album", "albums", &b),
-        browse::toolbar(&b, Kind::Albums, &options.0, &options.1)
-    );
+    let inner = AlbumsPage {
+        count: albums.len(),
+        filtered: b.filtered(),
+        toolbar: browse::toolbar(&b, Kind::Albums, &options.0, &options.1),
+        tiles: cells(&albums, &versions, &credits, hearts.as_ref()),
+    }
+    .html();
     respond(&s, &headers, &user, "Albums", &inner)
+}
+
+/// An album page. `sub` is what follows the credit under the title.
+#[derive(Template)]
+#[template(path = "pages/album.html")]
+struct AlbumPage<'a> {
+    album: &'a AlbumRow,
+    cover: String,
+    credit: Html,
+    sub: Vec<String>,
+    can_share: bool,
+    heart: Html,
+    /// Each row, after its disc's heading where the album has several discs.
+    rows: Vec<(Option<i32>, Html)>,
 }
 
 pub(super) async fn album(
@@ -654,31 +576,31 @@ pub(super) async fn album(
         credits: &credits,
         hearts: hearts.as_ref(),
     };
-    let mut rows = String::new();
     let mut disc = None;
-    for (i, t) in tracks.iter().enumerate() {
-        if discs.len() > 1 && disc != Some(t.disc.unwrap_or(1)) {
-            disc = Some(t.disc.unwrap_or(1));
-            let _ = write!(rows, "<li class=\"disc\">Disc {}</li>", t.disc.unwrap_or(1));
-        }
-        let n = t.track_number.map_or(i + 1, |n| n as usize);
-        rows.push_str(&track_row(
-            t,
-            n,
-            t.artist_name != album.artist_name,
-            false,
-            can_share,
-            &data,
-        ));
-    }
+    let rows = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let d = t.disc.unwrap_or(1);
+            let heading = (discs.len() > 1 && disc != Some(d)).then_some(d);
+            disc = Some(d);
+            let n = t.track_number.map_or(i + 1, |n| n as usize);
+            let row = track_row(
+                t,
+                n,
+                t.artist_name != album.artist_name,
+                false,
+                can_share,
+                &data,
+            );
+            (heading, row)
+        })
+        .collect();
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
-    let mut sub = vec![credit_links(
-        &credits.album(Some(album.id), &album.artist_name, Some(album.artist_id)),
-        false,
-    )];
+    let mut sub = Vec::new();
     let y = year(album.date.as_deref());
     if !y.is_empty() {
-        sub.push(escape(y));
+        sub.push(y.to_owned());
     }
     sub.push(format!(
         "{} track{}",
@@ -687,33 +609,24 @@ pub(super) async fn album(
     ));
     sub.push(duration(Some(total)));
     if let Some(codec) = &album.codec {
-        sub.push(escape(codec));
+        sub.push(codec.clone());
     }
-    let share = if can_share {
-        format!(
-            "<button class=\"standard\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
-data-class:busy=\"$_sharing\" data-on:click=\"@post('/album/{}/share')\">Share</button>",
-            album.id
-        )
-    } else {
-        String::new()
-    };
-    let inner = format!(
-        "<header class=\"{HERO}\"><img class=\"{HERO_COVER}\" src=\"{cover}\" width={large} height={large} alt=\"\">\
-<div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Album</p><h1 class=\"mb-1 normal-case\">{title}</h1><p class=\"{SUB}\">{sub}</p>\
-<div class=\"{ACTIONS}\">\
-<button class=\"primary\" data-act=play>Play</button><button class=\"standard\" data-act=shuffle>Shuffle</button>\
-<button class=\"standard\" data-act=queue>Add to queue</button>{share}{heart}</div><div id=share-result></div></div></header>\
-<ol class=\"tracks\" data-context=album>{rows}</ol>",
-        heart = hearts
+    let inner = AlbumPage {
+        album: &album,
+        cover: cover_url(album.id, crate::covers::LARGE, &versions),
+        credit: credit_links(
+            &credits.album(Some(album.id), &album.artist_name, Some(album.artist_id)),
+            false,
+        ),
+        sub,
+        can_share,
+        heart: hearts
             .as_ref()
             .map(|h| h.album(album.id))
             .unwrap_or_default(),
-        cover = cover_url(album.id, crate::covers::LARGE, &versions),
-        large = crate::covers::LARGE,
-        title = escape(&album.title),
-        sub = sub.join(" · "),
-    );
+        rows,
+    }
+    .html();
     respond(&s, &headers, &user, &album.title, &inner)
 }
 
@@ -745,6 +658,12 @@ pub(super) async fn share_artist(
     share(s, user, ShareTarget::Artist(id)).await
 }
 
+#[derive(Template)]
+#[template(path = "library/share_result.html")]
+struct ShareResult {
+    result: Result<String, String>,
+}
+
 /// Make a share link and show it in the page's `#share-result`.
 async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
     let result = if user.role.has_permission(Role::User) {
@@ -762,34 +681,16 @@ async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
     } else {
         Err("This account cannot make share links.".into())
     };
-    let html = match result {
-        Ok(url) => format!(
-            "<div id=share-result class=\"{COPY_ROW}\"><input id=share-url readonly value=\"{url}\" \
-aria-label=\"Share link\" class=\"{COPY_INPUT}\">\
-<button data-on:click=\"navigator.clipboard.writeText(document.getElementById('share-url').value)\">Copy</button></div>",
-            url = escape(&url)
-        ),
-        Err(e) => format!(
-            "<div id=share-result class=\"{COPY_ERROR}\" role=alert>{}</div>",
-            escape(&e)
-        ),
-    };
+    let html = ShareResult { result }.html();
     events(vec![patch(&html, None)])
 }
 
-fn artist_list(artists: &[queries::ArtistRow]) -> String {
-    artists.iter().fold(String::new(), |mut out, a| {
-        let _ = write!(
-            out,
-            "<li><a class=\"{LIST_ROW}\" href=\"/artist/{}\"><span class=\"{LIST_NAME}\">{}</span>\
-<span class=\"{LIST_COUNT}\">{} album{}</span></a></li>",
-            a.id,
-            escape(&a.name),
-            a.album_count,
-            if a.album_count == 1 { "" } else { "s" }
-        );
-        out
-    })
+#[derive(Template)]
+#[template(path = "pages/artists.html")]
+struct ArtistsPage {
+    artists: Vec<queries::ArtistRow>,
+    filtered: bool,
+    toolbar: Html,
 }
 
 fn artist_rows(s: &UiState, user: i64, b: &Browse) -> Option<Vec<queries::ArtistRow>> {
@@ -808,21 +709,27 @@ pub(super) async fn artists(
     let Some((artists, options)) = found else {
         return unavailable();
     };
-    let list = if artists.is_empty() {
-        format!("<p class=\"{EMPTY}\">No artists match.</p>")
-    } else {
-        format!("<ul id=artists>{}</ul>", artist_list(&artists))
-    };
-    let inner = format!(
-        "<h1>Artists</h1>{}{}{list}",
-        counted(artists.len(), "artist", "artists", &b),
-        browse::toolbar(&b, Kind::Artists, &options.0, &options.1)
-    );
+    let inner = ArtistsPage {
+        filtered: b.filtered(),
+        toolbar: browse::toolbar(&b, Kind::Artists, &options.0, &options.1),
+        artists,
+    }
+    .html();
     respond(&s, &headers, &user, "Artists", &inner)
 }
 
 /// Tracks on one page of the track browser.
 const TRACKS_PAGE: u32 = 200;
+
+#[derive(Template)]
+#[template(path = "pages/tracks.html")]
+struct TracksPage {
+    total: u64,
+    toolbar: Html,
+    rows: Html,
+    previous: Option<String>,
+    next: Option<String>,
+}
 
 /// Every track the filters let through, a page at a time. Picking one plays on
 /// through the page.
@@ -852,50 +759,39 @@ pub(super) async fn tracks(
         return unavailable();
     };
     let first = (page * TRACKS_PAGE) as usize;
-    let list = if rows.is_empty() {
-        format!("<p class=\"{EMPTY}\">No tracks match.</p>")
-    } else {
-        let data = RowData {
-            versions: &versions,
-            credits: &credits,
-            hearts: hearts.as_ref(),
-        };
-        let items: String = rows
-            .iter()
-            .enumerate()
-            .map(|(i, t)| track_row(t, first + i + 1, true, true, false, &data))
-            .collect();
-        format!("<ol class=\"tracks\" data-context=album>{items}</ol>")
+    let data = RowData {
+        versions: &versions,
+        credits: &credits,
+        hearts: hearts.as_ref(),
     };
-    let mut nav = Vec::new();
     let at = |p: u32| {
         let q = b.query();
         let sep = if q.is_empty() { "" } else { "&" };
         format!("/tracks?{q}{sep}page={p}")
     };
-    if page > 0 {
-        nav.push(format!(
-            "<a class=\"lowercase\" href=\"{}\">Previous</a>",
-            at(page - 1)
-        ));
+    let inner = TracksPage {
+        total,
+        toolbar: browse::toolbar(&b, Kind::Tracks, &options.0, &options.1),
+        rows: rows
+            .iter()
+            .enumerate()
+            .map(|(i, t)| track_row(t, first + i + 1, true, true, false, &data))
+            .collect(),
+        previous: (page > 0).then(|| at(page - 1)),
+        next: ((((page + 1) * TRACKS_PAGE) as u64) < total).then(|| at(page + 1)),
     }
-    if (((page + 1) * TRACKS_PAGE) as u64) < total {
-        nav.push(format!(
-            "<a class=\"lowercase\" href=\"{}\">Next</a>",
-            at(page + 1)
-        ));
-    }
-    let nav = if nav.is_empty() {
-        String::new()
-    } else {
-        format!("<p class=\"mt-5 flex gap-4\">{}</p>", nav.join(""))
-    };
-    let inner = format!(
-        "<h1>Tracks</h1><p class=\"{SUB}\">{total} track{}</p>{}{list}{nav}",
-        if total == 1 { "" } else { "s" },
-        browse::toolbar(&b, Kind::Tracks, &options.0, &options.1)
-    );
+    .html();
     respond(&s, &headers, &user, "Tracks", &inner)
+}
+
+/// An artist page. `heart` is there where the account may favourite, and
+/// so share.
+#[derive(Template)]
+#[template(path = "pages/artist.html")]
+struct ArtistPage<'a> {
+    artist: &'a queries::ArtistRow,
+    heart: Option<Html>,
+    tiles: Html,
 }
 
 pub(super) async fn artist(
@@ -923,27 +819,19 @@ pub(super) async fn artist(
     let Some((artist, albums, versions, credits, hearts)) = found else {
         return not_found();
     };
-    // Sharing and favouriting are the same accounts' to do.
-    let share = match &hearts {
-        Some(h) => format!(
-            "<div class=\"mb-5 {ACTIONS}\"><button class=\"standard\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
-data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{id}/share')\">Share</button>{heart}</div>\
-<div id=share-result></div>",
-            id = artist.id,
-            heart = h.artist(artist.id),
-        ),
-        None => String::new(),
-    };
-    let inner = format!(
-        "<p class=\"{KICKER}\">Artist</p><h1 class=\"normal-case\">{}</h1><p class=\"{SUB}\">{} album{} · {} tracks</p>{share}\
-<div class=\"{GRID}\">{}</div>",
-        escape(&artist.name),
-        artist.album_count,
-        if artist.album_count == 1 { "" } else { "s" },
-        artist.track_count,
-        cells(&albums, &versions, &credits, hearts.as_ref())
-    );
+    let inner = ArtistPage {
+        heart: hearts.as_ref().map(|h| h.artist(artist.id)),
+        tiles: cells(&albums, &versions, &credits, hearts.as_ref()),
+        artist: &artist,
+    }
+    .html();
     respond(&s, &headers, &user, &artist.name, &inner)
+}
+
+#[derive(Template)]
+#[template(path = "pages/playlists.html")]
+struct PlaylistsPage {
+    lists: Vec<queries::PlaylistRow>,
 }
 
 pub(super) async fn playlists(
@@ -960,26 +848,19 @@ pub(super) async fn playlists(
     let Some(lists) = found else {
         return unavailable();
     };
-    let list = if lists.is_empty() {
-        format!("<p class=\"{EMPTY}\">No playlists yet.</p>")
-    } else {
-        let rows = lists.iter().fold(String::new(), |mut out, p| {
-            let _ = write!(
-                out,
-                "<li><a class=\"{LIST_ROW}\" href=\"/playlist/{}\"><span class=\"{LIST_NAME}\">{}</span>\
-<span class=\"{LIST_COUNT}\">{} track{} · {}</span></a></li>",
-                p.id,
-                escape(&p.name),
-                p.track_count,
-                if p.track_count == 1 { "" } else { "s" },
-                duration(Some(p.duration_ms)),
-            );
-            out
-        });
-        format!("<ul>{rows}</ul>")
-    };
-    let inner = format!("<h1>Playlists</h1>{list}");
+    let inner = PlaylistsPage { lists }.html();
     respond(&s, &headers, &user, "Playlists", &inner)
+}
+
+#[derive(Template)]
+#[template(path = "pages/playlist.html")]
+struct PlaylistPage<'a> {
+    list: &'a queries::PlaylistRow,
+    cover: Option<String>,
+    owner: Option<&'a str>,
+    comment: Option<&'a str>,
+    count: usize,
+    rows: Html,
 }
 
 /// A playlist, laid out like an album so its rows play and queue the same way.
@@ -1017,86 +898,74 @@ pub(super) async fn playlist(
         credits: &credits,
         hearts: hearts.as_ref(),
     };
-    let rows: String = tracks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| track_row(t, i + 1, true, true, false, &data))
-        .collect();
-    let cover = tracks
-        .iter()
-        .find_map(|t| t.album_id)
-        .map(|a| {
-            format!(
-                "<img class=\"{HERO_COVER}\" src=\"{}\" width={large} height={large} alt=\"\">",
-                cover_url(a, crate::covers::LARGE, &versions),
-                large = crate::covers::LARGE,
-            )
-        })
-        .unwrap_or_default();
-    let mut sub = Vec::new();
-    if let Some(owner) = list.owner.as_deref().filter(|o| !o.is_empty()) {
-        sub.push(escape(owner));
+    let inner = PlaylistPage {
+        list: &list,
+        cover: tracks
+            .iter()
+            .find_map(|t| t.album_id)
+            .map(|a| cover_url(a, crate::covers::LARGE, &versions)),
+        owner: list.owner.as_deref().filter(|o| !o.is_empty()),
+        comment: list.comment.as_deref().filter(|c| !c.is_empty()),
+        count: tracks.len(),
+        rows: tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| track_row(t, i + 1, true, true, false, &data))
+            .collect(),
     }
-    sub.push(format!(
-        "{} track{}",
-        tracks.len(),
-        if tracks.len() == 1 { "" } else { "s" }
-    ));
-    sub.push(duration(Some(list.duration_ms)));
-    let comment = list
-        .comment
-        .as_deref()
-        .filter(|c| !c.is_empty())
-        .map(|c| format!("<p class=\"{SUB}\">{}</p>", escape(c)))
-        .unwrap_or_default();
-    let inner = format!(
-        "<header class=\"{HERO}\">{cover}<div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Playlist</p>\
-<h1 class=\"mb-1 normal-case\">{title}</h1><p class=\"{SUB}\">{sub}</p>{comment}<div class=\"{ACTIONS}\">\
-<button class=\"primary\" data-act=play>Play</button>\
-<button class=\"standard\" data-act=shuffle>Shuffle</button><button class=\"standard\" data-act=queue>Add to queue</button></div></div></header>\
-<ol class=\"tracks\" data-context=album>{rows}</ol>",
-        title = escape(&list.name),
-        sub = sub.join(" · "),
-    );
+    .html();
     respond(&s, &headers, &user, &list.name, &inner)
 }
 
-fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
+/// What the search's results area shows.
+enum Results<'a> {
+    Blank,
+    Unavailable,
+    Nothing(&'a str),
+    Shelf(Html),
+}
+
+#[derive(Template)]
+#[template(path = "library/results.html")]
+struct ResultsView<'a> {
+    found: Results<'a>,
+}
+
+fn results(s: &UiState, user: &AuthUser, q: &str) -> Html {
     let q = q.trim();
-    if q.is_empty() {
-        return "<div id=results></div>".into();
-    }
-    let shelf = Shelf::Search(q);
-    let found = open(&s.pool).and_then(|db| {
-        let summary =
-            shelves::summary(&db.conn, shelf, user.user_id, shelves::now(), false).ok()?;
-        let versions = shelf_versions(&db.conn, &summary);
-        let credits = shelf_credits(&db.conn, &summary);
-        Some((summary, versions, credits, Hearts::load(&db.conn, user)))
-    });
-    let Some((summary, versions, credits, hearts)) = found else {
-        return format!(
-            "<div id=results><p class=\"{ERROR}\">The library is unavailable.</p></div>"
-        );
+    let found = if q.is_empty() {
+        Results::Blank
+    } else {
+        let shelf = Shelf::Search(q);
+        let found = open(&s.pool).and_then(|db| {
+            let summary =
+                shelves::summary(&db.conn, shelf, user.user_id, shelves::now(), false).ok()?;
+            let versions = shelf_versions(&db.conn, &summary);
+            let credits = shelf_credits(&db.conn, &summary);
+            Some((summary, versions, credits, Hearts::load(&db.conn, user)))
+        });
+        match found {
+            None => Results::Unavailable,
+            Some((summary, ..)) if summary.is_empty() => Results::Nothing(q),
+            Some((summary, versions, credits, hearts)) => Results::Shelf(shelf_sections(
+                &summary,
+                shelf,
+                &RowData {
+                    versions: &versions,
+                    credits: &credits,
+                    hearts: hearts.as_ref(),
+                },
+            )),
+        }
     };
-    if summary.is_empty() {
-        return format!(
-            "<div id=results><p class=\"{EMPTY}\">Nothing matches “{}”.</p></div>",
-            escape(q)
-        );
-    }
-    format!(
-        "<div id=results>{}</div>",
-        shelf_sections(
-            &summary,
-            shelf,
-            &RowData {
-                versions: &versions,
-                credits: &credits,
-                hearts: hearts.as_ref(),
-            },
-        )
-    )
+    ResultsView { found }.html()
+}
+
+#[derive(Template)]
+#[template(path = "pages/search.html")]
+struct SearchPage<'a> {
+    q: &'a str,
+    results: Html,
 }
 
 pub(super) async fn search(
@@ -1111,16 +980,11 @@ pub(super) async fn search(
     let found = blocking(move || Some(results(&st, &who, &query)))
         .await
         .unwrap_or_default();
-    // Without script the form is an ordinary GET; with it, results follow typing.
-    let inner = format!(
-        "<h1>Search</h1><form class=\"search\" action=\"/search\" method=get \
-data-on:submit__prevent=\"@get('/search/results')\">\
-<input class=\"w-full max-w-panel px-3 py-2.5 text-input\" type=search name=q value=\"{q}\" placeholder=\"Albums, artists, tracks\" autocomplete=off \
-autocapitalize=none spellcheck=false enterkeyhint=search autofocus aria-label=Search data-bind:q \
-data-init=\"$q && @get('/search/results')\" \
-data-on:input__debounce.250ms=\"@get('/search/results')\"></form>{found}",
-        q = escape(&q),
-    );
+    let inner = SearchPage {
+        q: &q,
+        results: found,
+    }
+    .html();
     respond(&s, &headers, &user, "Search", &inner)
 }
 
@@ -1142,6 +1006,12 @@ pub(super) async fn search_results(
     events(vec![patch(&html, None)])
 }
 
+#[derive(Template)]
+#[template(path = "pages/library.html")]
+struct LibraryPage {
+    scan: Html,
+}
+
 /// The library's own lists, which the sidebar shows as links and a phone, with
 /// one tab for them all, as this page.
 pub(super) async fn library(
@@ -1149,40 +1019,11 @@ pub(super) async fn library(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let rows = [
-        ("/playlists", "Playlists"),
-        ("/tracks", "Tracks"),
-        ("/recent", "Recently played"),
-        ("/favourites", "Favourites"),
-        ("/history", "History"),
-    ]
-        .iter()
-        .fold(String::new(), |mut out, (href, name)| {
-            let _ = write!(
-                out,
-                "<li><a class=\"{LIST_ROW}\" href=\"{href}\"><span class=\"{LIST_NAME}\">{name}</span></a></li>"
-            );
-            out
-        });
-    let inner = format!(
-        "<h1>Library</h1><ul>{rows}</ul>{}",
-        super::scan::section(&s, &user)
-    );
+    let inner = LibraryPage {
+        scan: super::scan::section(&s, &user),
+    }
+    .html();
     respond(&s, &headers, &user, "Library", &inner)
-}
-
-/// An artist as a pill, on a shelf.
-fn pills(artists: &[queries::ArtistRow]) -> String {
-    artists.iter().fold(String::new(), |mut out, a| {
-        let _ = write!(
-            out,
-            "<a class=\"inline-flex max-w-full border border-muted px-3 py-1.5 text-control text-ink \
-hover:bg-hover/30 hover:no-underline\" href=\"/artist/{}\"><span class=\"truncate\">{}</span></a>",
-            a.id,
-            escape(&a.name)
-        );
-        out
-    })
 }
 
 /// What a shelf page says with nothing on it.
@@ -1203,63 +1044,51 @@ fn shelf_credits(conn: &rusqlite::Connection, s: &Summary) -> Credits {
     Credits::load(conn, &s.tracks.preview, &album_ids(&s.albums.preview))
 }
 
-/// A section's heading: its name, how many the shelf has in all, and a
-/// chevron, the whole of it a link to the browser with the shelf as its
-/// filter. The preview below may show fewer.
-fn section_head(title: &str, total: u64, shelf: Shelf, kind: Kind, extra: &str) -> String {
-    let href = escape(&browse::shelf_browser(shelf, kind));
-    let chevron = icon::CHEVRON_RIGHT.svg(14.0, "size-[0.8em]");
-    format!(
-        "<div class=\"{LIST_HEAD}\"><h2><a class=\"inline-flex items-center gap-1.5 text-[inherit] \
-hover:text-brand hover:no-underline\" href=\"{href}\">{title}\
-<span class=\"text-muted tabular-nums\">{total}</span>{chevron}</a></h2>\
-<div class=\"{ACTIONS}\">{extra}</div></div>"
-    )
+#[derive(Template)]
+#[template(path = "library/shelf.html")]
+struct ShelfView<'a> {
+    /// Each section's total, the browser it links to and its preview, where it
+    /// has a preview to show.
+    artists: Option<(u64, String, &'a [queries::ArtistRow])>,
+    albums: Option<(u64, String, Html)>,
+    tracks: Option<(u64, String, Html)>,
 }
 
-/// The previews of a shelf, as the apps' shelf lays them out: artists as
-/// pills, records as tiles, and the tracks as a list that plays on from the
-/// row picked.
-fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> String {
-    let mut out = String::new();
-    if !s.artists.preview.is_empty() {
-        let _ = write!(
-            out,
-            "{}<div class=\"mb-6 flex flex-wrap gap-2\">{}</div>",
-            section_head("Artists", s.artists.total, shelf, Kind::Artists, ""),
-            pills(&s.artists.preview)
-        );
+/// The previews of a shelf.
+fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> Html {
+    let browser = |kind| browse::shelf_browser(shelf, kind);
+    ShelfView {
+        artists: (!s.artists.preview.is_empty()).then(|| {
+            (
+                s.artists.total,
+                browser(Kind::Artists),
+                &s.artists.preview[..],
+            )
+        }),
+        albums: (!s.albums.preview.is_empty()).then(|| {
+            let tiles = cells(&s.albums.preview, data.versions, data.credits, data.hearts);
+            (s.albums.total, browser(Kind::Albums), tiles)
+        }),
+        tracks: (!s.tracks.preview.is_empty()).then(|| {
+            let rows = s
+                .tracks
+                .preview
+                .iter()
+                .enumerate()
+                .map(|(i, t)| track_row(t, i + 1, true, true, false, data))
+                .collect();
+            (s.tracks.total, browser(Kind::Tracks), rows)
+        }),
     }
-    if !s.albums.preview.is_empty() {
-        let _ = write!(
-            out,
-            "{}<div class=\"mb-6 {GRID}\">{}</div>",
-            section_head("Albums", s.albums.total, shelf, Kind::Albums, ""),
-            cells(&s.albums.preview, data.versions, data.credits, data.hearts)
-        );
-    }
-    if !s.tracks.preview.is_empty() {
-        let rows: String = s
-            .tracks
-            .preview
-            .iter()
-            .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, false, data))
-            .collect();
-        let _ = write!(
-            out,
-            "{}<ol class=\"tracks\" data-context=album>{rows}</ol>",
-            section_head(
-                "Tracks",
-                s.tracks.total,
-                shelf,
-                Kind::Tracks,
-                "<button class=\"standard\" data-act=play>Play</button>\
-<button class=\"standard\" data-act=shuffle>Shuffle</button><button class=\"standard\" data-act=queue>Add to queue</button>",
-            ),
-        );
-    }
-    out
+    .html()
+}
+
+#[derive(Template)]
+#[template(path = "pages/shelf.html")]
+struct ShelfPage<'a> {
+    title: &'a str,
+    sections: Option<Html>,
+    empty: EmptyShelf,
 }
 
 /// A shelf page: its title, then its previews, or what it says when empty.
@@ -1283,25 +1112,23 @@ async fn shelf_page(
     let Some((summary, versions, credits, hearts)) = found else {
         return unavailable();
     };
-    let inner = if summary.is_empty() {
-        format!(
-            "<h1>{title}</h1><p class=\"{EMPTY}\">{}</p><p class=\"{EMPTY}\">{}</p>",
-            empty.title, empty.detail
+    let sections = (!summary.is_empty()).then(|| {
+        shelf_sections(
+            &summary,
+            shelf,
+            &RowData {
+                versions: &versions,
+                credits: &credits,
+                hearts: hearts.as_ref(),
+            },
         )
-    } else {
-        format!(
-            "<h1>{title}</h1>{}",
-            shelf_sections(
-                &summary,
-                shelf,
-                &RowData {
-                    versions: &versions,
-                    credits: &credits,
-                    hearts: hearts.as_ref(),
-                },
-            )
-        )
-    };
+    });
+    let inner = ShelfPage {
+        title,
+        sections,
+        empty,
+    }
+    .html();
     respond(&s, &headers, &user, title, &inner)
 }
 
@@ -1348,23 +1175,16 @@ is gathered here for a month, each artist, record and track once.",
     .await
 }
 
+#[derive(Template)]
+#[template(path = "pages/queue.html")]
+struct QueuePage;
+
 /// The queue lives in the browser, so the page is a frame the script fills.
 pub(super) async fn queue(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let inner = format!(
-        "<header class=\"{HERO}\"><img class=\"{HERO_COVER} max-wide:max-w-[360px] max-wide:self-center\" \
-data-np=cover alt=\"\" hidden><div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Now playing</p>\
-<h1 class=\"mb-1 normal-case\" data-np=title>Nothing playing</h1>\
-<p class=\"{SUB}\"><span data-np=artist></span><span data-np=sep hidden> · </span><a data-np=album></a></p>\
-{buttons}{scrub}</div></header>\
-<div class=\"{LIST_HEAD}\"><h2>Up next</h2>\
-<button class=\"quiet px-2 py-1\" data-act=clear>Clear</button></div>\
-<ol id=queue-list class=\"tracks\"></ol>",
-        buttons = buttons(true),
-        scrub = scrub("max-w-form max-wide:mt-2 max-wide:text-meta", "h-11"),
-    );
+    let inner = QueuePage.html();
     respond(&s, &headers, &user, "Queue", &inner)
 }

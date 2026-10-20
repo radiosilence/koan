@@ -7,7 +7,9 @@
 //! replaces them all, so a track listed twice lights up twice.
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
+use askama::Template;
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
@@ -16,7 +18,7 @@ use koan_core::db::queries;
 
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
-use crate::icon;
+use crate::html::{Html, Render};
 use crate::share::blocking;
 use crate::subsonic::EntityKind;
 
@@ -40,37 +42,30 @@ impl Hearts {
         })
     }
 
-    pub fn track(&self, id: i64) -> String {
-        heart(Kind::Song, id, self.tracks.contains(&id))
+    pub fn track(&self, id: i64) -> Html {
+        heart(Kind::Song, id, self.tracks.contains(&id), false)
     }
 
-    /// A record's heart, over the corner of its tile. The placing is the
-    /// wrapper's, so the button inside can be replaced as any other is.
-    pub fn tile(&self, id: i64) -> String {
-        format!(
-            "<span class=\"absolute top-2 right-2 bg-bg/85\">{}</span>",
-            heart(Kind::Album, id, self.albums.contains(&id))
-        )
+    /// A record's heart, over the corner of its tile.
+    pub fn tile(&self, id: i64) -> Html {
+        heart(Kind::Album, id, self.albums.contains(&id), true)
     }
 
-    pub fn album(&self, id: i64) -> String {
-        heart(Kind::Album, id, self.albums.contains(&id))
+    pub fn album(&self, id: i64) -> Html {
+        heart(Kind::Album, id, self.albums.contains(&id), false)
     }
 
-    pub fn artist(&self, id: i64) -> String {
-        heart(Kind::Artist, id, self.artists.contains(&id))
+    pub fn artist(&self, id: i64) -> Html {
+        heart(Kind::Artist, id, self.artists.contains(&id), false)
     }
 
     /// A favourite's heart beside a track row's ⋯ on a narrow screen, where
     /// the row's own heart is in its menu: a mark, not a button. The stylesheet
     /// shows it while the row's hidden heart is pressed, so it follows a
     /// toggle made from the menu.
-    pub fn mark(&self) -> String {
-        format!(
-            "<span class=\"fav-mark\" role=img aria-label=Favourite title=Favourite>\
-{heart}</span>",
-            heart = icon::HEART_FILLED.svg(13.0, "")
-        )
+    pub fn mark(&self) -> &'static Html {
+        static MARK: LazyLock<Html> = LazyLock::new(|| Mark.html());
+        &MARK
     }
 }
 
@@ -108,28 +103,36 @@ impl Kind {
     }
 }
 
+#[derive(Template)]
+#[template(path = "favourite/heart.html")]
+struct Heart {
+    kind: &'static str,
+    id: i64,
+    on: bool,
+    label: String,
+    tile: bool,
+}
+
+#[derive(Template)]
+#[template(path = "favourite/mark.html")]
+struct Mark;
+
+fn label(kind: Kind, on: bool) -> String {
+    let verb = if on { "Unfavourite" } else { "Favourite" };
+    format!("{verb} this {}", kind.noun())
+}
+
 /// A heart for one thing, filled while it is a favourite. Pressing it asks
-/// for the opposite.
-fn heart(kind: Kind, id: i64, on: bool) -> String {
-    let (label, next) = if on {
-        (format!("Unfavourite this {}", kind.noun()), 0)
-    } else {
-        (format!("Favourite this {}", kind.noun()), 1)
-    };
-    format!(
-        "<button class=\"quiet text-muted aria-pressed:text-brand\" data-fav=\"{k}-{id}\" aria-pressed=\"{on}\" \
-aria-label=\"{label}\" title=\"{label}\" data-on:click=\"@post('/favourite/{k}/{id}?on={next}')\">\
-{outline}{filled}</button>",
-        k = kind.as_str(),
-        outline = icon::HEART.svg(
-            15.0,
-            "inline size-[15px] align-[-2px] in-aria-pressed:hidden"
-        ),
-        filled = icon::HEART_FILLED.svg(
-            15.0,
-            "hidden size-[15px] align-[-2px] in-aria-pressed:inline"
-        ),
-    )
+/// for the opposite. `tile` places it over the corner of a record's tile.
+fn heart(kind: Kind, id: i64, on: bool, tile: bool) -> Html {
+    Heart {
+        kind: kind.as_str(),
+        id,
+        on,
+        label: label(kind, on),
+        tile,
+    }
+    .html()
 }
 
 #[derive(serde::Deserialize)]
@@ -163,7 +166,7 @@ pub(super) async fn toggle(
     .await;
     match done {
         Some(Ok(())) => events(vec![patch(
-            &heart(kind, id, on),
+            &heart(kind, id, on, false),
             Some((&selector, "outer")),
         )]),
         Some(Err(e)) => {

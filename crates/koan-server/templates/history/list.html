@@ -1,0 +1,26 @@
+{#- The account's plays, grouped by day, and links to newer and earlier pages: one element the forget action can replace. -#}
+{%- import "library/macros.html" as library -%}
+<div id="history">
+{%- if plays.is_empty() && page == 0 %}
+<p class="{{ crate::ui::pages::EMPTY }}">Nothing played yet.</p>
+<p class="{{ crate::ui::pages::EMPTY }}">What you play here, in the kōan apps or in a Subsonic app signed in as you is listed by day.</p>
+{%- else %}
+<ol class="tracks" data-context="one">
+{%- for p in plays %}
+{%- if let Some(day) = p.day %}
+<li class="disc">{{ day }}</li>
+{%- endif %}
+{% call library::track_open(p.row) %}{% endcall %}
+<input type="checkbox" class="flex-none max-wide:hidden" value="{{ p.play }}" aria-label="Select this play">
+<span class="n w-auto max-wide:text-meta">{{ p.time }}</span><span class="t">{{ p.row.t.title }}{{ p.row.sub }}</span>
+<span class="d">{{ crate::share::duration(p.row.t.duration_ms.clone()) }}</span>{% call library::track_close(p.row) %}{% endcall %}
+{%- endfor %}
+</ol>
+{%- if page > 0 || more %}
+<p class="mt-5 flex gap-4">
+{%- if page == 1 %}<a href="/history">Newer</a>{% else if page > 1 %}<a href="/history?page={{ page - 1 }}">Newer</a>{% endif -%}
+{%- if more %}<a href="/history?page={{ page + 1 }}">Earlier</a>{% endif -%}
+</p>
+{%- endif %}
+{%- endif %}
+</div>

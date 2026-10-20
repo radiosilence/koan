@@ -1,0 +1,16 @@
+{#- Every account, with its access, an invite, and for others a new password or deletion. -#}
+<ul id="users">
+{%- for u in rows %}
+<li class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-1 py-2.5">
+<span class="min-w-[8em] flex-1 truncate wrap-anywhere">{{ u.username }}{% if u.id == me %}<small class="ml-2 text-meta text-muted">you</small>{% endif %}</span>
+<select class="px-2 py-1.5" aria-label="Access" data-on:change="@post('/users/{{ u.id }}/role?role=' + el.value)">
+{%- for (role, label) in crate::ui::users::ROLES %}<option value="{{ role.as_str() }}"{% if role == u.role %} selected{% endif %}>{{ label }}</option>{% endfor -%}
+</select>
+<button data-on:click="@post('/users/{{ u.id }}/invite')">Invite</button>
+{%- if u.id != me %}
+{#- Not on your own row: a new password signs out every session, this one included. The name reaches the confirmation as data: escaped into the expression itself, it would be decoded back and run. #}
+<button class="quiet" data-on:click="@post('/users/{{ u.id }}/password/form')">Password</button>
+<button class="quiet bad" data-username="{{ u.username }}" data-on:click="confirm('Delete ' + el.dataset.username + '? Their devices stop working and their playlists and favourites go.') && @post('/users/{{ u.id }}/delete')">Delete</button>
+{%- endif %}</li>
+{%- endfor %}
+</ul>

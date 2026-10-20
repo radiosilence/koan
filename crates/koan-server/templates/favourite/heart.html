@@ -1,0 +1,6 @@
+{#- A heart for one thing, filled while it is a favourite. Pressing it asks for the opposite. On a record's tile it sits over the corner; the placing is the wrapper's, so the button inside can be replaced as any other is. -#}
+{%- if tile %}<span class="absolute top-2 right-2 bg-bg/85">{% endif -%}
+<button class="quiet text-muted aria-pressed:text-brand" data-fav="{{ kind }}-{{ id }}" aria-pressed="{{ on }}" aria-label="{{ label }}" title="{{ label }}" data-on:click="@post('/favourite/{{ kind }}/{{ id }}?on={% if on %}0{% else %}1{% endif %}')">
+{{- crate::icon::HEART.svg(15.0, "inline size-[15px] align-[-2px] in-aria-pressed:hidden") -}}
+{{- crate::icon::HEART_FILLED.svg(15.0, "hidden size-[15px] align-[-2px] in-aria-pressed:inline") -}}
+</button>{% if tile %}</span>{% endif %}

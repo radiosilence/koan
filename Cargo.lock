@@ -3023,6 +3023,7 @@ dependencies = [
 name = "koan-server"
 version = "0.66.0"
 dependencies = [
+ "askama",
  "async-graphql",
  "async-graphql-axum",
  "async-stream",

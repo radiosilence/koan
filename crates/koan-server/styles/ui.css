@@ -2,11 +2,13 @@
  * The web UI's stylesheet, compiled by Tailwind into assets/ui.css (`just css`). The compiled file is committed:
  * the crate embeds it, and building koan must not need the Tailwind CLI.
  *
- * The pages carry their look as utilities in the Rust templates. What is here is what those cannot say: element
+ * The pages carry their look as utilities in the askama templates (`templates/`). What is here is what those cannot say: element
  * defaults, and rules for markup that ui.js builds or classes it toggles (`playing`, `busy`, `missing`).
  */
 @import "tailwindcss" source(none);
 @source "../src/ui";
+@source "../templates";
+@source not "../templates/share";
 @source "../assets/ui.js";
 @import "../../../site/src/theme.css";
 @import "./controls.css";

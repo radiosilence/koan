@@ -11,24 +11,23 @@ use axum::response::sse::Event;
 use koan_core::db::queries::scrobbling::{self, LASTFM, LISTENBRAINZ, ScrobbleService};
 use koan_core::scrobbling::lastfm;
 
-use super::pages::{COPY_ERROR, EMPTY, ERROR, SUB, respond};
+use super::pages::{COPY_ERROR, Failed, respond};
 use super::{UiState, events, open, patch, see_other};
 use crate::auth::AuthUser;
-use crate::share::{blocking, escape};
+use crate::html::{Html, Render};
+use crate::share::blocking;
+use askama::Template;
 
-const DISCONNECT_CONFIRM: &str = "Stop sending your plays to ListenBrainz?";
+pub(super) const NO_ACCOUNTS: &str =
+    "Scrobbling belongs to accounts, and this server runs without sign-in.";
 
-const LASTFM_DISCONNECT_CONFIRM: &str = "Stop sending your plays to Last.fm?";
-
-const NO_ACCOUNTS: &str = "Scrobbling belongs to accounts, and this server runs without sign-in.";
-
-fn day(secs: i64) -> String {
+pub(super) fn day(secs: i64) -> String {
     chrono::DateTime::from_timestamp(secs, 0)
         .map(|t| t.format("%-d %b %Y").to_string())
         .unwrap_or_default()
 }
 
-fn plays(n: i64) -> String {
+pub(super) fn plays(n: i64) -> String {
     if n == 1 {
         "1 play".to_owned()
     } else {
@@ -36,87 +35,40 @@ fn plays(n: i64) -> String {
     }
 }
 
-/// The ListenBrainz section: the form to connect, or the connection.
-fn section(service: Option<&ScrobbleService>, message: Option<&str>) -> String {
-    let message = message.map_or_else(String::new, |m| format!("<p>{}</p>", escape(m)));
-    let Some(s) = service else {
-        return format!(
-            "<div id=listenbrainz><p>Paste your user token from \
-<a href=\"https://listenbrainz.org/settings/\">your ListenBrainz settings</a>. \
-The plays already in your history here are sent when you connect.</p>\
-<form class=\"mb-2 flex max-w-form gap-2\" data-on:submit__prevent=\"@post('/scrobbling/listenbrainz')\">\
-<input class=\"flex-1\" type=password name=token data-bind:lbtoken placeholder=\"User token\" required \
-autocomplete=off aria-label=\"ListenBrainz user token\"><button class=\"primary\">Connect</button></form>\
-{message}<div id=scrobble-result></div></div>"
-        );
-    };
-    let state = match &s.error {
-        Some(e) => format!("<p class=\"{ERROR}\" role=alert>{}</p>", escape(e)),
-        None if s.pending > 0 => format!(
-            "<p class=\"{EMPTY}\">{} waiting to be sent.</p>",
-            plays(s.pending)
-        ),
-        None => format!("<p class=\"{EMPTY}\">Every play has been sent.</p>"),
-    };
-    let reconnect = if s.error.is_some() {
-        "<p>Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.</p>"
-    } else {
-        ""
-    };
-    format!(
-        "<div id=listenbrainz><p>Connected as <strong>{name}</strong> since {since}.</p>{message}{state}{reconnect}\
-<button class=\"quiet bad\" data-on:click=\"confirm('{DISCONNECT_CONFIRM}') && \
-@post('/scrobbling/listenbrainz/disconnect')\">Disconnect</button>\
-<div id=scrobble-result></div></div>",
-        name = escape(&s.account_name),
-        since = day(s.connected_at),
-    )
+#[derive(Template)]
+#[template(path = "scrobbling/listenbrainz.html")]
+struct ListenBrainz<'a> {
+    service: Option<&'a ScrobbleService>,
+    message: Option<&'a str>,
 }
 
-/// The Last.fm section: what the server lacks to offer it, the link that
-/// sends the person to Last.fm, or the connection.
-fn lastfm_section(
-    service: Option<&ScrobbleService>,
+fn section(service: Option<&ScrobbleService>, message: Option<&str>) -> Html {
+    ListenBrainz { service, message }.html()
+}
+
+#[derive(Template)]
+#[template(path = "scrobbling/lastfm.html")]
+struct Lastfm<'a> {
+    service: Option<&'a ScrobbleService>,
     offered: bool,
-    message: Option<&str>,
-) -> String {
-    let message = message.map_or_else(String::new, |m| {
-        format!("<p class=\"{ERROR}\" role=alert>{}</p>", escape(m))
-    });
-    let Some(s) = service else {
-        if !offered {
-            return format!(
-                "<div id=lastfm><p class=\"{EMPTY}\">Last.fm is not set up on this server. \
-Its admin needs to add a Last.fm API key and secret.</p>{message}</div>"
-            );
-        }
-        return format!(
-            "<div id=lastfm><p>You will be sent to Last.fm to approve kōan, then back here. \
-The plays in your history from the last two weeks are sent when you connect: Last.fm takes no older ones.</p>\
-<a class=\"primary\" href=\"/scrobbling/lastfm/connect\">Connect Last.fm</a>{message}</div>"
-        );
-    };
-    let state = match &s.error {
-        Some(e) => format!("<p class=\"{ERROR}\" role=alert>{}</p>", escape(e)),
-        None if s.pending > 0 => format!(
-            "<p class=\"{EMPTY}\">{} waiting to be sent.</p>",
-            plays(s.pending)
-        ),
-        None => format!("<p class=\"{EMPTY}\">Every play has been sent.</p>"),
-    };
-    let reconnect = if s.error.is_some() {
-        "<p>Disconnect, then connect again. Plays recorded meanwhile are kept and sent.</p>"
-    } else {
-        ""
-    };
-    format!(
-        "<div id=lastfm><p>Connected as <strong>{name}</strong> since {since}.</p>{message}{state}{reconnect}\
-<button class=\"quiet bad\" data-on:click=\"confirm('{LASTFM_DISCONNECT_CONFIRM}') && \
-@post('/scrobbling/lastfm/disconnect')\">Disconnect</button>\
-<div id=lastfm-result></div></div>",
-        name = escape(&s.account_name),
-        since = day(s.connected_at),
-    )
+    message: Option<&'a str>,
+}
+
+fn lastfm_section(service: Option<&ScrobbleService>, offered: bool, message: Option<&str>) -> Html {
+    Lastfm {
+        service,
+        offered,
+        message,
+    }
+    .html()
+}
+
+/// The scrobbling page. `sections` is the rendered ListenBrainz and Last.fm
+/// sections, absent when the server runs without sign-in.
+#[derive(Template)]
+#[template(path = "pages/scrobbling.html")]
+struct ScrobblingPage {
+    sections: Option<(Html, Html)>,
 }
 
 fn connection(s: &UiState, user_id: i64, service: &str) -> Option<Option<ScrobbleService>> {
@@ -139,12 +91,8 @@ async fn render(
     headers: &HeaderMap,
     lastfm_message: Option<&str>,
 ) -> Response {
-    let intro = format!(
-        "<h1>Scrobbling</h1><p class=\"{SUB}\">Send what you play to ListenBrainz or Last.fm: every play kōan's \
-apps and other Subsonic clients signed in as you report to this server, as they report it.</p>"
-    );
-    let inner = if !s.auth_enabled {
-        format!("{intro}<p class=\"{EMPTY}\">{NO_ACCOUNTS}</p>")
+    let sections = if !s.auth_enabled {
+        None
     } else {
         let st = s.clone();
         let user_id = user.user_id;
@@ -164,12 +112,12 @@ apps and other Subsonic clients signed in as you report to this server, as they 
             }
             other => other.map(str::to_owned),
         };
-        format!(
-            "{intro}<h2>ListenBrainz</h2>{}<h2>Last.fm</h2>{}",
+        Some((
             section(brainz.flatten().as_ref(), None),
             lastfm_section(fm.flatten().as_ref(), offered, message.as_deref()),
-        )
+        ))
     };
+    let inner = ScrobblingPage { sections }.html();
     respond(s, headers, user, "Scrobbling", &inner)
 }
 
@@ -251,13 +199,13 @@ fn failed(message: &str) -> Response {
 }
 
 fn failed_in(id: &str, message: &str) -> Response {
-    events(vec![patch(
-        &format!(
-            "<div id={id} class=\"{COPY_ERROR}\" role=alert>{}</div>",
-            escape(message)
-        ),
-        None,
-    )])
+    let html = Failed {
+        id,
+        class: COPY_ERROR,
+        message,
+    }
+    .html();
+    events(vec![patch(&html, None)])
 }
 
 /// Datastar posts its signals as JSON; the token is `lbtoken`.

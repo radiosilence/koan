@@ -2,8 +2,7 @@
 //! credentials Subsonic clients sign in with — API keys and app passwords, each
 //! shown once when made, listed with when it was last used, revocable.
 
-use std::fmt::Write as _;
-
+use askama::Template;
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -14,116 +13,82 @@ use koan_core::auth::Role;
 use koan_core::db::queries::api_keys::{self, ApiKeyRow};
 use koan_core::db::queries::app_passwords::{self, AppPasswordRow};
 
-use super::pages::{COPY_ERROR, COPY_INPUT, COPY_ROW, EMPTY, SUB, respond};
+use super::pages::{COPY_ERROR, Failed, respond};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
-use crate::share::{blocking, escape};
+use crate::html::{Html, Render};
+use crate::share::blocking;
 
-const MAX_NAME: usize = 100;
+pub(super) const MAX_NAME: usize = 100;
 
 const REVOKE_KEY: &str = "Revoke this key? Clients using it will stop working.";
 const REVOKE_APP_PASSWORD: &str = "Revoke this app password? The app using it will stop working.";
 
-fn day(secs: i64) -> String {
-    chrono::DateTime::from_timestamp(secs, 0)
-        .map(|t| t.format("%-d %b %Y").to_string())
-        .unwrap_or_default()
+struct Credential<'a> {
+    id: i64,
+    name: &'a str,
+    created: String,
+    used: Option<String>,
 }
 
-const ROW: &str = "flex min-w-0 items-center gap-3 border-b border-rule px-1 py-2.5";
-
-/// One credential's row: its name, when it was made and last used, and a
-/// revoke button posting to `revoke`.
-fn row(out: &mut String, name: &str, created: i64, used: Option<i64>, revoke: &str, confirm: &str) {
-    let used = used.map_or_else(
-        || "never used".to_owned(),
-        |t| format!("last used {}", day(t)),
-    );
-    let _ = write!(
-        out,
-        "<li class=\"{ROW}\"><span class=\"min-w-0 flex-1 overflow-hidden text-ellipsis wrap-anywhere\">{name}\
-<small class=\"block text-meta text-muted\">Created {created} · {used}</small></span>\
-<button class=\"quiet bad\" data-on:click=\"confirm('{confirm}') && @post('{revoke}')\">Revoke</button></li>",
-        name = escape(name),
-        created = day(created),
-    );
-}
-
-fn key_list(keys: &[ApiKeyRow]) -> String {
-    let mut out = String::from("<ul class=\"mt-4\" id=keys>");
-    if keys.is_empty() {
-        let _ = write!(out, "<li class=\"{ROW} {EMPTY}\">No keys yet.</li>");
+impl<'a> Credential<'a> {
+    fn new(id: i64, name: &'a str, created: i64, used: Option<i64>) -> Self {
+        Self {
+            id,
+            name,
+            created: super::scrobbling::day(created),
+            used: used.map(super::scrobbling::day),
+        }
     }
-    for k in keys {
-        let revoke = format!("/account/keys/{}/revoke", k.id);
-        row(
-            &mut out,
-            &k.name,
-            k.created_at,
-            k.last_used_at,
-            &revoke,
-            REVOKE_KEY,
-        );
-    }
-    out.push_str("</ul>");
-    out
 }
 
-fn app_password_list(passwords: &[AppPasswordRow]) -> String {
-    let mut out = String::from("<ul class=\"mt-4\" id=app-passwords>");
-    if passwords.is_empty() {
-        let _ = write!(
-            out,
-            "<li class=\"{ROW} {EMPTY}\">No app passwords yet.</li>"
-        );
-    }
-    for p in passwords {
-        let revoke = format!("/account/app-passwords/{}/revoke", p.id);
-        row(
-            &mut out,
-            &p.name,
-            p.created_at,
-            p.last_used_at,
-            &revoke,
-            REVOKE_APP_PASSWORD,
-        );
-    }
-    out.push_str("</ul>");
-    out
+#[derive(Template)]
+#[template(path = "account/credentials.html")]
+struct Credentials<'a> {
+    id: &'a str,
+    rows: Vec<Credential<'a>>,
+    empty: &'a str,
+    /// Where each row's revoke posts, below its id.
+    revoke: &'a str,
+    confirm: &'a str,
 }
 
-/// A form making one credential, posting `signal` (the name) to `action`, with
-/// the place its result lands.
-fn create_form(
-    action: &str,
-    signal: &str,
-    placeholder: &str,
-    label: &str,
-    button: &str,
-    result: &str,
-) -> String {
-    format!(
-        "<form class=\"mb-2 flex max-w-form gap-2\" data-on:submit__prevent=\"@post('{action}')\">\
-<input class=\"flex-1\" name={signal} data-bind:{signal} placeholder=\"{placeholder}\" maxlength={MAX_NAME} required \
-autocomplete=off aria-label=\"{label}\"><button class=\"primary\">{button}</button></form><div id={result}></div>"
-    )
+fn key_list(keys: &[ApiKeyRow]) -> Html {
+    Credentials {
+        id: "keys",
+        rows: keys
+            .iter()
+            .map(|k| Credential::new(k.id, &k.name, k.created_at, k.last_used_at))
+            .collect(),
+        empty: "No keys yet.",
+        revoke: "/account/keys",
+        confirm: REVOKE_KEY,
+    }
+    .html()
 }
 
-/// The page's links elsewhere: assistants and scrobbling for everyone,
-/// accounts for an admin.
-fn more(user: &AuthUser) -> String {
-    let users = if user.role == Role::Admin {
-        "<li><a href=\"/users\" data-nav=users>Users</a>: make accounts and invite people.</li>"
-    } else {
-        ""
-    };
-    format!(
-        "<h2>More</h2><ul class=\"my-2 flex flex-col gap-1.5\">{users}\
-<li><a href=\"/connect\" data-nav=connect>Assistants</a>: connect Claude or another assistant to your music.</li>\
-<li><a href=\"/scrobbling\" data-nav=scrobbling>Scrobbling</a>: send what you play to ListenBrainz or Last.fm.</li>\
-<li><a href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></li></ul>",
-        v = env!("CARGO_PKG_VERSION")
-    )
+fn app_password_list(passwords: &[AppPasswordRow]) -> Html {
+    Credentials {
+        id: "app-passwords",
+        rows: passwords
+            .iter()
+            .map(|p| Credential::new(p.id, &p.name, p.created_at, p.last_used_at))
+            .collect(),
+        empty: "No app passwords yet.",
+        revoke: "/account/app-passwords",
+        confirm: REVOKE_APP_PASSWORD,
+    }
+    .html()
+}
+
+/// The account page. `credentials` is the rendered key and app password
+/// lists, absent when the server runs without sign-in.
+#[derive(Template)]
+#[template(path = "pages/account.html")]
+struct AccountPage<'a> {
+    username: &'a str,
+    admin: bool,
+    credentials: Option<(Html, Html)>,
 }
 
 pub(super) async fn page(
@@ -131,13 +96,7 @@ pub(super) async fn page(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let inner = if !s.auth_enabled {
-        format!(
-            "<h1>Account</h1><p class=\"{EMPTY}\">This server runs without sign-in, so there are no \
-accounts, keys or app passwords.</p>{}",
-            more(&user)
-        )
-    } else {
+    let credentials = if s.auth_enabled {
         let st = s.clone();
         let user_id = user.user_id;
         let (keys, passwords) = blocking(move || {
@@ -149,38 +108,16 @@ accounts, keys or app passwords.</p>{}",
         })
         .await
         .unwrap_or_default();
-        format!(
-            "<h1>Account</h1><form class=\"{SUB} flex flex-wrap items-center gap-x-3 gap-y-1\" method=post \
-action=\"/auth/signout\"><span>Signed in as <strong class=\"text-ink\">{name}</strong></span>\
-<button class=\"quiet px-0\">Sign out</button></form>\
-<h2>API keys</h2><p class=\"{SUB}\">A Subsonic client that supports API keys can sign in with one instead of \
-your password. It acts as you, with your permissions, until you revoke it.</p>{key_form}{keys}\
-<h2>App passwords</h2><p class=\"{SUB}\">For a Subsonic app that only signs in with a username and password: \
-give it your username and an app password in place of yours. Make one per app. kōan keeps it encrypted, \
-never shows it again, and it stops working when you revoke it or change your password.</p>\
-{password_form}{passwords}{more}",
-            name = escape(&user.username),
-            key_form = create_form(
-                "/account/keys",
-                "keyname",
-                "Name, e.g. phone",
-                "Key name",
-                "Create key",
-                "key-result"
-            ),
-            keys = key_list(&keys),
-            password_form = create_form(
-                "/account/app-passwords",
-                "appname",
-                "Name, e.g. Arpeggi",
-                "App password name",
-                "Create app password",
-                "app-password-result"
-            ),
-            passwords = app_password_list(&passwords),
-            more = more(&user),
-        )
+        Some((key_list(&keys), app_password_list(&passwords)))
+    } else {
+        None
     };
+    let inner = AccountPage {
+        username: &user.username,
+        admin: user.role == Role::Admin,
+        credentials,
+    }
+    .html();
     respond(&s, &headers, &user, "Account", &inner)
 }
 
@@ -196,25 +133,34 @@ fn posted_name(body: &[u8], signal: &str) -> Option<String> {
 }
 
 fn refused(result: &str, message: &str) -> Response {
-    events(vec![patch(
-        &format!("<div id={result} class=\"{COPY_ERROR}\" role=alert>{message}</div>"),
-        None,
-    )])
+    let html = Failed {
+        id: result,
+        class: COPY_ERROR,
+        message,
+    }
+    .html();
+    events(vec![patch(&html, None)])
+}
+
+#[derive(Template)]
+#[template(path = "account/made.html")]
+struct Made<'a> {
+    result: &'a str,
+    what: &'a str,
+    secret: &'a str,
 }
 
 /// A credential made: shown once with a copy button, the list redrawn, the
 /// name field cleared.
-fn made(result: &str, what: &str, secret: &str, list: String, signal: &str) -> Response {
+fn made(result: &str, what: &str, secret: &str, list: Html, signal: &str) -> Response {
     events(vec![
         patch(
-            &format!(
-                "<div id={result}><p class=\"mt-3 mb-0\">Copy the {what} now: it is not shown again.</p>\
-<div class=\"{COPY_ROW}\"><input id={result}-value readonly value=\"{secret}\" \
-aria-label=\"New {what}\" class=\"{COPY_INPUT}\">\
-<button data-on:click=\"navigator.clipboard.writeText(document.getElementById('{result}-value').value)\">Copy</button>\
-</div></div>",
-                secret = escape(secret)
-            ),
+            &Made {
+                result,
+                what,
+                secret,
+            }
+            .html(),
             None,
         ),
         patch(&list, None),

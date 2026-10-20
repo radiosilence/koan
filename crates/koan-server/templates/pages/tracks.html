@@ -1,0 +1,9 @@
+<h1>Tracks</h1><p class="{{ crate::ui::pages::SUB }}">{{ total }} track{% if total != 1 %}s{% endif %}</p>{{ toolbar }}
+{%- if rows.is_empty() %}
+<p class="{{ crate::ui::pages::EMPTY }}">No tracks match.</p>
+{%- else %}
+<ol class="tracks" data-context="album">{{ rows }}</ol>
+{%- endif %}
+{%- if previous.is_some() || next.is_some() %}
+<p class="mt-5 flex gap-4">{% if let Some(href) = previous %}<a class="lowercase" href="{{ href }}">Previous</a>{% endif %}{% if let Some(href) = next %}<a class="lowercase" href="{{ href }}">Next</a>{% endif %}</p>
+{%- endif %}
