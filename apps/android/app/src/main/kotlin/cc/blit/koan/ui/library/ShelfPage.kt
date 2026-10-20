@@ -24,15 +24,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.ShelfSummary
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
-import cc.blit.koan.ui.theme.KoanButton
-import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanSpace
-import cc.blit.koan.ui.theme.KoanText
-import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
-import cc.blit.koan.ui.theme.koanChip
 
 /**
  * A page of artists, records and tracks answering one question: what is
@@ -49,15 +44,21 @@ fun ShelfPage(shelf: Shelf) {
     val app = koanApp()
     val model = viewModel { ShelfModel(app.mirror, shelf) }
     val summary by model.summary.collectAsStateWithLifecycle()
+    val selection = model.selection
+    SelectMode(selection)
+    val empty = summary?.run { artists.isEmpty() && albums.isEmpty() && tracks.isEmpty() } ?: true
     Column {
-        PageBar(shelf.title, summary?.counts(), appText = shelf !is Shelf.Search)
+        PageBar(shelf.title, summary?.counts(), appText = shelf !is Shelf.Search) {
+            if (!empty) SelectButton(selection)
+        }
         val held = summary ?: return@Column
-        if (held.artists.isEmpty() && held.albums.isEmpty() && held.tracks.isEmpty()) {
+        if (empty) {
             val (title, detail) = shelf.empty
             KoanUnavailable(title, shelf.icon, detail)
         } else {
-            ShelfSections(shelf, held)
+            ShelfSections(shelf, held, selection, Modifier.weight(1f))
         }
+        if (selection.active) SelectionBar(selection)
     }
 }
 
@@ -85,12 +86,12 @@ private val Shelf.empty
     }
 
 /**
- * The sections, for a shelf's page and for search's results, which are the
- * same question asked with words.
+ * The sections of a shelf's page, each of whose artists, records and tracks
+ * the select button can pick.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modifier) {
+fun ShelfSections(shelf: Shelf, summary: ShelfSummary, selection: Selection<Playable>, modifier: Modifier = Modifier) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val gutter = LocalKoanTokens.current.gutter
@@ -110,11 +111,7 @@ fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modi
                         horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
                         verticalArrangement = Arrangement.spacedBy(KoanSpace.s),
                     ) {
-                        summary.artists.forEach { artist ->
-                            KoanButton({ nav.push(ArtistRoute(artist.id)) }, Modifier.koanChip(), kind = KoanButtonKind.Card) {
-                                KoanText(artist.name, role = KoanType.Control, maxLines = 1)
-                            }
-                        }
+                        summary.artists.forEach { ArtistPill(it.id, it.name, selection) }
                     }
                 }
             }
@@ -124,7 +121,7 @@ fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modi
                 // scrolls rather than laying out every sleeve at once.
                 items(rows, key = { "albums-${it.first().id}" }) { row ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = gutter - 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        row.forEach { AlbumTile(it, Modifier.weight(1f)) }
+                        row.forEach { AlbumTile(it, Modifier.weight(1f), selection = selection) }
                         repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
@@ -138,6 +135,7 @@ fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modi
                         current = track.id == current,
                         playing = playing,
                         onPlay = { app.playFrom(trackIds, index, nav) },
+                        selection = selection,
                         mixed = true,
                     )
                 }

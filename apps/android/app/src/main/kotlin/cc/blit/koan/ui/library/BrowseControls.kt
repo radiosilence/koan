@@ -159,7 +159,7 @@ private fun YearField(label: String, year: Int?, modifier: Modifier, onYear: (In
     )
 }
 
-/** Narrows a listing by name as it is typed: a glyph, the field, and a clear button. */
+/** Narrows a listing by name as it is typed: a glyph, the field with its prompt lowercase in the theme, and a clear button. */
 @Composable
 fun FilterField(text: String, placeholder: String, onText: (String) -> Unit, modifier: Modifier = Modifier) {
     Row(
@@ -171,7 +171,7 @@ fun FilterField(text: String, placeholder: String, onText: (String) -> Unit, mod
         horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
     ) {
         KoanIcon(KoanIcons.search, null, color = KoanTheme.color(KoanTone.Muted))
-        KoanField(text, onText, Modifier.weight(1f).padding(vertical = 2.dp), placeholder = placeholder, ground = false)
+        KoanField(text, onText, Modifier.weight(1f).padding(vertical = 2.dp), placeholder = KoanTheme.label(placeholder), ground = false)
         if (text.isNotEmpty()) KoanButton("Clear", { onText("") }, kind = KoanButtonKind.Icon, icon = KoanIcons.clearField)
     }
 }
