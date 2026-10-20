@@ -1,0 +1,1 @@
+- **Distrusted emSign certificates are refused.** rustls-webpki 0.103.16 and webpki-roots 1.0.10 reject paths through the emSign intermediates whose private keys are public (RUSTSEC-2026-0381, -0382, -0383).
