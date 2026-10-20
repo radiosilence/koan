@@ -143,6 +143,7 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
     }
     val inUse = state.overview?.device
     val label = { d: String -> state.overview?.names?.get(d) ?: d }
+    val ink = KoanTheme.color(KoanTone.Ink)
 
     SettingsPage(name, settings) {
         val d = detail ?: return@SettingsPage
@@ -150,7 +151,6 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
         // Stereo needs bands to copy: an empty EQ has no channels to split.
         val layout = d.channels?.takeIf { !d.readOnly && d.bands.isNotEmpty() }
         val editing = if (layout?.stereo == true) channel else null
-        val ink = KoanTheme.color(KoanTone.Ink)
         if (r != null) {
             // A tuning as it plays on the output's correction, where that differs from the tuning alone: with the
             // target difference its Made against asks for, so a wrong choice shows as a preference doubled or taken out.
@@ -220,7 +220,7 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
         d.problem?.let { line(it, KoanTone.Bad) }
 
         header("Used for")
-        if (d.devices.isEmpty()) line(KoanTheme.label("No output yet"), KoanTone.Muted)
+        if (d.devices.isEmpty()) item { KoanText("No output yet", inset.padding(vertical = KoanSpace.s), tone = KoanTone.Muted, appText = true) }
         d.devices.forEach { line(label(it)) }
         inUse?.let { output ->
             item {
