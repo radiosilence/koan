@@ -1,0 +1,1 @@
+- **CI/CD hardening.** The image's `main` tag no longer moves backwards when a release run finishes late, freeing runners for a release never fails it, a push whose base cannot be worked out runs every check, and a retried release passes a package version that is already published.
