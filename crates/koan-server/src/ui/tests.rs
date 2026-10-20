@@ -2988,13 +2988,24 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains("/library/scan"), "{}", r.body);
     assert!(!r.body.contains(wide_link), "{}", r.body);
+    let hidden_lists = "<ul class=\"wide:hidden\">";
+    assert!(
+        !r.body.contains(hidden_lists),
+        "the lists are all a listener's page has: {}",
+        r.body
+    );
     let r = send(&f.app, scan(&access_token(&f.state), "{}")).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     let r = send(&f.app, library(&admin)).await;
     assert!(r.body.contains("@post('/library/scan')"), "{}", r.body);
     assert!(r.body.contains(wide_link), "{}", r.body);
-    assert!(!r.body.contains("<progress class=\"h-1.5"), "no bar while idle: {}", r.body);
+    assert!(r.body.contains(hidden_lists), "{}", r.body);
+    assert!(
+        !r.body.contains("aria-label=\"Scan progress\""),
+        "no bar while idle: {}",
+        r.body
+    );
     // The stream follows the scan to its end, so the whole body is its story.
     let r = send(&f.app, scan(&admin, r#"{"reread":false}"#)).await;
     assert_eq!(r.status, StatusCode::OK);
