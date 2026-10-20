@@ -127,6 +127,7 @@ The server answers `http://host:4000/` with a browser UI: the library, search, a
 - **Favourites** lists the account's favourite artists, records and tracks. **Recently played** lists what it played in the last 30 days, each once. Both show the first few of each kind under a heading that gives the whole count and opens the matching filtered browser.
 - **History** lists plays by day; any of them can be ticked and forgotten.
 - **Hearts** on tracks, records and artists favourite them for the signed-in account. Every artist named in a collaboration's credit links to their own page.
+- **Artist pages** hold the artist's own records and, under Features on, the records someone else is the album artist of that they are credited on.
 
 On a phone, Favourites, Recently played, History and Playlists sit under a Library tab, since the tab bar has room for six.
 

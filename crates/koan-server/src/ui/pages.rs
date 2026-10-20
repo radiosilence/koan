@@ -786,14 +786,15 @@ pub(super) async fn tracks(
     respond(&s, &headers, &user, "Tracks", &inner)
 }
 
-/// An artist page. `heart` is there where the account may favourite, and
-/// so share.
+/// An artist page: their own records, then the ones they feature on. `heart`
+/// is there where the account may favourite, and so share.
 #[derive(Template)]
 #[template(path = "pages/artist.html")]
 struct ArtistPage<'a> {
     artist: &'a queries::ArtistRow,
     heart: Option<Html>,
-    tiles: Html,
+    tiles: Option<Html>,
+    features: Option<Html>,
 }
 
 pub(super) async fn artist(
@@ -807,23 +808,36 @@ pub(super) async fn artist(
         let db = open(&st.pool)?;
         let artist = queries::get_artist(&db.conn, id).ok()??;
         let albums = queries::albums_for_artist(&db.conn, id).ok()?;
-        let versions = album_versions(&db.conn, &albums);
-        let credits = Credits::load(&db.conn, &[], &album_ids(&albums));
+        let features = queries::list_albums(
+            &db.conn,
+            &queries::AlbumQuery {
+                features_of: Some(id),
+                order: queries::AlbumOrder::Date,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
+        let ids: Vec<i64> = albums.iter().chain(&features).map(|a| a.id).collect();
+        let versions = cover_versions(&db.conn, &ids);
+        let credits = Credits::load(&db.conn, &[], &ids);
         Some((
             artist,
             albums,
+            features,
             versions,
             credits,
             Hearts::load(&db.conn, &who),
         ))
     })
     .await;
-    let Some((artist, albums, versions, credits, hearts)) = found else {
+    let Some((artist, albums, features, versions, credits, hearts)) = found else {
         return not_found();
     };
     let inner = ArtistPage {
         heart: hearts.as_ref().map(|h| h.artist(artist.id)),
-        tiles: cells(&albums, &versions, &credits, hearts.as_ref()),
+        tiles: (!albums.is_empty()).then(|| cells(&albums, &versions, &credits, hearts.as_ref())),
+        features: (!features.is_empty())
+            .then(|| cells(&features, &versions, &credits, hearts.as_ref())),
         artist: &artist,
     }
     .html();
