@@ -71,8 +71,9 @@ class WalkTest {
                 ?.visibleBounds
             title?.let { device.click(it.centerX(), it.top - it.height() * 3) }
             pause(3)
-            // Still on the browser, whose filter field a record's page has not, if the tap missed.
-            if (title != null && !device.hasObject(label("Filter albums"))) {
+            // A record's page, by its Shuffle, which the browser has not. The
+            // browser's own controls stay in the tree under the page pushed over it.
+            if (title != null && device.hasObject(label("Shuffle"))) {
                 snap("04-album")
                 // What the queue, the mini player and Now Playing show from here on.
                 tap { find(label("Play")) }
