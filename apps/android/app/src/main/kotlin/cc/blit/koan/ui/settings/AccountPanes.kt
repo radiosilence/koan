@@ -75,10 +75,21 @@ fun AccountPane(model: SettingsModel) {
     val app = koanApp()
     val state by model.state.collectAsStateWithLifecycle()
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
-    val keys = viewModel(key = "keys") { CredentialsModel.apiKeys(app.mirror::engine) }
-    val passwords = viewModel(key = "app-passwords") { CredentialsModel.appPasswords(app.mirror::engine) }
-    val keysState by keys.state.collectAsStateWithLifecycle()
-    val passwordsState by passwords.state.collectAsStateWithLifecycle()
+    // Made only where the server has them, and afresh for each account.
+    val account = "${state.settings?.remoteUrl}-${state.settings?.remoteUsername}"
+    val keys = if (connection.offers(API_KEYS)) {
+        viewModel(key = "keys-$account") { CredentialsModel.apiKeys(app.mirror::engine) }
+    } else {
+        null
+    }
+    // Only while the server can be reached, as on the iPhone.
+    val passwords = if (connection.offers(APP_PASSWORDS) && connection?.offline != true) {
+        viewModel(key = "app-passwords-$account") { CredentialsModel.appPasswords(app.mirror::engine) }
+    } else {
+        null
+    }
+    val keysState = keys?.state?.collectAsStateWithLifecycle()?.value
+    val passwordsState = passwords?.state?.collectAsStateWithLifecycle()?.value
     var changing by remember { mutableStateOf(false) }
     var revoking by remember { mutableStateOf<Pair<CredentialsModel, Credential>?>(null) }
     var keyName by rememberSaveable { mutableStateOf("") }
@@ -92,7 +103,7 @@ fun AccountPane(model: SettingsModel) {
             item { ButtonRow { KoanButton("Change password", { changing = true }, kind = KoanButtonKind.Bordered) } }
             footer(PASSWORD_NOTE)
         }
-        if (connection.offers(API_KEYS)) {
+        if (keys != null && keysState != null) {
             credentials(
                 "API keys",
                 keysState,
@@ -105,8 +116,7 @@ fun AccountPane(model: SettingsModel) {
                     "has one too; revoking it signs that device out.",
             )
         }
-        // Only while the server can be reached, as on the iPhone.
-        if (connection.offers(APP_PASSWORDS) && connection?.offline != true) {
+        if (passwords != null && passwordsState != null) {
             credentials(
                 "App passwords",
                 passwordsState,
@@ -136,8 +146,8 @@ fun AccountPane(model: SettingsModel) {
             dismissButton = { KoanButton("Cancel", { revoking = null }) },
         )
     }
-    keysState.made?.let { NewSecret("Key", it, keys::dismissMade) }
-    passwordsState.made?.let { NewSecret("App password", it, passwords::dismissMade) }
+    if (keys != null) keysState?.made?.let { NewSecret("Key", it, keys::dismissMade) }
+    if (passwords != null) passwordsState?.made?.let { NewSecret("App password", it, passwords::dismissMade) }
 }
 
 private fun LazyListScope.credentials(

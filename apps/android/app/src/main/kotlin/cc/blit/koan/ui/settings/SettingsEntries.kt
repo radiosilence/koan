@@ -125,12 +125,17 @@ private fun SettingsRoot() {
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
     val nav = LocalNavigator.current
     val signedIn = state.settings?.remoteSignedIn == true
-    // Asked for each account signed in as: the list loading is what says
-    // the account is an admin's, and so whether there is a People page.
-    val people = viewModel(key = "people-${state.settings?.remoteUrl}-${state.settings?.remoteUsername}") {
-        PeopleModel(app.mirror::engine)
+    // Asked for each account signed in as, of a server that has koan's
+    // accounts: the list loading is what says the account is an admin's, and
+    // so whether there is a People page.
+    val people = if (signedIn && connection.offers(INVITE)) {
+        viewModel(key = "people-${state.settings?.remoteUrl}-${state.settings?.remoteUsername}") {
+            PeopleModel(app.mirror::engine)
+        }
+    } else {
+        null
     }
-    val admin = people.state.collectAsStateWithLifecycle().value.accounts != null
+    val admin = people?.state?.collectAsStateWithLifecycle()?.value?.accounts != null
     val panes = Pane.entries.filter {
         when (it) {
             Pane.Account -> signedIn && accountShown(connection)
@@ -218,6 +223,9 @@ internal const val PASSWORDS = "koanPasswords"
 
 /** The extension a koan server lists when it serves assistants over MCP. */
 internal const val ASSISTANTS = "koanMcp"
+
+/** Accounts arrived with invites, and making one answers with its invite. */
+internal const val INVITE = "koanInvite"
 
 /**
  * Whether the Integrations page has anything on it: scrobbling, or
