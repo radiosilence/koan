@@ -38,7 +38,12 @@ struct TrackLine: Equatable {
 extension TrackTableRow {
     /// A lead column wide enough for the longest number in a list of `count`.
     static func leadWidth(for count: Int) -> CGFloat {
-        max(22, measure(String(repeating: "0", count: String(count).count), numberFont) + 3)
+        leadWidth(fitting: [String(repeating: "0", count: String(count).count)])
+    }
+
+    /// A lead column wide enough for the widest of `leads`.
+    static func leadWidth(fitting leads: [String]) -> CGFloat {
+        max(22, (leads.map { measure($0, numberFont) }.max() ?? 0) + 3)
     }
 }
 
