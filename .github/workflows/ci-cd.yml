@@ -245,6 +245,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.release == 'true'
     permissions:
       actions: write
+      contents: read
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
@@ -805,13 +806,27 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          current=$(docker buildx imagetools inspect "$IMAGE:main" --format '{{json .Image}}' 2>/dev/null \
-            | jq -r '[.. | objects | .config.Labels?["org.opencontainers.image.revision"]? // empty][0] // empty' || true)
+          # Only a missing tag, label or commit means "retag"; any other error
+          # stops here, since retagging on a guess can move `main` backwards.
+          if out=$(docker buildx imagetools inspect "$IMAGE:main" --format '{{json .Image}}' 2>&1); then
+            current=$(printf '%s' "$out" | jq -r '[.. | objects | .config.Labels?["org.opencontainers.image.revision"]? // empty][0] // empty')
+          elif printf '%s' "$out" | grep -qi 'not found'; then
+            current=
+          else
+            echo "::error::cannot read $IMAGE:main: $out"
+            exit 1
+          fi
           if [ -n "$current" ] && [ "$current" != "$GITHUB_SHA" ]; then
-            status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$current...$GITHUB_SHA" --jq .status)
-            if [ "$status" != ahead ]; then
-              echo "::notice::main holds $current, which this commit does not descend from ($status); leaving it"
-              exit 0
+            if status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$current...$GITHUB_SHA" --jq .status 2>&1); then
+              if [ "$status" != ahead ]; then
+                echo "::notice::main holds $current, which this commit does not descend from ($status); leaving it"
+                exit 0
+              fi
+            elif printf '%s' "$status" | grep -q 'HTTP 404'; then
+              echo "::notice::main holds $current, which no longer exists; retagging"
+            else
+              echo "::error::cannot compare $current with $GITHUB_SHA: $status"
+              exit 1
             fi
           fi
           docker buildx imagetools create -t "$IMAGE:main" "$IMAGE:$GITHUB_SHA"
