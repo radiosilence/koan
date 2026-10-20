@@ -84,7 +84,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let mut out = format!(
         "<p class=\"{KICKER}\">Properties</p><h2 class=\"my-1 normal-case\">{}</h2><p class=\"{SUB}\">{}</p>",
         escape(&t.title),
-        &artist,
+        artist,
     );
     if admin && let Some(path) = crate::subsonic::track_file_path(&t) {
         out.push_str(&format!(
