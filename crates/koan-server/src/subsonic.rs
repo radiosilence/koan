@@ -5588,16 +5588,6 @@ fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
         .attr_bool("local", info.local())
 }
 
-/// `/rest/koanPair`: see `crate::pair::route`.
-async fn koan_pair(
-    State(state): State<Arc<AppState>>,
-    raw: RawQuery,
-    ws: axum::extract::WebSocketUpgrade,
-    request: Request,
-) -> Response {
-    crate::pair::route(state.pool.clone(), raw, ws, request).await
-}
-
 /// Who may look a pairing up, approve it or decline it: a caller who could
 /// sign it in. Approving mints an API key for the device, which an app
 /// password, one client's credential, may not hand out, and the shared secret
@@ -6188,7 +6178,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/koanLink", get(koan_link))
         // A device without a keyboard waiting to be signed in, and the
         // endpoints that sign it in. See `crate::pair`.
-        .route("/rest/koanPair", get(koan_pair))
+        .route("/rest/koanPair", get(crate::pair::route))
         .route(
             "/rest/koanPairInfo",
             get(koan_pair_info).post(koan_pair_info),

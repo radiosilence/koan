@@ -77,6 +77,16 @@ pub enum PairError {
     Closed,
     #[error("no server is signed in")]
     NotSignedIn,
+    /// No device is waiting on that id or code: it was mistyped, lapsed, or
+    /// the device stopped waiting.
+    #[error(
+        "no device is waiting with that code; codes last ten minutes, so check the device for a new one"
+    )]
+    NotWaiting,
+    /// Signed in with a credential that may not sign devices in: an app
+    /// password.
+    #[error("signing a device in needs this account's password or an API key, not an app password")]
+    NotAllowed,
     #[error(transparent)]
     Remote(#[from] SubsonicError),
     #[error(transparent)]
@@ -262,18 +272,28 @@ fn client() -> Result<std::sync::Arc<crate::remote::client::SubsonicClient>, Pai
 /// The device waiting on `pair` (an id or a code) on the signed-in server,
 /// and where it asked from.
 pub fn info(pair: &str) -> Result<crate::remote::client::KoanPair, PairError> {
-    Ok(client()?.koan_pair_info(pair)?)
+    client()?.koan_pair_info(pair).map_err(refused)
 }
 
 /// Sign the device waiting on `pair` in as the signed-in account. Answers
 /// with the device's name.
 pub fn approve(pair: &str) -> Result<String, PairError> {
-    Ok(client()?.koan_pair_approve(pair, false)?)
+    client()?.koan_pair_approve(pair, false).map_err(refused)
 }
 
 /// Turn the device waiting on `pair` away.
 pub fn decline(pair: &str) -> Result<String, PairError> {
-    Ok(client()?.koan_pair_approve(pair, true)?)
+    client()?.koan_pair_approve(pair, true).map_err(refused)
+}
+
+/// The server's refusals that the person can act on, as their own errors.
+/// Anything else, such as too many codes tried, keeps the server's words.
+fn refused(e: SubsonicError) -> PairError {
+    match e {
+        SubsonicError::Api { code: 70, .. } => PairError::NotWaiting,
+        SubsonicError::Api { code: 50, .. } => PairError::NotAllowed,
+        e => PairError::Remote(e),
+    }
 }
 
 #[cfg(test)]

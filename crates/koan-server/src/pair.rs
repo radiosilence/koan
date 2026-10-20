@@ -10,14 +10,13 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use axum::extract::RawQuery;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use koan_core::db::pool::Pool;
 use koan_core::remote::pair::PairMessage;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
@@ -44,6 +43,9 @@ const KEEPALIVE: Duration = Duration::from_secs(30);
 /// Someone typing a code gets it wrong a few times at most; a guesser
 /// against 2^32 codes at this rate gets nowhere.
 const MISSES_PER_MINUTE: u32 = 10;
+/// How long an approval waits for the session to say the device was sent its
+/// key, before taking it as lost.
+const DELIVERY: Duration = Duration::from_secs(10);
 
 struct Entry {
     /// Without its dash.
@@ -52,7 +54,23 @@ struct Entry {
     /// Where the request came from, as the rate limits see it.
     from: IpAddr,
     created: Instant,
-    outcome: oneshot::Sender<PairMessage>,
+    outcome: oneshot::Sender<Settled>,
+}
+
+/// What settling a pairing hands its waiting session.
+pub struct Settled {
+    pub message: PairMessage,
+    /// For an approval: where the session says whether the socket took it.
+    sent: Option<std::sync::mpsc::SyncSender<bool>>,
+}
+
+impl From<PairMessage> for Settled {
+    fn from(message: PairMessage) -> Self {
+        Self {
+            message,
+            sent: None,
+        }
+    }
 }
 
 pub struct Pairings {
@@ -90,7 +108,7 @@ pub struct Opened<'a> {
     pub id: String,
     /// `XXXX-XXXX`.
     pub code: String,
-    outcome: oneshot::Receiver<PairMessage>,
+    outcome: oneshot::Receiver<Settled>,
     pairings: &'a Pairings,
 }
 
@@ -154,7 +172,10 @@ impl Taken {
 
     /// Send the device its outcome. Gives it back when the device has gone.
     pub fn settle(self, outcome: PairMessage) -> Result<(), PairMessage> {
-        self.entry.outcome.send(outcome)
+        self.entry
+            .outcome
+            .send(outcome.into())
+            .map_err(|settled| settled.message)
     }
 }
 
@@ -247,14 +268,19 @@ impl Pairings {
     }
 
     /// The pairing `pair` names, counting a miss against `caller`. One that
-    /// has missed too often finds nothing, right or wrong, for the rest of the
-    /// minute (RFC 8628 §5.1).
+    /// has missed too often finds nothing by code, right or wrong, until its
+    /// window is out (RFC 8628 §5.1). An id is unguessable and always found,
+    /// so a link followed after a few mistyped codes still works.
     fn lookup(
         &self,
         entries: &HashMap<String, Entry>,
         pair: &str,
         caller: i64,
     ) -> Result<String, PairError> {
+        let pair = pair.trim();
+        if entries.contains_key(pair) {
+            return Ok(pair.to_owned());
+        }
         if self.misses.exhausted(&caller) {
             return Err(PairError::Limited);
         }
@@ -302,9 +328,20 @@ impl Pairings {
             username: username.to_owned(),
             api_key: api_key.clone(),
         };
-        if taken.settle(approved).is_err() {
-            // The device went between the lookup and now: its key would sit unused.
+        // Answered only once the session has written the key to the socket,
+        // so the approver is never told of a sign-in whose key was lost.
+        let (sent_tx, sent_rx) = std::sync::mpsc::sync_channel(1);
+        let settled = Settled {
+            message: approved,
+            sent: Some(sent_tx),
+        };
+        let sent = taken.entry.outcome.send(settled).is_ok()
+            && sent_rx.recv_timeout(DELIVERY).unwrap_or(false);
+        if !sent {
+            // The device went, or its socket would not take the key, which
+            // would otherwise sit on the account unused.
             let _ = api_keys::revoke_api_key_value(conn, &api_key);
+            log::warn!("pair: {device} went before its key reached it");
             return Err(PairError::NotFound);
         }
         log::info!("pair: {device} signed in as {username}");
@@ -320,7 +357,7 @@ impl Pairings {
             .collect();
         for id in lapsed {
             if let Some(e) = entries.remove(&id) {
-                let _ = e.outcome.send(PairMessage::Expired);
+                let _ = e.outcome.send(PairMessage::Expired.into());
             }
         }
     }
@@ -373,10 +410,8 @@ fn find(entries: &HashMap<String, Entry>, pair: &str) -> Option<String> {
 }
 
 /// `/rest/koanPair?name=…`: a device asking to be signed in. Unauthenticated,
-/// since it has nothing to sign in with yet. `pool` is where a key minted for
-/// a device that never receives it is revoked.
+/// since it has nothing to sign in with yet.
 pub(crate) async fn route(
-    pool: Arc<Pool>,
     RawQuery(raw): RawQuery,
     ws: WebSocketUpgrade,
     request: axum::extract::Request,
@@ -397,7 +432,7 @@ pub(crate) async fn route(
         .map(|(_, v)| v.into_owned())
         .unwrap_or_default();
     match pairings().open(&name, from) {
-        Ok(opened) => ws.on_upgrade(move |socket| session(socket, opened, pool)),
+        Ok(opened) => ws.on_upgrade(move |socket| session(socket, opened)),
         Err(OpenError::Full) => {
             (StatusCode::SERVICE_UNAVAILABLE, "too many pairings waiting").into_response()
         }
@@ -410,43 +445,37 @@ pub(crate) async fn route(
     }
 }
 
-/// Hold the device until its pairing is settled, then tell it the outcome.
-/// An approval it never receives has its key revoked: one the socket failed
-/// to carry, or one settled after the device went.
-async fn session(mut socket: WebSocket, mut opened: Opened<'static>, pool: Arc<Pool>) {
+/// Hold the device until its pairing is settled, then tell it the outcome,
+/// and tell an approval whether the socket took it.
+async fn session(mut socket: WebSocket, mut opened: Opened<'static>) {
     let waited = wait(&mut socket, &mut opened).await;
-    // Nothing reads the outcome after this, so `settle` now sees the device
-    // as gone; one settled before it was not read yet.
+    // Nothing reads the outcome after this, so `settle` now finds the device
+    // gone. One settled just before is read here; dropped unsent, as when
+    // the device went first, its approval is revoked by `settle`.
     opened.outcome.close();
     let late = opened.outcome.try_recv().ok();
-    let unsent = match waited {
-        // A lapse can race an approval, which then wins.
-        Some(waited) => {
-            let outcome = late.unwrap_or(waited);
-            log::info!(
-                "pair: {} {}",
-                opened.code,
-                match outcome {
-                    PairMessage::Approved { .. } => "approved",
-                    PairMessage::Declined => "declined",
-                    _ => "expired",
-                }
-            );
-            let sent = send(&mut socket, &outcome).await.is_ok();
-            let _ = socket.send(Message::Close(None)).await;
-            (!sent).then_some(outcome)
+    let Some(waited) = waited else { return };
+    // A lapse can race an approval, which then wins.
+    let settled = late.unwrap_or(waited);
+    log::info!(
+        "pair: {} {}",
+        opened.code,
+        match settled.message {
+            PairMessage::Approved { .. } => "approved",
+            PairMessage::Declined => "declined",
+            _ => "expired",
         }
-        None => late,
-    };
-    if let Some(PairMessage::Approved { api_key, .. }) = unsent {
-        log::warn!("pair: {} went before its key reached it", opened.code);
-        revoke(pool, api_key).await;
+    );
+    let sent = send(&mut socket, &settled.message).await.is_ok();
+    if let Some(done) = settled.sent {
+        let _ = done.send(sent);
     }
+    let _ = socket.send(Message::Close(None)).await;
 }
 
 /// Wait for the pairing's outcome. `None` when the device went first: it
 /// closed the socket, or stopped answering pings.
-async fn wait(socket: &mut WebSocket, opened: &mut Opened<'static>) -> Option<PairMessage> {
+async fn wait(socket: &mut WebSocket, opened: &mut Opened<'static>) -> Option<Settled> {
     let pending = PairMessage::Pending {
         id: opened.id.clone(),
         code: opened.code.clone(),
@@ -464,8 +493,10 @@ async fn wait(socket: &mut WebSocket, opened: &mut Opened<'static>) -> Option<Pa
     loop {
         tokio::select! {
             // A dropped sender is a sweep that found it lapsed.
-            outcome = &mut opened.outcome => return Some(outcome.unwrap_or(PairMessage::Expired)),
-            () = &mut lapse => return Some(PairMessage::Expired),
+            outcome = &mut opened.outcome => {
+                return Some(outcome.unwrap_or_else(|_| PairMessage::Expired.into()));
+            }
+            () = &mut lapse => return Some(PairMessage::Expired.into()),
             () = &mut quiet => {
                 log::info!("pair: {} stopped answering", opened.code);
                 return None;
@@ -476,19 +507,6 @@ async fn wait(socket: &mut WebSocket, opened: &mut Opened<'static>) -> Option<Pa
                 Some(Ok(_)) => quiet.as_mut().reset(tokio::time::Instant::now() + silence),
             },
         }
-    }
-}
-
-async fn revoke(pool: Arc<Pool>, api_key: String) {
-    let revoked = tokio::task::spawn_blocking(move || {
-        let db = pool.get().map_err(|e| e.to_string())?;
-        koan_core::db::queries::api_keys::revoke_api_key_value(&db.conn, &api_key)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
-    if let Err(e) = revoked {
-        log::error!("pair: revoking an undelivered key: {e}");
     }
 }
 
@@ -586,7 +604,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            (&mut o.outcome).await.unwrap(),
+            (&mut o.outcome).await.unwrap().message,
             PairMessage::Approved {
                 username: "alice".into(),
                 api_key: "key".into(),
@@ -607,12 +625,26 @@ mod tests {
         (dir, db, id)
     }
 
-    #[tokio::test]
-    async fn approving_mints_a_key_for_the_approver() {
+    /// A device's session: takes its outcome, and says whether the socket
+    /// took it.
+    fn device(mut o: Opened<'static>, sent: bool) -> std::thread::JoinHandle<PairMessage> {
+        std::thread::spawn(move || {
+            let settled = o.outcome.blocking_recv().unwrap();
+            if let Some(done) = settled.sent {
+                done.send(sent).unwrap();
+            }
+            settled.message
+        })
+    }
+
+    #[test]
+    fn approving_mints_a_key_for_the_approver() {
         let (_dir, db, alice) = database();
         let p = leaked(TTL);
-        let mut o = p.open("Living room TV", LAN).unwrap();
-        let settled = p.settle(&db.conn, &o.code, alice, "alice", false).unwrap();
+        let o = p.open("Living room TV", LAN).unwrap();
+        let (id, code) = (o.id.clone(), o.code.clone());
+        let device = device(o, true);
+        let settled = p.settle(&db.conn, &code, alice, "alice", false).unwrap();
         assert_eq!(
             settled,
             PairInfo {
@@ -620,7 +652,7 @@ mod tests {
                 from: LAN,
             }
         );
-        let PairMessage::Approved { username, api_key } = (&mut o.outcome).await.unwrap() else {
+        let PairMessage::Approved { username, api_key } = device.join().unwrap() else {
             panic!("not approved");
         };
         assert_eq!(username, "alice");
@@ -632,9 +664,33 @@ mod tests {
         assert_eq!(keys[0].name, "Living room TV");
         // Settled once only.
         assert_eq!(
-            p.settle(&db.conn, &o.id, alice, "alice", false),
+            p.settle(&db.conn, &id, alice, "alice", false),
             Err(PairError::NotFound)
         );
+    }
+
+    #[test]
+    fn a_key_the_socket_would_not_take_is_revoked() {
+        let (_dir, db, alice) = database();
+        let p = leaked(TTL);
+        let o = p.open("tv", LAN).unwrap();
+        let id = o.id.clone();
+        let device = device(o, false);
+        // The approver is told, rather than shown a sign-in that never happened.
+        assert_eq!(
+            p.settle(&db.conn, &id, alice, "alice", false),
+            Err(PairError::NotFound)
+        );
+        let PairMessage::Approved { api_key, .. } = device.join().unwrap() else {
+            panic!("not approved");
+        };
+        assert!(
+            koan_core::db::queries::api_keys::authenticate_api_key(&db.conn, &api_key)
+                .unwrap()
+                .is_none()
+        );
+        let keys = koan_core::db::queries::api_keys::list_api_keys(&db.conn, Some(alice)).unwrap();
+        assert!(keys.is_empty());
     }
 
     #[tokio::test]
@@ -643,7 +699,10 @@ mod tests {
         let p = leaked(TTL);
         let mut o = p.open("tv", LAN).unwrap();
         p.settle(&db.conn, &o.id, alice, "alice", true).unwrap();
-        assert_eq!((&mut o.outcome).await.unwrap(), PairMessage::Declined);
+        assert_eq!(
+            (&mut o.outcome).await.unwrap().message,
+            PairMessage::Declined
+        );
         let keys = koan_core::db::queries::api_keys::list_api_keys(&db.conn, Some(alice)).unwrap();
         assert!(keys.is_empty());
     }
@@ -691,7 +750,10 @@ mod tests {
         let mut o = p.open("tv", LAN).unwrap();
         assert!(p.info(&o.id, ME).is_err());
         assert!(p.take(&o.code, ME).is_err());
-        assert_eq!((&mut o.outcome).await.unwrap(), PairMessage::Expired);
+        assert_eq!(
+            (&mut o.outcome).await.unwrap().message,
+            PairMessage::Expired
+        );
     }
 
     #[test]
@@ -763,26 +825,24 @@ mod tests {
         for _ in 0..MISSES_PER_MINUTE {
             assert_eq!(p.info(other, ME).err(), Some(PairError::NotFound));
         }
-        // Spent: nothing is found, the right code included.
+        // Spent: no code is found, the right one included.
         assert_eq!(p.info(&o.code, ME).err(), Some(PairError::Limited));
-        assert!(matches!(p.take(&o.id, ME), Err(PairError::Limited)));
+        assert_eq!(p.info(other, ME).err(), Some(PairError::Limited));
+        // An id is unguessable: a link still works.
+        assert!(p.info(&o.id, ME).is_ok());
         // Finding one does not count, and another account has its own.
         for _ in 0..=MISSES_PER_MINUTE {
             assert!(p.info(&o.code, ME + 1).is_ok());
         }
     }
 
-    /// Serves pairings from `p` the way `route` does, with keys revoked in
-    /// `pool`.
-    async fn serve(p: &'static Pairings, pool: Arc<Pool>) -> std::net::SocketAddr {
+    /// Serves pairings from `p` the way `route` does.
+    async fn serve(p: &'static Pairings) -> std::net::SocketAddr {
         let app = axum::Router::new().route(
             "/",
-            axum::routing::get(move |ws: WebSocketUpgrade| {
-                let pool = pool.clone();
-                async move {
-                    let opened = p.open("tv", LAN).unwrap();
-                    ws.on_upgrade(move |socket| session(socket, opened, pool))
-                }
+            axum::routing::get(move |ws: WebSocketUpgrade| async move {
+                let opened = p.open("tv", LAN).unwrap();
+                ws.on_upgrade(move |socket| session(socket, opened))
             }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -809,9 +869,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_device_that_stops_answering_is_dropped() {
-        let (dir, _db, _) = database();
-        let p = quick(Duration::from_millis(100));
-        let addr = serve(p, Arc::new(Pool::new(dir.path().join("koan.db")))).await;
+        // Seconds, not milliseconds: a busy runner must not make a device
+        // that answers look silent.
+        let p = quick(Duration::from_secs(1));
+        let addr = serve(p).await;
         // Connected, then never read again, so pings go unanswered.
         let (socket, id) = tokio::task::spawn_blocking(move || {
             let (mut socket, _) = tungstenite::connect(format!("ws://{addr}/")).unwrap();
@@ -821,16 +882,16 @@ mod tests {
         .await
         .unwrap();
         assert!(p.info(&id, ME).is_ok());
-        tokio::time::sleep(p.silence() * 3).await;
+        tokio::time::sleep(p.silence() * 2).await;
         assert_eq!(p.info(&id, ME).err(), Some(PairError::NotFound));
         drop(socket);
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_device_that_answers_waits_and_gets_its_key() {
-        let (dir, db, alice) = database();
-        let p = quick(Duration::from_millis(100));
-        let addr = serve(p, Arc::new(Pool::new(dir.path().join("koan.db")))).await;
+        let (_dir, db, alice) = database();
+        let p = quick(Duration::from_secs(1));
+        let addr = serve(p).await;
         let (id_tx, id_rx) = oneshot::channel();
         let device = tokio::task::spawn_blocking(move || {
             let (mut socket, _) = tungstenite::connect(format!("ws://{addr}/")).unwrap();
@@ -843,8 +904,14 @@ mod tests {
             }
         });
         let id = id_rx.await.unwrap();
-        tokio::time::sleep(p.silence() * 3).await;
-        p.settle(&db.conn, &id, alice, "alice", false).unwrap();
+        tokio::time::sleep(p.silence() * 2).await;
+        // `settle` blocks until the session has written the key.
+        let db = tokio::task::spawn_blocking(move || {
+            p.settle(&db.conn, &id, alice, "alice", false).unwrap();
+            db
+        })
+        .await
+        .unwrap();
         let PairMessage::Approved { api_key, .. } = device.await.unwrap() else {
             panic!("not approved");
         };
