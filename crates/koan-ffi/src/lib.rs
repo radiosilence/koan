@@ -5656,15 +5656,15 @@ impl KoanEngine {
         let Ok(db) = self.db() else {
             return queue_slice::Joins::default();
         };
-        use queries::batch::CreditsOf;
         let places = queries::batch::places_for_tracks(&db.conn, track_ids).unwrap_or_default();
-        let mut albums: Vec<i64> = places.values().filter_map(|p| p.album_id).collect();
-        albums.sort_unstable();
-        albums.dedup();
         queue_slice::Joins {
             sources: queries::batch::sources_for_tracks(&db.conn, track_ids).unwrap_or_default(),
-            track_credits: credits(&db, CreditsOf::Tracks, track_ids),
-            album_credits: credits(&db, CreditsOf::Albums, &albums),
+            credits: koan_core::helpers::QueueCredits::read(&db.conn, &places).unwrap_or_else(
+                |e| {
+                    log::warn!("credited artists unread, credits left unlinked: {e}");
+                    Default::default()
+                },
+            ),
             places,
         }
     }

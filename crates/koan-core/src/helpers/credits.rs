@@ -103,8 +103,52 @@ impl RowCredits {
     /// credits beyond its record's are shown even where its artist tag is the
     /// record's.
     pub fn differ(&self) -> bool {
-        let text = |parts: &[CreditPart]| parts.iter().map(|p| p.text.as_str()).collect::<String>();
+        // `credit_parts` normalises a credit it cuts and not one it leaves
+        // whole, so the two sides are compared normalised.
+        let text =
+            |parts: &[CreditPart]| parts.iter().flat_map(|p| p.text.nfc()).collect::<String>();
         text(&self.artist) != text(&self.album_artist)
+    }
+}
+
+/// The artists credited on a list of tracks and on their records, read once
+/// for the whole list: what `RowCredits` is built from for each row.
+#[derive(Debug, Default, Clone)]
+pub struct QueueCredits {
+    /// Keyed by track.
+    pub tracks: HashMap<i64, Vec<(i64, String)>>,
+    /// Keyed by album.
+    pub albums: HashMap<i64, Vec<(i64, String)>>,
+}
+
+impl QueueCredits {
+    /// The credits of `places`' tracks and of the records they are on.
+    pub fn read(conn: &Connection, places: &HashMap<i64, Place>) -> Result<Self, DbError> {
+        let tracks: Vec<i64> = places.keys().copied().collect();
+        let mut albums: Vec<i64> = places.values().filter_map(|p| p.album_id).collect();
+        albums.sort_unstable();
+        albums.dedup();
+        Ok(Self {
+            tracks: credits_by_id(conn, CreditsOf::Tracks, &tracks)?,
+            albums: credits_by_id(conn, CreditsOf::Albums, &albums)?,
+        })
+    }
+
+    /// The credits of a row filed at `place`, `track` where it is a library
+    /// track.
+    pub fn row(
+        &self,
+        track: Option<i64>,
+        place: Place,
+        artist: &str,
+        album_artist: &str,
+    ) -> RowCredits {
+        let record = place
+            .album_id
+            .and_then(|id| self.albums.get(&id))
+            .map_or(&[][..], Vec::as_slice);
+        let own = track.and_then(|id| self.tracks.get(&id)).map(Vec::as_slice);
+        RowCredits::new(artist, album_artist, place, own, record)
     }
 }
 
@@ -337,6 +381,18 @@ mod tests {
         let duo: &[(i64, &str)] = &[(1, "A"), (2, "B")];
         let row = RowCredits::new("A × B", "A × B", place, None, duo);
         assert_eq!(row.artist, row.album_artist);
+        assert!(!row.differ());
+        // A decomposed tag cut into parts on one side and left whole on the
+        // other reads the same.
+        let solo: &[(i64, &str)] = &[(1, "Ro\u{301}s")];
+        let both: &[(i64, &str)] = &[(1, "Ro\u{301}s"), (2, "Kimbra")];
+        let row = RowCredits::new(
+            "Ro\u{301}s Kimbra",
+            "Ro\u{301}s Kimbra",
+            place,
+            Some(both),
+            solo,
+        );
         assert!(!row.differ());
     }
 }

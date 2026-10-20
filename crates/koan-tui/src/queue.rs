@@ -9,8 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
-use koan_core::db::queries::Place;
-use koan_core::helpers::RowCredits;
+use koan_core::helpers::QueueCredits;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
@@ -186,25 +185,13 @@ impl Facts {
             None => None,
         };
         let places = queries::places_for_tracks(&db.conn, &ids).unwrap_or_default();
-        let mut albums: Vec<i64> = places.values().filter_map(|p| p.album_id).collect();
-        albums.sort_unstable();
-        albums.dedup();
-        let credits = |of, ids: &[i64]| {
-            koan_core::helpers::credits_by_id(&db.conn, of, ids).unwrap_or_default()
-        };
-        let tracks = credits(queries::CreditsOf::Tracks, &ids);
-        let records = credits(queries::CreditsOf::Albums, &albums);
+        let credits = QueueCredits::read(&db.conn, &places).unwrap_or_default();
         let own_credits = entries
             .iter()
             .filter_map(|e| {
                 let id = e.db_id?;
                 let place = places.get(&id).copied().unwrap_or_default();
-                let record = place
-                    .album_id
-                    .and_then(|a| records.get(&a))
-                    .map_or(&[][..], Vec::as_slice);
-                let own = tracks.get(&id).map(Vec::as_slice);
-                let row = RowCredits::new(&e.artist, &e.album_artist, place, own, record);
+                let row = credits.row(Some(id), place, &e.artist, &e.album_artist);
                 let text = row.artist.iter().map(|p| p.text.as_str()).collect();
                 Some((id, row.differ().then_some(text)))
             })
@@ -441,11 +428,8 @@ fn track_of<'e>(
     } else {
         match e.db_id.and_then(|id| look?.facts?.own_credits.get(&id)) {
             Some(own) => own.as_deref(),
-            None => {
-                RowCredits::new::<&str>(&e.artist, &e.album_artist, Place::default(), None, &[])
-                    .differ()
-                    .then_some(e.artist.as_str())
-            }
+            // With no credited artists, the credits are the tags.
+            None => (e.artist != e.album_artist).then_some(e.artist.as_str()),
         }
         .filter(|a| !a.is_empty())
     };

@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use koan_core::db::queries::Place;
-use koan_core::helpers::RowCredits;
+use koan_core::helpers::{QueueCredits, RowCredits};
 use koan_core::player::state::{QueueItemId, QueueReading, SharedPlayerState};
 
 use crate::state::StateSlice;
@@ -34,24 +34,15 @@ pub(crate) const PATCH_MAX: usize = 512;
 pub(crate) struct Joins {
     pub places: HashMap<i64, Place>,
     pub sources: HashMap<i64, (bool, bool)>,
-    /// Keyed by track.
-    pub track_credits: HashMap<i64, Vec<(i64, String)>>,
-    /// Keyed by album.
-    pub album_credits: HashMap<i64, Vec<(i64, String)>>,
+    pub credits: QueueCredits,
 }
 
 impl Joins {
     /// A row's artist and record artist with each credited artist linked.
     pub(crate) fn credits(&self, track: Option<i64>, artist: &str, album_artist: &str) -> Credits {
-        let place = self.place(track);
-        let record = place
-            .album_id
-            .and_then(|id| self.album_credits.get(&id))
-            .map_or(&[][..], Vec::as_slice);
-        let own = track
-            .and_then(|id| self.track_credits.get(&id))
-            .map(Vec::as_slice);
-        RowCredits::new(artist, album_artist, place, own, record).into()
+        self.credits
+            .row(track, self.place(track), artist, album_artist)
+            .into()
     }
 
     pub(crate) fn place(&self, track: Option<i64>) -> Place {
@@ -423,7 +414,10 @@ mod tests {
     fn a_row_links_each_artist_its_credit_names() {
         let joins = Joins {
             places: HashMap::from([(1, record(5))]),
-            album_credits: HashMap::from([(5, vec![(1, "A".into()), (2, "B".into())])]),
+            credits: QueueCredits {
+                albums: HashMap::from([(5, vec![(1, "A".into()), (2, "B".into())])]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         // A track naming no artists of its own, credited as its record is,
