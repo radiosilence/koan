@@ -39,7 +39,7 @@ android {
         targetSdk = 37
         // CI passes the time, since Google Play takes each version code once.
         versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1
-        versionName = "0.66.0"
+        versionName = "0.66.1"
         // Which build a tester's log came from.
         buildConfigField("String", "COMMIT", "\"${commit.get()}\"")
         // Only what the core is built for: a device would otherwise pick a
