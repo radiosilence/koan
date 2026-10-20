@@ -294,33 +294,20 @@ window.KoanPlayer = (opts = {}) => {
   return api;
 };
 
-// Text cut short by an ellipsis or a line clamp has the whole of it as its
-// tooltip, on every page, with nothing in the markup asking for it. Decided as
-// the pointer or focus arrives, so it follows the width the text has now, and
-// never put over a title the page gave the element itself.
-(() => {
-  const given = new WeakSet();
-  const cut = (el) => {
-    const s = getComputedStyle(el);
-    if (s.textOverflow === "ellipsis") return el.scrollWidth > el.clientWidth;
-    if (s.webkitLineClamp && s.webkitLineClamp !== "none") return el.scrollHeight > el.clientHeight;
-    return null;
-  };
-  const show = (e) => {
-    for (let el = e.target; el instanceof Element && el !== document.body; el = el.parentElement) {
-      const c = cut(el);
-      if (c === null) continue;
-      if (el.title && !given.has(el)) return;
-      if (c) {
-        el.title = el.textContent.trim();
-        given.add(el);
-      } else if (given.has(el)) {
-        el.removeAttribute("title");
-        given.delete(el);
-      }
+// Text cut short by an ellipsis has the whole of it as its tooltip, on every
+// page, with nothing in the markup asking for it. Decided as the pointer
+// arrives, so it follows the width the text has now, and never put over a
+// title the page gave the element itself: a title is ours only while it is the
+// text we put there.
+document.addEventListener("pointerover", (e) => {
+  for (let el = e.target; el instanceof Element && el !== document.body; el = el.parentElement) {
+    if (getComputedStyle(el).textOverflow !== "ellipsis") continue;
+    const ours = el.hasAttribute("data-cut") && el.title === el.dataset.cut;
+    if (el.title && !ours) continue;
+    if (el.scrollWidth > el.clientWidth) {
+      el.title = el.dataset.cut = el.innerText.trim();
       return;
     }
-  };
-  document.addEventListener("pointerover", show, { passive: true });
-  document.addEventListener("focusin", show);
-})();
+    if (ours) el.removeAttribute("title");
+  }
+}, { passive: true });
