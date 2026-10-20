@@ -1,0 +1,1 @@
+- **Queue rows on the Mac keep their artist line steady.** Hovering a track in a grouped queue no longer reveals an artist the row leaves out because the record heading already names it.
