@@ -419,14 +419,10 @@
 
   // --- Invites ---------------------------------------------------------------
   // The email goes out as rich text where the clipboard takes it, so pasting
-  // into a mail client keeps the button; the share sheet gets the plain text.
-  const inviteEmail = () => ({
-    html: document.getElementById("invite-html")?.innerHTML ?? "",
-    text: document.getElementById("invite-text")?.value ?? "",
-    subject: document.getElementById("invite-text")?.dataset.subject ?? "",
-  });
+  // into a mail client keeps the button. Datastar can write only plain text.
   async function copyEmail(button) {
-    const { html, text } = inviteEmail();
+    const html = document.getElementById("invite-html")?.innerHTML ?? "";
+    const text = document.getElementById("invite-text")?.value ?? "";
     try {
       await navigator.clipboard.write([new ClipboardItem({
         "text/html": new Blob([html], { type: "text/html" }),
@@ -437,26 +433,9 @@
     }
     button.textContent = "Copied";
   }
-  function inviteClick(e) {
-    const copy = e.target.closest("[data-copy]");
-    if (copy) {
-      const el = document.getElementById(copy.dataset.copy);
-      navigator.clipboard.writeText(el.value ?? el.textContent).then(() => { copy.textContent = "Copied"; });
-      return true;
-    }
-    const email = e.target.closest("[data-copy-email]");
-    if (email) { copyEmail(email); return true; }
-    const share = e.target.closest("[data-share-email]");
-    if (share) {
-      const { text, subject } = inviteEmail();
-      navigator.share({ title: subject, text }).catch(() => {});
-      return true;
-    }
-    return false;
-  }
-
   document.addEventListener("click", (e) => {
-    if (inviteClick(e)) return;
+    const email = e.target.closest("[data-copy-email]");
+    if (email) { copyEmail(email); return; }
     const ctl = e.target.closest("[data-ctl]");
     if (ctl) {
       if (ctl.dataset.ctl === "play") player.toggle();
@@ -483,7 +462,6 @@
   document.addEventListener("change", (e) => {
     if (e.target.matches("input[data-ctl=seek]")) player.seek(Number(e.target.value));
   });
-  document.addEventListener("focusin", (e) => { if (e.target.id === "share-url") e.target.select(); });
   // A cover that is not there leaves an empty tile rather than a broken image.
   document.addEventListener("error", (e) => {
     if (e.target.tagName !== "IMG") return;
@@ -592,12 +570,6 @@
     history.replaceState(null, "", url);
     render(player.state());
   }
-  // The search view's query lives in the URL too, so reload and back find it.
-  document.addEventListener("input", (e) => {
-    if (!e.target.matches(".search input[name=q]")) return;
-    const q = e.target.value.trim();
-    history.replaceState(null, "", q ? `/search?q=${encodeURIComponent(q)}` : "/search");
-  });
 
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
