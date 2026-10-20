@@ -1,0 +1,1 @@
+- **Queue rows keep their artist line steady and show featured artists.** In a grouped queue a track names its artists whenever its credit differs from the record's, so "Big Data, Kimbra" shows under a Big Data record, and hovering a row on the Mac no longer reveals an artist the row leaves out.
