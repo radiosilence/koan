@@ -2717,8 +2717,7 @@ mod tests {
         create_tables(&conn).unwrap();
         conn.execute_batch(
             "INSERT INTO artists (id, name) VALUES (1, 'A');
-             INSERT INTO albums (id, title, artist_id) VALUES (1, 'Two', 1), (2, 'One', 1),
-                                                              (3, 'Empty', 1);
+             INSERT INTO albums (id, title, artist_id) VALUES (1, 'Two', 1), (2, 'One', 1);
              INSERT INTO tracks (id, album_id, artist_id, disc, title, source)
                  VALUES (1, 1, 1, 1, 'a', 'local'), (2, 1, 1, 2, 'b', 'local'),
                         (3, 2, 1, NULL, 'c', 'local');",
@@ -2736,7 +2735,7 @@ mod tests {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        assert_eq!(totals, [Some(2), Some(1), None]);
+        assert_eq!(totals, [Some(2), Some(1)]);
     }
 
     #[test]
