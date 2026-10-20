@@ -40,6 +40,11 @@ extension TrackTableRow {
     static func leadWidth(for count: Int) -> CGFloat {
         max(22, measure(String(repeating: "0", count: String(count).count), numberFont) + 3)
     }
+
+    /// A lead column wide enough for the widest of `leads`.
+    static func leadWidth(fitting leads: [String]) -> CGFloat {
+        max(22, (leads.map { measure($0, numberFont) }.max() ?? 0) + 3)
+    }
 }
 
 /// The columns a track list draws beside the title.

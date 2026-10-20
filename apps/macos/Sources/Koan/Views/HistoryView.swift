@@ -92,7 +92,7 @@ struct HistoryView: View {
                 context: TrackTableRow.Context(
                     showsAlbum: true,
                     columns: [],
-                    leadWidth: 46,
+                    leadWidth: TrackTableRow.leadWidth(fitting: HistoryDate.everyHour),
                     currentTrackId: nil,
                     isPlaying: false,
                     barsLive: false,
@@ -326,6 +326,15 @@ private enum HistoryDate {
 
     static func time(_ unixSeconds: Int64) -> String {
         timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
+    }
+
+    /// A minute in each hour of a day, as the time column prints it. Digits
+    /// are monospaced in both looks, so the hour and its period ("PM",
+    /// "a.m.", "下午") are what make one time wider than another.
+    static var everyHour: [String] {
+        (0..<24).compactMap { hour in
+            Calendar.current.date(bySettingHour: hour, minute: 59, second: 0, of: Date()).map { timeFormatter.string(from: $0) }
+        }
     }
 }
 
