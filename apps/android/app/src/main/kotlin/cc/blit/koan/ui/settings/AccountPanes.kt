@@ -383,6 +383,8 @@ private fun Confirm(title: String, message: String, action: String, destructive:
     )
 }
 
+private enum class InviteCopy { Email, Link }
+
 /** An invite, ready to send. The server sends no mail; this hands it to whatever the admin sends with. */
 @Composable
 private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
@@ -390,7 +392,7 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     // What was copied last, so only its button says so.
-    var copied by remember { mutableStateOf<String?>(null) }
+    var copied by remember { mutableStateOf<InviteCopy?>(null) }
     val share = {
         val send = Intent(Intent.ACTION_SEND)
             .setType("text/plain")
@@ -424,16 +426,16 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
                         }
                     })
                     // The formatted email, for pasting into a message composed elsewhere.
-                    KoanButton(if (copied == "email") "Copied" else "Copy email", {
+                    KoanButton(if (copied == InviteCopy.Email) "Copied" else "Copy email", {
                         scope.launch {
                             clipboard.setClipEntry(ClipEntry(ClipData.newHtmlText("Invite", invite.emailText, invite.emailHtml)))
-                            copied = "email"
+                            copied = InviteCopy.Email
                         }
                     }, kind = KoanButtonKind.Bordered)
-                    KoanButton(if (copied == "link") "Copied" else "Copy link", {
+                    KoanButton(if (copied == InviteCopy.Link) "Copied" else "Copy link", {
                         scope.launch {
                             clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Invite", invite.link)))
-                            copied = "link"
+                            copied = InviteCopy.Link
                         }
                     }, kind = KoanButtonKind.Bordered)
                 }
