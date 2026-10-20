@@ -1,5 +1,6 @@
 package cc.blit.koan.art
 
+import androidx.compose.runtime.mutableIntStateOf
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.CoverArt
 import coil3.ImageLoader
@@ -13,7 +14,6 @@ import coil3.request.Options
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import okio.Buffer
-import java.util.concurrent.ConcurrentHashMap
 
 /** How big a cover is wanted: a thumbnail for lists and grids, or the whole image. */
 enum class ArtSize(val px: UInt?) {
@@ -35,7 +35,7 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
     val key get() = "${kind.name.lowercase()}:$id:${size.name.lowercase()}"
 
     /** The engine has said there is no such cover, at any size. */
-    val missing get() = record in misses
+    val missing get() = synchronized(misses) { record in misses }
 
     private val record get() = "${kind.name.lowercase()}:$id"
 
@@ -47,12 +47,21 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
          * covers on `art_evictions`. Artists are not kept: `artist_image`
          * cannot tell a failure from a miss.
          */
-        private val misses = ConcurrentHashMap.newKeySet<String>()
+        private val misses = HashSet<String>()
 
-        internal fun forget(art: Art) = misses.remove(art.record)
+        /**
+         * Moves with each eviction, so a cover on screen asks again, and a
+         * fetch begun before one does not record a miss it may have outlived.
+         */
+        val generation = mutableIntStateOf(0)
 
-        internal fun none(art: Art) {
-            if (art.kind != Kind.Artist) misses.add(art.record)
+        internal fun forget(arts: List<Art>) = synchronized(misses) {
+            arts.forEach { misses.remove(it.record) }
+            generation.intValue++
+        }
+
+        internal fun none(art: Art, since: Int) = synchronized(misses) {
+            if (art.kind != Kind.Artist && generation.intValue == since) misses.add(art.record)
         }
 
         fun album(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Album, id, size)
@@ -78,6 +87,7 @@ class ArtFetcher(
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
         if (art.missing) throw NoArt()
+        val since = Art.generation.intValue
         val disk = loader.diskCache
         disk?.openSnapshot(art.key)?.let { snapshot ->
             return SourceFetchResult(
@@ -86,7 +96,7 @@ class ArtFetcher(
                 DataSource.DISK,
             )
         }
-        val cover = cover() ?: throw NoArt().also { Art.none(art) }
+        val cover = cover() ?: throw NoArt().also { Art.none(art, since) }
         disk?.openEditor(art.key)?.let { editor ->
             try {
                 disk.fileSystem.write(editor.data) { write(cover.data) }
@@ -138,8 +148,8 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
             val gone = artEvictions(seq)
             seq = gone.seq
             val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
+            Art.forget(arts.map { (kind, id) -> Art(kind, id, ArtSize.Thumb) })
             for ((kind, id) in arts) {
-                Art.forget(Art(kind, id, ArtSize.Thumb))
                 for (size in ArtSize.entries) {
                     val key = Art(kind, id, size).key
                     loader.diskCache?.remove(key)

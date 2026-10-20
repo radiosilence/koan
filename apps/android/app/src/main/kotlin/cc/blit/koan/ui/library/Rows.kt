@@ -30,8 +30,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
@@ -123,7 +125,8 @@ fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.
  */
 @Composable
 fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null) {
-    var missing by remember(art) { mutableStateOf(art == null || art.missing) }
+    val generation by Art.generation
+    var missing by remember(art, generation) { mutableStateOf(art == null || art.missing) }
     Box(modifier.background(KoanTheme.color(KoanTone.Rule))) {
         if (missing && art?.kind != Art.Kind.Artist) {
             Image(
@@ -164,7 +167,7 @@ private fun Modifier.tap(playable: Playable, selection: Selection<Playable>?, on
  * it is in. Without one, the link on the line under it, whose touch target
  * Compose extends to 48 dp, takes taps on the title as near hits.
  */
-private fun Modifier.claimsTaps() = pointerInput(Unit) {}
+fun Modifier.claimsTaps() = pointerInput(Unit) {}
 
 /**
  * One record in a grid: the sleeve with its codec, the title, and the artist
@@ -202,7 +205,7 @@ fun AlbumTile(
                 if (picked) Box(Modifier.matchParentSize().border(3.dp, KoanTheme.color(KoanTone.Accent)))
                 Tick(picked, Modifier.align(Alignment.TopStart).padding(KoanSpace.s))
             } else {
-                AlbumHeart(album.id, Modifier.align(Alignment.BottomEnd).onGround(), showing = false)
+                AlbumHeart(album.id, Modifier.align(Alignment.BottomEnd).onGround(KoanTheme.colors.bg, KoanTheme.metric(RectangleShape, CircleShape)), showing = false)
             }
             PlayableMenu(playable, menu) { menu = false }
         }
@@ -219,16 +222,12 @@ fun AlbumTile(
  * A small square of `bg` behind a heart on a sleeve, so it reads over any
  * cover; a disc in the platform's look.
  */
-@Composable
-private fun Modifier.onGround(): Modifier {
-    val ground = KoanTheme.colors.bg
-    val shape = KoanTheme.metric(RectangleShape, CircleShape)
-    return drawBehind {
+private fun Modifier.onGround(ground: Color, shape: Shape) =
+    drawBehind {
         val side = 28.dp.toPx()
         val outline = shape.createOutline(Size(side, side), layoutDirection, this)
         translate((size.width - side) / 2, (size.height - side) / 2) { drawOutline(outline, ground) }
     }
-}
 
 /** How much of a record is on this device, along the foot of its sleeve. */
 @Composable
