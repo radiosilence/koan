@@ -1106,7 +1106,8 @@ mod tests {
                 test_utils::generate_wav(&folder.join(name), 8000, 1, 0.1, 16);
             }
         }
-        std::fs::write(two.join("broken.flac"), b"not a flac").unwrap();
+        // An empty file, whose tags cannot be read.
+        std::fs::write(two.join("e.wav"), b"").unwrap();
         let db = test_db(dir.path());
         let reports = std::cell::RefCell::new(Vec::new());
         let on_read = |done, total| reports.borrow_mut().push((done, total));
