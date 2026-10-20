@@ -76,7 +76,8 @@ class DspTest {
         advanceUntilIdle()
         assertNull(model.state.value.pendingImport)
         assertEquals(listOf(listOf<Any?>(paths, "Mine", null)), fake.called("dspImportFiles"))
-        assertEquals(RoleAsk(listOf("Lush", "Bright")), model.state.value.askRole)
+        // One answer for the group's members, and the group is what goes into a chain.
+        assertEquals(RoleAsk(listOf("Lush", "Bright"), listOf("Mine")), model.state.value.askRole)
         assertTrue(model.state.value.summary!!.startsWith("Imported 2 presets as the group “Mine”."))
     }
 
@@ -116,6 +117,23 @@ class DspTest {
         model.answer(RoleAsk(listOf("C")), null)
         advanceUntilIdle()
         assertEquals(2, fake.called("dspSetRole").size)
+    }
+
+    @Test fun anImportStartedFromAStageGoesIntoIt() = runTest(dispatcher) {
+        fake.answers["dspOverviewFor"] = { overview(chain = listOf(DspTuningEntry("Warm", true))) }
+        val model = model()
+        model.answer(RoleAsk(listOf("Bright"), into = DspPlacement("dac", Stage.Eq)), DspRole.TUNING)
+        advanceUntilIdle()
+        assertEquals(listOf(listOf<Any?>("dac", listOf(DspTuningEntry("Warm", true), DspTuningEntry("Bright", true)))), fake.called("dspSetTunings"))
+
+        model.answer(RoleAsk(listOf("HD 600"), into = DspPlacement("dac", Stage.Eq)), DspRole.CORRECTION)
+        advanceUntilIdle()
+        assertEquals(listOf(listOf<Any?>("dac", "HD 600")), fake.called("dspAssignDevice"))
+
+        // Left for later, a tuning still goes on the end of the chain it was imported into.
+        model.answer(RoleAsk(listOf("Loud"), into = DspPlacement("dac", Stage.Eq)), null)
+        advanceUntilIdle()
+        assertEquals(listOf(DspTuningEntry("Warm", true), DspTuningEntry("Loud", true)), fake.called("dspSetTunings").last()[1])
     }
 
     @Test fun bitPerfectIsChoosingNothing() = runTest(dispatcher) {

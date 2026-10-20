@@ -1862,6 +1862,13 @@ fn ask_server(
     // No server and not on this network: nothing could carry it.
     let client = crate::helpers::subsonic_client(&cfg)
         .ok_or_else(|| Missed::OutOfReach(out_of_reach(id)))?;
+    // A server known not to relay is not asked. One that cannot be probed
+    // is: the command is the reason to try it.
+    if crate::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| !p.offers(crate::remote::profile::DEVICES))
+    {
+        return Err(Missed::OutOfReach(out_of_reach(id)));
+    }
     let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
     client
         .koan_command(id, &json, ack)

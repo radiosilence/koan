@@ -40,6 +40,7 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       docker: ${{ steps.filter.outputs.docker }}
       package: ${{ steps.filter.outputs.package }}
+      rust: ${{ steps.filter.outputs.rust }}
       macos: ${{ steps.filter.outputs.macos }}
       android: ${{ steps.filter.outputs.android }}
       release: ${{ steps.filter.outputs.release }}
@@ -63,6 +64,7 @@ jobs:
           code=true
           docker=true
           package=true
+          rust=true
           macos=true
           android=true
           release=false
@@ -76,7 +78,7 @@ jobs:
           fi
           if [ "$state" != "OPEN" ]; then
             echo "pull request #$PR is no longer open -- skipping everything"
-            code=false docker=false package=false macos=false android=false
+            code=false docker=false package=false rust=false macos=false android=false
           elif [ "$EVENT" = "pull_request" ]; then
             # HEAD is the merge commit GitHub built for this PR and its first
             # parent is the base branch, so this is exactly the PR's diff. If it
@@ -99,11 +101,17 @@ jobs:
               if ! printf '%s\n' "$files" | grep -qE '^deploy/'; then
                 package=false
               fi
+              # The Rust jobs on Linux, for anything cargo compiles or that
+              # decides how. A change confined to the apps leaves them out: the
+              # Apple and Android jobs build what the apps link.
+              if ! printf '%s\n' "$files" | grep -E '^crates/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' | grep -qvE '\.md$'; then
+                rust=false
+              fi
               # The macOS runners are few. A pull request holds one only when
               # it touches what the Linux jobs cannot see: the apps and the FFI
               # they link, or Rust that is compiled for Apple platforms alone.
-              # A shared change that breaks only on macOS is then caught by the
-              # release pull request, which runs everything.
+              # A shared change that breaks only on macOS is then caught on main,
+              # where the Apple job runs everything.
               version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
               case "$HEAD_REF" in release-*) release=true ;; esac
               if [ "$(git show HEAD^1:Cargo.toml | version_of)" != "$(version_of < Cargo.toml)" ]; then
@@ -115,7 +123,7 @@ jobs:
                 # build them; dependencies and toolchains, whose Apple-only
                 # crates the Linux jobs never compile; and the workflows, so a
                 # change to this gating runs what it gates.
-                native='^apps/|^crates/koan-ffi/|^tools/uniffi-bindgen/|^justfile$|^Cargo\.lock$|^\.cargo/|^rust-toolchain|^mise\.toml$|^\.github/workflows/'
+                native='^apps/(macos|ios)/|^crates/koan-ffi/|^tools/uniffi-bindgen/|^justfile$|^Cargo\.lock$|^\.cargo/|^rust-toolchain|^mise\.toml$|^\.github/workflows/'
                 # Modules declared for Apple targets only, whose own source
                 # names no target.
                 native="$native"'|^crates/koan-core/src/audio/(coreaudio_backend|device|engine|ios_backend|toolbox)\.rs$'
@@ -132,11 +140,13 @@ jobs:
                   fi
                 done
               fi
-              # The Android app compiles all of koan-core, so any Rust change can
-              # break it; a change confined to the Apple apps or the site cannot.
-              if ! printf '%s\n' "$files" | grep -E '^apps/android/|^crates/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^justfile$|^mise\.toml$|^rust-toolchain|^\.github/workflows/' | grep -qvE '\.md$'; then
+              # The Android app links koan-core through koan-ffi and nothing
+              # else of the workspace, so the server, TUI and CLI cannot break
+              # it, nor can the Apple apps or the site.
+              if ! printf '%s\n' "$files" | grep -E '^apps/android/|^crates/(koan-core|koan-ffi)/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^justfile$|^mise\.toml$|^rust-toolchain|^\.github/workflows/' | grep -qvE '\.md$'; then
                 android=false
               fi
+              echo "Rust jobs: $rust"
               echo "macOS jobs: $macos (release: $release)"
               echo "Android job: $android"
               printf '%s\n' "$files" | sed 's/^/  /'
@@ -146,6 +156,7 @@ jobs:
             echo "code=$code"
             echo "docker=$docker"
             echo "package=$package"
+            echo "rust=$rust"
             echo "macos=$macos"
             echo "android=$android"
             echo "release=$release"
@@ -157,7 +168,7 @@ jobs:
     # scarce ones: every macOS job here queues behind the others.
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 45
     # A newer push cancels a PR's checks, never main's: a release run's
     # publish jobs need these to finish.
@@ -225,7 +236,7 @@ jobs:
     name: Linux
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 60
     concurrency:
       group: linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -254,7 +265,7 @@ jobs:
     name: Build (ubuntu-latest)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.rust == 'true' && github.event_name != 'pull_request'
     timeout-minutes: 45
     concurrency:
       group: build-ubuntu-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -284,16 +295,25 @@ jobs:
           retention-days: 1
 
   # Everything built for Apple, on one runner: the account's macOS runners are
-  # few, and every macOS job in every run queues behind the others. A pull
-  # request checks; a release builds, signs and packages the CLI and the app,
-  # which its pull request has already checked. Other pushes to main do not
-  # run it. A pull request with nothing for it (see `changes`) runs it on Linux
-  # with its steps skipped, so the check the ruleset requires still reports.
+  # few, and every macOS job in every run queues behind the others.
+  #
+  # A pull request proves the engine builds and its tests pass on macOS and
+  # that the app compiles against it, in the dev profile throughout, so the
+  # FFI library, the tests and the app share one build of the dependencies.
+  # Clippy and the full suite are the Linux job's; the code only macOS
+  # compiles is linted on main.
+  #
+  # A push to main checks everything, tvOS included, and saves the cache
+  # pull requests start from. A release builds, signs and packages the CLI
+  # and the app, and is the only run that builds them in release.
+  #
+  # A pull request with nothing for it (see `changes`) runs it on Linux with
+  # its steps skipped, so the check the ruleset requires still reports.
   apple:
     name: Apple
     runs-on: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' && 'macos-latest' || 'ubuntu-latest' }}
     needs: [changes, check-version]
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
+    if: ${{ !cancelled() }}
     timeout-minutes: 90
     concurrency:
       group: apple-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -301,15 +321,13 @@ jobs:
     env:
       RUN: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' }}
       RELEASE: ${{ needs.check-version.outputs.should_release == 'true' }}
-      # Checking: everything but a release push, which its pull request checked.
+      # Checking: everything but a release push, which main already checked.
       CHECK: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' && needs.check-version.outputs.should_release != 'true' }}
-      # A release pull request packages too, unsigned, so a packaging failure
-      # shows before the version is merged rather than after.
-      PACKAGE: ${{ needs.check-version.outputs.should_release == 'true' || needs.changes.outputs.release == 'true' }}
-      # The tvOS build itself runs on release pull requests only. Every other
-      # pull request typechecks the shared sources for tvOS, which catches an
-      # API tvOS lacks, and a release uploads a tvOS build to TestFlight.
-      TVOS: ${{ needs.changes.outputs.release == 'true' }}
+      # Everything, tvOS included: main and manual runs.
+      FULL: ${{ github.event_name != 'pull_request' && needs.check-version.outputs.should_release != 'true' }}
+      # The FFI library's dependencies are built for this target, as the tests'
+      # are, so neither invalidates the other's build scripts.
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
     steps:
       - if: env.RUN == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -317,41 +335,80 @@ jobs:
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
-          targets: ${{ env.TVOS == 'true' && 'aarch64-apple-tvos,aarch64-apple-tvos-sim' || '' }}
+          targets: ${{ env.FULL == 'true' && 'aarch64-apple-tvos,aarch64-apple-tvos-sim' || '' }}
+      # Saved by main's checks only: a release builds another profile, and a
+      # pull request's cache would be seen by that pull request alone.
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && env.CHECK == 'true' }}
           shared-key: apple
+          cache-on-failure: true
       - if: env.RUN == 'true'
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-      - if: ${{ !cancelled() && env.CHECK == 'true' }}
+      - if: ${{ !cancelled() && env.CHECK == 'true' && env.FULL == 'true' }}
         run: cargo clippy --all-targets -- -D warnings
-      - if: ${{ !cancelled() && env.CHECK == 'true' }}
-        run: cargo test --all-targets
-      - if: ${{ !cancelled() && env.CHECK == 'true' }}
+      # Builds koan-ffi and regenerates the Swift bindings from it. The bindings
+      # are generated, so the app build below catches drift between the Rust
+      # surface and the Swift that calls it.
+      - id: ffi
+        if: ${{ !cancelled() && env.CHECK == 'true' }}
+        run: just macos-ffi
+        env:
+          KOAN_FFI_PROFILE: debug
+      # The tests, the app and the typechecks at once. Each needs only the
+      # library and bindings above, and the tests spend much of their run
+      # waiting, which the Swift compiler fills. Every log is printed, and
+      # every failure named, once all have finished.
+      - name: Tests, the app, and the iOS and tvOS typechecks
+        if: ${{ !cancelled() && env.CHECK == 'true' && steps.ffi.outcome == 'success' }}
+        run: |
+          names=() pids=()
+          start() {
+            local name=$1; shift
+            "$@" > "$RUNNER_TEMP/$name.log" 2>&1 &
+            names+=("$name") pids+=($!)
+          }
+          # A pull request tests the crates with code for Apple platforms.
+          if [ "$FULL" = true ]; then
+            start tests cargo test --all-targets
+          else
+            start tests cargo test -p koan-core -p koan-ffi --all-targets
+          fi
+          start app bash -c 'cd apps/macos && swift build -c debug'
+          # The shared sources build for iOS and tvOS too. These need the
+          # bindings and nothing else: no Rust build for either, no simulator.
+          start ios-typecheck just --no-deps ios-typecheck
+          if [ "$FULL" = true ]; then
+            start tv-typecheck just --no-deps tv-typecheck
+          fi
+          failed=()
+          for i in "${!pids[@]}"; do
+            if wait "${pids[$i]}"; then
+              echo "::group::${names[$i]} passed"
+              cat "$RUNNER_TEMP/${names[$i]}.log"
+              echo "::endgroup::"
+            else
+              failed+=("${names[$i]}")
+              echo "${names[$i]} failed:"
+              cat "$RUNNER_TEMP/${names[$i]}.log"
+            fi
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::failed: ${failed[*]}"
+            exit 1
+          fi
+      - if: ${{ !cancelled() && env.CHECK == 'true' && env.FULL == 'true' }}
         run: cargo test --doc
-      # Builds koan-ffi, regenerates the Swift bindings from it, then compiles
-      # the app. The bindings are generated, so this catches drift between the
-      # Rust surface and the Swift that calls it. When packaging, the app is
-      # built through `macos-dmg` below instead, once.
-      - if: ${{ !cancelled() && env.CHECK == 'true' && env.PACKAGE != 'true' }}
-        run: just macos-build
-      # The shared sources also build for iOS and tvOS. These need the same
-      # bindings and nothing else: no Rust build for either, no simulator.
-      - if: ${{ !cancelled() && env.CHECK == 'true' }}
-        run: just ios-typecheck
-      - if: ${{ !cancelled() && env.CHECK == 'true' }}
-        run: just tv-typecheck
-      - if: ${{ !cancelled() && env.CHECK == 'true' && env.TVOS == 'true' }}
+      - if: ${{ !cancelled() && env.CHECK == 'true' && env.FULL == 'true' }}
         run: brew install xcodegen
       # The device target as well as the simulator's: they take different
       # cfgs in places, and only the simulator is built below.
-      - if: ${{ !cancelled() && env.CHECK == 'true' && env.TVOS == 'true' }}
+      - if: ${{ !cancelled() && env.CHECK == 'true' && env.FULL == 'true' }}
         run: cargo check -p koan-ffi --target aarch64-apple-tvos --target-dir target/tv-26.0
         env:
           TVOS_DEPLOYMENT_TARGET: "26.0"
-      - if: ${{ !cancelled() && env.CHECK == 'true' && env.TVOS == 'true' }}
+      - if: ${{ !cancelled() && env.CHECK == 'true' && env.FULL == 'true' }}
         run: just tv-build
       # Developer ID signed (hardened runtime, secure timestamp) here, and
       # notarised by `notarise` once the release is out: Apple's queue is no
@@ -364,7 +421,7 @@ jobs:
         with:
           certificate-p12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      - if: ${{ !cancelled() && env.RUN == 'true' && env.PACKAGE == 'true' }}
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE == 'true' }}
         run: cargo build --release -p koan-cli
       - name: Package the CLI
         if: env.RUN == 'true' && env.RELEASE == 'true'
@@ -381,7 +438,7 @@ jobs:
       # Build, bundle and package in one invocation, so `macos-build` runs
       # once; then check the kōan.app the disk image was made from.
       - name: Package the app
-        if: ${{ !cancelled() && env.RUN == 'true' && env.PACKAGE == 'true' }}
+        if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE == 'true' }}
         run: |
           just macos-dmg
           just macos-verify arm64
@@ -461,7 +518,7 @@ jobs:
     name: MSRV (1.90)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 30
     concurrency:
       group: msrv-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -485,7 +542,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 15
     # Blocking. The advisories already in the lockfile are acknowledged in
     # .cargo/audit.toml so this fails on anything new.
