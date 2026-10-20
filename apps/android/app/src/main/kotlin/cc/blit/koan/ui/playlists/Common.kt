@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import cc.blit.koan.art.Art
 import cc.blit.koan.ui.library.NameLine
 import cc.blit.koan.ui.library.Named
-import cc.blit.koan.ui.library.claimsTaps
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanField
 import cc.blit.koan.ui.theme.KoanIcon
@@ -85,9 +84,9 @@ fun CollectionRow(
     ) {
         leading?.invoke()
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            KoanText(title, Modifier.fillMaxWidth().claimsTaps(), tone = titleTone, appText = appText, maxLines = 1)
+            KoanText(title, tone = titleTone, appText = appText, maxLines = 1)
             detail?.let { KoanText(it, role = KoanType.Meta, tone = detailTone, maxLines = 1) }
-            names?.takeIf { n -> n.any { it.text.isNotEmpty() } }?.let { NameLine(it, tone = detailTone, linked = linked) }
+            names?.takeIf { n -> n.any { it.text.isNotEmpty() } }?.let { NameLine(it, tone = detailTone, linked = linked, dense = true) }
             below?.invoke()
         }
         trailing?.invoke()

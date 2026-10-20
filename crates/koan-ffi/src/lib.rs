@@ -1459,7 +1459,8 @@ impl KoanEngine {
     /// Navidrome has no local files to read art out of, so without the remote
     /// fallback every album is blank. `size` requests a thumbnail; the grid
     /// wants one, the now-playing pane doesn't. Hits the network on the remote
-    /// path.
+    /// path. `None` means the record has no cover; an error, that whether it
+    /// has one could not be found out, and asking again may answer.
     pub async fn cover_art(
         self: Arc<Self>,
         track_id: i64,
@@ -5470,9 +5471,12 @@ impl KoanEngine {
             return Ok(None);
         };
         let cfg = Config::cached();
-        // No server configured: this record simply has no art.
+        // The record's art is on a server this device is not using. Not an
+        // answer about the record: signing in again may find it.
         if !cfg.remote.enabled {
-            return Ok(None);
+            return Err(KoanError::Remote {
+                message: "no server is configured".into(),
+            });
         }
         // Configured but unusable — signed out, or the password cannot be
         // read. Reported rather than shrugged off: answering "no art" for
@@ -5488,13 +5492,15 @@ impl KoanEngine {
                 let mime = sniff_mime(&data).to_string();
                 Ok(Some(CoverArt { data, mime }))
             }
-            // The server answered and it has nothing. Normal, and worth
-            // remembering: this record has no art and never will.
-            Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => Ok(None),
-            // A timeout or a dropped connection says nothing about whether
-            // art exists. Reported rather than swallowed, so the caller can
-            // ask again instead of recording "this album has none" for the
-            // rest of the session — and so it appears in the log at all.
+            // The server answered and it has nothing, or no such entry
+            // (Subsonic's "data not found"). Normal, and worth remembering:
+            // `None` means this record has no art, so callers may cache it.
+            Ok(_) | Err(SubsonicError::Api { code: 70, .. }) => Ok(None),
+            // A timeout, a dropped connection, any other refusal or a reply
+            // that does not parse says nothing about whether art exists.
+            // Reported rather than swallowed, so the caller can ask again
+            // instead of recording "this album has none" for the rest of the
+            // session — and so it appears in the log at all.
             Err(e) => {
                 log::warn!("cover art for track {track_id} failed: {e}");
                 Err(KoanError::Remote {

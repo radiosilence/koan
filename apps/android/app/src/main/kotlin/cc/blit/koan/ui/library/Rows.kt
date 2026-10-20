@@ -30,20 +30,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.R
 import cc.blit.koan.art.Art
-import cc.blit.koan.art.NoArt
+import cc.blit.koan.art.ArtMisses
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.Track
@@ -61,7 +59,8 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRow
 import coil3.compose.AsyncImage
-import coil3.compose.AsyncImagePainter
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** `3:07`, or `1:02:45` past an hour. */
 fun duration(ms: Long): String {
@@ -125,13 +124,16 @@ fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.
  */
 @Composable
 fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null) {
-    val generation by Art.generation
-    var missing by remember(art, generation) { mutableStateOf(art == null || art.missing) }
+    val miss = art?.miss
+    // Each cover follows its own record, so a miss recomposes only the covers it is about.
+    val known by remember(miss) { ArtMisses.misses.map { miss != null && miss in it }.distinctUntilChanged() }
+        .collectAsStateWithLifecycle(ArtMisses.has(miss))
+    val missing = art == null || known
     Box(modifier.background(KoanTheme.color(KoanTone.Rule))) {
-        if (missing && art?.kind != Art.Kind.Artist) {
+        if (missing) {
             Image(
                 painterResource(R.drawable.koan_enso),
-                null,
+                description,
                 Modifier.matchParentSize(),
                 colorFilter = ColorFilter.tint(KoanTheme.color(KoanTone.Muted).copy(alpha = 0.5f)),
             )
@@ -142,7 +144,6 @@ fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null)
                 description,
                 Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
-                onState = { if (it is AsyncImagePainter.State.Error && it.result.throwable is NoArt) missing = true },
             )
         }
     }
@@ -161,13 +162,6 @@ private fun Modifier.tap(playable: Playable, selection: Selection<Playable>?, on
         onClick = { if (selection?.take(playable) != true) open() },
         onLongClick = { if (selection?.active != true) onMenu() },
     )
-
-/**
- * A title's own place in hit testing, so a tap on it reaches the row or tile
- * it is in. Without one, the link on the line under it, whose touch target
- * Compose extends to 48 dp, takes taps on the title as near hits.
- */
-fun Modifier.claimsTaps() = pointerInput(Unit) {}
 
 /**
  * One record in a grid: the sleeve with its codec, the title, and the artist
@@ -205,29 +199,30 @@ fun AlbumTile(
                 if (picked) Box(Modifier.matchParentSize().border(3.dp, KoanTheme.color(KoanTone.Accent)))
                 Tick(picked, Modifier.align(Alignment.TopStart).padding(KoanSpace.s))
             } else {
-                AlbumHeart(album.id, Modifier.align(Alignment.BottomEnd).onGround(KoanTheme.colors.bg, KoanTheme.metric(RectangleShape, CircleShape)), showing = false)
+                // On a small square of `bg`, a disc in the platform's look, so it reads over any cover.
+                val ground = KoanTheme.colors.bg
+                val shape = KoanTheme.metric(RectangleShape, CircleShape)
+                AlbumHeart(
+                    album.id,
+                    Modifier.align(Alignment.BottomEnd).drawBehind {
+                        val side = 28.dp.toPx()
+                        val outline = shape.createOutline(Size(side, side), layoutDirection, this)
+                        translate((size.width - side) / 2, (size.height - side) / 2) { drawOutline(outline, ground) }
+                    },
+                    showing = false,
+                )
             }
             PlayableMenu(playable, menu) { menu = false }
         }
-        KoanText(album.title, Modifier.fillMaxWidth().claimsTaps(), role = KoanType.Control, maxLines = 1)
+        KoanText(album.title, role = KoanType.Control, maxLines = 1)
         NameLine(
             listOfNotNull(artistCredit(album.artistCredit, album.artistName, album.artistId, except = onArtistPage).takeIf { showArtist }, album.year?.let { Named("$it") }),
             role = KoanType.Fine,
             linked = selection?.active != true,
+            dense = true,
         )
     }
 }
-
-/**
- * A small square of `bg` behind a heart on a sleeve, so it reads over any
- * cover; a disc in the platform's look.
- */
-private fun Modifier.onGround(ground: Color, shape: Shape) =
-    drawBehind {
-        val side = 28.dp.toPx()
-        val outline = shape.createOutline(Size(side, side), layoutDirection, this)
-        translate((size.width - side) / 2, (size.height - side) / 2) { drawOutline(outline, ground) }
-    }
 
 /** How much of a record is on this device, along the foot of its sleeve. */
 @Composable
@@ -281,8 +276,8 @@ private fun LibraryRow(
 @Composable
 private fun TitleAndDetail(title: String, detail: List<Named>, linked: Boolean, tone: KoanTone = KoanTone.Ink) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        KoanText(title, Modifier.fillMaxWidth().claimsTaps(), tone = tone, maxLines = 1)
-        if (detail.any { it.text.isNotEmpty() }) NameLine(detail, linked = linked)
+        KoanText(title, tone = tone, maxLines = 1)
+        if (detail.any { it.text.isNotEmpty() }) NameLine(detail, linked = linked, dense = true)
     }
 }
 

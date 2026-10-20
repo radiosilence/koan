@@ -38,7 +38,6 @@ import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.library.TrackAvailability
 import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.artistCredit
-import cc.blit.koan.ui.library.claimsTaps
 import cc.blit.koan.ui.library.pickable
 import cc.blit.koan.ui.library.rememberPlayNow
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -142,11 +141,12 @@ internal fun TrackRow(track: Track, selection: Selection<Playable>) {
             if (selection.active) Tick(picked)
             Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id), size = 40.dp)
             Column(Modifier.weight(1f)) {
-                KoanText(track.title, Modifier.fillMaxWidth().claimsTaps(), maxLines = 1)
+                KoanText(track.title, maxLines = 1)
                 NameLine(
                     listOf(artistCredit(track.artistCredit, track.artistName, track.artistId), albumName(track.albumTitle, track.albumId, track.id)),
                     role = KoanType.Fine,
                     linked = !selection.active,
+                    dense = true,
                 )
             }
             TrackAvailability(track)

@@ -72,7 +72,6 @@ import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.library.artistName
-import cc.blit.koan.ui.library.claimsTaps
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.nowplaying.art
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
@@ -410,7 +409,6 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
         Column(Modifier.weight(1f)) {
             KoanText(
                 item.title,
-                Modifier.fillMaxWidth().claimsTaps(),
                 tone = when {
                     current -> KoanTone.Accent
                     played -> KoanTone.Muted
@@ -426,6 +424,7 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
                     ),
                     role = KoanType.Fine,
                     linked = linked,
+                    dense = true,
                 )
             }
         }

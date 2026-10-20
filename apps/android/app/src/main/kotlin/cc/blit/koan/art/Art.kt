@@ -1,6 +1,5 @@
 package cc.blit.koan.art
 
-import androidx.compose.runtime.mutableIntStateOf
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.CoverArt
 import coil3.ImageLoader
@@ -11,7 +10,11 @@ import coil3.fetch.Fetcher
 import coil3.fetch.SourceFetchResult
 import coil3.key.Keyer
 import coil3.request.Options
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okio.Buffer
 
@@ -34,41 +37,10 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
 
     val key get() = "${kind.name.lowercase()}:$id:${size.name.lowercase()}"
 
-    /** The engine has said there is no such cover, at any size. */
-    val missing get() = synchronized(misses) { record in misses }
-
-    private val record get() = record(kind, id)
+    /** How a miss of this cover is kept: artists' never are, as `artist_image` cannot tell a failure from one. */
+    val miss get() = Miss(kind, id).takeIf { kind != Kind.Artist }
 
     companion object {
-        /**
-         * Records the engine answered for and has no cover: asked once, so a
-         * grid of them neither asks again nor waits to draw the placeholder.
-         * A failed fetch is not an answer and is not kept. Dropped with the
-         * covers on `art_evictions`. Artists are not kept: `artist_image`
-         * cannot tell a failure from a miss.
-         */
-        private val misses = HashSet<String>()
-
-        /**
-         * Moves with each eviction, so a cover on screen asks again, and a
-         * fetch begun before one does not record a miss it may have outlived.
-         */
-        val generation = mutableIntStateOf(0)
-
-        private fun record(kind: Kind, id: Long) = "${kind.name.lowercase()}:$id"
-
-        internal fun forget(arts: List<Pair<Kind, Long>>) {
-            if (arts.isEmpty()) return
-            synchronized(misses) {
-                arts.forEach { (kind, id) -> misses.remove(record(kind, id)) }
-                generation.intValue++
-            }
-        }
-
-        internal fun none(art: Art, since: Int) = synchronized(misses) {
-            if (art.kind != Kind.Artist && generation.intValue == since) misses.add(art.record)
-        }
-
         fun album(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Album, id, size)
 
         fun track(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Track, id, size)
@@ -81,6 +53,37 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
 /** What a fetch fails with when the engine has no cover, as against one it could not get. */
 class NoArt : Exception("no artwork")
 
+/** A record the engine has no cover for, at any size. */
+data class Miss(val kind: Art.Kind, val id: Long)
+
+/**
+ * The records the engine answered for and has no cover: asked once, so a grid
+ * of them neither asks again nor waits to draw the placeholder. A failed fetch
+ * is an error, not an answer, and is not kept. Row ids are reused and a server
+ * signed into may hold covers, so the set empties whenever the library or the
+ * connection moves.
+ */
+object ArtMisses {
+    private val held = MutableStateFlow<Set<Miss>>(emptySet())
+    val misses: StateFlow<Set<Miss>> = held.asStateFlow()
+
+    /** Moves with each clearing, so a fetch begun before one does not record what it may have outlived. */
+    private var epoch = 0L
+
+    fun has(miss: Miss?) = miss != null && miss in held.value
+
+    internal fun epoch() = synchronized(this) { epoch }
+
+    internal fun add(miss: Miss, since: Long) = synchronized(this) {
+        if (epoch == since) held.update { it + miss }
+    }
+
+    internal fun clear() = synchronized(this) {
+        epoch++
+        held.value = emptySet()
+    }
+}
+
 class ArtKeyer : Keyer<Art> {
     override fun key(data: Art, options: Options) = data.key
 }
@@ -91,8 +94,8 @@ class ArtFetcher(
     private val mirror: EngineMirror,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
-        if (art.missing) throw NoArt()
-        val since = Art.generation.intValue
+        if (ArtMisses.has(art.miss)) throw NoArt()
+        val since = ArtMisses.epoch()
         val disk = loader.diskCache
         disk?.openSnapshot(art.key)?.let { snapshot ->
             return SourceFetchResult(
@@ -101,7 +104,7 @@ class ArtFetcher(
                 DataSource.DISK,
             )
         }
-        val cover = cover() ?: throw NoArt().also { Art.none(art, since) }
+        val cover = cover() ?: throw NoArt().also { art.miss?.let { ArtMisses.add(it, since) } }
         disk?.openEditor(art.key)?.let { editor ->
             try {
                 disk.fileSystem.write(editor.data) { write(cover.data) }
@@ -144,16 +147,18 @@ class ArtFetcher(
  * SQLite reuses a freed row id, so a cover cached under a deleted album's id
  * would show for the next album given it; a rescanned folder may have a new
  * cover beside its tracks. Each time the library moves, ask the engine what
- * went (`art_evictions`) and forget those covers at every size.
+ * went (`art_evictions`) and forget those covers at every size, and forget
+ * every miss, as on each change of connection.
  */
 fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
+    mirror.launch { mirror.connection.drop(1).collect { ArtMisses.clear() } }
     mirror.launch {
         var seq = artEvictions(0).seq
         mirror.library.drop(1).collect {
+            ArtMisses.clear()
             val gone = artEvictions(seq)
             seq = gone.seq
             val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
-            Art.forget(arts)
             for ((kind, id) in arts) {
                 for (size in ArtSize.entries) {
                     val key = Art(kind, id, size).key
