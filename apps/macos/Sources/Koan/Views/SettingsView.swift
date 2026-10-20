@@ -680,7 +680,7 @@ private struct RemoteSettings: View {
                 )
                 KoanPicker(
                     "Keep downloads",
-                    selection: Binding(get: { shownKeeping }, set: keep),
+                    selection: Binding(get: { shownKeeping }, set: { keep($0) }),
                     options: [
                         ("Up to a limit", CacheKeeping.limited),
                         ("Without limit", .unlimited),
