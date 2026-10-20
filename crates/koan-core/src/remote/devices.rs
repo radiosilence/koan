@@ -2998,6 +2998,7 @@ pub(crate) mod tests {
         let saved = Saved {
             target: None,
             account: vec![device("mac", true), device("phone", true)],
+            account_library: None,
             nearby: Vec::new(),
             live: HashMap::new(),
             departed: Vec::new(),
