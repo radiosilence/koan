@@ -1,0 +1,1 @@
+- **Shorter paragraphs in the guides.** The server, terminal UI and headphone EQ guides, among others, are split into short sections and lists, and the homepage says the first admin is made on the setup page by default.
