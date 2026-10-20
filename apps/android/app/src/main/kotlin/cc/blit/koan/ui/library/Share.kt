@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import cc.blit.koan.KoanApp
+import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.Share
 import kotlinx.coroutines.Dispatchers
@@ -16,12 +17,15 @@ import kotlinx.coroutines.withContext
  * server; a pick mixing local-only files shares what it can and says how much
  * it left out. A failure says why, in the server's words.
  */
-fun KoanApp.share(context: Context, playable: Playable) = mirror.launch {
-    val result = runCatching { createShare(playable.trackIds(this), playable.name) }
+fun KoanApp.share(context: Context, playable: Playable) = share(context, playable.name) { playable.trackIds(this) }
+
+/** A link to the tracks `trackIds` reads, called `name`: a run of the queue, say, rather than a whole record. */
+fun KoanApp.share(context: Context, name: String, trackIds: suspend KoanEngine.() -> List<Long>) = mirror.launch {
+    val result = runCatching { createShare(trackIds(), name) }
     withContext(Dispatchers.Main) {
         result
             .onSuccess { share ->
-                context.startActivity(shareIntent(share, playable.name))
+                context.startActivity(shareIntent(share, name))
                 skippedNote(share)?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
             }
             .onFailure { e ->

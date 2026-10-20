@@ -157,7 +157,7 @@ private fun HistoryPage() {
             SelectionBar(
                 selection,
                 { Playable.OfTrack(it.track) },
-                Removal("Forget") { picked -> app.mirror.launch { deletePlays(picked.map { it.id }) } },
+                Removal("Forget", "play") { picked -> app.mirror.launch { deletePlays(picked.map { it.id }) } },
             )
         }
     }
