@@ -2,12 +2,9 @@ package cc.blit.koan.ui.library
 
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalViewConfiguration
-import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -15,8 +12,6 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.ffi.CreditPart
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -82,18 +77,7 @@ fun NameLine(
     val text = remember(parts, linked, pressed, nav) {
         nameLineText(parts, linked, TextLinkStyles(pressedStyle = SpanStyle(color = pressed))) { nav.push(it) }
     }
-    // A link shorter than the minimum touch target takes taps within it, and
-    // under a title that reaches up over the title, which opens the row. Links
-    // keep the target's width, for a short name, but not its height.
-    val config = LocalViewConfiguration.current
-    val flat = remember(config) {
-        object : ViewConfiguration by config {
-            override val minimumTouchTargetSize get() = DpSize(config.minimumTouchTargetSize.width, 0.dp)
-        }
-    }
-    CompositionLocalProvider(LocalViewConfiguration provides flat) {
-        Text(text, modifier, style = role.style, color = KoanTheme.textColor(tone), maxLines = maxLines, overflow = TextOverflow.Ellipsis)
-    }
+    Text(text, modifier, style = role.style, color = KoanTheme.textColor(tone), maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }
 
 /** A line's parts joined by dots, its links opening their pages through `open`. */

@@ -34,12 +34,14 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.R
 import cc.blit.koan.art.Art
+import cc.blit.koan.art.NoArt
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.Track
@@ -116,30 +118,28 @@ fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.
 /**
  * A cover filling `modifier`, on the `rule` ground until it arrives, and the
  * kōan ensō on that ground where there is none: nothing playing, or a record
- * without artwork. An artist's photograph that fails stays bare ground, as the
- * ensō stands for a record. `alpha` fades the art and the ensō, not the ground.
+ * the engine has no artwork for. A cover that could not be fetched stays bare
+ * ground, as does an artist without a photograph: the ensō stands for a record.
  */
 @Composable
-fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null, alpha: Float = 1f) {
-    var missing by remember(art) { mutableStateOf(art == null) }
+fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null) {
+    var missing by remember(art) { mutableStateOf(art == null || art.missing) }
     Box(modifier.background(KoanTheme.color(KoanTone.Rule))) {
         if (missing && art?.kind != Art.Kind.Artist) {
             Image(
                 painterResource(R.drawable.koan_enso),
                 null,
                 Modifier.matchParentSize(),
-                alpha = alpha,
                 colorFilter = ColorFilter.tint(KoanTheme.color(KoanTone.Muted).copy(alpha = 0.5f)),
             )
         }
-        if (art != null) {
+        if (art != null && !missing) {
             AsyncImage(
                 art,
                 description,
                 Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
-                alpha = alpha,
-                onState = { missing = it is AsyncImagePainter.State.Error },
+                onState = { if (it is AsyncImagePainter.State.Error && it.result.throwable is NoArt) missing = true },
             )
         }
     }
@@ -158,6 +158,13 @@ private fun Modifier.tap(playable: Playable, selection: Selection<Playable>?, on
         onClick = { if (selection?.take(playable) != true) open() },
         onLongClick = { if (selection?.active != true) onMenu() },
     )
+
+/**
+ * A title's own place in hit testing, so a tap on it reaches the row or tile
+ * it is in. Without one, the link on the line under it, whose touch target
+ * Compose extends to 48 dp, takes taps on the title as near hits.
+ */
+private fun Modifier.claimsTaps() = pointerInput(Unit) {}
 
 /**
  * One record in a grid: the sleeve with its codec, the title, and the artist
@@ -199,7 +206,7 @@ fun AlbumTile(
             }
             PlayableMenu(playable, menu) { menu = false }
         }
-        KoanText(album.title, role = KoanType.Control, maxLines = 1)
+        KoanText(album.title, Modifier.fillMaxWidth().claimsTaps(), role = KoanType.Control, maxLines = 1)
         NameLine(
             listOfNotNull(artistCredit(album.artistCredit, album.artistName, album.artistId, except = onArtistPage).takeIf { showArtist }, album.year?.let { Named("$it") }),
             role = KoanType.Fine,
@@ -275,7 +282,7 @@ private fun LibraryRow(
 @Composable
 private fun TitleAndDetail(title: String, detail: List<Named>, linked: Boolean, tone: KoanTone = KoanTone.Ink) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        KoanText(title, tone = tone, maxLines = 1)
+        KoanText(title, Modifier.fillMaxWidth().claimsTaps(), tone = tone, maxLines = 1)
         if (detail.any { it.text.isNotEmpty() }) NameLine(detail, linked = linked)
     }
 }

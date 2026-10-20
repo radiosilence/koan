@@ -13,6 +13,7 @@ import coil3.request.Options
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import okio.Buffer
+import java.util.concurrent.ConcurrentHashMap
 
 /** How big a cover is wanted: a thumbnail for lists and grids, or the whole image. */
 enum class ArtSize(val px: UInt?) {
@@ -33,7 +34,27 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
 
     val key get() = "${kind.name.lowercase()}:$id:${size.name.lowercase()}"
 
+    /** The engine has said there is no such cover, at any size. */
+    val missing get() = record in misses
+
+    private val record get() = "${kind.name.lowercase()}:$id"
+
     companion object {
+        /**
+         * Records the engine answered for and has no cover: asked once, so a
+         * grid of them neither asks again nor waits to draw the placeholder.
+         * A failed fetch is not an answer and is not kept. Dropped with the
+         * covers on `art_evictions`. Artists are not kept: `artist_image`
+         * cannot tell a failure from a miss.
+         */
+        private val misses = ConcurrentHashMap.newKeySet<String>()
+
+        internal fun forget(art: Art) = misses.remove(art.record)
+
+        internal fun none(art: Art) {
+            if (art.kind != Kind.Artist) misses.add(art.record)
+        }
+
         fun album(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Album, id, size)
 
         fun track(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Track, id, size)
@@ -42,6 +63,9 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
         fun artist(id: Long) = Art(Kind.Artist, id, ArtSize.Full)
     }
 }
+
+/** What a fetch fails with when the engine has no cover, as against one it could not get. */
+class NoArt : Exception("no artwork")
 
 class ArtKeyer : Keyer<Art> {
     override fun key(data: Art, options: Options) = data.key
@@ -52,7 +76,8 @@ class ArtFetcher(
     private val loader: ImageLoader,
     private val mirror: EngineMirror,
 ) : Fetcher {
-    override suspend fun fetch(): FetchResult? {
+    override suspend fun fetch(): FetchResult {
+        if (art.missing) throw NoArt()
         val disk = loader.diskCache
         disk?.openSnapshot(art.key)?.let { snapshot ->
             return SourceFetchResult(
@@ -61,7 +86,7 @@ class ArtFetcher(
                 DataSource.DISK,
             )
         }
-        val cover = cover() ?: return null
+        val cover = cover() ?: throw NoArt().also { Art.none(art) }
         disk?.openEditor(art.key)?.let { editor ->
             try {
                 disk.fileSystem.write(editor.data) { write(cover.data) }
@@ -114,6 +139,7 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
             seq = gone.seq
             val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
             for ((kind, id) in arts) {
+                Art.forget(Art(kind, id, ArtSize.Thumb))
                 for (size in ArtSize.entries) {
                     val key = Art(kind, id, size).key
                     loader.diskCache?.remove(key)

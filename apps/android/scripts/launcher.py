@@ -130,7 +130,8 @@ outputs["drawable/ic_notification.xml"] = vector(
 )
 
 # The Apple apps' placeholder: the icon's 512 units in the middle 48% of the
-# sleeve, its stroke 4.5% of the sleeve's side, lighter than the icon's own.
+# sleeve, its stroke 4.5% of the sleeve's side: 48 of the icon's units, where
+# the icon draws 40, so it holds up at thumbnail size.
 outputs["drawable/koan_enso.xml"] = vector(
     48, 512, 0.48, (0.26 * 512, 0.26 * 512), path(enso, "#FFFFFFFF", f"{0.045 / 0.48 * 512:.0f}"),
 )

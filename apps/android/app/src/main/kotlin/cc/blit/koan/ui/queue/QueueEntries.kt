@@ -40,6 +40,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -400,7 +401,7 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
         Spacer(Modifier.width(if (sleeve) 10.dp else 6.dp))
         if (sleeve) {
             val shape = Modifier.size(tokens.thumb).clip(sleeveShape(4))
-            Cover(item.art(ArtSize.Thumb), shape, alpha = if (played) 0.5f else 1f)
+            Cover(item.art(ArtSize.Thumb), shape.alpha(if (played) 0.5f else 1f))
         } else {
             KoanText(item.trackNumber?.toString() ?: "", Modifier.width(22.dp), role = KoanType.Fine, tone = KoanTone.Muted)
         }
