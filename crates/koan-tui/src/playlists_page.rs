@@ -1391,7 +1391,7 @@ pub(crate) mod tests {
         assert_eq!(p.toolbar().title, "mix");
         let row: String = (0..100).map(|x| buf[(x, 0)].symbol()).collect();
         let x = row.find("artist").expect("the artist is drawn") as u16;
-        assert_eq!(links.at(x, 0), Some(Link::Artist(2)));
+        assert_eq!(links.at(x, 0), Some(Link::ArtistOfTrack(1)));
     }
 
     #[test]

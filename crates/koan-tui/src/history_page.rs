@@ -945,7 +945,9 @@ mod tests {
     /// Where the artist link of each line starts.
     fn artist_links(links: &Links, w: u16, h: u16) -> Vec<u16> {
         (0..h)
-            .filter_map(|y| (0..w).find(|&x| matches!(links.at(x, y), Some(Link::Artist(_)))))
+            .filter_map(|y| {
+                (0..w).find(|&x| matches!(links.at(x, y), Some(Link::ArtistOfTrack(_))))
+            })
             .collect()
     }
 
@@ -989,7 +991,7 @@ mod tests {
         let links = Links::default();
         draw_with(&mut p, 100, 12, &links);
         let x = artist_links(&links, 100, 12)[0];
-        assert_eq!(links.at(x, 1), Some(Link::Artist(2)));
+        assert_eq!(links.at(x, 1), Some(Link::ArtistOfTrack(1)));
         let album = (x..100).find(|&cx| links.at(cx, 1) == Some(Link::Album(1)));
         assert!(album.is_some(), "the album is a link too");
     }
