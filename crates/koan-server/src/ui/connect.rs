@@ -22,7 +22,7 @@ MCP can search your library, make playlists and play music on your devices, as y
     );
     let Some(base) = super::oauth::public_base(&s) else {
         let fix = if user.role == koan_core::auth::Role::Admin {
-            "Set <code>sharing.public_url</code> to the address this server is reached at"
+            "Set <code>server.url</code> to the address this server is reached at"
         } else {
             "Its admin needs to set the address this server is reached at"
         };

@@ -96,12 +96,12 @@ class EqGraphTest {
     }
 
     @Test
-    fun aTuningCorrectingIsOfferedAsATuning() {
-        assertEquals(PhoneAction.MoveToTuning, phoneAction("Warm", DspRole.TUNING, active = "Warm", inChain = false))
-        assertEquals(PhoneAction.StopCorrecting, phoneAction("HD 650", DspRole.CORRECTION, active = "HD 650", inChain = false))
-        assertEquals(PhoneAction.TakeOutOfTuning, phoneAction("Warm", DspRole.TUNING, active = null, inChain = true))
-        assertEquals(PhoneAction.AddToTuning, phoneAction("Warm", DspRole.TUNING, active = null, inChain = false))
-        assertEquals(PhoneAction.Correct, phoneAction("HD 650", DspRole.BAKED, active = null, inChain = false))
+    fun aTuningGoesIntoTheFiltersAndNeverTakesTheCorrectionsPlace() {
+        assertEquals(DeviceAction.MoveToFilters, deviceAction("Warm", DspRole.TUNING, active = "Warm", inChain = false))
+        assertEquals(DeviceAction.StopCorrecting, deviceAction("HD 650", DspRole.CORRECTION, active = "HD 650", inChain = false))
+        assertEquals(DeviceAction.TakeOutOfFilters, deviceAction("Warm", DspRole.TUNING, active = null, inChain = true))
+        assertEquals(DeviceAction.AddToFilters, deviceAction("Warm", DspRole.TUNING, active = "HD 650", inChain = false))
+        assertEquals(DeviceAction.Correct, deviceAction("HD 650", DspRole.BAKED, active = null, inChain = false))
     }
 
     @Test
@@ -142,9 +142,11 @@ class EqGraphTest {
             correction = freqs.map { 0.5 }, tuning = null, original = null, right = null, rightGainDb = 0.0,
         )
         val o = overview(active = "HD 600", chain = listOf(DspTuningEntry("Warm", true), DspTuningEntry("Off", false)))
-        val curves = outputCurves(o, r, Color.Black, Color.Red, Color.Gray)
-        assertEquals(listOf(Color.Red, Color.Gray, Color.Black), curves.map { it.color })
+        val curves = outputCurves(o, r, Color.Black, Color.Red, Color.Blue, Color.Gray)
+        assertEquals(listOf(Color.Red, Color.Blue, Color.Black), curves.map { it.color })
+        // Each EQ dashed as its block in the chain draws it.
         assertTrue(curves[1].dashed)
+        assertEquals(StageStroke.eq(0).pattern, curves[1].pattern)
         assertTrue(abs(curves.last().db.first() - 1.0) < 1e-9)
     }
 

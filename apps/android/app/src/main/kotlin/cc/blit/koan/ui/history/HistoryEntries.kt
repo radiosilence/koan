@@ -2,15 +2,17 @@
 
 package cc.blit.koan.ui.history
 
+import android.text.format.DateFormat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,6 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,12 +36,12 @@ import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.art.Art
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.PlayHistoryEntry
-import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
-import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.FilterField
 import cc.blit.koan.ui.library.Named
 import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.library.Playable
+import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.Removal
 import cc.blit.koan.ui.library.SelectButton
 import cc.blit.koan.ui.library.SelectMode
@@ -43,24 +50,19 @@ import cc.blit.koan.ui.library.SelectionBar
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.library.albumName
-import cc.blit.koan.ui.library.GoToArtists
 import cc.blit.koan.ui.library.artistCredit
-import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.library.count
 import cc.blit.koan.ui.navigation.nonce
-import cc.blit.koan.ui.nowplaying.LocalShowTrackInfo
 import cc.blit.koan.ui.nowplaying.clock
-import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
-import cc.blit.koan.ui.theme.KoanField
+import cc.blit.koan.ui.theme.KoanDivider
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
-import cc.blit.koan.ui.theme.KoanMenu
 import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanSectionHeader
-import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
@@ -68,11 +70,14 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanSurface
+import java.text.DecimalFormatSymbols
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.util.Calendar
+import java.util.Date
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -115,25 +120,20 @@ private fun HistoryPage() {
     val entries by model.entries.collectAsStateWithLifecycle()
     val query by model.query.collectAsStateWithLifecycle()
     var clearing by remember { mutableStateOf(false) }
-    var adding by remember { mutableStateOf<Long?>(null) }
     val zone = ZoneId.systemDefault()
     val today = LocalDate.now(zone)
     val gutter = LocalKoanTokens.current.gutter
+    val times = rememberPlayClock()
     // Plays, not tracks: a track played twice is two rows to pick.
     val selection = remember { Selection<PlayHistoryEntry> { it.id } }
     SelectMode(selection)
 
     Column {
-        PageBar("History") {
+        PageBar("History", entries?.let { count(it.size.toLong(), "play") }) {
             if (!entries.isNullOrEmpty()) SelectButton(selection)
             KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty() && query.isBlank())
         }
-        KoanField(
-            query,
-            { model.query.value = it },
-            Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = KoanSpace.xs),
-            placeholder = KoanTheme.label("Filter history"),
-        )
+        FilterField(query, "Filter history", { model.query.value = it })
         val shown = entries
         when {
             shown == null -> Unit
@@ -148,7 +148,7 @@ private fun HistoryPage() {
                         )
                     }
                     items(plays, key = { it.id }) { entry ->
-                        HistoryRow(entry, zone, selection, onAdd = { adding = it }, modifier = Modifier.animateItem())
+                        HistoryRow(entry, times, selection, modifier = Modifier.animateItem())
                     }
                 }
             }
@@ -157,12 +157,11 @@ private fun HistoryPage() {
             SelectionBar(
                 selection,
                 { Playable.OfTrack(it.track) },
-                Removal("Forget") { picked -> app.mirror.launch { deletePlays(picked.map { it.id }) } },
+                Removal("Forget", "play") { picked -> app.mirror.launch { deletePlays(picked.map { it.id }) } },
             )
         }
     }
 
-    adding?.let { id -> AddToPlaylistSheet({ listOf(id) }) { adding = null } }
     if (clearing) {
         ConfirmDialog(
             "Clear History?",
@@ -174,14 +173,12 @@ private fun HistoryPage() {
 }
 
 @Composable
-private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selection<PlayHistoryEntry>, onAdd: (Long) -> Unit, modifier: Modifier) {
+private fun HistoryRow(entry: PlayHistoryEntry, times: PlayClock, selection: Selection<PlayHistoryEntry>, modifier: Modifier) {
     val app = koanApp()
-    val nav = LocalNavigator.current
     val track = entry.track
     val forget = { app.mirror.launch { deletePlays(listOf(entry.id)) } }
     val swipe = rememberSwipeToDismissBoxState()
     var menu by remember { mutableStateOf(false) }
-    val showInfo = LocalShowTrackInfo.current
     // A play another client scrobbled in did not happen here, and saying so stops it reading as a phantom.
     val elsewhere = if (entry.source != "local") "scrobbled by another client" else ""
 
@@ -207,7 +204,6 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
                 track.title,
                 null,
                 names = listOf(
-                    Named(timeOf(entry.playedAt, zone)),
                     artistCredit(track.artistCredit, track.artistName, track.artistId),
                     albumName(track.albumTitle, track.albumId, track.id),
                     Named(elsewhere),
@@ -216,24 +212,57 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
                 onClick = { if (!selection.take(entry)) app.player.playTracks(listOf(track.id)) },
                 onLongClick = if (selection.active) null else ({ menu = true }),
                 leading = {
-                    if (selection.active) Tick(selection.contains(entry)) else Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id))
+                    if (selection.active) Tick(selection.contains(entry))
+                    times.Lead(entry.playedAt)
+                    Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id))
                 },
                 trailing = { KoanText(track.durationMs?.let(::clock).orEmpty(), role = KoanType.Meta, tone = KoanTone.Muted) },
             )
-            KoanMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                KoanMenuItem("Play", KoanIcons.play) { menu = false; app.player.playTracks(listOf(track.id)) }
-                KoanMenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
-                KoanMenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
-                KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(track.id) }
-                DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
-                track.albumId?.let { albumId ->
-                    KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
-                }
-                GoToArtists(track.artistCredit, track.artistId) { menu = false }
-                KoanMenuItem("Info…", KoanIcons.info) { menu = false; showInfo(track.id) }
+            PlayableMenu(Playable.OfTrack(track), menu, more = {
+                KoanDivider()
                 KoanMenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
-            }
+            }) { menu = false }
         }
+    }
+}
+
+/**
+ * When each play was, in the clock the phone is set to, as a column as wide as
+ * the widest time the locale prints, so every title lines up.
+ */
+private class PlayClock(private val format: java.text.DateFormat, private val width: Dp) {
+    fun time(epochSeconds: Long): String = format.format(Date(epochSeconds * 1000))
+
+    @Composable
+    fun Lead(epochSeconds: Long) {
+        KoanText(time(epochSeconds), Modifier.width(width), role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1, textAlign = TextAlign.End)
+    }
+}
+
+/**
+ * The phone's own clock, 12- or 24-hour as its settings say, which
+ * `DateTimeFormatter` would ignore. The column is measured once, from every
+ * shape a time can take: a minute to each hour, its digits the locale's zero,
+ * since digits are monospaced.
+ */
+@Composable
+private fun rememberPlayClock(): PlayClock {
+    val context = LocalContext.current
+    val measurer = rememberTextMeasurer()
+    val style = KoanType.Fine.style
+    val density = LocalDensity.current
+    val hours24 = DateFormat.is24HourFormat(context)
+    // The format holds the zone it was made in, and the days are grouped in the current one.
+    val zone = ZoneId.systemDefault()
+    return remember(context, hours24, zone, style, density) {
+        val format = DateFormat.getTimeFormat(context)
+        val zero = DecimalFormatSymbols.getInstance().zeroDigit
+        val widest = (0..23).maxOf { hour ->
+            val at = Calendar.getInstance().apply { set(2001, 0, 1, hour, 59, 0) }
+            val shape = format.format(at.time).map { if (it.isDigit()) zero else it }.joinToString("")
+            measurer.measure(shape, style, maxLines = 1).size.width
+        }
+        PlayClock(format, with(density) { widest.toDp() })
     }
 }
 
@@ -252,7 +281,6 @@ fun <T> byDay(items: List<T>, zone: ZoneId, epochSeconds: (T) -> Long): List<Pai
 }
 
 private val dayFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL)
-private val timeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 
 /** "Today", "Yesterday", or the date in full. */
 fun dayLabel(day: LocalDate, today: LocalDate): String = when (day) {
@@ -260,5 +288,3 @@ fun dayLabel(day: LocalDate, today: LocalDate): String = when (day) {
     today.minusDays(1) -> "Yesterday"
     else -> day.format(dayFormat)
 }
-
-private fun timeOf(epochSeconds: Long, zone: ZoneId) = Instant.ofEpochSecond(epochSeconds).atZone(zone).format(timeFormat)

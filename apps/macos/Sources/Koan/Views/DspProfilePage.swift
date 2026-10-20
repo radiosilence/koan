@@ -948,12 +948,19 @@ private struct ImpulseRow: View {
 }
 
 /// Where a profile is kept: on every device signed in to the account's kōan
-/// server, or on this one alone.
+/// server, or on this one alone. Absent where the server keeps no EQs.
 private struct ScopeSection: View {
+    @Environment(EngineMirror.self) private var mirror
     let dsp: DspModel
     let detail: DspProfileDetail
 
     var body: some View {
+        if mirror.offers(DspModel.syncExtension) {
+            section
+        }
+    }
+
+    private var section: some View {
         Section {
             KoanPicker("Sync", selection: Binding(
                 get: { detail.everywhere },

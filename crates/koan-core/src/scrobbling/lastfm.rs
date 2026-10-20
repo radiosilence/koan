@@ -230,9 +230,9 @@ pub enum LastfmError {
     #[error("Last.fm is not set up on this server. Its admin needs to add a Last.fm API key.")]
     NotConfigured,
     #[error(
-        "This server does not know where it is reached from outside, which Last.fm needs to send you back. Its admin needs to set sharing.public_url."
+        "This server does not know where it is reached from outside, which Last.fm needs to send you back. Its admin needs to set server.url."
     )]
-    NoPublicUrl,
+    NoServerUrl,
     #[error("That Last.fm sign-in has expired or was not started here. Start again.")]
     Expired,
     #[error("Last.fm did not accept the approval. Start again.")]

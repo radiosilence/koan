@@ -526,10 +526,8 @@ impl QueryRoot {
                 .into_iter()
                 .map(|s| GqlShareLink {
                     url: cfg
-                        .sharing
-                        .public_url
-                        .as_deref()
-                        .map(|base| koan_core::helpers::share_url(base, &s.id)),
+                        .server_url()
+                        .map(|base| koan_core::helpers::share_url(&base, &s.id)),
                     expired: !s.is_live(now),
                     id: s.id,
                     description: s.description,
@@ -697,7 +695,7 @@ impl QueryRoot {
             Some(GqlLyrics {
                 content: lyrics.content,
                 synced: lyrics.synced,
-                source: format!("{:?}", lyrics.source),
+                source: lyrics.source.map(|s| s.credit().into()),
             })
         };
         let cached = match lookup {

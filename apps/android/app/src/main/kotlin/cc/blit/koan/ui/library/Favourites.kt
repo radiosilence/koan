@@ -1,6 +1,9 @@
 package cc.blit.koan.ui.library
 
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -14,6 +17,7 @@ import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanLabel
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import kotlinx.coroutines.CoroutineScope
@@ -92,7 +96,8 @@ fun favourites() = Favourites.of(koanApp())
  * The heart, wherever something can be favourited: filled in `bad` when on,
  * an outline in `muted` when off. A row that would otherwise show a column of
  * empty hearts passes `showing = false`, and then only a favourite's heart is
- * drawn.
+ * drawn. A page's header passes `labelled`: the heart with its word beside
+ * it, "favourite", or "favourited" in `bad` once on, as the iPhone's header has it.
  */
 @Composable
 fun FavouriteButton(
@@ -100,22 +105,26 @@ fun FavouriteButton(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     showing: Boolean = true,
+    labelled: Boolean = false,
 ) {
     if (!isOn && !showing) return
     val haptics = LocalHapticFeedback.current
-    KoanButton(
-        {
-            if (!isOn) haptics.performHapticFeedback(HapticFeedbackType.ToggleOn)
-            onToggle()
-        },
-        modifier,
-        kind = KoanButtonKind.Icon,
-    ) {
-        KoanIcon(
-            if (isOn) KoanIcons.favourited else KoanIcons.favourite,
-            if (isOn) "Remove favourite" else "Favourite",
-            color = KoanTheme.color(if (isOn) KoanTone.Bad else KoanTone.Muted),
-        )
+    val toggle = {
+        if (!isOn) haptics.performHapticFeedback(HapticFeedbackType.ToggleOn)
+        onToggle()
+    }
+    val icon = if (isOn) KoanIcons.favourited else KoanIcons.favourite
+    if (labelled) {
+        KoanButton(toggle, modifier, kind = KoanButtonKind.Compact) {
+            val color = KoanTheme.color(if (isOn) KoanTone.Bad else KoanTone.Ink)
+            CompositionLocalProvider(LocalContentColor provides color, LocalTextStyle provides LocalTextStyle.current.copy(color = color)) {
+                KoanLabel(if (isOn) "Favourited" else "Favourite", icon)
+            }
+        }
+        return
+    }
+    KoanButton(toggle, modifier, kind = KoanButtonKind.Icon) {
+        KoanIcon(icon, if (isOn) "Remove favourite" else "Favourite", color = KoanTheme.color(if (isOn) KoanTone.Bad else KoanTone.Muted))
     }
 }
 
@@ -130,15 +139,15 @@ fun TrackHeart(trackId: Long, modifier: Modifier = Modifier, showing: Boolean = 
 }
 
 @Composable
-fun AlbumHeart(albumId: Long, modifier: Modifier = Modifier, showing: Boolean = true) {
+fun AlbumHeart(albumId: Long, modifier: Modifier = Modifier, showing: Boolean = true, labelled: Boolean = false) {
     val store = favourites()
     val ids by store.albums.collectAsStateWithLifecycle()
-    FavouriteButton(albumId in ids, { store.toggleAlbum(albumId) }, modifier, showing)
+    FavouriteButton(albumId in ids, { store.toggleAlbum(albumId) }, modifier, showing, labelled)
 }
 
 @Composable
-fun ArtistHeart(artistId: Long, modifier: Modifier = Modifier, showing: Boolean = true) {
+fun ArtistHeart(artistId: Long, modifier: Modifier = Modifier, showing: Boolean = true, labelled: Boolean = false) {
     val store = favourites()
     val ids by store.artists.collectAsStateWithLifecycle()
-    FavouriteButton(artistId in ids, { store.toggleArtist(artistId) }, modifier, showing)
+    FavouriteButton(artistId in ids, { store.toggleArtist(artistId) }, modifier, showing, labelled)
 }

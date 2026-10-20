@@ -1,0 +1,1 @@
+- **Changing server leaves the last one's waiting plays behind.** Plays, forgettings and hearts queued for one server were sent to the next one signed in to, so a history clear could reach another koan server. Signing in elsewhere now drops them, and the app no longer asks a server without device relaying to relay lock-screen commands.

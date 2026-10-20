@@ -30,9 +30,15 @@ import kotlin.math.ceil
 import kotlin.math.ln
 import kotlin.math.pow
 
-/** A curve to draw: its levels at the response's frequencies, and how. */
+/** A curve to draw: its levels at the response's frequencies, and how; dashed, in `pattern`'s dashes and gaps, in dp. */
 @Immutable
-data class Curve(val db: List<Double>, val color: Color, val width: Float = 1.5f, val dashed: Boolean = false)
+data class Curve(
+    val db: List<Double>,
+    val color: Color,
+    val width: Float = 1.5f,
+    val dashed: Boolean = false,
+    val pattern: List<Float> = listOf(6f, 4f),
+)
 
 /** The frequencies the graph marks, and how each is written. */
 val hzTicks = listOf(20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 20_000.0)
@@ -162,7 +168,7 @@ private fun CacheDrawScope.graph(
         }
     }
     val strokes = curves.map { c ->
-        Stroke(c.width.dp.toPx(), pathEffect = if (c.dashed) PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())) else null)
+        Stroke(c.width.dp.toPx(), pathEffect = if (c.dashed) PathEffect.dashPathEffect(c.pattern.map { it.dp.toPx() }.toFloatArray()) else null)
     }
     val hair = 1.dp.toPx()
     val label = 2.dp.toPx()

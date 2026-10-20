@@ -1,0 +1,1 @@
+- **Android browses and keeps history as the iPhone does.** The track browser filters, albums sorted Random reshuffle from their own button, the shelves have a select mode, search titles its results, and history lines its times up in a column in the phone's clock and offers the full track menu.

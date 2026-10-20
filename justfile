@@ -111,14 +111,22 @@ macos-icon:
 # One slice, for the machine doing the building: a universal binary is two
 # cross builds lipo'd together, most of a release job's time and disk.
 # `macos-verify` fails if the assembled app is not the architecture asked for.
+#
+# `KOAN_FFI_PROFILE=debug` builds the dev profile instead, which shares its
+# dependencies with `cargo test`: pull request CI checks the app against it.
 macos-ffi:
     #!/usr/bin/env bash
     set -euo pipefail
     # Match what SwiftPM links against. Without it cargo builds for the host's
     # OS and every link is a page of "built for newer macOS version" warnings.
     export MACOSX_DEPLOYMENT_TARGET=26.0
-    cargo build --release -p koan-ffi
-    lib=${CARGO_TARGET_DIR:-target}/release/libkoan_ffi.a
+    profile=${KOAN_FFI_PROFILE:-release}
+    case "$profile" in
+        release) cargo build --release -p koan-ffi ;;
+        debug) cargo build -p koan-ffi ;;
+        *) echo "KOAN_FFI_PROFILE must be release or debug, not $profile" >&2; exit 1 ;;
+    esac
+    lib=${CARGO_TARGET_DIR:-target}/$profile/libkoan_ffi.a
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
@@ -1492,7 +1500,7 @@ _demo-server library out:
     [ -z "{{library}}" ] || printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
     KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password "$koan" auth setup >/dev/null
     [ -z "{{library}}" ] || KOAN_CONFIG_DIR=$dir "$koan" scan >/dev/null 2>&1
-    KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true KOAN_SHARING__PUBLIC_URL=http://127.0.0.1:$port \
+    KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true KOAN_SERVER__URL=http://127.0.0.1:$port \
         nohup "$koan" --headless --port "$port" >"{{out}}/server.log" 2>&1 &
     echo "$! $dir" > "{{out}}/server.pid"
     echo "$password" > "{{out}}/server.password"

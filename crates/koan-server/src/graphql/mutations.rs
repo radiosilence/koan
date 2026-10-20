@@ -1396,8 +1396,7 @@ impl MutationRoot {
     /// Make an account with a generated password and return its invite, which
     /// carries the password this once.
     /// `server` is the address the invite points at; without it, the
-    /// configured `sharing.public_url`, then the address this request came in
-    /// on (which an in-process caller such as MCP does not have).
+    /// configured `server.url`.
     async fn create_user(
         &self,
         ctx: &Context<'_>,
@@ -1406,7 +1405,7 @@ impl MutationRoot {
         server: Option<String>,
     ) -> async_graphql::Result<GqlInvite> {
         require_role(ctx, Role::Admin)?;
-        let server = invite_server(ctx, server)?;
+        let server = invite_server(server)?;
         with_db(ctx, move |db| {
             let made = koan_core::invite::create_account(&db.conn, &username, role.into())?;
             let token = invite_token(db, made.id)?;
@@ -1432,7 +1431,7 @@ impl MutationRoot {
         server: Option<String>,
     ) -> async_graphql::Result<GqlInvite> {
         require_role(ctx, Role::Admin)?;
-        let server = invite_server(ctx, server)?;
+        let server = invite_server(server)?;
         with_db(ctx, move |db| {
             let user = koan_core::invite::account(&db.conn, &username)?;
             let password = if reset_password {
@@ -1639,8 +1638,6 @@ fn reach(sent: &[String], queued: &[String]) -> String {
     }
 }
 
-/// Where an invite points: the caller's choice, `sharing.public_url`, or the
-/// address the request came in on.
 /// A token for an invite, signed with the server's key.
 fn invite_token(
     db: &koan_core::db::connection::Database,
@@ -1650,14 +1647,11 @@ fn invite_token(
     Ok(koan_core::invite::mint_token(&db.conn, &keys.0, user_id)?)
 }
 
-fn invite_server(ctx: &Context<'_>, server: Option<String>) -> async_graphql::Result<String> {
-    let configured = Config::load().ok().and_then(|c| c.sharing.public_url);
+/// Where an invite points: the caller's choice, else `server.url`.
+fn invite_server(server: Option<String>) -> async_graphql::Result<String> {
     server
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| configured.filter(|s| !s.trim().is_empty()))
-        .or_else(|| ctx.data::<super::RequestOrigin>().ok().map(|o| o.0.clone()))
         .map(|s| s.trim().trim_end_matches('/').to_owned())
-        .ok_or_else(|| {
-            "pass `server` or set sharing.public_url: this request has no address".into()
-        })
+        .filter(|s| !s.is_empty())
+        .or_else(|| Config::load().ok()?.server_url())
+        .ok_or_else(|| "pass `server` or set server.url: this server has no address".into())
 }

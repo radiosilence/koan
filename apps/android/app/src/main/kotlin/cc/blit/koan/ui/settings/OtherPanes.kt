@@ -138,8 +138,9 @@ fun IntegrationsPane(model: SettingsModel) {
     val busy = SettingsModel.SCROBBLING in state.running
     val connect = { if (token.isNotBlank() && !busy) model.connectScrobbling(token) { token = "" } }
 
-    // Read once per page: the address only changes with the server.
-    val assistants by produceState<Result<Assistants>?>(null, connection.offers(ASSISTANTS)) {
+    // Read once per page and server: the address only changes with the server.
+    val assistants by produceState<Result<Assistants>?>(null, connection.offers(ASSISTANTS), state.settings?.remoteUrl) {
+        value = null
         if (connection.offers(ASSISTANTS)) value = runCatching { app.mirror.engine().assistants() }
     }
 

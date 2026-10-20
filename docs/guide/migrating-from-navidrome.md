@@ -50,7 +50,7 @@ services:
     environment:
       KOAN_LIBRARY__FOLDERS: '["/music"]'
       KOAN_GRAPHQL__ALLOWED_HOSTS: '["music.example.com"]'
-      KOAN_SHARING__PUBLIC_URL: https://music.example.com
+      KOAN_SERVER__URL: https://music.example.com
       KOAN_SUBSONIC__ENABLED: "true"
     volumes:
       - koan-config:/config
@@ -70,7 +70,7 @@ docker compose exec koan koan auth setup
 | `/data` | `/config`: config, database, signing keys and the cover cache. The image runs as uid 1000, so a bind mount must be writable by it |
 | `ND_MUSICFOLDER` | `KOAN_LIBRARY__FOLDERS`, a list; several folders form one library |
 | `ND_SCANSCHEDULE`, `ND_SCANNER_WATCHERWAIT` | Nothing to set. The server scans at start and watches the folders for changes |
-| `ND_ENABLESHARING` | Always on; `sharing.public_url` sets the address links are built on |
+| `ND_ENABLESHARING` | Always on; `server.url` sets the address links are built on |
 | `ND_BASEURL` | Not supported; give kōan its own hostname |
 | `ND_REVERSEPROXYUSERHEADER`, `ND_REVERSEPROXYWHITELIST` | `KOAN_GRAPHQL__PROXY_AUTH_HEADER`, `KOAN_GRAPHQL__PROXY_AUTH_FROM`, for the web UI; see [Behind an authenticating proxy](headless-server.md#behind-an-authenticating-proxy) |
 | Port 4533 | Port 4000, which serves the web UI, the Subsonic API (`/rest`), GraphQL and MCP |
