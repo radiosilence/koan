@@ -2269,9 +2269,17 @@ impl App {
                     return;
                 }
                 let said = format!("moved the music to {}", choice.name);
-                self.run_control(said, move |tx, state| {
-                    koan_core::remote::control::move_music(choice.id, tx, state, None).map(|_| ())
-                });
+                // Woken off the lane: keys meanwhile are for the music where
+                // it is.
+                let wake = choice.id.clone();
+                self.run_control_after(
+                    move || koan_core::remote::control::wake_for_move(wake.as_deref()),
+                    said,
+                    move |asked, tx, state| {
+                        koan_core::remote::control::move_music(choice.id, asked, tx, state, None)
+                            .map(|_| ())
+                    },
+                );
             }
             KeyCode::Char('x') => {
                 let Some(choice) = play_on.current().cloned() else {
@@ -2311,6 +2319,36 @@ impl App {
             };
             report.send(super::tasks::Report::Work(line)).ok();
         });
+    }
+
+    /// `run_control`, once `before` has run on a thread of its own: what has
+    /// to happen first without holding up the commands sent meanwhile.
+    fn run_control_after<T: Send + 'static>(
+        &mut self,
+        before: impl FnOnce() -> T + Send + 'static,
+        said: String,
+        work: impl FnOnce(T, &Sender<PlayerCommand>, &SharedPlayerState) -> Result<(), String>
+        + Send
+        + 'static,
+    ) {
+        let (lane, local, tx, report) = (
+            self.lane.clone(),
+            self.view.local.clone(),
+            self.local_tx.clone(),
+            self.task_tx.clone(),
+        );
+        let _ = std::thread::Builder::new()
+            .name("koan-before-control".into())
+            .spawn(move || {
+                let ready = before();
+                lane.run(move || {
+                    let line = match work(ready, &tx, &local) {
+                        Ok(()) => said,
+                        Err(e) => e,
+                    };
+                    report.send(super::tasks::Report::Work(line)).ok();
+                });
+            });
     }
 
     fn open_play_on(&mut self) {

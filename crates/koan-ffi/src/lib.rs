@@ -2668,12 +2668,16 @@ impl KoanEngine {
 
     /// Move the music of the device being controlled to `to` (this device
     /// with `None`): its queue and playhead go there, it pauses, and `to` is
-    /// controlled from then on. Says how many tracks were left out because
-    /// the server does not have them, which only this device can say, and
-    /// whether `to` has said it has the music.
+    /// controlled from then on. `to` asleep is woken first, as choosing it
+    /// does, while the music plays on where it is. Says how many tracks were
+    /// left out because the server does not have them, which only this device
+    /// can say, and whether `to` has said it has the music.
     pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<MoveResult, KoanError> {
         use koan_core::remote::control::{self, Moved};
         use koan_core::remote::devices;
+        // Off the lane: commands meanwhile are for the music where it is.
+        let waking = to.clone();
+        let asked = offload::offload(move || control::wake_for_move(waking.as_deref())).await;
         let engine = self.clone();
         // Sent on the lane, in order with every other command; waited for off
         // it, so the transport does not stall behind a device that is slow to
@@ -2687,8 +2691,9 @@ impl KoanEngine {
             let before = to.as_deref().and_then(devices::last_report);
             let cursor_before = engine.state.cursor();
             let (then, answer) = outcome_channel();
-            let moved = control::move_music(to.clone(), &engine.tx, &engine.state, Some(then))
-                .map_err(|message| KoanError::Remote { message })?;
+            let moved =
+                control::move_music(to.clone(), asked, &engine.tx, &engine.state, Some(then))
+                    .map_err(|message| KoanError::Remote { message })?;
             Ok(moved.map(|moved| match moved {
                 Moved::Sent(sent) => HandedOff {
                     left_out: sent.left_out,
