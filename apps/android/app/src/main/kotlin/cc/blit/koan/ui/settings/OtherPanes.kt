@@ -140,6 +140,7 @@ fun IntegrationsPane(model: SettingsModel) {
 
     // Read once per page and server: the address only changes with the server.
     val assistants by produceState<Result<Assistants>?>(null, connection.offers(ASSISTANTS), state.settings?.remoteUrl) {
+        value = null
         if (connection.offers(ASSISTANTS)) value = runCatching { app.mirror.engine().assistants() }
     }
 

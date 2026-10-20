@@ -264,6 +264,8 @@ struct SettingsView: View {
             guard let model, model.settings.remoteSignedIn, mirror.offers(PeopleModel.extensionName) else { return }
             let people = PeopleModel(engine: library.engine)
             await people.load()
+            // Signed in elsewhere while it loaded: that account's task sets its own.
+            guard !Task.isCancelled else { return }
             self.people = people
         }
         #endif

@@ -76,14 +76,14 @@ fun AccountPane(model: SettingsModel) {
     val state by model.state.collectAsStateWithLifecycle()
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
     // Made only where the server has them, and afresh for each account.
-    val account = "${state.settings?.remoteUrl}-${state.settings?.remoteUsername}"
-    val keys = if (connection.offers(API_KEYS)) {
+    val account = state.settings?.let { "${it.remoteUrl}-${it.remoteUsername}" }
+    val keys = if (account != null && connection.offers(API_KEYS)) {
         viewModel(key = "keys-$account") { CredentialsModel.apiKeys(app.mirror::engine) }
     } else {
         null
     }
     // Only while the server can be reached, as on the iPhone.
-    val passwords = if (connection.offers(APP_PASSWORDS) && connection?.offline != true) {
+    val passwords = if (account != null && connection.offers(APP_PASSWORDS) && connection?.offline != true) {
         viewModel(key = "app-passwords-$account") { CredentialsModel.appPasswords(app.mirror::engine) }
     } else {
         null
@@ -256,7 +256,9 @@ fun PeoplePane(model: SettingsModel) {
     val app = koanApp()
     val state by model.state.collectAsStateWithLifecycle()
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
-    val people = viewModel { PeopleModel(app.mirror::engine) }
+    val people = viewModel(key = "people-${state.settings?.remoteUrl}-${state.settings?.remoteUsername}") {
+        PeopleModel(app.mirror::engine)
+    }
     val p by people.state.collectAsStateWithLifecycle()
     var newName by rememberSaveable { mutableStateOf("") }
     var newRole by rememberSaveable { mutableStateOf(AccountRole.READONLY) }

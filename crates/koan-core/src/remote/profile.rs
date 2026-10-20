@@ -172,6 +172,8 @@ pub fn lacking(profile: Option<&ServerProfile>, to: &str) -> String {
         Some(p) if p.kind.as_deref() == Some("koan") => {
             format!("this server is older than this app: update it to {to}")
         }
+        // Older than OpenSubsonic, so it does not say what it is.
+        Some(p) if p.kind.is_none() => format!("this server cannot {to}"),
         Some(_) => format!("only a kōan server can {to}"),
     }
 }
@@ -220,6 +222,10 @@ mod tests {
         assert_eq!(
             lacking(Some(&navidrome), "invite people"),
             "only a kōan server can invite people"
+        );
+        assert_eq!(
+            lacking(Some(&ServerProfile::default()), "invite people"),
+            "this server cannot invite people"
         );
         assert!(lacking(None, "invite people").starts_with("could not reach"));
     }
