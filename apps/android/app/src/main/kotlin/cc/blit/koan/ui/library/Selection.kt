@@ -161,32 +161,32 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
             if (ids.isNotEmpty()) action(ids)
         }
     }
-    var confirming by remember { mutableStateOf<List<T>?>(null) }
+    var confirming by remember { mutableStateOf(false) }
     SelectionBarFrame(picks, selection::end) {
         BarItem("Play", "play", KoanIcons.play, picks > 0) { run(app.player::playTracks) }
         BarItem("Play Next", "next", KoanIcons.playNext, picks > 0) { run(app.player::playNext) }
         BarItem("Add to Queue", "queue", KoanIcons.queue, picks > 0) { run(app.player::enqueue) }
         BarItem("Add to Playlist", "playlist", KoanIcons.playlist, picks > 0) { adding = selection.picked.map(playable) }
-        BarItem("Favourite", "favourite", KoanIcons.favourite, picks > 0) { favourite(store, selection.picked.map(playable)); selection.end() }
+        BarItem("Favourite", "favourite", KoanIcons.favourite, picks > 0) { favourite(store, selection.picked.map { playable(it).heart }); selection.end() }
         remove?.let { removal ->
-            BarItem(removal.title, removal.title, KoanIcons.remove, picks > 0, destructive = true) { confirming = selection.picked.toList() }
+            BarItem(removal.title, removal.title, KoanIcons.remove, picks > 0, destructive = true) { confirming = true }
         }
     }
-    if (remove != null) {
-        confirming?.let { picked ->
-            AlertDialog(
-                onDismissRequest = { confirming = null },
-                title = { KoanText("${remove.title} ${count(picked.size.toLong(), remove.noun)}?", role = KoanType.TitleSmall) },
-                confirmButton = {
-                    KoanButton(remove.title, {
-                        confirming = null
-                        remove.act(picked)
-                        selection.end()
-                    }, destructive = true)
-                },
-                dismissButton = { KoanButton("Cancel", { confirming = null }) },
-            )
-        }
+    // The pick is read when the removal is confirmed, so a page that redrew
+    // meanwhile is acted on as it now is.
+    if (remove != null && confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { KoanText("${remove.title} ${count(picks.toLong(), remove.noun)}?", role = KoanType.TitleSmall) },
+            confirmButton = {
+                KoanButton(remove.title, {
+                    confirming = false
+                    remove.act(selection.picked.toList())
+                    selection.end()
+                }, destructive = true)
+            },
+            dismissButton = { KoanButton("Cancel", { confirming = false }) },
+        )
     }
     adding?.let { items ->
         AddToPlaylistSheet({ items.flatMap { it.trackIds(this) } }, onAdded = selection::end) { adding = null }
@@ -255,23 +255,33 @@ internal fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: 
     }
 }
 
+/** What a heart is on: a track, a record or an artist, by id. */
+internal enum class Heart { Track, Album, Artist }
+
+private val Playable.heart
+    get() = when (this) {
+        is Playable.OfTrack -> Heart.Track to track.id
+        is Playable.OfAlbum -> Heart.Album to album.id
+        is Playable.OfArtist -> Heart.Artist to id
+    }
+
 /**
  * Hearts every one of the pick, or, where all of them are hearted already,
  * takes the hearts off: the things themselves, not the tracks behind them.
  */
-private fun favourite(store: Favourites, items: List<Playable>) {
-    fun hearted(item: Playable) = when (item) {
-        is Playable.OfTrack -> item.track.id in store.tracks.value
-        is Playable.OfAlbum -> item.album.id in store.albums.value
-        is Playable.OfArtist -> item.id in store.artists.value
+internal fun favourite(store: Favourites, items: List<Pair<Heart, Long>>) {
+    fun hearted(item: Pair<Heart, Long>) = item.second in when (item.first) {
+        Heart.Track -> store.tracks.value
+        Heart.Album -> store.albums.value
+        Heart.Artist -> store.artists.value
     }
     val all = items.all(::hearted)
-    for (item in items) {
+    for (item in items.distinct()) {
         if (hearted(item) != all) continue
-        when (item) {
-            is Playable.OfTrack -> store.toggleTrack(item.track.id)
-            is Playable.OfAlbum -> store.toggleAlbum(item.album.id)
-            is Playable.OfArtist -> store.toggleArtist(item.id)
+        when (item.first) {
+            Heart.Track -> store.toggleTrack(item.second)
+            Heart.Album -> store.toggleAlbum(item.second)
+            Heart.Artist -> store.toggleArtist(item.second)
         }
     }
 }

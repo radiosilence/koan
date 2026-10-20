@@ -18,22 +18,28 @@ sealed interface QueueRow {
     /** What the row is called, for saying what was removed. */
     val label: String
 
+    /** The queue items themselves: a heading's run, or the one track. */
+    val items: List<QueueItem>
+
     data class Album(val group: QueueGroup) : QueueRow {
         override val key get() = "album:${group.items.first().queueItemId}"
         override val itemIds get() = group.items.map { it.queueItemId }
         override val label get() = group.title
+        override val items get() = group.items
     }
 
     data class Track(val item: QueueItem) : QueueRow {
         override val key get() = item.queueItemId
         override val itemIds get() = listOf(item.queueItemId)
         override val label get() = item.title
+        override val items get() = listOf(item)
     }
 
     data class Single(val item: QueueItem) : QueueRow {
         override val key get() = item.queueItemId
         override val itemIds get() = listOf(item.queueItemId)
         override val label get() = item.title
+        override val items get() = listOf(item)
     }
 
     companion object {

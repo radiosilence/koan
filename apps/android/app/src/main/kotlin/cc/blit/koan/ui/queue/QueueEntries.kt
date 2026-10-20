@@ -62,12 +62,15 @@ import cc.blit.koan.ffi.QueueLock
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.BarItem
+import cc.blit.koan.ui.library.GoToArtists
+import cc.blit.koan.ui.library.Heart
 import cc.blit.koan.ui.library.NameLine
 import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.library.SelectionBarFrame
 import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.library.artistName
+import cc.blit.koan.ui.library.favourite
 import cc.blit.koan.ui.library.favourites
 import cc.blit.koan.ui.library.share
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -150,13 +153,29 @@ private fun QueuePage() {
         selection = emptySet()
     }
     BackHandler(selecting) { stopSelecting() }
+    // Pruned only once the queue has arrived: a pick restored with the page
+    // would otherwise be wiped by the empty queue drawn before it loads.
+    var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(built) {
-        selection = selection.filterTo(mutableSetOf()) { key -> built.any { it.key == key } }
-        if (built.isEmpty()) stopSelecting()
+        if (built.isNotEmpty()) {
+            loaded = true
+            selection = selection.filterTo(mutableSetOf()) { key -> built.any { it.key == key } }
+        } else if (loaded) {
+            stopSelecting()
+        }
     }
 
     // What the last removal took, offered back for a few seconds.
     var removed by remember { mutableStateOf<Removal?>(null) }
+    // Over the foot of the list, or above the selection bar while there is one.
+    val undoBar: @Composable (Modifier) -> Unit = { modifier ->
+        removed?.let { removal ->
+            UndoBar(removal, modifier, onTimeout = { if (removed === removal) removed = null }) {
+                removed = null
+                mirror.launch { undo(null) }
+            }
+        }
+    }
     fun remove(ids: List<String>, what: String) {
         app.player.remove(ids)
         removed = Removal(what)
@@ -264,26 +283,24 @@ private fun QueuePage() {
                 }
             }
             if (selecting) {
+                undoBar(Modifier)
                 val ids = QueueRow.itemIds(selection, built)
                 SelectionBar(
+                    built.filter { it.key in selection },
                     ids,
-                    queue.items,
                     done = ::stopSelecting,
                     // Already queued, so play next is a move to just after what is playing.
-                    playNext = {
-                        val moving = ids.filter { it != current }
-                        if (current != null && moving.isNotEmpty()) mirror.launch { moveInQueue(moving, current, true) }
+                    playNext = current?.let { playing ->
+                        {
+                            val moving = ids.filter { it != playing }
+                            if (moving.isNotEmpty()) mirror.launch { moveInQueue(moving, playing, true) }
+                        }
                     },
                     remove = { remove(ids, count(ids.size, "track")) },
                 )
             }
         }
-        removed?.let { removal ->
-            UndoBar(removal, Modifier.align(Alignment.BottomCenter), onTimeout = { if (removed === removal) removed = null }) {
-                removed = null
-                mirror.launch { undo(null) }
-            }
-        }
+        if (!selecting) undoBar(Modifier.align(Alignment.BottomCenter))
     }
 }
 
@@ -548,13 +565,21 @@ private fun Header(
 /**
  * What to do with the rows picked, at the foot of the queue, as the library's
  * bar is. The rows are queued already, so there is no Play or Add to Queue;
- * Remove asks nothing first, since the Undo bar can take it back.
+ * Play Next needs something playing to go after (`playNext` is null without
+ * it); Remove asks nothing first, since the Undo bar can take it back. A
+ * heading picked hearts its record, as one does in the library.
  */
 @Composable
-private fun SelectionBar(ids: List<String>, items: List<QueueItem>, done: () -> Unit, playNext: () -> Unit, remove: () -> Unit) {
+private fun SelectionBar(rows: List<QueueRow>, ids: List<String>, done: () -> Unit, playNext: (() -> Unit)?, remove: () -> Unit) {
     val store = favourites()
-    val picked = ids.toSet()
-    val trackIds = items.filter { it.queueItemId in picked }.mapNotNull { it.trackId }.distinct()
+    val trackIds = rows.flatMap { row -> row.items.mapNotNull { it.trackId } }.distinct()
+    val hearts = rows.mapNotNull { row ->
+        when (row) {
+            is QueueRow.Album -> row.group.items.first().albumId?.let { Heart.Album to it }
+            is QueueRow.Track -> row.item.trackId?.let { Heart.Track to it }
+            is QueueRow.Single -> row.item.trackId?.let { Heart.Track to it }
+        }
+    }
     var adding by remember { mutableStateOf(false) }
     val any = ids.isNotEmpty()
     fun then(action: () -> Unit) {
@@ -562,16 +587,9 @@ private fun SelectionBar(ids: List<String>, items: List<QueueItem>, done: () -> 
         done()
     }
     SelectionBarFrame(ids.size, done) {
-        BarItem("Play Next", "next", KoanIcons.playNext, any) { then(playNext) }
+        BarItem("Play Next", "next", KoanIcons.playNext, any && playNext != null) { playNext?.let(::then) }
         BarItem("Add to Playlist", "playlist", KoanIcons.playlist, trackIds.isNotEmpty()) { adding = true }
-        BarItem("Favourite", "favourite", KoanIcons.favourite, trackIds.isNotEmpty()) {
-            then {
-                // Hearts them all, or takes the hearts off where every one has one.
-                val hearted = store.tracks.value
-                val all = trackIds.all { it in hearted }
-                trackIds.filter { (it in hearted) == all }.forEach(store::toggleTrack)
-            }
-        }
+        BarItem("Favourite", "favourite", KoanIcons.favourite, hearts.isNotEmpty()) { then { favourite(store, hearts) } }
         BarItem("Remove", "remove", KoanIcons.remove, any, destructive = true) { then(remove) }
     }
     if (adding) AddToPlaylistSheet({ trackIds }, onAdded = done) { adding = false }
@@ -590,11 +608,9 @@ private fun QueueMenu(row: QueueRow, onDismiss: () -> Unit, remove: () -> Unit, 
     val signedIn = app.mirror.connection.collectAsStateWithLifecycle().value != null
     val store = favourites()
     val hearted by store.tracks.collectAsStateWithLifecycle()
-    val items = when (row) {
-        is QueueRow.Album -> row.group.items
-        is QueueRow.Track -> listOf(row.item)
-        is QueueRow.Single -> listOf(row.item)
-    }
+    val heartedAlbums by store.albums.collectAsStateWithLifecycle()
+    val items = row.items
+    val heading = row is QueueRow.Album
     val trackIds = items.mapNotNull { it.trackId }
     val first = items.first()
     fun act(block: () -> Unit) {
@@ -608,31 +624,43 @@ private fun QueueMenu(row: QueueRow, onDismiss: () -> Unit, remove: () -> Unit, 
         KoanDivider()
         KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { act { addToPlaylist(trackIds) } }
         KoanDivider()
-        val trackId = first.trackId.takeIf { row !is QueueRow.Album }
+        val trackId = first.trackId.takeIf { !heading }
         if (trackId != null) {
             val on = trackId in hearted
             KoanMenuItem(if (on) "Remove Favourite" else "Favourite Track", if (on) KoanIcons.favourited else KoanIcons.favourite) {
                 act { store.toggleTrack(trackId) }
             }
         }
-        first.albumId?.let { albumId ->
-            KoanMenuItem("Go to Album", KoanIcons.album) { act { nav.push(AlbumRoute(albumId, trackId)) } }
+        val albumId = first.albumId
+        if (heading && albumId != null) {
+            val on = albumId in heartedAlbums
+            KoanMenuItem(if (on) "Remove Favourite" else "Favourite Album", if (on) KoanIcons.favourited else KoanIcons.favourite) {
+                act { store.toggleAlbum(albumId) }
+            }
         }
+        if (signedIn) {
+            val (title, name) = if (heading) "Share Album" to (row as QueueRow.Album).group.title else "Share" to first.title
+            KoanMenuItem(title, KoanIcons.share) { act { app.share(context, name) { trackIds } } }
+        }
+        // A track knows whether its file is here; a run is usually part of the way there, and both apply.
         if (trackId != null) {
-            val showInfo = LocalShowTrackInfo.current
-            KoanMenuItem("Info…", KoanIcons.info) { act { showInfo(trackId) } }
             if (first.onDisk) {
                 KoanMenuItem("Remove Download", KoanIcons.clear) { act { app.mirror.launch { clearDownloads(listOf(trackId)) } } }
             } else {
                 KoanMenuItem("Download", KoanIcons.downloads) { act { app.mirror.launch { downloadToCache(listOf(trackId)) } } }
             }
+        } else {
+            KoanMenuItem("Download All", KoanIcons.downloads) { act { app.mirror.launch { downloadToCache(trackIds) } } }
+            KoanMenuItem("Remove Downloads", KoanIcons.clear) { act { app.mirror.launch { clearDownloads(trackIds) } } }
         }
-        if (signedIn) {
-            val (title, name) = when (row) {
-                is QueueRow.Album -> "Share Album" to "${row.group.albumArtist} — ${row.group.album}"
-                else -> "Share" to first.title
-            }
-            KoanMenuItem(title, KoanIcons.share) { act { app.share(context, name) { trackIds } } }
+        KoanDivider()
+        if (albumId != null) {
+            KoanMenuItem("Go to Album", KoanIcons.album) { act { nav.push(AlbumRoute(albumId, trackId)) } }
+        }
+        if (heading) GoToArtists(first.albumArtistCredit, first.albumArtistId, onDismiss) else GoToArtists(first.artistCredit, first.artistId, onDismiss)
+        if (trackId != null) {
+            val showInfo = LocalShowTrackInfo.current
+            KoanMenuItem("Info…", KoanIcons.info) { act { showInfo(trackId) } }
         }
     }
 }
