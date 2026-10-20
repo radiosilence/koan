@@ -348,7 +348,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">doc
       <p>Stick it behind a reverse proxy with TLS at the hostname you listed, or use the <a
           href="/docs/headless-server/#docker-compose">Docker Compose file</a>, which runs Caddy in front and sorts the
         certificate out itself. The server refuses any <code>Host</code> it wasn't given, and won't start without
-        <code>KOAN_SERVER__URL</code>, the address every link it hands out is built on. The first admin is made on the setup page the server shows until one exists (whoever gets there first wins, so do it straight away) or from a shell, like above; after that,
+        <code>KOAN_SERVER__URL</code>, the address every link it hands out is built on. Run the <code>koan auth setup</code> line straight away: until an account exists the server shows a setup page, and whoever reaches it first becomes the admin. Opening the hostname and filling that page in works too. After that,
         add people from the web UI's Users page or with <code>koan auth create-user</code>. Without a container,
         <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>. <a
           href="/docs/headless-server/">Running a server</a> has the details, and <a
@@ -613,7 +613,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
           only sign in with a token. Favourites, ratings, bookmarks and a saved play queue are kept per account, so
           Symfonium or Feishin can pick up a queue another device left, and a stream gets transcoded to Opus, MP3 or AAC
           for an app that asks for a lower bitrate.</li>
-        <li><strong>Scrobbling.</strong> Each account can connect ListenBrainz, from the web UI or the apps' settings, or Last.fm from the web UI,
+        <li><strong>Scrobbling.</strong> Each account can connect ListenBrainz, from the web UI or the apps' settings, or Last.fm through the web UI,
           and the server sends every play its apps report, so you don't have to set it up in each app. See <a
             href="/docs/headless-server/#scrobbling">Scrobbling</a>.</li>
         <li><strong>Accounts.</strong> Admin, user and read-only roles, plus API keys and app passwords you can revoke

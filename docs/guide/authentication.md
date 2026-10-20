@@ -6,7 +6,7 @@ kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default
 
 ```bash
 koan auth setup               # signing keys and the first admin account
-koan --headless --port 4000
+KOAN_SERVER__URL=http://localhost:4000 koan --headless --port 4000
 
 # Sign in: returns an access token, a refresh token and its lifetime
 curl -s -X POST http://localhost:4000/auth/login \
@@ -266,7 +266,7 @@ Two things differ from an app's session. A client id is a JWT signed with the se
 ## GraphQL Playground
 
 ```bash
-koan --headless --playground
+KOAN_SERVER__URL=http://localhost:4000 koan --headless --playground
 # Prints: GraphiQL: http://127.0.0.1:4000/graphql?introspection-key=<uuid>
 # Auto-opens the browser. The introspection key is injected into all requests.
 # Key is process-scoped — dies when the server exits.

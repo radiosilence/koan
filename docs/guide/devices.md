@@ -11,7 +11,7 @@ Playing, make the two choices:
   mini player's button.
 - **Output** (a speaker) is where the device in view plays. For this device,
   that is each of its audio devices (built-in speakers, a USB DAC, a display;
-  on a phone, the route iOS chose) and the UPnP amplifiers it can see. Picking
+  on a phone, the route the system chose) and, on the Mac and Android, the UPnP amplifiers it can see. Picking
   one keeps the queue and transport where they are and moves only the sound.
   On a phone, AirPlay has its own button beside it: the system's picker, since
   no app may pick a speaker itself. On the Mac, choose an AirPlay speaker in

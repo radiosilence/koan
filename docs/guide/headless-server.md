@@ -120,7 +120,7 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
+The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
 - **Albums, artists and tracks** sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the apps offer, so a filtered view can be bookmarked or sent.
 - **Playlists** are the account's own and anyone's public ones, played or queued like an album. They are edited from the apps.
@@ -237,7 +237,7 @@ Sign-in, and which credential each kind of client should use, is in [Authenticat
 
 ## Scrobbling
 
-Each account can forward its plays to ListenBrainz, from the web UI's Scrobbling page (linked from Account) or Settings → Integrations → Scrobbling in the Mac, iOS and Android apps, and to Last.fm, from the web UI only (see [Last.fm](#last.fm)). For ListenBrainz, paste the user token from its settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
+Each account can forward its plays to ListenBrainz, from the web UI's Scrobbling page (linked from Account) or Settings → Integrations → Scrobbling in the Mac, iOS and Android apps, and to Last.fm, through the web UI's page, which the terminal UI's Settings also opens (see [Last.fm](#lastfm)). For ListenBrainz, paste the user token from its settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
 
 Plays wait in the database until ListenBrainz accepts them, so a restart or an outage delays them rather than losing them; the page shows how many are waiting. A token ListenBrainz stops accepting is shown there, and plays are kept until the account connects again. Plays the server's own player records are forwarded in the history sent on connecting, when they were listened to for half the track or four minutes, but not as they happen. Tracks without an artist or title are not sent.
 
