@@ -93,7 +93,7 @@ pub fn cut_off() -> bool {
         return false;
     }
     // A server known not to keep a link never reports one up.
-    if crate::remote::profile::current().is_some_and(|p| !p.offers(crate::remote::profile::LINK)) {
+    if crate::remote::profile::current().is_some_and(|p| !p.links()) {
         return false;
     }
     down_since()
