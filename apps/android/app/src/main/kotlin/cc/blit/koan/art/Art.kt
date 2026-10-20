@@ -37,7 +37,7 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
     /** The engine has said there is no such cover, at any size. */
     val missing get() = synchronized(misses) { record in misses }
 
-    private val record get() = "${kind.name.lowercase()}:$id"
+    private val record get() = record(kind, id)
 
     companion object {
         /**
@@ -55,9 +55,14 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
          */
         val generation = mutableIntStateOf(0)
 
-        internal fun forget(arts: List<Art>) = synchronized(misses) {
-            arts.forEach { misses.remove(it.record) }
-            generation.intValue++
+        private fun record(kind: Kind, id: Long) = "${kind.name.lowercase()}:$id"
+
+        internal fun forget(arts: List<Pair<Kind, Long>>) {
+            if (arts.isEmpty()) return
+            synchronized(misses) {
+                arts.forEach { (kind, id) -> misses.remove(record(kind, id)) }
+                generation.intValue++
+            }
         }
 
         internal fun none(art: Art, since: Int) = synchronized(misses) {
@@ -148,7 +153,7 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
             val gone = artEvictions(seq)
             seq = gone.seq
             val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
-            Art.forget(arts.map { (kind, id) -> Art(kind, id, ArtSize.Thumb) })
+            Art.forget(arts)
             for ((kind, id) in arts) {
                 for (size in ArtSize.entries) {
                     val key = Art(kind, id, size).key
