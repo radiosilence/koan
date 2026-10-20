@@ -1,0 +1,1 @@
+- **Android queue menus act on the queue.** A queue row's menu plays from that row and removes it, as the iPhone's does, rather than replacing the queue; a record heading removes its run; the select bar adds Add to Playlist and Favourite, and bulk Remove and Forget on playlists and history ask first.
