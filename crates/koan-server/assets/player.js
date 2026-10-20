@@ -13,6 +13,8 @@
 //
 // A track is { src, dur (seconds), title, artist, album, cover }; any other
 // fields ride along untouched.
+//
+// Both pages also get the tooltips at the end of this file.
 window.KoanPlayer = (opts = {}) => {
   const LONG = 900; // seconds
   const changed = opts.onChange || (() => {});
@@ -291,3 +293,21 @@ window.KoanPlayer = (opts = {}) => {
   };
   return api;
 };
+
+// Text cut short by an ellipsis has the whole of it as its tooltip, on every
+// page, with nothing in the markup asking for it. Decided as the pointer
+// arrives, so it follows the width the text has now, and never put over a
+// title the page gave the element itself: a title is ours only while it is the
+// text we put there.
+document.addEventListener("pointerover", (e) => {
+  for (let el = e.target; el instanceof Element && el !== document.body; el = el.parentElement) {
+    if (getComputedStyle(el).textOverflow !== "ellipsis") continue;
+    const ours = el.hasAttribute("data-cut") && el.title === el.dataset.cut;
+    if (el.title && !ours) continue;
+    if (el.scrollWidth > el.clientWidth) {
+      el.title = el.dataset.cut = el.innerText.trim();
+      return;
+    }
+    if (ours) el.removeAttribute("title");
+  }
+}, { passive: true });

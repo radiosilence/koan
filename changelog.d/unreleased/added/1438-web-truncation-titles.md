@@ -1,0 +1,1 @@
+- **Tooltips on truncated text in the web UI.** Any title or credit cut short by an ellipsis shows its full text on hover, on the web UI and the share page.
