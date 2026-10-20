@@ -111,14 +111,22 @@ macos-icon:
 # One slice, for the machine doing the building: a universal binary is two
 # cross builds lipo'd together, most of a release job's time and disk.
 # `macos-verify` fails if the assembled app is not the architecture asked for.
+#
+# `KOAN_FFI_PROFILE=debug` builds the dev profile instead, which shares its
+# dependencies with `cargo test`: pull request CI checks the app against it.
 macos-ffi:
     #!/usr/bin/env bash
     set -euo pipefail
     # Match what SwiftPM links against. Without it cargo builds for the host's
     # OS and every link is a page of "built for newer macOS version" warnings.
     export MACOSX_DEPLOYMENT_TARGET=26.0
-    cargo build --release -p koan-ffi
-    lib=${CARGO_TARGET_DIR:-target}/release/libkoan_ffi.a
+    profile=${KOAN_FFI_PROFILE:-release}
+    case "$profile" in
+        release) cargo build --release -p koan-ffi ;;
+        debug) cargo build -p koan-ffi ;;
+        *) echo "KOAN_FFI_PROFILE must be release or debug, not $profile" >&2; exit 1 ;;
+    esac
+    lib=${CARGO_TARGET_DIR:-target}/$profile/libkoan_ffi.a
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
