@@ -1652,8 +1652,14 @@ fn song_extras<'a>(
             tracks.iter().map(|t| t.id),
         )?,
         starred: starred(db, user, Favourite::Track, &ids)?,
-        library: (caller.role == Role::Admin)
-            .then(|| Config::load().unwrap_or_default().library.folders),
+        library: (caller.role == Role::Admin).then(|| {
+            Config::cached()
+                .library
+                .folders
+                .iter()
+                .map(|f| koan_core::index::spelling::on_disk(f))
+                .collect()
+        }),
     })
 }
 
@@ -1993,20 +1999,22 @@ pub(crate) fn extension_to_mime(ext: &str) -> &str {
     }
 }
 
-/// Resolve a track's file path (local preferred, then cached).
 /// A file as Subsonic's `path`: relative to the library folder that holds it,
 /// as Navidrome sends it, or whole for a file imported from elsewhere.
+/// `folders` are spelled as on disk, as the indexed paths are.
 fn library_path(path: &str, folders: &[PathBuf]) -> String {
     let path = std::path::Path::new(path);
     folders
         .iter()
         .filter_map(|folder| path.strip_prefix(folder).ok())
+        .filter(|rest| !rest.as_os_str().is_empty())
         .min_by_key(|rest| rest.components().count())
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned()
 }
 
+/// Resolve a track's file path (local preferred, then cached).
 pub(crate) fn track_file_path(track: &queries::TrackRow) -> Option<&str> {
     track.path.as_deref().or(track.cached_path.as_deref())
 }
@@ -8620,6 +8628,7 @@ mod tests {
         assert_eq!(path("/music/classical/Bach/01.flac"), "Bach/01.flac");
         assert_eq!(path("/music/Burial/01.flac"), "Burial/01.flac");
         assert_eq!(path("/imported/01.flac"), "/imported/01.flac");
+        assert_eq!(path("/music"), "/music", "never empty");
     }
 
     /// Typed attributes must not change the XML wire format: every attribute is
