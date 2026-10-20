@@ -7,13 +7,12 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 
 use async_graphql::Enum;
 use koan_core::helpers::WatchScan;
-use koan_core::index::scanner::{ScanEvent, ScanResult};
+use koan_core::index::scanner::ScanResult;
 use uuid::Uuid;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
@@ -237,9 +236,6 @@ pub(crate) const REREAD: &str = "reread";
 /// the folders, every so often, or for a folder newly added.
 pub(crate) const WATCH: &str = "watch";
 
-/// How many files a scan reads between progress reports.
-const REPORT_EVERY: u64 = 50;
-
 /// Scan the library folders as a job. With `reread`, every file's tags are
 /// read again, ignoring the scan cache: for when what koan takes from tags
 /// changes and files that have not changed need reading again. Progress
@@ -258,23 +254,16 @@ pub(crate) fn start_scan(
         move |db, progress| {
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             crate::clients::changed_if_library_moved(&db.conn);
-            let to_read = Arc::new(AtomicU64::new(0));
-            let read = AtomicU64::new(0);
-            let on_track: &dyn Fn(ScanEvent) = &|_| {
-                let done = read.fetch_add(1, Ordering::Relaxed) + 1;
-                if done.is_multiple_of(REPORT_EVERY) {
-                    progress.read(done, to_read.load(Ordering::Relaxed));
-                }
-            };
+            let on_read = |done, total| progress.read(done, total);
             let result = koan_core::index::scanner::full_scan(
                 &db,
                 &cfg.library.folders,
                 koan_core::index::scanner::ScanOptions {
                     force: reread,
-                    to_read: Some(to_read.clone()),
+                    on_read: Some(&on_read),
                     ..Default::default()
                 },
-                Some(on_track),
+                None,
             );
             crate::clients::changed_if_library_moved(&db.conn);
             outcome(&result)

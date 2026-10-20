@@ -1,0 +1,1 @@
+- **Scan progress counts every file first.** A scan decides which files it will read in every library folder before reading any, so its total stays fixed and its bar never jumps back. Files whose tags cannot be read count as read, so the bar ends full, and progress is reported for each batch rather than every 50 files.

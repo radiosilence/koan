@@ -107,6 +107,7 @@ struct Shell<'a> {
     title: &'a str,
     content: &'a Html,
     username: &'a str,
+    /// Whether the wide sidebar links the Library page, for its rescan.
     admin: bool,
     auth_enabled: bool,
     proxied: bool,
@@ -1025,6 +1026,8 @@ pub(super) async fn search_results(
 #[derive(Template)]
 #[template(path = "pages/library.html")]
 struct LibraryPage {
+    /// Whether the page has the rescan, which a wide screen shows alone.
+    rescan: bool,
     scan: Html,
 }
 
@@ -1036,6 +1039,7 @@ pub(super) async fn library(
     headers: HeaderMap,
 ) -> Response {
     let inner = LibraryPage {
+        rescan: super::scan::allowed(&user),
         scan: super::scan::section(&s, &user),
     }
     .html();

@@ -22,6 +22,8 @@ use crate::html::{Html, Render};
 
 const KINDS: [&str; 3] = [SCAN, REREAD, WATCH];
 
+/// Who may rescan: an admin. The one test for the section, its routes, and
+/// the wide sidebar's link to the Library page that holds it.
 pub(super) fn allowed(user: &AuthUser) -> bool {
     user.role == Role::Admin
 }
@@ -81,12 +83,14 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
             ),
         }
     });
-    let bar = job
-        .filter(|j| j.state == JobState::Running)
-        .map(|j| match (j.done, j.total) {
-            (Some(done), Some(total)) if total > 0 => Bar::Read(done, total),
-            _ => Bar::Counting,
-        });
+    // A scan whose count came to nothing has no bar: it is about to end.
+    let bar =
+        job.filter(|j| j.state == JobState::Running)
+            .and_then(|j| match j.done.zip(j.total) {
+                None => Some(Bar::Counting),
+                Some((_, 0)) => None,
+                Some((done, total)) => Some(Bar::Read(done, total)),
+            });
     Status {
         follow: on_load,
         line,

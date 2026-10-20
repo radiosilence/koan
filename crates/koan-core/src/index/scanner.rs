@@ -1,8 +1,9 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 use std::time::UNIX_EPOCH;
 
 use rayon::prelude::*;
@@ -46,8 +47,8 @@ pub struct ScanResult {
 }
 
 /// How a scan should behave.
-#[derive(Debug, Clone, Default)]
-pub struct ScanOptions {
+#[derive(Clone, Default)]
+pub struct ScanOptions<'a> {
     /// Re-read tags for every file, ignoring `scan_cache`.
     pub force: bool,
     /// Set from another thread to stop early.
@@ -61,10 +62,64 @@ pub struct ScanOptions {
     /// audio files is still left alone, and an IO error still never counts as
     /// "file gone".
     pub force_remove: bool,
-    /// Counts the files whose tags the scan will read, raised as each
-    /// directory's are known: with the scan cache, only the changed files,
-    /// which is what a progress bar over `on_track` counts against.
-    pub to_read: Option<Arc<AtomicU64>>,
+    /// Told how far reading has got, as `(read, to_read)`: once with
+    /// `(0, to_read)` when every folder's files to read are known and before
+    /// any is read, then after each batch is stored. `to_read` is fixed for
+    /// the scan: every file when forced, otherwise only those the scan cache
+    /// does not vouch for. `read` counts every file read, whether or not its
+    /// tags could be, so it ends at `to_read` unless the scan stops early.
+    pub on_read: Option<&'a dyn Fn(u64, u64)>,
+}
+
+impl std::fmt::Debug for ScanOptions<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScanOptions")
+            .field("force", &self.force)
+            .field("cancel", &self.cancel)
+            .field("force_remove", &self.force_remove)
+            .field("on_read", &self.on_read.is_some())
+            .finish()
+    }
+}
+
+/// A scan's reading progress, counted against a total fixed before the first
+/// file is read: see [`ScanOptions::on_read`].
+struct Tally<'a> {
+    on_read: Option<&'a dyn Fn(u64, u64)>,
+    total: u64,
+    read: Cell<u64>,
+}
+
+impl<'a> Tally<'a> {
+    /// The count is final: tell the caller before anything is read.
+    fn counted(opts: &ScanOptions<'a>, total: usize) -> Self {
+        let total = total as u64;
+        if let Some(on_read) = opts.on_read {
+            on_read(0, total);
+        }
+        Self {
+            on_read: opts.on_read,
+            total,
+            read: Cell::new(0),
+        }
+    }
+
+    /// For reads nobody follows.
+    fn silent() -> Self {
+        Self {
+            on_read: None,
+            total: 0,
+            read: Cell::new(0),
+        }
+    }
+
+    fn read(&self, files: usize) {
+        let read = self.read.get() + files as u64;
+        self.read.set(read);
+        if let Some(on_read) = self.on_read {
+            on_read(read, self.total);
+        }
+    }
 }
 
 /// Files per transaction. Bounds peak memory (only one chunk's metadata is
@@ -143,13 +198,56 @@ fn scan_folders_in_lane(
                 .sum(),
         );
     }
+    let planned: Vec<Planned> = walked
+        .into_iter()
+        .map(|(path, found, result)| Planned::new(db, path, found, result, opts.force))
+        .collect();
+    let tally = Tally::counted(opts, planned.iter().map(|p| p.to_read.len()).sum());
+    index_planned(db, planned, opts, on_track, &tally)
+}
 
+/// A library folder walked, with the files whose tags its scan will read.
+/// Every folder's are decided before any is read, so the scan's count of
+/// files to read is fixed from the first.
+struct Planned {
+    path: PathBuf,
+    found: Walked,
+    result: ScanResult,
+    to_read: Vec<PathBuf>,
+}
+
+impl Planned {
+    fn new(db: &Database, path: PathBuf, found: Walked, result: ScanResult, force: bool) -> Self {
+        let to_read = needs_reading(db, &found.audio, std::slice::from_ref(&path), force);
+        Self {
+            path,
+            found,
+            result,
+            to_read,
+        }
+    }
+}
+
+/// Index walked folders, and then prune and read the playlists of each.
+fn index_planned(
+    db: &Database,
+    planned: Vec<Planned>,
+    opts: &ScanOptions,
+    on_track: Option<&dyn Fn(ScanEvent)>,
+    tally: &Tally,
+) -> ScanResult {
     // Every folder is indexed before any is pruned, so a file moved from one
     // library folder to another is found at its new path before it is missed
     // at its old one, and keeps its track.
     let mut indexed = Vec::new();
     let (mut cancelled, mut stopped) = (false, false);
-    for (path, found, mut result) in walked {
+    for Planned {
+        path,
+        found,
+        mut result,
+        to_read,
+    } in planned
+    {
         let seen = stored_paths(&found.audio);
         if cancelled || stopped {
             // Not indexed, but its rows may have moved into a folder that was:
@@ -168,7 +266,17 @@ fn scan_folders_in_lane(
         } else {
             vec![path.clone()]
         };
-        let prune = index_folder(db, &path, found.audio, opts, on_track, &mut result);
+        let found_files = found.audio.len();
+        let prune = index_folder(
+            db,
+            &path,
+            found_files,
+            to_read,
+            opts,
+            on_track,
+            tally,
+            &mut result,
+        );
         cancelled |= result.cancelled;
         // A database that would not take one folder's writes is not asked
         // for the next one's.
@@ -214,19 +322,21 @@ fn scan_folders_in_lane(
 
 /// Index a library folder's files. Whether its stale rows may then be
 /// removed.
+#[allow(clippy::too_many_arguments)]
 fn index_folder(
     db: &Database,
     path: &Path,
-    audio_files: Vec<PathBuf>,
+    total_files: usize,
+    to_read: Vec<PathBuf>,
     opts: &ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
+    tally: &Tally,
     result: &mut ScanResult,
 ) -> bool {
-    let total_files = audio_files.len();
     log::info!("found {} audio files in {}", total_files, path.display());
 
-    let scope = [path.to_path_buf()];
-    index_files(db, audio_files, &scope, opts, on_track, result, path);
+    result.skipped += total_files - to_read.len();
+    read_files(db, to_read, opts, on_track, tally, result, path);
 
     // Remove tracks for files that no longer exist. A folder that yielded nothing
     // is far more likely to be an unmounted volume than a library someone emptied,
@@ -275,16 +385,23 @@ pub fn scan_dirs(
     let mut playlists = Vec::new();
     let mut walked = Vec::new();
     let mut settled = Vec::new();
+    // Library folders named whole, scanned as `scan_folders` scans them.
+    let mut roots = Vec::new();
     for dir in minimal_dirs(dirs) {
         let Some(root) = library.iter().find(|root| dir.starts_with(root)) else {
             log::warn!("not in a library folder, not scanning: {}", dir.display());
             continue;
         };
         if dir == *root {
-            merge(
-                &mut result,
-                scan_folders_in_lane(db, std::slice::from_ref(root), &opts, None, on_track),
-            );
+            let mut walked_root = ScanResult::default();
+            let found = walk(root, &mut walked_root);
+            roots.push(Planned::new(
+                db,
+                root.clone(),
+                found,
+                walked_root,
+                opts.force,
+            ));
             continue;
         }
         if !is_populated(root) {
@@ -315,13 +432,27 @@ pub fn scan_dirs(
         }
     }
 
+    // Every file to read is known before any is read: the roots' and the
+    // directories'.
+    let to_read = needs_reading(db, &files, &walked, opts.force);
+    let tally = Tally::counted(
+        &opts,
+        roots.iter().map(|p| p.to_read.len()).sum::<usize>() + to_read.len(),
+    );
+    for root in roots {
+        merge(
+            &mut result,
+            index_planned(db, vec![root], &opts, on_track, &tally),
+        );
+    }
     let seen = stored_paths(&files);
-    index_files(
+    result.skipped += files.len() - to_read.len();
+    read_files(
         db,
-        files,
-        &walked,
+        to_read,
         &opts,
         on_track,
+        &tally,
         &mut result,
         Path::new(""),
     );
@@ -468,21 +599,42 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
 /// commit ends the run; batches committed before it stay committed.
 fn index_files(
     db: &Database,
-    mut audio_files: Vec<PathBuf>,
+    audio_files: Vec<PathBuf>,
     scope: &[PathBuf],
     opts: &ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
     result: &mut ScanResult,
     context: &Path,
 ) {
-    let total_files = audio_files.len();
-    if total_files == 0 {
-        return;
-    }
+    let to_read = needs_reading(db, &audio_files, scope, opts.force);
+    result.skipped += audio_files.len() - to_read.len();
+    read_files(
+        db,
+        to_read,
+        opts,
+        on_track,
+        &Tally::silent(),
+        result,
+        context,
+    );
+}
 
+/// The files among `audio_files` whose tags need reading: every one when
+/// `force`, otherwise those the scan cache does not hold at their current
+/// size and mtime. `scope` holds the directories and files they were walked
+/// from: the cache is read for those alone.
+fn needs_reading(
+    db: &Database,
+    audio_files: &[PathBuf],
+    scope: &[PathBuf],
+    force: bool,
+) -> Vec<PathBuf> {
+    if audio_files.is_empty() {
+        return Vec::new();
+    }
     // The scope's cache entries in one read, rather than a lookup per file.
-    let files_to_scan: Vec<PathBuf> = if opts.force {
-        std::mem::take(&mut audio_files)
+    if force {
+        audio_files.to_vec()
     } else {
         let scan_cache = queries::load_scan_cache(&db.conn, scope).unwrap_or_default();
         // One stat per file; in parallel, since on a network mount each is a round trip.
@@ -509,14 +661,21 @@ fn index_files(
             })
             .cloned()
             .collect()
-    };
+    }
+}
 
-    result.skipped += total_files - files_to_scan.len();
-    if let Some(to_read) = &opts.to_read {
-        to_read.fetch_add(
-            files_to_scan.len() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+/// Read and store `files_to_scan`, telling `tally` as each batch is stored.
+fn read_files(
+    db: &Database,
+    files_to_scan: Vec<PathBuf>,
+    opts: &ScanOptions,
+    on_track: Option<&dyn Fn(ScanEvent)>,
+    tally: &Tally,
+    result: &mut ScanResult,
+    context: &Path,
+) {
+    if files_to_scan.is_empty() {
+        return;
     }
 
     // Tag reads and database writes run at the same time.
@@ -597,6 +756,7 @@ fn index_files(
             }
         };
 
+        let files = batch.len();
         let (mut added, mut updated) = (0usize, 0usize);
         let mut arrived = Vec::new();
         // Told once the batch is committed: a rolled-back track was never added.
@@ -640,6 +800,7 @@ fn index_files(
                 result.added += added;
                 result.updated += updated;
                 result.arrived.extend(arrived);
+                tally.read(files);
                 if let Some(cb) = &on_track {
                     for (file_path, meta, is_new) in &stored {
                         cb(ScanEvent {
@@ -932,8 +1093,49 @@ mod tests {
         Database::open(&db_path).unwrap()
     }
 
-    /// `to_read` counts what the scan will read: every file the first time,
-    /// only the changed one after.
+    /// Every folder's files to read are counted before the first is read, so
+    /// the total is the whole scan's from the start; and a file whose tags
+    /// cannot be read still counts as read, so the count reaches the total.
+    #[test]
+    fn on_read_has_the_whole_count_first_and_ends_at_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (one, two) = (dir.path().join("one"), dir.path().join("two"));
+        for (folder, names) in [(&one, ["a.wav", "b.wav"]), (&two, ["c.wav", "d.wav"])] {
+            std::fs::create_dir_all(folder).unwrap();
+            for name in names {
+                test_utils::generate_wav(&folder.join(name), 8000, 1, 0.1, 16);
+            }
+        }
+        // An empty file, whose tags cannot be read.
+        std::fs::write(two.join("e.wav"), b"").unwrap();
+        let db = test_db(dir.path());
+        let reports = std::cell::RefCell::new(Vec::new());
+        let on_read = |done, total| reports.borrow_mut().push((done, total));
+        let reported_at_first_track = std::cell::Cell::new(None);
+        let on_track = |_: ScanEvent| {
+            if reported_at_first_track.get().is_none() {
+                reported_at_first_track.set(reports.borrow().first().copied());
+            }
+        };
+        let opts = ScanOptions {
+            on_read: Some(&on_read),
+            ..Default::default()
+        };
+        let result = scan_folders(&db, &[one, two], opts, None, Some(&on_track));
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+        assert_eq!(reported_at_first_track.get(), Some((0, 5)));
+        let reports = reports.into_inner();
+        assert_eq!(
+            reports.iter().filter(|(done, _)| *done == 0).count(),
+            1,
+            "counted once: {reports:?}"
+        );
+        assert!(reports.iter().all(|&(_, total)| total == 5), "{reports:?}");
+        assert_eq!(reports.last(), Some(&(5, 5)));
+    }
+
+    /// `on_read` counts against what the scan will read: every file the first
+    /// time, only the changed one after.
     #[test]
     fn to_read_counts_the_files_whose_tags_are_read() {
         let dir = tempfile::tempdir().unwrap();
@@ -944,13 +1146,18 @@ mod tests {
         }
         let db = test_db(dir.path());
         let counted = |db: &Database| {
-            let to_read = Arc::new(AtomicU64::new(0));
+            let reports = std::cell::RefCell::new(Vec::new());
+            let on_read = |done, total| reports.borrow_mut().push((done, total));
             let opts = ScanOptions {
-                to_read: Some(to_read.clone()),
+                on_read: Some(&on_read),
                 ..Default::default()
             };
             scan_folder(db, &music, opts, None);
-            to_read.load(std::sync::atomic::Ordering::Relaxed)
+            let reports = reports.into_inner();
+            let total = reports[0].1;
+            assert_eq!(reports[0], (0, total), "counted before any is read");
+            assert_eq!(reports.last(), Some(&(total, total)), "{reports:?}");
+            total
         };
         assert_eq!(counted(&db), 3);
 

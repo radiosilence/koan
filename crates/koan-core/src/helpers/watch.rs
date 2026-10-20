@@ -1,7 +1,6 @@
 //! The library watch and auto-sync threads, and the lock that lets one process at a time run them.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::Config;
 use crate::db::connection::Database;
@@ -45,7 +44,9 @@ pub enum WatchScan<'a> {
     /// A scan is starting, and why: `start-up`, `folder change`, `periodic`
     /// or `new folder`. It may yet wait for another scan to leave the lane.
     Started(&'static str),
-    /// Files whose tags were read, of those found so far to need reading.
+    /// Files read, of those the scan will read: first `done: 0`, once the
+    /// count is known, then after each batch stored. See
+    /// [`ScanOptions::on_read`](crate::index::scanner::ScanOptions::on_read).
     Read {
         done: u64,
         total: u64,
@@ -100,8 +101,6 @@ pub fn spawn_library_watch(
     // asking for a rescan. Unchanged files are skipped on mtime and size, so an
     // idle one is a second's work.
     const RESCAN: Duration = Duration::from_secs(15 * 60);
-    // Files read between progress reports.
-    const REPORT_EVERY: u64 = 50;
 
     std::thread::Builder::new()
         .name("koan-library-watch".into())
@@ -142,25 +141,17 @@ pub fn spawn_library_watch(
                     return;
                 }
                 on_scan(WatchScan::Started(reason));
-                let to_read = std::sync::Arc::new(AtomicU64::new(0));
+                let on_read = |done, total| on_scan(WatchScan::Read { done, total });
                 let opts = ScanOptions {
-                    to_read: Some(to_read.clone()),
+                    on_read: Some(&on_read),
                     ..Default::default()
-                };
-                let read = AtomicU64::new(0);
-                let on_track = |_: scanner::ScanEvent| {
-                    let done = read.fetch_add(1, Ordering::Relaxed) + 1;
-                    if done.is_multiple_of(REPORT_EVERY) {
-                        let total = to_read.load(Ordering::Relaxed);
-                        on_scan(WatchScan::Read { done, total });
-                    }
                 };
                 // A scan that panics is reported as stopped part way, and the
                 // watch carries on: the next change or rescan tries again.
                 let result =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match dirs {
-                        Some(dirs) => scanner::scan_dirs(&db, folders, dirs, opts, Some(&on_track)),
-                        None => scanner::full_scan(&db, folders, opts, Some(&on_track)),
+                        Some(dirs) => scanner::scan_dirs(&db, folders, dirs, opts, None),
+                        None => scanner::full_scan(&db, folders, opts, None),
                     }))
                     .unwrap_or_else(|_| {
                         log::error!("{reason} scan panicked");

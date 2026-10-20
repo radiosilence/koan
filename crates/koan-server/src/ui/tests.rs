@@ -3009,21 +3009,27 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
             .unwrap()
     };
 
-    // The sidebar links the Library page for an admin, who finds the scan
-    // there; for anyone else it is the phone's tab alone.
-    const WIDE_LINK: &str = r#"href="/library" data-nav="library">"#;
+    // A wide screen's sidebar links the Library page for an admin only.
+    let wide_link = "href=\"/library\" data-nav=\"library\"";
     let r = send(&f.app, library(&access_token(&f.state))).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains("/library/scan"), "{}", r.body);
-    assert!(!r.body.contains(WIDE_LINK), "{}", r.body);
+    assert!(!r.body.contains(wide_link), "{}", r.body);
+    let hidden_lists = "<ul class=\"wide:hidden\">";
+    assert!(
+        !r.body.contains(hidden_lists),
+        "the lists are all a listener's page has: {}",
+        r.body
+    );
     let r = send(&f.app, scan(&access_token(&f.state), "{}")).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     let r = send(&f.app, library(&admin)).await;
     assert!(r.body.contains("@post('/library/scan')"), "{}", r.body);
-    assert!(r.body.contains(WIDE_LINK), "{}", r.body);
+    assert!(r.body.contains(wide_link), "{}", r.body);
+    assert!(r.body.contains(hidden_lists), "{}", r.body);
     assert!(
-        !r.body.contains(r#"aria-label="Scan progress""#),
+        !r.body.contains("aria-label=\"Scan progress\""),
         "no bar while idle: {}",
         r.body
     );
@@ -3059,10 +3065,18 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     record(&koan_core::helpers::WatchScan::Started("start-up"));
     let r = send(&f.app, library(&admin)).await;
     assert!(
-        r.body.contains(r#"aria-label="Scan progress"></progress>"#),
-        "a bar with no value until the files are counted: {}",
+        r.body.contains("aria-label=\"Scan progress\"></progress>")
+            && !r.body.contains("max=\"1200\""),
+        "indeterminate until the files are counted: {}",
         r.body
     );
+    // Counted before any file is read, so the bar has its end from the start.
+    record(&koan_core::helpers::WatchScan::Read {
+        done: 0,
+        total: 1200,
+    });
+    let r = send(&f.app, library(&admin)).await;
+    assert!(r.body.contains("value=\"0\" max=\"1200\""), "{}", r.body);
     record(&koan_core::helpers::WatchScan::Read {
         done: 50,
         total: 1200,
@@ -3074,5 +3088,9 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         "{}",
         r.body
     );
-    assert!(r.body.contains(r#"value="50" max="1200""#), "{}", r.body);
+    assert!(
+        r.body.contains("value=\"50\" max=\"1200\""),
+        "the bar follows the count: {}",
+        r.body
+    );
 }

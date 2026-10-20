@@ -143,7 +143,7 @@ Admin accounts find Rescan at the foot of the Library page, which the sidebar li
 
 **Read every file again** ignores the scan cache and reads every file's tags. An upgrade that reads more from tags needs this, since the files themselves did not change (`triggerScan(reread: true)`).
 
-The section also shows the scans the server runs by itself, with what started each, how many of the files it found it has read, and how it ended. A bar under the status fills as files are read; until the files are counted it moves without filling. The start-up scan after an upgrade that empties the scan cache reads every file and can take a long while.
+The section also shows the scans the server runs by itself, with what started each, how many of the files it has to read (new and changed ones, or every file on a re-read) it has read so far, and how it ended. A bar fills as it reads; while the scan is still finding out how many files that is, it shows a still band. The start-up scan after an upgrade that empties the scan cache reads every file and can take a long while.
 
 ### Signing in
 
