@@ -1578,6 +1578,45 @@ mod tests {
     }
 
     #[test]
+    fn an_albums_disc_total_follows_its_tracks() {
+        let db = test_db();
+        let total = |album: &str| -> Option<i32> {
+            db.conn
+                .query_row(
+                    "SELECT total_discs FROM albums WHERE title = ?1",
+                    params![album],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        let mut untagged = sample_meta("Intro", "Burial", "Untrue");
+        untagged.path = Some("/music/Untrue/01.flac".into());
+        upsert_track(&db.conn, &untagged).unwrap();
+        assert_eq!(total("Untrue"), Some(1), "an album with tracks has a disc");
+
+        let mut cd1 = sample_meta("Overture", "Wagner", "Ring Cycle");
+        cd1.disc = Some(1);
+        cd1.path = Some("/music/Ring Cycle/CD1/01.flac".into());
+        let mut cd2 = cd1.clone();
+        cd2.disc = Some(2);
+        cd2.path = Some("/music/Ring Cycle/CD2/01.flac".into());
+        upsert_track(&db.conn, &cd1).unwrap();
+        upsert_track(&db.conn, &cd2).unwrap();
+        assert_eq!(total("Ring Cycle"), Some(2), "the highest disc held");
+
+        let mut boxed = sample_meta("Prelude", "Wagner", "Parsifal");
+        boxed.disc = Some(1);
+        boxed.disc_total = Some(4);
+        boxed.path = Some("/music/Parsifal/CD1/01.flac".into());
+        upsert_track(&db.conn, &boxed).unwrap();
+        assert_eq!(total("Parsifal"), Some(4), "a tag names discs not held");
+
+        remove_stale_tracks(&db.conn, Path::new("/music/Ring Cycle/CD2"), true).unwrap();
+        assert_eq!(total("Ring Cycle"), Some(1), "disc 2 gone");
+    }
+
+    #[test]
     fn test_dedup_never_merges_two_local_files() {
         let db = test_db();
 

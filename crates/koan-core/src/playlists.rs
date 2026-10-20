@@ -900,6 +900,7 @@ mod tests {
             album: "Album".into(),
             date: None,
             disc: None,
+            disc_total: None,
             track_number: None,
             genre: None,
             label: None,

@@ -1640,6 +1640,7 @@ mod tests {
             album: album.into(),
             date: Some("1997-06-16".into()),
             disc: Some(1),
+            disc_total: None,
             track_number: Some(1),
             genre: Some("Rock".into()),
             label: None,

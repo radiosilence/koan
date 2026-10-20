@@ -634,6 +634,7 @@ fn write_albums(
                 album: album.name.clone(),
                 date: album.year.map(|y| y.to_string()),
                 disc: song.disc_number,
+                disc_total: None,
                 track_number: song.track,
                 genre: song.genre.clone().or_else(|| album.genre.clone()),
                 label: None,
@@ -729,6 +730,7 @@ mod tests {
             album: album.into(),
             date: Some("2024".into()),
             disc: Some(1),
+            disc_total: None,
             track_number: Some(1),
             genre: Some("Electronic".into()),
             label: None,
@@ -1283,6 +1285,7 @@ mod tests {
         let file = TrackMeta {
             date: None,
             disc: None,
+            disc_total: None,
             path: Some("/music/song.flac".into()),
             source: "local".into(),
             album_remote_id: None,
@@ -1321,6 +1324,7 @@ mod tests {
         let ghost = TrackMeta {
             date: None,
             disc: None,
+            disc_total: None,
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
