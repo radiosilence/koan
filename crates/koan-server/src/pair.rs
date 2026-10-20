@@ -10,17 +10,19 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::RawQuery;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use koan_core::db::pool::Pool;
 use koan_core::remote::pair::PairMessage;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
+use crate::auth::password::FailureLimiter;
 use crate::auth::routes::{RateLimiter, network};
 
 /// How long a pairing waits for someone to approve it.
@@ -35,8 +37,13 @@ const MAX_PENDING_PER_ADDRESS: usize = 3;
 /// mistyped as another.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LEN: usize = 8;
-/// What keeps a waiting socket open through proxies that drop idle ones.
+/// What keeps a waiting socket open through proxies that drop idle ones, and
+/// what a live device answers.
 const KEEPALIVE: Duration = Duration::from_secs(30);
+/// Pairing codes and ids one account may look up and not find in a minute.
+/// Someone typing a code gets it wrong a few times at most; a guesser
+/// against 2^32 codes at this rate gets nowhere.
+const MISSES_PER_MINUTE: u32 = 10;
 
 struct Entry {
     /// Without its dash.
@@ -50,7 +57,10 @@ struct Entry {
 
 pub struct Pairings {
     ttl: Duration,
+    keepalive: Duration,
     entries: Mutex<HashMap<String, Entry>>,
+    /// Lookups that found nothing, by the account that made them.
+    misses: FailureLimiter<i64>,
 }
 
 /// One set per process: the socket route, the Subsonic endpoints and the web
@@ -160,8 +170,16 @@ impl Pairings {
     fn new(ttl: Duration) -> Self {
         Self {
             ttl,
+            keepalive: KEEPALIVE,
             entries: Mutex::default(),
+            misses: FailureLimiter::new(MISSES_PER_MINUTE),
         }
+    }
+
+    /// How long a socket may stay silent before its device is taken as gone:
+    /// two pings unanswered, and some slack.
+    fn silence(&self) -> Duration {
+        self.keepalive * 5 / 2
     }
 
     /// Open a pairing for the device called `device`, asked for from `from`.
@@ -205,12 +223,14 @@ impl Pairings {
         })
     }
 
-    /// The device waiting on `pair`, an id or a code, and where it asked from.
-    pub fn info(&self, pair: &str) -> Option<PairInfo> {
+    /// The device waiting on `pair`, an id or a code, and where it asked
+    /// from, as the account `caller` asks.
+    pub fn info(&self, pair: &str, caller: i64) -> Result<PairInfo, PairError> {
         let mut entries = self.entries.lock();
         self.sweep(&mut entries);
-        let id = find(&entries, pair)?;
-        entries.get(&id).map(|e| PairInfo {
+        let id = self.lookup(&entries, pair, caller)?;
+        let e = &entries[&id];
+        Ok(PairInfo {
             device: e.device.clone(),
             from: e.from,
         })
@@ -218,12 +238,30 @@ impl Pairings {
 
     /// Take the pairing `pair` out, to settle it. No one else can settle it
     /// meanwhile; `put_back` returns it if it could not be.
-    pub fn take(&self, pair: &str) -> Option<Taken> {
+    pub fn take(&self, pair: &str, caller: i64) -> Result<Taken, PairError> {
         let mut entries = self.entries.lock();
         self.sweep(&mut entries);
-        let id = find(&entries, pair)?;
-        let entry = entries.remove(&id)?;
-        Some(Taken { id, entry })
+        let id = self.lookup(&entries, pair, caller)?;
+        let entry = entries.remove(&id).ok_or(PairError::NotFound)?;
+        Ok(Taken { id, entry })
+    }
+
+    /// The pairing `pair` names, counting a miss against `caller`. One that
+    /// has missed too often finds nothing, right or wrong, for the rest of the
+    /// minute (RFC 8628 §5.1).
+    fn lookup(
+        &self,
+        entries: &HashMap<String, Entry>,
+        pair: &str,
+        caller: i64,
+    ) -> Result<String, PairError> {
+        if self.misses.exhausted(&caller) {
+            return Err(PairError::Limited);
+        }
+        find(entries, pair).ok_or_else(|| {
+            self.misses.record(caller);
+            PairError::NotFound
+        })
     }
 
     /// Unless its device went while it was out.
@@ -243,9 +281,9 @@ impl Pairings {
         user_id: i64,
         username: &str,
         decline: bool,
-    ) -> Result<PairInfo, SettleError> {
+    ) -> Result<PairInfo, PairError> {
         use koan_core::db::queries::api_keys;
-        let taken = self.take(pair).ok_or(SettleError::NotFound)?;
+        let taken = self.take(pair, user_id)?;
         let info = taken.info();
         let device = info.device.clone();
         if decline {
@@ -257,7 +295,7 @@ impl Pairings {
             Ok((_, key)) => key,
             Err(e) => {
                 self.put_back(taken);
-                return Err(SettleError::Internal(e.to_string()));
+                return Err(PairError::Internal(e.to_string()));
             }
         };
         let approved = PairMessage::Approved {
@@ -267,7 +305,7 @@ impl Pairings {
         if taken.settle(approved).is_err() {
             // The device went between the lookup and now: its key would sit unused.
             let _ = api_keys::revoke_api_key_value(conn, &api_key);
-            return Err(SettleError::NotFound);
+            return Err(PairError::NotFound);
         }
         log::info!("pair: {device} signed in as {username}");
         Ok(info)
@@ -289,9 +327,11 @@ impl Pairings {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum SettleError {
+pub enum PairError {
     /// No such pairing, it lapsed, or its device has gone.
     NotFound,
+    /// The caller has looked up too many pairings that were not there.
+    Limited,
     Internal(String),
 }
 
@@ -333,8 +373,10 @@ fn find(entries: &HashMap<String, Entry>, pair: &str) -> Option<String> {
 }
 
 /// `/rest/koanPair?name=…`: a device asking to be signed in. Unauthenticated,
-/// since it has nothing to sign in with yet.
+/// since it has nothing to sign in with yet. `pool` is where a key minted for
+/// a device that never receives it is revoked.
 pub(crate) async fn route(
+    pool: Arc<Pool>,
     RawQuery(raw): RawQuery,
     ws: WebSocketUpgrade,
     request: axum::extract::Request,
@@ -355,7 +397,7 @@ pub(crate) async fn route(
         .map(|(_, v)| v.into_owned())
         .unwrap_or_default();
     match pairings().open(&name, from) {
-        Ok(opened) => ws.on_upgrade(move |socket| session(socket, opened)),
+        Ok(opened) => ws.on_upgrade(move |socket| session(socket, opened, pool)),
         Err(OpenError::Full) => {
             (StatusCode::SERVICE_UNAVAILABLE, "too many pairings waiting").into_response()
         }
@@ -368,47 +410,86 @@ pub(crate) async fn route(
     }
 }
 
-async fn session(mut socket: WebSocket, mut opened: Opened<'static>) {
+/// Hold the device until its pairing is settled, then tell it the outcome.
+/// An approval it never receives has its key revoked: one the socket failed
+/// to carry, or one settled after the device went.
+async fn session(mut socket: WebSocket, mut opened: Opened<'static>, pool: Arc<Pool>) {
+    let waited = wait(&mut socket, &mut opened).await;
+    // Nothing reads the outcome after this, so `settle` now sees the device
+    // as gone; one settled before it was not read yet.
+    opened.outcome.close();
+    let late = opened.outcome.try_recv().ok();
+    let unsent = match waited {
+        // A lapse can race an approval, which then wins.
+        Some(waited) => {
+            let outcome = late.unwrap_or(waited);
+            log::info!(
+                "pair: {} {}",
+                opened.code,
+                match outcome {
+                    PairMessage::Approved { .. } => "approved",
+                    PairMessage::Declined => "declined",
+                    _ => "expired",
+                }
+            );
+            let sent = send(&mut socket, &outcome).await.is_ok();
+            let _ = socket.send(Message::Close(None)).await;
+            (!sent).then_some(outcome)
+        }
+        None => late,
+    };
+    if let Some(PairMessage::Approved { api_key, .. }) = unsent {
+        log::warn!("pair: {} went before its key reached it", opened.code);
+        revoke(pool, api_key).await;
+    }
+}
+
+/// Wait for the pairing's outcome. `None` when the device went first: it
+/// closed the socket, or stopped answering pings.
+async fn wait(socket: &mut WebSocket, opened: &mut Opened<'static>) -> Option<PairMessage> {
     let pending = PairMessage::Pending {
         id: opened.id.clone(),
         code: opened.code.clone(),
         expires_in: opened.pairings.ttl.as_secs(),
     };
-    if send(&mut socket, &pending).await.is_err() {
-        return;
-    }
+    send(socket, &pending).await.ok()?;
     log::info!("pair: {} waiting", opened.code);
     let lapse = tokio::time::sleep(opened.pairings.ttl);
     tokio::pin!(lapse);
-    let mut keepalive =
-        tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
-    let outcome = loop {
+    let keepalive = opened.pairings.keepalive;
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + keepalive, keepalive);
+    let silence = opened.pairings.silence();
+    let quiet = tokio::time::sleep(silence);
+    tokio::pin!(quiet);
+    loop {
         tokio::select! {
             // A dropped sender is a sweep that found it lapsed.
-            outcome = &mut opened.outcome => break outcome.unwrap_or(PairMessage::Expired),
-            () = &mut lapse => break PairMessage::Expired,
-            _ = keepalive.tick() => {
-                if socket.send(Message::Ping(Default::default())).await.is_err() {
-                    return;
-                }
+            outcome = &mut opened.outcome => return Some(outcome.unwrap_or(PairMessage::Expired)),
+            () = &mut lapse => return Some(PairMessage::Expired),
+            () = &mut quiet => {
+                log::info!("pair: {} stopped answering", opened.code);
+                return None;
             }
+            _ = ping.tick() => socket.send(Message::Ping(Default::default())).await.ok()?,
             msg = socket.recv() => match msg {
-                Some(Ok(Message::Close(_)) | Err(_)) | None => return,
-                Some(Ok(_)) => {}
+                Some(Ok(Message::Close(_)) | Err(_)) | None => return None,
+                Some(Ok(_)) => quiet.as_mut().reset(tokio::time::Instant::now() + silence),
             },
         }
-    };
-    log::info!(
-        "pair: {} {}",
-        opened.code,
-        match outcome {
-            PairMessage::Approved { .. } => "approved",
-            PairMessage::Declined => "declined",
-            _ => "expired",
-        }
-    );
-    let _ = send(&mut socket, &outcome).await;
-    let _ = socket.send(Message::Close(None)).await;
+    }
+}
+
+async fn revoke(pool: Arc<Pool>, api_key: String) {
+    let revoked = tokio::task::spawn_blocking(move || {
+        let db = pool.get().map_err(|e| e.to_string())?;
+        koan_core::db::queries::api_keys::revoke_api_key_value(&db.conn, &api_key)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    if let Err(e) = revoked {
+        log::error!("pair: revoking an undelivered key: {e}");
+    }
 }
 
 async fn send(socket: &mut WebSocket, message: &PairMessage) -> Result<(), axum::Error> {
@@ -420,6 +501,8 @@ async fn send(socket: &mut WebSocket, message: &PairMessage) -> Result<(), axum:
 mod tests {
     use super::*;
 
+    /// The account looking pairings up, where none is in a database.
+    const ME: i64 = 1;
     const LAN: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 20));
 
     /// A distinct address per `i`, so the per-address cap stays out of the way.
@@ -467,7 +550,7 @@ mod tests {
         let p = leaked(TTL);
         let o = p.open("Living room\u{7} TV", LAN).unwrap();
         assert_eq!(
-            p.info(&o.id).map(|i| i.device).as_deref(),
+            p.info(&o.id, ME).ok().map(|i| i.device).as_deref(),
             Some("Living room TV")
         );
         let bare = o.code.replace('-', "");
@@ -478,7 +561,7 @@ mod tests {
             format!(" {} {} ", &bare[..4], &bare[4..]),
         ] {
             assert_eq!(
-                p.info(&typed).map(|i| i.device).as_deref(),
+                p.info(&typed, ME).ok().map(|i| i.device).as_deref(),
                 Some("Living room TV"),
                 "{typed}"
             );
@@ -492,10 +575,10 @@ mod tests {
     async fn approving_delivers_the_key_to_the_waiting_device() {
         let p = leaked(TTL);
         let mut o = p.open("tv", LAN).unwrap();
-        let taken = p.take(&o.code).unwrap();
+        let taken = p.take(&o.code, ME).unwrap();
         assert_eq!(taken.device(), "tv");
         // Taken: no one else can settle it.
-        assert!(p.take(&o.id).is_none());
+        assert!(p.take(&o.id, ME).is_err());
         taken
             .settle(PairMessage::Approved {
                 username: "alice".into(),
@@ -550,7 +633,7 @@ mod tests {
         // Settled once only.
         assert_eq!(
             p.settle(&db.conn, &o.id, alice, "alice", false),
-            Err(SettleError::NotFound)
+            Err(PairError::NotFound)
         );
     }
 
@@ -572,12 +655,12 @@ mod tests {
         let o = p.open("tv", LAN).unwrap();
         let id = o.id.clone();
         // The socket closes while an approval holds the pairing.
-        let taken = p.take(&id).unwrap();
+        let taken = p.take(&id, ME).unwrap();
         drop(o);
         p.entries.lock().insert(taken.id, taken.entry);
         assert_eq!(
             p.settle(&db.conn, &id, alice, "alice", false),
-            Err(SettleError::NotFound)
+            Err(PairError::NotFound)
         );
         let keys = koan_core::db::queries::api_keys::list_api_keys(&db.conn, Some(alice)).unwrap();
         assert!(keys.is_empty());
@@ -589,7 +672,7 @@ mod tests {
         let p = leaked(TTL);
         assert_eq!(
             p.settle(&db.conn, "ABCD-EFGH", alice, "alice", false),
-            Err(SettleError::NotFound)
+            Err(PairError::NotFound)
         );
     }
 
@@ -597,7 +680,7 @@ mod tests {
     fn a_gone_device_gives_the_outcome_back() {
         let p = leaked(TTL);
         let o = p.open("tv", LAN).unwrap();
-        let taken = p.take(&o.id).unwrap();
+        let taken = p.take(&o.id, ME).unwrap();
         drop(o);
         assert!(taken.settle(PairMessage::Declined).is_err());
     }
@@ -606,8 +689,8 @@ mod tests {
     async fn a_lapsed_pairing_is_expired_and_unknown() {
         let p = leaked(Duration::ZERO);
         let mut o = p.open("tv", LAN).unwrap();
-        assert!(p.info(&o.id).is_none());
-        assert!(p.take(&o.code).is_none());
+        assert!(p.info(&o.id, ME).is_err());
+        assert!(p.take(&o.code, ME).is_err());
         assert_eq!((&mut o.outcome).await.unwrap(), PairMessage::Expired);
     }
 
@@ -616,10 +699,10 @@ mod tests {
         let p = leaked(TTL);
         let mapped: IpAddr = "::ffff:203.0.113.9".parse().unwrap();
         let o = p.open("tv", mapped).unwrap();
-        let info = p.info(&o.code).unwrap();
+        let info = p.info(&o.code, ME).unwrap();
         assert_eq!(info.from.to_string(), "203.0.113.9");
         assert!(!info.local());
-        assert_eq!(p.take(&o.id).unwrap().info(), info);
+        assert_eq!(p.take(&o.id, ME).unwrap().info(), info);
     }
 
     #[test]
@@ -663,9 +746,113 @@ mod tests {
         } else {
             "0000-0000"
         };
-        assert!(p.info(other).is_none());
-        assert!(p.take("not-a-pairing").is_none());
-        assert!(p.info("").is_none());
+        assert!(p.info(other, ME).is_err());
+        assert!(p.take("not-a-pairing", ME).is_err());
+        assert!(p.info("", ME).is_err());
+    }
+
+    #[test]
+    fn misses_are_limited_per_account() {
+        let p = leaked(TTL);
+        let o = p.open("tv", LAN).unwrap();
+        let other = if o.code == "0000-0000" {
+            "1111-1111"
+        } else {
+            "0000-0000"
+        };
+        for _ in 0..MISSES_PER_MINUTE {
+            assert_eq!(p.info(other, ME).err(), Some(PairError::NotFound));
+        }
+        // Spent: nothing is found, the right code included.
+        assert_eq!(p.info(&o.code, ME).err(), Some(PairError::Limited));
+        assert!(matches!(p.take(&o.id, ME), Err(PairError::Limited)));
+        // Finding one does not count, and another account has its own.
+        for _ in 0..=MISSES_PER_MINUTE {
+            assert!(p.info(&o.code, ME + 1).is_ok());
+        }
+    }
+
+    /// Serves pairings from `p` the way `route` does, with keys revoked in
+    /// `pool`.
+    async fn serve(p: &'static Pairings, pool: Arc<Pool>) -> std::net::SocketAddr {
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(move |ws: WebSocketUpgrade| {
+                let pool = pool.clone();
+                async move {
+                    let opened = p.open("tv", LAN).unwrap();
+                    ws.on_upgrade(move |socket| session(socket, opened, pool))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        addr
+    }
+
+    fn quick(keepalive: Duration) -> &'static Pairings {
+        let mut p = Pairings::new(TTL);
+        p.keepalive = keepalive;
+        Box::leak(Box::new(p))
+    }
+
+    fn pending_id(
+        socket: &mut tungstenite::WebSocket<impl std::io::Read + std::io::Write>,
+    ) -> String {
+        let first = socket.read().unwrap();
+        match serde_json::from_str(first.to_text().unwrap()).unwrap() {
+            PairMessage::Pending { id, .. } => id,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_device_that_stops_answering_is_dropped() {
+        let (dir, _db, _) = database();
+        let p = quick(Duration::from_millis(100));
+        let addr = serve(p, Arc::new(Pool::new(dir.path().join("koan.db")))).await;
+        // Connected, then never read again, so pings go unanswered.
+        let (socket, id) = tokio::task::spawn_blocking(move || {
+            let (mut socket, _) = tungstenite::connect(format!("ws://{addr}/")).unwrap();
+            let id = pending_id(&mut socket);
+            (socket, id)
+        })
+        .await
+        .unwrap();
+        assert!(p.info(&id, ME).is_ok());
+        tokio::time::sleep(p.silence() * 3).await;
+        assert_eq!(p.info(&id, ME).err(), Some(PairError::NotFound));
+        drop(socket);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_device_that_answers_waits_and_gets_its_key() {
+        let (dir, db, alice) = database();
+        let p = quick(Duration::from_millis(100));
+        let addr = serve(p, Arc::new(Pool::new(dir.path().join("koan.db")))).await;
+        let (id_tx, id_rx) = oneshot::channel();
+        let device = tokio::task::spawn_blocking(move || {
+            let (mut socket, _) = tungstenite::connect(format!("ws://{addr}/")).unwrap();
+            id_tx.send(pending_id(&mut socket)).unwrap();
+            // Reading answers the pings.
+            loop {
+                if let tungstenite::Message::Text(text) = socket.read().unwrap() {
+                    return serde_json::from_str::<PairMessage>(&text).unwrap();
+                }
+            }
+        });
+        let id = id_rx.await.unwrap();
+        tokio::time::sleep(p.silence() * 3).await;
+        p.settle(&db.conn, &id, alice, "alice", false).unwrap();
+        let PairMessage::Approved { api_key, .. } = device.await.unwrap() else {
+            panic!("not approved");
+        };
+        assert!(
+            koan_core::db::queries::api_keys::authenticate_api_key(&db.conn, &api_key)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -674,7 +861,7 @@ mod tests {
         let o = p.open("tv", LAN).unwrap();
         let id = o.id.clone();
         drop(o);
-        assert!(p.info(&id).is_none());
+        assert!(p.info(&id, ME).is_err());
     }
 
     #[test]

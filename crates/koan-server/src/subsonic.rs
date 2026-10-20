@@ -5588,18 +5588,56 @@ fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
         .attr_bool("local", info.local())
 }
 
+/// `/rest/koanPair`: see `crate::pair::route`.
+async fn koan_pair(
+    State(state): State<Arc<AppState>>,
+    raw: RawQuery,
+    ws: axum::extract::WebSocketUpgrade,
+    request: Request,
+) -> Response {
+    crate::pair::route(state.pool.clone(), raw, ws, request).await
+}
+
+/// Who may look a pairing up, approve it or decline it: a caller who could
+/// sign it in. Approving mints an API key for the device, which an app
+/// password, one client's credential, may not hand out, and the shared secret
+/// is no account's. Any role: a device is signed in to the caller's own
+/// account, with no more than the caller can do.
+fn may_pair(caller: &Caller) -> Result<(), SubsonicError> {
+    caller.may_manage_credentials()?;
+    if caller.user_id == queries::LOCAL_USER {
+        return Err(SubsonicError::new(
+            SubsonicErrorCode::Generic,
+            "sign in with an account to sign a device in as it",
+        ));
+    }
+    Ok(())
+}
+
+fn pair_error(e: crate::pair::PairError) -> SubsonicError {
+    match e {
+        crate::pair::PairError::NotFound => SubsonicError::not_found("Pairing"),
+        crate::pair::PairError::Limited => SubsonicError::new(
+            SubsonicErrorCode::Generic,
+            "Too many pairing codes tried that were not waiting; try again in a minute",
+        ),
+        crate::pair::PairError::Internal(e) => SubsonicError::internal(e),
+    }
+}
+
 /// The device waiting on `pair`, an id or a code, and where it asked from: for
 /// an app to ask whether to sign it in.
 async fn koan_pair_info(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
-        respond(&state, &params.auth(), |_, b| {
+        respond(&state, &params.auth(), |caller, b| {
             let pair = params
                 .get("pair")
                 .ok_or_else(|| SubsonicError::missing_param("pair"))?;
+            may_pair(caller)?;
             let info = crate::pair::pairings()
-                .info(pair)
-                .ok_or_else(|| SubsonicError::not_found("Pairing"))?;
+                .info(pair, caller.user_id)
+                .map_err(pair_error)?;
             Ok(b.child(pair_node(&info)))
         })
     })
@@ -5607,8 +5645,7 @@ async fn koan_pair_info(State(state): State<Arc<AppState>>, RawQuery(raw): RawQu
 }
 
 /// Sign the device waiting on `pair` in as the caller, with an API key of its
-/// own, or with `decline=true` turn it away. Any role: a device is signed in
-/// to the caller's own account, with no more than the caller can do.
+/// own, or with `decline=true` turn it away.
 async fn koan_pair_approve(
     State(state): State<Arc<AppState>>,
     RawQuery(raw): RawQuery,
@@ -5620,23 +5657,10 @@ async fn koan_pair_approve(
                 .get("pair")
                 .ok_or_else(|| SubsonicError::missing_param("pair"))?;
             let decline = params.get("decline") == Some("true");
-            // Approving mints an API key for the device: not something an app
-            // password, one client's credential, may hand out.
-            if !decline {
-                caller.may_manage_credentials()?;
-            }
-            if !decline && caller.user_id == queries::LOCAL_USER {
-                return Err(SubsonicError::new(
-                    SubsonicErrorCode::Generic,
-                    "sign in with an account to sign a device in as it",
-                ));
-            }
+            may_pair(caller)?;
             let info = crate::pair::pairings()
                 .settle(&db.conn, pair, caller.user_id, &caller.username, decline)
-                .map_err(|e| match e {
-                    crate::pair::SettleError::NotFound => SubsonicError::not_found("Pairing"),
-                    crate::pair::SettleError::Internal(e) => SubsonicError::internal(e),
-                })?;
+                .map_err(pair_error)?;
             Ok(b.child(pair_node(&info)))
         })
     })
@@ -6164,7 +6188,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/koanLink", get(koan_link))
         // A device without a keyboard waiting to be signed in, and the
         // endpoints that sign it in. See `crate::pair`.
-        .route("/rest/koanPair", get(crate::pair::route))
+        .route("/rest/koanPair", get(koan_pair))
         .route(
             "/rest/koanPairInfo",
             get(koan_pair_info).post(koan_pair_info),
@@ -7700,12 +7724,18 @@ mod tests {
         let mut mate = as_app_password("mate").to_vec();
         mate.push(auth_query(""));
         for auth in &mate {
-            let body = call(format!(
-                "/rest/koanPairApprove?pair={}&{auth}&v=1.16.1&c=test",
-                opened.id
-            ))
-            .await;
-            assert!(body.contains("code=\"50\""), "approve as {auth}: {body}");
+            for path in [
+                "koanPairApprove?",
+                "koanPairApprove?decline=true&",
+                "koanPairInfo?",
+            ] {
+                let body = call(format!(
+                    "/rest/{path}pair={}&{auth}&v=1.16.1&c=test",
+                    opened.id
+                ))
+                .await;
+                assert!(body.contains("code=\"50\""), "{path} as {auth}: {body}");
+            }
         }
 
         assert!(
