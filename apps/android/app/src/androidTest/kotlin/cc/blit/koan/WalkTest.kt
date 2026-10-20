@@ -23,7 +23,8 @@ import java.util.regex.Pattern
  * Not an assertion suite: what is worth checking about the pages is how they
  * look. `just android-walk` signs the app in to a throwaway server, sets the
  * look and the appearance, runs this once for each, and pulls the screenshots.
- * A page that cannot be reached is skipped rather than failing the walk.
+ * A page that cannot be reached is skipped, so the rest are still taken, and
+ * the walk fails at the end naming every page it missed.
  */
 @RunWith(AndroidJUnit4::class)
 class WalkTest {
@@ -31,6 +32,17 @@ class WalkTest {
     private val device = UiDevice.getInstance(instrumentation)
     private val args = InstrumentationRegistry.getArguments()
     private val out = File(instrumentation.targetContext.getExternalFilesDir(null), "walk")
+
+    private companion object {
+        /** Every page the walk takes, by its screenshot's name. */
+        val PAGES = listOf(
+            "01-queue", "02-library", "03-albums", "04-album", "05-artists", "05b-favourites", "05c-playlists",
+            "05c2-playlist", "05d-recently-played", "05e-history", "05f-downloads", "05g-downloaded",
+            "06-now-playing", "07-lyrics", "08-search", "08a-artist", "09-settings", "09b-server-end",
+            "09c-appearance", "09d-account", "09e-people", "09f-devices", "09g-server-capabilities", "09h-eq",
+            "09i-eq-more", "09j-playback", "09k-downloads", "09l-about", "10-queue-playing",
+        )
+    }
 
     @Test
     fun walk() {
@@ -57,9 +69,10 @@ class WalkTest {
             val title = device.wait(Until.findObjects(By.text(Pattern.compile("(?i)album \\d+|record \\d+|thirty rooms"))), 3_000)
                 ?.minWithOrNull(compareBy({ it.visibleBounds.top }, { it.visibleBounds.left }))
                 ?.visibleBounds
-            if (title != null) {
-                device.click(title.centerX(), title.top - title.height() * 3)
-                pause(3)
+            title?.let { device.click(it.centerX(), it.top - it.height() * 3) }
+            pause(3)
+            // Still on the browser, whose filter field a record's page has not, if the tap missed.
+            if (title != null && !device.hasObject(label("Filter albums"))) {
                 snap("04-album")
                 // What the queue, the mini player and Now Playing show from here on.
                 tap { find(label("Play")) }
@@ -154,6 +167,9 @@ class WalkTest {
             pause(4)
             snap("08a-artist")
         }
+
+        val missed = PAGES.filterNot { File(out, "$it.png").exists() }
+        if (missed.isNotEmpty()) throw AssertionError("pages not reached: ${missed.joinToString()}")
     }
 
     /** Text the app writes, which the kōan theme lowercases. */

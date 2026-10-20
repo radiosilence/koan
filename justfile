@@ -1730,14 +1730,14 @@ android-walk avd="koan-walk" search="Long":
     cleanup+=("adb reverse --remove tcp:$port || true")
     # A still status bar, so the screenshots differ only where the app does.
     demo=$(adb shell settings get global sysui_demo_allowed | tr -d '\r')
-    adb shell settings put global sysui_demo_allowed 1
-    for c in "clock -e hhmm 0941" "battery -e level 100 -e plugged false" "network -e wifi show -e level 4" "notifications -e visible false"; do
-        adb shell am broadcast -a com.android.systemui.demo -e command $c >/dev/null
-    done
     was=$(adb shell cmd uimode night | awk '{ print $NF }' | tr -d '\r')
     cleanup+=("adb shell am broadcast -a com.android.systemui.demo -e command exit >/dev/null; \
         if [ '$demo' = null ]; then adb shell settings delete global sysui_demo_allowed >/dev/null; else adb shell settings put global sysui_demo_allowed '$demo'; fi; \
         adb shell cmd uimode night '$was' >/dev/null")
+    adb shell settings put global sysui_demo_allowed 1
+    for c in "clock -e hhmm 0941" "battery -e level 100 -e plugged false" "network -e wifi show -e level 4" "notifications -e visible false"; do
+        adb shell am broadcast -a com.android.systemui.demo -e command $c >/dev/null
+    done
     put() { adb shell "run-as {{bundle_id}} sh -c 'mkdir -p \$(dirname $1) && cat > $1'"; }
     status=0
     for look in koan system; do
