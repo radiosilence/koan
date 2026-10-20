@@ -107,6 +107,7 @@ struct Shell<'a> {
     title: &'a str,
     content: &'a Html,
     username: &'a str,
+    admin: bool,
     auth_enabled: bool,
     proxied: bool,
 }
@@ -136,6 +137,7 @@ pub(super) fn respond(
                 title,
                 content: &content,
                 username: &user.username,
+                admin: super::scan::allowed(user),
                 auth_enabled: s.auth_enabled,
                 proxied: s.proxy_auth.is_some(),
             }

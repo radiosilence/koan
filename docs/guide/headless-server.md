@@ -138,11 +138,11 @@ A track row's menu (right-click, press and hold on a phone, or its ⋯) offers p
 
 ### Rescan
 
-Admin accounts find Rescan at the foot of the Library page. It looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. It is the same job as `triggerScan`, so a scan started from either shows in both.
+Admin accounts find Rescan at the foot of the Library page, which the sidebar links for them on a wide screen as well as the phone's tab bar. It looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. It is the same job as `triggerScan`, so a scan started from either shows in both.
 
 **Read every file again** ignores the scan cache and reads every file's tags. An upgrade that reads more from tags needs this, since the files themselves did not change (`triggerScan(reread: true)`).
 
-The section also shows the scans the server runs by itself, with what started each, how many of the files it found it has read, and how it ended. The start-up scan after an upgrade that empties the scan cache reads every file and can take a long while.
+The section also shows the scans the server runs by itself, with what started each, how many of the files it found it has read, and how it ended. A bar under the status fills as files are read; until the files are counted it moves without filling. The start-up scan after an upgrade that empties the scan cache reads every file and can take a long while.
 
 ### Signing in
 

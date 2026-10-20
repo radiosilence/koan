@@ -22,7 +22,7 @@ use crate::html::{Html, Render};
 
 const KINDS: [&str; 3] = [SCAN, REREAD, WATCH];
 
-fn allowed(user: &AuthUser) -> bool {
+pub(super) fn allowed(user: &AuthUser) -> bool {
     user.role == Role::Admin
 }
 
@@ -36,6 +36,16 @@ struct Status {
     follow: bool,
     /// The line's colour and text; nothing before any scan.
     line: Option<(&'static str, String)>,
+    /// Only while a scan runs.
+    bar: Option<Bar>,
+}
+
+/// How far a running scan has got.
+enum Bar {
+    /// The walk is still counting the files to read.
+    Counting,
+    /// Files read, of how many.
+    Read(u64, u64),
 }
 
 /// What the current scan is doing, or the last did. On a page as it loads
@@ -71,9 +81,16 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
             ),
         }
     });
+    let bar = job
+        .filter(|j| j.state == JobState::Running)
+        .map(|j| match (j.done, j.total) {
+            (Some(done), Some(total)) if total > 0 => Bar::Read(done, total),
+            _ => Bar::Counting,
+        });
     Status {
         follow: on_load,
         line,
+        bar,
     }
     .html()
 }

@@ -1,4 +1,5 @@
 {#- What the current scan is doing, or the last did. On a page as it loads it asks to be followed; a stream's own patches never do, or each would open another stream. -#}
 <div id="scan-status"{% if follow %} data-init="@get('/library/scan')"{% endif %}>
 {%- if let Some((class, text)) = line %}<p class="{{ class }} text-control" role="status">{{ text }}</p>{% endif -%}
+{%- if let Some(bar) = bar %}<progress class="meter mb-2" aria-label="Scan progress"{% if let Bar::Read(done, total) = bar %} value="{{ done }}" max="{{ total }}"{% endif %}></progress>{% endif -%}
 </div>
