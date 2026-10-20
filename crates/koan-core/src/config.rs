@@ -479,8 +479,8 @@ impl Default for OrganizeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GraphqlConfig {
-    /// Enable the GraphQL API server alongside the TUI (default: true).
-    /// Set to false for TUI-only mode (equivalent to --no-api).
+    /// Serve the GraphQL/Subsonic API alongside the TUI (default: false,
+    /// equivalent to --api). Headless mode always serves it.
     pub enabled: bool,
     /// GraphQL API port (default: 4000).
     pub port: u16,
@@ -539,7 +539,7 @@ fn default_bind() -> std::net::IpAddr {
 impl Default for GraphqlConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             port: 4000,
             bind: default_bind(),
             playground: false,

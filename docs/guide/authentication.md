@@ -324,7 +324,7 @@ koan auth reset
 ```toml
 # config.toml
 [graphql]
-enabled = true            # default: true — API starts with TUI
+enabled = false           # default: false — true serves the API with the TUI
 auth_enabled = true       # default: true
 access_token_ttl = "15m"  # access token lifetime
 refresh_token_ttl = "30d" # refresh token lifetime

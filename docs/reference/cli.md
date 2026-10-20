@@ -7,7 +7,7 @@ kōan is a single binary with subcommands. Running `koan` with no subcommand lau
 Play audio files or open the TUI player. Running `koan` with no subcommand is equivalent to `koan play`.
 
 ```bash
-koan                                    # TUI + GraphQL API on :4000
+koan                                    # TUI
 koan play                               # same as above
 koan play ~/Music/album/                # play a directory (recursive)
 koan play ~/Music/*.flac                # play specific files
@@ -15,18 +15,18 @@ koan play --album 5                     # play album by ID (use tab completion)
 koan play --artist 3                    # play artist by ID
 koan play --library                     # TUI in library browse mode
 koan play --clear                       # clear persisted queue
-koan --no-api                           # TUI only (no GraphQL server)
+koan --api                              # TUI + GraphQL/Subsonic API on 127.0.0.1:4000
 ```
 
 ### Server flags
 
-These are root-level flags (not under `play`).
+These are root-level flags (not under `play`). The TUI serves the API only when asked: `--api`, any of `--port`, `--bind`, `--subsonic` or `--playground`, or `[graphql] enabled = true`. A server with no accounts lets whoever opens `/setup` first become its admin, so one started without being asked for would hand that to any local process. `--no-api` overrides the config.
 
 ```bash
 koan --headless                   # serve on 127.0.0.1:4000, no TUI
 koan --headless --playground      # with GraphiQL at /graphql
 koan --headless --subsonic 4040   # Subsonic also on a port of its own
-koan --port 8080                  # custom GraphQL port
+koan --port 8080                  # TUI + API on a custom port
 koan --bind 0.0.0.0              # listen on all interfaces (auth enabled by default)
 koan -d                           # background daemon
 koan -d --subsonic 4040           # daemon with Subsonic
