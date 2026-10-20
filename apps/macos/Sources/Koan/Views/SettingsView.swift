@@ -483,7 +483,7 @@ private struct RemoteSettings: View {
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
-    @FocusState private var cacheLimitFocused: Bool
+    @FocusState private var focus: CacheLimitField?
     /// "Up to a limit" chosen and no limit typed yet: nothing is written, and
     /// nothing deleted, until there is a number.
     @State private var choosingLimit = false
@@ -702,11 +702,11 @@ private struct RemoteSettings: View {
                         .keyboardType(.decimalPad)
                         #endif
                         .monospacedDigit()
-                        .focused($cacheLimitFocused)
-                        .onAppear { if choosingLimit { cacheLimitFocused = true } }
+                        .focused($focus, equals: .cacheLimit)
+                        .onAppear { if choosingLimit { focus = .cacheLimit } }
                         .onSubmit(commitCacheLimit)
-                        .onChange(of: cacheLimitFocused) { _, focused in
-                            if !focused { commitCacheLimit() }
+                        .onChange(of: focus) { _, focused in
+                            if focused == nil { commitCacheLimit() }
                         }
                         .koanField(cacheLimit ?? limitGB, prompt: "50")
                     }
@@ -730,6 +730,7 @@ private struct RemoteSettings: View {
             }
         }
         .koanSheet()
+        .decimalPadDone($focus, order: [.cacheLimit], label: "Set")
         .onAppear {
             url = model.settings.remoteUrl
             username = model.settings.remoteUsername
@@ -847,6 +848,11 @@ private struct RemoteSettings: View {
             setLimit(limit)
         }
     }
+}
+
+/// The cache limit, the page's one decimal field.
+private enum CacheLimitField: Hashable {
+    case cacheLimit
 }
 
 /// How much of what is downloaded to play the cache keeps.
