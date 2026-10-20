@@ -10,8 +10,6 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.navigation3.runtime.NavKey
@@ -73,17 +71,13 @@ fun NameLine(
     tone: KoanTone = KoanTone.Muted,
     linked: Boolean = true,
     maxLines: Int = 1,
-    underlined: Boolean = false,
-    textAlign: TextAlign? = null,
 ) {
     val nav = LocalNavigator.current
     val pressed = KoanTheme.textColor(KoanTone.Ink)
-    val text = remember(parts, linked, pressed, underlined, nav) {
-        val decoration = if (underlined) TextDecoration.Underline else null
-        val styles = TextLinkStyles(SpanStyle(textDecoration = decoration), pressedStyle = SpanStyle(color = pressed, textDecoration = decoration))
-        nameLineText(parts, linked, styles) { nav.push(it) }
+    val text = remember(parts, linked, pressed, nav) {
+        nameLineText(parts, linked, TextLinkStyles(pressedStyle = SpanStyle(color = pressed))) { nav.push(it) }
     }
-    Text(text, modifier, style = role.style, color = KoanTheme.textColor(tone), maxLines = maxLines, overflow = TextOverflow.Ellipsis, textAlign = textAlign)
+    Text(text, modifier, style = role.style, color = KoanTheme.textColor(tone), maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }
 
 /** A line's parts joined by dots, its links opening their pages through `open`. */

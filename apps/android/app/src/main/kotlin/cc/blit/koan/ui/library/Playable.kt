@@ -127,7 +127,7 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
                 is Playable.OfAlbum -> playable.album.artistCredit
                 is Playable.OfArtist -> emptyList()
             }
-            if (albumId != null || artistId != null) KoanDivider()
+            if (albumId != null || artistId != null || creditedArtists(credit).isNotEmpty()) KoanDivider()
             if (albumId != null && playable !is Playable.OfAlbum) {
                 KoanMenuItem("Go to Album", KoanIcons.album) { onDismiss(); nav.push(AlbumRoute(albumId, (playable as? Playable.OfTrack)?.track?.id)) }
             }
@@ -145,7 +145,7 @@ fun GoToArtists(credit: List<CreditPart>, id: Long?, onDismiss: () -> Unit) {
     val nav = LocalNavigator.current
     val linked = creditedArtists(credit).ifEmpty { listOfNotNull(id?.let { CreditPart("", it) }) }
     linked.forEach { part ->
-        KoanMenuItem(if (linked.size == 1) "Go to Artist" else "Go to ${part.text}", KoanIcons.artist) {
+        KoanMenuItem(if (linked.size == 1) "Go to Artist" else "Go to ", KoanIcons.artist, name = if (linked.size == 1) "" else part.text) {
             onDismiss()
             nav.push(ArtistRoute(part.artistId!!))
         }

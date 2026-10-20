@@ -292,7 +292,7 @@ private fun Titles(entry: QueueItem?) {
             entry?.let {
                 val albumId = track?.albumId ?: it.albumId
                 NameLine(
-                    listOf(track?.let { t -> artistCredit(t.artistCredit, it.artist, t.artistId) } ?: artistCredit(it.artistCredit, it.artist, it.artistId)),
+                    listOf(artistCredit(it.artistCredit, it.artist, it.artistId)),
                     role = KoanType.Body,
                     tone = KoanTone.Ink,
                 )

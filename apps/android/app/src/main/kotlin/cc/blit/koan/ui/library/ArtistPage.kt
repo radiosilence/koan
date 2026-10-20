@@ -114,7 +114,7 @@ fun ArtistPage(artistId: Long) {
                         item(key = "features", span = { GridItemSpan(maxLineSpan) }) {
                             FeaturesOn(held.features, Modifier.padding(start = 4.dp, end = 4.dp, top = KoanSpace.l))
                         }
-                        items(held.features, key = { "feature-${it.id}" }, contentType = { "album" }) { AlbumTile(it, selection = selection) }
+                        items(held.features, key = { "feature-${it.id}" }, contentType = { "album" }) { AlbumTile(it, selection = selection, onArtistPage = artistId) }
                     }
                 }
             }

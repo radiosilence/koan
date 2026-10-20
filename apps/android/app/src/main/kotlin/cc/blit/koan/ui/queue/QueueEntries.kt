@@ -69,6 +69,7 @@ import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.artistCredit
+import cc.blit.koan.ui.library.artistName
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.nowplaying.art
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
@@ -374,7 +375,11 @@ private fun AlbumHeading(group: QueueGroup, linked: Boolean) {
             val first = group.items.first()
             if (group.album.isNotEmpty()) {
                 NameLine(listOf(albumName(group.title, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
-                NameLine(listOf(artistCredit(first.albumArtistCredit.takeIf { group.albumArtist.isNotEmpty() }.orEmpty(), group.albumArtist.ifEmpty { "Unknown Artist" }, first.albumArtistId)), linked = linked)
+                val artist = when {
+                    group.albumArtist.isEmpty() -> artistName("Unknown Artist", first.albumArtistId)
+                    else -> artistCredit(first.albumArtistCredit, group.albumArtist, first.albumArtistId)
+                }
+                NameLine(listOf(artist), linked = linked)
             } else {
                 KoanText(group.title, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 2)
             }

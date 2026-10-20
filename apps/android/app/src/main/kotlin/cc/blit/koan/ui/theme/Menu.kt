@@ -31,13 +31,16 @@ fun KoanMenu(expanded: Boolean, onDismissRequest: () -> Unit, modifier: Modifier
     )
 }
 
-/** An item of a `KoanMenu`, in the app's words: lowercased in the theme, its glyph before it. */
+/**
+ * An item of a `KoanMenu`, in the app's words: lowercased in the theme, its
+ * glyph before it. A `name` after the words, such as an artist's, keeps its case.
+ */
 @Composable
-fun KoanMenuItem(title: String, icon: Int? = null, destructive: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+fun KoanMenuItem(title: String, icon: Int? = null, destructive: Boolean = false, enabled: Boolean = true, name: String = "", onClick: () -> Unit) {
     val tone = if (destructive) KoanTone.Bad else KoanTone.Ink
     val colour = KoanTheme.color(tone)
     DropdownMenuItem(
-        text = { if (KoanTheme.isOn) KoanText(title, role = KoanType.Control, tone = tone, appText = true) else Text(title) },
+        text = { if (KoanTheme.isOn) KoanText(KoanTheme.label(title) + name, role = KoanType.Control, tone = tone) else Text(title + name) },
         leadingIcon = icon?.let { { KoanIcon(it, null, color = colour) } },
         onClick = onClick,
         enabled = enabled,
