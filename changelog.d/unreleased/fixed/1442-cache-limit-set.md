@@ -1,1 +1,1 @@
-- **The iOS cache limit can be set.** Its number pad has no return key, so a Set button above the keyboard commits the limit and puts the keyboard away.
+- **Number pads on iOS can be closed.** The cache limit and the browse filters' years use the number pad, which has no return key; a bar above the keyboard now commits the figure and puts the keyboard away.

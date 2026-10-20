@@ -84,6 +84,7 @@ private struct FilterSheet: ViewModifier {
 
 struct BrowseFilterForm: View {
     @Environment(LibraryModel.self) private var library
+    @FocusState private var year: YearBound?
 
     var body: some View {
         #if os(macOS)
@@ -97,6 +98,7 @@ struct BrowseFilterForm: View {
         #else
         KoanForm { sections }
             .task { await library.loadBrowseChoices() }
+            .decimalPadDone($year, order: [.from, .to])
         #endif
     }
 
@@ -162,8 +164,10 @@ struct BrowseFilterForm: View {
         LabeledContent("Years") {
             HStack(spacing: 4) {
                 YearField(prompt: "From", value: $library.browseFilter.yearFrom)
+                    .focused($year, equals: .from)
                 Text("–").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 YearField(prompt: "To", value: $library.browseFilter.yearTo)
+                    .focused($year, equals: .to)
             }
         }
     }
@@ -190,6 +194,11 @@ struct BrowseFilterForm: View {
         guard let current, !choices.contains(current) else { return choices }
         return choices + [current]
     }
+}
+
+/// Which end of the year range has the keyboard.
+private enum YearBound: Hashable {
+    case from, to
 }
 
 /// A year, applied as it is typed rather than on Return: the phone's number
