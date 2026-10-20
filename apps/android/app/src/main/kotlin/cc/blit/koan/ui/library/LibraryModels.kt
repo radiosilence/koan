@@ -228,11 +228,17 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
         null,
     )
 
-    fun sort(sort: TrackBrowseSort) = query.update { it.copy(sort = sort) }
+    fun sort(sort: TrackBrowseSort) = requery { it.copy(sort = sort) }
 
-    fun filter(filter: BrowseFilter) = query.update { it.copy(filter = filter) }
+    fun filter(filter: BrowseFilter) = requery { it.copy(filter = filter) }
 
-    fun search(text: String) = query.update { it.copy(search = text) }
+    fun search(text: String) = requery { it.copy(search = text) }
+
+    /** A new query starts again from its first page, however far the last one was read. */
+    private fun requery(change: (BrowseQuery<TrackBrowseSort>) -> BrowseQuery<TrackBrowseSort>) {
+        wanted.value = PAGE
+        query.update(change)
+    }
 
     private companion object {
         const val PAGE = 500

@@ -1,10 +1,8 @@
 package cc.blit.koan.ui.library
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,25 +20,23 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
-import cc.blit.koan.ui.theme.koanChip
+import cc.blit.koan.ui.theme.koanPill
 
 /**
  * An artist among records and tracks, going to the artist: the artist glyph,
- * or a tick while picking, and the name. A plain `rule` fill in the theme, as
- * the Apple apps' pills, since an outline is for a prominent button.
+ * or a tick while picking, and the name, on the theme's pill.
  */
 @Composable
 fun ArtistPill(id: Long, name: String, selection: Selection<Playable>) {
     val nav = LocalNavigator.current
     val playable = Playable.OfArtist(id, name)
     var menu by remember { mutableStateOf(false) }
-    val ground = if (KoanTheme.isOn) Modifier.background(KoanTheme.colors.rule).padding(horizontal = 12.dp, vertical = 6.dp) else Modifier.koanChip()
     Box {
         Row(
             Modifier
                 .widthIn(max = 260.dp)
-                .then(ground)
-                .pickable(playable, selection, { menu = true }) { nav.push(ArtistRoute(id)) },
+                .pickable(playable, selection, { menu = true }) { nav.push(ArtistRoute(id)) }
+                .koanPill(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs),
         ) {

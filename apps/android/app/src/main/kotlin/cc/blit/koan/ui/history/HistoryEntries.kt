@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.SwipeToDismissBox
@@ -20,8 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,6 +70,7 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanSurface
+import java.text.DecimalFormatSymbols
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -207,7 +212,8 @@ private fun HistoryRow(entry: PlayHistoryEntry, times: PlayClock, selection: Sel
                 onClick = { if (!selection.take(entry)) app.player.playTracks(listOf(track.id)) },
                 onLongClick = if (selection.active) null else ({ menu = true }),
                 leading = {
-                    if (selection.active) Tick(selection.contains(entry)) else times.Lead(entry.playedAt)
+                    if (selection.active) Tick(selection.contains(entry))
+                    times.Lead(entry.playedAt)
                     Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id))
                 },
                 trailing = { KoanText(track.durationMs?.let(::clock).orEmpty(), role = KoanType.Meta, tone = KoanTone.Muted) },
@@ -221,32 +227,41 @@ private fun HistoryRow(entry: PlayHistoryEntry, times: PlayClock, selection: Sel
 }
 
 /**
- * When each play was, in the clock the phone is set to, as a column: as wide
- * as the widest time the locale prints, so every title lines up.
+ * When each play was, in the clock the phone is set to, as a column as wide as
+ * the widest time the locale prints, so every title lines up.
  */
-private class PlayClock(private val format: java.text.DateFormat) {
-    /** A time at a minute to each hour, its digits zeroed; the widest shapes there are, since digits are monospaced. */
-    private val shapes = (0..23).map { hour ->
-        val at = Calendar.getInstance().apply { set(2001, 0, 1, hour, 59, 0) }
-        format.format(at.time).map { if (it.isDigit()) '0' else it }.joinToString("")
-    }.distinct()
-
+private class PlayClock(private val format: java.text.DateFormat, private val width: Dp) {
     fun time(epochSeconds: Long): String = format.format(Date(epochSeconds * 1000))
 
     @Composable
     fun Lead(epochSeconds: Long) {
-        Box(contentAlignment = Alignment.CenterEnd) {
-            shapes.forEach { KoanText(it, Modifier.alpha(0f), role = KoanType.Fine, maxLines = 1) }
-            KoanText(time(epochSeconds), role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
-        }
+        KoanText(time(epochSeconds), Modifier.width(width), role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1, textAlign = TextAlign.End)
     }
 }
 
-/** The phone's own clock, 12- or 24-hour as its settings say, which `DateTimeFormatter` would ignore. */
+/**
+ * The phone's own clock, 12- or 24-hour as its settings say, which
+ * `DateTimeFormatter` would ignore. The column is measured once, from every
+ * shape a time can take: a minute to each hour, its digits the locale's zero,
+ * since digits are monospaced.
+ */
 @Composable
 private fun rememberPlayClock(): PlayClock {
     val context = LocalContext.current
-    return remember(context) { PlayClock(DateFormat.getTimeFormat(context)) }
+    val measurer = rememberTextMeasurer()
+    val style = KoanType.Fine.style
+    val density = LocalDensity.current
+    val hours24 = DateFormat.is24HourFormat(context)
+    return remember(context, hours24, style, density) {
+        val format = DateFormat.getTimeFormat(context)
+        val zero = DecimalFormatSymbols.getInstance().zeroDigit
+        val widest = (0..23).maxOf { hour ->
+            val at = Calendar.getInstance().apply { set(2001, 0, 1, hour, 59, 0) }
+            val shape = format.format(at.time).map { if (it.isDigit()) zero else it }.joinToString("")
+            measurer.measure(shape, style, maxLines = 1).size.width
+        }
+        PlayClock(format, with(density) { widest.toDp() })
+    }
 }
 
 /**
