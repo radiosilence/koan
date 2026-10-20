@@ -14,7 +14,9 @@ use super::*;
 /// a time: those fetched to play first, then those asked for, least recently
 /// used first within each. Never a file whose album has a favourite in it,
 /// nor a track in `keep` — the playback window, whose files the player may be
-/// reading and which are what it wants next (`playback_window`). Returns the
+/// reading and which are what it wants next (`playback_window`). A limit of
+/// nothing means no cache rather than no downloads: everything fetched to
+/// play goes, and what was asked for stays until it is removed. Returns the
 /// bytes freed.
 pub fn evict_cache(
     db: &Database,
@@ -48,7 +50,7 @@ pub fn evict_cache(
     // A file two tracks record is kept if either is, and removed once.
     let kept: std::collections::HashSet<&str> = files
         .iter()
-        .filter(|f| keep.contains(&f.track_id))
+        .filter(|f| keep.contains(&f.track_id) || (limit == 0 && f.pinned))
         .map(|f| f.path.as_str())
         .collect();
     let mut removed = std::collections::HashSet::new();

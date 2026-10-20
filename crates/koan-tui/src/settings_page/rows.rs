@@ -348,6 +348,7 @@ fn server(page: &SettingsPage, rows: &mut Rows) {
 
     rows.heading("downloads");
     rows.setting(page, Setting::DownloadWorkers);
+    rows.setting(page, Setting::DownloadAhead);
     rows.field(Field::CacheLimit, "cache limit", Some(Op::CommitCacheLimit));
     rows.info("using", bytes(page.local.cache_bytes));
     rows.button(

@@ -1959,12 +1959,28 @@ impl SharedPlayerState {
             .collect()
     }
 
-    /// Every entry with a library track, in the order `pending_downloads`
-    /// gives, whatever its state: what the cache has to hold, downloaded or
-    /// not, for the player to reach it.
+    /// Every entry with a library track the player can still reach, in the
+    /// order `pending_downloads` gives, whatever its state: what the cache has
+    /// to hold, downloaded or not, for the player to reach it. A repeating
+    /// queue reaches every row; one that does not, only the cursor and what
+    /// follows it — the rest of the queue, or shuffle's rows still to play.
+    /// Those lead `reach_order`, so they are a prefix of it.
     pub fn playback_order(&self) -> Vec<(i64, QueueItemId)> {
+        let repeating = self.play_mode().repeat == Repeat::Queue;
         let pl = self.playlist.read();
+        let reachable = match &pl.order {
+            _ if repeating => pl.items.len(),
+            Some(order) => usize::from(pl.cursor.is_some()) + order.upcoming.len(),
+            None => {
+                let from = pl
+                    .cursor
+                    .and_then(|c| pl.items.iter().position(|item| item.id == c))
+                    .unwrap_or(0);
+                pl.items.len() - from
+            }
+        };
         reach_order(&pl)
+            .take(reachable)
             .filter_map(|item| item.db_id.map(|db_id| (db_id, item.id)))
             .collect()
     }

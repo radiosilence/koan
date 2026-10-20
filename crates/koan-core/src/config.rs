@@ -271,10 +271,18 @@ pub struct RemoteConfig {
     /// Parallel download workers for remote tracks (default: 5).
     pub download_workers: usize,
     /// Maximum cache size on disk. Human-readable: "50GB", "500MB", etc.
-    /// None or empty = unlimited. Past it, whole albums are evicted, least
-    /// recently used first, at startup and as downloads land.
+    /// None or empty = unlimited. Past it, files are evicted, least recently
+    /// used first, at startup and as downloads land. "0" keeps no cache: only
+    /// the files the queue is about to play, downloads asked for and
+    /// favourites stay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit: Option<String>,
+    /// How many tracks past the playing one to fetch ahead of time. None
+    /// fetches the whole queue. 0 fetches only the track being played, so
+    /// nothing plays gaplessly and each new track waits for its download; 1
+    /// is the least that keeps gapless playback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_ahead: Option<u32>,
     /// Sync the library from the server on startup, and on a timer for a server
     /// that cannot say when it changes; a koan server tells its apps itself.
     ///
@@ -379,6 +387,7 @@ impl Default for RemoteConfig {
             cache_dir: None,
             download_workers: 5,
             cache_limit: None,
+            download_ahead: None,
             auto_sync: true,
             auto_sync_interval_mins: 60,
             play_queue: false,
@@ -1435,6 +1444,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.username"
         | "remote.cache_dir"
         | "remote.cache_limit"
+        | "remote.download_ahead"
         // Whether this device follows the account's saved play queue.
         | "remote.play_queue"
         // This machine's hardware.

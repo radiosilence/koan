@@ -116,7 +116,8 @@ private fun CacheUsage(onRemoveAll: () -> Unit) {
     val used by app.mirror.cacheBytes.collectAsStateWithLifecycle()
     // Read again as the cache moves; a limit changed in Settings shows on the next visit.
     val limit by produceState<Long?>(null, used) {
-        value = runCatching { app.mirror.engine().cacheLimitBytes()?.toLong() }.getOrNull()
+        // A limit of nothing is no cache, not a cache over its limit.
+        value = runCatching { app.mirror.engine().cacheLimitBytes()?.toLong() }.getOrNull()?.takeIf { it > 0 }
     }
     val size = { bytes: Long -> Formatter.formatShortFileSize(context, bytes) }
 

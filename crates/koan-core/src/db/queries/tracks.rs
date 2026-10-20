@@ -3265,6 +3265,26 @@ mod tests {
     }
 
     #[test]
+    fn with_no_cache_only_what_was_fetched_to_play_goes() {
+        crate::config::isolate_config_for_tests();
+        let db = test_db();
+        let ids = cached_tracks(
+            &db,
+            &[
+                ("Asked", 1000, true),
+                ("Played", 2000, false),
+                ("Next", 3000, false),
+            ],
+        );
+        let mut cfg = crate::config::Config::default();
+        cfg.remote.cache_limit = Some("0".into());
+
+        let keep = std::collections::HashSet::from([ids[2]]);
+        crate::helpers::evict_cache(&db, &cfg, &keep, false);
+        assert_eq!(still_cached(&db, &ids), vec![ids[0], ids[2]]);
+    }
+
+    #[test]
     fn eviction_takes_the_played_half_of_a_queued_album() {
         crate::config::isolate_config_for_tests();
         let db = test_db();

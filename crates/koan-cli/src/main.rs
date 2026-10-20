@@ -786,6 +786,12 @@ fn main() {
             CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
             CacheCommands::Evict => {
                 let cfg = config::Config::load().unwrap_or_default();
+                // Nothing here knows a player's queue, and with no cache
+                // everything unpinned is over the limit, its files included.
+                if cfg.cache_limit_bytes() == Some(0) {
+                    println!("no cache: the player removes tracks as it moves past them");
+                    return;
+                }
                 let freed = commands::evict_cache(&cfg, true);
                 if freed == 0 {
                     println!("cache within limit, nothing to evict");
@@ -976,7 +982,12 @@ fn start_player(
     server: Option<String>,
 ) {
     let cfg = koan_core::config::Config::load_or_default();
-    commands::evict_cache(&cfg, false);
+    // With no cache, everything over the limit is everything: the restored
+    // queue's files would go before it plays. The download queue trims around
+    // the queue instead, once it has one.
+    if cfg.cache_limit_bytes() != Some(0) {
+        commands::evict_cache(&cfg, false);
+    }
 
     if let Some(ref url) = server {
         commands::cmd_play_remote(url);

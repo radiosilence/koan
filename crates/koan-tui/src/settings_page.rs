@@ -72,6 +72,7 @@ pub enum Setting {
     AutoSync,
     SyncInterval,
     DownloadWorkers,
+    DownloadAhead,
     Offline,
     Discoverable,
     NearbyControl,
@@ -144,7 +145,7 @@ impl Field {
             Field::Username | Field::PersonName => "username",
             Field::Secret => "the account's password or API key",
             Field::Folder => "the path of a folder of music",
-            Field::CacheLimit => "e.g. 50GB, blank for no limit",
+            Field::CacheLimit => "e.g. 50GB, 0 for no cache, blank for no limit",
             Field::CurrentPassword => "current password",
             Field::NewPassword => "new password",
             Field::KeyName | Field::AppPasswordName => "the app it is for",
@@ -192,6 +193,8 @@ pub(crate) enum Op {
     },
     AskRebuild,
     CommitCacheLimit,
+    /// A cache limit that deletes downloads, confirmed.
+    SetCacheLimit(Option<String>),
     ChangePassword,
     NewApiKey,
     AskRevokeKey(i64, String),
@@ -803,10 +806,16 @@ impl SettingsPage {
                 koan_core::remote::offline::set_manual(!koan_core::remote::offline::manual());
                 Some(Outcome::Changed(Setting::Offline))
             }
-            Step::Setting(setting) => Some(match self.persist(|c| setting.step(c, forward)) {
-                Ok(()) => Outcome::Changed(setting),
-                Err(e) => Outcome::Say(e),
-            }),
+            Step::Setting(setting) => {
+                let wrote = self.persist(|c| setting.step(c, forward));
+                if setting == Setting::DownloadAhead && wrote.is_ok() {
+                    koan_core::remote::queue::cache_limit_changed();
+                }
+                Some(match wrote {
+                    Ok(()) => Outcome::Changed(setting),
+                    Err(e) => Outcome::Say(e),
+                })
+            }
             Step::SignInWith => {
                 self.sign_in_with_key = !self.sign_in_with_key;
                 None
@@ -824,6 +833,20 @@ const THEMES: [&str; 2] = ["koan", "ansi"];
 const PALETTES: [&str; 5] = ["theme", "rainbow", "mono", "fire", "neon"];
 const FRAME_RATES: [u8; 3] = [30, 60, 120];
 const SYNC_MINUTES: [u64; 5] = [0, 15, 60, 360, 1440];
+const DOWNLOAD_AHEAD: [Option<u32>; 12] = [
+    Some(0),
+    Some(1),
+    Some(2),
+    Some(3),
+    Some(4),
+    Some(5),
+    Some(6),
+    Some(7),
+    Some(8),
+    Some(9),
+    Some(10),
+    None,
+];
 
 /// The palette's name as the page lists it: `spectrum` and `record` are older
 /// names for the themed palette.
@@ -872,6 +895,7 @@ impl Setting {
             Setting::AutoSync => "keep in sync",
             Setting::SyncInterval => "every",
             Setting::DownloadWorkers => "parallel downloads",
+            Setting::DownloadAhead => "download ahead",
             Setting::Offline => "offline mode",
             Setting::Discoverable => "discoverable",
             Setting::NearbyControl => "devices on network",
@@ -893,6 +917,7 @@ impl Setting {
             Setting::AutoSync => "in the apps",
             Setting::SyncInterval => "",
             Setting::DownloadWorkers => "from the next start",
+            Setting::DownloadAhead => "past the playing track; 0 plays nothing gaplessly",
             Setting::Offline => "only what is on this device",
             Setting::Discoverable => "other kōan apps on this network see it",
             Setting::NearbyControl => "what they may do here",
@@ -924,6 +949,11 @@ impl Setting {
                 n => format!("{n} minutes"),
             },
             Setting::DownloadWorkers => cfg.remote.download_workers.to_string(),
+            Setting::DownloadAhead => match cfg.remote.download_ahead {
+                None => "whole queue".into(),
+                Some(1) => "1 track".into(),
+                Some(n) => format!("{n} tracks"),
+            },
             Setting::Offline => on_off(koan_core::remote::offline::manual()),
             Setting::Discoverable => on_off(cfg.devices.discoverable),
             Setting::NearbyControl => match cfg.devices.nearby_control {
@@ -982,6 +1012,22 @@ impl Setting {
             Setting::DownloadWorkers => {
                 c.remote.download_workers =
                     (c.remote.download_workers as isize + d).clamp(1, 16) as usize;
+            }
+            Setting::DownloadAhead => {
+                // A number past the steps, set by hand, sits between the
+                // largest and the whole queue.
+                let at = DOWNLOAD_AHEAD
+                    .iter()
+                    .position(|n| *n == c.remote.download_ahead)
+                    .unwrap_or(if forward {
+                        DOWNLOAD_AHEAD.len() - 2
+                    } else {
+                        DOWNLOAD_AHEAD.len() - 1
+                    }) as isize;
+                // Clamped, not cycled: one step past the whole queue would
+                // otherwise give up gapless playback.
+                c.remote.download_ahead =
+                    DOWNLOAD_AHEAD[(at + d).clamp(0, DOWNLOAD_AHEAD.len() as isize - 1) as usize];
             }
             Setting::Offline => {}
             Setting::Discoverable => c.devices.discoverable = !c.devices.discoverable,
