@@ -120,9 +120,34 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI: albums, artists, playlists, search, a play queue and share links, laid out for a phone as well as a desktop. Albums, artists and tracks sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the apps offer, so a filtered view can be bookmarked or sent. Playlists are the account's own and anyone's public ones, played or queued like an album; they are edited from the apps. Favourites lists the signed-in account's favourite artists, records and tracks, as the apps' page does; Recently played what it played in the last 30 days, each once; each page showing the first few of each kind under a heading that gives the whole count and opens the matching filtered browser; and History its plays by day, any of which can be ticked and forgotten. On a phone these sit under a Library tab with Playlists, since the tab bar has room for six. Hearts on tracks, records and artists favourite them for the signed-in account, as the apps do, and every artist named in a collaboration's credit links to their own page. An artist's page holds their own records and, under Features on, the records someone else is the album artist of that they are credited on, as in the apps. A track row's menu (right-click, press and hold on a phone, or its ⋯) offers what the apps' does: play next, queue, favourite, share, and the album and artist. Its Properties shows what the server knows about the track, for working out why a record appears twice or the wrong file plays: each of its sources (the file, and an entry from a remote server it syncs) with their tags and format, its uid and its album's, and its MusicBrainz ids. Admin accounts also see the file's full path on the server, with a copy button; other accounts are not shown paths, since they describe the server's filesystem. Playback happens in the browser, streaming from the server; the server's own player is not involved. Admin accounts find Rescan at the foot of the Library page: it looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. Read every file again ignores what the scan cache says is unchanged and reads every file's tags, which is what an upgrade that reads more from tags needs, since the files themselves did not change. It is the same job as `triggerScan(reread: true)`, so a scan started from either shows in both. The section also shows the scans the server runs by itself, such as the one at start-up, which after an upgrade that empties the scan cache reads every file and can take a long while: what started the scan, how many of the files it found it has read, and how it ended.
+The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
-Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
+- **Albums, artists and tracks** sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the apps offer, so a filtered view can be bookmarked or sent.
+- **Playlists** are the account's own and anyone's public ones, played or queued like an album. They are edited from the apps.
+- **Favourites** lists the account's favourite artists, records and tracks. **Recently played** lists what it played in the last 30 days, each once. Both show the first few of each kind under a heading that gives the whole count and opens the matching filtered browser.
+- **History** lists plays by day; any of them can be ticked and forgotten.
+- **Hearts** on tracks, records and artists favourite them for the signed-in account. Every artist named in a collaboration's credit links to their own page.
+- **Artist pages** hold the artist's own records and, under Features on, the records someone else is the album artist of that they are credited on.
+
+On a phone, Favourites, Recently played, History and Playlists sit under a Library tab, since the tab bar has room for six.
+
+### Track menu and properties
+
+A track row's menu (right-click, press and hold on a phone, or its ⋯) offers play next, queue, favourite, share, and the album and artist.
+
+**Properties** shows what the server knows about the track, for working out why a record appears twice or the wrong file plays: each of its sources (the file, and an entry from a remote server it syncs) with their tags and format, its uid and its album's, and its MusicBrainz ids. Admin accounts also see the file's full path on the server, with a copy button. Other accounts are not shown paths, since they describe the server's filesystem.
+
+### Rescan
+
+Admin accounts find Rescan at the foot of the Library page. It looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. It is the same job as `triggerScan`, so a scan started from either shows in both.
+
+**Read every file again** ignores the scan cache and reads every file's tags. An upgrade that reads more from tags needs this, since the files themselves did not change (`triggerScan(reread: true)`).
+
+The section also shows the scans the server runs by itself, with what started each, how many of the files it found it has read, and how it ended. The start-up scan after an upgrade that empties the scan cache reads every file and can take a long while.
+
+### Signing in
+
+Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port.
 
 ### Behind an authenticating proxy
 
@@ -134,7 +159,15 @@ proxy_auth_header = "Remote-User"
 proxy_auth_from = ["172.18.0.5"]     # the proxy's own address
 ```
 
-The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan with exactly that name, byte for byte and case included: a name the server has no account for is refused, not created. A header from the proxy that names no one account (sent twice, merged, or not UTF-8) is refused too, and signs the browser out rather than leaving it on the session it had. A session through the proxy is an access cookie alone, with no refresh cookie, and each page load and each renewal derives it again from the header. It therefore lasts no longer than the proxy's say-so: a browser whose proxy sign-in changes to another account is handed over on its next page load, and once the proxy stops naming an account (sign-out, or removal at the identity provider), what kōan issued for it lapses within `access_token_ttl`. Signing out is done at the proxy. A password sign-in made without the proxy, such as `koan auth login`, keeps its refresh token as usual. Turning proxy mode on does not end sessions signed in with a password before it: their refresh tokens still rotate at `/auth/refresh`. To end them, have each person sign out of the web UI once, or reset the account's password (`koan auth reset-password`, or Users in the web UI), which also revokes its API keys and app passwords and so signs its apps out too.
+The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value.
+
+The account must already exist in kōan with exactly that name, byte for byte and case included: a name the server has no account for is refused, not created. A header from the proxy that names no one account (sent twice, merged, or not UTF-8) is refused too, and signs the browser out rather than leaving it on the session it had.
+
+A session through the proxy is an access cookie alone, with no refresh cookie, and each page load and each renewal derives it again from the header. It therefore lasts no longer than the proxy's say-so: a browser whose proxy sign-in changes to another account is handed over on its next page load, and once the proxy stops naming an account (sign-out, or removal at the identity provider), what kōan issued for it lapses within `access_token_ttl`.
+
+Signing out is done at the proxy. A password sign-in made without the proxy, such as `koan auth login`, keeps its refresh token as usual.
+
+Turning proxy mode on does not end sessions signed in with a password before it: their refresh tokens still rotate at `/auth/refresh`. To end them, have each person sign out of the web UI once, or reset the account's password (`koan auth reset-password`, or Users in the web UI), which also revokes its API keys and app passwords and so signs its apps out too.
 
 Proxy sign-in is on only when both settings are set. The server refuses to start, naming the problem, when one is set without the other, when the header is not a header name or an entry is neither an address nor a range, and when an entry covers every address (`0.0.0.0/0`, `::/0`). When it is on, the server logs the header and the addresses it believes it from.
 
@@ -191,7 +224,11 @@ Besides playing, browsing and favourites, Subsonic clients get:
 - **Favourites on every listing.** A song, album or artist the account has favourited carries `starred`, the time it was favourited, in the ID3 listings (album and artist pages, search, album lists, playlists, random songs) and in the folder browse (`getIndexes`' artists, and the albums and songs `getMusicDirectory` lists), so a client shows its hearts without reading `getStarred2` first. Ratings (`userRating`) and an album's last play (`played`) are carried in the same places.
 - **Ratings.** `setRating` keeps a rating of one to five per account for songs, albums and artists, returned as `userRating`, and `getAlbumList2?type=highest` lists rated albums best first. kōan's own apps do not show ratings.
 - **Bookmarks.** `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track, for clients that resume long tracks. kōan's own apps do not use them.
-- **A saved play queue.** `savePlayQueue` and `getPlayQueue` keep one queue per account, with its current song and position, for clients that save on pause or exit and resume on another device; the OpenSubsonic `indexBasedQueue` extension (`savePlayQueueByIndex`, `getPlayQueueByIndex`) names the current song by its place, so a song queued twice is unambiguous. Songs the library no longer has are left out when it is read. A queue holds at most 5,000 songs; a longer one is refused rather than cut. It needs an account: the shared secret is refused. kōan's own apps move their queues between devices over the link, and use it only when a device is set to keep its queue on the server (see [Remote servers](remote-servers.md#the-play-queue-on-the-server)).
+- **A saved play queue.** `savePlayQueue` and `getPlayQueue` keep one queue per account, with its current song and position, for clients that save on pause or exit and resume on another device; the OpenSubsonic `indexBasedQueue` extension (`savePlayQueueByIndex`, `getPlayQueueByIndex`) names the current song by its place, so a song queued twice is unambiguous. Songs the library no longer has are left out when it is read.
+
+  A queue holds at most 5,000 songs; a longer one is refused rather than cut. It needs an account: the shared secret is refused.
+
+  kōan's own apps move their queues between devices over the link, and use it only when a device is set to keep its queue on the server (see [Remote servers](remote-servers.md#the-play-queue-on-the-server)).
 - **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).
 - **A cover for every record.** `getCoverArt` for a song, album or artist without art answers with the kōan ensō on a dark square, at the nearest size covers are served at, as Navidrome answers with its own placeholder, so a client always has an image to draw. It is marked with an `X-Koan-Placeholder` header, which kōan's own apps read as "no artwork" and draw their placeholder in their own appearance instead. An id the library does not hold is still an error.
 - **Smart playlists**, read-only, as ordinary playlists. See [Smart playlists](smart-playlists.md).
@@ -201,13 +238,17 @@ Sign-in, and which credential each kind of client should use, is in [Authenticat
 
 ## Scrobbling
 
-Each account can forward its plays to ListenBrainz or Last.fm from the web UI's Scrobbling page, linked from Account, or from Settings → Integrations → Scrobbling in the Mac, iOS and Android apps. For ListenBrainz, paste the user token from its settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
+Each account can forward its plays to ListenBrainz, from the web UI's Scrobbling page (linked from Account) or Settings → Integrations → Scrobbling in the Mac, iOS and Android apps, and to Last.fm, through the web UI's page, which the terminal UI's Settings also opens (see [Last.fm](#lastfm)). For ListenBrainz, paste the user token from its settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
 
 Plays wait in the database until ListenBrainz accepts them, so a restart or an outage delays them rather than losing them; the page shows how many are waiting. A token ListenBrainz stops accepting is shown there, and plays are kept until the account connects again. Plays the server's own player records are forwarded in the history sent on connecting, when they were listened to for half the track or four minutes, but not as they happen. Tracks without an artist or title are not sent.
 
 ### Last.fm
 
-Last.fm needs an API key and shared secret for the server, which its admin registers at <https://www.last.fm/api/account/create> and sets as `lastfm.api_key` and `lastfm.secret` in `config.local.toml` (see [Configuration](../reference/configuration.md#lastfm)), and `server.url`, so that Last.fm can send people back. The Scrobbling page then offers Connect Last.fm: it sends the person to Last.fm to approve kōan and back, and the server exchanges what Last.fm returns for a session key it keeps, never showing it. The return address carries a one-time code made when the person left, so a link someone else makes cannot connect their Last.fm to your account. Without the key and secret the page says Last.fm is not set up.
+Last.fm needs an API key and shared secret for the server, which its admin registers at <https://www.last.fm/api/account/create> and sets as `lastfm.api_key` and `lastfm.secret` in `config.local.toml` (see [Configuration](../reference/configuration.md#lastfm)), and `server.url`, so that Last.fm can send people back.
+
+The Scrobbling page then offers Connect Last.fm: it sends the person to Last.fm to approve kōan and back, and the server exchanges what Last.fm returns for a session key it keeps, never showing it.
+
+The return address carries a one-time code made when the person left, so a link someone else makes cannot connect their Last.fm to your account. Without the key and secret the page says Last.fm is not set up.
 
 Plays are sent as they are reported, fifty to a call, with now-playing notices, and wait in the database the same way. Last.fm ignores plays more than two weeks old, so connecting sends only the last two weeks of history, and a play still waiting past that is dropped rather than sent. A session key Last.fm stops accepting (the person revoked kōan there) is shown on the page, and plays are kept until the account connects again. Connecting Last.fm is done in the web UI; the apps show it in `koanScrobbling` as a service named `lastfm` and can disconnect it with `service=lastfm`.
 
@@ -248,13 +289,17 @@ mutation { queueOnClientWhenAdded(artist: "Rilo Kiley", album: "Under the Blackl
 | `evictOnClients(trackIds)` | Have every linked app delete its downloaded copies of those tracks, after a damaged file on the server is replaced |
 | `queueOnClientWhenAdded(artist, album, playNext)` | Queue an album once it is in the library, e.g. one slsk is downloading. Checked after every library scan; lapses after a day. `clientOrders` lists them, `cancelClientOrder` withdraws one |
 
-Every mutation that addresses one app, apart from `handOffClient` with its `from` and `to`, takes an optional `client`, an id or name from `clients`. Without it the server picks the app that is playing, else the one that played in the last six hours, else the only one linked, and otherwise answers with the choices so the caller can ask. Track ids are the server's; an app that has not seen one syncs first, and its pages show what the sync brought in. Every account, admin included, sees and commands only its own apps, so a server shared by several people never sends one person's music to another's phone.
+Every mutation that addresses one app, apart from `handOffClient` with its `from` and `to`, takes an optional `client`, an id or name from `clients`. Without it the server picks the app that is playing, else the one that played in the last six hours, else the only one linked, and otherwise answers with the choices so the caller can ask.
+
+Track ids are the server's; an app that has not seen one syncs first, and its pages show what the sync brought in. Every account, admin included, sees and commands only its own apps, so a server shared by several people never sends one person's music to another's phone.
 
 An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. A server with [`[push]`](../reference/configuration.md#push) configured wakes a suspended phone to relink and take the command, choosing the one seen most recently when no `client` is named, since a reinstalled app leaves its old entry behind under the same name; a request to play arrives as a notification to tap, since iOS does not let an app start audio from the background. Opening the app relinks at once.
 
 ## In a container
 
-The image at `ghcr.io/radiosilence/koan`, for amd64 and arm64, runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first admin on the setup page the web UI shows until one exists, or with `koan auth setup` inside the container (see [The first account](#the-first-account)), and `koan subsonic setup` to enable the Subsonic API.
+The image at `ghcr.io/radiosilence/koan`, for amd64 and arm64, runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them.
+
+Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first admin on the setup page the web UI shows until one exists, or with `koan auth setup` inside the container (see [The first account](#the-first-account)), and `koan subsonic setup` to enable the Subsonic API.
 
 Set `KOAN_SERVER__URL` to the public address; the container does not start without it.
 

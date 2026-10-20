@@ -35,21 +35,29 @@ The Android app plays from a server, as the iOS app does, and needs Android 10 o
 
 ## The Apple TV app
 
-The Apple TV app is in the same TestFlight beta as the iOS app and needs tvOS 26. It is signed in from a phone or Mac that already is, rather than with a password typed on the remote; see [Apple TV](guide/apple-tv.md).
+The Apple TV app is in the same TestFlight beta as the iOS app and needs tvOS 26. It is most easily signed in from a phone or Mac that already is, or with a code a browser approves, though it also takes a password or API key typed with the remote; see [Apple TV](guide/apple-tv.md).
 
 ## History and Recently played
 
 The apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the Library tab on iPhone and Android, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
 
-Recently Played and Favourites show the first few of each kind. Each section's heading gives how many there are in all and opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same. On the Mac, **Tracks**, beside Albums and Artists, lists every track in the library with the same filters; the iOS and Apple TV apps reach the track listing only filtered, from a "See all", since the whole library as one list is more than a phone or a television should draw and queue at once. On Apple TV the Albums, Artists, History and Playlists pages narrow by name from a field above the listing, as the other apps' filter fields do.
+Recently Played and Favourites show the first few of each kind. Each section's heading gives how many there are in all and opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same.
+
+On the Mac, **Tracks**, beside Albums and Artists, lists every track in the library with the same filters; the iOS and Apple TV apps reach the track listing only filtered, from a "See all", since the whole library as one list is more than a phone or a television should draw and queue at once. On Apple TV the Albums, Artists, History and Playlists pages narrow by name from a field above the listing, as the other apps' filter fields do.
 
 ## Artist pages
 
-An artist's page holds the records they are the album artist of, and below them, under **Features on**, the records someone else is the album artist of that they are credited on: compilations, splits, guest spots. The page's Play, Shuffle and Queue act on the artist's own records only, and Play on an artist elsewhere in the apps and the terminal UI (a row, a menu) plays the same. Features on has its own smaller Play and Queue for those records, so everything they appear on is their records queued and then the features. Records picked with Select can come from both sections. An artist with no records of their own has only Features on, and the page's Play plays the tracks credited to them.
+An artist's page holds the records they are the album artist of, and below them, under **Features on**, the records someone else is the album artist of that they are credited on: compilations, splits, guest spots. The page's Play, Shuffle and Queue act on the artist's own records only, and Play on an artist elsewhere in the apps and the terminal UI (a row, a menu) plays the same.
+
+Features on has its own smaller Play and Queue for those records, so everything they appear on is their records queued and then the features. Records picked with Select can come from both sections. An artist with no records of their own has only Features on, and the page's Play plays the tracks credited to them.
 
 ### Collaborations
 
-A record credited to several artists ("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains") is listed under each of them when its tags name them one by one: the `ARTISTS` and `ALBUMARTISTS` tags and the MusicBrainz artist ids that Picard and sift write, or the `artists` and `albumArtists` an OpenSubsonic server sends. The record keeps its credit as it reads, and the credit itself is no longer listed as an artist. In the apps and the web UI each artist's name within the credit links to that artist, with the text joining them plain; where the credit spells a name differently from its tag, the artists are listed separated by commas instead. kōan does not split credits that are only a single string, because "&", "," and " x " also occur inside band names; retag them instead.
+A record credited to several artists ("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains") is listed under each of them when its tags name them one by one: the `ARTISTS` and `ALBUMARTISTS` tags and the MusicBrainz artist ids that Picard and sift write, or the `artists` and `albumArtists` an OpenSubsonic server sends. The record keeps its credit as it reads, and the credit itself is no longer listed as an artist.
+
+In the apps and the web UI each artist's name within the credit links to that artist, with the text joining them plain; where the credit spells a name differently from its tag, the artists are listed separated by commas instead.
+
+kōan does not split credits that are only a single string, because "&", "," and " x " also occur inside band names; retag them instead.
 
 After upgrading, the next scan reads every file's tags again and the next sync walks the whole server, so a library already indexed picks these tags up without a rescan by hand.
 
@@ -95,7 +103,11 @@ koan remote sync
 
 ### Playing
 
-The terminal UI has pages, as the apps do: `1` the queue, `2` Now playing, `3` Albums, `4` Artists, `5` Favourites, `6` Recent, `7` History, `8` Playlists, `9` Settings and `0` Search, also reached from the sidebar. On the queue, `p` picks tracks, `a` albums and `r` artists; in the picker, `Enter` adds to the queue, `Ctrl+Enter` adds and plays, and `Ctrl+R` replaces the queue. `space` plays and pauses, `<` and `>` skip, `,` and `.` seek, and `Ctrl+Z` undoes a queue edit. `?` lists every key; [The terminal UI](guide/terminal-ui.md) describes the pages and [Keybindings](reference/keybindings.md) lists the keys.
+The terminal UI has pages, as the apps do: `1` the queue, `2` Now playing, `3` Albums, `4` Artists, `5` Favourites, `6` Recent, `7` History, `8` Playlists, `9` Settings and `0` Search, also reached from the sidebar.
+
+On the queue, `p` picks tracks, `a` albums and `r` artists; in the picker, `Enter` adds to the queue, `Ctrl+Enter` adds and plays, and `Ctrl+R` replaces the queue. `space` plays and pauses, `<` and `>` skip, `,` and `.` seek, and `Ctrl+Z` undoes a queue edit.
+
+`?` lists every key; [The terminal UI](guide/terminal-ui.md) describes the pages and [Keybindings](reference/keybindings.md) lists the keys.
 
 `koan play` also takes paths: `koan play ~/Music/some-album/`.
 
