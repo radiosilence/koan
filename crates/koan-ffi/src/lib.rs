@@ -2661,9 +2661,8 @@ impl KoanEngine {
         use koan_core::remote::control::{self, Moved};
         use koan_core::remote::devices;
         // Off the lane: commands meanwhile are for the music where it is.
-        if let Some(id) = to.clone() {
-            offload::offload(move || devices::wake_to_send(&id)).await;
-        }
+        let waking = to.clone();
+        let asked = offload::offload(move || control::wake_for_move(waking.as_deref())).await;
         let engine = self.clone();
         // Sent on the lane, in order with every other command; waited for off
         // it, so the transport does not stall behind a device that is slow to
@@ -2677,8 +2676,9 @@ impl KoanEngine {
             let before = to.as_deref().and_then(devices::last_report);
             let cursor_before = engine.state.cursor();
             let (then, answer) = outcome_channel();
-            let moved = control::move_music(to.clone(), &engine.tx, &engine.state, Some(then))
-                .map_err(|message| KoanError::Remote { message })?;
+            let moved =
+                control::move_music(to.clone(), asked, &engine.tx, &engine.state, Some(then))
+                    .map_err(|message| KoanError::Remote { message })?;
             Ok(moved.map(|moved| match moved {
                 Moved::Sent(sent) => HandedOff {
                     left_out: sent.left_out,

@@ -957,8 +957,10 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                     last_seen: live(&d.id),
                     waking: None,
                     // Met on the network, its own word is the latest.
+                    // Linked to this server it is on it, by whatever address;
+                    // otherwise, met on the network, its own word is the latest.
                     same_library: account_here
-                        && near.is_none_or(|n| same_server(&ours, &n.hello.library)),
+                        && (d.linked || near.is_none_or(|n| same_server(&ours, &n.hello.library))),
                     // The network's state is fresher, but only the server's
                     // carries the outputs: the network is told none.
                     state: match (near.and_then(|n| n.state.clone()), &d.state) {
@@ -1018,7 +1020,12 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                 wakeable: !g.account && s.linked,
                 last_seen: last,
                 waking: None,
-                same_library: same_server(&ours, &g.library),
+                // One that left a list kept before servers were recorded
+                // has none, and is taken as the list was.
+                same_library: match &g.library {
+                    Some(_) => same_server(&ours, &g.library),
+                    None => g.account || g.shared,
+                },
                 // What it was doing is not what it is doing now.
                 state: None,
                 heard: Instant::now(),
@@ -1243,7 +1250,9 @@ pub fn wake_to_send(id: &str) -> bool {
     if reachable(id) {
         return true;
     }
-    start_wake(id, false);
+    if !start_wake(id, false) {
+        return false;
+    }
     let waking = || {
         with(|s| {
             s.attempt.as_ref().is_some_and(|(_, d)| d == id)
@@ -1254,28 +1263,37 @@ pub fn wake_to_send(id: &str) -> bool {
         })
     };
     await_until(|| reachable(id) || !waking(), WAKE_TO_SEND);
+    // Whatever this wake left, or would leave once it ends, is dropped: a
+    // wake still running is abandoned, so it marks nothing later.
+    // A wake from choosing it, waiting on a tap, is left to run.
     changed(|s| {
-        if matches!(s.waking.get(id), Some(Waking::Failed(_))) {
-            s.waking.remove(id);
+        if matches!(s.waking.get(id), Some(Waking::Notification)) {
+            return;
         }
+        if s.attempt.as_ref().is_some_and(|(_, d)| d == id) {
+            s.attempt = None;
+            s.wake_gen += 1;
+        }
+        s.waking.remove(id);
     });
     reachable(id)
 }
 
 /// The longest `wake_to_send` waits: every stage before the notification,
-/// an Apple TV's knock included.
+/// an Apple TV's knock included, and some for the steps between them.
 const WAKE_TO_SEND: Duration = Duration::from_secs(
-    TV_KNOCK.as_secs() + TV_WAIT.as_secs() + NETWORK_WAIT.as_secs() + PUSH_WAIT.as_secs() + 1,
+    TV_KNOCK.as_secs() + TV_WAIT.as_secs() + NETWORK_WAIT.as_secs() + PUSH_WAIT.as_secs() + 5,
 );
 
 /// `wake`, with the notification to tap as its last stage when `notify`.
-fn start_wake(id: &str, notify: bool) {
+/// Whether a wake of `id` is under way now, started or joined.
+fn start_wake(id: &str, notify: bool) -> bool {
     let id = id.to_string();
     if reachable(&id) {
-        return;
+        return false;
     }
     let Some(device) = list().into_iter().find(|d| d.id == id) else {
-        return;
+        return false;
     };
     let now = chrono::Utc::now().timestamp();
     // A stranger on the network has nothing to answer a push with.
@@ -1283,11 +1301,11 @@ fn start_wake(id: &str, notify: bool) {
     let mut plan = wake_plan(tv.is_some(), recently_on_network(&id, now), device.wakeable);
     plan.retain(|(stage, _)| notify || *stage != Waking::Notification);
     if plan.is_empty() {
-        return;
+        return false;
     }
     let Some(generation) = begin_wake(&id) else {
         log::info!("wake: {}: already being woken", device.name);
-        return;
+        return true;
     };
     let name = device.name;
     let _ = std::thread::Builder::new()
@@ -1380,6 +1398,7 @@ fn start_wake(id: &str, notify: bool) {
                 }
             });
         });
+    true
 }
 
 /// The device the app is controlling; `None` for this one.
@@ -3128,7 +3147,14 @@ pub(crate) mod tests {
                 .unwrap()
                 .same_library
         };
-        set_account(vec![device("tv", false), device("phone", false)], here());
+        let away = |id: &str| LinkDevice {
+            linked: false,
+            ..device(id, false)
+        };
+        set_account(
+            vec![away("tv"), away("phone"), device("mac", false)],
+            here(),
+        );
         assert!(same(here(), "tv"));
         assert!(
             !same(Some("elsewhere".into()), "tv"),
@@ -3152,6 +3178,12 @@ pub(crate) mod tests {
         assert!(same(here(), "phone"));
         nearby_hello(on("tv", None), "10.0.0.7:5626");
         assert!(!same(here(), "tv"), "signed out");
+        // Linked to this server it is on it, by whatever address it uses.
+        nearby_hello(
+            on("mac", Some("this server by another name")),
+            "10.0.0.6:5626",
+        );
+        assert!(same(here(), "mac"));
 
         // A stranger that left keeps the server it was on.
         nearby_hello(on("stranger", Some("elsewhere")), "10.0.0.9:5626");

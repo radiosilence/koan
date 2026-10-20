@@ -540,22 +540,55 @@ pub enum Moved {
     Asked,
 }
 
+/// Make ready to move the music to `to`: woken as choosing it does, unless
+/// it is the device controlled already, while the music plays on where it is.
+/// It can take half a minute, so run it off any lane commands wait on. The
+/// device controlled when asked, for `move_music`.
+pub fn wake_for_move(to: Option<&str>) -> Option<String> {
+    let from = devices::target();
+    if let Some(to) = to
+        && from.as_deref() != Some(to)
+    {
+        devices::wake_to_send(to);
+    }
+    from
+}
+
 /// Move the music of the device being controlled (this one, when none is)
 /// to `to` (this one with `None`), and control `to` from then on. `None` when
-/// there was nothing to move: `to` is already the one controlled.
-///
-/// Wake `to` first with `devices::wake_to_send`, off any lane commands wait
-/// on: it can take half a minute, and the music plays on where it is till
-/// then.
+/// there was nothing to move: `to` is already the one controlled. `asked` is
+/// what `wake_for_move` returned: another device chosen since is the person's
+/// later word, and nothing moves. Only between devices on this device's
+/// server, whose track ids both can find.
 pub fn move_music(
     to: Option<String>,
+    asked: Option<String>,
     tx: &Sender<PlayerCommand>,
     state: &SharedPlayerState,
     then: Option<devices::Then>,
 ) -> Result<Option<Moved>, String> {
     let from = devices::target();
+    if from != asked {
+        return Err("Another device was chosen meanwhile, so nothing moved.".into());
+    }
     if from == to {
         return Ok(None);
+    }
+    let listed = devices::list();
+    let elsewhere = |id: &str| {
+        listed
+            .iter()
+            .find(|d| d.id == id && !d.same_library)
+            .map(|d| d.name.clone())
+    };
+    if let Some(name) = to
+        .as_deref()
+        .and_then(elsewhere)
+        .or_else(|| from.as_deref().and_then(elsewhere))
+    {
+        return Err(format!(
+            "{name} plays from another server, which cannot find this music."
+        ));
     }
     let moved = match (&from, &to) {
         (None, Some(to)) => Some(Moved::Sent(Box::new(hand_off(
@@ -776,5 +809,51 @@ mod tests {
             serde_json::from_value(serde_json::json!({"type": "enqueue", "trackIds": ["t"]}))
                 .unwrap();
         assert_eq!(old, plain);
+    }
+
+    /// Music moves only to a device on this device's server, and not at all
+    /// when another device was chosen while the destination woke.
+    #[test]
+    fn music_moves_only_as_asked_and_on_one_server() {
+        let _held = devices::tests::STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        devices::set_target(None);
+        // Signed in to nothing here: the account's TV is on a server this
+        // device is not.
+        devices::set_account(
+            vec![crate::remote::link::LinkDevice {
+                id: "tv".into(),
+                name: "TV".into(),
+                platform: "tvos".into(),
+                linked: true,
+                state: None,
+                last_seen: None,
+                wakeable: None,
+                owner: None,
+                acks: false,
+            }],
+            Some("elsewhere".into()),
+        );
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let state = SharedPlayerState::new();
+        let err = |r: Result<Option<Moved>, String>| r.err().unwrap_or_default();
+
+        assert_eq!(wake_for_move(Some("tv")), None, "linked: nothing to wake");
+        assert!(
+            err(move_music(
+                Some("tv".into()),
+                Some("tv".into()),
+                &tx,
+                &state,
+                None
+            ))
+            .contains("chosen meanwhile")
+        );
+        assert!(
+            err(move_music(Some("tv".into()), None, &tx, &state, None)).contains("another server")
+        );
+        assert_eq!(devices::target(), None, "nothing moved, nothing controlled");
+        assert!(rx.try_recv().is_err(), "this player was not paused");
+        devices::set_account(Vec::new(), None);
     }
 }
