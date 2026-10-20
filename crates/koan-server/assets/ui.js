@@ -83,17 +83,28 @@
       id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
       title: d.title, artist: d.artist, album: d.album, albumId,
       artistId: Number(d.artistId) || 0, cover: d.cover || null,
+      credit: d.credit ? JSON.parse(d.credit) : null,
     };
+  }
+
+  // A track's artist credit as it reads: each credited artist's name a link to
+  // them, the text joining the names plain. A track whose credit is one name
+  // carries no parts, only its artist.
+  function creditNodes(t) {
+    const parts = t.credit ?? (t.artist ? [[t.artist, t.artistId]] : []);
+    return parts.map(([text, id]) => {
+      if (!id) return document.createTextNode(text);
+      const a = document.createElement("a");
+      a.href = `/artist/${id}`;
+      a.textContent = text;
+      return a;
+    });
   }
 
   function render({ queue, cur, playing, track }) {
     document.body.classList.toggle("playing", playing);
     for (const el of all("[data-np=title]")) el.textContent = track ? track.title : "Nothing playing";
-    for (const el of all("[data-np=artist]")) {
-      el.textContent = track ? track.artist : "";
-      if (track && track.artistId) el.href = `/artist/${track.artistId}`;
-      else el.removeAttribute("href");
-    }
+    for (const el of all("[data-np=artist]")) el.replaceChildren(...(track ? creditNodes(track) : []));
     for (const el of all("[data-np=sep]")) el.hidden = !(track && track.artist && track.album);
     for (const el of all("[data-np=album]")) {
       el.textContent = track ? track.album : "";
@@ -139,6 +150,7 @@
         id: t.id, dur: t.dur, title: t.title, artist: t.artist ?? "", album: t.album ?? "",
         albumId: t.albumId || 0, artistId: t.artistId || 0, cover: t.cover ?? "",
       });
+      if (t.credit) li.dataset.credit = JSON.stringify(t.credit);
       li.classList.toggle("playing", i === cur);
       const n = document.createElement("span");
       n.className = "n";
@@ -147,15 +159,17 @@
       title.className = "t";
       title.textContent = t.title;
       const small = document.createElement("small");
-      const names = [[t.artist, t.artistId, "artist"], [t.album, t.albumId, "album"]].filter(([name]) => name);
-      names.forEach(([name, id, kind], j) => {
-        if (j) small.append(" · ");
-        if (!id) return small.append(name);
-        const a = document.createElement("a");
-        a.href = `/${kind}/${id}`;
-        a.textContent = name;
-        small.append(a);
-      });
+      small.append(...creditNodes(t));
+      if (t.album) {
+        if (t.artist) small.append(" · ");
+        if (!t.albumId) small.append(t.album);
+        else {
+          const a = document.createElement("a");
+          a.href = `/album/${t.albumId}`;
+          a.textContent = t.album;
+          small.append(a);
+        }
+      }
       title.append(small);
       const d = document.createElement("span");
       d.className = "d";

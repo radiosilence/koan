@@ -707,6 +707,74 @@ async fn artists_and_albums_are_linked_wherever_they_are_named() {
 }
 
 #[tokio::test]
+async fn each_credited_artist_is_its_own_link() {
+    let f = setup(true);
+    let (track, album) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let file = f.dir.path().join("b.flac");
+        std::fs::write(&file, b"0123456789").unwrap();
+        let credit = |name: &str| queries::Credit {
+            name: name.into(),
+            ..Default::default()
+        };
+        let both = vec![credit("Rrose"), credit("Bob Ostertag")];
+        let mut m = meta(&file, "Duet", 1);
+        m.artist = "Rrose × Bob Ostertag".into();
+        m.album = "Duets".into();
+        m.album_artist = Some("Rrose × Bob Ostertag".into());
+        m.credits = queries::Credits {
+            artists: both.clone(),
+            album_artists: both,
+        };
+        let id = queries::upsert_track(&db.conn, &m).unwrap();
+        let album = queries::tracks_by_ids(&db.conn, &[id]).unwrap()[0]
+            .album_id
+            .unwrap();
+        (id, album)
+    };
+    let page = |uri: String| {
+        let app = f.app.clone();
+        let req = authed(&f.state, &uri).body(Body::empty()).unwrap();
+        async move { send(&app, req).await.body }
+    };
+    // Two links, the "×" between them plain; never one link for the credit.
+    let split = |html: &str| {
+        let at = html
+            .find(">Rrose</a> × <a href=\"/artist/")
+            .unwrap_or_else(|| panic!("a split credit: {html}"));
+        assert!(html[at..].contains(">Bob Ostertag</a>"), "{html}");
+        assert!(!html.contains(">Rrose × Bob Ostertag</a>"), "{html}");
+    };
+
+    let header = page(format!("/album/{album}")).await;
+    split(header.split("</header>").next().unwrap());
+
+    let tiles = page("/albums".into()).await;
+    split(&tiles);
+    assert!(tiles.contains("tabindex=-1>Bob Ostertag</a>"), "{tiles}");
+
+    let search = page("/search?q=Duet".into()).await;
+    let row = search
+        .split("<small>")
+        .nth(1)
+        .and_then(|r| r.split("</small>").next())
+        .unwrap_or_else(|| panic!("a track row: {search}"));
+    split(row);
+    assert!(
+        search.contains("data-credit=\"[[&quot;Rrose&quot;,"),
+        "the queue is drawn from the row's parts: {search}"
+    );
+
+    let props = page(format!("/track/{track}/properties")).await;
+    split(&props);
+    assert_eq!(
+        props.matches(">Bob Ostertag</a>").count(),
+        3,
+        "heading, artist and album artist: {props}"
+    );
+}
+
+#[tokio::test]
 async fn sorting_and_filtering_live_in_the_query_string() {
     let f = setup(true);
     let page = |uri: &str| {

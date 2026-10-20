@@ -44,7 +44,7 @@ An artist's page holds the records they are the album artist of, and below them,
 
 ### Collaborations
 
-A record credited to several artists ("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains") is listed under each of them when its tags name them one by one: the `ARTISTS` and `ALBUMARTISTS` tags and the MusicBrainz artist ids that Picard and sift write, or the `artists` and `albumArtists` an OpenSubsonic server sends. The record keeps its credit as it reads, and the credit itself is no longer listed as an artist. kōan does not split credits that are only a single string, because "&", "," and " x " also occur inside band names; retag them instead.
+A record credited to several artists ("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains") is listed under each of them when its tags name them one by one: the `ARTISTS` and `ALBUMARTISTS` tags and the MusicBrainz artist ids that Picard and sift write, or the `artists` and `albumArtists` an OpenSubsonic server sends. The record keeps its credit as it reads, and the credit itself is no longer listed as an artist. In the apps and the web UI each artist's name within the credit links to that artist, with the text joining them plain; where the credit spells a name differently from its tag, the artists are listed separated by commas instead. kōan does not split credits that are only a single string, because "&", "," and " x " also occur inside band names; retag them instead.
 
 After upgrading, the next scan reads every file's tags again and the next sync walks the whole server, so a library already indexed picks these tags up without a rescan by hand.
 

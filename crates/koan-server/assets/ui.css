@@ -1499,7 +1499,7 @@
     font-size: var(--text-meta);
     color: var(--muted);
   }
-  .tracks .t small a {
+  .tracks .t small a, .credit a {
     color: inherit;
     &:hover {
       @media (hover: hover) {

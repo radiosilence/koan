@@ -14,7 +14,7 @@ use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
-use super::pages::{COPY_INPUT, KICKER, SUB, link, respond, unavailable};
+use super::pages::{COPY_INPUT, Credits, KICKER, SUB, credit_links, link, respond, unavailable};
 use super::{UiState, open};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
@@ -63,6 +63,20 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
         None => None,
     };
     let sources = queries::sources_of_track(conn, id).ok()?;
+    let credits = Credits::load(
+        conn,
+        std::slice::from_ref(&t),
+        &t.album_id.into_iter().collect::<Vec<_>>(),
+    );
+    let artist = credit_links(&credits.track(&t), false);
+    let album_artist = credit_links(
+        &credits.album(
+            t.album_id.unwrap_or(0),
+            &t.album_artist_name,
+            album.as_ref().map(|a| a.artist_id),
+        ),
+        false,
+    );
     // Facts only a source holds, from the first that has them: the file's.
     let first = |f: fn(&queries::TrackMeta) -> Option<String>| sources.iter().find_map(f);
     let size = first(|m| m.size_bytes.map(|b| format!("{b} bytes")));
@@ -74,7 +88,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let mut out = format!(
         "<p class=\"{KICKER}\">Properties</p><h2 class=\"my-1 normal-case\">{}</h2><p class=\"{SUB}\">{}</p>",
         escape(&t.title),
-        link("artist", t.artist_id, &t.artist_name),
+        artist,
     );
     if admin && let Some(path) = crate::subsonic::track_file_path(&t) {
         out.push_str(&format!(
@@ -89,16 +103,13 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let text = |v: Option<String>| v.map(|v| escape(&v));
     // Names that have a page are linked to it.
     let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
+    let credited = |name: &str, links: &String| (!name.is_empty()).then(|| links.clone());
     let track = [
         ("Title", text(Some(t.title.clone()))),
-        ("Artist", linked("artist", t.artist_id, &t.artist_name)),
+        ("Artist", credited(&t.artist_name, &artist)),
         (
             "Album artist",
-            linked(
-                "artist",
-                album.as_ref().map(|a| a.artist_id),
-                &t.album_artist_name,
-            ),
+            credited(&t.album_artist_name, &album_artist),
         ),
         ("Album", linked("album", t.album_id, &t.album_title)),
         ("Disc", number(t.disc)),
