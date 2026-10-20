@@ -4,12 +4,14 @@ import SwiftUI
 /// The signed-in server's accounts, for its admins: add someone, set what they
 /// can do, send them an invite, remove them.
 ///
-/// Only a koan server has these, and only an admin may see them; the list
-/// failing to load is how both are told apart from a server that has them, so
-/// the section simply does not appear.
+/// Only a server listing `koanInvite` has these: accounts and their invites
+/// arrived together, and making one answers with its invite. Only an admin
+/// may see them, which the server says by refusing anyone else the list.
 @MainActor
 @Observable
 final class PeopleModel {
+    static let extensionName = "koanInvite"
+
     private let engine: KoanEngine
     private(set) var accounts: [ServerAccount]?
     var invite: Invite?

@@ -406,7 +406,8 @@ was already set from a preset and not changed since.
 
 Signed in to a kōan server, an EQ can be kept on every device of the
 account. Each EQ's **Sync** is either **Everywhere** or **This device**,
-chosen on its page. One synced everywhere goes through the server:
+chosen on its page; signed in to any other server, or to none, there is no
+choice to make and the page leaves it out. One synced everywhere goes through the server:
 filters, preamp, target, the EQs it plays and the files in its folder (impulse responses,
 a routing `.cfg`, AutoEQ's measurement). Which output plays it is not synced,
 since the headphones on a Mac's DAC are not the AirPods on a phone; each device

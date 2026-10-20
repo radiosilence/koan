@@ -11,8 +11,8 @@ use super::*;
 /// act on.
 #[derive(Debug, thiserror::Error)]
 pub enum ShareError {
-    #[error("sharing.public_url is not set, so there is no address to give out")]
-    NoPublicUrl,
+    #[error("server.url is not set, so there is no address to give out")]
+    NoServerUrl,
     #[error("none of these tracks are in the library")]
     NothingToShare,
     #[error("none of these tracks are on the server, so a link has nothing to point at")]
@@ -194,7 +194,7 @@ pub fn create_share(
     })
 }
 
-/// A share this koan serves at `{sharing.public_url}/share/{id}`.
+/// A share this koan serves at `{server.url}/share/{id}`.
 ///
 /// What a server's own surfaces make whatever `[remote]` says: a link made
 /// upstream would belong to the upstream's account, not the koan user who
@@ -206,19 +206,14 @@ pub fn create_native_share(
     target: &ShareTarget,
     description: Option<&str>,
 ) -> Result<ShareOutcome, ShareError> {
-    let base = cfg
-        .sharing
-        .public_url
-        .as_deref()
-        .filter(|u| !u.trim().is_empty())
-        .ok_or(ShareError::NoPublicUrl)?;
+    let base = cfg.server_url().ok_or(ShareError::NoServerUrl)?;
     let (slice, ids) = resolve_share(&db.conn, target)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     let share = queries::shares::create_share(&db.conn, user, slice, &ids, description, now, None)?;
     Ok(ShareOutcome {
-        url: share_url(base, &share.id),
+        url: share_url(&base, &share.id),
         id: share.id,
         shared: ids.len(),
         // Only loose tracks are named one by one, so only they can be missing.
@@ -230,8 +225,8 @@ pub fn create_native_share(
 }
 
 /// A native share's public address.
-pub fn share_url(public_url: &str, id: &str) -> String {
-    format!("{}/share/{id}", public_url.trim_end_matches('/'))
+pub fn share_url(server_url: &str, id: &str) -> String {
+    format!("{}/share/{id}", server_url.trim_end_matches('/'))
 }
 
 /// An album's id as `createShare` should be given it.
@@ -366,9 +361,9 @@ mod native_share_tests {
                 &ShareTarget::Tracks(vec![a]),
                 None
             ),
-            Err(ShareError::NoPublicUrl)
+            Err(ShareError::NoServerUrl)
         ));
-        cfg.sharing.public_url = Some("https://koan.example/".into());
+        cfg.server.url = Some("https://koan.example/".into());
         let out = create_share(
             &db,
             queries::LOCAL_USER,
@@ -408,7 +403,7 @@ mod native_share_tests {
         cfg.remote.url = "https://upstream.invalid".into();
         cfg.remote.username = "someone".into();
         cfg.remote.password = "secret".into();
-        cfg.sharing.public_url = Some("https://koan.example".into());
+        cfg.server.url = Some("https://koan.example".into());
         let out = create_native_share(
             &db,
             queries::LOCAL_USER,

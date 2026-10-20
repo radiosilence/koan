@@ -98,14 +98,14 @@ const TRACKS: &str = "grid";
 #[derive(Clone)]
 struct ShareState {
     pool: Arc<Pool>,
-    /// `sharing.public_url`: link previews need absolute addresses.
-    public_url: Option<String>,
+    /// `server.url`: link previews need absolute addresses.
+    server_url: Option<String>,
     covers: std::sync::Arc<crate::covers::Covers>,
 }
 
 pub fn router(
     pool: Arc<Pool>,
-    public_url: Option<String>,
+    server_url: Option<String>,
     covers: std::sync::Arc<crate::covers::Covers>,
 ) -> axum::Router {
     axum::Router::new()
@@ -132,7 +132,7 @@ pub fn router(
         .route("/share/{id}/{n}/cover", get(track_cover))
         .with_state(ShareState {
             pool,
-            public_url: public_url.filter(|u| !u.trim().is_empty()),
+            server_url,
             covers,
         })
 }
@@ -294,13 +294,13 @@ fn meta(attr: &str, key: &str, content: &str) -> String {
 /// The page: what was shared, shown the way the app shows it, and the player.
 /// Each row carries what the player needs in data attributes; without script,
 /// each row is a link. The link-preview tags need absolute URLs, so they are
-/// only complete when `sharing.public_url` is set.
+/// only complete when `server.url` is set.
 fn render(
     id: &str,
     share: &ShareRow,
     tracks: &[TrackRow],
     subject: &Subject,
-    public_url: Option<&str>,
+    server_url: Option<&str>,
 ) -> String {
     // The slice as recorded, unless what it names has since left the library.
     let album = match share.slice.kind {
@@ -395,7 +395,7 @@ fn render(
         meta("name", "twitter:title", &og_title),
         meta("name", "twitter:description", &og_desc),
     ];
-    if let Some(base) = public_url.map(|u| u.trim_end_matches('/')) {
+    if let Some(base) = server_url.map(|u| u.trim_end_matches('/')) {
         let image = format!("{base}/share/{id}/cover");
         preview.push(meta(
             "property",
@@ -550,7 +550,7 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
             &share,
             &tracks,
             &subject,
-            s.public_url.as_deref(),
+            s.server_url.as_deref(),
         ))
     })
     .await;
@@ -1196,7 +1196,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn several_tracks_stay_a_list_and_previews_need_a_public_url() {
+    async fn several_tracks_stay_a_list_and_previews_need_a_server_url() {
         let lib = library();
         let [t1, _, later] = lib.tracks;
         let id = lib.share(ShareTarget::Tracks(vec![later, t1]));

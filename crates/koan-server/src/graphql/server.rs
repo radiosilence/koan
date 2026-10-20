@@ -18,6 +18,21 @@ use crate::auth::routes::{AuthRouteState, RateLimiter, auth_router};
 // `koan --headless` entry point (standalone headless server)
 // ---------------------------------------------------------------------------
 
+/// A server hands out links to itself — invites, shares, sign-ins — and is
+/// known to its clients by one address, which it cannot work out for itself.
+fn require_server_url() {
+    let why = match Config::load().unwrap_or_default().server_url() {
+        None => "server.url is not set. Set it, or KOAN_SERVER__URL, to the address clients reach this server at, e.g. https://koan.example.com".to_owned(),
+        Some(url) if !url.starts_with("https://") && !url.starts_with("http://") => {
+            format!("server.url is {url:?}, which is not an http:// or https:// address")
+        }
+        Some(_) => return,
+    };
+    log::error!("{why}");
+    eprintln!("koan: {why}");
+    std::process::exit(1);
+}
+
 pub fn cmd_serve(
     port: Option<u16>,
     bind: Option<std::net::IpAddr>,
@@ -26,6 +41,7 @@ pub fn cmd_serve(
 ) {
     use koan_core::player::Player;
 
+    require_server_url();
     // Open, and migrate, before binding: a database this build cannot read,
     // such as one a newer koan has migrated, stops it here with the reason
     // rather than serving errors.
@@ -178,6 +194,11 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
 
     let cfg = Config::load().unwrap_or_default();
     let port = port.unwrap_or(cfg.graphql.port);
+    // The wizard is for a server with no shell to hand, in a container. One
+    // beside a terminal session would open its /setup to any local process
+    // with nothing on screen to say so; its first admin comes from
+    // `koan auth setup`.
+    let setup_wizard = cfg.graphql.setup_wizard && headless;
     let bind = bind.unwrap_or(cfg.graphql.bind);
     let subsonic_port = subsonic_port.or(cfg.subsonic.port);
     let playground_enabled = playground || cfg.graphql.playground;
@@ -257,7 +278,7 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
         state.clone(),
         cmd_tx.clone(),
         auth_state.clone(),
-        cfg.sharing.public_url.clone(),
+        cfg.server_url(),
         headless,
         shutdown.clone(),
     );
@@ -274,7 +295,7 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
             .ok()
             .and_then(|db| koan_core::db::queries::auth::has_users(&db.conn).ok())
             == Some(false);
-        if no_accounts && cfg.graphql.setup_wizard {
+        if no_accounts && setup_wizard {
             log::warn!(
                 "No accounts yet: whoever opens /setup first becomes the admin. \
                  Set graphql.setup_wizard = false to make it with `koan auth setup` instead."
@@ -329,9 +350,9 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
             pool.clone(),
             auth_route_state.clone(),
             auth_enabled,
-            cfg.graphql.setup_wizard,
+            setup_wizard,
             covers.clone(),
-            cfg.sharing.public_url.clone(),
+            cfg.server_url(),
             cfg.mcp.redirect_hosts.clone(),
             proxy_auth,
             jobs,
@@ -368,7 +389,7 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
         // link names, and nothing else. The Host guard still applies.
         let share_routes = crate::share::router(
             pool.clone(),
-            cfg.sharing.public_url.clone(),
+            cfg.server_url(),
             covers.clone(),
         )
         .merge(crate::push::router(pool.clone(), covers.clone()));
@@ -690,13 +711,9 @@ async fn drain_deadline() {
 async fn graphql_handler(
     axum::Extension(user): axum::Extension<AuthUser>,
     axum::extract::State(schema): axum::extract::State<KoanSchema>,
-    headers: axum::http::HeaderMap,
     req: async_graphql_axum::GraphQLRequest,
 ) -> async_graphql_axum::GraphQLResponse {
     let mut request = req.into_inner();
-    if let Some(origin) = crate::origin::origin(&headers, None) {
-        request = request.data(super::RequestOrigin(origin));
-    }
     // The auth middleware always injects AuthUser (anonymous_admin when auth is
     // disabled, or a real user when auth is enabled). No fallback needed here.
     request = request.data(user);
@@ -786,6 +803,8 @@ pub fn cmd_serve_daemon(
 ) {
     use std::fs;
     use std::process::Command;
+
+    require_server_url();
 
     let cfg = Config::load().unwrap_or_default();
     let port_val = port.unwrap_or(cfg.graphql.port);

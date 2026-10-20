@@ -101,8 +101,9 @@ data class PeopleState(
 
 /**
  * The signed-in server's accounts, for its admins: add someone, set what they
- * can do, send them an invite, remove them. The list failing to load is how a
- * server without them, or an account that may not see them, is told apart.
+ * can do, send them an invite, remove them. Made only where the server lists
+ * `koanInvite`; the list failing to load is how an account that may not see
+ * them is told apart.
  */
 class PeopleModel(private val engine: suspend () -> KoanEngineInterface) : ViewModel() {
     private val _state = MutableStateFlow(PeopleState())

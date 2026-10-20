@@ -15,7 +15,7 @@
 //! under any name, the consent page names a client by the host it returns to.
 //! Codes live in memory for a minute and are spent once.
 //!
-//! Every address here is `sharing.public_url`: an issuer taken from request
+//! Every address here is `server.url`: an issuer taken from request
 //! headers would let a client choose it. Without one, none of this is served.
 
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ pub(super) type Codes = Arc<parking_lot::Mutex<HashMap<String, Code>>>;
 
 /// This server's address, which OAuth needs a fixed one of.
 pub(super) fn public_base(s: &UiState) -> Option<String> {
-    s.public_url
+    s.server_url
         .as_deref()
         .map(|u| u.trim().trim_end_matches('/'))
         .filter(|u| !u.is_empty())

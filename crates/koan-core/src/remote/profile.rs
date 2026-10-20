@@ -51,7 +51,7 @@ pub const API_KEYS: &str = "koanApiKeys";
 pub const APP_PASSWORDS: &str = "koanAppPasswords";
 /// Assistants connect to this server's `/mcp`: `/rest/koanMcp` gives its
 /// address and the page explaining how. Listed only where the server knows
-/// the address it is reached at (`sharing.public_url`), which MCP's sign-in
+/// the address it is reached at (`server.url`), which MCP's sign-in
 /// needs.
 pub const MCP: &str = "koanMcp";
 /// The server can push to the iOS app through Apple: wake it once suspended,
@@ -96,6 +96,9 @@ pub struct ServerProfile {
     pub open_subsonic: bool,
     /// Each extension's name and the versions offered.
     pub extensions: Vec<(String, Vec<i64>)>,
+    /// The address the server says it is reached at, its `server.url`, from
+    /// `ping`'s `serverUrl`. `None` from a server that does not say.
+    pub url: Option<String>,
 }
 
 impl ServerProfile {
@@ -140,8 +143,24 @@ pub fn for_auth(auth: &SubsonicAuth) -> Option<ServerProfile> {
         profile.extensions.len()
     );
     *PROFILE.lock() = Some((auth.clone(), profile.clone(), true));
+    adopt_url(auth, profile.url.as_deref());
     crate::remote::devices::touch();
     Some(profile)
+}
+
+/// Keep the address the signed-in server gives for itself, which
+/// `link::library_fingerprint` knows it by. Written only when it changed, and
+/// only for the server this device is signed in to.
+fn adopt_url(auth: &SubsonicAuth, url: Option<&str>) {
+    use crate::config::Config;
+    let url = url.map(|u| u.trim().trim_end_matches('/')).unwrap_or("");
+    let Ok(cfg) = Config::load() else { return };
+    if crate::helpers::subsonic_auth(&cfg).as_ref() != Some(auth) || cfg.remote.server_url == url {
+        return;
+    }
+    if let Err(e) = Config::persist(|c| c.remote.server_url = url.to_owned()) {
+        log::warn!("profile: could not keep the server's address: {e}");
+    }
 }
 
 /// Probe again on next ask: the server may have changed under a dropped link.
@@ -161,6 +180,21 @@ pub fn current() -> Option<ServerProfile> {
         .as_ref()
         .filter(|(held, _, _)| *held == auth)
         .map(|(_, p, _)| p.clone())
+}
+
+/// Why the server cannot do what `to` names ("invite people"), for a person
+/// to read: a koan server older than the feature is told apart from a server
+/// that is not koan, which no update brings it to.
+pub fn lacking(profile: Option<&ServerProfile>, to: &str) -> String {
+    match profile {
+        None => format!("could not reach the server to see whether it can {to}"),
+        Some(p) if p.kind.as_deref() == Some("koan") => {
+            format!("this server is older than this app: update it to {to}")
+        }
+        // Older than OpenSubsonic, so it does not say what it is.
+        Some(p) if p.kind.is_none() => format!("this server cannot {to}"),
+        Some(_) => format!("only a kōan server can {to}"),
+    }
 }
 
 /// Whether the configured server is koan, probing it if it has not been.
@@ -188,5 +222,30 @@ mod tests {
         };
         assert!(hub.links() && hub.offers(DEVICES));
         assert!(!ServerProfile::default().links());
+    }
+
+    #[test]
+    fn a_missing_feature_names_its_cause() {
+        let koan = ServerProfile {
+            kind: Some("koan".into()),
+            ..Default::default()
+        };
+        let navidrome = ServerProfile {
+            kind: Some("navidrome".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            lacking(Some(&koan), "invite people"),
+            "this server is older than this app: update it to invite people"
+        );
+        assert_eq!(
+            lacking(Some(&navidrome), "invite people"),
+            "only a kōan server can invite people"
+        );
+        assert_eq!(
+            lacking(Some(&ServerProfile::default()), "invite people"),
+            "this server cannot invite people"
+        );
+        assert!(lacking(None, "invite people").starts_with("could not reach"));
     }
 }

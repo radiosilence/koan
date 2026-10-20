@@ -29,12 +29,14 @@ fn done(apply: impl FnOnce(&mut SettingsPage) -> Option<String> + Send + 'static
     Box::new(apply)
 }
 
-/// The signed-in server's client, when it offers `extension`.
-fn client_offering(extension: &str) -> Result<Arc<SubsonicClient>, String> {
+/// The signed-in server's client, when it offers `extension`. `to` names
+/// what was wanted, for the message when it does not.
+fn client_offering(extension: &str, to: &str) -> Result<Arc<SubsonicClient>, String> {
     let client = helpers::subsonic_client(&Config::load().unwrap_or_default())
         .ok_or("no server is signed in")?;
-    if !profile::for_auth(client.auth()).is_some_and(|p| p.offers(extension)) {
-        return Err("this server is older than kōan: update it to do this here".into());
+    let found = profile::for_auth(client.auth());
+    if !found.as_ref().is_some_and(|p| p.offers(extension)) {
+        return Err(profile::lacking(found.as_ref(), to));
     }
     Ok(client)
 }
@@ -179,7 +181,11 @@ impl SettingsPage {
                     client.koan_scrobbling().map(|s| s.service)
                 });
                 remote.assistants = read(p.offers(profile::MCP), || client.koan_mcp());
-                remote.people = client.koan_users().ok();
+                // Accounts arrived with invites; the list is refused to an
+                // account that is not an admin's.
+                if p.offers(profile::INVITE) {
+                    remote.people = client.koan_users().ok();
+                }
             }
             done(move |page| {
                 if page.cfg.remote.url == url {
@@ -398,7 +404,7 @@ impl SettingsPage {
                 self.fields.remove(&Field::CurrentPassword);
                 self.fields.remove(&Field::NewPassword);
                 self.ask_server("could not change the password", move || {
-                    client_offering(profile::PASSWORDS)?;
+                    client_offering(profile::PASSWORDS, "change passwords here")?;
                     helpers::change_own_password(&current, &new)
                         .map(|()| "password changed".to_string())
                         .map_err(|e| e.to_string())
@@ -419,14 +425,15 @@ impl SettingsPage {
                 }
                 self.spawn(move || {
                     let made = if app_password {
-                        client_offering(profile::APP_PASSWORDS).and_then(|c| {
-                            let made = c
-                                .koan_create_app_password(&name)
-                                .map_err(|e| e.to_string())?;
-                            Ok((made.name, made.password))
-                        })
+                        client_offering(profile::APP_PASSWORDS, "manage app passwords here")
+                            .and_then(|c| {
+                                let made = c
+                                    .koan_create_app_password(&name)
+                                    .map_err(|e| e.to_string())?;
+                                Ok((made.name, made.password))
+                            })
                     } else {
-                        client_offering(profile::API_KEYS).and_then(|c| {
+                        client_offering(profile::API_KEYS, "manage API keys here").and_then(|c| {
                             let made = c.koan_create_api_key(&name).map_err(|e| e.to_string())?;
                             Ok((made.name, made.key))
                         })
@@ -467,7 +474,7 @@ impl SettingsPage {
             }
             Op::RevokeKey(id) => {
                 self.ask_server("could not revoke the key", move || {
-                    let c = client_offering(profile::API_KEYS)?;
+                    let c = client_offering(profile::API_KEYS, "manage API keys here")?;
                     c.koan_revoke_api_key(id).map_err(|e| e.to_string())?;
                     Ok("key revoked".into())
                 });
@@ -475,7 +482,7 @@ impl SettingsPage {
             }
             Op::RevokeAppPassword(id) => {
                 self.ask_server("could not revoke the app password", move || {
-                    let c = client_offering(profile::APP_PASSWORDS)?;
+                    let c = client_offering(profile::APP_PASSWORDS, "manage app passwords here")?;
                     c.koan_revoke_app_password(id).map_err(|e| e.to_string())?;
                     Ok("app password revoked".into())
                 });
@@ -496,7 +503,7 @@ impl SettingsPage {
                     return say("type their username");
                 }
                 self.spawn(move || {
-                    let made = client_offering(profile::INVITE).and_then(|c| {
+                    let made = client_offering(profile::INVITE, "invite people").and_then(|c| {
                         let made = match role {
                             Some(role) => c.koan_create_user(&username, role),
                             None => c.koan_invite(&username, reset),
@@ -559,8 +566,7 @@ impl SettingsPage {
             }
             Op::Delete(username) => {
                 self.ask_server("could not delete the account", move || {
-                    let c = helpers::subsonic_client(&Config::load().unwrap_or_default())
-                        .ok_or("no server is signed in")?;
+                    let c = client_offering(profile::INVITE, "manage its accounts here")?;
                     c.koan_delete_user(&username).map_err(|e| e.to_string())?;
                     Ok(format!("deleted {username}"))
                 });
@@ -583,8 +589,7 @@ impl SettingsPage {
             }
             Op::SetRole(username, role) => {
                 self.ask_server("could not change their access", move || {
-                    let c = helpers::subsonic_client(&Config::load().unwrap_or_default())
-                        .ok_or("no server is signed in")?;
+                    let c = client_offering(profile::INVITE, "manage its accounts here")?;
                     c.koan_set_user_role(&username, &role)
                         .map_err(|e| e.to_string())?;
                     Ok(format!("{username} can now {}", super::role_label(&role)))
@@ -736,7 +741,7 @@ impl SettingsPage {
             return Some(Outcome::Say("type the new password".into()));
         }
         self.ask_server("could not set the password", move || {
-            let c = client_offering(profile::PASSWORDS)?;
+            let c = client_offering(profile::PASSWORDS, "change passwords here")?;
             c.koan_set_user_password(&username, &password)
                 .map_err(|e| e.to_string())?;
             Ok(format!("{username} has a new password"))
