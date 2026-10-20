@@ -336,17 +336,20 @@ private enum HistoryDate {
         timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
     }
 
-    /// Every shape a time in the column can take, its digits as zeros: a
-    /// minute in each hour of a day, deduplicated. Digits are monospaced in
-    /// both looks, so the number of them and the period ("PM", "a.m.",
+    /// Every shape a time in the column can take, its digits as the locale's
+    /// zero: a minute in each hour of a day, deduplicated. Digits are
+    /// monospaced, so the number of them and the period ("PM", "a.m.",
     /// "下午") are what make one time wider than another. On a fixed day, so
     /// a clock change never drops an hour.
     static let shapes: [String] = {
         let day = Date(timeIntervalSinceReferenceDate: 0)
+        let numbers = NumberFormatter()
+        numbers.locale = timeFormatter.locale
+        let zero = numbers.string(from: 0)?.first ?? "0"
         var seen = Set<String>()
         return (0..<24).compactMap { hour in
             Calendar.current.date(bySettingHour: hour, minute: 59, second: 0, of: day)
-                .map { String(timeFormatter.string(from: $0).map { $0.isNumber ? "0" : $0 }) }
+                .map { String(timeFormatter.string(from: $0).map { $0.isNumber ? zero : $0 }) }
         }
         .filter { seen.insert($0).inserted }
     }()
