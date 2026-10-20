@@ -10,6 +10,9 @@ use super::download::{self, DownloadError};
 const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "koan";
 const PLAYBACK_REPORT_EXTENSION: &str = "playbackReport";
+/// Marks a koan server's `getCoverArt` answer as its placeholder for a record
+/// without art, which other Subsonic clients draw and koan's own replace.
+pub const PLACEHOLDER_HEADER: &str = "x-koan-placeholder";
 
 #[derive(Debug, Error)]
 pub enum SubsonicError {
@@ -310,7 +313,9 @@ impl SubsonicClient {
     ///
     /// Returns the raw image rather than a parsed response — `getCoverArt`
     /// answers with image data, not JSON, so it can't go through `get()`.
-    /// `size` requests a square thumbnail; omit it for the original.
+    /// `size` requests a square thumbnail; omit it for the original. Empty
+    /// when the record has no art: a koan server's placeholder is not passed
+    /// on, so the caller draws its own.
     pub fn get_cover_art(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
         let url = format!("{}/rest/getCoverArt", self.base_url());
         let mut params = self.auth_params()?;
@@ -321,6 +326,9 @@ impl SubsonicClient {
 
         let resp = self.http().get(&url).query(&params).send()?;
         Self::reject_error_body(&resp)?;
+        if resp.headers().contains_key(PLACEHOLDER_HEADER) {
+            return Ok(Vec::new());
+        }
         Ok(resp.bytes()?.to_vec())
     }
 

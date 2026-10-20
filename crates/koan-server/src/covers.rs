@@ -195,7 +195,7 @@ pub(crate) fn placeholder(size: u32) -> Bytes {
     let slot = SIZES
         .iter()
         .position(|s| *s == size)
-        .unwrap_or(SIZES.len() - 1);
+        .expect("snap answers one of SIZES");
     DRAWN[slot].get_or_init(|| draw_placeholder(size)).clone()
 }
 

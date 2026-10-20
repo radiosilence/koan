@@ -3273,23 +3273,36 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
     let groups = cover_tracks(&db, kind, id)?;
     drop(db);
     // A record without art is answered with the ensō, as Navidrome answers
-    // its own placeholder, so a client always has an image to draw.
-    let (bytes, kind) = match groups
+    // its own placeholder, so a client always has an image to draw. It is
+    // marked so koan's own clients can draw theirs instead, and kept only
+    // briefly so a cover added later is picked up.
+    match groups
         .iter()
         .find_map(|tracks| state.covers.cover(tracks, size))
     {
-        Some(bytes) => (bytes, "image/jpeg"),
-        None => (crate::covers::placeholder(size), "image/png"),
-    };
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, kind),
-            (header::CACHE_CONTROL, "max-age=86400"),
-        ],
-        bytes,
-    )
-        .into_response())
+        Some(bytes) => Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (header::CACHE_CONTROL, "max-age=86400"),
+            ],
+            bytes,
+        )
+            .into_response()),
+        None => Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "max-age=300"),
+                (
+                    header::HeaderName::from_static(koan_core::remote::client::PLACEHOLDER_HEADER),
+                    "1",
+                ),
+            ],
+            crate::covers::placeholder(size),
+        )
+            .into_response()),
+    }
 }
 
 /// The tracks whose art answers a `getCoverArt` id, as groups tried in turn:
@@ -3324,7 +3337,14 @@ fn cover_tracks(
                 .filter_map(|album| tracks.remove(album))
                 .filter(|tracks| !tracks.is_empty())
                 .collect();
-            if groups.is_empty() {
+            // An artist credited only on others' records has no albums of
+            // their own, and is answered with the placeholder like any
+            // record without art.
+            if groups.is_empty()
+                && queries::get_artist(&db.conn, id)
+                    .map_err(internal)?
+                    .is_none()
+            {
                 return Err(SubsonicError::not_found("Artist"));
             }
             groups
@@ -10620,7 +10640,11 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/png");
-        assert_eq!(resp.headers()[header::CACHE_CONTROL], "max-age=86400");
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "max-age=300");
+        assert_eq!(
+            resp.headers()[koan_core::remote::client::PLACEHOLDER_HEADER],
+            "1"
+        );
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
