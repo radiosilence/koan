@@ -712,6 +712,33 @@ async fn artists_and_albums_are_linked_wherever_they_are_named() {
 }
 
 #[tokio::test]
+async fn an_artist_page_lists_the_records_they_feature_on() {
+    let f = setup(true);
+    let artist = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let file = f.dir.path().join("guest.flac");
+        std::fs::write(&file, b"0123456789").unwrap();
+        let mut m = meta(&file, "Guest Spot", 1);
+        m.album = "Other People".into();
+        m.album_artist = Some("Bob Ostertag".into());
+        queries::upsert_track(&db.conn, &m).unwrap();
+        queries::tracks_by_ids(&db.conn, &[f.track_id]).unwrap()[0]
+            .artist_id
+            .unwrap()
+    };
+    let req = authed(&f.state, &format!("/artist/{artist}"))
+        .body(Body::empty())
+        .unwrap();
+    let html = send(&f.app, req).await.body;
+    let (own, features) = html
+        .split_once(">Features on</h2>")
+        .unwrap_or_else(|| panic!("a Features on section: {html}"));
+    assert!(own.contains("Hymn &#60;to&#62; Moisture"), "{html}");
+    assert!(!own.contains("Other People"), "{html}");
+    assert!(features.contains("Other People"), "{html}");
+}
+
+#[tokio::test]
 async fn each_credited_artist_is_its_own_link() {
     let f = setup(true);
     let (track, album) = {
@@ -3049,7 +3076,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         total: 1200,
     });
     let r = send(&f.app, library(&admin)).await;
-    assert!(r.body.contains("max=\"1200\" value=\"0\""), "{}", r.body);
+    assert!(r.body.contains("value=\"0\" max=\"1200\""), "{}", r.body);
     record(&koan_core::helpers::WatchScan::Read {
         done: 50,
         total: 1200,
@@ -3062,7 +3089,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         r.body
     );
     assert!(
-        r.body.contains("max=\"1200\" value=\"50\""),
+        r.body.contains("value=\"50\" max=\"1200\""),
         "the bar follows the count: {}",
         r.body
     );

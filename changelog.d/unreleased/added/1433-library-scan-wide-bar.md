@@ -1,1 +1,0 @@
-- **The web UI's library scan, from a desktop, with a progress bar.** Admins have a Library link in the wide sidebar, so the rescan and the start-up scan's progress are reachable without typing the address, and a running scan fills a bar as it reads (a still band until the files are counted).

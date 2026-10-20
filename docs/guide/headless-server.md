@@ -127,6 +127,7 @@ The server answers `http://host:4000/` with a browser UI: the library, search, a
 - **Favourites** lists the account's favourite artists, records and tracks. **Recently played** lists what it played in the last 30 days, each once. Both show the first few of each kind under a heading that gives the whole count and opens the matching filtered browser.
 - **History** lists plays by day; any of them can be ticked and forgotten.
 - **Hearts** on tracks, records and artists favourite them for the signed-in account. Every artist named in a collaboration's credit links to their own page.
+- **Artist pages** hold the artist's own records and, under Features on, the records someone else is the album artist of that they are credited on.
 
 On a phone, Favourites, Recently played, History and Playlists sit under a Library tab, since the tab bar has room for six.
 
@@ -138,7 +139,7 @@ A track row's menu (right-click, press and hold on a phone, or its ⋯) offers p
 
 ### Rescan
 
-Admin accounts find Rescan at the foot of the Library page, which the sidebar links for them on a wide screen too. It looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. It is the same job as `triggerScan`, so a scan started from either shows in both.
+Admin accounts find Rescan at the foot of the Library page, which the sidebar links for them on a wide screen as well as the phone's tab bar. It looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. It is the same job as `triggerScan`, so a scan started from either shows in both.
 
 **Read every file again** ignores the scan cache and reads every file's tags. An upgrade that reads more from tags needs this, since the files themselves did not change (`triggerScan(reread: true)`).
 

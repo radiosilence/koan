@@ -38,19 +38,16 @@ struct Status {
     follow: bool,
     /// The line's colour and text; nothing before any scan.
     line: Option<(&'static str, String)>,
-    /// A running scan's bar.
+    /// Only while a scan runs.
     bar: Option<Bar>,
 }
 
-/// How far a running scan has got, as its bar shows it.
+/// How far a running scan has got.
 enum Bar {
-    /// Walking the folders and checking the scan cache: the files to read
-    /// are not counted yet.
+    /// The walk is still counting the files to read.
     Counting,
-    Reading {
-        done: u64,
-        total: u64,
-    },
+    /// Files read, of how many.
+    Read(u64, u64),
 }
 
 /// What the current scan is doing, or the last did. On a page as it loads
@@ -92,7 +89,7 @@ fn status(job: Option<&Job>, on_load: bool) -> Html {
             .and_then(|j| match j.done.zip(j.total) {
                 None => Some(Bar::Counting),
                 Some((_, 0)) => None,
-                Some((done, total)) => Some(Bar::Reading { done, total }),
+                Some((done, total)) => Some(Bar::Read(done, total)),
             });
     Status {
         follow: on_load,
