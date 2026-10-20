@@ -237,20 +237,23 @@ private struct NumberField<Field: Hashable>: View {
 
 extension View {
     /// The decimal pad has no return key: above it, the field before and
-    /// after in `order`, and Done, which commits the figure and puts the
-    /// keyboard away. Declared once for the page, never per row: a toolbar
-    /// in a list's row is laid out as the page's bottom bar.
-    func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding, order: [Field]) -> some View {
+    /// after in `order` when there is more than one, and `label`, which
+    /// commits the figure and puts the keyboard away. Declared once for the
+    /// page, never per row: a toolbar in a list's row is laid out as the
+    /// page's bottom bar.
+    func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding, order: [Field], label: LocalizedStringKey = "Done") -> some View {
         #if os(iOS)
         toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 // The page's other fields, its name among them, keep their
                 // own return key: these buttons move and dismiss only these.
                 if focus.wrappedValue != nil {
-                    Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
-                    Button("Next", koan: Icon.nextField) { step(1, focus, order) }
+                    if order.count > 1 {
+                        Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
+                        Button("Next", koan: Icon.nextField) { step(1, focus, order) }
+                    }
                     Spacer()
-                    Button("Done") { focus.wrappedValue = nil }
+                    Button(label) { focus.wrappedValue = nil }
                 }
             }
             .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
