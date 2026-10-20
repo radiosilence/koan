@@ -1,0 +1,1 @@
+- **Invite QR codes in the apps.** The Mac, iOS and Android apps show an invite link as a QR code beside the ways to send it, so a phone in the room can join by scanning it.

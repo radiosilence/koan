@@ -980,6 +980,37 @@ ios-signin device url user password: (ios-ffi "iphonesimulator") ios-project
             -only-testing:KoanUITests/SignInTests
     echo "{{device}} is signed in to {{url}}"
 
+# Make an invite from Settings → People on a simulator signed in as a throwaway
+# server's admin: the sheet stays up, and its QR code reads back as the link.
+ios-invite-sheet: (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/ios-invite-sheet
+    rm -rf "$out" && mkdir -p "$out"
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    phone=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k for d in v if d["isAvailable"] and "iPhone" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$phone" ] || { echo "Needs an iPhone simulator." >&2; exit 1; }
+    url=$(just _demo-server "" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    xcrun simctl boot "$phone" 2>/dev/null || true
+    xcrun simctl bootstatus "$phone" -b >/dev/null
+    cleanup+=("xcrun simctl shutdown '$phone'")
+    xcrun simctl uninstall "$phone" {{bundle_id}} 2>/dev/null || true
+    TEST_RUNNER_KOAN_INVITE_SHEET=1 \
+    TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
+    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY="$(cat "$out/server.key")" \
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$phone" -derivedDataPath target/ios-build \
+        -only-testing:KoanUITests/InviteSheetTests \
+        -resultBundlePath "$out/test.xcresult"
+    xcrun xcresulttool export attachments --path "$out/test.xcresult" --output-path "$out" >/dev/null
+    shot=$(find "$out" -name '*.png' | head -1)
+    link=$(swift apps/ios/tools/qrdecode.swift "$shot" | head -1)
+    echo "QR code reads: $link"
+    case "$link" in https://koan.rocks/join/*) ;; *) echo "FAIL: the QR code is not an invite link" >&2; exit 1 ;; esac
+
 # Open an invite link on a simulator and wait for its library, as a listener
 # tapping it would. `koan auth invite` prints one.
 ios-join device link: (ios-ffi "iphonesimulator") ios-project

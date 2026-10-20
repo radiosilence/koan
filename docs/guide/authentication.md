@@ -103,9 +103,10 @@ Opening a link again on a device that already joined replaces that device's key
 and revokes the old one, through `/rest/koanRevokeKey`, which revokes the key
 the request signs in with.
 
-The web UI shows the link as a QR code above it, so a phone beside the screen
-can scan it rather than receive an email. The code carries the invite's token,
-so anyone who can see the screen can join with it until the invite lapses.
+The web UI and the Mac, iOS and Android apps show the link as a QR code, so a
+phone beside the screen can scan it rather than receive an email. The code
+carries the invite's token, so anyone who can see the screen can join with it
+until the invite lapses.
 
 Creating an account generates its password, and the email carries it once, for
 the web UI and other Subsonic apps. Inviting an existing account sends only the

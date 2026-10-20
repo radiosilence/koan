@@ -2212,6 +2212,14 @@ pub struct Invite {
     pub mailto: String,
 }
 
+/// A QR code's modules, `width` to a side, row by row from the top left; a
+/// dark module is `true`. No quiet zone: the drawing adds its own margin.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct QrCode {
+    pub width: u32,
+    pub dark: Vec<bool>,
+}
+
 /// A pairing this device opened: the code to show, and the link that
 /// approves it.
 #[derive(uniffi::Record, Debug, Clone)]

@@ -379,6 +379,21 @@ pub fn set_config_dir(path: String) {
     config::set_config_dir(path);
 }
 
+/// `text` as a QR code, for a platform with no encoder of its own: Android.
+/// Absent when the text is too long for one.
+#[uniffi::export]
+pub fn qr_code(text: String) -> Option<QrCode> {
+    let code = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::M).ok()?;
+    Some(QrCode {
+        width: code.width() as u32,
+        dark: code
+            .to_colors()
+            .into_iter()
+            .map(|c| c == qrcode::Color::Dark)
+            .collect(),
+    })
+}
+
 impl Drop for KoanEngine {
     /// Wake the state watcher so it notices there is nothing left to watch.
     ///
