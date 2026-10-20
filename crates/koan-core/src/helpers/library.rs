@@ -181,16 +181,25 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
     // of the server copy they matched: without it the next sync pulls them
     // whole again, rather than reading them as unchanged and leaving them
     // empty.
+    forget_outboxes(&tx)?;
     tx.execute_batch(
         "UPDATE playlists SET remote_changed = NULL WHERE remote_id IS NOT NULL;
-         DELETE FROM history_outbox;
-         DELETE FROM favourite_outbox;
          UPDATE remote_servers SET history_cursor = NULL;
          DELETE FROM dsp_synced;
          DELETE FROM dsp_sync_cursor;",
     )?;
     tx.commit()?;
     Ok(removed)
+}
+
+/// Drop the plays, forgettings and hearts waiting to reach the server. They
+/// name its ids and its account, so they mean nothing to another: a clear
+/// meant for one server's history must never run against the next one's.
+pub fn forget_outboxes(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DELETE FROM history_outbox;
+         DELETE FROM favourite_outbox;",
+    )
 }
 
 #[cfg(test)]
