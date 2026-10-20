@@ -63,6 +63,7 @@ import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.QueueLock
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.library.Cover
 import cc.blit.koan.ui.library.NameLine
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.PlayableMenu
@@ -92,7 +93,6 @@ import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
-import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableCollectionItemScope
@@ -368,8 +368,7 @@ private fun sleeveShape(radius: Int) = if (KoanTheme.isOn) RectangleShape else R
 private fun AlbumHeading(group: QueueGroup, linked: Boolean) {
     Row(Modifier.padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
         val sleeve = Modifier.size(52.dp).clip(sleeveShape(5))
-        group.items.first().art(ArtSize.Thumb)?.let { AsyncImage(it, null, sleeve) }
-            ?: Box(sleeve.background(KoanTheme.color(KoanTone.Rule)))
+        Cover(group.items.first().art(ArtSize.Thumb), sleeve)
         Spacer(Modifier.width(KoanSpace.m))
         Column {
             val first = group.items.first()
@@ -401,8 +400,7 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
         Spacer(Modifier.width(if (sleeve) 10.dp else 6.dp))
         if (sleeve) {
             val shape = Modifier.size(tokens.thumb).clip(sleeveShape(4))
-            item.art(ArtSize.Thumb)?.let { AsyncImage(it, null, shape, alpha = if (played) 0.5f else 1f) }
-                ?: Box(shape.background(KoanTheme.color(KoanTone.Rule)))
+            Cover(item.art(ArtSize.Thumb), shape, alpha = if (played) 0.5f else 1f)
         } else {
             KoanText(item.trackNumber?.toString() ?: "", Modifier.width(22.dp), role = KoanType.Fine, tone = KoanTone.Muted)
         }

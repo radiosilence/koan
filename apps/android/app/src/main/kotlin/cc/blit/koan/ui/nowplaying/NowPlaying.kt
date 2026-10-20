@@ -9,7 +9,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -44,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -69,6 +67,7 @@ import cc.blit.koan.ffi.SleepTimer
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.Cover
 import cc.blit.koan.ui.library.NameLine
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.PlayableMenu
@@ -97,7 +96,6 @@ import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.recordWash
-import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -242,12 +240,7 @@ private fun Sleeve(entry: QueueItem?) {
     val shape = if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(12.dp)
     // Square, as large as fits either way.
     val modifier = Modifier.widthIn(max = 520.dp).aspectRatio(1f, matchHeightConstraintsFirst = true).clip(shape)
-    val art = entry?.art(ArtSize.Full)
-    if (art != null) {
-        AsyncImage(art, entry.album, modifier, contentScale = ContentScale.Crop)
-    } else {
-        Box(modifier.background(KoanTheme.color(KoanTone.Rule)))
-    }
+    Cover(entry?.art(ArtSize.Full), modifier, entry?.album)
 }
 
 /**

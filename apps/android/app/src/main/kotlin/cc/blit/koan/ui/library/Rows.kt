@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.library
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,9 +28,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import cc.blit.koan.R
 import cc.blit.koan.art.Art
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
@@ -47,6 +57,7 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRow
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 
 /** `3:07`, or `1:02:45` past an hour. */
 fun duration(ms: Long): String {
@@ -96,14 +107,39 @@ fun PageBar(
     }
 }
 
-/** A cover, square, on the `rule` ground until it arrives; at the list's sleeve size unless the modifier says otherwise. */
+/** A cover, square, at the list's sleeve size unless the modifier says otherwise. */
 @Composable
 fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.current.thumb) {
-    val ground = modifier.size(size).background(KoanTheme.color(KoanTone.Rule))
-    if (art == null) {
-        Box(ground)
-    } else {
-        AsyncImage(art, null, ground, contentScale = ContentScale.Crop)
+    Cover(art, modifier.size(size))
+}
+
+/**
+ * A cover filling `modifier`, on the `rule` ground until it arrives, and the
+ * kōan ensō on that ground where there is none: nothing playing, or a record
+ * without artwork. `alpha` fades the art and leaves the ground.
+ */
+@Composable
+fun Cover(art: Art?, modifier: Modifier = Modifier, description: String? = null, alpha: Float = 1f) {
+    var missing by remember(art) { mutableStateOf(art == null) }
+    Box(modifier.background(KoanTheme.color(KoanTone.Rule))) {
+        if (missing) {
+            Image(
+                painterResource(R.drawable.koan_enso),
+                null,
+                Modifier.matchParentSize(),
+                colorFilter = ColorFilter.tint(KoanTheme.color(KoanTone.Muted).copy(alpha = 0.5f)),
+            )
+        }
+        if (art != null) {
+            AsyncImage(
+                art,
+                description,
+                Modifier.matchParentSize(),
+                contentScale = ContentScale.Crop,
+                alpha = alpha,
+                onState = { missing = it is AsyncImagePainter.State.Error },
+            )
+        }
     }
 }
 
@@ -157,7 +193,7 @@ fun AlbumTile(
                 if (picked) Box(Modifier.matchParentSize().border(3.dp, KoanTheme.color(KoanTone.Accent)))
                 Tick(picked, Modifier.align(Alignment.TopStart).padding(KoanSpace.s))
             } else {
-                AlbumHeart(album.id, Modifier.align(Alignment.BottomEnd), showing = false)
+                AlbumHeart(album.id, Modifier.align(Alignment.BottomEnd).onGround(), showing = false)
             }
             PlayableMenu(playable, menu) { menu = false }
         }
@@ -167,6 +203,21 @@ fun AlbumTile(
             role = KoanType.Fine,
             linked = selection?.active != true,
         )
+    }
+}
+
+/**
+ * A small square of `bg` behind a heart on a sleeve, so it reads over any
+ * cover; a disc in the platform's look.
+ */
+@Composable
+private fun Modifier.onGround(): Modifier {
+    val ground = KoanTheme.colors.bg
+    val shape = KoanTheme.metric(RectangleShape, CircleShape)
+    return drawBehind {
+        val side = 28.dp.toPx()
+        val outline = shape.createOutline(Size(side, side), layoutDirection, this)
+        translate((size.width - side) / 2, (size.height - side) / 2) { drawOutline(outline, ground) }
     }
 }
 
