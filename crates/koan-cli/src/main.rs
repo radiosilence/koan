@@ -118,7 +118,12 @@ struct Cli {
     #[arg(long)]
     subsonic: Option<u16>,
 
-    /// Disable the GraphQL API server (TUI-only mode)
+    /// Serve the GraphQL/Subsonic API alongside the TUI. Implied by --port,
+    /// --bind, --subsonic and --playground
+    #[arg(long, conflicts_with = "no_api")]
+    api: bool,
+
+    /// Do not serve the API alongside the TUI, even if `[graphql] enabled` is set
     #[arg(long)]
     no_api: bool,
 
@@ -992,7 +997,14 @@ fn start_player(
     if let Some(ref url) = server {
         commands::cmd_play_remote(url);
     } else {
-        let api_enabled = !cli.no_api && cfg.graphql.enabled;
+        // A terminal session serves the API only when asked: an unasked-for
+        // server with no accounts offers its /setup to any local process.
+        let api_asked = cli.api
+            || cli.port.is_some()
+            || cli.bind.is_some()
+            || cli.subsonic.is_some()
+            || cli.playground;
+        let api_enabled = !cli.no_api && (api_asked || cfg.graphql.enabled);
         let api_opts = if api_enabled {
             Some(commands::ApiOptions {
                 port: cli.port.or(Some(cfg.graphql.port)),

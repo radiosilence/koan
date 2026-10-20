@@ -383,7 +383,7 @@ Named patterns for organize, in [format string](../format-strings.md) syntax. Se
 
 ```toml
 [graphql]
-enabled = true                # run API alongside TUI (default: true, false = --no-api)
+enabled = false               # run API alongside TUI (default: false, true = --api)
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false            # enable GraphiQL IDE at GET /graphql (default: false)
