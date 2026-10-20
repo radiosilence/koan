@@ -39,6 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -63,6 +64,7 @@ import cc.blit.koan.ffi.QueueLock
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.BarItem
+import cc.blit.koan.ui.library.Cover
 import cc.blit.koan.ui.library.GoToArtists
 import cc.blit.koan.ui.library.Heart
 import cc.blit.koan.ui.library.NameLine
@@ -99,7 +101,6 @@ import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
-import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
@@ -391,8 +392,7 @@ private fun sleeveShape(radius: Int) = if (KoanTheme.isOn) RectangleShape else R
 private fun AlbumHeading(group: QueueGroup, linked: Boolean) {
     Row(Modifier.padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
         val sleeve = Modifier.size(52.dp).clip(sleeveShape(5))
-        group.items.first().art(ArtSize.Thumb)?.let { AsyncImage(it, null, sleeve) }
-            ?: Box(sleeve.background(KoanTheme.color(KoanTone.Rule)))
+        Cover(group.items.first().art(ArtSize.Thumb), sleeve)
         Spacer(Modifier.width(KoanSpace.m))
         Column {
             val first = group.items.first()
@@ -424,8 +424,7 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
         Spacer(Modifier.width(if (sleeve) 10.dp else 6.dp))
         if (sleeve) {
             val shape = Modifier.size(tokens.thumb).clip(sleeveShape(4))
-            item.art(ArtSize.Thumb)?.let { AsyncImage(it, null, shape, alpha = if (played) 0.5f else 1f) }
-                ?: Box(shape.background(KoanTheme.color(KoanTone.Rule)))
+            Cover(item.art(ArtSize.Thumb), shape.alpha(if (played) 0.5f else 1f))
         } else {
             KoanText(item.trackNumber?.toString() ?: "", Modifier.width(22.dp), role = KoanType.Fine, tone = KoanTone.Muted)
         }
@@ -448,6 +447,7 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
                     ),
                     role = KoanType.Fine,
                     linked = linked,
+                    dense = true,
                 )
             }
         }

@@ -86,7 +86,7 @@ fun CollectionRow(
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             KoanText(title, tone = titleTone, appText = appText, maxLines = 1)
             detail?.let { KoanText(it, role = KoanType.Meta, tone = detailTone, maxLines = 1) }
-            names?.takeIf { n -> n.any { it.text.isNotEmpty() } }?.let { NameLine(it, tone = detailTone, linked = linked) }
+            names?.takeIf { n -> n.any { it.text.isNotEmpty() } }?.let { NameLine(it, tone = detailTone, linked = linked, dense = true) }
             below?.invoke()
         }
         trailing?.invoke()

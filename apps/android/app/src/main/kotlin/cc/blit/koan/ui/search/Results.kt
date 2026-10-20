@@ -121,6 +121,7 @@ internal fun TrackRow(track: Track, selection: Selection<Playable>) {
                     listOf(artistCredit(track.artistCredit, track.artistName, track.artistId), albumName(track.albumTitle, track.albumId, track.id)),
                     role = KoanType.Fine,
                     linked = !selection.active,
+                    dense = true,
                 )
             }
             TrackAvailability(track)

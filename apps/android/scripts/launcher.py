@@ -9,7 +9,10 @@ the Apple apps' icon, and writes:
   layer for themed icons. The icon's 512 units span the 72 dp the launcher
   shows of the 108-dp layers, so the ensō sits in it as on the Apple icon;
 - `drawable/ic_notification.xml`, the ensō alone, white, filling the status
-  bar's 24-dp square, for the media notification.
+  bar's 24-dp square, for the media notification;
+- `drawable/koan_enso.xml`, the placeholder for a record without a cover:
+  the ensō alone, white for the app to tint, in the middle of a square it
+  fills, as the Apple apps' `EnsoPlaceholder` draws it.
 
 Usage: apps/android/scripts/launcher.py
 """
@@ -124,6 +127,13 @@ scale = 22 / side
 cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
 outputs["drawable/ic_notification.xml"] = vector(
     24, 24, scale, (12 - cx * scale, 12 - cy * scale), path(enso, "#FFFFFFFF", enso_width),
+)
+
+# The Apple apps' placeholder: the icon's 512 units in the middle 48% of the
+# sleeve, its stroke 4.5% of the sleeve's side: 48 of the icon's units, where
+# the icon draws 40, so it holds up at thumbnail size.
+outputs["drawable/koan_enso.xml"] = vector(
+    48, 512, 0.48, (0.26 * 512, 0.26 * 512), path(enso, "#FFFFFFFF", f"{0.045 / 0.48 * 512:.0f}"),
 )
 
 for name, text in outputs.items():

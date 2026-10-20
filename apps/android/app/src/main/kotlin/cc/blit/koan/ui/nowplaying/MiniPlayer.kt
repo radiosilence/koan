@@ -34,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.library.Cover
 import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.settings.PlayOnButton
@@ -52,7 +53,6 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
-import coil3.compose.AsyncImage
 
 /**
  * The transport, phone-sized, always above the tabs: how far through as an
@@ -92,8 +92,7 @@ fun MiniPlayer() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val sleeve = Modifier.size(tokens.thumb).clip(if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(6.dp))
-            entry?.art(ArtSize.Thumb)?.let { AsyncImage(it, null, sleeve) }
-                ?: Box(sleeve.background(KoanTheme.color(KoanTone.Rule)))
+            Cover(entry?.art(ArtSize.Thumb), sleeve)
             Spacer(Modifier.width(KoanSpace.m))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KoanSpace.s)) {

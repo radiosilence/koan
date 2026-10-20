@@ -43,6 +43,9 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
     }
 }
 
+/** What a fetch fails with when the engine has no cover, as against one it could not get. */
+class NoArt : Exception("no artwork")
+
 class ArtKeyer : Keyer<Art> {
     override fun key(data: Art, options: Options) = data.key
 }
@@ -52,7 +55,7 @@ class ArtFetcher(
     private val loader: ImageLoader,
     private val mirror: EngineMirror,
 ) : Fetcher {
-    override suspend fun fetch(): FetchResult? {
+    override suspend fun fetch(): FetchResult {
         val disk = loader.diskCache
         disk?.openSnapshot(art.key)?.let { snapshot ->
             return SourceFetchResult(
@@ -61,7 +64,7 @@ class ArtFetcher(
                 DataSource.DISK,
             )
         }
-        val cover = cover() ?: return null
+        val cover = cover() ?: throw NoArt()
         disk?.openEditor(art.key)?.let { editor ->
             try {
                 disk.fileSystem.write(editor.data) { write(cover.data) }
