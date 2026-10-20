@@ -49,8 +49,10 @@ impl From<Html> for String {
     }
 }
 
-/// Rendering that cannot fail the response: a template that errors is logged
-/// with its type and drawn as nothing.
+/// Rendering a template. askama fails only when a value's `Display` does,
+/// which for the text, numbers and [`Html`] these templates hold is a bug, so
+/// it panics: the web UI and share routes sit behind `CatchPanicLayer`, which
+/// answers 500 rather than a page or an event drawn as nothing.
 pub(crate) trait Render {
     fn html(&self) -> Html;
 }
@@ -59,10 +61,7 @@ impl<T: askama::Template> Render for T {
     fn html(&self) -> Html {
         match self.render() {
             Ok(s) => Html(s),
-            Err(e) => {
-                log::error!("rendering {}: {e}", std::any::type_name::<T>());
-                Html::default()
-            }
+            Err(e) => panic!("rendering {}: {e}", std::any::type_name::<T>()),
         }
     }
 }
