@@ -794,10 +794,8 @@ private struct PeoplePane: View {
     }
 
     var body: some View {
-        KoanForm {
-            PeopleSettings(signedInAs: model.settings.remoteUsername, model: people)
-        }
-        .koanSheet()
+        PeopleSettings(signedInAs: model.settings.remoteUsername, model: people)
+            .koanSheet()
     }
 }
 
