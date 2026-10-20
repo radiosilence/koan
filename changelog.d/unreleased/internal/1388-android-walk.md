@@ -1,0 +1,1 @@
+- **Android walk.** `just android-walk` screenshots every page of the Android app on an emulator, in both looks and appearances, against the generated library the iPhone checks use, so the two apps can be compared page for page.
