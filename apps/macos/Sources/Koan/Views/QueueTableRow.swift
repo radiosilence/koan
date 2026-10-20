@@ -165,7 +165,7 @@ final class QueueTableRow: TableCell, TableRow {
         case .track(let content, _, let showArtist, let artwork):
             title.font = Self.titleFont
             title.stringValue = Format.title(content.title)
-            artist.stringValue = !showArtist ? "" : CreditLabel.text(content.artistCredit)
+            artist.stringValue = CreditLabel.text(credit)
             album.stringValue = !showArtist || content.artist.isEmpty || !artwork ? "" : content.album
             number.stringValue = content.place
             placeTemplate = content.placeTemplate
@@ -450,11 +450,12 @@ final class QueueTableRow: TableCell, TableRow {
     /// The artist is the credit part under the pointer.
     private enum Part: Equatable { case title, artist(Int), album }
 
-    /// The credit the artist label draws.
+    /// The credit the artist label draws: none for a track whose artist is
+    /// its record's, which the heading above already names.
     private var credit: [CreditPart] {
         switch line?.kind {
         case .heading(let heading): heading.artist ?? []
-        case .track(let content, _, _, _): content.artistCredit
+        case .track(let content, _, let showArtist, _): showArtist ? content.artistCredit : []
         case nil: []
         }
     }
