@@ -200,8 +200,12 @@ pub(crate) fn placeholder(size: u32) -> Bytes {
 }
 
 fn draw_placeholder(size: u32) -> Bytes {
+    // The dark appearance's `--surface` (#2a2a2a) and `--muted` (#919191),
+    // from site/src/theme.css.
     const SURFACE: [f32; 3] = [42.0, 42.0, 42.0];
     const MUTED: [f32; 3] = [145.0, 145.0, 145.0];
+    // `just icons` writes each glyph as absolute `M`/`L` polylines, which is
+    // all this reads; the test below fails if that changes.
     // The glyph's 24-unit box, with the ring spanning 2.5–21.5, scaled so the
     // ring is as wide as the apps' (60% of the inset box).
     let side = size as f32;
@@ -264,6 +268,18 @@ mod tests {
         assert_eq!(snap(Some(401)), 800);
         assert_eq!(snap(Some(99_999)), 1200);
         assert_eq!(snap(None), LARGE);
+    }
+
+    #[test]
+    fn the_enso_is_one_absolute_polyline() {
+        let strokes = crate::icon::ENSO.strokes;
+        assert!(strokes.starts_with('M'));
+        assert_eq!(strokes.matches('M').count(), 1);
+        assert!(
+            strokes
+                .chars()
+                .all(|c| matches!(c, 'M' | 'L' | ' ' | '.' | '-' | '0'..='9'))
+        );
     }
 
     #[test]
