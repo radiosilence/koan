@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.66.1
+
+### Added
+
+- **Features on in the web UI.** An artist's page lists the records they feature on below their own, as the apps' artist pages do.
+- **Tooltips on truncated text in the web UI.** Any title or credit cut short by an ellipsis shows its full text on hover, on the web UI and the share page.
+
+### Changed
+
+- **The site and guides describe 0.66.** Android and the Apple TV app are on the homepage and in the install steps, with the TestFlight beta for iOS and tvOS; the terminal UI's pages and keys, the configuration and CLI references, and how local and server tracks are merged now match what the code does.
+- **The container image is built from the release binaries, for amd64 and arm64.** Linux binaries are compiled once per architecture and both the image and the release downloads are made from them. The image now runs on Debian 13 (trixie), whose glibc those binaries need. The Mac release build starts alongside the checks, so a release finishes sooner.
+- **Shorter paragraphs in the guides.** The server, terminal UI and headphone EQ guides, among others, are split into short sections and lists, and the homepage says to make the first admin straight away, since until one exists the setup page lets whoever reaches it first become admin.
+
+### Fixed
+
+- **Scan progress counts every file first.** A scan decides which files it will read in every library folder before reading any, so its total stays fixed and its bar never jumps back. Files whose tags cannot be read count as read, so the bar ends full, and progress is reported for each batch rather than every 50 files.
+- **Web UI: the library scan from a wide screen.** Admins find the Library page, with Rescan and the progress of every scan, in the sidebar as well as the phone's tab bar, and a running scan shows a bar that fills as files are read.
+
+### Internal
+
+- **The web UI and share page render through askama templates.** Their HTML was built with `format!` and an `escape()` call on every interpolated value, where one missed call was an XSS hole; templates are checked when the crate compiles and escape their output by default. Copy buttons, the invite's share sheet and the search address are Datastar attributes rather than script. This is how slsk-mcp renders its UI, so patterns move between the two. A lefthook pre-commit hook (`just hooks`) runs `cargo fmt`.
+- **CI runs only what a change touches, behind one `Checks` gate.** Shared inputs such as `Cargo.lock` count for the apps only when the change reaches them, so a web UI pull request no longer holds a macOS runner. Delivery runs after the gate in the same workflow and ships what CI built: TestFlight and Google Play on every push that changes the apps, the full release on a version bump.
+- **Release jobs read one answer for whether a run releases.** The Mac build and the publishing steps can no longer disagree, which could skip a release without a failure.
+- **CI/CD hardening.** The image's `main` tag no longer moves backwards when a release run finishes late, freeing runners for a release never fails it, a push whose base cannot be worked out runs every check, and a retried release passes a package version that is already published.
+
 ## 0.66.0
 
 ### Added
