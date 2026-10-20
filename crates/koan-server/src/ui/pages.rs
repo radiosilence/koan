@@ -13,8 +13,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
+use koan_core::db::queries::batch::CreditsOf;
 use koan_core::db::queries::{self, AlbumRow, TrackRow};
-use koan_core::helpers::ShareTarget;
+use koan_core::helpers::{CreditPart, ShareTarget, credit_parts, credits_by_id};
 
 use super::browse::{self, Browse, Kind};
 use super::favourite::Hearts;
@@ -209,7 +210,7 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
 <img class=\"size-10 bg-surface object-cover\" data-np=cover alt=\"\" hidden></a>\
 <span class=\"flex min-w-0 flex-col items-start\">\
 <a class=\"max-w-full truncate text-meta text-strong hover:no-underline\" href=\"/queue\" data-np=title>Nothing playing</a>\
-<a class=\"max-w-full truncate text-fine text-muted hover:text-strong\" data-np=artist></a></span></div>\
+<span class=\"credit max-w-full truncate text-fine text-muted\" data-np=artist></span></span></div>\
 <div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}{TRACK_PROPERTIES}</body></html>",
         head = head(title),
         datastar = super::ASSETS.datastar_js,
@@ -345,7 +346,12 @@ pub(super) fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -
 
 /// Record tiles, each with its heart over the corner where the account may
 /// favourite.
-fn cells(albums: &[AlbumRow], versions: &Versions, hearts: Option<&Hearts>) -> String {
+fn cells(
+    albums: &[AlbumRow],
+    versions: &Versions,
+    credits: &Credits,
+    hearts: Option<&Hearts>,
+) -> String {
     albums.iter().fold(String::new(), |mut out, a| {
         let _ = write!(
             out,
@@ -354,14 +360,13 @@ fn cells(albums: &[AlbumRow], versions: &Versions, hearts: Option<&Hearts>) -> S
 [&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
 width={size} height={size} src=\"{src}\" alt=\"\">\
 <span class=\"truncate group-hover:text-strong\">{title}</span></a>\
-<a class=\"truncate self-start max-w-full text-meta text-muted hover:text-strong\" href=\"/artist/{artist_id}\" tabindex=-1>{artist}</a>{heart}</div>",
+<span class=\"credit truncate self-start max-w-full text-meta text-muted\">{artist}</span>{heart}</div>",
             id = a.id,
             heart = hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
             size = crate::covers::GRID,
             src = cover_url(a.id, crate::covers::GRID, versions),
             title = escape(&a.title),
-            artist_id = a.artist_id,
-            artist = escape(&a.artist_name),
+            artist = credit_links(&credits.album(Some(a.id), &a.artist_name, Some(a.artist_id)), true),
         );
         out
     })
@@ -414,23 +419,100 @@ pub(super) fn link(kind: &str, id: Option<i64>, name: &str) -> String {
     }
 }
 
-/// A track row's subtitle: its artist and its album, each where asked for
-/// and named, linked to their pages.
-pub(super) fn credit_line(t: &TrackRow, artist: bool, album: bool) -> String {
-    let names = [
-        (artist, "artist", t.artist_id, &t.artist_name),
-        (album, "album", t.album_id, &t.album_title),
-    ];
-    let sub: Vec<_> = names
-        .into_iter()
-        .filter(|(shown, _, _, name)| *shown && !name.is_empty())
-        .map(|(_, kind, id, name)| link(kind, id, name))
+/// The artists credited on a page's tracks and albums, read once for the
+/// page. Where the read fails each credit is one link, to the artist it is
+/// filed under.
+#[derive(Default)]
+pub(super) struct Credits {
+    tracks: HashMap<i64, Vec<(i64, String)>>,
+    albums: HashMap<i64, Vec<(i64, String)>>,
+}
+
+impl Credits {
+    pub(super) fn load(conn: &rusqlite::Connection, tracks: &[TrackRow], albums: &[i64]) -> Self {
+        let read = |of, ids: &[i64]| credits_by_id(conn, of, ids).unwrap_or_default();
+        let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+        Self {
+            tracks: read(CreditsOf::Tracks, &ids),
+            albums: read(CreditsOf::Albums, albums),
+        }
+    }
+
+    /// A track's artist credit.
+    pub(super) fn track(&self, t: &TrackRow) -> Vec<CreditPart> {
+        let artists = self.tracks.get(&t.id).map(Vec::as_slice).unwrap_or(&[]);
+        credit_parts(&t.artist_name, t.artist_id, artists)
+    }
+
+    /// An album's artist credit, `credit` as the row names it.
+    pub(super) fn album(
+        &self,
+        id: Option<i64>,
+        credit: &str,
+        filed: Option<i64>,
+    ) -> Vec<CreditPart> {
+        let artists = id
+            .and_then(|id| self.albums.get(&id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        credit_parts(credit, filed, artists)
+    }
+}
+
+/// A credit as it reads, each credited artist's name a link to their page and
+/// the text joining them plain. `quiet` links are left out of the tab order,
+/// as beside a tile's own link.
+pub(super) fn credit_links(parts: &[CreditPart], quiet: bool) -> String {
+    let tab = if quiet { " tabindex=-1" } else { "" };
+    parts
+        .iter()
+        .map(|p| match p.artist_id {
+            Some(id) => format!("<a href=\"/artist/{id}\"{tab}>{}</a>", escape(&p.text)),
+            None => escape(&p.text),
+        })
+        .collect()
+}
+
+/// A row's credit for the player, which draws the queue and Now Playing from
+/// the row's data: `[text, artist id or 0]` for each part. Nothing where the
+/// credit is one name, which `data-artist` and `data-artist-id` already say.
+pub(super) fn credit_data(parts: &[CreditPart]) -> String {
+    if parts.len() < 2 {
+        return String::new();
+    }
+    let parts: Vec<_> = parts
+        .iter()
+        .map(|p| serde_json::json!([p.text, p.artist_id.unwrap_or(0)]))
         .collect();
+    format!(
+        " data-credit=\"{}\"",
+        escape(&serde_json::Value::Array(parts).to_string())
+    )
+}
+
+/// A track row's subtitle: its artist credit, where given, and its album,
+/// where asked for, each named part linked to its page.
+pub(super) fn credit_line(t: &TrackRow, artist: Option<&[CreditPart]>, album: bool) -> String {
+    let mut sub = Vec::new();
+    let artist = artist.map(|parts| credit_links(parts, false));
+    if let Some(links) = artist.filter(|l| !l.is_empty()) {
+        sub.push(links);
+    }
+    if album && !t.album_title.is_empty() {
+        sub.push(link("album", t.album_id, &t.album_title));
+    }
     if sub.is_empty() {
         String::new()
     } else {
         format!("<small>{}</small>", sub.join(" · "))
     }
+}
+
+/// What a page read once for all its rows: covers, credits and hearts.
+pub(super) struct RowData<'a> {
+    pub versions: &'a Versions,
+    pub credits: &'a Credits,
+    pub hearts: Option<&'a Hearts>,
 }
 
 /// A track row. `album` is set where the row stands alone (search) and names
@@ -440,14 +522,19 @@ fn track_row(
     n: usize,
     show_artist: bool,
     album: bool,
-    versions: &Versions,
     share: bool,
-    hearts: Option<&Hearts>,
+    data: &RowData,
 ) -> String {
-    let sub = credit_line(t, show_artist, album);
+    let RowData {
+        versions,
+        credits,
+        hearts,
+    } = *data;
+    let parts = credits.track(t);
+    let sub = credit_line(t, show_artist.then_some(&parts[..]), album);
     format!(
         "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
+data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\"{credit}>\
 <span class=\"n\">{n}</span><span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>\
 <span class=\"contents max-wide:hidden\">{heart}{share}\
 <button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{mark}{MORE}</li>",
@@ -462,6 +549,7 @@ data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id}
             .album_id
             .map(|a| cover_url(a, crate::covers::LARGE, versions))
             .unwrap_or_default(),
+        credit = credit_data(&parts),
         dur = duration(t.duration_ms),
         heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
         mark = hearts.map(Hearts::mark).unwrap_or_default(),
@@ -479,11 +567,16 @@ fn album_list(
     s: &UiState,
     user: &AuthUser,
     b: &Browse,
-) -> Option<(Vec<AlbumRow>, Versions, Option<Hearts>)> {
+) -> Option<(Vec<AlbumRow>, Versions, Credits, Option<Hearts>)> {
     let db = open(&s.pool)?;
     let albums = queries::list_albums(&db.conn, &b.albums(user.user_id, shelves::now())).ok()?;
     let versions = album_versions(&db.conn, &albums);
-    Some((albums, versions, Hearts::load(&db.conn, user)))
+    let credits = Credits::load(&db.conn, &[], &album_ids(&albums));
+    Some((albums, versions, credits, Hearts::load(&db.conn, user)))
+}
+
+fn album_ids(albums: &[AlbumRow]) -> Vec<i64> {
+    albums.iter().map(|a| a.id).collect()
 }
 
 /// "12 albums", once a filter is on: the count a shelf's heading gave.
@@ -507,7 +600,7 @@ pub(super) async fn albums(
     let b = b.seeded();
     let (st, bb, who) = (s.clone(), b.clone(), user.clone());
     let found = blocking(move || Some((album_list(&st, &who, &bb)?, filter_options(&st)?))).await;
-    let Some(((albums, versions, hearts), options)) = found else {
+    let Some(((albums, versions, credits, hearts), options)) = found else {
         return unavailable();
     };
     let grid = if albums.is_empty() {
@@ -515,7 +608,7 @@ pub(super) async fn albums(
     } else {
         format!(
             "<div class=\"{GRID}\" id=albums>{}</div>",
-            cells(&albums, &versions, hearts.as_ref())
+            cells(&albums, &versions, &credits, hearts.as_ref())
         )
     };
     let inner = format!(
@@ -538,10 +631,17 @@ pub(super) async fn album(
         let album = queries::get_album(&db.conn, id).ok()??;
         let tracks = queries::tracks_for_album(&db.conn, id).ok()?;
         let versions = cover_versions(&db.conn, &[id]);
-        Some((album, tracks, versions, Hearts::load(&db.conn, &who)))
+        let credits = Credits::load(&db.conn, &tracks, &[id]);
+        Some((
+            album,
+            tracks,
+            versions,
+            credits,
+            Hearts::load(&db.conn, &who),
+        ))
     })
     .await;
-    let Some((album, tracks, versions, hearts)) = found else {
+    let Some((album, tracks, versions, credits, hearts)) = found else {
         return not_found();
     };
     let can_share = user.role.has_permission(Role::User);
@@ -549,6 +649,11 @@ pub(super) async fn album(
         .iter()
         .map(|t| t.disc.unwrap_or(1))
         .collect::<std::collections::BTreeSet<_>>();
+    let data = RowData {
+        versions: &versions,
+        credits: &credits,
+        hearts: hearts.as_ref(),
+    };
     let mut rows = String::new();
     let mut disc = None;
     for (i, t) in tracks.iter().enumerate() {
@@ -562,16 +667,14 @@ pub(super) async fn album(
             n,
             t.artist_name != album.artist_name,
             false,
-            &versions,
             can_share,
-            hearts.as_ref(),
+            &data,
         ));
     }
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
-    let mut sub = vec![format!(
-        "<a href=\"/artist/{}\">{}</a>",
-        album.artist_id,
-        escape(&album.artist_name)
+    let mut sub = vec![credit_links(
+        &credits.album(Some(album.id), &album.artist_name, Some(album.artist_id)),
+        false,
     )];
     let y = year(album.date.as_deref());
     if !y.is_empty() {
@@ -739,32 +842,28 @@ pub(super) async fn tracks(
             .page(&db.conn, TRACKS_PAGE, page * TRACKS_PAGE)
             .ok()?;
         let versions = track_versions(&db.conn, &rows);
+        let credits = Credits::load(&db.conn, &rows, &[]);
         let hearts = Hearts::load(&db.conn, &who);
         drop(db);
-        Some((rows, total, versions, hearts, filter_options(&st)?))
+        Some((rows, total, versions, credits, hearts, filter_options(&st)?))
     })
     .await;
-    let Some((rows, total, versions, hearts, options)) = found else {
+    let Some((rows, total, versions, credits, hearts, options)) = found else {
         return unavailable();
     };
     let first = (page * TRACKS_PAGE) as usize;
     let list = if rows.is_empty() {
         format!("<p class=\"{EMPTY}\">No tracks match.</p>")
     } else {
+        let data = RowData {
+            versions: &versions,
+            credits: &credits,
+            hearts: hearts.as_ref(),
+        };
         let items: String = rows
             .iter()
             .enumerate()
-            .map(|(i, t)| {
-                track_row(
-                    t,
-                    first + i + 1,
-                    true,
-                    true,
-                    &versions,
-                    false,
-                    hearts.as_ref(),
-                )
-            })
+            .map(|(i, t)| track_row(t, first + i + 1, true, true, false, &data))
             .collect();
         format!("<ol class=\"tracks\" data-context=album>{items}</ol>")
     };
@@ -811,10 +910,17 @@ pub(super) async fn artist(
         let artist = queries::get_artist(&db.conn, id).ok()??;
         let albums = queries::albums_for_artist(&db.conn, id).ok()?;
         let versions = album_versions(&db.conn, &albums);
-        Some((artist, albums, versions, Hearts::load(&db.conn, &who)))
+        let credits = Credits::load(&db.conn, &[], &album_ids(&albums));
+        Some((
+            artist,
+            albums,
+            versions,
+            credits,
+            Hearts::load(&db.conn, &who),
+        ))
     })
     .await;
-    let Some((artist, albums, versions, hearts)) = found else {
+    let Some((artist, albums, versions, credits, hearts)) = found else {
         return not_found();
     };
     // Sharing and favouriting are the same accounts' to do.
@@ -835,7 +941,7 @@ data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{id}/share')\">Shar
         artist.album_count,
         if artist.album_count == 1 { "" } else { "s" },
         artist.track_count,
-        cells(&albums, &versions, hearts.as_ref())
+        cells(&albums, &versions, &credits, hearts.as_ref())
     );
     respond(&s, &headers, &user, &artist.name, &inner)
 }
@@ -893,16 +999,28 @@ pub(super) async fn playlist(
             .filter(|p| p.readable_by(me))?;
         let tracks = queries::playlist_tracks(&db.conn, id).ok()?;
         let versions = track_versions(&db.conn, &tracks);
-        Some((list, tracks, versions, Hearts::load(&db.conn, &who)))
+        let credits = Credits::load(&db.conn, &tracks, &[]);
+        Some((
+            list,
+            tracks,
+            versions,
+            credits,
+            Hearts::load(&db.conn, &who),
+        ))
     })
     .await;
-    let Some((list, tracks, versions, hearts)) = found else {
+    let Some((list, tracks, versions, credits, hearts)) = found else {
         return not_found();
+    };
+    let data = RowData {
+        versions: &versions,
+        credits: &credits,
+        hearts: hearts.as_ref(),
     };
     let rows: String = tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false, hearts.as_ref()))
+        .map(|(i, t)| track_row(t, i + 1, true, true, false, &data))
         .collect();
     let cover = tracks
         .iter()
@@ -953,9 +1071,10 @@ fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
         let summary =
             shelves::summary(&db.conn, shelf, user.user_id, shelves::now(), false).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
-        Some((summary, versions, Hearts::load(&db.conn, user)))
+        let credits = shelf_credits(&db.conn, &summary);
+        Some((summary, versions, credits, Hearts::load(&db.conn, user)))
     });
-    let Some((summary, versions, hearts)) = found else {
+    let Some((summary, versions, credits, hearts)) = found else {
         return format!(
             "<div id=results><p class=\"{ERROR}\">The library is unavailable.</p></div>"
         );
@@ -968,7 +1087,15 @@ fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
     }
     format!(
         "<div id=results>{}</div>",
-        shelf_sections(&summary, shelf, &versions, hearts.as_ref())
+        shelf_sections(
+            &summary,
+            shelf,
+            &RowData {
+                versions: &versions,
+                credits: &credits,
+                hearts: hearts.as_ref(),
+            },
+        )
     )
 }
 
@@ -1071,6 +1198,11 @@ fn shelf_versions(conn: &rusqlite::Connection, s: &Summary) -> Versions {
     versions
 }
 
+/// The credits a shelf's previews show.
+fn shelf_credits(conn: &rusqlite::Connection, s: &Summary) -> Credits {
+    Credits::load(conn, &s.tracks.preview, &album_ids(&s.albums.preview))
+}
+
 /// A section's heading: its name, how many the shelf has in all, and a
 /// chevron, the whole of it a link to the browser with the shelf as its
 /// filter. The preview below may show fewer.
@@ -1088,12 +1220,7 @@ hover:text-brand hover:no-underline\" href=\"{href}\">{title}\
 /// The previews of a shelf, as the apps' shelf lays them out: artists as
 /// pills, records as tiles, and the tracks as a list that plays on from the
 /// row picked.
-fn shelf_sections(
-    s: &Summary,
-    shelf: Shelf,
-    versions: &Versions,
-    hearts: Option<&Hearts>,
-) -> String {
+fn shelf_sections(s: &Summary, shelf: Shelf, data: &RowData) -> String {
     let mut out = String::new();
     if !s.artists.preview.is_empty() {
         let _ = write!(
@@ -1108,7 +1235,7 @@ fn shelf_sections(
             out,
             "{}<div class=\"mb-6 {GRID}\">{}</div>",
             section_head("Albums", s.albums.total, shelf, Kind::Albums, ""),
-            cells(&s.albums.preview, versions, hearts)
+            cells(&s.albums.preview, data.versions, data.credits, data.hearts)
         );
     }
     if !s.tracks.preview.is_empty() {
@@ -1117,7 +1244,7 @@ fn shelf_sections(
             .preview
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, versions, false, hearts))
+            .map(|(i, t)| track_row(t, i + 1, true, true, false, data))
             .collect();
         let _ = write!(
             out,
@@ -1149,10 +1276,11 @@ async fn shelf_page(
         let db = open(&st.pool)?;
         let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now(), false).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
-        Some((summary, versions, Hearts::load(&db.conn, &who)))
+        let credits = shelf_credits(&db.conn, &summary);
+        Some((summary, versions, credits, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((summary, versions, hearts)) = found else {
+    let Some((summary, versions, credits, hearts)) = found else {
         return unavailable();
     };
     let inner = if summary.is_empty() {
@@ -1163,7 +1291,15 @@ async fn shelf_page(
     } else {
         format!(
             "<h1>{title}</h1>{}",
-            shelf_sections(&summary, shelf, &versions, hearts.as_ref())
+            shelf_sections(
+                &summary,
+                shelf,
+                &RowData {
+                    versions: &versions,
+                    credits: &credits,
+                    hearts: hearts.as_ref(),
+                },
+            )
         )
     };
     respond(&s, &headers, &user, title, &inner)
@@ -1222,7 +1358,7 @@ pub(super) async fn queue(
         "<header class=\"{HERO}\"><img class=\"{HERO_COVER} max-wide:max-w-[360px] max-wide:self-center\" \
 data-np=cover alt=\"\" hidden><div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Now playing</p>\
 <h1 class=\"mb-1 normal-case\" data-np=title>Nothing playing</h1>\
-<p class=\"{SUB}\"><a data-np=artist></a><span data-np=sep hidden> · </span><a data-np=album></a></p>\
+<p class=\"{SUB}\"><span data-np=artist></span><span data-np=sep hidden> · </span><a data-np=album></a></p>\
 {buttons}{scrub}</div></header>\
 <div class=\"{LIST_HEAD}\"><h2>Up next</h2>\
 <button class=\"quiet px-2 py-1\" data-act=clear>Clear</button></div>\
