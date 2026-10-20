@@ -697,7 +697,7 @@ impl QueryRoot {
             Some(GqlLyrics {
                 content: lyrics.content,
                 synced: lyrics.synced,
-                source: format!("{:?}", lyrics.source),
+                source: lyrics.source.map(|s| s.credit().into()),
             })
         };
         let cached = match lookup {

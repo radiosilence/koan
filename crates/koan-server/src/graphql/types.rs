@@ -924,7 +924,9 @@ impl GqlFuzzyMatch {
 pub(super) struct GqlLyrics {
     pub content: String,
     pub synced: bool,
-    pub source: String,
+    /// Where the words came from, as a credit: "LRCLIB", "Embedded" or
+    /// "Sidecar". Null when the cache names a source this build does not know.
+    pub source: Option<String>,
 }
 
 #[derive(SimpleObject)]

@@ -3,9 +3,7 @@
 use rusqlite::Connection;
 
 use crate::db::connection::DbError;
-use crate::db::queries::lyrics::{
-    CachedLyrics, cache_lyrics, get_cached_lyrics, lyrics_fetched_at,
-};
+use crate::db::queries::lyrics::{CachedLyrics, cache_lyrics, get_cached_lyrics, touch_lyrics};
 use crate::remote::lrclib::{self, LrclibError};
 
 // ---------------------------------------------------------------------------
@@ -20,8 +18,8 @@ pub struct Lyrics {
     /// Whether `content` is in LRC (time-tagged) format.
     pub synced: bool,
     /// Which source provided the lyrics. A cached copy keeps the source it
-    /// was fetched from.
-    pub source: LyricsSource,
+    /// was fetched from; `None` for a stored name this build does not know.
+    pub source: Option<LyricsSource>,
 }
 
 /// Which source provided the lyrics.
@@ -54,13 +52,13 @@ impl LyricsSource {
         }
     }
 
-    /// The source a cached row names. LRCLIB is the only source that has
-    /// ever been cached, so a name not recognised is taken to be it.
-    fn stored(name: &str) -> Self {
+    /// The source a cached row names.
+    fn stored(name: &str) -> Option<Self> {
         match name {
-            "embedded" => LyricsSource::Embedded,
-            "sidecar" => LyricsSource::Sidecar,
-            _ => LyricsSource::Lrclib,
+            "embedded" => Some(LyricsSource::Embedded),
+            "sidecar" => Some(LyricsSource::Sidecar),
+            "lrclib" => Some(LyricsSource::Lrclib),
+            _ => None,
         }
     }
 }
@@ -200,18 +198,16 @@ pub enum CacheLookup {
 }
 
 pub fn look_up_cached(conn: &Connection, track_id: i64) -> Result<CacheLookup, LyricsError> {
-    let cached = get_cached_lyrics(conn, track_id)?.map(Lyrics::from);
-    if let Some(lyrics) = cached {
-        let stale = !lyrics.synced
-            && lyrics_fetched_at(conn, track_id)?
-                .is_none_or(|at| now_secs() - at >= PLAIN_RECHECK_SECS);
-        return Ok(if stale {
-            CacheLookup::Stale(Some(lyrics))
-        } else {
-            CacheLookup::Fresh(lyrics)
-        });
-    }
-    Ok(CacheLookup::Stale(None))
+    let Some(cached) = get_cached_lyrics(conn, track_id)? else {
+        return Ok(CacheLookup::Stale(None));
+    };
+    let stale = !cached.synced && now_secs() - cached.fetched_at >= PLAIN_RECHECK_SECS;
+    let lyrics = Lyrics::from(cached);
+    Ok(if stale {
+        CacheLookup::Stale(Some(lyrics))
+    } else {
+        CacheLookup::Fresh(lyrics)
+    })
 }
 
 /// Cache what LRCLIB said, or keep the stale copy when it said nothing.
@@ -221,21 +217,25 @@ pub fn settle(
     fetched: Result<Lyrics, LyricsError>,
     cached: Option<Lyrics>,
 ) -> Result<Lyrics, LyricsError> {
-    let lyrics = match (fetched, cached) {
-        (Ok(lyrics), _) => lyrics,
-        // No synced copy upstream, or LRCLIB unreachable: keep the plain one,
-        // and restart its clock so the next play does not ask again.
-        (Err(_), Some(cached)) => cached,
-        (Err(e), None) => return Err(e),
-    };
-    cache_lyrics(
-        conn,
-        track_id,
-        lyrics.source.as_str(),
-        lyrics.synced,
-        &lyrics.content,
-    )?;
-    Ok(lyrics)
+    match (fetched, cached) {
+        (Ok(lyrics), _) => {
+            cache_lyrics(
+                conn,
+                track_id,
+                LyricsSource::Lrclib.as_str(),
+                lyrics.synced,
+                &lyrics.content,
+            )?;
+            Ok(lyrics)
+        }
+        // No synced copy upstream, or LRCLIB unreachable: keep the plain one
+        // as it is, and restart its clock so the next play does not ask again.
+        (Err(_), Some(cached)) => {
+            touch_lyrics(conn, track_id)?;
+            Ok(cached)
+        }
+        (Err(e), None) => Err(e),
+    }
 }
 
 fn now_secs() -> i64 {
@@ -268,7 +268,7 @@ pub fn fetch_from_lrclib(
     Ok(Lyrics {
         content,
         synced,
-        source: LyricsSource::Lrclib,
+        source: Some(LyricsSource::Lrclib),
     })
 }
 
@@ -307,9 +307,27 @@ mod tests {
         assert_eq!(got.content, "plain");
         assert_eq!(
             got.source,
-            LyricsSource::Lrclib,
+            Some(LyricsSource::Lrclib),
             "a cached copy keeps its source"
         );
+    }
+
+    /// A name this build does not know is credited to nobody, and keeping the
+    /// stale copy leaves the row's source as it was.
+    #[test]
+    fn an_unknown_stored_source_is_kept_and_not_credited() {
+        let (conn, id) = db_with_track();
+        cache_lyrics(&conn, id, "somewhere", false, "plain").unwrap();
+        conn.execute("UPDATE lyrics_cache SET fetched_at = 0", [])
+            .unwrap();
+        let CacheLookup::Stale(cached) = look_up_cached(&conn, id).unwrap() else {
+            panic!("an old plain copy is stale");
+        };
+        let kept = settle(&conn, id, Err(LyricsError::NotFound), cached).unwrap();
+        assert_eq!(kept.source, None);
+        let row = get_cached_lyrics(&conn, id).unwrap().unwrap();
+        assert_eq!(row.source, "somewhere");
+        assert!(row.fetched_at > 0, "its clock restarted");
     }
 
     #[test]

@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.engine.Playhead
+import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.LyricLine
 import cc.blit.koan.ffi.Lyrics
 import cc.blit.koan.ui.koanApp
@@ -65,12 +66,21 @@ fun LyricsPanel(trackId: Long?, durationMs: Long, modifier: Modifier = Modifier)
     LaunchedEffect(trackId) {
         if (trackId == null) return@LaunchedEffect
         val engine = mirror.engine()
-        val cached = runCatching { engine.lyrics(trackId) }.getOrNull()
+        // A failed lookup is no lyrics; a cancelled one, for a track gone by, writes nothing.
+        val cached = try {
+            engine.lyrics(trackId)
+        } catch (e: KoanException) {
+            null
+        }
         loaded = Loaded(trackId, cached)
         if (cached?.synced == true) return@LaunchedEffect
         fetching = trackId
         try {
-            val fetched = runCatching { engine.fetchLyrics(trackId) }.getOrNull()
+            val fetched = try {
+                engine.fetchLyrics(trackId)
+            } catch (e: KoanException) {
+                null
+            }
             loaded = Loaded(trackId, fetched ?: cached)
         } finally {
             if (fetching == trackId) fetching = null
@@ -78,21 +88,22 @@ fun LyricsPanel(trackId: Long?, durationMs: Long, modifier: Modifier = Modifier)
     }
     // Nothing is said about a track until the cache has answered for it.
     val answered = loaded?.trackId == trackId
-    val lyrics = loaded?.takeIf { answered }?.lyrics
+    // Only words worth showing: an empty copy is "No lyrics found", uncredited.
+    val lyrics = loaded?.takeIf { answered }?.lyrics?.takeIf { it.lines.isNotEmpty() || it.content.isNotBlank() }
     val loading = trackId != null && (fetching == trackId || !answered)
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(vertical = KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
             KoanText("Lyrics", Modifier.weight(1f).semantics { heading() }, appText = true)
             when {
                 loading -> CircularProgressIndicator(Modifier.size(14.dp), color = KoanTheme.color(KoanTone.Muted), strokeWidth = 2.dp)
-                lyrics != null -> KoanText(lyrics.source, role = KoanType.Fine, tone = KoanTone.Muted)
+                else -> lyrics?.source?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted) }
             }
         }
         KoanDivider()
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
             when {
                 lyrics != null && lyrics.lines.isNotEmpty() -> SyncedLyrics(lyrics.lines, durationMs)
-                lyrics != null && lyrics.content.isNotBlank() ->
+                lyrics != null ->
                     KoanText(
                         lyrics.content,
                         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = KoanSpace.l),

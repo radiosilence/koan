@@ -9,6 +9,8 @@ pub struct CachedLyrics {
     pub synced: bool,
     /// Where the words came from, as `cache_lyrics` was told.
     pub source: String,
+    /// When the copy was fetched, in seconds since the epoch.
+    pub fetched_at: i64,
 }
 
 /// Retrieve cached lyrics for a track.
@@ -17,13 +19,14 @@ pub fn get_cached_lyrics(
     track_id: i64,
 ) -> Result<Option<CachedLyrics>, DbError> {
     let result = conn.query_row(
-        "SELECT content, synced, source FROM lyrics_cache WHERE track_id = ?1",
+        "SELECT content, synced, source, fetched_at FROM lyrics_cache WHERE track_id = ?1",
         params![track_id],
         |row| {
             Ok(CachedLyrics {
                 content: row.get(0)?,
                 synced: row.get::<_, i32>(1)? != 0,
                 source: row.get(2)?,
+                fetched_at: row.get(3)?,
             })
         },
     );
@@ -35,17 +38,20 @@ pub fn get_cached_lyrics(
     }
 }
 
-/// When the cached copy was fetched, in seconds since the epoch.
-pub fn lyrics_fetched_at(conn: &Connection, track_id: i64) -> Result<Option<i64>, DbError> {
-    match conn.query_row(
-        "SELECT fetched_at FROM lyrics_cache WHERE track_id = ?1",
-        params![track_id],
-        |row| row.get(0),
-    ) {
-        Ok(at) => Ok(Some(at)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
+/// Restart a cached copy's clock, leaving the copy as it is.
+pub fn touch_lyrics(conn: &Connection, track_id: i64) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE lyrics_cache SET fetched_at = ?2 WHERE track_id = ?1",
+        params![track_id, now_secs()],
+    )?;
+    Ok(())
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 /// Cache lyrics for a track. Replaces any existing cached lyrics.
@@ -56,11 +62,7 @@ pub fn cache_lyrics(
     synced: bool,
     content: &str,
 ) -> Result<(), DbError> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-
+    let now = now_secs();
     conn.execute(
         "INSERT INTO lyrics_cache (track_id, source, synced, content, fetched_at)
          VALUES (?1, ?2, ?3, ?4, ?5)
