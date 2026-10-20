@@ -730,6 +730,19 @@ private struct RemoteSettings: View {
             }
         }
         .koanSheet()
+        #if os(iOS)
+        // The decimal pad has no return key. Declared on the page, not the
+        // row: a toolbar in a list's row is laid out as the page's bottom bar.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if cacheLimitFocused {
+                    Spacer()
+                    Button("Set") { cacheLimitFocused = false }
+                }
+            }
+            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
+        }
+        #endif
         .onAppear {
             url = model.settings.remoteUrl
             username = model.settings.remoteUsername
