@@ -542,6 +542,7 @@ struct PlaylistView: View {
                     Label("Go to Album", koan: Icon.album)
                 }
             }
+            TrackInfoButton(trackId: entry.track.id)
         }
     }
 

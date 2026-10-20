@@ -242,6 +242,7 @@ struct TabShell: View {
         // As on the Mac: the things that ask for a new playlist are mostly
         // context menus, which take their own alerts down with them.
         .newPlaylistAlert()
+        .trackInfoHost()
         // What `RootView` does for the wide layout: the one place a library
         // change reaches the app's own lists, and the last dependable moment
         // to save the queue before iOS suspends the app.

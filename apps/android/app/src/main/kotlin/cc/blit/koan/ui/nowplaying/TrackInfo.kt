@@ -13,11 +13,19 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.ffi.InfoField
 import cc.blit.koan.ffi.TrackDetails
+import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.settings.inset
 import cc.blit.koan.ui.theme.KoanSectionHeader
 import cc.blit.koan.ui.theme.KoanSpace
@@ -25,6 +33,28 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
+
+/** Opens a track's info sheet from any menu. Provided by `TrackInfoHost`. */
+val LocalShowTrackInfo = staticCompositionLocalOf<(Long) -> Unit> { error("no TrackInfoHost: compose inside AppShell") }
+
+/**
+ * The one place a track's info sheet is opened from a menu: held above the
+ * menus, since a menu composed only while it is open would take its sheet
+ * with it as it closes.
+ */
+@Composable
+fun TrackInfoHost(content: @Composable () -> Unit) {
+    val mirror = koanApp().mirror
+    var shown by remember { mutableStateOf<Long?>(null) }
+    val show = remember { { trackId: Long -> shown = trackId } }
+    CompositionLocalProvider(LocalShowTrackInfo provides show, content = content)
+    shown?.let { trackId ->
+        val details by produceState<TrackDetails?>(null, trackId) {
+            value = runCatching { mirror.engine().trackDetails(trackId) }.getOrNull()
+        }
+        details?.let { TrackInfoSheet(it) { shown = null } }
+    }
+}
 
 /**
  * Everything the library knows about a track, as each of its sources says it:

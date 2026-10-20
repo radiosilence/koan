@@ -155,6 +155,10 @@ struct PlayableMenu: View {
             #endif
         }
 
+        if case .track(let track) = playable {
+            Divider()
+            TrackInfoButton(trackId: track.id)
+        }
         if case .track(let track) = playable, let albumId = track.albumId {
             Divider()
             Button { nav.open(album: albumId, highlighting: track.id) } label: {

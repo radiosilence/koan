@@ -600,6 +600,7 @@ struct QueueView: View {
             Button { showInLibrary(trackId: trackId, highlight: true) } label: {
                 Label("Go to Album", koan: Icon.album)
             }
+            TrackInfoButton(trackId: trackId)
             if item.onDisk {
                 Button { library.clearDownloads(trackIds: [trackId]) } label: {
                     Label("Remove Downloaded File", koan: Icon.clear)
