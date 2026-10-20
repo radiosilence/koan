@@ -791,7 +791,7 @@ pub(super) async fn tracks(
 struct ArtistPage<'a> {
     artist: &'a queries::ArtistRow,
     heart: Option<Html>,
-    tiles: Html,
+    tiles: Option<Html>,
     features: Option<Html>,
 }
 
@@ -814,10 +814,10 @@ pub(super) async fn artist(
                 ..Default::default()
             },
         )
-        .ok()?;
-        let both = [&albums[..], &features[..]].concat();
-        let versions = album_versions(&db.conn, &both);
-        let credits = Credits::load(&db.conn, &[], &album_ids(&both));
+        .unwrap_or_default();
+        let ids: Vec<i64> = albums.iter().chain(&features).map(|a| a.id).collect();
+        let versions = cover_versions(&db.conn, &ids);
+        let credits = Credits::load(&db.conn, &[], &ids);
         Some((
             artist,
             albums,
@@ -833,7 +833,7 @@ pub(super) async fn artist(
     };
     let inner = ArtistPage {
         heart: hearts.as_ref().map(|h| h.artist(artist.id)),
-        tiles: cells(&albums, &versions, &credits, hearts.as_ref()),
+        tiles: (!albums.is_empty()).then(|| cells(&albums, &versions, &credits, hearts.as_ref())),
         features: (!features.is_empty())
             .then(|| cells(&features, &versions, &credits, hearts.as_ref())),
         artist: &artist,
