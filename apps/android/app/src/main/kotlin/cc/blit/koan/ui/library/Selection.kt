@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -174,7 +175,9 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
     }
     // The pick is read when the removal is confirmed, so a page that redrew
     // meanwhile is acted on as it now is.
-    if (remove != null && confirming) {
+    // Nothing left to remove once the page has dropped the whole pick: the question goes too.
+    LaunchedEffect(picks == 0) { if (picks == 0) confirming = false }
+    if (remove != null && confirming && picks > 0) {
         ConfirmDialog("${remove.title} ${count(picks.toLong(), remove.noun)}?", "This can't be undone.", remove.title, { confirming = false }) {
             remove.act(selection.picked.toList())
             selection.end()

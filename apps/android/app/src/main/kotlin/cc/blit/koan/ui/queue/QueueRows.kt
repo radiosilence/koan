@@ -26,6 +26,9 @@ sealed interface QueueRow {
         override val itemIds get() = group.items.map { it.queueItemId }
         override val label get() = group.title
         override val items get() = group.items
+
+        /** The records the run is of: one, unless editions share its tags. */
+        val albumIds get() = group.items.mapNotNull { it.albumId }.distinct()
     }
 
     data class Track(val item: QueueItem) : QueueRow {

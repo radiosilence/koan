@@ -153,12 +153,11 @@ private fun QueuePage() {
         selecting = false
         selection = emptySet()
     }
-    // Not while the queue is empty: a pick restored with the page waits for it
-    // with its bar hidden, and back should leave the page.
-    BackHandler(selecting && built.isNotEmpty()) { stopSelecting() }
-    // Pruned only once the queue has arrived: a pick restored with the page
-    // would otherwise be wiped by the empty queue drawn before it loads.
-    var loaded by remember { mutableStateOf(false) }
+    BackHandler(selecting) { stopSelecting() }
+    // Pruned only once the queue has arrived, and saved with the pick: a page
+    // that never saw rows keeps its pick for them, and one that did ends
+    // selecting when the queue empties, so select mode never outlives it.
+    var loaded by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(built) {
         if (built.isNotEmpty()) {
             loaded = true
@@ -294,9 +293,10 @@ private fun QueuePage() {
             }
             if (selecting) {
                 undoBar(Modifier)
-                val ids = QueueRow.itemIds(selection, built)
+                val rows = remember(selection, built) { built.filter { it.key in selection } }
+                val ids = remember(rows) { rows.flatMap { it.itemIds }.distinct() }
                 SelectionBar(
-                    built.filter { it.key in selection },
+                    rows,
                     ids,
                     done = ::stopSelecting,
                     // Already queued, so play next is a move to just after what is playing.
@@ -551,7 +551,7 @@ private fun Header(
             )
         }
         KoanIconToggle(KoanIcons.album, "Group by album", grouped, setGrouped)
-        KoanButton("Select", select, kind = KoanButtonKind.Icon, icon = if (selecting) KoanIcons.selecting else KoanIcons.select, enabled = items.isNotEmpty())
+        KoanButton(if (selecting) "Done" else "Select", select, kind = KoanButtonKind.Icon, icon = if (selecting) KoanIcons.selecting else KoanIcons.select, enabled = items.isNotEmpty())
         var menu by remember { mutableStateOf(false) }
         Box {
             KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
@@ -575,17 +575,15 @@ private fun Header(
  * bar is. The rows are queued already, so there is no Play or Add to Queue;
  * Play Next needs something playing to go after and something else to move
  * (`playNext` is null without them); Remove asks nothing first, since the Undo bar can take it back. A
- * heading picked hearts its record, as one does in the library.
+ * heading picked hearts its records, as one does in the library.
  */
 @Composable
 private fun SelectionBar(rows: List<QueueRow>, ids: List<String>, done: () -> Unit, playNext: (() -> Unit)?, remove: () -> Unit) {
     val store = favourites()
-    val trackIds = rows.flatMap { row -> row.items.mapNotNull { it.trackId } }.distinct()
-    val hearts = rows.mapNotNull { row ->
-        when (row) {
-            is QueueRow.Album -> row.group.items.first().albumId?.let { Heart.Album to it }
-            is QueueRow.Track -> row.item.trackId?.let { Heart.Track to it }
-            is QueueRow.Single -> row.item.trackId?.let { Heart.Track to it }
+    val trackIds = remember(rows) { rows.flatMap { row -> row.items.mapNotNull { it.trackId } }.distinct() }
+    val hearts = remember(rows) {
+        rows.flatMap { row ->
+            if (row is QueueRow.Album) row.albumIds.map { Heart.Album to it } else listOfNotNull(row.items.first().trackId?.let { Heart.Track to it })
         }
     }
     var adding by remember { mutableStateOf(false) }
@@ -595,7 +593,7 @@ private fun SelectionBar(rows: List<QueueRow>, ids: List<String>, done: () -> Un
         done()
     }
     SelectionBarFrame(ids.size, done) {
-        BarItem("Play Next", "next", KoanIcons.playNext, any && playNext != null) { playNext?.let(::then) }
+        BarItem("Play Next", "next", KoanIcons.playNext, playNext != null) { playNext?.let(::then) }
         BarItem("Add to Playlist", "playlist", KoanIcons.playlist, trackIds.isNotEmpty()) { adding = true }
         BarItem("Favourite", "favourite", KoanIcons.favourite, hearts.isNotEmpty()) { then { favourite(store, hearts) } }
         BarItem("Remove", "remove", KoanIcons.remove, any, destructive = true) { then(remove) }
@@ -654,17 +652,18 @@ private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) ->
     KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { act { addToPlaylist(trackIds) } }
     KoanDivider()
     val trackId = first.trackId.takeIf { !heading }
-    val albumId = first.albumId
     if (trackId != null) {
         val on = trackId in hearted
         KoanMenuItem(if (on) "Remove Favourite" else "Favourite Track", if (on) KoanIcons.favourited else KoanIcons.favourite) {
             act { store.toggleTrack(trackId) }
         }
     }
-    if (heading && albumId != null) {
-        val on = albumId in heartedAlbums
+    // A run is grouped by its tags, so it can hold more than one edition: each is hearted.
+    val albumIds = (row as? QueueRow.Album)?.albumIds.orEmpty()
+    if (albumIds.isNotEmpty()) {
+        val on = albumIds.all { it in heartedAlbums }
         KoanMenuItem(if (on) "Remove Favourite" else "Favourite Album", if (on) KoanIcons.favourited else KoanIcons.favourite) {
-            act { store.toggleAlbum(albumId) }
+            act { favourite(store, albumIds.map { Heart.Album to it }) }
         }
     }
     if (signedIn) {
