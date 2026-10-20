@@ -9,6 +9,7 @@ use clap_complete::env::CompleteEnv;
 use koan_core::config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
+use owo_colors::OwoColorize;
 
 /// glibc's allocator gives each thread that allocates heavily an arena of its
 /// own and rarely returns what is freed in one, so a server that does bursts
