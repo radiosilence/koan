@@ -1,6 +1,7 @@
 [tools]
 rust = "latest"
 just = "latest"
+lefthook = "2.2.2"
 "github:tailwindlabs/tailwindcss" = "4.3.3"
 xcodegen = "2.46.0"
 # The Android app: Gradle's JDK, and the Rust core cross-compiled against the NDK.

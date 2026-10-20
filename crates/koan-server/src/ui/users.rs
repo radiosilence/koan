@@ -3,8 +3,7 @@
 //! server sends nothing itself; the admin sends the email from their own
 //! client.
 
-use std::fmt::Write as _;
-
+use askama::Template;
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -15,77 +14,58 @@ use koan_core::auth::Role;
 use koan_core::db::queries::auth::{self as users, UserRow};
 use koan_core::invite::{self, AccountError, Invite};
 
-use super::pages::{COPY_ERROR, COPY_INPUT, COPY_ROW, EMPTY, SUB, respond};
+use super::pages::respond;
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
-use crate::share::{blocking, escape};
+use crate::share::blocking;
 
 /// A one-line form: the field, an option or two, the button.
-const FORM: &str = "mb-2 flex max-w-form gap-2";
+pub(super) const FORM: &str = "mb-2 flex max-w-form gap-2";
 
-const ROLES: [(Role, &str); 3] = [
+pub(super) const ROLES: [(Role, &str); 3] = [
     (Role::Readonly, "Listen only"),
     (Role::User, "Listen and edit"),
     (Role::Admin, "Admin"),
 ];
 
-fn role_select(id: i64, current: Role) -> String {
-    let mut out = format!(
-        "<select class=\"px-2 py-1.5\" aria-label=Access data-on:change=\"@post('/users/{id}/role?role=' + el.value)\">"
-    );
-    for (role, label) in ROLES {
-        let sel = if role == current { " selected" } else { "" };
-        let _ = write!(out, "<option value={}{sel}>{label}</option>", role.as_str());
-    }
-    out.push_str("</select>");
-    out
+#[derive(Template)]
+#[template(path = "users/list.html")]
+struct UserList<'a> {
+    rows: &'a [UserRow],
+    me: i64,
 }
 
 fn user_list(rows: &[UserRow], me: i64) -> String {
-    let mut out = String::from("<ul id=users>");
-    for u in rows {
-        // Not on your own row: a new password signs out every session, this
-        // one included. The name reaches the confirmation as data: escaped
-        // into the expression itself, it would be decoded back and run.
-        let others = if u.id == me {
-            String::new()
-        } else {
-            format!(
-                "<button class=\"quiet\" data-on:click=\"@post('/users/{id}/password/form')\">Password</button>\
-<button class=\"quiet bad\" data-username=\"{name}\" data-on:click=\"confirm('Delete ' + el.dataset.username + \
-'? Their devices stop working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
-                name = escape(&u.username),
-                id = u.id,
-            )
-        };
-        let _ = write!(
-            out,
-            "<li class=\"flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-1 py-2.5\">\
-<span class=\"min-w-[8em] flex-1 truncate wrap-anywhere\">{name}{you}</span>{select}\
-<button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>{others}</li>",
-            name = escape(&u.username),
-            you = if u.id == me {
-                "<small class=\"ml-2 text-meta text-muted\">you</small>"
-            } else {
-                ""
-            },
-            select = role_select(u.id, u.role),
-            id = u.id,
-        );
-    }
-    out.push_str("</ul>");
-    out
+    UserList { rows, me }.render().unwrap_or_default()
+}
+
+/// What the result area under the form shows: rendered markup, or a message,
+/// which is an error when the flag is set.
+#[derive(Template)]
+#[template(path = "users/result.html")]
+struct UserResult<'a> {
+    html: &'a str,
+    message: Option<(&'a str, bool)>,
 }
 
 fn result(html: &str) -> Event {
-    patch(&format!("<div id=user-result>{html}</div>"), None)
+    let html = UserResult {
+        html,
+        message: None,
+    };
+    patch(&html.render().unwrap_or_default(), None)
 }
 
-fn failure(message: &str) -> Event {
-    result(&format!(
-        "<p class=\"{COPY_ERROR}\" role=alert>{}</p>",
-        escape(message)
-    ))
+fn message(text: &str, error: bool) -> Event {
+    let html = UserResult {
+        html: "",
+        message: Some((text, error)),
+    };
+    patch(&html.render().unwrap_or_default(), None)
+}
+
+fn failure(text: &str) -> Event {
+    message(text, true)
 }
 
 /// The invite link as a QR code, for a phone to scan off the screen. Dark on
@@ -116,42 +96,23 @@ fn invite_qr(link: &str) -> String {
     }
 }
 
-fn invite_panel(i: &Invite) -> String {
-    let link = i.link();
-    let e = escape;
-    let details = match &i.password {
-        Some(password) => format!(
-            "<p class=\"{SUB}\">The password is shown this once: the server keeps only its hash.</p>\
-<dl class=\"mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-control [&_dd]:wrap-anywhere \
-[&_dd]:select-all [&_dt]:text-muted\"><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
-<dt>Password</dt><dd><code>{password}</code></dd></dl>",
-            server = e(&i.server),
-            user = e(&i.username),
-            password = e(password),
-        ),
-        None => String::new(),
-    };
-    format!(
-        "<div class=\"mt-2 mb-4 max-w-panel border border-rule px-4 pt-1 pb-4\">\
-<h2>Invite for <span class=\"normal-case\">{user}</span></h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
-installed signs in and loads the library, on each device, for a week.</p>{qr}\
-<div class=\"{COPY_ROW}\"><input id=invite-link readonly value=\"{link}\" \
-aria-label=\"Invite link\" class=\"{COPY_INPUT}\">\
-<button data-copy=invite-link>Copy link</button></div>\
-<div class=\"mt-2.5 flex flex-wrap gap-2\"><a class=\"inline-block border border-muted px-3 py-1.5 \
-text-meta text-ink lowercase hover:bg-hover/30 hover:no-underline\" href=\"{mailto}\">Open in Mail</a>\
-<button data-copy-email>Copy email</button>\
-<button data-share-email data-show=\"'share' in navigator\">Share…</button></div>{details}\
-<textarea id=invite-text hidden readonly data-subject=\"{subject}\">{text}</textarea>\
-<template id=invite-html>{html}</template></div>",
-        user = e(&i.username),
-        qr = invite_qr(&link),
-        link = e(&link),
-        mailto = e(&i.mailto()),
-        subject = e(&i.email_subject()),
-        text = e(&i.email_text()),
-        html = i.email_html(),
-    )
+#[derive(Template)]
+#[template(path = "users/invite.html")]
+struct InvitePanel<'a> {
+    invite: &'a Invite,
+    link: String,
+    qr: String,
+}
+
+fn invite_panel(invite: &Invite) -> String {
+    let link = invite.link();
+    InvitePanel {
+        invite,
+        qr: invite_qr(&link),
+        link,
+    }
+    .render()
+    .unwrap_or_default()
 }
 
 /// An invite carrying a token signed with this server's key.
@@ -182,48 +143,30 @@ fn list(s: &UiState) -> Vec<UserRow> {
         .unwrap_or_default()
 }
 
+/// The users page. `list` is the rendered account list, absent when the
+/// server runs without sign-in.
+#[derive(Template)]
+#[template(path = "pages/users.html")]
+struct UsersPage {
+    list: Option<String>,
+}
+
 pub(super) async fn page(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let intro = format!(
-        "<h1>Users</h1><p class=\"{SUB}\">Everyone who can sign in to this server. \
-An invite is a link that sets koan up with the account in one tap.</p>"
-    );
-    if !s.auth_enabled {
-        let inner = format!(
-            "{intro}<p class=\"{EMPTY}\">This server runs without sign-in, so it has no accounts.</p>"
-        );
-        return respond(&s, &headers, &user, "Users", &inner);
-    }
-    if user.role != Role::Admin {
-        return forbidden();
-    }
-    let st = s.clone();
-    let rows = blocking(move || Some(list(&st))).await.unwrap_or_default();
-    let mut options = String::new();
-    for (role, label) in ROLES {
-        let sel = if role == Role::Readonly {
-            " selected"
-        } else {
-            ""
-        };
-        let _ = write!(
-            options,
-            "<option value={}{sel}>{label}</option>",
-            role.as_str()
-        );
-    }
-    let inner = format!(
-        "{intro}<form class=\"{FORM}\" data-on:submit__prevent=\"@post('/users')\">\
-<input class=\"flex-1\" name=username data-bind:newuser placeholder=Username maxlength=64 required \
-autocomplete=off autocapitalize=none spellcheck=false aria-label=Username>\
-<select class=\"px-2 py-1.5\" data-bind:newrole aria-label=Access>{options}</select>\
-<button class=\"primary\">Create and invite</button></form>\
-<div id=user-result></div>{}",
-        user_list(&rows, user.user_id)
-    );
+    let list = if s.auth_enabled {
+        if user.role != Role::Admin {
+            return forbidden();
+        }
+        let st = s.clone();
+        let rows = blocking(move || Some(list(&st))).await.unwrap_or_default();
+        Some(user_list(&rows, user.user_id))
+    } else {
+        None
+    };
+    let inner = UsersPage { list }.render().unwrap_or_default();
     respond(&s, &headers, &user, "Users", &inner)
 }
 
@@ -332,6 +275,13 @@ fn clear_password_signal() -> Event {
         .data("signals {\"setpassword\":\"\"}")
 }
 
+#[derive(Template)]
+#[template(path = "users/password.html")]
+struct PasswordForm<'a> {
+    id: i64,
+    name: &'a str,
+}
+
 /// The form asking for an account's new password. Its own route, so a value
 /// typed into one account's form and never submitted cannot reach another's:
 /// Datastar posts every signal with every request.
@@ -347,18 +297,13 @@ pub(super) async fn password_form(
     let Some(row) = row else {
         return events(vec![failure("No such account.")]);
     };
-    let name = escape(&row.username);
+    let form = PasswordForm {
+        id,
+        name: &row.username,
+    };
     events(vec![
         clear_password_signal(),
-        result(&format!(
-            "<form class=\"{FORM}\" data-on:submit__prevent=\"@post('/users/{id}/password')\">\
-<input class=\"flex-1\" type=password data-bind:setpassword placeholder=\"New password for {name}\" \
-minlength=8 required autocomplete=new-password aria-label=\"New password for {name}\">\
-<button class=\"primary\">Set password</button></form>\
-<p class=\"{SUB}\">Signs {name} out of every device. \
-<button class=\"quiet\" data-on:click=\"@post('/users/{id}/invite?reset=true')\">Generate one and \
-invite</button></p>",
-        )),
+        result(&form.render().unwrap_or_default()),
     ])
 }
 
@@ -388,10 +333,13 @@ pub(super) async fn set_password(
     .await;
     match done {
         Some((row, Ok(_))) => events(vec![
-            result(&format!(
-                "<p class=\"{COPY_ROW}\">{}'s password is changed, and their devices are signed out.</p>",
-                escape(&row.username)
-            )),
+            message(
+                &format!(
+                    "{}'s password is changed, and their devices are signed out.",
+                    row.username
+                ),
+                false,
+            ),
             clear_password_signal(),
         ]),
         Some((_, Err(e))) => events(vec![failure(&e.to_string())]),

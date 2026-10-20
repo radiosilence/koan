@@ -1,0 +1,11 @@
+{% extends "signin.html" %}
+{% block body %}
+{%- let label = "grid gap-1.5 text-meta text-muted" -%}
+<p class="text-meta text-muted">This server has no accounts yet. Choose the admin's name and password; this page closes once it exists.</p>
+<form class="grid gap-3.5" method="post" action="/setup">
+<label class="{{ label }}">Username<input class="text-input" name="username" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+<label class="{{ label }}">Password<input class="text-input" name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+<label class="{{ label }}">Confirm password<input class="text-input" name="confirm" type="password" minlength="8" autocomplete="new-password" required></label>
+{% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
+<button class="primary">Create admin</button></form>
+{% endblock %}

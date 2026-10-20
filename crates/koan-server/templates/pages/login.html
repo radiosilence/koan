@@ -1,0 +1,9 @@
+{% extends "signin.html" %}
+{% block body %}
+{%- let label = "grid gap-1.5 text-meta text-muted" -%}
+<form class="grid gap-3.5" method="post" action="/login"><input type="hidden" name="next" value="{{ next }}">
+<label class="{{ label }}">Username<input class="text-input" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+<label class="{{ label }}">Password<input class="text-input" name="password" type="password" autocomplete="current-password" required></label>
+{% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
+<button class="primary">Sign in</button></form>
+{% endblock %}

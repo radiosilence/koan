@@ -1,0 +1,9 @@
+{#- The document's head up to its last tag, which each page closes once it has added its own. -#}
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="robots" content="noindex,nofollow">
+<title>{{ title }} · kōan</title>{{ crate::share::icon_links("/ui/assets")|safe }}
+<link rel="stylesheet" href="{{ crate::ui::ASSETS.css }}">

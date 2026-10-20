@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use askama::Template;
+
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -35,12 +37,12 @@ aria-label=\"More\" title=\"More\">⋯</button>";
 
 /// The menu every track row opens, filled for the row by the UI's script.
 /// Beside the pointer on a wide screen, a sheet above the bar on a phone.
-const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
+pub(super) const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
 flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto \
 max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
 
 /// A track's properties, filled from `/track/{id}/properties` by the UI's script.
-const TRACK_PROPERTIES: &str = "<dialog id=track-properties class=\"m-auto max-h-[85dvh] w-[calc(100%-24px)] \
+pub(super) const TRACK_PROPERTIES: &str = "<dialog id=track-properties class=\"m-auto max-h-[85dvh] w-[calc(100%-24px)] \
 max-w-panel overflow-y-auto border border-rule bg-bg px-5 pt-4 pb-5 text-ink backdrop:bg-bg/70\" \
 aria-label=Properties><div id=track-properties-body></div>\
 <form method=dialog class=\"mt-6 flex justify-end\"><button>Close</button></form></dialog>";
@@ -78,7 +80,7 @@ pub(super) const SIGNIN_MAIN: &str = "mx-auto max-w-[360px] px-4 py-16";
 pub(super) const SIGNIN_TITLE: &str = "text-brand";
 
 /// The transport buttons: in the bar, or larger on a phone on the queue page.
-fn buttons(page: bool) -> String {
+pub(super) fn buttons(page: bool) -> String {
     let icon = "inline-flex items-center justify-center p-0 text-ink hover:bg-transparent hover:text-strong";
     let (row, small, big, prev) = if page {
         (
@@ -108,7 +110,7 @@ fn buttons(page: bool) -> String {
 
 /// Position and length around the seek bar. `extra` places it; `height` is the
 /// slider's hit area, which the transport bar has no room to make 44 px.
-fn scrub(extra: &str, height: &str) -> String {
+pub(super) fn scrub(extra: &str, height: &str) -> String {
     format!(
         "<div class=\"flex w-full items-center gap-2.5 text-fine text-muted tabular-nums {extra}\">\
 <span data-np=pos>0:00</span>\
@@ -117,109 +119,27 @@ fn scrub(extra: &str, height: &str) -> String {
     )
 }
 
-pub(super) fn head(title: &str) -> String {
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-<meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
-<meta name=color-scheme content=\"dark light\">\
-<meta name=theme-color content=\"#1e1e1e\" media=\"(prefers-color-scheme: dark)\">\
-<meta name=theme-color content=\"#ffffff\" media=\"(prefers-color-scheme: light)\"><meta name=robots content=\"noindex,nofollow\">\
-<title>{} · kōan</title>{}<link rel=stylesheet href=\"{}\">",
-        escape(title),
-        crate::share::icon_links("/ui/assets"),
-        super::ASSETS.css,
-    )
+#[derive(Template)]
+#[template(path = "head.html")]
+struct Head<'a> {
+    title: &'a str,
 }
 
-/// The sidebar's links, which become the tab bar on a phone: six tabs, each as
-/// wide as its label, which fit a 360 px screen at the meta size. A phone has
-/// no room for a seventh, so there Playlists becomes Library, a page of the
-/// library's own lists; the sidebar lists them directly.
-///
-/// The theme's navigation row: lowercase in `muted`, the page shown in the
-/// accent with a rule on its leading edge, and no fill. On a phone, the tab
-/// bar's: the page shown in the accent and underlined.
-const NAV_LINK: &str = "border-l-2 border-transparent px-2.5 py-1.5 text-muted lowercase hover:text-ink \
-hover:no-underline aria-[current=page]:border-brand aria-[current=page]:text-brand max-wide:flex \
-max-wide:flex-auto max-wide:items-center max-wide:justify-center max-wide:border-l-0 max-wide:px-0 \
-max-wide:text-meta max-wide:underline-offset-4 max-wide:aria-[current=page]:underline";
-
-/// The account's links in the sidebar.
-const ACCOUNT_LINK: &str = "px-1.5 py-1 text-meta whitespace-nowrap text-muted lowercase hover:text-ink \
-hover:no-underline aria-[current=page]:text-brand";
+/// The document's head, unclosed, for pages outside the shell.
+pub(super) fn head(title: &str) -> String {
+    Head { title }.render().unwrap_or_default()
+}
 
 /// `proxied`: an authenticating proxy is trusted, so the page renews its
 /// session from the proxy rather than a refresh cookie.
-fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool, proxied: bool) -> String {
-    // On a wide screen the sidebar ends with who is signed in and the version;
-    // the account page has everything else. A phone has an Account tab instead.
-    let signed_in = if auth_enabled {
-        format!(
-            "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
-method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
-<a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
-<button class=\"quiet px-1.5 py-1 text-meta\">Sign out</button></form>",
-            escape(&user.username)
-        )
-    } else {
-        format!(
-            "<a class=\"{ACCOUNT_LINK} self-start\" href=\"/account\" data-nav=account>Account</a>"
-        )
-    };
-    let account = format!(
-        "<div class=\"mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden\">{signed_in}\
-<a class=\"px-1.5 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
-href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
-        v = env!("CARGO_PKG_VERSION")
-    );
-    format!(
-        "{head}<script type=module src=\"{datastar}\"></script>\
-<script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
-</head><body{proxied}><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
-border-rule bg-bg px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
-max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
-max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 \
-max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
-<a class=\"mb-3 px-3 py-2 text-[22px] font-extralight text-brand hover:text-ink hover:no-underline \
-max-wide:hidden\" href=\"/\">kōan</a>\
-<a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
-<a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/tracks\" data-nav=tracks>Tracks</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
-<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists recent favourites history tracks\">Library</a>\
-<a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
-<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
-<a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/recent\" data-nav=recent>Recently played</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
-<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/history\" data-nav=history>History</a>\
-<a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
-<main id=content class=\"ml-(--side-w) min-w-0 px-7 \
-pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
-max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
-\
-<footer class=\"fixed inset-x-0 bottom-(--tabs-h) z-5 grid h-[calc(var(--bar-h)+env(safe-area-inset-bottom))] \
-grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-bg px-4 \
-pb-[env(safe-area-inset-bottom)] max-wide:bottom-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] \
-max-wide:h-(--bar-h) max-wide:grid-cols-[minmax(0,1fr)_auto] max-wide:gap-2 max-wide:pr-2 max-wide:pb-0 \
-max-wide:pl-3\">\
-<progress class=\"absolute inset-x-0 -top-px hidden h-0.5 w-full appearance-none border-0 bg-rule \
-max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule \
-[&::-webkit-progress-value]:bg-brand\" data-np=progress max=1 value=0></progress>\
-<div class=\"flex min-w-0 items-center gap-2.5\">\
-<a class=\"flex-none hover:no-underline\" href=\"/queue\" tabindex=-1 aria-hidden=true>\
-<img class=\"size-10 bg-surface object-cover\" data-np=cover alt=\"\" hidden></a>\
-<span class=\"flex min-w-0 flex-col items-start\">\
-<a class=\"max-w-full truncate text-meta text-strong hover:no-underline\" href=\"/queue\" data-np=title>Nothing playing</a>\
-<span class=\"credit max-w-full truncate text-fine text-muted\" data-np=artist></span></span></div>\
-<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}{TRACK_PROPERTIES}</body></html>",
-        head = head(title),
-        datastar = super::ASSETS.datastar_js,
-        player = super::ASSETS.player_js,
-        ui = super::ASSETS.ui_js,
-        buttons = buttons(false),
-        scrub = scrub("max-wide:hidden", "h-4"),
-        proxied = if proxied { " data-proxied" } else { "" },
-    )
+#[derive(Template)]
+#[template(path = "shell.html")]
+struct Shell<'a> {
+    title: &'a str,
+    content: &'a str,
+    username: &'a str,
+    auth_enabled: bool,
+    proxied: bool,
 }
 
 /// The whole page, or only its content when the UI's script asked for that.
@@ -239,13 +159,15 @@ pub(super) fn respond(
     } else {
         html(
             StatusCode::OK,
-            shell(
+            Shell {
                 title,
-                &content,
-                user,
-                s.auth_enabled,
-                s.proxy_auth.is_some(),
-            ),
+                content: &content,
+                username: &user.username,
+                auth_enabled: s.auth_enabled,
+                proxied: s.proxy_auth.is_some(),
+            }
+            .render()
+            .unwrap_or_default(),
         )
     }
 }
@@ -258,45 +180,41 @@ pub(super) fn unavailable() -> Response {
         .into_response()
 }
 
+#[derive(Template)]
+#[template(path = "pages/login.html")]
+struct Login<'a> {
+    title: &'a str,
+    next: &'a str,
+    error: Option<&'a str>,
+}
+
 pub(super) fn login(next: &str, error: Option<&str>) -> String {
-    let error = error
-        .map(|e| format!("<p class=\"m-0 {ERROR}\" role=alert>{}</p>", escape(e)))
-        .unwrap_or_default();
-    let label = "grid gap-1.5 text-meta text-muted";
-    format!(
-        "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\"><h1 class=\"{SIGNIN_TITLE}\">kōan</h1>\
-<form class=\"grid gap-3.5\" method=post action=\"/login\"><input type=hidden name=next value=\"{next}\">\
-<label class=\"{label}\">Username<input class=\"text-input\" name=username autocomplete=username autocapitalize=none \
-spellcheck=false required autofocus></label>\
-<label class=\"{label}\">Password<input class=\"text-input\" name=password type=password \
-autocomplete=current-password required></label>\
-{error}<button class=\"primary\">Sign in</button></form></main></body></html>",
-        head = head("Sign in"),
-        next = escape(next),
-    )
+    Login {
+        title: "Sign in",
+        next,
+        error,
+    }
+    .render()
+    .unwrap_or_default()
 }
 
 /// The setup page: the first admin's name and password, chosen here.
+#[derive(Template)]
+#[template(path = "pages/setup.html")]
+struct Setup<'a> {
+    title: &'a str,
+    username: &'a str,
+    error: Option<&'a str>,
+}
+
 pub(super) fn setup(username: &str, error: Option<&str>) -> String {
-    let error = error
-        .map(|e| format!("<p class=\"m-0 {ERROR}\" role=alert>{}</p>", escape(e)))
-        .unwrap_or_default();
-    let label = "grid gap-1.5 text-meta text-muted";
-    format!(
-        "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\"><h1 class=\"{SIGNIN_TITLE}\">kōan</h1>\
-<p class=\"text-meta text-muted\">This server has no accounts yet. Choose the admin's name and password; \
-this page closes once it exists.</p>\
-<form class=\"grid gap-3.5\" method=post action=\"/setup\">\
-<label class=\"{label}\">Username<input class=\"text-input\" name=username value=\"{username}\" autocomplete=username \
-autocapitalize=none spellcheck=false required autofocus></label>\
-<label class=\"{label}\">Password<input class=\"text-input\" name=password type=password minlength=8 \
-autocomplete=new-password required></label>\
-<label class=\"{label}\">Confirm password<input class=\"text-input\" name=confirm type=password minlength=8 \
-autocomplete=new-password required></label>\
-{error}<button class=\"primary\">Create admin</button></form></main></body></html>",
-        head = head("Set up"),
-        username = escape(username),
-    )
+    Setup {
+        title: "Set up",
+        username,
+        error,
+    }
+    .render()
+    .unwrap_or_default()
 }
 
 fn year(date: Option<&str>) -> &str {

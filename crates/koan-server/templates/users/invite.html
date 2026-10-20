@@ -1,0 +1,15 @@
+{#- An invite: the link, as text and a QR code, and the email to send it in. -#}
+{%- let sub = crate::ui::pages::SUB -%}
+<div class="mt-2 mb-4 max-w-panel border border-rule px-4 pt-1 pb-4">
+<h2>Invite for <span class="normal-case">{{ invite.username }}</span></h2><p class="{{ sub }}">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan installed signs in and loads the library, on each device, for a week.</p>{{ qr|safe }}
+<div class="{{ crate::ui::pages::COPY_ROW }}"><input id="invite-link" readonly value="{{ link }}" aria-label="Invite link" class="{{ crate::ui::pages::COPY_INPUT }}">
+<button data-copy="invite-link">Copy link</button></div>
+<div class="mt-2.5 flex flex-wrap gap-2"><a class="inline-block border border-muted px-3 py-1.5 text-meta text-ink lowercase hover:bg-hover/30 hover:no-underline" href="{{ invite.mailto() }}">Open in Mail</a>
+<button data-copy-email>Copy email</button>
+<button data-share-email data-show="'share' in navigator">Share…</button></div>
+{%- if let Some(password) = invite.password %}
+<p class="{{ sub }}">The password is shown this once: the server keeps only its hash.</p>
+<dl class="mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-control [&_dd]:wrap-anywhere [&_dd]:select-all [&_dt]:text-muted"><dt>Server URL</dt><dd>{{ invite.server }}</dd><dt>Username</dt><dd>{{ invite.username }}</dd><dt>Password</dt><dd><code>{{ password }}</code></dd></dl>
+{%- endif %}
+<textarea id="invite-text" hidden readonly data-subject="{{ invite.email_subject() }}">{{ invite.email_text() }}</textarea>
+<template id="invite-html">{{ invite.email_html()|safe }}</template></div>

@@ -1,0 +1,6 @@
+{#- A form making one credential, posting `signal` (the name) to `action`, with the place its result lands. -#}
+{% macro create_form(action, signal, placeholder, label, button, result) %}
+<form class="mb-2 flex max-w-form gap-2" data-on:submit__prevent="@post('{{ action }}')">
+<input class="flex-1" name="{{ signal }}" data-bind:{{ signal }} placeholder="{{ placeholder }}" maxlength="{{ crate::ui::account::MAX_NAME }}" required autocomplete="off" aria-label="{{ label }}"><button class="primary">{{ button }}</button></form>
+<div id="{{ result }}"></div>
+{% endmacro %}

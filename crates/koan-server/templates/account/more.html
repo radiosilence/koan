@@ -1,0 +1,9 @@
+{#- The account page's links elsewhere: assistants and scrobbling for everyone, accounts for an admin. -#}
+{%- let version = env!("CARGO_PKG_VERSION") -%}
+<h2>More</h2><ul class="my-2 flex flex-col gap-1.5">
+{%- if admin %}
+<li><a href="/users" data-nav="users">Users</a>: make accounts and invite people.</li>
+{%- endif %}
+<li><a href="/connect" data-nav="connect">Assistants</a>: connect Claude or another assistant to your music.</li>
+<li><a href="/scrobbling" data-nav="scrobbling">Scrobbling</a>: send what you play to ListenBrainz or Last.fm.</li>
+<li><a href="https://github.com/radiosilence/koan/releases/tag/v{{ version }}">kōan {{ version }}</a></li></ul>

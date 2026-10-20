@@ -1,0 +1,14 @@
+{%- import "account/macros.html" as account -%}
+<h1>Account</h1>
+{%- match credentials %}
+{%- when None %}
+<p class="{{ crate::ui::pages::EMPTY }}">This server runs without sign-in, so there are no accounts, keys or app passwords.</p>
+{%- when Some((keys, passwords)) %}
+<form class="{{ crate::ui::pages::SUB }} flex flex-wrap items-center gap-x-3 gap-y-1" method="post" action="/auth/signout"><span>Signed in as <strong class="text-ink">{{ username }}</strong></span>
+<button class="quiet px-0">Sign out</button></form>
+<h2>API keys</h2><p class="{{ crate::ui::pages::SUB }}">A Subsonic client that supports API keys can sign in with one instead of your password. It acts as you, with your permissions, until you revoke it.</p>
+{% call account::create_form("/account/keys", "keyname", "Name, e.g. phone", "Key name", "Create key", "key-result") %}{% endcall %}{{ keys|safe }}
+<h2>App passwords</h2><p class="{{ crate::ui::pages::SUB }}">For a Subsonic app that only signs in with a username and password: give it your username and an app password in place of yours. Make one per app. kōan keeps it encrypted, never shows it again, and it stops working when you revoke it or change your password.</p>
+{% call account::create_form("/account/app-passwords", "appname", "Name, e.g. Arpeggi", "App password name", "Create app password", "app-password-result") %}{% endcall %}{{ passwords|safe }}
+{%- endmatch %}
+{% include "account/more.html" %}

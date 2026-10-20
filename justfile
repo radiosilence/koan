@@ -34,6 +34,10 @@ protocol-schema:
 fmt:
     cargo fmt
 
+# Install the git hooks (lefthook.yml): `cargo fmt` before every commit.
+hooks:
+    lefthook install
+
 # Write CHANGELOG.md from the fragments in changelog.d/.
 changelog *args:
     python3 scripts/changelog.py {{args}}
