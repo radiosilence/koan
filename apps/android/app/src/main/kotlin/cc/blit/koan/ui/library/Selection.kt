@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
+import cc.blit.koan.ui.playlists.ConfirmDialog
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanEdge
@@ -135,9 +137,11 @@ fun SelectionBar(selection: Selection<Playable>) = SelectionBar(selection, { it 
 
 /**
  * Taking the pick out of what the page shows: a playlist's entries, or plays
- * from the history. `title` names the verb ("Remove", "Forget").
+ * from the history. `title` names the verb ("Remove", "Forget"), `noun` one of
+ * the pick ("track", "play") for the question asked first: these pages have
+ * no undo, and a bulk removal is a lot to lose to a stray tap.
  */
-class Removal<T>(val title: String, val act: (List<T>) -> Unit)
+class Removal<T>(val title: String, val noun: String, val act: (List<T>) -> Unit)
 
 /**
  * The bar over a pick of things that are not playables themselves (a
@@ -148,7 +152,7 @@ class Removal<T>(val title: String, val act: (List<T>) -> Unit)
 fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove: Removal<T>? = null) {
     val app = koanApp()
     val store = favourites()
-    val count = selection.picked.size
+    val picks = selection.picked.size
     var adding by remember { mutableStateOf<List<Playable>?>(null) }
     fun run(action: (List<Long>) -> Unit) {
         val items = selection.picked.map(playable)
@@ -158,6 +162,38 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
             if (ids.isNotEmpty()) action(ids)
         }
     }
+    var confirming by remember { mutableStateOf(false) }
+    SelectionBarFrame(picks, selection::end) {
+        BarItem("Play", "play", KoanIcons.play, picks > 0) { run(app.player::playTracks) }
+        BarItem("Play Next", "next", KoanIcons.playNext, picks > 0) { run(app.player::playNext) }
+        BarItem("Add to Queue", "queue", KoanIcons.queue, picks > 0) { run(app.player::enqueue) }
+        BarItem("Add to Playlist", "playlist", KoanIcons.playlist, picks > 0) { adding = selection.picked.map(playable) }
+        BarItem("Favourite", "favourite", KoanIcons.favourite, picks > 0) { favourite(store, selection.picked.map { playable(it).heart }); selection.end() }
+        remove?.let { removal ->
+            BarItem(removal.title, removal.title, KoanIcons.remove, picks > 0, destructive = true) { confirming = true }
+        }
+    }
+    // The pick is read when the removal is confirmed, so a page that redrew
+    // meanwhile is acted on as it now is.
+    // Nothing left to remove once the page has dropped the whole pick: the question goes too.
+    LaunchedEffect(picks == 0) { if (picks == 0) confirming = false }
+    if (remove != null && confirming && picks > 0) {
+        ConfirmDialog("${remove.title} ${count(picks.toLong(), remove.noun)}?", "This can't be undone.", remove.title, { confirming = false }) {
+            remove.act(selection.picked.toList())
+            selection.end()
+        }
+    }
+    adding?.let { items ->
+        AddToPlaylistSheet({ items.flatMap { it.trackIds(this) } }, onAdded = selection::end) { adding = null }
+    }
+}
+
+/**
+ * The selection bar's frame, at the foot of the page: how many are picked and
+ * Done over a row of `BarItem`s.
+ */
+@Composable
+internal fun SelectionBarFrame(count: Int, done: () -> Unit, verbs: @Composable RowScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -173,24 +209,9 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
                 tone = KoanTone.Muted,
                 appText = true,
             )
-            KoanButton("Done", selection::end)
+            KoanButton("Done", done)
         }
-        Row(Modifier.fillMaxWidth()) {
-            BarItem("Play", "play", KoanIcons.play, count > 0) { run(app.player::playTracks) }
-            BarItem("Play Next", "next", KoanIcons.playNext, count > 0) { run(app.player::playNext) }
-            BarItem("Add to Queue", "queue", KoanIcons.queue, count > 0) { run(app.player::enqueue) }
-            BarItem("Add to Playlist", "playlist", KoanIcons.playlist, count > 0) { adding = selection.picked.map(playable) }
-            BarItem("Favourite", "favourite", KoanIcons.favourite, count > 0) { favourite(store, selection.picked.map(playable)); selection.end() }
-            remove?.let { removal ->
-                BarItem(removal.title, removal.title, KoanIcons.remove, count > 0, destructive = true) {
-                    removal.act(selection.picked.toList())
-                    selection.end()
-                }
-            }
-        }
-    }
-    adding?.let { items ->
-        AddToPlaylistSheet({ items.flatMap { it.trackIds(this) } }, onAdded = selection::end) { adding = null }
+        Row(Modifier.fillMaxWidth(), content = verbs)
     }
 }
 
@@ -199,7 +220,7 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
  * share of the bar each, so five fit a phone. Read out by its full name.
  */
 @Composable
-private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: Boolean, destructive: Boolean = false, onClick: () -> Unit) {
+internal fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: Boolean, destructive: Boolean = false, onClick: () -> Unit) {
     val tone = if (destructive) KoanTone.Bad else KoanTone.Ink
     Column(
         Modifier
@@ -229,23 +250,33 @@ private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: B
     }
 }
 
+/** What a heart is on: a track, a record or an artist, by id. */
+internal enum class Heart { Track, Album, Artist }
+
+private val Playable.heart
+    get() = when (this) {
+        is Playable.OfTrack -> Heart.Track to track.id
+        is Playable.OfAlbum -> Heart.Album to album.id
+        is Playable.OfArtist -> Heart.Artist to id
+    }
+
 /**
  * Hearts every one of the pick, or, where all of them are hearted already,
  * takes the hearts off: the things themselves, not the tracks behind them.
  */
-private fun favourite(store: Favourites, items: List<Playable>) {
-    fun hearted(item: Playable) = when (item) {
-        is Playable.OfTrack -> item.track.id in store.tracks.value
-        is Playable.OfAlbum -> item.album.id in store.albums.value
-        is Playable.OfArtist -> item.id in store.artists.value
+internal fun favourite(store: Favourites, items: List<Pair<Heart, Long>>) {
+    fun hearted(item: Pair<Heart, Long>) = item.second in when (item.first) {
+        Heart.Track -> store.tracks.value
+        Heart.Album -> store.albums.value
+        Heart.Artist -> store.artists.value
     }
     val all = items.all(::hearted)
-    for (item in items) {
+    for (item in items.distinct()) {
         if (hearted(item) != all) continue
-        when (item) {
-            is Playable.OfTrack -> store.toggleTrack(item.track.id)
-            is Playable.OfAlbum -> store.toggleAlbum(item.album.id)
-            is Playable.OfArtist -> store.toggleArtist(item.id)
+        when (item.first) {
+            Heart.Track -> store.toggleTrack(item.second)
+            Heart.Album -> store.toggleAlbum(item.second)
+            Heart.Artist -> store.toggleArtist(item.second)
         }
     }
 }

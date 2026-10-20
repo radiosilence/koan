@@ -165,7 +165,7 @@ fun PlaylistPage(playlistId: Long) {
                 SelectionBar(
                     selection,
                     { Playable.OfTrack(it.track) },
-                    if (fillable) Removal("Remove") { picked -> edits.remove(playlistId, picked.map { it.entryId }) } else null,
+                    if (fillable) Removal("Remove", "track") { picked -> edits.remove(playlistId, picked.map { it.entryId }) } else null,
                 )
             }
         }
