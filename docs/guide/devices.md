@@ -18,8 +18,8 @@ Playing, make the two choices:
   System Settings or Control Centre; playing to the system default, the music
   moves to the speaker chosen there, from where it was. On a phone or an Apple TV the route
   is the only audio device, so Output appears only once an amplifier answers
-  (Now Playing looks for them on opening) or while another device is
-  controlled.
+  (Android looks for them as Now Playing opens; the iOS app cannot yet) or
+  while another device is controlled.
 
 While another device is controlled, Output lists that device's outputs: its
 audio devices, the amplifiers it can see, which one it plays through and the

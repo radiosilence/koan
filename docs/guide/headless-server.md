@@ -128,7 +128,7 @@ The server answers `http://host:4000/` with a browser UI: the library, search, a
 - **History** lists plays by day; any of them can be ticked and forgotten.
 - **Hearts** on tracks, records and artists favourite them for the signed-in account. Every artist named in a collaboration's credit links to their own page.
 
-On a phone, Favourites, Recently played, History and Playlists sit under a Library tab, since the tab bar has room for six.
+On a phone, Playlists, Tracks, Recently played, Favourites and History sit under a Library tab, since the tab bar has room for six.
 
 ### Track menu and properties
 
@@ -138,7 +138,7 @@ A track row's menu (right-click, press and hold on a phone, or its ⋯) offers p
 
 ### Rescan
 
-Admin accounts find Rescan at the foot of the Library page. It looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. It is the same job as `triggerScan`, so a scan started from either shows in both.
+Admin accounts find Rescan at the foot of the Library page (`/library`, the Library tab on a phone; on a desktop the sidebar has no link to it, so open the address). It looks through the library folders for files added, changed or removed since the last scan, which the folder watcher normally does by itself. It is the same job as `triggerScan`, so a scan started from either shows in both.
 
 **Read every file again** ignores the scan cache and reads every file's tags. An upgrade that reads more from tags needs this, since the files themselves did not change (`triggerScan(reread: true)`).
 
@@ -237,7 +237,7 @@ Sign-in, and which credential each kind of client should use, is in [Authenticat
 
 ## Scrobbling
 
-Each account can forward its plays to ListenBrainz, from the web UI's Scrobbling page (linked from Account) or Settings → Integrations → Scrobbling in the Mac, iOS and Android apps, and to Last.fm, through the web UI's page, which the terminal UI's Settings also opens (see [Last.fm](#lastfm)). For ListenBrainz, paste the user token from its settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
+Each account can forward its plays to ListenBrainz, from the web UI's Scrobbling page (linked from Account), Settings → Integrations → Scrobbling in the Mac, iOS and Android apps, or the terminal UI's Settings, and to Last.fm, through the web UI's page, which the terminal UI's Settings also opens (see [Last.fm](#lastfm)). For ListenBrainz, paste the user token from its settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
 
 Plays wait in the database until ListenBrainz accepts them, so a restart or an outage delays them rather than losing them; the page shows how many are waiting. A token ListenBrainz stops accepting is shown there, and plays are kept until the account connects again. Plays the server's own player records are forwarded in the history sent on connecting, when they were listened to for half the track or four minutes, but not as they happen. Tracks without an artist or title are not sent.
 
