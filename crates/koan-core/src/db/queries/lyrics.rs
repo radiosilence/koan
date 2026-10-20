@@ -42,16 +42,9 @@ pub fn get_cached_lyrics(
 pub fn touch_lyrics(conn: &Connection, track_id: i64) -> Result<(), DbError> {
     conn.execute(
         "UPDATE lyrics_cache SET fetched_at = ?2 WHERE track_id = ?1",
-        params![track_id, now_secs()],
+        params![track_id, crate::shelves::now()],
     )?;
     Ok(())
-}
-
-fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
 }
 
 /// Cache lyrics for a track. Replaces any existing cached lyrics.
@@ -62,7 +55,7 @@ pub fn cache_lyrics(
     synced: bool,
     content: &str,
 ) -> Result<(), DbError> {
-    let now = now_secs();
+    let now = crate::shelves::now();
     conn.execute(
         "INSERT INTO lyrics_cache (track_id, source, synced, content, fetched_at)
          VALUES (?1, ?2, ?3, ?4, ?5)

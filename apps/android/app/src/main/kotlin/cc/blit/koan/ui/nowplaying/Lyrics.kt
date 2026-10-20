@@ -31,7 +31,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.engine.Playhead
-import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.LyricLine
 import cc.blit.koan.ffi.Lyrics
 import cc.blit.koan.ui.koanApp
@@ -43,6 +42,7 @@ import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 /** What was found, and for which track, so words never show beside another song. */
@@ -69,7 +69,9 @@ fun LyricsPanel(trackId: Long?, durationMs: Long, modifier: Modifier = Modifier)
         // A failed lookup is no lyrics; a cancelled one, for a track gone by, writes nothing.
         val cached = try {
             engine.lyrics(trackId)
-        } catch (e: KoanException) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             null
         }
         loaded = Loaded(trackId, cached)
@@ -78,7 +80,9 @@ fun LyricsPanel(trackId: Long?, durationMs: Long, modifier: Modifier = Modifier)
         try {
             val fetched = try {
                 engine.fetchLyrics(trackId)
-            } catch (e: KoanException) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 null
             }
             loaded = Loaded(trackId, fetched ?: cached)
@@ -95,8 +99,9 @@ fun LyricsPanel(trackId: Long?, durationMs: Long, modifier: Modifier = Modifier)
         Row(Modifier.fillMaxWidth().padding(vertical = KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
             KoanText("Lyrics", Modifier.weight(1f).semantics { heading() }, appText = true)
             when {
+                // A copy on screen is credited while LRCLIB is asked for a better one.
+                lyrics != null -> lyrics.source?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted) }
                 loading -> CircularProgressIndicator(Modifier.size(14.dp), color = KoanTheme.color(KoanTone.Muted), strokeWidth = 2.dp)
-                else -> lyrics?.source?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted) }
             }
         }
         KoanDivider()

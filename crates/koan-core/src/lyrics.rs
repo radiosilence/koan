@@ -201,7 +201,7 @@ pub fn look_up_cached(conn: &Connection, track_id: i64) -> Result<CacheLookup, L
     let Some(cached) = get_cached_lyrics(conn, track_id)? else {
         return Ok(CacheLookup::Stale(None));
     };
-    let stale = !cached.synced && now_secs() - cached.fetched_at >= PLAIN_RECHECK_SECS;
+    let stale = !cached.synced && crate::shelves::now() - cached.fetched_at >= PLAIN_RECHECK_SECS;
     let lyrics = Lyrics::from(cached);
     Ok(if stale {
         CacheLookup::Stale(Some(lyrics))
@@ -222,7 +222,11 @@ pub fn settle(
             cache_lyrics(
                 conn,
                 track_id,
-                LyricsSource::Lrclib.as_str(),
+                lyrics
+                    .source
+                    .as_ref()
+                    .unwrap_or(&LyricsSource::Lrclib)
+                    .as_str(),
                 lyrics.synced,
                 &lyrics.content,
             )?;
@@ -236,12 +240,6 @@ pub fn settle(
         }
         (Err(e), None) => Err(e),
     }
-}
-
-fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Ask LRCLIB. Synced lyrics are preferred, plain ones taken otherwise.
