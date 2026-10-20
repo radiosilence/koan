@@ -76,6 +76,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - Work in PRs; never push to main. PRs are squashed; merge main into a branch rather than rebasing.
 - Never push tags or run `cargo publish`. CI tags and publishes when a release PR merges.
 - Commits are signed.
+- `Checks` is the only status the ruleset requires. CI jobs run per domain the change touches and may skip; add a new CI job to `checks`' needs, never to the ruleset.
 
 ## Changelog
 
@@ -83,7 +84,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 ## Releasing
 
-`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CI publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, and the changelog section as notes) and the Homebrew formulae. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
+`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, and the changelog section as notes) and the Homebrew formulae. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
 
 ## Docs and site
 

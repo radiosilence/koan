@@ -111,21 +111,29 @@ kōan look, and dense views for technical data. Views name roles from
 4. Keep commits focused. PRs are squash-merged, so branch history does not need tidying.
 5. Describe what your PR does and why in the PR description.
 
-The build, test and lint jobs only run when a PR touches something that feeds
-a build — `crates/`, `apps/`, `Cargo.toml`, `Cargo.lock`, `.cargo/`, `justfile`,
-`mise.toml` or `.github/workflows/`. A documentation PR sees them reported as
-skipped, which counts as passing. Adding a new top-level source directory means
-adding it to the `changes` job in `.github/workflows/ci-cd.yml`, or CI will sit
-the PR out.
+CI (`.github/workflows/ci-cd.yml`) runs only the jobs for the domains a change
+touches, worked out by its `changes` job from the diff: Rust, the web UI's
+stylesheets, dependencies, the container image, the Pulumi package, the Apple
+apps and the Android app. Every job ends in `Checks`, the one status the
+ruleset requires, which passes a skipped job and fails a failed or cancelled
+one. A documentation PR runs almost nothing. Adding a new top-level source
+directory means adding it to `changes`, or CI will sit the PR out.
 
-The macOS jobs (Test, Clippy and Build on macOS, and the macOS and tvOS app
-builds) run on a PR only when it touches what the Linux jobs cannot check: the
-apps, `koan-ffi`, the bindings generator, `justfile`, dependencies or
-toolchains, the workflows, or a Rust file with code for an Apple target
-(`target_os = "macos"`, `"ios"`, `"tvos"`, or a module declared for Apple
-only). Otherwise the macOS checks report success without running. A release PR
-(branch `release-*`, or one that changes the version) runs everything, so a
-change to shared Rust that breaks only on macOS is caught there at the latest.
+`Cargo.lock`, `justfile` and `mise.toml` count for an app only when the change
+reaches it (`.github/scripts/native_inputs.py`): a package `koan-ffi` depends
+on, a recipe the Apple jobs run, a tool the Android job installs. A web UI PR
+that adds a dependency to `koan-server` does not hold a macOS runner.
+
+The macOS job runs on a PR only for what the Linux jobs cannot check: the
+apps, `koan-ffi`, the bindings generator, toolchains, the workflows, or Rust
+changed within a few lines of code for an Apple target. Main runs it for any
+Rust change, so a shared change that breaks only on macOS is caught there. A
+release PR (branch `release-*`, or one that changes the version) runs
+everything.
+
+CD runs in the same workflow after `Checks` passes on main, and uses what CI
+built: every push uploads the apps to TestFlight and Google Play's internal
+track when it changes them, and a push that changes the version releases.
 
 ## Releasing
 

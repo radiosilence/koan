@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.66.0
 
 ### Added
 
@@ -8,6 +8,17 @@
 - **Sort albums by year, oldest first.** Every album browser now offers the year order in both directions, so a filtered listing can be played or queued in the order the records came out.
 - **Playlists reorder by drag on iOS and Android.** Press and drag on iOS, in the Playlists page and the iPad sidebar; Edit on Android's Playlists page puts a handle on each row. The order is kept per device, as the Mac's is.
 - **Protocol reference.** A Protocol section in the docs specifies the link between the apps and the server, nearby connections, pairing and invites, each of kōan's OpenSubsonic extensions, and the rules that keep old and new versions working together, for anyone writing a client or server that speaks it.
+- **Download ahead and no cache.** Settings → Downloads chooses how many tracks past the playing one are fetched, from none to ten or the whole queue, so a long queue no longer downloads in full unless that is wanted. Keep downloads is now a choice of a limit in gigabytes, no limit, or only what plays next (`cache_limit = "0"`), which deletes played tracks while keeping downloads asked for and favourite albums.
+- **Invite QR codes in the apps.** The Mac, iOS and Android apps show an invite link as a QR code beside the ways to send it, so a phone in the room can join by scanning it.
+- **Track info from any track's menu.** On the Mac, iPhone and Android, the menu of every track row (library, search, album pages, history, the queue and playlists) has Info…, which shows what each of the track's sources says, as Now Playing's info view does, with every value selectable for copying.
+- **A track's path on the server.** A kōan server sends admin accounts each song's `path`, relative to its library folder, as Navidrome does, and the apps keep it with the server's copy of the track, listed in its info as "Path on server". When a track plays the wrong file or appears twice, the path says where it comes from. Other accounts are not sent paths.
+- **Android: lyrics source and invite mail.** The lyrics panel names where its words came from, and the invite dialog adds Open in Mail and Copy email, the formatted email for pasting into a message written elsewhere.
+- **Android EQ editing matches the iPhone's.** The EQ page edits any device's EQ as its chain of correction and filters, with presets saved over, reverted or saved as new, and filters alone; stages open a picker with targets and ways to add more, and an import started there goes into that chain. Find a measurement (squig.link, a file or pasted text), splitting a baked correction, targets and made-against suggestions, layers and groups, sync scope, Save as copy and Reset to file, and Manage EQ with Recently deleted are there too.
+
+### Security
+
+- **Pairing guesses are limited, and undelivered keys revoked.** An account that tries ten pairing codes in a minute that no device is waiting with is refused further codes until the minute is out; a pairing link still works. An approval is confirmed only once the key has been written to the device, and is otherwise revoked and reported to the approver as failed. A device that stops answering pings is dropped after 75 seconds instead of holding its pairing open for ten minutes. Looking a pairing up and declining it now need the same credentials as approving it, the account's own password or an API key, and the apps say so, or that too many codes were tried, instead of reporting that no device is waiting.
+- **The TUI no longer serves the API unasked.** `koan` started the GraphQL/Subsonic API on 127.0.0.1:4000, and with no accounts any local process could claim it through `/setup`. It now serves only with `--api`, `--port`, `--bind`, `--subsonic` or `--playground`, or `[graphql] enabled = true`; set that to keep the old behaviour. When it does, `/setup` stays closed and the first admin comes from `koan auth setup`. Headless mode is unchanged.
 
 ### Changed
 
@@ -15,6 +26,14 @@
 - **Notifications only from servers that can send them.** The iOS app asks to show notifications only on a server listing `koanApns`, which a server does when `[push]` holds an APNs key. Apple accepts pushes only signed by the app developer's team, so on any other server the prompt was noise.
 - **Record, artist and playlist headers on the Mac put Play and Shuffle on top.** They sit level with the sleeve, with the title on a line of its own below them, then the credit, then the lesser actions.
 - **Android names its artists and albums as links.** Track rows, record headings, history, downloads and search open the artist or record a row names, as the Apple apps and the web UI do, and every detail line reads "Artist · Album".
+- **Each artist of a collaboration is its own link on Android.** Album headers, tiles, track, queue, playlist and history rows, record headings and Now Playing link every credited artist separately, as the Apple apps do, and Go to Artist menus list each of them. The playlist and history menus gain Go to Artist.
+- **The web UI links each artist of a collaboration.** A credit such as "Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains" links each named artist separately in album headers and tiles, track, queue and history rows, search, playlists, track properties, the playback bar and Now Playing, as the apps do, where it used to be one link to the artist it is filed under.
+- **The TUI reaches each credited artist.** Where a record or track is credited to several artists, its menu offers "Go to" each of them, and `A`, the queue's "Go to artist" and the artist link of a track or record ask which, rather than opening the combined credit's page.
+- **`server.url` is the server's one address, and a server needs it.** `koan --headless` refuses to start without `server.url` (`KOAN_SERVER__URL`), the address clients reach it at; share links, invites, MCP's sign-in, push covers and the Last.fm callback are all built on it, and invites no longer fall back to the address a request came in on. `sharing.public_url` is still read while `server.url` is unset, with a warning, and will be removed in a later release; a server with neither must set one before upgrading. The server gives its address on `ping`, and signed-in apps identify it by that address, so devices that reach one server at different addresses recognise each other on the local network.
+- **Records without artwork show the kōan ensō on Android.** The album grid, rows, album page, Now Playing, the mini player and the queue draw it on the sleeve's ground, as the Apple apps do, where Now Playing and the mini player drew nothing. The grid's heart sits on a small square so it reads over any cover.
+- **Android page headers follow the iPhone's.** The queue, library and settings tabs drop their repeated titles; record, artist and playlist pages share one left-aligned header, with the record's artist as a plain line and its heart labelled "favourited". Track rows show their hearts, a record's sleeve opens full size, and a playlist offers Play Next, Add to Queue and, per entry, Favourite.
+- **Android browses and keeps history as the iPhone does.** The track browser filters, albums sorted Random reshuffle from their own button, the shelves have a select mode, search titles its results, and history lines its times up in a column in the phone's clock and offers the full track menu.
+- **Covers for records without art.** The server answers `getCoverArt` for a song, album or artist without artwork with the kōan ensō on a dark square, at the nearest served size, as Navidrome answers with its own placeholder, so every client has an image to draw; kōan's own apps recognise it and keep drawing their own. An id the library does not hold is still an error.
 
 ### Removed
 
@@ -30,10 +49,25 @@
 - **Signing in with a password loads the library on the Mac and iPhone.** It synced only when joining with an invite, so a fresh sign-in showed an empty library until a manual sync.
 - **Signing out clears the queue and downloads.** The queue held tracks from a server this device can no longer reach, and its transfers, queued or running, kept going; both are dropped on signing out, in the apps and the terminal UI alike. The synced library still stays.
 - **Commands from newer versions are answered.** A device, a nearby device or the server that cannot read a command sent with an id now refuses it, so the sender is not left waiting and the server no longer takes the device for gone. Pairing passes over messages from a newer server instead of failing.
+- **Playlists reorder by dragging again.** On the Mac and iOS a row dragged within a playlist was added as a copy rather than moved; it now moves as a queue row does, a heading taking its whole run.
+- **Android playlist rows reorder more than once.** After one drag in a playlist, the next moved nothing on screen and could undo the first move on drop; every drag now lands, and a cancelled drag leaves the order as it was.
+- **History's times fit.** The time column in History is sized to the widest time the current locale prints, measured in its font, so 12-hour times are no longer cut off in the kōan theme or at larger text sizes, on the Mac, iPhone, iPad and Apple TV.
+- **The invite sheet on iOS stays open.** It could close as soon as it appeared, when the account list reloaded behind it; it now hangs off the page rather than a list row.
+- **Every album has a disc total.** It is the highest disc among the album's tracks, or a larger total the files are tagged with, so the web UI, GraphQL and the terminal UI report it for synced libraries and for files tagged without one. The next scan reads every file's tags again.
+- **Move here wakes its destination, and only offers devices on the same server.** A device asleep is woken as choosing it does, on the network and then with a background push, before the music is sent, rather than getting the music only as a notification to tap. One of the account's devices that has since signed in to another server, as it says on the local network, is no longer offered the music, since it could not find the tracks.
+- **Lyrics credit their source after caching.** Lyrics read back from the cache were credited to "cache"; they now keep the source they were fetched from, shown as LRCLIB on the Mac, iPhone and Android. GraphQL's `Lyrics.source` gives the same credit (`LRCLIB`, `Embedded`, `Sidecar`) where it gave the variant's name (`Cache`, `Lrclib`), and is null for a source the server does not recognise.
+- **A tap on a record's title in the Android album grid opens the record.** The artist link under it had a touch target reaching up over the title, which opened the artist instead; the same held for the line under any row's title.
+- **Changing server leaves the last one's waiting plays behind.** Plays, forgettings and hearts queued for one server were sent to the next one signed in to, so a history clear could reach another koan server. Signing in elsewhere now drops them, and the app no longer asks a server without device relaying to relay lock-screen commands.
+- **Android queue menus act on the queue.** A queue row's menu plays from that row and removes it, as the iPhone's does, rather than replacing the queue; a record heading removes its run; the select bar adds Add to Playlist and Favourite, and bulk Remove and Forget on playlists and history ask first.
+- **Settings shows koan's accounts and EQ sync only on a server that has them.** People and an EQ's Sync choice no longer appear against Navidrome and other servers, and a feature a server lacks is explained as an old kōan server or as one that is not kōan, rather than always as an old one.
 
 ### Internal
 
-- **Pairing documented against RFC 8628.** The authentication guide maps pairing onto the device authorization grant and says why its protocol differs: an API key rather than an OAuth token, LAN-only servers, and a pushed outcome.
+- **One Linux CI job for clippy and the tests.** They share build scripts and proc-macros, so one runner and one cache compiles those once per run, and the cache holds one entry instead of two.
+- **Pairing documented against RFC 8628.** The protocol reference maps pairing onto the device authorization grant and says why its protocol differs: an API key rather than an OAuth token, servers without `server.url`, and a pushed outcome.
+- **Protocol schema.** JSON Schema for the link, pairing and nearby messages is generated from the Rust types into `docs/reference/protocol/schema/` by `just protocol-schema`, and the test suite fails when the committed files fall behind the types.
+- **Android walk.** `just android-walk` screenshots every page of the Android app on an emulator, in both looks and appearances, against the generated library the iPhone checks use, so the two apps can be compared page for page.
+- **Faster Apple CI on pull requests.** The Apple job builds `koan-ffi` once in the dev profile and reuses it for the macOS tests, the app build and the iOS typecheck, which run side by side. Clippy, the full suite and tvOS run on main, which also saves the cache pull requests start from, and release builds wait for a release. Jobs run only for the paths they cover: an app-only change skips the Linux Rust jobs, and an Android-only change skips macOS.
 
 ## 0.65.1
 
