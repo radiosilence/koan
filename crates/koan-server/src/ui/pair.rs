@@ -17,6 +17,9 @@ use super::{UiState, encode, html, open, see_other};
 use crate::auth::AuthUser;
 use crate::share::{blocking, escape};
 
+const LIMITED: &str =
+    "Too many codes were tried that no device was waiting with. Try again in a minute.";
+
 #[derive(serde::Deserialize, Default)]
 #[serde(default)]
 pub(super) struct CodeQuery {
@@ -74,13 +77,17 @@ pub(super) async fn confirm(
     if !s.auth_enabled {
         return without_accounts();
     }
-    let Some(info) = crate::pair::pairings().info(&pair) else {
-        return code_page(
-            &s,
-            Some(
-                "No device is waiting with that code. Codes last ten minutes: check the device for a new one.",
-            ),
-        );
+    let info = match crate::pair::pairings().info(&pair, user.user_id) {
+        Ok(info) => info,
+        Err(crate::pair::PairError::Limited) => return code_page(&s, Some(LIMITED)),
+        Err(_) => {
+            return code_page(
+                &s,
+                Some(
+                    "No device is waiting with that code. Codes last ten minutes: check the device for a new one.",
+                ),
+            );
+        }
     };
     let action = format!("/pair/{}", encode(&pair));
     let body = format!(
@@ -165,12 +172,15 @@ API keys, where it can be revoked.</p>",
             escape(&info.device),
             escape(&username)
         ),
-        Some(Err(crate::pair::SettleError::NotFound)) => {
+        Some(Err(crate::pair::PairError::Limited)) => {
+            format!("<h2>Wait a minute</h2><p>{LIMITED}</p>")
+        }
+        Some(Err(crate::pair::PairError::NotFound)) => {
             "<h2>Nothing to sign in</h2><p>The device stopped waiting, or its code lapsed. \
 Check the device for a new code.</p>"
                 .to_owned()
         }
-        Some(Err(crate::pair::SettleError::Internal(_))) | None => {
+        Some(Err(crate::pair::PairError::Internal(_))) | None => {
             "<h2>Something went wrong</h2><p>The device could not be signed in. Try again.</p>"
                 .to_owned()
         }

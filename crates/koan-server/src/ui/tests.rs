@@ -1489,6 +1489,7 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
         .open("Living <room> TV", "10.0.0.8".parse().unwrap())
         .unwrap();
     let typed = opened.code.to_lowercase();
+    let device = opened.device(true);
     let r = send(
         &f.app,
         authed(&f.state, &format!("/pair?code={typed}"))
@@ -1551,7 +1552,7 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
     // Settled: the code no longer names anything.
     let r = send(&f.app, post(ORIGIN)).await;
     assert!(r.body.contains("Nothing to sign in"));
-    drop(opened);
+    device.join().unwrap();
 }
 
 mod oauth {
