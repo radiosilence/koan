@@ -9,10 +9,10 @@ The GraphQL API runs standalone in headless mode, or alongside the TUI when aske
 koan --api
 
 # Headless with GraphiQL web IDE
-koan --headless --playground
+KOAN_SERVER__URL=http://localhost:4000 koan --headless --playground
 
 # As a background daemon
-koan -d --playground
+KOAN_SERVER__URL=http://localhost:4000 koan -d --playground
 ```
 
 Then open `http://localhost:4000/graphql` for the GraphiQL IDE, or query directly:
@@ -39,7 +39,7 @@ Auth is enabled by default. Run `koan auth setup` to create a keypair and first 
 
 ```bash
 koan auth setup              # generate keypair + create admin user
-koan --headless --playground # start server
+KOAN_SERVER__URL=http://localhost:4000 koan --headless --playground # start server
 ```
 
 To disable auth:
