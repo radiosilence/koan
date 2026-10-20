@@ -1057,9 +1057,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [check-version, android, linux-build, macos-release, publish-crate, publish-package]
-    # Every need having run, not merely not failed: a skipped job is not a
+    # Every need having succeeded, named one by one: a skipped job is not a
     # failure, and a release without one of its parts is not a release.
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') && needs.check-version.outputs.should_release == 'true' }}
+    # needs.*.result would also see jobs further up the graph, such as Apple,
+    # which a release push skips on purpose.
+    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.android.result == 'success' && needs.linux-build.result == 'success' && needs.macos-release.result == 'success' && needs.publish-crate.result == 'success' && needs.publish-package.result == 'success' }}
     permissions:
       contents: write
     steps:
