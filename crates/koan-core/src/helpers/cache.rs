@@ -489,6 +489,7 @@ mod cache_path_tests {
             id: 1,
             album_id: None,
             artist_id: None,
+            album_artist_id: None,
             artist_name: artist.into(),
             album_artist_name: artist.into(),
             album_title: album.into(),

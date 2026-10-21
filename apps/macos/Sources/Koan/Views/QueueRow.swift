@@ -11,9 +11,8 @@ struct QueueRowContent: Equatable {
     /// that was never indexed; nothing about it can be favourited.
     var trackId: Int64?
     var title: String
-    var artist: String
     var album: String
-    /// `artist` with each credited artist's name leading to them.
+    /// The track's artist, each credited artist's name leading to them.
     var artistCredit: [CreditPart]
     /// Where the album name leads.
     var albumId: Int64?
@@ -47,7 +46,6 @@ struct QueueRowContent: Equatable {
     init(item: QueueItem, numbering: Numbering = Numbering()) {
         trackId = item.trackId
         title = item.title
-        artist = item.artist
         album = item.album
         artistCredit = item.artistCredit
         albumId = item.albumId
@@ -79,7 +77,6 @@ struct QueueRowContent: Equatable {
         let track = entry.track
         trackId = track.id
         title = track.title
-        artist = track.artistName
         album = track.albumTitle
         artistCredit = track.artistCredit
         albumId = track.albumId
@@ -164,7 +161,7 @@ struct QueueRow: View {
                     .foregroundStyle(titleStyle)
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
-                if showArtist && !item.artist.isEmpty {
+                if showArtist && !item.artistCredit.text.isEmpty {
                     ArtistAlbumLine(
                         artist: item.artistCredit,
                         album: artwork ? item.album : nil,

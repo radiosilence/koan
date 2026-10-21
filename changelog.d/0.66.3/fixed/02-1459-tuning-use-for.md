@@ -1,0 +1,1 @@
+- **A tuning's page adds it to the device's filters.** On the Mac and iPhone, an EQ's page offered only "Use for", which made a tuning the device's correction in place of the real one, and always acted on the output in use. It now offers one action by the EQ's role and what the device plays, on the device the page was opened for, as Android does.

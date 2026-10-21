@@ -164,9 +164,9 @@ jobs:
 
             # Anything cargo compiles or that decides how.
             touches '^crates/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' || rust=false
-            # The web UI's compiled stylesheets: its styles and everything
-            # Tailwind reads class names from.
-            touches '^crates/koan-server/|^site/src/theme\.css$|^mise\.toml$|^justfile$|^\.github/' || web=false
+            # The web UI's compiled stylesheets and scripts: their sources,
+            # everything Tailwind reads class names from, and the tools.
+            touches '^crates/koan-server/|^site/src/theme\.css$|^scripts/strip-types\.mjs$|^mise\.toml$|^justfile$|^\.github/' || web=false
             touches '^deploy/|^\.github/' || package=false
             # The image is the Linux binaries in a runtime layer. The Rust
             # jobs already check the code, so a pull request builds them and
@@ -331,6 +331,21 @@ jobs:
       - run: just css
       - name: Compiled stylesheets match their sources
         run: git diff --exit-code crates/koan-server/assets
+
+  # The web UI's scripts are TypeScript, typechecked and stripped to the
+  # JavaScript the server embeds, which is committed.
+  js:
+    name: Scripts
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          install_args: just node github:microsoft/typescript-go
+      - run: just js --check
 
   # Clippy and the tests on one runner, with one target directory and one
   # cache: they share build scripts and proc-macros, which separate jobs each
@@ -750,7 +765,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, fmt, changelog, css, linux, msrv, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, fmt, changelog, css, js, linux, msrv, audit, pulumi-package, linux-build, container, apple, android]
     if: always()
     steps:
       - env:
@@ -816,9 +831,11 @@ jobs:
     needs: [container, check-version]
     if: ${{ !cancelled() && needs.container.result == 'success' && needs.check-version.result == 'success' }}
     # One at a time across runs: two that read the tag together could both
-    # see their commit ahead, and the one finishing last would win.
+    # see their commit ahead, and the one finishing last would win. A group
+    # keeps one pending job and cancels it when another queues, which would
+    # end a release run cancelled, so a release waits in a group of its own.
     concurrency:
-      group: container-main-${{ matrix.image }}
+      group: container-main-${{ matrix.image }}${{ needs.check-version.outputs.should_release == 'true' && '-release' || '' }}
       cancel-in-progress: false
     permissions:
       contents: read

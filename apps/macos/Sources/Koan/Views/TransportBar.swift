@@ -108,7 +108,7 @@ struct TransportBar: View {
                             source: sleeve,
                             title: player.currentEntry?.title ?? "",
                             subtitle: player.currentEntry.map {
-                                "\($0.artist) · \($0.album)"
+                                "\($0.artistCredit.text) · \($0.album)"
                             }
                         )
                 } else {
@@ -140,7 +140,7 @@ struct TransportBar: View {
                     // line as a whole meaning one of them, drawn as every row
                     // draws them.
                     ArtistAlbumLine(
-                        artist: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
+                        artist: player.currentArtistCredit,
                         album: entry.album,
                         albumId: player.currentAlbumId
                     )

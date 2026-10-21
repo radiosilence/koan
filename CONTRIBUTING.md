@@ -113,7 +113,7 @@ kōan look, and dense views for technical data. Views name roles from
 
 CI (`.github/workflows/ci-cd.yml`) runs only the jobs for the domains a change
 touches, worked out by its `changes` job from the diff: Rust, the web UI's
-stylesheets, dependencies, the container image, the Pulumi package, the Apple
+stylesheets and scripts, dependencies, the container image, the Pulumi package, the Apple
 apps and the Android app. Every job ends in `Checks`, the one status the
 ruleset requires, which passes a skipped job and fails a failed or cancelled
 one. A documentation PR runs almost nothing. Adding a new top-level source

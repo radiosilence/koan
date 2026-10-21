@@ -3,6 +3,7 @@ package cc.blit.koan.ui.settings
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import cc.blit.koan.ffi.CreditPart
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.SyncPhase
@@ -55,7 +56,8 @@ class SettingsTest {
     ) = DeviceInfo(
         id = id, name = "Living room", platform = "tvos", account = true, owner = null, nearby = false,
         awake = awake, asleep = asleep, wakeable = wakeable, lastSeen = lastSeen, waking = null, wakeFailed = null,
-        sameLibrary = sameLibrary, state = state, title = "Tone 300 Hz", artist = "Tone Settings", album = null,
+        sameLibrary = sameLibrary, state = state, title = "Tone 300 Hz", artist = "Tone Settings",
+        artistCredit = listOf(CreditPart("Tone Settings", null)), album = null,
         trackId = null, albumId = null, positionMs = 0u, durationMs = 0u, problem = problem,
     )
 

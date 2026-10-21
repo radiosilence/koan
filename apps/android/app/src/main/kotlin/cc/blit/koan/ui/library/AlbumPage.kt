@@ -153,7 +153,7 @@ private fun Header(album: Album, tracks: List<Track>) {
     val playable = Playable.OfAlbum(album)
     val total = tracks.sumOf { it.durationMs ?: 0 }
     val details = listOfNotNull(album.year?.toString(), album.codec?.uppercase(), length(total).takeIf { total > 0 }).joinToString(" · ")
-    val credit = artistCredit(album.artistCredit, album.artistName, album.artistId)
+    val credit = artistCredit(album.artistCredit)
     PageHeader(
         album.title,
         Modifier.padding(horizontal = LocalKoanTokens.current.gutter),

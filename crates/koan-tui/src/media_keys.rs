@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
+use koan_core::helpers::{ListCredits, credit_text};
 use koan_core::index::folder_art::cover_art;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
@@ -121,7 +122,24 @@ impl MediaKeyHandler {
         let entry = vq.entries.iter().find(|e| e.id == info.id);
 
         let title = entry.map(|e| e.title.clone()).unwrap_or_default();
-        let artist = entry.map(|e| e.artist.clone()).unwrap_or_default();
+        // Read once per track: the credit as the library has it.
+        let artist = entry.map(|e| {
+            let ids: Vec<i64> = e.db_id.into_iter().collect();
+            let (places, credits) = koan_core::db::pool::shared()
+                .get()
+                .map(|db| ListCredits::read_tracks(&db.conn, &ids))
+                .unwrap_or_default();
+            let place = e
+                .db_id
+                .and_then(|id| places.get(&id).copied())
+                .unwrap_or_default();
+            credit_text(
+                &credits
+                    .row(e.db_id, place, &e.artist, &e.album_artist)
+                    .artist,
+            )
+        });
+        let artist = artist.unwrap_or_default();
         let album = entry.map(|e| e.album.clone()).unwrap_or_default();
         let duration = entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms));
 

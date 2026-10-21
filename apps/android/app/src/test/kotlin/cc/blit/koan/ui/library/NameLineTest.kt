@@ -34,7 +34,7 @@ class NameLineTest {
 
     @Test
     fun eachCreditedArtistIsItsOwnLink() {
-        val (text, links) = links(listOf(artistCredit(credit, "whole", 9), albumName("Ventre Unique", 5)))
+        val (text, links) = links(listOf(artistCredit(credit), albumName("Ventre Unique", 5)))
         assertEquals("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains · Ventre Unique", text)
         assertEquals(
             listOf(
@@ -48,21 +48,21 @@ class NameLineTest {
 
     @Test
     fun theArtistWhosePageItIsStaysText() {
-        val (text, links) = links(listOf(artistCredit(credit, "whole", 9, except = 2)))
+        val (text, links) = links(listOf(artistCredit(credit, except = 2)))
         assertEquals("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains", text)
         assertEquals(listOf("Orchestre Tout Puissant Marcel Duchamp" to "artist 1"), links.map { (t, page) -> t to page.id() })
     }
 
     @Test
     fun anUnsplitCreditIsTheNameAndItsArtist() {
-        val (text, links) = links(listOf(artistCredit(emptyList(), "Burial", 7)))
+        val (text, links) = links(listOf(artistCredit(listOf(CreditPart("Burial", 7)))))
         assertEquals("Burial", text)
         assertEquals(listOf("Burial" to "artist 7"), links.map { (t, page) -> t to page.id() })
     }
 
     @Test
     fun whilePickingNothingIsALink() {
-        val (text, links) = links(listOf(artistCredit(credit, "whole", 9)), linked = false)
+        val (text, links) = links(listOf(artistCredit(credit)), linked = false)
         assertEquals("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains", text)
         assertEquals(emptyList<Pair<String, NavKey>>(), links)
     }

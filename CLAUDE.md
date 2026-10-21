@@ -19,7 +19,7 @@ Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-
 
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
-**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
+**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
 ## Architecture overview
 
@@ -69,6 +69,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
 - **Tracks are derived from sources** — each file is a `local_files` row and each server entry a `remote_entries` row, holding its own tags. A track holds at most one of each; its columns are derived, the file's first. `sources::link` alone decides which track a source is (MusicBrainz recording + release, or album/album artist/disc/number/title with the artist as tie-break; ambiguous → declined). Never write track identity columns outside `db/queries/sources.rs`. Albums are title + album artist + release (editions are separate albums); artists are their folded name; favourites reference rows by id.
+- **Credits and record runs are core's** — every artist a client draws is a credit built in `helpers/credits.rs` (each credited artist linked, "Unknown Artist" for a record naming none), whether a row names its artists is `RowCredits::differ`, and which rows sit under one record heading is `helpers::record_runs`. The FFI carries the results (`credit_differs`, `run`); clients draw them and compare no names.
 - **Uids, not row ids, leave the database** — every artist, album, track and playlist has a UUIDv7 `uid`, published by Subsonic, GraphQL and the link. Clients syncing from a koan server adopt its uids, so ids mean the same thing on every device. See `db/queries/uids.rs`.
 - **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. All writes go through `Config::persist()`, which diffs the mutation and routes each changed key by `config::layer_of` — secrets, this machine's paths/hardware/account and volatile UI state to `config.local.toml`, taste to `config.toml`. Comments survive; untouched keys are never rewritten.
 
@@ -120,6 +121,7 @@ just build          # cargo build --release
 just macos-run      # build + launch the macOS app
 just macos-dmg      # package the app for release
 just css            # compile the web UI's Tailwind stylesheets (output is committed)
+just js             # typecheck the web UI's TypeScript and strip it to JS (output is committed; --check fails if stale)
 just ios-typecheck  # the shared SwiftUI sources still build for iOS
 just ios-run        # build and launch on a booted simulator
 just ios-smoke FILE # play a file through the real Player on the simulator
@@ -215,7 +217,7 @@ The `version` in `package.json` and `APP_VERSION` in `src/versions.ts`, in both 
 | `upnp/` | Playing to UPnP/DLNA MediaRenderers. SSDP discovery, SOAP, GENA, DIDL-Lite, the tokenised HTTP listener renderers fetch from, and `stream.rs`, which encodes a processed session for one. Hand-rolled on std threads; an event is a reason to ask the renderer where it is, never a reading |
 | `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
-| `helpers/` | Shared by every front end, one module per concern and re-exported as `helpers::*`: `sign_in`, `watch` (folder watching, auto-sync), `sync`, `library` (rebuild, forget-folder/forget-remote), `cache`, `download`, `favourites`, `shares`, `playlist_items`, `text` |
+| `helpers/` | Shared by every front end, one module per concern and re-exported as `helpers::*`: `sign_in`, `watch` (folder watching, auto-sync), `sync`, `library` (rebuild, forget-folder/forget-remote), `cache`, `download`, `favourites`, `shares`, `playlist_items`, `credits` (credits and whether a row names its artists), `runs` (which rows are one record), `text` |
 | `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export. Read-only playlists (smart ones here, `readonly` ones there) are never pushed |
 | `smart.rs` | Smart playlist rules: the typed model and its JSON, checked with errors that name the problem, and Navidrome `.nsp` parsing into it |
 | `shelves.rs` | Favourites, Recently played and a search as filters on the album, artist and track listings (`AlbumQuery`, `ArtistQuery`, `TrackFilter`). A shelf page's previews are the head of those listings, with counts from the same query, so a preview and its "See all" agree. What each shelf holds, its window and its order live here; front ends ask by name |
@@ -354,8 +356,9 @@ Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and genera
 | `icon.rs`, `icon/glyphs.rs` | The kōan icon set for the web UI and share page: `glyphs.rs` is generated by `just icons` from the apps' SVGs; `Glyph::svg` draws one inline on the theme's stroke rule |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
 | `../styles/` | Tailwind sources for `assets/ui.css` and `assets/share.css`, on the theme koan.rocks uses (`site/src/theme.css`). The pages are styled with utilities in the templates; these hold element defaults and the rules for classes the scripts toggle or build (`playing`, `busy`, `missing`, the queue's rows). Quote every `class` attribute: Tailwind does not read an unquoted one. Run `just css` after changing either; the compiled files are committed because the crate embeds them |
+| `../scripts/` | TypeScript sources for `assets/ui.js`, `assets/player.js` and `assets/share.js`, typechecked by `tsc` and compiled by `scripts/strip-types.mjs`, which removes the types and nothing else, so the output reads as the source does. Erasable syntax only: no enums, namespaces or parameter properties. Classic scripts sharing `window.KoanPlayer`, whose types are in `koan.d.ts`. Run `just js` after changing them; the compiled files are committed because the crate embeds them |
 | `../templates/` | askama templates for the web UI and share page: `pages/` holds page bodies, `shell.html` and `signin.html` the frames around them, and one directory per area its fragments. Output is escaped unless a template says `\|safe`, which is for markup the server built. Shared class strings stay Rust constants that templates name by path (`crate::ui::pages::SUB`) |
-| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant; `ui/scrobbling.rs` the page connecting an account to ListenBrainz or Last.fm |
+| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `scripts/player.ts` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant; `ui/scrobbling.rs` the page connecting an account to ListenBrainz or Last.fm |
 
 ### koan-cli (`crates/koan-cli/src/`)
 
