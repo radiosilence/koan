@@ -292,6 +292,9 @@ struct Saved {
     /// was kept, when only the device being controlled counts.
     #[serde(default)]
     used: Option<Vec<String>>,
+    /// Where each Apple TV's Companion service last answered.
+    #[serde(default)]
+    tv_addrs: HashMap<String, std::net::SocketAddr>,
 }
 
 /// A device reached on the local network, and where: dialled there at once
@@ -401,6 +404,7 @@ impl Store {
                 used.sort();
                 used
             }),
+            tv_addrs: self.tv_addrs.clone(),
         };
         if let Ok(json) = serde_json::to_string(&saved) {
             let _ = std::fs::write(saved_path(), json);
@@ -431,6 +435,7 @@ fn restore() {
             .filter(|n| n.at >= cutoff)
             .collect();
         s.live = saved.live;
+        s.tv_addrs = saved.tv_addrs;
         s.used = match saved.used {
             Some(used) => used.into_iter().collect(),
             None => s.target.iter().map(|t| t.id.clone()).collect(),
@@ -762,19 +767,45 @@ fn wake_tv(
         .or_else(|| with(|s| s.tv_addrs.get(id).copied()))
         .ok_or_else(|| format!("{name} isn't on this network."))?;
     companion::wake(addr, pairing, &own_name()).map_err(|e| e.to_string())?;
-    with(|s| s.tv_addrs.insert(id.to_string(), addr));
+    remember_tv_addr(id, addr);
     Ok(())
 }
 
-/// A pairing under way, for the Apple TV by id: the TV is showing its PIN.
-static PAIRING: Mutex<Option<(String, crate::remote::companion::Pairing)>> = Mutex::new(None);
+/// Where the Apple TV `id` answered, kept for when browsing misses it.
+fn remember_tv_addr(id: &str, addr: std::net::SocketAddr) {
+    with(|s| {
+        if s.tv_addrs.insert(id.to_string(), addr) != Some(addr) {
+            s.save();
+        }
+    });
+}
+
+/// A pairing under way: the TV is showing its PIN.
+struct PendingPairing {
+    /// The koan device's id.
+    id: String,
+    addr: std::net::SocketAddr,
+    pairing: crate::remote::companion::Pairing,
+    generation: u64,
+}
+
+static PAIRING: Mutex<Option<PendingPairing>> = Mutex::new(None);
+/// Bumped by every pairing begun or cancelled: a pairing finishing after its
+/// sheet was dismissed is not handed to the server.
+static PAIRING_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How long the server's list is waited on to carry a new pairing.
+const PAIRING_KEPT: Duration = Duration::from_secs(8);
 
 /// Ask the account's Apple TV `id` to pair, so that the account's devices can
 /// wake it: the TV shows a PIN, which `finish_tv_pairing` takes. Blocks for
-/// the few seconds finding the TV takes. The TV is the one on the host koan
-/// there was met at, else the one of its name, else the only one here.
-pub fn begin_tv_pairing(id: &str) -> Result<(), String> {
+/// the few seconds finding the TV takes, and returns the name of the TV
+/// asked, which the person checks against the screen showing the PIN. The
+/// TV is the one on the host koan there was met at, else the one of its
+/// name, else the only one here.
+pub fn begin_tv_pairing(id: &str) -> Result<String, String> {
     use crate::remote::companion;
+    use std::sync::atomic::Ordering;
     if !COMPANION {
         return Err("Waking an Apple TV is set up from an iPhone, iPad or Mac.".into());
     }
@@ -796,7 +827,7 @@ pub fn begin_tv_pairing(id: &str) -> Result<(), String> {
         s.seen
             .iter()
             .find(|n| n.id == id)
-            .map(|n| crate::remote::companion::host_of(&n.addr).to_string())
+            .map(|n| companion::host_of(&n.addr).to_string())
     })
     .unwrap_or_default();
     let tvs = companion::browse(TV_FIND);
@@ -807,43 +838,55 @@ pub fn begin_tv_pairing(id: &str) -> Result<(), String> {
         _ => format!("Couldn't tell which Apple TV here is {name}."),
     })?;
     log::info!("tv: pairing {name} at {} ({})", tv.addr, tv.name);
+    let generation = PAIRING_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     let pairing = companion::begin_pairing(tv.addr).map_err(|e| e.to_string())?;
-    *PAIRING.lock() = Some((id.to_string(), pairing));
-    Ok(())
+    *PAIRING.lock() = Some(PendingPairing {
+        id: id.to_string(),
+        addr: tv.addr,
+        pairing,
+        generation,
+    });
+    Ok(tv.name.clone())
 }
 
-/// Finish the pairing `begin_tv_pairing` started with the PIN on the TV,
-/// and have the server keep it for the account.
+/// Finish the pairing `begin_tv_pairing` started with the PIN on the TV, and
+/// wait for the server to keep it for the account: done only once the
+/// account's list carries it back.
 pub fn finish_tv_pairing(pin: &str) -> Result<(), String> {
-    let (id, pairing) = PAIRING
+    use std::sync::atomic::Ordering;
+    let pending = PAIRING
         .lock()
         .take()
         .ok_or("The TV is no longer waiting for a code. Start again.")?;
-    let credential = pairing
+    let id = pending.id;
+    let credential = pending
+        .pairing
         .finish(pin, &own_name())
         .map_err(|e| e.to_string())?;
+    if PAIRING_GEN.load(Ordering::SeqCst) != pending.generation {
+        return Err("Cancelled.".into());
+    }
     log::info!("tv: paired {id}");
-    // Kept here at once: a wake before the server's list comes back works.
-    changed(|s| {
-        if let Some((d, _)) = s.account.iter_mut().find(|(d, _)| d.id == id) {
-            d.tv_pairing = Some(credential.clone());
-            s.save();
-        }
-    });
+    remember_tv_addr(&id, pending.addr);
     if !link::report(LinkReport::TvPairing {
-        device: id,
-        pairing: Some(credential),
+        device: id.clone(),
+        pairing: Some(credential.clone()),
     }) {
         return Err(
             "Paired, but not connected to your server to keep it. Try again once connected.".into(),
         );
     }
+    let kept = || tv_pairing_of(&id).as_ref() == Some(&credential);
+    if !await_until(kept, PAIRING_KEPT) {
+        return Err("Paired, but your server did not keep it. Try again.".into());
+    }
     Ok(())
 }
 
 /// Abandon the pairing under way; the TV takes its PIN down when the
-/// connection closes.
+/// connection closes. A pairing finishing meanwhile is not kept.
 pub fn cancel_tv_pairing() {
+    PAIRING_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     PAIRING.lock().take();
 }
 
@@ -1360,9 +1403,15 @@ pub fn wake_to_send(id: &str) -> bool {
 }
 
 /// The longest `wake_to_send` waits: every stage before the notification,
-/// finding an Apple TV included, and some for the steps between them.
+/// finding and waking an Apple TV included, and some for the steps between
+/// them.
 const WAKE_TO_SEND: Duration = Duration::from_secs(
-    TV_FIND.as_secs() + TV_WAIT.as_secs() + NETWORK_WAIT.as_secs() + PUSH_WAIT.as_secs() + 5,
+    TV_FIND.as_secs()
+        + crate::remote::companion::LONGEST_WAKE.as_secs()
+        + TV_WAIT.as_secs()
+        + NETWORK_WAIT.as_secs()
+        + PUSH_WAIT.as_secs()
+        + 5,
 );
 
 /// `wake`, with the notification to tap as its last stage when `notify`.

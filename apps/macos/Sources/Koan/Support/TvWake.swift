@@ -76,6 +76,9 @@ private struct TvWakeSheet: View {
     @State private var code = ""
     /// Bumped to ask the TV for a fresh code.
     @State private var attempt = 0
+    /// The name of the Apple TV asked, as it calls itself: the screen the
+    /// code should be on.
+    @State private var asked: String?
     @FocusState private var focused: Bool
 
     private enum Phase: Equatable {
@@ -120,7 +123,7 @@ private struct TvWakeSheet: View {
                 Text("Asking \(target.name) for a code…").koanText(.body, .muted)
             }
         case .entering:
-            Text("Type the code on \(target.name). It waits about half a minute.")
+            Text("Type the code on \(asked ?? target.name). It waits about half a minute.")
                 .koanText(.body, .muted)
             HStack {
                 TextField("Code", text: $code, prompt: Text("0000"))
@@ -155,7 +158,7 @@ private struct TvWakeSheet: View {
         phase = .asking
         code = ""
         do {
-            try await state.engine.beginTvPairing(id: target.id)
+            asked = try await state.engine.beginTvPairing(id: target.id)
             phase = .entering
             focused = true
         } catch {

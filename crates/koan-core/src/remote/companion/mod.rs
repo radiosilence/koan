@@ -77,9 +77,15 @@ impl From<opack::Malformed> for Error {
 }
 
 /// How long one answer is waited for.
-const ANSWER: Duration = Duration::from_secs(5);
+const ANSWER: Duration = Duration::from_secs(3);
 /// How long connecting is given.
 const CONNECT: Duration = Duration::from_secs(4);
+/// The longest `wake` can take: connecting, then the two pair-verify round
+/// trips and the four requests, each waited on for `ANSWER`.
+pub const LONGEST_WAKE: Duration = Duration::from_secs(CONNECT.as_secs() + 6 * ANSWER.as_secs());
+/// The largest frame read. A TV's answers are a few kilobytes; a length past
+/// this is from something that is not one.
+const MAX_FRAME: usize = 1 << 20;
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -206,6 +212,9 @@ impl Conn {
         let mut header = [0u8; 4];
         self.stream.read_exact(&mut header)?;
         let len = u32::from_be_bytes([0, header[1], header[2], header[3]]) as usize;
+        if len > MAX_FRAME {
+            return Err(Error::Protocol("a frame too long to be a TV's"));
+        }
         let mut body = vec![0u8; len];
         self.stream.read_exact(&mut body)?;
         if let Some(c) = &mut self.cipher
@@ -420,7 +429,9 @@ fn verify(addr: SocketAddr, credential: &Credential) -> Result<Conn, Error> {
         "Pair-Verify-Encrypt-Info",
         &shared,
     ));
-    let inner = open(&session, label_nonce(b"PV-Msg02"), &[], sealed).map_err(|_| Error::Stale)?;
+    // Sealed with this session's key exchange, not the pairing: a failure
+    // here is the exchange's.
+    let inner = open(&session, label_nonce(b"PV-Msg02"), &[], sealed)?;
     let items = tlv8::read(&inner).ok_or(Error::Protocol("malformed proof"))?;
     let tv_id = tlv8::find(&items, tlv8::IDENTIFIER).ok_or(Error::Protocol("no TV id"))?;
     let tv_signature =
@@ -470,7 +481,15 @@ pub fn wake(addr: SocketAddr, credential: &Credential, name: &str) -> Result<(),
             ("_clFl", 128.into()),
             (
                 "_i",
-                credential.id.to_lowercase().replace('-', "")[..12].into(),
+                Value::Str(
+                    credential
+                        .id
+                        .to_lowercase()
+                        .chars()
+                        .filter(char::is_ascii_hexdigit)
+                        .take(12)
+                        .collect(),
+                ),
             ),
             ("_idsID", Value::Bytes(credential.id.as_bytes().to_vec())),
             ("_pubID", credential.id.as_str().into()),

@@ -2637,9 +2637,10 @@ impl KoanEngine {
     }
 
     /// Ask the account's Apple TV `id` to pair so that the account's devices
-    /// can wake it and start koan there. Returns once the TV is showing a
-    /// PIN; `finish_tv_pairing` takes it, within half a minute.
-    pub async fn begin_tv_pairing(self: Arc<Self>, id: String) -> Result<(), KoanError> {
+    /// can wake it and start koan there. Returns the name of the TV asked
+    /// once it is showing a PIN; `finish_tv_pairing` takes it, within half a
+    /// minute.
+    pub async fn begin_tv_pairing(self: Arc<Self>, id: String) -> Result<String, KoanError> {
         offload::offload(move || {
             koan_core::remote::devices::begin_tv_pairing(&id)
                 .map_err(|message| KoanError::Remote { message })
@@ -2647,8 +2648,8 @@ impl KoanEngine {
         .await
     }
 
-    /// Finish the pairing under way with the PIN the TV shows. The server
-    /// keeps the pairing for every device of the account.
+    /// Finish the pairing under way with the PIN the TV shows. Returns once
+    /// the server has kept it for every device of the account.
     pub async fn finish_tv_pairing(self: Arc<Self>, pin: String) -> Result<(), KoanError> {
         offload::offload(move || {
             koan_core::remote::devices::finish_tv_pairing(&pin)
