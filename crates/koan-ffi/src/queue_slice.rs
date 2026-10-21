@@ -20,7 +20,7 @@ use koan_core::helpers::{QueueCredits, RowCredits};
 use koan_core::player::state::{QueueItemId, QueueReading, SharedPlayerState};
 
 use crate::state::StateSlice;
-use crate::types::{CreditPart, Credits, EntryStatus, QueueItem};
+use crate::types::{Credits, EntryStatus, QueueItem};
 
 /// Past this many differing rows, the whole queue again: a client applies
 /// that as cheaply as a patch the size of the queue, and a base that has
@@ -259,6 +259,7 @@ fn moved(sent: &QueueItem, reading: &QueueReading, library: &Library) -> Option<
 mod tests {
     use super::*;
     use crate::state::EngineState;
+    use crate::types::CreditPart;
     use koan_core::player::state::{ItemState, PlaylistItem};
     use std::time::{Duration, Instant};
 
