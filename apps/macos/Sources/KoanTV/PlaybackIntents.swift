@@ -59,7 +59,7 @@ struct PlayRecordIntent: AudioPlaybackIntent {
             throw offline ? IntentError.notDownloaded(album.title) : IntentError.nothingToPlay(album.title)
         }
         try await IntentError.saying { _ = try await app.engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: false) }
-        return .result(dialog: "Playing \(album.title) by \(album.artistName).")
+        return .result(dialog: "Playing \(album.title) by \(album.artistCredit.text).")
     }
 }
 
@@ -121,7 +121,7 @@ struct RecordQuery: EntityStringQuery {
         var found: [RecordEntity] = []
         for id in identifiers {
             if let album = try await engine.album(albumId: Int64(id)) {
-                found.append(RecordEntity(id: Int(album.id), title: album.title, artist: album.artistName))
+                found.append(RecordEntity(id: Int(album.id), title: album.title, artist: album.artistCredit.text))
             }
         }
         return found

@@ -3,27 +3,12 @@ package cc.blit.koan.ui
 import cc.blit.koan.ui.history.byDay
 import cc.blit.koan.ui.history.dayLabel
 import cc.blit.koan.ui.playlists.duration
-import cc.blit.koan.ui.playlists.runs
 import java.time.LocalDate
 import java.time.ZoneOffset
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CollectionsTest {
-    @Test
-    fun runsKeepSeparateVisitsToARecordApart() {
-        val records = listOf("a", "a", "b", "a", "c", "c")
-        assertEquals(
-            listOf(listOf("a", "a"), listOf("b"), listOf("a"), listOf("c", "c")),
-            runs(records) { x, y -> x == y },
-        )
-    }
-
-    @Test
-    fun runsOfNothingIsNothing() {
-        assertEquals(emptyList<List<String>>(), runs(emptyList<String>()) { _, _ -> true })
-    }
-
     @Test
     fun playsGroupByTheirLocalDay() {
         val zone = ZoneOffset.ofHours(2)

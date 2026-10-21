@@ -290,7 +290,7 @@ private struct MenuBarMenu: View {
         let entry = state.mirror.playback.entry
         if let entry {
             Text(entry.title)
-            Text(entry.artist)
+            Text(entry.artistCredit.text)
         } else {
             Text("Nothing playing")
         }

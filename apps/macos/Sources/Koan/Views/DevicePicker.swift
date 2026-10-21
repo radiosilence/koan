@@ -120,7 +120,7 @@ private struct DeviceRow: View {
                 ? "Not running\(seen). It can't be woken from here."
                 : "Asleep\(seen)"
         }
-        let playing = [device.title, device.artist].compactMap { $0 }.joined(separator: " — ")
+        let playing = [device.title, device.artistCredit.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " — ")
         let library = device.sameLibrary ? "" : " · different library"
         switch device.state {
         case .playing: return "Playing \(playing)\(library)"

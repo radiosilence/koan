@@ -7,7 +7,7 @@ import androidx.lifecycle.viewModelScope
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ffi.PlaylistEntry
-import cc.blit.koan.ffi.Track
+import cc.blit.koan.ffi.RunRole
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -96,7 +96,7 @@ val Playlist.fillable get() = !readonly
 sealed interface PlaylistRow {
     val key: String
 
-    data class Heading(val album: String, val artist: String, val albumId: Long?, val entries: List<PlaylistEntry>) : PlaylistRow {
+    data class Heading(val album: String, val albumId: Long?, val entries: List<PlaylistEntry>) : PlaylistRow {
         override val key get() = "album:${entries.first().entryId}"
     }
 
@@ -106,36 +106,29 @@ sealed interface PlaylistRow {
 }
 
 /**
- * The rows for `entries`, grouped or flat. Grouped, each contiguous run of one
- * record gets a heading: playlist order is the person's, so two separate visits
- * to a record are two headings rather than one.
+ * The rows for `entries`, grouped as the engine grouped them or flat: a heading
+ * above each entry that opens a record's run, the run beneath it.
  */
 fun playlistRows(entries: List<PlaylistEntry>, grouped: Boolean): List<PlaylistRow> {
     if (!grouped) return entries.map(PlaylistRow::Entry)
-    return runs(entries) { a, b -> a.track.albumTitle.isNotEmpty() && sameRecord(a.track, b.track) }.flatMap { run ->
-        val first = run.first().track
-        val heading = if (first.albumTitle.isEmpty()) {
-            emptyList()
-        } else {
-            listOf(PlaylistRow.Heading(first.albumTitle, first.albumArtistName, first.albumId, run))
+    val rows = ArrayList<PlaylistRow>(entries.size + entries.size / 8)
+    var index = 0
+    while (index < entries.size) {
+        val first = entries[index]
+        if (first.run != RunRole.OPENS) {
+            rows += PlaylistRow.Entry(first)
+            index++
+            continue
         }
-        heading + run.map(PlaylistRow::Entry)
+        var end = index + 1
+        while (end < entries.size && entries[end].run == RunRole.CONTINUES) end++
+        val run = entries.subList(index, end).toList()
+        rows += PlaylistRow.Heading(first.track.albumTitle, first.track.albumId, run)
+        run.mapTo(rows, PlaylistRow::Entry)
+        index = end
     }
+    return rows
 }
 
-/** Two records can share a title; the id tells them apart where there is one. */
-private fun sameRecord(a: Track, b: Track): Boolean {
-    val ids = a.albumId to b.albumId
-    if (ids.first != null && ids.second != null) return ids.first == ids.second
-    return a.albumTitle == b.albumTitle && a.albumArtistName == b.albumArtistName
-}
-
-/** `items` cut into maximal runs whose neighbours are `same` as the run's first. */
-fun <T> runs(items: List<T>, same: (T, T) -> Boolean): List<List<T>> {
-    val out = mutableListOf<MutableList<T>>()
-    for (item in items) {
-        val run = out.lastOrNull()
-        if (run != null && same(run.first(), item)) run.add(item) else out.add(mutableListOf(item))
-    }
-    return out
-}
+/** A row grouping leaves without a heading above it: on no record, or a single. */
+val PlaylistEntry.standsAlone get() = run == RunRole.ALONE || run == RunRole.SINGLE

@@ -33,6 +33,7 @@ import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.library.text
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
@@ -210,7 +211,7 @@ internal fun detail(device: DeviceInfo, now: Long = System.currentTimeMillis()):
         if (device.wakeable) return "Asleep$seen. Choosing it wakes it; music sent here arrives as a notification to tap."
         return if (device.platform == "macos") "Not running$seen. It can't be woken from here." else "Asleep$seen"
     }
-    val playing = listOfNotNull(device.title, device.artist).joinToString(" — ")
+    val playing = listOfNotNull(device.title, device.artistCredit.text.ifEmpty { null }).joinToString(" — ")
     val library = if (device.sameLibrary) "" else " · different library"
     val state = when (device.state) {
         PlayState.PLAYING -> "Playing $playing"

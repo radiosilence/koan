@@ -234,6 +234,7 @@ mod tests {
             id: 1,
             album_id: None,
             artist_id: None,
+            album_artist_id: None,
             artist_name: String::new(),
             album_artist_name: String::new(),
             album_title: String::new(),

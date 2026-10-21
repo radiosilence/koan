@@ -1,0 +1,1 @@
+- **Dependencies updated to their latest releases.** Includes lru 0.18 → 0.19 and sift-music 0.6 → 0.8.

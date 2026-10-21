@@ -214,7 +214,7 @@ final class TrackTableRow: TableCell, TableRow {
             hovered = nil
             number.stringValue = item.lead
             title.stringValue = Format.title(track.title)
-            artist.stringValue = CreditLabel.text(track.artistCredit)
+            artist.stringValue = credit.text
             album.stringValue = track.albumTitle
             album.toolTip = track.albumId == nil ? nil : "Go to \(track.albumTitle)"
             quality.stringValue = context.columns.contains(.quality) ? Format.quality(track) ?? "" : ""
@@ -227,6 +227,7 @@ final class TrackTableRow: TableCell, TableRow {
         sleeve.isHidden = !context.showsAlbum
         dot.isHidden = !context.showsAlbum
         album.isHidden = !context.showsAlbum
+        artist.isHidden = credit.isEmpty
         restyle()
     }
 
@@ -289,11 +290,11 @@ final class TrackTableRow: TableCell, TableRow {
         let linked = linkedArtist
         let albumLinked = hovered == .album && track.albumId != nil
         artist.attributedStringValue = CreditLabel.attributed(
-            track.artistCredit, font: Self.captionFont,
+            credit, font: Self.captionFont,
             colour: selected ? onAccent : .koanSecondaryLabel,
             linked: linked, linkColour: selected ? onAccent : .koanLabel
         )
-        artist.toolTip = linked.map { "Go to \(track.artistCredit[$0].text)" }
+        artist.toolTip = linked.map { "Go to \(credit[$0].text)" }
         album.styleLink(font: Self.captionFont, colour: selected ? onAccent : (albumLinked ? .koanLabel : .koanSecondaryLabel), underlined: albumLinked)
         dot.textColor = selected ? onAccent : .koanTertiaryLabel
         quality.textColor = selected ? onAccent : .koanTertiaryLabel
@@ -471,7 +472,7 @@ final class TrackTableRow: TableCell, TableRow {
 
         let titleHeight = lineHeight(Self.titleFont)
         let captionHeight = lineHeight(Self.captionFont)
-        let top = (height - titleHeight - 1 - captionHeight) / 2
+        let top = (height - titleHeight - (artist.isHidden ? 0 : 1 + captionHeight)) / 2
         let width = max(right - x, 0)
         title.frame = CGRect(x: x, y: top, width: width, height: titleHeight)
         let captionY = top + titleHeight + 1
@@ -491,9 +492,9 @@ final class TrackTableRow: TableCell, TableRow {
         if let context, context.leadOnSleeve, context.showsAlbum {
             if point.x < RowMetrics.sleeve + 4 { return .lead }
         } else if point.x < (context?.leadWidth ?? 22) + 4 { return .lead }
-        if artist.frame.contains(point), let track = item?.track {
+        if !artist.isHidden, artist.frame.contains(point) {
             let i = CreditLabel.artist(
-                at: point.x - artist.frame.minX, in: track.artistCredit,
+                at: point.x - artist.frame.minX, in: credit,
                 font: Self.captionFont, width: artist.frame.width
             )
             return i.map(Part.artist) ?? .elsewhere
@@ -513,10 +514,17 @@ final class TrackTableRow: TableCell, TableRow {
         return linkedArtist != nil || (now == .album && track.albumId != nil)
     }
 
+    /// The credit the artist label draws: on a record's page, where the header
+    /// names the record's artist, only a credit that differs from it.
+    private var credit: [CreditPart] {
+        guard let track = item?.track, let context else { return [] }
+        return context.showsAlbum || track.creditDiffers ? track.artistCredit : []
+    }
+
     /// The hovered artist, while the credit still has that part: a row shown
     /// again for the same track keeps its hover and may get a shorter credit.
     private var linkedArtist: Int? {
-        guard case .artist(let i) = hovered, let credit = item?.track?.artistCredit, credit.indices.contains(i) else { return nil }
+        guard case .artist(let i) = hovered, credit.indices.contains(i) else { return nil }
         return i
     }
 
@@ -527,7 +535,7 @@ final class TrackTableRow: TableCell, TableRow {
         case .lead: return .button { [weak self] in _ = self?.play() }
         case .heart: return .button { context.toggleFavourite(track.id) }
         case .artist(let i):
-            guard track.artistCredit.indices.contains(i), let id = track.artistCredit[i].artistId else { return .plain }
+            guard credit.indices.contains(i), let id = credit[i].artistId else { return .plain }
             return .link { context.openArtist(id) }
         case .album:
             guard let id = track.albumId else { return .plain }

@@ -290,7 +290,7 @@ private fun PlaylistList(
                     EntryRow(
                         entry = row.entry,
                         playlist = playlist,
-                        artwork = !grouped || editing,
+                        artwork = !grouped || editing || row.entry.standsAlone,
                         playing = playingEntry == id,
                         editing = editing,
                         selection = selection,
@@ -395,7 +395,7 @@ private fun RecordHeading(heading: PlaylistRow.Heading, selection: Selection<Pla
     CollectionRow(
         heading.album,
         null,
-        names = listOf(heading.entries.first().let { artistCredit(it.albumArtistCredit, heading.artist, it.albumArtistId) }),
+        names = listOf(artistCredit(heading.entries.first().track.albumArtistCredit)),
         linked = !selection.active,
         modifier = Modifier.padding(top = KoanSpace.m),
         titleTone = KoanTone.Strong,
@@ -439,7 +439,7 @@ private fun EntryRow(
             null,
             // Under a heading the record is named already, and so is its artist.
             names = listOfNotNull(
-                artistCredit(track.artistCredit, track.artistName, track.artistId).takeIf { artwork || track.artistName != track.albumArtistName },
+                artistCredit(track.artistCredit).takeIf { artwork || track.creditDiffers },
                 albumName(track.albumTitle, track.albumId, track.id).takeIf { artwork },
             ),
             linked = !selection.active && !editing,

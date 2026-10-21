@@ -7,14 +7,16 @@ import SwiftUI
 struct DspProfilePage: View {
     let dsp: DspModel
     @State var name: String
-    /// The output whose tuning a copy saved here takes this EQ's place in;
-    /// the one in use if none.
+    /// The output Used for acts on, and whose tuning a copy saved here takes
+    /// this EQ's place in; the one in use if none.
     var device: String?
     @Environment(\.dismiss) private var dismiss
 
     @State private var detail: DspProfileDetail?
     @State private var response: DspResponse?
     @State private var targets: DspTargets?
+    /// What `device` plays, for the one thing Used for offers on it.
+    @State private var deviceOverview: DspOverview?
     /// Every target, for what a ready-made EQ was made for.
     @State private var madeForChoices = TargetGroups()
     /// For a tuning: the target it looks made against, while it does not
@@ -59,6 +61,14 @@ struct DspProfilePage: View {
     }
 
     private static let nameRow = "name"
+
+    /// The device whose filters and correction Used for acts on: the one the
+    /// EQ page showed, else the output in use.
+    private var target: String? { device ?? dsp.overview?.device }
+
+    /// What `target` plays. The output in use's is the overview the model
+    /// holds, which follows a route change.
+    private var targetOverview: DspOverview? { device == nil ? dsp.overview : deviceOverview }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -119,17 +129,15 @@ struct DspProfilePage: View {
                                 .koanCase()
                         }
                         ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
-                        if let device = dsp.overview?.device {
+                        if let device = target, let shown = targetOverview {
+                            let action = DeviceAction(
+                                name: d.name, role: d.role, active: shown.active,
+                                inChain: shown.chain.contains { $0.name == d.name }
+                            )
                             // The app's words follow the theme; the device's name
                             // keeps its case.
-                            if d.devices.contains(device) {
-                                Button { dsp.use(nil) } label: {
-                                    Text("\(KoanTheme.label("Stop using for")) \(dsp.label(device))").textCase(nil)
-                                }
-                            } else {
-                                Button { dsp.use(d.name) } label: {
-                                    Text("\(KoanTheme.label("Use for")) \(dsp.label(device))").textCase(nil)
-                                }
+                            Button { act(action, d.name, shown.chain, on: device) } label: {
+                                Text("\(KoanTheme.label(action.rawValue)) \(dsp.label(device))").textCase(nil)
                             }
                         }
                     } header: {
@@ -401,9 +409,15 @@ struct DspProfilePage: View {
             before = snapshot
             editsAtBefore = edits
         }
-        detail = await dsp.detail(name)
-        response = await dsp.response(name)
-        targets = await dsp.targets(name)
+        async let d = dsp.detail(name)
+        async let r = dsp.response(name)
+        async let t = dsp.targets(name)
+        detail = await d
+        response = await r
+        targets = await t
+        if let device {
+            deviceOverview = await dsp.overview(for: device)
+        }
         madeForChoices = await TargetGroups(
             over: dsp.targetsFor(inEar: false),
             inEar: dsp.targetsFor(inEar: true),
@@ -425,6 +439,17 @@ struct DspProfilePage: View {
     private func onCorrection(_ d: DspProfileDetail, _ r: DspResponse) -> [EqGraph.Part] {
         guard let db = previews[d.tunedFor ?? ""], db.count == r.total.count, db != r.total else { return [] }
         return [EqGraph.Part(name: "On the correction in use", db: db, stroke: .eq(1))]
+    }
+
+    private func act(_ action: DeviceAction, _ name: String, _ chain: [DspTuningEntry], on device: String) {
+        let added = chain.contains { $0.name == name } ? chain : chain + [DspTuningEntry(name: name, on: true)]
+        switch action {
+        case .stopCorrecting: dsp.assign(nil, to: device)
+        case .moveToFilters: dsp.uncorrect(device, tunings: added)
+        case .takeOutOfFilters: dsp.setTunings(chain.filter { $0.name != name }, for: device)
+        case .addToFilters: dsp.setTunings(added, for: device)
+        case .correct: dsp.assign(name, to: device)
+        }
     }
 
     private func rename() {
@@ -1069,5 +1094,26 @@ struct BandRow: View {
         return ["low_pass", "high_pass", "notch", "band_pass", "all_pass"].contains(band.kind)
             ? "\(freq)  \(q)"
             : "\(freq)  \(gain)  \(q)"
+    }
+}
+
+/// The one thing an EQ's page offers on a device, by what the EQ is and what
+/// the device plays.
+enum DeviceAction: String {
+    case stopCorrecting = "Stop using for"
+    /// Correcting with it, though it is now said to be a tuning: play it as one.
+    case moveToFilters = "Play it in the filters instead on"
+    case takeOutOfFilters = "Take out of the filters on"
+    case addToFilters = "Add to the filters on"
+    case correct = "Use for"
+
+    init(name: String, role: DspRole, active: String?, inChain: Bool) {
+        self = switch true {
+        case name == active && role == .tuning: .moveToFilters
+        case name == active: .stopCorrecting
+        case inChain: .takeOutOfFilters
+        case role == .tuning: .addToFilters
+        default: .correct
+        }
     }
 }
