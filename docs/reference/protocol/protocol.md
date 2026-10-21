@@ -28,7 +28,7 @@ These hold today, and a change to the protocol keeps them.
 
 **Unknown messages are ignored.** A receiver that cannot parse a frame, or does not know its `type`, drops it and keeps the connection open: an unreadable frame never closes a link or a nearby connection. The reasons a connection does close are on [Link](link-protocol.md#connecting) and [Nearby](nearby-protocol.md#transport). A command that is parsed and then refused is answered with a `refused` ack when it carried an id.
 
-**Unknown fields are ignored.** No message type rejects fields it does not know.
+**Unknown fields are ignored.** No message type rejects fields it does not know. The [push relay](push-relay.md)'s requests are the exception: the relay refuses a field it does not know, since it accepts nothing it does not write itself.
 
 **Optional fields may be missing.** A missing optional field takes its default: `false`, `0`, empty, or absent. A missing required field, or an unknown value of a nested enum (`play` `mode`, `repeat` mode, a `state`'s `repeat` and `sleep`, `sleepTimer` kind, output kind, ack `result`), fails the whole message, which is then ignored. Required fields are those the pages list without saying they may be absent.
 

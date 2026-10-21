@@ -18,6 +18,8 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 const TOKEN: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+/// The slot the app gave the server a test pushes from.
+const SLOT: &str = "00112233445566778899aabbccddeeff";
 
 #[derive(Clone, Debug)]
 struct Received {
@@ -130,10 +132,8 @@ impl Harness {
         let addr: SocketAddr = listener.local_addr().unwrap();
         let metrics = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let metrics_addr = metrics.local_addr().unwrap();
-        let max = cfg.limits.max_requests;
         tokio::spawn(koan_push_relay::serve(
             relay,
-            max,
             listener,
             Some(metrics),
             std::future::pending(),
@@ -157,7 +157,14 @@ impl Harness {
     }
 
     async fn register(&self, token: &str) -> String {
-        let r = self.post("/v1/register", json!({ "token": token })).await;
+        self.register_for(token, SLOT).await
+    }
+
+    /// A handle for the server the app gave `slot`.
+    async fn register_for(&self, token: &str, slot: &str) -> String {
+        let r = self
+            .post("/v1/register", json!({ "token": token, "slot": slot }))
+            .await;
         assert_eq!(r.status(), 200);
         let body: Value = r.json().await.unwrap();
         body["handle"].as_str().unwrap().to_string()
@@ -258,15 +265,14 @@ async fn a_handle_the_relay_did_not_seal_is_gone() {
 }
 
 #[tokio::test]
-async fn each_handle_has_its_own_allowance_under_the_devices_ceiling() {
+async fn each_server_has_its_own_allowance_under_the_devices_ceiling() {
     let h = Harness::start(|cfg| {
         cfg.limits.handle_alerts_per_hour = 2;
         cfg.limits.device_alerts_per_hour = 3;
     })
     .await;
-    let hostile = h.register(TOKEN).await;
-    let friendly = h.register(TOKEN).await;
-    assert_ne!(hostile, friendly);
+    let hostile = h.register_for(TOKEN, &"11".repeat(16)).await;
+    let friendly = h.register_for(TOKEN, &"22".repeat(16)).await;
 
     for _ in 0..2 {
         assert_eq!(h.push(&hostile, "summon", None).await.status(), 204);
@@ -292,6 +298,87 @@ async fn each_handle_has_its_own_allowance_under_the_devices_ceiling() {
     assert_eq!(h.push(&other, "summon", None).await.status(), 204);
 }
 
+#[tokio::test]
+async fn a_renewed_handle_shares_its_servers_allowance() {
+    let h = Harness::start(|cfg| cfg.limits.handle_alerts_per_hour = 1).await;
+    let first = h.register(TOKEN).await;
+    let renewed = h.register(TOKEN).await;
+    assert_ne!(first, renewed);
+    assert_eq!(h.push(&first, "notify", None).await.status(), 204);
+    assert_eq!(h.push(&renewed, "notify", None).await.status(), 429);
+}
+
+#[tokio::test]
+async fn a_sender_that_hangs_up_still_pays() {
+    let h = Harness::start(|cfg| cfg.limits.handle_alerts_per_hour = 1).await;
+    let handle = h.register(TOKEN).await;
+    *h.gateway.delay.lock() = std::time::Duration::from_millis(500);
+    let impatient = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(100))
+        .build()
+        .unwrap();
+    let hung_up = impatient
+        .post(format!("{}/v1/push", h.url))
+        .json(&json!({ "handle": handle, "kind": "notify" }))
+        .send()
+        .await;
+    assert!(hung_up.is_err());
+    // The push went on without its sender, and was paid for.
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    assert_eq!(h.gateway.received().len(), 2);
+    *h.gateway.delay.lock() = std::time::Duration::ZERO;
+    assert_eq!(h.push(&handle, "notify", None).await.status(), 429);
+}
+
+#[tokio::test]
+async fn only_json_is_taken() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    for path in ["/v1/register", "/v1/revoke", "/v1/push"] {
+        // What a web page can send a visitor's browser without a preflight.
+        let r = h
+            .http
+            .post(format!("{}{path}", h.url))
+            .header("content-type", "text/plain")
+            .body(
+                json!({ "token": TOKEN, "slot": SLOT, "handle": handle, "kind": "wake" })
+                    .to_string(),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 415, "{path}");
+    }
+    assert_eq!(h.gateway.received().len(), 1, "only registration's proof");
+}
+
+#[tokio::test]
+async fn a_registration_needs_a_slot() {
+    let h = Harness::start(|_| {}).await;
+    for body in [
+        json!({ "token": TOKEN }),
+        json!({ "token": TOKEN, "slot": "abc" }),
+        json!({ "token": TOKEN, "slot": "zz".repeat(16) }),
+    ] {
+        assert_eq!(h.post("/v1/register", body).await.status(), 400);
+    }
+}
+
+#[tokio::test]
+async fn a_push_says_which_server_it_came_through() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    assert_eq!(
+        h.push(&handle, "notify", Some("YmxvYg")).await.status(),
+        204
+    );
+    let got = &h.gateway.received()[1];
+    assert_eq!(got.body["koan-from"], SLOT);
+    assert_eq!(
+        got.headers["apns-collapse-id"].to_str().unwrap(),
+        format!("koan-play-{SLOT}")
+    );
+}
 #[tokio::test]
 async fn a_push_apple_could_not_take_spends_no_allowance() {
     let h = Harness::start(|cfg| cfg.limits.handle_alerts_per_hour = 1).await;
@@ -327,7 +414,9 @@ async fn the_request_limit_is_one_limit_across_routes() {
     while h.gateway.arrived.load(std::sync::atomic::Ordering::SeqCst) == before {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    let r = h
+        .post("/v1/register", json!({ "token": TOKEN, "slot": SLOT }))
+        .await;
     assert_eq!(r.status(), 503);
     assert!(r.headers().contains_key("retry-after"));
     assert_eq!(slow.await.unwrap(), 204);
@@ -353,7 +442,9 @@ async fn a_revocation_retires_every_earlier_handle() {
 async fn only_a_token_apple_accepts_gets_a_handle() {
     let h = Harness::start(|_| {}).await;
     h.gateway.answer(400, "BadDeviceToken");
-    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    let r = h
+        .post("/v1/register", json!({ "token": TOKEN, "slot": SLOT }))
+        .await;
     assert_eq!(r.status(), 400);
 }
 
@@ -372,7 +463,9 @@ async fn proving_a_token_counts_against_its_wakes() {
     let h = Harness::start(|cfg| cfg.limits.device_wakes_per_hour = 2).await;
     h.register(TOKEN).await;
     h.register(TOKEN).await;
-    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    let r = h
+        .post("/v1/register", json!({ "token": TOKEN, "slot": SLOT }))
+        .await;
     assert_eq!(r.status(), 429);
     assert_eq!(h.gateway.received().len(), 2);
 }
@@ -391,7 +484,6 @@ async fn a_signing_key_apple_rejects_asks_senders_to_wait_minutes() {
         assert_eq!(r.headers()["retry-after"], "300", "{reason}");
     }
 }
-
 #[tokio::test]
 async fn an_absurd_lifetime_is_refused_not_wrapped() {
     for days in [0, 366, u64::MAX / 1000] {
@@ -434,7 +526,6 @@ async fn apples_answers_reach_the_sender_as_the_relays() {
     let h = Harness::start(|_| {}).await;
     let cases = [
         (410, "Unregistered", 410),
-        (400, "BadDeviceToken", 410),
         (429, "TooManyRequests", 429),
         (500, "InternalServerError", 503),
     ];
@@ -453,6 +544,21 @@ async fn apples_answers_reach_the_sender_as_the_relays() {
 }
 
 #[tokio::test]
+async fn a_proven_token_apple_now_refuses_stops_the_gateway_not_the_device() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    // What Apple says to every token when the relay's topic or gateway is
+    // wrong: the relay is at fault, and stops.
+    h.gateway.answer(400, "DeviceTokenNotForTopic");
+    let r = h.push(&handle, "wake", None).await;
+    assert_eq!(r.status(), 503);
+    assert_eq!(r.headers()["retry-after"], "300");
+    let reached = h.gateway.received().len();
+    h.gateway.accept();
+    assert_eq!(h.push(&handle, "wake", None).await.status(), 503);
+    assert_eq!(h.gateway.received().len(), reached, "held, not sent");
+}
+#[tokio::test]
 async fn a_device_apple_calls_gone_is_never_sent_to_again() {
     let h = Harness::start(|_| {}).await;
     let handle = h.register(TOKEN).await;
@@ -460,17 +566,44 @@ async fn a_device_apple_calls_gone_is_never_sent_to_again() {
     assert_eq!(h.push(&handle, "wake", None).await.status(), 410);
     let reached = h.gateway.received().len();
     h.gateway.accept();
-    // Retiring is recorded off the request; give it a moment.
-    for _ in 0..100 {
-        if h.push(&handle, "wake", None).await.status() == 410 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
     assert_eq!(h.push(&handle, "summon", None).await.status(), 410);
-    assert!(h.gateway.received().len() <= reached + 1);
+    assert_eq!(h.gateway.received().len(), reached);
 }
 
+#[tokio::test]
+async fn a_refused_key_on_one_gateway_leaves_the_other_sending() {
+    let h = Harness::start(|cfg| {
+        cfg.apns.sandbox = Some(ApnsKey {
+            key_id: "SANDBOX123".into(),
+            key: Some(pem()),
+            key_path: None,
+        });
+        cfg.apns.sandbox_url = cfg.apns.production_url.clone();
+    })
+    .await;
+    let production = h.register(TOKEN).await;
+    let r = h
+        .post(
+            "/v1/register",
+            json!({ "token": "ff".repeat(32), "sandbox": true, "slot": SLOT }),
+        )
+        .await;
+    let sandbox = r.json::<Value>().await.unwrap()["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    h.gateway.answer(403, "InvalidProviderToken");
+    assert_eq!(h.push(&sandbox, "wake", None).await.status(), 503);
+    h.gateway.accept();
+    assert_eq!(h.push(&production, "wake", None).await.status(), 204);
+    let reached = h.gateway.received().len();
+    assert_eq!(h.push(&sandbox, "wake", None).await.status(), 503);
+    assert_eq!(
+        h.gateway.received().len(),
+        reached,
+        "the sandbox stays held"
+    );
+}
 #[tokio::test]
 async fn a_relay_apple_refuses_stops_sending() {
     let h = Harness::start(|_| {}).await;
@@ -490,29 +623,95 @@ async fn a_relay_apple_refuses_stops_sending() {
     );
     // Registration stops too: a proof would carry the same refused key.
     let r = h
-        .post("/v1/register", json!({ "token": "ff".repeat(32) }))
+        .post(
+            "/v1/register",
+            json!({ "token": "ff".repeat(32), "slot": SLOT }),
+        )
         .await;
     assert_eq!(r.status(), 503);
     assert_eq!(h.gateway.received().len(), reached);
 }
 
 #[tokio::test]
-async fn made_up_tokens_stop_proofs_once_apple_has_refused_enough() {
-    let h = Harness::start(|cfg| cfg.limits.bad_tokens_per_hour = 2).await;
+async fn an_address_sending_made_up_tokens_stops_proving_them() {
+    let h = Harness::start(|cfg| {
+        cfg.limits.ip_bad_tokens_per_hour = 2;
+        cfg.client_ip_header = Some("x-forwarded-for".into());
+    })
+    .await;
+    let register = |from: &'static str, token: String| {
+        h.http
+            .post(format!("{}/v1/register", h.url))
+            .header("x-forwarded-for", from)
+            .json(&json!({ "token": token, "slot": SLOT }))
+            .send()
+    };
     h.gateway.answer(400, "BadDeviceToken");
     for i in 0..2 {
-        let token = format!("{:064x}", i + 1);
-        let r = h.post("/v1/register", json!({ "token": token })).await;
+        let r = register("198.51.100.1", format!("{:064x}", i + 1))
+            .await
+            .unwrap();
         assert_eq!(r.status(), 400);
     }
     let reached = h.gateway.received().len();
-    let r = h
-        .post("/v1/register", json!({ "token": "ee".repeat(32) }))
-        .await;
-    assert_eq!(r.status(), 503);
+    let r = register("198.51.100.1", "ee".repeat(32)).await.unwrap();
+    assert_eq!(r.status(), 429);
     assert_eq!(h.gateway.received().len(), reached, "no proof sent");
+    // Another address is not held by it.
+    h.gateway.accept();
+    assert_eq!(
+        register("203.0.113.1", TOKEN.into())
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
 }
 
+#[tokio::test]
+async fn made_up_tokens_from_everywhere_hold_registration_but_never_revocation() {
+    let h = Harness::start(|cfg| {
+        cfg.limits.bad_tokens_per_hour = 2;
+        cfg.client_ip_header = Some("x-forwarded-for".into());
+    })
+    .await;
+    let post = |path: &'static str, from: String, body: Value| {
+        h.http
+            .post(format!("{}{path}", h.url))
+            .header("x-forwarded-for", from)
+            .json(&body)
+            .send()
+    };
+    h.gateway.answer(400, "BadDeviceToken");
+    for i in 0..2 {
+        let token = format!("{:064x}", i + 1);
+        let r = post(
+            "/v1/register",
+            format!("198.51.100.{i}"),
+            json!({ "token": token, "slot": SLOT }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.status(), 400);
+    }
+    h.gateway.accept();
+    let r = post(
+        "/v1/register",
+        "203.0.113.1".into(),
+        json!({ "token": TOKEN, "slot": SLOT }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 503);
+    let r = post(
+        "/v1/revoke",
+        "203.0.113.1".into(),
+        json!({ "token": TOKEN }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 204);
+}
 #[tokio::test]
 async fn ipv6_registrations_are_counted_by_slash_48() {
     let h = Harness::start(|cfg| {
@@ -524,7 +723,7 @@ async fn ipv6_registrations_are_counted_by_slash_48() {
         h.http
             .post(format!("{}/v1/register", h.url))
             .header("x-forwarded-for", forwarded)
-            .json(&json!({ "token": TOKEN }))
+            .json(&json!({ "token": TOKEN, "slot": SLOT }))
             .send()
     };
     assert_eq!(register("2001:db8:0:1::1").await.unwrap().status(), 200);
@@ -536,7 +735,9 @@ async fn ipv6_registrations_are_counted_by_slash_48() {
 async fn spending_a_devices_wakes_does_not_stop_it_revoking() {
     let h = Harness::start(|cfg| cfg.limits.device_wakes_per_hour = 1).await;
     h.register(TOKEN).await;
-    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    let r = h
+        .post("/v1/register", json!({ "token": TOKEN, "slot": SLOT }))
+        .await;
     assert_eq!(r.status(), 429);
     let r = h.post("/v1/revoke", json!({ "token": TOKEN })).await;
     assert_eq!(r.status(), 204);
@@ -551,15 +752,22 @@ async fn relayed_notifications_do_not_break_through_a_focus() {
     }
     for got in &h.gateway.received()[1..] {
         assert_eq!(got.body["aps"]["interruption-level"], "active");
-        assert!(got.headers.contains_key("apns-collapse-id"));
+        assert!(
+            got.headers["apns-collapse-id"]
+                .to_str()
+                .unwrap()
+                .ends_with(SLOT)
+        );
     }
 }
-
 #[tokio::test]
 async fn a_gateway_without_a_key_is_refused_at_registration() {
     let h = Harness::start(|_| {}).await;
     let r = h
-        .post("/v1/register", json!({ "token": TOKEN, "sandbox": true }))
+        .post(
+            "/v1/register",
+            json!({ "token": TOKEN, "sandbox": true, "slot": SLOT }),
+        )
         .await;
     assert_eq!(r.status(), 400);
 }
@@ -568,7 +776,9 @@ async fn a_gateway_without_a_key_is_refused_at_registration() {
 async fn malformed_tokens_and_oversized_bodies_are_refused() {
     let h = Harness::start(|_| {}).await;
     for token in ["", "abc", "zz", &"ab".repeat(101)] {
-        let r = h.post("/v1/register", json!({ "token": token })).await;
+        let r = h
+            .post("/v1/register", json!({ "token": token, "slot": SLOT }))
+            .await;
         assert_eq!(r.status(), 400, "{token}");
     }
     let r = h
@@ -585,7 +795,9 @@ async fn registrations_are_limited_per_address() {
     let h = Harness::start(|cfg| cfg.limits.ip_registrations_per_minute = 2).await;
     h.register(TOKEN).await;
     h.register(TOKEN).await;
-    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    let r = h
+        .post("/v1/register", json!({ "token": TOKEN, "slot": SLOT }))
+        .await;
     assert_eq!(r.status(), 429);
 }
 
@@ -600,7 +812,7 @@ async fn behind_a_proxy_the_last_forwarded_address_is_the_caller() {
         h.http
             .post(format!("{}/v1/register", h.url))
             .header("x-forwarded-for", forwarded)
-            .json(&json!({ "token": TOKEN }))
+            .json(&json!({ "token": TOKEN, "slot": SLOT }))
             .send()
     };
     assert_eq!(
@@ -630,7 +842,7 @@ async fn behind_two_proxies_the_caller_is_two_back() {
         h.http
             .post(format!("{}/v1/register", h.url))
             .header("x-forwarded-for", forwarded)
-            .json(&json!({ "token": TOKEN }))
+            .json(&json!({ "token": TOKEN, "slot": SLOT }))
             .send()
     };
     // Callers behind one edge proxy are told apart by what it appended.
@@ -666,7 +878,7 @@ async fn a_proxys_own_header_line_wins_over_the_callers() {
             .post(format!("{}/v1/register", h.url))
             .header("x-forwarded-for", forged)
             .header("x-forwarded-for", "203.0.113.9")
-            .json(&json!({ "token": TOKEN }))
+            .json(&json!({ "token": TOKEN, "slot": SLOT }))
             .send()
     };
     assert_eq!(register("1.1.1.1").await.unwrap().status(), 200);

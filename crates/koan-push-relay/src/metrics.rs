@@ -12,6 +12,7 @@ pub enum Route {
 }
 
 const ROUTES: [&str; 3] = ["register", "revoke", "push"];
+const KINDS: usize = crate::apns::Kind::ALL.len();
 
 #[derive(Debug, Clone, Copy)]
 pub enum Outcome {
@@ -26,9 +27,11 @@ const OUTCOMES: [&str; 5] = ["ok", "bad_request", "gone", "limited", "unavailabl
 
 #[derive(Default)]
 pub struct Metrics {
-    requests: [[AtomicU64; 5]; 3],
-    /// Pushes by kind (wake, wake-now, summon, notify) that reached Apple.
-    sent: [AtomicU64; 4],
+    requests: [[AtomicU64; OUTCOMES.len()]; ROUTES.len()],
+    /// Pushes Apple accepted, by kind.
+    sent: [AtomicU64; KINDS],
+    /// Proofs Apple accepted, and refused as no device of this app's.
+    proofs: [AtomicU64; 2],
 }
 
 impl Metrics {
@@ -38,6 +41,10 @@ impl Metrics {
 
     pub fn sent(&self, kind: crate::apns::Kind) {
         self.sent[kind as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn proof(&self, accepted: bool) {
+        self.proofs[usize::from(!accepted)].fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn render(&self, gauges: &[(&str, &str, u64)]) -> String {
@@ -55,9 +62,19 @@ impl Metrics {
         }
         out.push_str("# HELP koan_relay_pushes_sent_total Pushes Apple accepted, by kind.\n");
         out.push_str("# TYPE koan_relay_pushes_sent_total counter\n");
-        for (k, kind) in ["wake", "wake-now", "summon", "notify"].iter().enumerate() {
-            let n = self.sent[k].load(Ordering::Relaxed);
-            let _ = writeln!(out, "koan_relay_pushes_sent_total{{kind=\"{kind}\"}} {n}");
+        for kind in crate::apns::Kind::ALL {
+            let n = self.sent[kind as usize].load(Ordering::Relaxed);
+            let _ = writeln!(
+                out,
+                "koan_relay_pushes_sent_total{{kind=\"{}\"}} {n}",
+                kind.name()
+            );
+        }
+        out.push_str("# HELP koan_relay_proofs_total Proofs of a token, by Apple's answer.\n");
+        out.push_str("# TYPE koan_relay_proofs_total counter\n");
+        for (i, answer) in ["accepted", "refused"].iter().enumerate() {
+            let n = self.proofs[i].load(Ordering::Relaxed);
+            let _ = writeln!(out, "koan_relay_proofs_total{{answer=\"{answer}\"}} {n}");
         }
         for (name, help, value) in gauges {
             let _ = writeln!(

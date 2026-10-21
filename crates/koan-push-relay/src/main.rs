@@ -25,14 +25,7 @@ async fn run() -> Result<(), String> {
         None => None,
     };
     log::info!("relaying on {}", cfg.listen);
-    koan_push_relay::serve(
-        relay,
-        cfg.limits.max_requests,
-        listener,
-        metrics,
-        shutdown(),
-    )
-    .await
+    koan_push_relay::serve(relay, listener, metrics, shutdown()).await
 }
 
 /// Ctrl-C, or the SIGTERM a container is stopped with.

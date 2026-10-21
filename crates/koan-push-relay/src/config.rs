@@ -1,6 +1,8 @@
 //! The relay's configuration: a TOML file named by `KOAN_RELAY_CONFIG`, under
-//! `KOAN_RELAY_*` environment variables (`__` between levels), which is how a
-//! deployment hands over the secrets.
+//! `KOAN_RELAY__*` environment variables (`__` after the prefix and between
+//! levels), which is how a deployment hands over the secrets. The double
+//! underscore keeps variables Kubernetes injects for a Service named
+//! `koan-relay` (`KOAN_RELAY_SERVICE_HOST`) out of the configuration.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -27,10 +29,10 @@ pub struct Config {
     /// that writes the header: anyone can send it. Behind Cloudflare,
     /// `cf-connecting-ip`, which it sets to the caller alone.
     pub client_ip_header: Option<String>,
-    /// How many addresses at the end of the header the proxies in front of
-    /// the relay added: the caller is the one before them. 1 for one proxy
-    /// appending to `x-forwarded-for`, or for a header that holds only the
-    /// caller.
+    /// Which address in that header, counting back from the end, is the
+    /// caller: 1 for the last, which is the caller in a header that holds
+    /// only the caller, or one proxy appending what it saw to
+    /// `x-forwarded-for`; 2 behind two proxies that each append.
     pub client_ip_hops: usize,
     /// The revocation table's SQLite file.
     pub store: PathBuf,
@@ -183,10 +185,15 @@ pub struct Limits {
     /// Proof pushes, for registrations and revocations, sent to Apple a
     /// second from everyone. Each may be for a token Apple has never issued.
     pub proofs_per_second: u32,
-    /// Tokens Apple refuses as unknown an hour, from proofs, before the
-    /// relay stops proving any until the count falls back. A run of made-up
-    /// tokens then reaches Apple at this rate at most, at the price of
-    /// registrations waiting while it lasts.
+    /// Tokens Apple refuses as unknown an hour, from proofs, from one
+    /// address (IPv6 by /48), before that address may prove no more until
+    /// the count falls back.
+    pub ip_bad_tokens_per_hour: u32,
+    /// The same count across everyone, past which no registration is proved
+    /// until it falls back: a backstop for made-up tokens from many
+    /// addresses, at the price of registrations waiting while it lasts.
+    /// Revocations are never held by it, so it cannot stop a device
+    /// revoking.
     pub bad_tokens_per_hour: u32,
     /// Callers each limiter keeps a count for. Past this, a caller it has no
     /// count for is refused until the idle ones are swept.
@@ -210,7 +217,8 @@ impl Default for Limits {
             ip_revocations_per_minute: 60,
             global_pushes_per_second: 20_000,
             proofs_per_second: 20,
-            bad_tokens_per_hour: 600,
+            ip_bad_tokens_per_hour: 10,
+            bad_tokens_per_hour: 3600,
             max_tracked: 1_000_000,
             max_revocations: 1_000_000,
             max_requests: 50_000,
@@ -227,7 +235,7 @@ impl Config {
             figment = figment.merge(Toml::file_exact(path));
         }
         figment
-            .merge(Env::prefixed("KOAN_RELAY_").ignore(&["CONFIG"]).split("__"))
+            .merge(Env::prefixed("KOAN_RELAY__").split("__"))
             .extract()
             .map_err(|e| e.to_string())
     }

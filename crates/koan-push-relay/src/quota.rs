@@ -147,6 +147,23 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
         Ok(())
     }
 
+    /// Count a request whether or not it is within the limit: for counting
+    /// what has already happened, such as Apple refusing a token. A caller
+    /// with no room to be tracked is not counted.
+    pub fn charge(&self, key: K, now: u64) {
+        let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
+        let mut shard = shard.lock();
+        let interval = self.rate.interval;
+        if let Some(tat) = shard.map.get_mut(&key) {
+            *tat = (*tat).max(now) + interval;
+            return;
+        }
+        if shard.map.len() < self.per_shard {
+            shard.map.insert(key, now + interval);
+            self.len.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Hand back one request's allowance, for one that was admitted and
     /// then not carried out.
     pub fn refund(&self, key: &K) {
@@ -354,6 +371,13 @@ mod tests {
         assert_eq!(limit.tracked(), 0, "looking tracks nobody");
         assert!(limit.check(1, 0).is_ok());
         assert!(limit.admits(&1, 0).is_err());
+
+        limit.charge(2, 0);
+        limit.charge(2, 0);
+        assert!(
+            limit.admits(&2, 0).is_err(),
+            "a charge counts even past the limit"
+        );
 
         let global = Global::new(Rate::per(2, Duration::from_secs(60)));
         assert!(global.admits(0));

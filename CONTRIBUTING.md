@@ -145,7 +145,7 @@ nothing on its own.
 
 ## Architecture
 
-Five crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for the macOS and iOS apps), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Six crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for the macOS and iOS apps), `koan-cli` (binary -- CLI entry point), and `koan-push-relay` (the service behind `push.koan.rocks`, on its own). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
 If you're touching the audio path: the render callback must never allocate or lock. Read the threading model docs before changing anything in `audio/`.
 

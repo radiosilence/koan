@@ -1,12 +1,19 @@
-//! The relay's only state: for each device that has revoked its handles, the
-//! time it did. A handle minted at or before that time no longer opens.
+//! The relay's only state: for each device that has revoked its handles, or
+//! that Apple says is gone, the time it happened. A handle minted at or
+//! before that time, or within `SLACK_MS` after it, no longer opens.
 //!
 //! Held whole in memory, so a push never touches the disk, and written
 //! through to SQLite before a revocation is acknowledged. An entry is dropped
 //! once every handle it could refuse has expired anyway.
+//!
+//! Beside it, the latest time any handle was minted at. A revocation is
+//! recorded at that time if the clock now reads earlier, so a handle minted
+//! while the clock ran fast cannot outrun a revocation made once it is
+//! corrected.
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::{Mutex, RwLock};
 use rusqlite::Connection;
@@ -28,6 +35,9 @@ pub struct Revocations {
     map: RwLock<HashMap<TokenHash, u64>>,
     db: Mutex<Connection>,
     max: usize,
+    /// The latest mint time, and the latest revocation time, in Unix ms.
+    minted: AtomicU64,
+    newest: AtomicU64,
 }
 
 impl Revocations {
@@ -39,13 +49,31 @@ impl Revocations {
              CREATE TABLE IF NOT EXISTS revocations (
                  token_hash BLOB PRIMARY KEY NOT NULL,
                  revoked_ms INTEGER NOT NULL
+             ) WITHOUT ROWID;
+             CREATE TABLE IF NOT EXISTS clock (
+                 name TEXT PRIMARY KEY NOT NULL,
+                 ms INTEGER NOT NULL
              ) WITHOUT ROWID;",
         )
         .map_err(|e| e.to_string())?;
+        let minted: i64 = db
+            .query_row("SELECT ms FROM clock WHERE name = 'minted'", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0);
+        let newest: i64 = db
+            .query_row(
+                "SELECT coalesce(max(revoked_ms), 0) FROM revocations",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
         let this = Self {
             map: RwLock::new(HashMap::new()),
             db: Mutex::new(db),
             max,
+            minted: AtomicU64::new(minted as u64),
+            newest: AtomicU64::new(newest as u64),
         };
         this.prune(now_ms, lifetime_ms)?;
         let rows = {
@@ -80,9 +108,30 @@ impl Revocations {
         self.map.read().get(device).copied()
     }
 
-    /// Revoke every handle for this device minted up to `now_ms`. Blocks on
-    /// the disk.
+    /// Note that a handle was minted at `minted_ms`.
+    pub fn minted(&self, minted_ms: u64) {
+        self.minted.fetch_max(minted_ms, Ordering::Relaxed);
+    }
+
+    /// Keep the latest mint time on disk, so a restart still knows it. Blocks
+    /// on the disk.
+    pub fn save_minted(&self) -> Result<(), String> {
+        let minted = self.minted.load(Ordering::Relaxed);
+        self.db
+            .lock()
+            .execute(
+                "INSERT INTO clock (name, ms) VALUES ('minted', ?1)
+                 ON CONFLICT (name) DO UPDATE SET ms = max(ms, ?1)",
+                [minted as i64],
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Revoke every handle for this device minted up to `now_ms`, or up to
+    /// the latest mint time if the clock reads earlier. Blocks on the disk.
     pub fn revoke(&self, device: TokenHash, now_ms: u64) -> Result<(), RevokeError> {
+        let now_ms = now_ms.max(self.minted.load(Ordering::Relaxed));
         // One writer at a time keeps the size check and the insert together.
         let db = self.db.lock();
         {
@@ -100,6 +149,7 @@ impl Revocations {
         let mut map = self.map.write();
         let at = map.entry(device).or_insert(now_ms);
         *at = (*at).max(now_ms);
+        self.newest.fetch_max(now_ms, Ordering::Relaxed);
         Ok(())
     }
 
@@ -112,8 +162,13 @@ impl Revocations {
 
     /// Drop revocations older than any handle that could still open. Blocks
     /// on the disk.
+    ///
+    /// Measured from the newest revocation when the clock reads later than
+    /// it: a clock jumped far ahead must not prune rows that live handles
+    /// still need once it is corrected.
     pub fn prune(&self, now_ms: u64, lifetime_ms: u64) -> Result<(), String> {
-        let cutoff = now_ms.saturating_sub(lifetime_ms);
+        let reference = now_ms.min(self.newest.load(Ordering::Relaxed).max(1));
+        let cutoff = reference.saturating_sub(lifetime_ms + SLACK_MS);
         let db = self.db.lock();
         db.execute(
             "DELETE FROM revocations WHERE revoked_ms < ?1",
@@ -126,10 +181,6 @@ impl Revocations {
 
     pub fn len(&self) -> usize {
         self.map.read().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.map.read().is_empty()
     }
 }
 
@@ -177,12 +228,37 @@ mod tests {
         let r = Revocations::open(&path, 10, 0, 60 * DAY).unwrap();
         r.revoke([1; 16], DAY).unwrap();
         r.revoke([2; 16], 30 * DAY).unwrap();
-        r.prune(70 * DAY, 60 * DAY).unwrap();
-        assert_eq!(r.len(), 1);
+        r.revoke([3; 16], 80 * DAY).unwrap();
+        r.prune(90 * DAY, 60 * DAY).unwrap();
+        assert_eq!(r.len(), 2);
         drop(r);
-        let r = Revocations::open(&path, 10, 70 * DAY, 60 * DAY).unwrap();
-        assert_eq!(r.len(), 1);
+        let r = Revocations::open(&path, 10, 90 * DAY, 60 * DAY).unwrap();
+        assert_eq!(r.len(), 2);
         assert!(r.revoked(&[2; 16], 30 * DAY));
+    }
+
+    #[test]
+    fn a_clock_jumped_ahead_prunes_nothing_still_needed() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = Revocations::open(&dir.path().join("r.db"), 10, 0, 60 * DAY).unwrap();
+        r.revoke([1; 16], 10 * DAY).unwrap();
+        r.prune(1000 * DAY, 60 * DAY).unwrap();
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn a_revocation_reaches_handles_minted_while_the_clock_ran_fast() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.db");
+        {
+            let r = Revocations::open(&path, 10, 0, 60 * DAY).unwrap();
+            r.minted(5 * DAY);
+            r.save_minted().unwrap();
+        }
+        // The clock is corrected, and the relay restarted.
+        let r = Revocations::open(&path, 10, DAY, 60 * DAY).unwrap();
+        r.revoke([1; 16], DAY).unwrap();
+        assert!(r.revoked(&[1; 16], 5 * DAY));
     }
 
     #[test]
