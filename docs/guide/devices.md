@@ -11,7 +11,7 @@ Playing, make the two choices:
   mini player's button.
 - **Output** (a speaker) is where the device in view plays. For this device,
   that is each of its audio devices (built-in speakers, a USB DAC, a display;
-  on a phone, the route the system chose) and, on the Mac and Android, the UPnP amplifiers it can see. Picking
+  on a phone, the route the system chose) and, on the Mac, iPhone and Android, the UPnP amplifiers it can see. Picking
   one keeps the queue and transport where they are and moves only the sound.
   On a phone, AirPlay has its own button beside it: the system's picker, since
   no app may pick a speaker itself. On the Mac, choose an AirPlay speaker in
@@ -288,7 +288,7 @@ so nothing else in the library can be fetched from it. On a Mac the first
 connection from the amplifier may bring up the firewall prompt. macOS also
 asks whether kōan may use the local network, the first time it looks; if
 no amplifier or other kōan appears, check System Settings → Privacy &
-Security → Local Network and turn kōan on. Android searches when Now Playing opens and once a minute while the app is on screen; see [Android](android.md). The iOS app cannot search for renderers yet, because Apple requires a multicast entitlement for it.
+Security → Local Network and turn kōan on. Android searches when Now Playing opens and once a minute while the app is on screen; see [Android](android.md). The iPhone searches when the output picker opens; the first search brings up iOS's local network prompt, and if no amplifier appears, check Settings → Privacy & Security → Local Network and turn kōan on.
 
 ## Controlling and moving
 
