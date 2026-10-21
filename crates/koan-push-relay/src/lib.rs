@@ -70,6 +70,7 @@ pub struct Relay {
     device_wakes: Keyed<TokenHash>,
     ip_pushes: Keyed<u128>,
     ip_registrations: Keyed<u128>,
+    ip_revocations: Keyed<u128>,
     global: Global,
     in_flight: Semaphore,
     max_in_flight: usize,
@@ -124,6 +125,10 @@ impl Relay {
                 Rate::per(l.ip_registrations_per_minute, MINUTE),
                 l.max_tracked,
             ),
+            ip_revocations: Keyed::new(
+                Rate::per(l.ip_revocations_per_minute, MINUTE),
+                l.max_tracked,
+            ),
             global: Global::new(Rate::per(
                 l.global_pushes_per_second,
                 Duration::from_secs(1),
@@ -166,6 +171,7 @@ impl Relay {
         self.device_wakes.sweep(now);
         self.ip_pushes.sweep(now);
         self.ip_registrations.sweep(now);
+        self.ip_revocations.sweep(now);
     }
 }
 
@@ -289,7 +295,12 @@ async fn upkeep(relay: Arc<Relay>) {
     let mut prune = tokio::time::interval(PRUNE_EVERY);
     loop {
         tokio::select! {
-            _ = sweep.tick() => relay.sweep(),
+            // A sweep walks every limiter: millions of entries at capacity,
+            // which is no work for a runtime thread.
+            _ = sweep.tick() => {
+                let relay = relay.clone();
+                let _ = tokio::task::spawn_blocking(move || relay.sweep()).await;
+            }
             _ = prune.tick() => {
                 let relay = relay.clone();
                 let pruned = tokio::task::spawn_blocking(move || {
@@ -387,7 +398,7 @@ async fn revoke(
     body: Result<Json<RevokeRequest>, JsonRejection>,
 ) -> Response {
     let caller = relay.caller(&headers, peer);
-    if let Err(e) = relay.ip_registrations.check(caller, relay.clock.now()) {
+    if let Err(e) = relay.ip_revocations.check(caller, relay.clock.now()) {
         return limited(e).respond(&relay, Route::Revoke);
     }
     let Ok(Json(req)) = body else {

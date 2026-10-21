@@ -33,6 +33,8 @@ struct Gateway {
     answer: Arc<Mutex<Option<(u16, &'static str)>>>,
     /// How long the gateway takes to answer.
     delay: Arc<Mutex<std::time::Duration>>,
+    /// Pushes that have reached the gateway, answered or not.
+    arrived: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Gateway {
@@ -55,6 +57,7 @@ async fn gateway_push(
     headers: HeaderMap,
     body: axum::Json<Value>,
 ) -> (StatusCode, axum::Json<Value>) {
+    gw.arrived.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let delay = *gw.delay.lock();
     tokio::time::sleep(delay).await;
     gw.received.lock().push(Received {
@@ -187,6 +190,10 @@ async fn a_wake_reaches_apple_as_a_bare_background_push() {
     assert_eq!(header("apns-push-type"), "background");
     assert_eq!(header("apns-priority"), "5");
     assert_eq!(header("apns-collapse-id"), "koan-wake");
+
+    assert_eq!(h.push(&handle, "wake-now", None).await.status(), 204);
+    let now = &h.gateway.received()[1];
+    assert_eq!(now.headers["apns-collapse-id"], "koan-wake-now");
     assert!(header("authorization").starts_with("bearer "));
 }
 
@@ -301,7 +308,7 @@ async fn a_push_apple_could_not_take_spends_no_allowance() {
 async fn the_request_limit_is_one_limit_across_routes() {
     let h = Harness::start(|cfg| cfg.limits.max_requests = 1).await;
     let handle = h.register(TOKEN).await;
-    *h.gateway.delay.lock() = std::time::Duration::from_millis(500);
+    *h.gateway.delay.lock() = std::time::Duration::from_secs(5);
     let slow = {
         let http = h.http.clone();
         let url = format!("{}/v1/push", h.url);
@@ -314,7 +321,10 @@ async fn the_request_limit_is_one_limit_across_routes() {
                 .status()
         })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The push holds the one slot once the gateway has it.
+    while h.gateway.arrived.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
     let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
     assert_eq!(r.status(), 503);
     assert!(r.headers().contains_key("retry-after"));

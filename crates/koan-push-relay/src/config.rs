@@ -155,8 +155,11 @@ pub struct Limits {
     /// Pushes from one address a minute. A server with many listeners sends
     /// from one address, so this is generous.
     pub ip_pushes_per_minute: u32,
-    /// Registrations and revocations from one address a minute.
+    /// Registrations from one address a minute. Generous: phones on a mobile
+    /// network share an address, and a registration is answered from memory.
     pub ip_registrations_per_minute: u32,
+    /// Revocations from one address a minute. Each costs a push to Apple.
+    pub ip_revocations_per_minute: u32,
     /// Pushes sent to Apple a second, from everyone.
     pub global_pushes_per_second: u32,
     /// Callers each limiter keeps a count for. Past this, a caller it has no
@@ -176,7 +179,8 @@ impl Default for Limits {
             device_alerts_per_hour: 120,
             device_wakes_per_hour: 240,
             ip_pushes_per_minute: 6000,
-            ip_registrations_per_minute: 30,
+            ip_registrations_per_minute: 600,
+            ip_revocations_per_minute: 120,
             global_pushes_per_second: 20_000,
             max_tracked: 2_000_000,
             max_revocations: 1_000_000,

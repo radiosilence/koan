@@ -128,8 +128,17 @@ impl Gateway {
         Ok(token)
     }
 
-    fn forget_bearer(&self) {
-        *self.bearer.write() = None;
+    /// Drop the provider token `used`, which Apple refused, unless another
+    /// push has already replaced it: every push in flight with it is refused
+    /// together, and Apple throttles a token refreshed too often.
+    fn forget_bearer(&self, used: &Arc<str>) {
+        let mut cached = self.bearer.write();
+        if cached
+            .as_ref()
+            .is_some_and(|(token, _)| Arc::ptr_eq(token, used))
+        {
+            *cached = None;
+        }
     }
 
     fn client(&self) -> &reqwest::Client {
@@ -180,8 +189,9 @@ impl Apns {
 
     pub async fn send(&self, device: &Device, kind: Kind, blob: Option<&str>) -> Delivery {
         let Some(gateway) = self.gateway(device.sandbox) else {
-            // A handle minted while the relay had this gateway's key.
-            return Delivery::Unavailable("no key for this gateway".into());
+            // A handle minted while the relay had this gateway's key, which
+            // it no longer has: the handle will never work again.
+            return Delivery::Gone;
         };
         let bearer = match gateway.bearer() {
             Ok(b) => b,
@@ -219,9 +229,11 @@ impl Apns {
             .unwrap_or_default();
         match (status.as_u16(), reason.as_str()) {
             (410, _) | (400, "BadDeviceToken" | "DeviceTokenNotForTopic") => Delivery::Gone,
-            (429, _) => Delivery::Throttled,
+            // Only this reason is about the device; Apple's other 429s
+            // are about the relay.
+            (429, "TooManyRequests") => Delivery::Throttled,
             (403, "ExpiredProviderToken" | "InvalidProviderToken") => {
-                gateway.forget_bearer();
+                gateway.forget_bearer(&bearer);
                 Delivery::Unavailable(format!("{status} {reason}"))
             }
             _ => Delivery::Unavailable(format!("{status} {reason}")),
@@ -241,7 +253,9 @@ fn headers(kind: Kind) -> Headers {
     let (push_type, priority, expires_in, collapse) = match kind {
         // Low priority is the only priority a background push may have.
         Kind::Wake => ("background", "5", 60 * 60, Some("koan-wake")),
-        Kind::WakeNow => ("background", "5", 60, Some("koan-wake")),
+        // Its own collapse id: replacing a queued `wake` with a push that
+        // expires in a minute would lose the wake.
+        Kind::WakeNow => ("background", "5", 60, Some("koan-wake-now")),
         Kind::Summon => ("alert", "10", 2 * 60, Some("koan-summon")),
         // "Play this" an hour late is not what anyone asked for.
         Kind::Notify => ("alert", "10", 10 * 60, None),

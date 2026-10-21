@@ -77,7 +77,7 @@ Called by servers. There is no other authentication: the handle is the capabilit
 | `kind` | Apple push | What the phone gets |
 |--------|------------|---------------------|
 | `wake` | background, low priority, collapse id `koan-wake`, expires in an hour | `content-available` and nothing else: the app wakes, links and takes what waits for it |
-| `wake-now` | as `wake`, expires in a minute | the same, for a wake that is no use late |
+| `wake-now` | as `wake`, collapse id `koan-wake-now`, expires in a minute | the same, for a wake that is no use late |
 | `summon` | alert, time-sensitive, collapse id `koan-summon`, expires in two minutes | the relay's notification |
 | `notify` | alert, time-sensitive, expires in ten minutes | the relay's notification |
 
@@ -87,7 +87,7 @@ The relay's notification is titled "kōan" and reads "Something is waiting to pl
 |--------|---------|----------------------|
 | `204` | Apple accepted the push | |
 | `400` | The request is malformed | Fix the request |
-| `410` | The handle does not open (unknown, altered, expired, revoked) or Apple says the token is no longer valid | Forget the handle; the app sends a new one when it next links |
+| `410` | The handle does not open (unknown, altered, expired, revoked), the relay no longer serves its gateway, or Apple says the token is no longer valid | Forget the handle; the app sends a new one when it next links |
 | `429` | A quota is spent, or Apple is throttling the device | Wait at least `Retry-After` seconds |
 | `503` | The relay or Apple cannot take the push now | Retry after `Retry-After` seconds |
 
@@ -104,7 +104,8 @@ Each relay process counts:
 | Device, across its handles: notifications | 120 an hour |
 | Device, across its handles: wakes | 240 an hour |
 | Caller address: pushes | 6000 a minute |
-| Caller address: registrations and revocations | 30 a minute |
+| Caller address: registrations | 600 a minute |
+| Caller address: revocations | 120 a minute |
 | Everyone: pushes sent to Apple | 20,000 a second |
 
 A device is counted by its token, so its ceiling holds whichever servers hold its handles. A caller address is counted by its IPv4 address or its IPv6 /64. Each count allows its whole allowance as a burst and then refills evenly over the period. A push refused because the relay or Apple could not take it is not counted against its handle or device. Behind a proxy, the address is the last one in the last instance of the header the relay is configured to trust: the one the nearest proxy wrote.
@@ -157,7 +158,8 @@ handle_wakes_per_hour = 60
 device_alerts_per_hour = 120
 device_wakes_per_hour = 240
 ip_pushes_per_minute = 6000
-ip_registrations_per_minute = 30
+ip_registrations_per_minute = 600
+ip_revocations_per_minute = 120
 global_pushes_per_second = 20000
 ```
 

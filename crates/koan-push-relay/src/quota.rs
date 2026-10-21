@@ -73,10 +73,20 @@ pub enum Refused {
 
 const SHARDS: usize = 64;
 
+/// How often a full shard may be swept to make room. A sweep walks the whole
+/// shard under its lock, so a flood of new callers must not run one each.
+const FULL_SWEEP_EVERY: u64 = 1_000_000_000;
+
+struct Shard<K> {
+    map: HashMap<K, u64>,
+    /// When the shard was last swept because it was full.
+    swept: Option<u64>,
+}
+
 /// One limit per key, sharded so that callers contend only within a shard.
 pub struct Keyed<K> {
     rate: Rate,
-    shards: Vec<Mutex<HashMap<K, u64>>>,
+    shards: Vec<Mutex<Shard<K>>>,
     hasher: std::collections::hash_map::RandomState,
     per_shard: usize,
     len: AtomicUsize,
@@ -86,7 +96,14 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
     pub fn new(rate: Rate, max_tracked: usize) -> Self {
         Self {
             rate,
-            shards: (0..SHARDS).map(|_| Mutex::new(HashMap::new())).collect(),
+            shards: (0..SHARDS)
+                .map(|_| {
+                    Mutex::new(Shard {
+                        map: HashMap::new(),
+                        swept: None,
+                    })
+                })
+                .collect(),
             hasher: Default::default(),
             per_shard: max_tracked.div_ceil(SHARDS).max(1),
             len: AtomicUsize::new(0),
@@ -95,21 +112,29 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
 
     pub fn check(&self, key: K, now: u64) -> Result<(), Refused> {
         let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
-        let mut map = shard.lock();
-        if let Some(tat) = map.get_mut(&key) {
+        let mut shard = shard.lock();
+        if let Some(tat) = shard.map.get_mut(&key) {
             return self.rate.admit(tat, now).map_err(Refused::Limited);
         }
-        if map.len() >= self.per_shard {
-            let before = map.len();
-            map.retain(|_, tat| *tat > now);
-            self.len.fetch_sub(before - map.len(), Ordering::Relaxed);
-            if map.len() >= self.per_shard {
+        if shard.map.len() >= self.per_shard {
+            if shard
+                .swept
+                .is_some_and(|at| now.saturating_sub(at) < FULL_SWEEP_EVERY)
+            {
+                return Err(Refused::Full);
+            }
+            shard.swept = Some(now);
+            let before = shard.map.len();
+            shard.map.retain(|_, tat| *tat > now);
+            self.len
+                .fetch_sub(before - shard.map.len(), Ordering::Relaxed);
+            if shard.map.len() >= self.per_shard {
                 return Err(Refused::Full);
             }
         }
         let mut tat = 0;
         self.rate.admit(&mut tat, now).map_err(Refused::Limited)?;
-        map.insert(key, tat);
+        shard.map.insert(key, tat);
         self.len.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -118,7 +143,7 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
     /// then not carried out.
     pub fn refund(&self, key: &K) {
         let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
-        if let Some(tat) = shard.lock().get_mut(key) {
+        if let Some(tat) = shard.lock().map.get_mut(key) {
             *tat = tat.saturating_sub(self.rate.interval);
         }
     }
@@ -127,7 +152,7 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
     /// are the same as callers never seen.
     pub fn sweep(&self, now: u64) {
         for shard in &self.shards {
-            let mut map = shard.lock();
+            let map = &mut shard.lock().map;
             let before = map.len();
             map.retain(|_, tat| *tat > now);
             self.len.fetch_sub(before - map.len(), Ordering::Relaxed);
@@ -239,10 +264,41 @@ mod tests {
         assert!(accepted <= SHARDS);
         assert!(refused > 0);
         assert_eq!(limit.tracked(), accepted);
-        // Ten seconds on, every caller has recovered and can be swept.
+        // Ten seconds on, every caller has recovered: the first newcomer to a
+        // full shard sweeps it, and makes room.
         assert!(limit.check(99_999, 10 * SEC).is_ok());
         limit.sweep(10 * SEC);
         assert!(limit.tracked() <= 1);
+    }
+
+    #[test]
+    fn a_full_shard_is_swept_at_most_once_a_second() {
+        let limit = Keyed::new(Rate::per(1, Duration::from_secs(10)), SHARDS);
+        // Fill every shard with callers who recover at ten seconds.
+        let mut key = 0u32;
+        while limit.tracked() < SHARDS {
+            let _ = limit.check(key, 0);
+            key += 1;
+        }
+        // At five seconds nothing has recovered: a newcomer sweeps in vain,
+        // and a newcomer to the same shard within the second does not sweep.
+        assert_eq!(limit.check(key, 5 * SEC), Err(Refused::Full));
+        let swept_at = |k: u32| {
+            let shard = &limit.shards[limit.hasher.hash_one(k) as usize % SHARDS];
+            shard.lock().swept
+        };
+        assert_eq!(swept_at(key), Some(5 * SEC));
+        // Past ten seconds the callers have recovered, but the shard was swept
+        // under a second ago, so it refuses without sweeping again.
+        let same_shard = (key + 1..)
+            .find(|k| swept_at(*k) == Some(5 * SEC) && *k != key)
+            .unwrap();
+        assert_eq!(
+            limit.check(same_shard, 5 * SEC + SEC / 2),
+            Err(Refused::Full)
+        );
+        assert_eq!(swept_at(key), Some(5 * SEC));
+        assert!(limit.check(same_shard, 11 * SEC).is_ok());
     }
 
     #[test]
