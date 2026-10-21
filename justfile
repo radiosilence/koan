@@ -53,12 +53,10 @@ css:
     tailwindcss --input crates/koan-server/styles/ui.css --output crates/koan-server/assets/ui.css
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
 
-# Compile the web UI and share page scripts (crates/koan-server/scripts/*.ts):
-# typecheck, then strip the types into assets/. The output is committed, since
-# the server embeds it; `--check` fails if it is stale.
-js *args:
+# Typecheck the web UI and share page scripts (crates/koan-server/scripts/*.ts).
+# Cargo strips their types when it builds koan-server (build.rs).
+js:
     tsc -p crates/koan-server/scripts
-    node --disable-warning=ExperimentalWarning scripts/strip-types.mjs {{args}}
 
 # Compile the kōan icon set (apps/macos/Resources/Icons/*.svg) into
 # Support/KoanGlyphs.swift and the web's crates/koan-server/src/icon/glyphs.rs. The output is committed; `--check` fails if stale.
