@@ -14,7 +14,6 @@ struct AlbumGridCell: View {
 
     @Environment(Navigator.self) private var nav
 
-    @State private var titleHovering = false
     @State private var hovering = false
 
     var body: some View {
@@ -91,13 +90,12 @@ struct AlbumGridCell: View {
                     AlbumTileHeart(albumId: album.id, hovering: hovering)
                 }
 
-            Text(album.title)
-                .font(.role(.control, system: .callout.weight(.medium)))
-                .underline(titleHovering)
-                .lineLimit(1)
-                .contentShape(.rect)
-                .pointerHover { titleHovering = $0 }
-                .onTapGesture { Trace.event("tap"); nav.open(album: album.id) }
+            LinkText(
+                text: album.title,
+                target: .album(album.id),
+                font: .role(.control, system: .callout.weight(.medium)),
+                prominent: true
+            )
 
             HStack(spacing: 4) {
                 if showArtist {

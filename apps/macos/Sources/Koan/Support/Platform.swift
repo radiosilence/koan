@@ -538,6 +538,23 @@ struct SystemSwitch: ToggleStyle {
 }
 #endif
 
+#if os(iOS)
+/// A touch down on the view, reported until it lifts or a scroll takes it.
+/// Alongside the view's own tap, which it neither delays nor claims.
+private struct Pressing: ViewModifier {
+    let action: (Bool) -> Void
+    @GestureState private var pressed = false
+
+    func body(content: Content) -> some View {
+        content
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: .infinity).updating($pressed) { _, pressed, _ in pressed = true }
+            )
+            .onChange(of: pressed) { _, pressed in action(pressed) }
+    }
+}
+#endif
+
 extension View {
     /// `onHover`, which tvOS does not have: nothing hovers under a remote.
     func pointerHover(perform action: @escaping (Bool) -> Void) -> some View {
@@ -545,6 +562,16 @@ extension View {
         self
         #else
         onHover(perform: action)
+        #endif
+    }
+
+    /// Hover for a link, and on a touch screen a finger held on it too: the one
+    /// sign a phone can give that a name leads somewhere before it is followed.
+    func linkHover(perform action: @escaping (Bool) -> Void) -> some View {
+        #if os(iOS)
+        pointerHover(perform: action).modifier(Pressing(action: action))
+        #else
+        pointerHover(perform: action)
         #endif
     }
 

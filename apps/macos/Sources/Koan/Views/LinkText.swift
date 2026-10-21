@@ -5,8 +5,9 @@ import SwiftUI
 /// wherever they appear — in a grid cell, a track row, a queue header — so the
 /// behaviour lives in one place rather than being re-hand-rolled per view.
 ///
-/// Underlines on hover rather than permanently: a library view is mostly names,
-/// and colouring or underlining all of them turns it into a ransom note.
+/// Underlines on hover, or while a finger is down on it, rather than
+/// permanently: a library view is mostly names, and colouring or underlining
+/// all of them turns it into a ransom note.
 struct LinkText: View {
     enum Target: Hashable {
         case artist(Int64)
@@ -68,7 +69,7 @@ struct LinkText: View {
                 #if os(macOS)
                 .pointerStyle(.link)
                 #endif
-                .pointerHover { hovering = $0 }
+                .linkHover { hovering = $0 }
                 // A row that scrolls or filters away while hovered never sees
                 // the exit, so it would come back still underlined.
                 .onDisappear { hovering = false }
