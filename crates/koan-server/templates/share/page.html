@@ -50,5 +50,6 @@
 {%- call tracks(rows) %}{% endcall %}
 {%- endmatch %}
 </div><noscript><p>{% for r in rows %}<a href="/share/{{ id }}/{{ r.pos }}">{{ r.track.title }}</a><br>{% endfor %}</p></noscript></main>
-<script src="{{ engine }}" defer></script>
-<script src="{{ js }}" defer></script></body></html>
+<script type="importmap">{{ imports|safe }}</script>
+<link rel="modulepreload" href="{{ engine }}">
+<script type="module" src="{{ js }}"></script></body></html>

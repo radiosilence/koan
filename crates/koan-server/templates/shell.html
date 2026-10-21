@@ -10,8 +10,10 @@
 {%- let account = "px-1.5 py-1 text-meta whitespace-nowrap text-muted lowercase hover:text-ink hover:no-underline aria-[current=page]:text-brand" -%}
 {%- let version = env!("CARGO_PKG_VERSION") -%}
 {% include "head.html" %}
+<script type="importmap">{{ crate::ui::ASSETS.imports.json|safe }}</script>
+<link rel="modulepreload" href="{{ crate::ui::ASSETS.player_js }}">
 <script type="module" src="{{ crate::ui::ASSETS.datastar_js }}"></script>
-<script src="{{ crate::ui::ASSETS.player_js }}" defer></script><script src="{{ crate::ui::ASSETS.ui_js }}" defer></script>
+<script type="module" src="{{ crate::ui::ASSETS.ui_js }}"></script>
 </head><body{% if proxied %} data-proxied{% endif %}>
 <nav class="fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r border-rule bg-bg px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 max-wide:pb-[env(safe-area-inset-bottom)]" aria-label="Library">
 <a class="mb-3 px-3 py-2 text-[22px] font-extralight text-brand hover:text-ink hover:no-underline max-wide:hidden" href="/">kōan</a>

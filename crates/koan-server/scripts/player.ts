@@ -15,187 +15,231 @@
 // fields ride along untouched.
 //
 // Both pages also get the tooltips at the end of this file.
-window.KoanPlayer = <T extends Track>(opts: PlayerOptions<T> = {}) => {
-  const LONG = 900; // seconds
-  const changed = opts.onChange || (() => {});
+export type Track = {
+  src: string;
+  dur: number;
+  title?: string | undefined;
+  artist?: string | undefined;
+  album?: string | undefined;
+  cover?: string | null | undefined;
+};
+
+type Options<T extends Track> = {
+  onChange?: (player: Player<T>) => void;
   // Called when a stream is refused, to renew the session before one retry.
-  const renew = opts.renew || null;
+  renew?: () => Promise<boolean>;
+};
 
-  let queue: T[] = [];
-  let cur = -1;             // playing (or paused) track
-  let resumeAt = 0;         // where a restored queue resumes
-  let playing = false;
-  let gen = 0;              // bumped on every jump, so stale callbacks do nothing
-  let mode: "buffer" | "stream" | null = null; // null when stopped
-  let ctx: AudioContext | null = null; // made on the first press
-  let source: AudioBufferSourceNode | null = null, startedAt = 0; // buffer mode
-  let queued: { source: AudioBufferSourceNode; at: number } | null = null; // the next track, scheduled gaplessly
-  const buffers = new Map<string, Promise<AudioBuffer | null>>(); // by src
-  const el = new Audio();                     // stream mode
-  el.preload = "auto";
-  let dest: MediaStreamAudioDestinationNode | null = null; // MediaStream the graph plays into
-  const out = new Audio();                    // what is heard in buffer mode
-  out.setAttribute("playsinline", "");
-  // Paused or played from outside (lock screen, headphones, another app's
-  // audio): follow it, so the clock and what is heard agree.
-  out.addEventListener("pause", () => {
-    if (playing && mode === "buffer") { playing = false; ctx?.suspend(); notify(); }
-  });
-  out.addEventListener("play", () => {
-    if (!playing && mode === "buffer") { playing = true; ctx?.resume(); notify(); }
-  });
+const LONG = 900; // seconds
 
-  const decodable = (t: T | undefined) => t && t.dur > 0 && t.dur <= LONG;
+const decodable = (t: Track | undefined) => t && t.dur > 0 && t.dur <= LONG;
+
+export class Player<T extends Track> {
+  #changed: (player: Player<T>) => void;
+  #renew: (() => Promise<boolean>) | null;
+
+  #queue: T[] = [];
+  #cur = -1;                // playing (or paused) track
+  #resumeAt = 0;            // where a restored queue resumes
+  #playing = false;
+  #gen = 0;                 // bumped on every jump, so stale callbacks do nothing
+  // Decoded audio on the context's clock, a stream, or null when stopped.
+  #mode: { kind: "buffer"; ctx: AudioContext } | { kind: "stream" } | null = null;
+  #ctx: AudioContext | null = null; // made on the first press
+  #source: AudioBufferSourceNode | null = null; // buffer mode
+  #startedAt = 0;
+  #queued: { source: AudioBufferSourceNode; at: number } | null = null; // the next track, scheduled gaplessly
+  #buffers = new Map<string, Promise<AudioBuffer | null>>(); // by src
+  #el = new Audio();        // stream mode
+  #dest: MediaStreamAudioDestinationNode | null = null; // MediaStream the graph plays into
+  #out = new Audio();       // what is heard in buffer mode
+  #elUnlocked = false;
+
+  constructor({ onChange, renew }: Options<T> = {}) {
+    this.#changed = onChange ?? (() => {});
+    this.#renew = renew ?? null;
+    this.#el.preload = "auto";
+    this.#out.setAttribute("playsinline", "");
+    // Paused or played from outside (lock screen, headphones, another app's
+    // audio): follow it, so the clock and what is heard agree.
+    this.#out.addEventListener("pause", () => {
+      if (this.#playing && this.#mode?.kind === "buffer") { this.#playing = false; this.#mode.ctx.suspend(); this.#notify(); }
+    });
+    this.#out.addEventListener("play", () => {
+      if (!this.#playing && this.#mode?.kind === "buffer") { this.#playing = true; this.#mode.ctx.resume(); this.#notify(); }
+    });
+
+    if ("mediaSession" in navigator) {
+      const ms = navigator.mediaSession;
+      const on = (action: MediaSessionAction, fn: MediaSessionActionHandler) => { try { ms.setActionHandler(action, fn); } catch {} };
+      on("play", () => { if (!this.#playing) this.toggle(); });
+      on("pause", () => { if (this.#playing) this.toggle(); });
+      on("previoustrack", () => this.prev());
+      on("nexttrack", () => this.next());
+      on("seekto", (d) => { if (d.seekTime != null) this.seek(d.seekTime); });
+    }
+  }
+
+  get queue() { return this.#queue; }
+  get cur() { return this.#cur; }
+  get playing() { return this.#playing; }
+  get track() { return this.#queue[this.#cur] || null; }
+
+  get position() {
+    if (this.#cur < 0) return 0;
+    if (this.#mode?.kind === "buffer") return Math.max(0, this.#mode.ctx.currentTime - this.#startedAt);
+    if (this.#mode?.kind === "stream") return this.#el.currentTime;
+    return this.#resumeAt;
+  }
 
   // Runs synchronously at the top of every gesture handler, before any await:
   // iOS only lets a context start from inside the gesture itself.
-  let elUnlocked = false;
-  function wake(t: T | null | undefined) {
+  #wake(t: T | null | undefined) {
     // Without this iOS treats Web Audio as a sound effect, silenced by the mute switch.
     if (navigator.audioSession) { try { navigator.audioSession.type = "playback"; } catch {} }
-    if (!ctx && window.AudioContext) ctx = new AudioContext();
-    if (ctx && !dest && ctx.createMediaStreamDestination) {
-      try { dest = ctx.createMediaStreamDestination(); out.srcObject = dest.stream; } catch { dest = null; }
+    if (!this.#ctx && window.AudioContext) this.#ctx = new AudioContext();
+    const ctx = this.#ctx;
+    if (ctx && !this.#dest && ctx.createMediaStreamDestination) {
+      try { this.#dest = ctx.createMediaStreamDestination(); this.#out.srcObject = this.#dest.stream; } catch { this.#dest = null; }
     }
     if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
     // Started inside the tap, like the context, so iOS lets it run from here on.
-    if (dest && t) out.play().catch(() => {});
+    if (this.#dest && t) this.#out.play().catch(() => {});
     // The streaming element needs the same blessing: once started in a gesture
     // it may start again later, after a fetch or at a track change.
-    if (!elUnlocked && t) {
-      elUnlocked = true;
-      el.src = t.src;
+    if (!this.#elUnlocked && t) {
+      this.#elUnlocked = true;
+      this.#el.src = t.src;
       // Silenced again unless this tap is what starts it streaming.
-      el.play().then(() => { if (mode !== "stream") el.pause(); }).catch(() => {});
+      this.#el.play().then(() => { if (this.#mode?.kind !== "stream") this.#el.pause(); }).catch(() => {});
     }
   }
 
-  function buffer(i: number) {
-    const t = queue[i], c = ctx;
-    if (!c || !decodable(t)) return Promise.resolve(null);
-    if (!buffers.has(t.src)) {
-      buffers.set(t.src, fetch(t.src, { credentials: "same-origin" })
+  #buffer(i: number) {
+    const t = this.#queue[i], ctx = this.#ctx;
+    if (!ctx || !t || !decodable(t)) return Promise.resolve(null);
+    if (!this.#buffers.has(t.src)) {
+      this.#buffers.set(t.src, fetch(t.src, { credentials: "same-origin" })
         .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(r.status)))
-        .then((b) => c.decodeAudioData(b))
+        .then((b) => ctx.decodeAudioData(b))
         .catch(() => null));
     }
     // Hold the current neighbourhood only: decoded audio is large.
-    const keep = new Set([cur - 1, cur, cur + 1, i].map((k) => queue[k] && queue[k].src));
-    for (const k of buffers.keys()) if (!keep.has(k)) buffers.delete(k);
-    return buffers.get(t.src);
+    const cur = this.#cur;
+    const keep = new Set([cur - 1, cur, cur + 1, i].map((k) => this.#queue[k]?.src));
+    for (const k of this.#buffers.keys()) if (!keep.has(k)) this.#buffers.delete(k);
+    return this.#buffers.get(t.src);
   }
 
-  function unqueue() {
-    if (!queued) return;
-    queued.source.onended = null;
-    try { queued.source.stop(); } catch {}
-    queued = null;
+  #unqueue() {
+    if (!this.#queued) return;
+    this.#queued.source.onended = null;
+    try { this.#queued.source.stop(); } catch {}
+    this.#queued = null;
   }
 
-  function stop() {
-    gen++;
-    if (source) { source.onended = null; try { source.stop(); } catch {} }
-    source = null;
-    unqueue();
-    el.onended = el.onerror = null;
-    el.pause(); el.removeAttribute("src"); el.load();
-    mode = null;
+  #stop() {
+    this.#gen++;
+    if (this.#source) { this.#source.onended = null; try { this.#source.stop(); } catch {} }
+    this.#source = null;
+    this.#unqueue();
+    this.#el.onended = this.#el.onerror = null;
+    this.#el.pause(); this.#el.removeAttribute("src"); this.#el.load();
+    this.#mode = null;
   }
 
-  function state() {
-    return { queue, cur, playing, track: queue[cur] || null };
-  }
-
-  function session() {
+  #session() {
     if (!("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
-    const t = queue[cur];
+    const t = this.#queue[this.#cur];
     ms.metadata = t ? new MediaMetadata({
       title: t.title || "", artist: t.artist || "", album: t.album || "",
       artwork: t.cover ? [{ src: new URL(t.cover, location.href).href }] : [],
     }) : null;
-    ms.playbackState = t ? (playing ? "playing" : "paused") : "none";
+    ms.playbackState = t ? (this.#playing ? "playing" : "paused") : "none";
     if (t && t.dur > 0 && ms.setPositionState) {
-      try { ms.setPositionState({ duration: t.dur, position: Math.min(position(), t.dur), playbackRate: 1 }); } catch {}
+      try { ms.setPositionState({ duration: t.dur, position: Math.min(this.position, t.dur), playbackRate: 1 }); } catch {}
     }
   }
 
-  function notify() { session(); changed(state()); }
+  #notify() { this.#session(); this.#changed(this); }
 
-  function setPlaying(p: boolean) { playing = p; notify(); }
+  #setPlaying(p: boolean) { this.#playing = p; this.#notify(); }
 
-  function startBuffer(ctx: AudioContext, buf: AudioBuffer, from: number, at: number) {
+  #startBuffer(ctx: AudioContext, buf: AudioBuffer, from: number, at: number) {
     const s = ctx.createBufferSource();
     s.buffer = buf;
-    s.connect(dest || ctx.destination);
+    s.connect(this.#dest || ctx.destination);
     s.start(at, from);
     return s;
   }
 
-  function onBufferEnded(g: number) {
-    return () => {
-      if (g !== gen) return;
-      if (queued) {
-        // The next track already started on the last sample of this one.
-        cur++;
-        source = queued.source; startedAt = queued.at; queued = null;
-        source.onended = onBufferEnded(g);
-        notify();
-        queueNext(g);
-      } else {
-        go(cur + 1, 0);
-      }
-    };
+  #ended(g: number) {
+    if (g !== this.#gen) return;
+    if (this.#queued) {
+      // The next track already started on the last sample of this one.
+      this.#cur++;
+      const { source, at } = this.#queued;
+      this.#source = source; this.#startedAt = at; this.#queued = null;
+      source.onended = () => this.#ended(g);
+      this.#notify();
+      this.#queueNext(g);
+    } else {
+      this.#go(this.#cur + 1, 0);
+    }
   }
 
-  async function queueNext(g: number) {
-    const i = cur + 1;
-    if (mode !== "buffer" || !source || queued || !decodable(queue[i])) return;
-    const buf = await buffer(i);
-    if (g !== gen || !buf || !ctx || !source?.buffer || queued || cur + 1 !== i) return;
-    const at = startedAt + source.buffer.duration;
+  async #queueNext(g: number) {
+    const i = this.#cur + 1;
+    if (this.#mode?.kind !== "buffer" || !this.#source || this.#queued || !decodable(this.#queue[i])) return;
+    const { ctx } = this.#mode;
+    const buf = await this.#buffer(i);
+    if (g !== this.#gen || !buf || !this.#source?.buffer || this.#queued || this.#cur + 1 !== i) return;
+    const at = this.#startedAt + this.#source.buffer.duration;
     if (at < ctx.currentTime + 0.05) return; // too late to be seamless; onended will follow on
-    queued = { source: startBuffer(ctx, buf, 0, at), at };
+    this.#queued = { source: this.#startBuffer(ctx, buf, 0, at), at };
   }
 
   // The track after this one changed: drop what was scheduled for the old one.
-  function requeue() {
-    if (queued && ctx && queued.at <= ctx.currentTime) return; // already sounding
-    unqueue();
-    queueNext(gen);
+  #requeue() {
+    if (this.#mode?.kind === "buffer" && this.#queued && this.#queued.at <= this.#mode.ctx.currentTime) return; // already sounding
+    this.#unqueue();
+    this.#queueNext(this.#gen);
   }
 
-  async function go(i: number, from: number) {
-    stop();
-    if (i < 0 || i >= queue.length) { cur = -1; resumeAt = 0; setPlaying(false); out.pause(); return; }
-    const g = gen;
-    cur = i;
-    resumeAt = 0;
-    setPlaying(true);
+  async #go(i: number, from: number) {
+    this.#stop();
+    if (i < 0 || i >= this.#queue.length) { this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); this.#out.pause(); return; }
+    const g = this.#gen;
+    this.#cur = i;
+    this.#resumeAt = 0;
+    this.#setPlaying(true);
     // A track that will stream starts without an await, so play() is still
     // inside the gesture; a decode that fails falls back to it afterwards.
-    const buf = ctx && decodable(queue[i]) ? await buffer(i) : null;
-    if (g !== gen) return;
-    if (buf && ctx) {
-      mode = "buffer";
-      if (dest) out.play().catch(() => {});
+    const ctx = this.#ctx;
+    const buf = ctx && decodable(this.#queue[i]) ? await this.#buffer(i) : null;
+    if (g !== this.#gen) return;
+    if (ctx && buf) {
+      this.#mode = { kind: "buffer", ctx };
+      if (this.#dest) this.#out.play().catch(() => {});
       if (ctx.state !== "running") await ctx.resume();
       const at = ctx.currentTime + 0.03;
-      source = startBuffer(ctx, buf, from, at);
-      startedAt = at - from;
-      source.onended = onBufferEnded(g);
-      queueNext(g);
+      const source = this.#startBuffer(ctx, buf, from, at);
+      this.#source = source;
+      this.#startedAt = at - from;
+      source.onended = () => this.#ended(g);
+      this.#queueNext(g);
     } else {
-      mode = "stream";
-      out.pause();
-      const t = queue[i];
+      this.#mode = { kind: "stream" };
+      this.#out.pause();
+      const el = this.#el, t = this.#queue[i];
       let retried = false;
       el.src = t.src;
       el.currentTime = from;
-      el.onended = () => { if (g === gen) go(cur + 1, 0); };
+      el.onended = () => { if (g === this.#gen) this.#go(this.#cur + 1, 0); };
       el.onerror = async () => {
-        if (g !== gen) return;
-        if (!retried && renew && await renew() && g === gen) {
+        if (g !== this.#gen) return;
+        if (!retried && this.#renew && await this.#renew() && g === this.#gen) {
           retried = true;
           const at = el.currentTime;
           el.src = t.src;
@@ -203,96 +247,90 @@ window.KoanPlayer = <T extends Track>(opts: PlayerOptions<T> = {}) => {
           el.play().catch(() => {});
           return;
         }
-        go(cur + 1, 0);
+        this.#go(this.#cur + 1, 0);
       };
-      el.play().catch(() => { if (g === gen) setPlaying(false); });
+      el.play().catch(() => { if (g === this.#gen) this.#setPlaying(false); });
     }
-    buffer(i + 1);
-    session();
+    this.#buffer(i + 1);
+    this.#session();
   }
 
-  function position() {
-    if (cur < 0) return 0;
-    if (mode === "buffer" && ctx) return Math.max(0, ctx.currentTime - startedAt);
-    if (mode === "stream") return el.currentTime;
-    return resumeAt;
-  }
-
-  async function toggle() {
-    wake(playing ? null : queue[Math.max(cur, 0)]);
-    if (!queue.length) return;
-    if (mode === null) return go(Math.max(cur, 0), resumeAt);
+  async toggle() {
+    this.#wake(this.#playing ? null : this.#queue[Math.max(this.#cur, 0)]);
+    if (!this.#queue.length) return;
+    if (this.#mode === null) return this.#go(Math.max(this.#cur, 0), this.#resumeAt);
     // `playing` flips first, so the output element's own events see it and
     // leave it alone.
-    if (playing) {
-      playing = false;
-      if (mode === "buffer") { out.pause(); await ctx?.suspend(); } else el.pause();
+    if (this.#playing) {
+      this.#playing = false;
+      if (this.#mode.kind === "buffer") { this.#out.pause(); await this.#mode.ctx.suspend(); } else this.#el.pause();
     } else {
-      playing = true;
-      if (mode === "buffer") { if (dest) out.play().catch(() => {}); await ctx?.resume(); } else await el.play().catch(() => {});
+      this.#playing = true;
+      if (this.#mode.kind === "buffer") { if (this.#dest) this.#out.play().catch(() => {}); await this.#mode.ctx.resume(); } else await this.#el.play().catch(() => {});
     }
-    notify();
+    this.#notify();
   }
 
-  if ("mediaSession" in navigator) {
-    const ms = navigator.mediaSession;
-    const on = (action: MediaSessionAction, fn: MediaSessionActionHandler) => { try { ms.setActionHandler(action, fn); } catch {} };
-    on("play", () => { if (!playing) toggle(); });
-    on("pause", () => { if (playing) toggle(); });
-    on("previoustrack", () => api.prev());
-    on("nexttrack", () => api.next());
-    on("seekto", (d) => { if (d.seekTime != null) api.seek(d.seekTime); });
+  // Load a queue without playing it: a restored session, or the share page.
+  set(tracks: T[], i = -1, from = 0) {
+    this.#stop();
+    this.#queue = tracks.slice();
+    this.#cur = i < this.#queue.length ? i : -1;
+    this.#resumeAt = this.#cur >= 0 ? from : 0;
+    this.#setPlaying(false);
   }
 
-  const api: Player<T> = {
-    state,
-    position,
-    toggle,
-    // Load a queue without playing it: a restored session, or the share page.
-    set(tracks, i = -1, from = 0) {
-      stop();
-      queue = tracks.slice();
-      cur = i < queue.length ? i : -1;
-      resumeAt = cur >= 0 ? from : 0;
-      setPlaying(false);
-    },
-    // Replace the queue and play from track i.
-    play(tracks, i = 0) { wake(tracks[i]); queue = tracks.slice(); go(i, 0); },
-    // Play these next, starting now, and keep the rest of the queue after them.
-    playNow(tracks) { wake(tracks[0]); queue.splice(cur + 1, 0, ...tracks); go(cur + 1, 0); },
-    // Queue these after the playing track, without interrupting it.
-    playNext(tracks) {
-      queue.splice(cur + 1, 0, ...tracks);
-      if (mode === "buffer") requeue();
-      notify();
-    },
-    append(tracks) {
-      const wasLast = cur === queue.length - 1;
-      queue.push(...tracks);
-      if (wasLast && mode === "buffer") requeue();
-      notify();
-    },
-    playAt(i, from = 0) { wake(queue[i]); go(i, from); },
-    remove(i) {
-      if (i < 0 || i >= queue.length) return;
-      queue.splice(i, 1);
-      if (i === cur) { if (playing) go(i, 0); else { stop(); cur = i < queue.length ? i : -1; resumeAt = 0; notify(); } return; }
-      if (i < cur) cur--;
-      else if (i === cur + 1 && mode === "buffer") requeue();
-      notify();
-    },
-    clear() { stop(); queue = []; cur = -1; resumeAt = 0; setPlaying(false); },
-    next() { wake(queue[cur + 1]); if (cur + 1 < queue.length) go(cur + 1, 0); },
-    prev() { wake(queue[Math.max(cur - 1, 0)]); go(position() > 3 || cur <= 0 ? Math.max(cur, 0) : cur - 1, 0); },
-    seek(s) {
-      if (cur < 0) return;
-      wake(queue[cur]);
-      if (mode === null) { resumeAt = s; notify(); return; }
-      go(cur, s);
-    },
-  };
-  return api;
-};
+  // Replace the queue and play from track i.
+  play(tracks: T[], i = 0) { this.#wake(tracks[i]); this.#queue = tracks.slice(); this.#go(i, 0); }
+
+  // Play these next, starting now, and keep the rest of the queue after them.
+  playNow(tracks: T[]) { this.#wake(tracks[0]); this.#queue.splice(this.#cur + 1, 0, ...tracks); this.#go(this.#cur + 1, 0); }
+
+  // Queue these after the playing track, without interrupting it.
+  playNext(tracks: T[]) {
+    this.#queue.splice(this.#cur + 1, 0, ...tracks);
+    if (this.#mode?.kind === "buffer") this.#requeue();
+    this.#notify();
+  }
+
+  append(tracks: T[]) {
+    const wasLast = this.#cur === this.#queue.length - 1;
+    this.#queue.push(...tracks);
+    if (wasLast && this.#mode?.kind === "buffer") this.#requeue();
+    this.#notify();
+  }
+
+  playAt(i: number, from = 0) { this.#wake(this.#queue[i]); this.#go(i, from); }
+
+  remove(i: number) {
+    if (i < 0 || i >= this.#queue.length) return;
+    this.#queue.splice(i, 1);
+    if (i === this.#cur) {
+      if (this.#playing) this.#go(i, 0);
+      else { this.#stop(); this.#cur = i < this.#queue.length ? i : -1; this.#resumeAt = 0; this.#notify(); }
+      return;
+    }
+    if (i < this.#cur) this.#cur--;
+    else if (i === this.#cur + 1 && this.#mode?.kind === "buffer") this.#requeue();
+    this.#notify();
+  }
+
+  clear() { this.#stop(); this.#queue = []; this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); }
+
+  next() { this.#wake(this.#queue[this.#cur + 1]); if (this.#cur + 1 < this.#queue.length) this.#go(this.#cur + 1, 0); }
+
+  prev() {
+    this.#wake(this.#queue[Math.max(this.#cur - 1, 0)]);
+    this.#go(this.position > 3 || this.#cur <= 0 ? Math.max(this.#cur, 0) : this.#cur - 1, 0);
+  }
+
+  seek(s: number) {
+    if (this.#cur < 0) return;
+    this.#wake(this.#queue[this.#cur]);
+    if (this.#mode === null) { this.#resumeAt = s; this.#notify(); return; }
+    this.#go(this.#cur, s);
+  }
+}
 
 // Text cut short by an ellipsis has the whole of it as its tooltip, on every
 // page, with nothing in the markup asking for it. Decided as the pointer

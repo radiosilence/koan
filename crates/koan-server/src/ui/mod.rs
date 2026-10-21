@@ -51,10 +51,16 @@ use crate::covers::Covers;
 use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
-/// Everything else is this server's own, and nothing is inline.
-const PAGE_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; font-src 'self'; \
-     img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; \
-     frame-ancestors 'none'";
+/// Everything else is this server's own, and nothing is inline but the import
+/// map naming the player, allowed by its hash.
+static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "default-src 'none'; script-src 'self' 'unsafe-eval' {}; style-src 'self'; font-src 'self'; \
+         img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; \
+         frame-ancestors 'none'",
+        ASSETS.imports.csp
+    )
+});
 
 /// Sent by the UI's own navigation, which wants the page content without the shell.
 const PARTIAL: &str = "x-koan-partial";
@@ -70,16 +76,19 @@ pub(super) struct AssetUrls {
     pub css_hash: String,
     pub ui_js: String,
     pub player_js: String,
+    pub imports: crate::share::ImportMap,
     pub datastar_js: String,
 }
 
 pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
     use crate::share::versioned;
+    let player_js = versioned("/ui/assets/player.js", crate::share::ENGINE_JS);
     AssetUrls {
         css: versioned("/ui/assets/ui.css", UI_CSS),
         css_hash: crate::share::content_hash(UI_CSS),
         ui_js: versioned("/ui/assets/ui.js", UI_JS),
-        player_js: versioned("/ui/assets/player.js", crate::share::ENGINE_JS),
+        imports: crate::share::ImportMap::player(&player_js),
+        player_js,
         datastar_js: versioned("/ui/assets/datastar.js", DATASTAR_JS),
     }
 });
@@ -401,7 +410,7 @@ fn html(status: StatusCode, body: impl Into<String>) -> Response {
     h.insert(header::VARY, HeaderValue::from_static("x-koan-partial"));
     h.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(PAGE_CSP),
+        HeaderValue::from_str(&PAGE_CSP).expect("the CSP is ASCII"),
     );
     h.insert(
         header::REFERRER_POLICY,
