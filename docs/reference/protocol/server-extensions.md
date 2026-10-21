@@ -35,8 +35,8 @@ Invite links: an admin mints a signed token for an account, and a device trades 
 | Endpoint | Caller | Parameters | Answer |
 |----------|--------|------------|--------|
 | `koanJoin` | none: the token is the credential | `invite`, `name` | `join` with `username`, `apiKey` |
-| `koanInvite` | admin | `username`, `reset=true` to set a new random password and disconnect the account's links | `invite` with `username`, `token`, and `password` when reset |
-| `koanCreateUser` | admin | `username`, `role` (`admin`, `user`, `readonly`) | `invite` with `username`, `token`, `password` |
+| `koanInvite` | admin | `username`, `reset=true` to set a new random password and disconnect the account's links | `invite` with `username`, `token`, `qrToken`, and `password` when reset |
+| `koanCreateUser` | admin | `username`, `role` (`admin`, `user`, `readonly`) | `invite` with `username`, `token`, `qrToken`, `password` |
 | `koanUsers` | admin | | `users`, one `user` per account with `username`, `role` |
 | `koanSetUserRole` | admin | `username`, `role` | empty |
 | `koanDeleteUser` | admin | `username`; not the caller's own | empty; the account's links are disconnected |

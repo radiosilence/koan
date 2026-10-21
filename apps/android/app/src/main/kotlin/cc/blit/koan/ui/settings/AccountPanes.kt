@@ -419,10 +419,10 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
                 KoanText(
                     "Opening the link on a phone, tablet or computer with kōan installed signs in and loads the library, on " +
-                        "each device, for a week.",
+                        "each device, for a week. The QR code works for ten minutes.",
                     tone = KoanTone.Muted,
                 )
-                InviteCode(invite.link)
+                InviteCode(invite.qrLink)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
                     KoanButton("Send invite…", share, kind = KoanButtonKind.Prominent)
                     // Only mail apps answer a mailto:. The subject and body go as extras alone,

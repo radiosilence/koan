@@ -4276,6 +4276,7 @@ impl KoanEngine {
                 username: invite.username,
                 token: invite.token,
                 password: invite.password,
+                qr_token: None,
             };
             koan_core::helpers::join_with_invite(&invite).map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
@@ -6797,6 +6798,7 @@ fn account_invite(
         &made.token,
         made.password.as_deref(),
     )
+    .with_qr_token(made.qr_token.as_deref())
 }
 
 fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {

@@ -5190,9 +5190,17 @@ fn invite_node(
         koan_core::invite::TOKEN_TTL_SECS,
     )
     .map_err(account_error)?;
+    let qr_token = koan_core::invite::mint_token(
+        conn,
+        &keypair()?.0,
+        user_id,
+        koan_core::invite::QR_TOKEN_TTL_SECS,
+    )
+    .map_err(account_error)?;
     let node = XmlNode::new("invite")
         .attr("username", username)
-        .attr("token", &token);
+        .attr("token", &token)
+        .attr("qrToken", &qr_token);
     Ok(match password {
         Some(p) => node.attr("password", p),
         None => node,
@@ -8436,6 +8444,8 @@ mod tests {
         let invite = &v["subsonic-response"]["invite"];
         let password = invite["password"].as_str().unwrap().to_owned();
         let token = invite["token"].as_str().unwrap().to_owned();
+        let qr_token = invite["qrToken"].as_str().unwrap().to_owned();
+        assert_ne!(qr_token, token);
         assert_eq!(invite["username"], "sarita");
 
         // The password works in any Subsonic app; the token, redeemed with
@@ -8454,6 +8464,12 @@ mod tests {
         let key = v["subsonic-response"]["join"]["apiKey"].as_str().unwrap();
         let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
         assert!(body.contains("status=\"ok\""), "{body}");
+        let body = call(format!("/rest/koanJoin?invite={qr_token}&name=iPad&f=json")).await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["subsonic-response"]["join"]["username"], "sarita",
+            "{body}"
+        );
         let body = call("/rest/koanJoin?invite=forged&f=json".to_owned()).await;
         assert!(body.contains("not valid"), "{body}");
 

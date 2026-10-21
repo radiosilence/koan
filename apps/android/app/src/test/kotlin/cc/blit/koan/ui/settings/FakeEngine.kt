@@ -73,6 +73,7 @@ fun invite(server: String = "https://other.example.com", username: String = "gue
     token = "token",
     password = null,
     link = "https://koan.rocks/join/#server=$server&username=$username&invite=token",
+    qrLink = "https://koan.rocks/join/#server=$server&username=$username&invite=qr",
     emailSubject = "",
     emailText = "",
     emailHtml = "",

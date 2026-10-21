@@ -228,10 +228,10 @@ struct InviteSheet: View {
         NavigationStack {
             KoanForm {
                 Section {
-                    Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
+                    Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week. The QR code works for ten minutes.")
                         .koanText(.body, .muted)
                     QRCodeView(
-                        text: invite.link, side: 168, margin: 12, radius: 8,
+                        text: invite.qrLink, side: 168, margin: 12, radius: 8,
                         caption: "Scan with a phone's camera to open it there."
                     )
                     .frame(maxWidth: .infinity)

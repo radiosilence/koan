@@ -1,0 +1,1 @@
+- **An invite's QR code in the Mac, iOS and Android apps lapses after ten minutes.** The server sends a short-lived `qrToken` with each invite and the apps draw it, as the web UI does; the emailed link keeps the week-long token. Against an older server the apps show the week-long token as before.
