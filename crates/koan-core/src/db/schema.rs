@@ -2698,8 +2698,7 @@ mod tests {
                  VALUES (7, 'lrclib', 'la', 1), (999, 'lrclib', 'la', 1);",
         )
         .unwrap();
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
-            .unwrap();
+        conn.pragma_update(None, "user_version", 24).unwrap();
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
 
         create_tables(&conn).unwrap();
@@ -2734,8 +2733,7 @@ mod tests {
                         (3, 2, 1, NULL, 'c', 'local');",
         )
         .unwrap();
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
-            .unwrap();
+        conn.pragma_update(None, "user_version", 24).unwrap();
 
         create_tables(&conn).unwrap();
 
