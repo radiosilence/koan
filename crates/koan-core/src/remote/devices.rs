@@ -3098,6 +3098,7 @@ pub(crate) mod tests {
             live: HashMap::new(),
             departed: Vec::new(),
             used: None,
+            tv_addrs: HashMap::new(),
         };
         std::fs::write(saved_path(), serde_json::to_string(&saved).unwrap()).unwrap();
         restore();
