@@ -552,6 +552,17 @@ pub struct KoanEngine {
     /// What the app calls this device — the name the person gave it, where
     /// the platform says — for the link and for a pairing to ask under.
     device_name: Option<String>,
+    /// The library's reading of the item under the cursor: read once per
+    /// track and library version, not on every wake of the state watcher.
+    cursor_reading: parking_lot::Mutex<Option<CursorReading>>,
+}
+
+/// What `KoanEngine::cursor_reading` holds.
+struct CursorReading {
+    /// The item, its tags and the library version it was read against.
+    key: (Option<i64>, String, String, u64),
+    place: queries::Place,
+    credits: koan_core::helpers::RowCredits,
 }
 
 /// How far a client's own reckoning of the playhead may drift before it is
@@ -1989,32 +2000,25 @@ impl KoanEngine {
                 entries.retain(|e| e.track.cached_path.is_some() || e.track.path.is_some());
             }
             let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
-            let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
-            let places = queries::places_for_tracks(&db.conn, &track_ids).unwrap_or_default();
-            let mut albums: Vec<i64> = places.values().filter_map(|p| p.album_id).collect();
-            albums.sort_unstable();
-            albums.dedup();
-            let records = credits(&db, queries::batch::CreditsOf::Albums, &albums);
             let tracks = self.decorate(&db, entries.into_iter().map(|e| e.track).collect());
+            let records: Vec<_> = tracks
+                .iter()
+                .map(|t| koan_core::helpers::RecordOf {
+                    album_id: t.album_id,
+                    album: &t.album_title,
+                    album_artist: &t.album_artist_name,
+                    title: &t.title,
+                })
+                .collect();
+            let runs = koan_core::helpers::record_runs(&records);
             Ok(ids
                 .into_iter()
                 .zip(tracks)
-                .map(|(entry_id, track)| {
-                    let place = places.get(&track.id).copied().unwrap_or_default();
-                    let record = place
-                        .album_id
-                        .and_then(|id| records.get(&id))
-                        .map_or(&[][..], Vec::as_slice);
-                    PlaylistEntry {
-                        entry_id,
-                        album_artist_id: place.album_artist_id,
-                        album_artist_credit: types::credit_parts(
-                            &track.album_artist_name,
-                            place.album_artist_id,
-                            record,
-                        ),
-                        track,
-                    }
+                .zip(runs)
+                .map(|((entry_id, track), run)| PlaylistEntry {
+                    entry_id,
+                    track,
+                    run: run.into(),
                 })
                 .collect())
         })
@@ -5322,18 +5326,39 @@ impl KoanEngine {
                         last_store = store_version;
                         let transfers = store.all();
                         let ids: Vec<i64> = transfers.iter().map(|d| d.track_id).collect();
-                        let rows: HashMap<i64, queries::TrackRow> = engine
-                            .db()
-                            .ok()
+                        let db = engine.db().ok();
+                        let rows: HashMap<i64, queries::TrackRow> = db
+                            .as_ref()
                             .and_then(|db| queries::tracks_by_ids(&db.conn, &ids).ok())
                             .unwrap_or_default()
                             .into_iter()
                             .map(|r| (r.id, r))
                             .collect();
+                        let (places, credits) = db
+                            .as_ref()
+                            .map(|db| koan_core::helpers::ListCredits::read_tracks(&db.conn, &ids))
+                            .unwrap_or_default();
                         out.publish(StateSlice::Transfers {
                             transfers: transfers
                                 .iter()
-                                .map(|d| Transfer::of(d, rows.get(&d.track_id)))
+                                .map(|d| {
+                                    let row = rows.get(&d.track_id);
+                                    let credit = match row {
+                                        Some(r) => {
+                                            let place =
+                                                places.get(&r.id).copied().unwrap_or_default();
+                                            let row = credits.row(
+                                                Some(r.id),
+                                                place,
+                                                &r.artist_name,
+                                                &r.album_artist_name,
+                                            );
+                                            types::Credits::from(row).artist
+                                        }
+                                        None => types::credit_parts(&d.artist, None, &[]),
+                                    };
+                                    Transfer::of(d, row, credit)
+                                })
                                 .collect(),
                         });
                         let now_running: HashSet<_> = transfers
@@ -5493,12 +5518,19 @@ impl KoanEngine {
             .filter_map(|d| current_entry(d.state.as_ref()?)?.track_id.clone())
             .collect();
         let rows = self.rows_for_remote(&playing);
+        let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
+        let joins = self.queue_joins(&row_ids);
         list.iter()
             .map(|d| {
                 let st = d.state.clone().unwrap_or_default();
                 let row = current_entry(&st)
                     .and_then(|e| e.track_id.as_ref())
                     .and_then(|r| rows.get(r));
+                let artist_credit = st.artist.as_deref().map_or_else(Vec::new, |artist| {
+                    let album_artist = row.map_or(artist, |r| r.album_artist_name.as_str());
+                    types::Credits::from(joins.credits(row.map(|r| r.id), artist, album_artist))
+                        .artist
+                });
                 DeviceInfo {
                     id: d.id.clone(),
                     name: d.name.clone(),
@@ -5527,6 +5559,7 @@ impl KoanEngine {
                     state: play_state(&st),
                     title: st.title.clone(),
                     artist: st.artist.clone(),
+                    artist_credit,
                     album: st.album.clone(),
                     track_id: row.map(|r| r.id),
                     album_id: row.and_then(|r| r.album_id),
@@ -5546,7 +5579,7 @@ impl KoanEngine {
         let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
         let joins = self.queue_joins(&row_ids);
         let current = st.queue.iter().position(|e| e.current);
-        let items: Vec<QueueItem> = st
+        let mut items: Vec<QueueItem> = st
             .queue
             .iter()
             .enumerate()
@@ -5569,6 +5602,7 @@ impl KoanEngine {
                     artist_credit: credits.artist,
                     album_artist_credit: credits.album_artist,
                     credit_differs: credits.differ,
+                    run: RunRole::Alone,
                     album: if e.album.is_empty() {
                         row.map(|r| r.album_title.clone()).unwrap_or_default()
                     } else {
@@ -5593,6 +5627,19 @@ impl KoanEngine {
                 }
             })
             .collect();
+        let records: Vec<_> = items
+            .iter()
+            .map(|i| koan_core::helpers::RecordOf {
+                album_id: i.album_id,
+                album: &i.album,
+                album_artist: &i.album_artist,
+                title: &i.title,
+            })
+            .collect();
+        let runs = koan_core::helpers::record_runs(&records);
+        for (item, run) in items.iter_mut().zip(runs) {
+            item.run = run.into();
+        }
         let entry = current.and_then(|c| items.get(c).cloned());
         let out = &self.out;
         out.publish(StateSlice::Playback {
@@ -5661,12 +5708,10 @@ impl KoanEngine {
         let places = queries::batch::places_for_tracks(&db.conn, track_ids).unwrap_or_default();
         queue_slice::Joins {
             sources: queries::batch::sources_for_tracks(&db.conn, track_ids).unwrap_or_default(),
-            credits: koan_core::helpers::QueueCredits::read(&db.conn, &places).unwrap_or_else(
-                |e| {
-                    log::warn!("credited artists unread, credits left unlinked: {e}");
-                    Default::default()
-                },
-            ),
+            credits: koan_core::helpers::ListCredits::read(&db.conn, &places).unwrap_or_else(|e| {
+                log::warn!("credited artists unread, credits left unlinked: {e}");
+                Default::default()
+            }),
             places,
         }
     }
@@ -5938,6 +5983,7 @@ impl KoanEngine {
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),
+            cursor_reading: Default::default(),
             device_name: device_name.clone(),
         });
         engine.spawn_watcher();
@@ -6001,13 +6047,51 @@ impl KoanEngine {
         Ok(engine)
     }
 
+    /// The library's reading of `item`, held for as long as the item, its
+    /// tags and the library stay as they were.
+    fn cursor_reading(
+        &self,
+        item: &PlaylistItem,
+    ) -> (queries::Place, koan_core::helpers::RowCredits) {
+        let library = self
+            .library_version
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let key = (
+            item.db_id,
+            item.artist.clone(),
+            item.album_artist.clone(),
+            library,
+        );
+        let mut held = self.cursor_reading.lock();
+        if let Some(r) = held.as_ref().filter(|r| r.key == key) {
+            return (r.place, r.credits.clone());
+        }
+        let ids: Vec<i64> = item.db_id.into_iter().collect();
+        let (places, credits) = self
+            .db()
+            .map(|db| koan_core::helpers::ListCredits::read_tracks(&db.conn, &ids))
+            .unwrap_or_default();
+        let place = item
+            .db_id
+            .and_then(|id| places.get(&id).copied())
+            .unwrap_or_default();
+        let credits = credits.row(item.db_id, place, &item.artist, &item.album_artist);
+        *held = Some(CursorReading {
+            key,
+            place,
+            credits: credits.clone(),
+        });
+        (place, credits)
+    }
+
     fn now_playing_blocking(&self) -> NowPlaying {
         let info = self.state.track_info();
         let cursor = self.state.cursor();
         let play_state = self.state.playback_state();
-        let entry = cursor
-            .and_then(|cid| self.state.get_item(cid))
-            .map(|item| QueueItem::from_cursor_item(&item, play_state, self.state.downloads()));
+        let entry = cursor.and_then(|cid| self.state.get_item(cid)).map(|item| {
+            let (place, credits) = self.cursor_reading(&item);
+            QueueItem::from_cursor_item(&item, play_state, self.state.downloads(), place, credits)
+        });
 
         NowPlaying {
             state: play_state.into(),
@@ -6251,31 +6335,23 @@ impl KoanEngine {
     /// whichever path a track happens to have, and a never-cached remote track
     /// only has a URL.
     ///
-    /// Each track's credited artists come in the same pass, one query for the
-    /// listing. A track that names no artists of its own but is credited as
-    /// its record is takes the record's.
+    /// Each track's place and credits come in the same pass, a few queries
+    /// for the listing (`ListCredits::read_tracks`).
     fn decorate(&self, db: &Database, rows: Vec<queries::TrackRow>) -> Vec<Track> {
-        use queries::batch::CreditsOf;
         let favs: HashSet<i64> =
             queries::favourite_track_ids_batch(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-        let tracks = credits(db, CreditsOf::Tracks, &ids);
-        let as_record = |r: &queries::TrackRow| {
-            r.album_id
-                .filter(|_| !tracks.contains_key(&r.id) && r.artist_name == r.album_artist_name)
-        };
-        let mut records: Vec<i64> = rows.iter().filter_map(as_record).collect();
-        records.sort_unstable();
-        records.dedup();
-        let records = credits(db, CreditsOf::Albums, &records);
+        let (places, credits) = koan_core::helpers::ListCredits::read_tracks(&db.conn, &ids);
         rows.into_iter()
             .map(|r| {
                 let is_fav = favs.contains(&r.id);
-                let artists = tracks
-                    .get(&r.id)
-                    .or_else(|| as_record(&r).and_then(|a| records.get(&a)))
-                    .map_or(&[][..], Vec::as_slice);
-                Track::from_row(r, is_fav, artists)
+                let place = places.get(&r.id).copied().unwrap_or(queries::Place {
+                    album_id: r.album_id,
+                    artist_id: r.artist_id,
+                    album_artist_id: None,
+                });
+                let row = credits.row(Some(r.id), place, &r.artist_name, &r.album_artist_name);
+                Track::from_row(r, is_fav, place.album_artist_id, row)
             })
             .collect()
     }

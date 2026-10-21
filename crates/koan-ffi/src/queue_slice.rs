@@ -16,11 +16,11 @@
 use std::collections::HashMap;
 
 use koan_core::db::queries::Place;
-use koan_core::helpers::{QueueCredits, RowCredits};
+use koan_core::helpers::{ListCredits, RecordOf, RowCredits, record_runs};
 use koan_core::player::state::{QueueItemId, QueueReading, SharedPlayerState};
 
 use crate::state::StateSlice;
-use crate::types::{Credits, EntryStatus, QueueItem};
+use crate::types::{Credits, EntryStatus, QueueItem, RunRole};
 
 /// Past this many differing rows, the whole queue again: a client applies
 /// that as cheaply as a patch the size of the queue, and a base that has
@@ -34,7 +34,7 @@ pub(crate) const PATCH_MAX: usize = 512;
 pub(crate) struct Joins {
     pub places: HashMap<i64, Place>,
     pub sources: HashMap<i64, (bool, bool)>,
-    pub credits: QueueCredits,
+    pub credits: ListCredits,
 }
 
 impl Joins {
@@ -96,12 +96,15 @@ struct Library {
     /// differently from the row as sent: a pass over the rows compares no
     /// strings.
     credits: Option<Credits>,
+    /// The row's place among the queue's records: a record id the library
+    /// moved can join or split runs.
+    run: RunRole,
 }
 
 impl Library {
     /// The library's reading of `track`, where `sent` is the row as last sent
     /// whole, if it differs in its credits.
-    fn of(track: Option<i64>, joins: &Joins, sent: Option<&QueueItem>) -> Self {
+    fn of(track: Option<i64>, joins: &Joins, sent: Option<&QueueItem>, run: RunRole) -> Self {
         let (on_server, on_disk) = joins.sources(track);
         let credits = sent.and_then(|sent| {
             let now = joins.credits(track, &sent.artist, &sent.album_artist);
@@ -113,8 +116,26 @@ impl Library {
             on_server,
             on_disk,
             credits,
+            run,
         }
     }
+}
+
+/// Each row's place among the records of the queue, as the library now files
+/// its tracks.
+fn runs<'a>(
+    rows: impl Iterator<Item = (Option<i64>, &'a str, &'a str, &'a str)>,
+    joins: &Joins,
+) -> Vec<RunRole> {
+    let records: Vec<RecordOf> = rows
+        .map(|(track, album, album_artist, title)| RecordOf {
+            album_id: joins.place(track).album_id,
+            album,
+            album_artist,
+            title,
+        })
+        .collect();
+    record_runs(&records).into_iter().map(Into::into).collect()
 }
 
 impl QueueSender {
@@ -151,10 +172,18 @@ impl QueueSender {
         if library_moved {
             let track_ids: Vec<i64> = readings.iter().filter_map(|r| r.db_id).collect();
             base.joins = joins(&track_ids);
+            let runs = runs(
+                readings.iter().zip(&base.items).map(|(r, sent)| {
+                    let (album, artist, title) = (&sent.album, &sent.album_artist, &sent.title);
+                    (r.db_id, album.as_str(), artist.as_str(), title.as_str())
+                }),
+                &base.joins,
+            );
             base.library = readings
                 .iter()
                 .zip(&base.items)
-                .map(|(r, sent)| Library::of(r.db_id, &base.joins, Some(sent)))
+                .zip(runs)
+                .map(|((r, sent), run)| Library::of(r.db_id, &base.joins, Some(sent), run))
                 .collect();
         }
 
@@ -190,9 +219,21 @@ impl QueueSender {
         let entries = state.derive_visible_queue().entries;
         let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
         let joins = joins(&track_ids);
+        let runs = runs(
+            entries.iter().map(|e| {
+                (
+                    e.db_id,
+                    e.album.as_str(),
+                    e.album_artist.as_str(),
+                    e.title.as_str(),
+                )
+            }),
+            &joins,
+        );
         let items: Vec<QueueItem> = entries
             .iter()
-            .map(|e| QueueItem::from_entry(e, &joins))
+            .zip(&runs)
+            .map(|(e, run)| QueueItem::from_entry(e, &joins, *run))
             .collect();
         let slices = vec![
             StateSlice::Queue {
@@ -210,7 +251,8 @@ impl QueueSender {
             ids: entries.iter().map(|e| e.id).collect(),
             library: entries
                 .iter()
-                .map(|e| Library::of(e.db_id, &joins, None))
+                .zip(runs)
+                .map(|(e, run)| Library::of(e.db_id, &joins, None, run))
                 .collect(),
             items,
             joins,
@@ -231,6 +273,7 @@ fn moved(sent: &QueueItem, reading: &QueueReading, library: &Library) -> Option<
         && library.place.album_id == sent.album_id
         && library.place.artist_id == sent.artist_id
         && library.place.album_artist_id == sent.album_artist_id
+        && library.run == sent.run
         && library.credits.is_none();
     (!same).then(|| {
         let credits = library.credits.clone().unwrap_or_else(|| Credits {
@@ -250,6 +293,7 @@ fn moved(sent: &QueueItem, reading: &QueueReading, library: &Library) -> Option<
             credit_differs: credits.differ,
             artist_credit: credits.artist,
             album_artist_credit: credits.album_artist,
+            run: library.run,
             ..sent.clone()
         }
     })
@@ -384,9 +428,21 @@ mod tests {
         let entries = state.derive_visible_queue().entries;
         let ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
         let j = joins(&ids);
+        let runs = runs(
+            entries.iter().map(|e| {
+                (
+                    e.db_id,
+                    e.album.as_str(),
+                    e.album_artist.as_str(),
+                    e.title.as_str(),
+                )
+            }),
+            &j,
+        );
         entries
             .iter()
-            .map(|e| QueueItem::from_entry(e, &j))
+            .zip(runs)
+            .map(|(e, run)| QueueItem::from_entry(e, &j, run))
             .collect()
     }
 
@@ -401,7 +457,7 @@ mod tests {
     fn a_row_links_each_artist_its_credit_names() {
         let joins = Joins {
             places: HashMap::from([(1, record(5))]),
-            credits: QueueCredits {
+            credits: ListCredits {
                 albums: HashMap::from([(5, vec![(1, "A".into()), (2, "B".into())])]),
                 ..Default::default()
             },

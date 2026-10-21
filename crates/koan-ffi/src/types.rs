@@ -4,7 +4,7 @@
 //! `PathBuf`, no `Arc`. These conversions are the only place that translation
 //! happens; everything above and below speaks its own native vocabulary.
 
-use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, TrackRow};
+use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, Place, TrackRow};
 use koan_core::helpers;
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueEntry, QueueEntryStatus, TrackInfo,
@@ -126,6 +126,28 @@ impl From<helpers::RowCredits> for Credits {
     }
 }
 
+/// A row's place among the records of a list. See
+/// `koan_core::helpers::RunRole`: a heading goes above each `Opens` row,
+/// drawn from that row's record.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RunRole {
+    Alone,
+    Single,
+    Opens,
+    Continues,
+}
+
+impl From<helpers::RunRole> for RunRole {
+    fn from(r: helpers::RunRole) -> Self {
+        match r {
+            helpers::RunRole::Alone => Self::Alone,
+            helpers::RunRole::Single => Self::Single,
+            helpers::RunRole::Opens => Self::Opens,
+            helpers::RunRole::Continues => Self::Continues,
+        }
+    }
+}
+
 pub(crate) fn credit_parts(
     credit: &str,
     filed: Option<i64>,
@@ -173,7 +195,10 @@ impl Album {
             id: r.id,
             title: r.title,
             artist_id: r.artist_id,
-            artist_credit: credit_parts(&r.artist_name, Some(r.artist_id), artists),
+            artist_credit: helpers::record_credit(&r.artist_name, Some(r.artist_id), artists)
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             artist_name: r.artist_name,
             year,
             codec: r.codec,
@@ -197,6 +222,14 @@ pub struct Track {
     /// `artist_name` with each artist it credits linked.
     pub artist_credit: Vec<CreditPart>,
     pub album_artist_name: String,
+    /// The record's artist, and its credit with each artist it names linked:
+    /// what a heading or page over the record draws.
+    pub album_artist_id: Option<i64>,
+    pub album_artist_credit: Vec<CreditPart>,
+    /// The track's credit reads differently from its record's: under the
+    /// record's heading or on its page, a row names its artists only when this
+    /// is set. See `koan_core::helpers::RowCredits::differ`.
+    pub credit_differs: bool,
     pub album_title: String,
     pub album_id: Option<i64>,
     pub artist_id: Option<i64>,
@@ -313,13 +346,23 @@ pub struct PlayHistoryEntry {
 }
 
 impl Track {
-    /// The row, with the artists `credits_by_id` read for it.
-    pub(crate) fn from_row(r: TrackRow, is_favourite: bool, artists: &[(i64, String)]) -> Self {
+    /// The row, with its record's artist and the credits `ListCredits` built
+    /// for it.
+    pub(crate) fn from_row(
+        r: TrackRow,
+        is_favourite: bool,
+        album_artist_id: Option<i64>,
+        credits: helpers::RowCredits,
+    ) -> Self {
         let path = r.path.clone().or_else(|| r.cached_path.clone());
+        let credits = Credits::from(credits);
         Self {
             id: r.id,
             title: r.title,
-            artist_credit: credit_parts(&r.artist_name, r.artist_id, artists),
+            artist_credit: credits.artist,
+            album_artist_credit: credits.album_artist,
+            credit_differs: credits.differ,
+            album_artist_id,
             artist_name: r.artist_name,
             album_artist_name: r.album_artist_name,
             album_title: r.album_title,
@@ -529,6 +572,8 @@ pub struct QueueItem {
     /// the record's heading, the row names its artists only when this is set.
     /// See `koan_core::helpers::RowCredits::differ`.
     pub credit_differs: bool,
+    /// Its place among the queue's records.
+    pub run: RunRole,
     pub album: String,
     pub year: Option<String>,
     pub codec: Option<String>,
@@ -567,6 +612,8 @@ pub struct Transfer {
     pub artist_id: Option<i64>,
     pub title: String,
     pub artist: String,
+    /// `artist` with each artist it credits linked.
+    pub artist_credit: Vec<CreditPart>,
     /// The record's title, empty where the library has none.
     pub album: String,
     pub state: TransferState,
@@ -607,8 +654,13 @@ impl TransferState {
 }
 
 impl Transfer {
-    /// `row` is the library's track, where it still has it.
-    pub(crate) fn of(d: &koan_core::remote::downloads::Download, row: Option<&TrackRow>) -> Self {
+    /// `row` is the library's track, where it still has it, and `credit` its
+    /// artist's credit.
+    pub(crate) fn of(
+        d: &koan_core::remote::downloads::Download,
+        row: Option<&TrackRow>,
+        credit: Vec<CreditPart>,
+    ) -> Self {
         use koan_core::remote::downloads::DownloadState;
         Self {
             track_id: d.track_id,
@@ -616,6 +668,7 @@ impl Transfer {
             artist_id: row.and_then(|r| r.artist_id),
             title: d.title.clone(),
             artist: d.artist.clone(),
+            artist_credit: credit,
             album: row.map(|r| r.album_title.clone()).unwrap_or_default(),
             state: match &d.state {
                 DownloadState::Queued => TransferState::Queued,
@@ -657,10 +710,14 @@ impl QueueItem {
     /// Build directly from a playlist item, skipping `derive_visible_queue()`.
     /// The state watcher builds this on every wake and only ever wants the
     /// item under the cursor — deriving the whole queue for that is waste.
+    /// `place` and `credits` are the library's reading of it, read once per
+    /// track by the caller.
     pub(crate) fn from_cursor_item(
         item: &PlaylistItem,
         state: PlaybackState,
         downloads: &koan_core::remote::downloads::DownloadStore,
+        place: Place,
+        credits: helpers::RowCredits,
     ) -> Self {
         // The item's own state and any transfer against it, as one answer.
         let load = LoadState::of(item, downloads);
@@ -671,27 +728,19 @@ impl QueueItem {
             QueueEntryStatus::Playing if state == PlaybackState::Stopped => EntryStatus::Queued,
             status => status.into(),
         };
-        let credits: Credits = helpers::RowCredits::new::<&str>(
-            &item.artist,
-            &item.album_artist,
-            Default::default(),
-            None,
-            &[],
-        )
-        .into();
+        let credits = Credits::from(credits);
         Self {
             queue_item_id: item.id.0.to_string(),
             track_id: item.db_id,
             playlist_entry_id: item.playlist_entry_id,
-            // The transport polls this and there is no connection here to ask.
-            // `PlayerModel` resolves the album for what is playing on its own.
-            album_id: None,
-            artist_id: None,
-            album_artist_id: None,
+            album_id: place.album_id,
+            artist_id: place.artist_id,
+            album_artist_id: place.album_artist_id,
             title: item.title.clone(),
             artist_credit: credits.artist,
             album_artist_credit: credits.album_artist,
             credit_differs: credits.differ,
+            run: RunRole::Alone,
             artist: item.artist.clone(),
             album_artist: item.album_artist.clone(),
             album: item.album.clone(),
@@ -719,7 +768,11 @@ impl QueueItem {
     /// Build from a derived queue entry, taking what the library says from
     /// joins read for the whole queue at once — a few statements per queue
     /// read rather than a few per row.
-    pub(crate) fn from_entry(e: &QueueEntry, joins: &crate::queue_slice::Joins) -> Self {
+    pub(crate) fn from_entry(
+        e: &QueueEntry,
+        joins: &crate::queue_slice::Joins,
+        run: RunRole,
+    ) -> Self {
         let place = joins.place(e.db_id);
         let (on_server, on_disk) = joins.sources(e.db_id);
         let credits: Credits = joins.credits(e.db_id, &e.artist, &e.album_artist).into();
@@ -732,6 +785,7 @@ impl QueueItem {
             album_artist_id: place.album_artist_id,
             title: e.title.clone(),
             credit_differs: credits.differ,
+            run,
             artist_credit: credits.artist,
             album_artist_credit: credits.album_artist,
             artist: e.artist.clone(),
@@ -922,10 +976,8 @@ pub enum QueueLock {
 pub struct PlaylistEntry {
     pub entry_id: i64,
     pub track: Track,
-    /// The track's record's artist, for the heading over a run of the record.
-    pub album_artist_id: Option<i64>,
-    /// The record's artist with each artist it credits linked.
-    pub album_artist_credit: Vec<CreditPart>,
+    /// Its place among the playlist's records.
+    pub run: RunRole,
 }
 
 /// What writing a playlist out to a file managed.
@@ -2502,6 +2554,9 @@ pub struct DeviceInfo {
     pub state: PlayState,
     pub title: Option<String>,
     pub artist: Option<String>,
+    /// `artist` with each artist it credits linked, where this library has
+    /// the track; empty when nothing is playing.
+    pub artist_credit: Vec<CreditPart>,
     pub album: Option<String>,
     /// This library's row for what it is playing, when it has one: for its
     /// artwork and its heart.

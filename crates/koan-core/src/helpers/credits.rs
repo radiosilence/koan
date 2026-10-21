@@ -6,7 +6,10 @@ use rusqlite::Connection;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::db::connection::DbError;
-use crate::db::queries::batch::{CreditsOf, Place, credited_artists};
+use crate::db::queries::batch::{CreditsOf, Place, credited_artists, places_for_tracks};
+
+/// What a record whose album artist is not known is credited to.
+pub const UNKNOWN_ARTIST: &str = "Unknown Artist";
 
 /// One stretch of a credit: an artist's name, linked to them, or the plain
 /// text joining two names.
@@ -93,16 +96,19 @@ impl RowCredits {
             .unwrap_or_default();
         Self {
             artist: credit_parts(artist, place.artist_id, own),
-            album_artist: credit_parts(album_artist, place.album_artist_id, record),
+            album_artist: record_credit(album_artist, place.album_artist_id, record),
         }
     }
 
-    /// The track's credit reads differently from its record's. Grouped under
-    /// the record's heading, which names the record's artists, a row names its
-    /// own only then. The credits are compared as drawn, so artists a track
-    /// credits beyond its record's are shown even where its artist tag is the
-    /// record's.
+    /// The track's credit reads differently from its record's. Wherever the
+    /// record's artists are already named, by a heading or by the page, a row
+    /// names its own only then. The credits are compared as drawn, so artists
+    /// a track credits beyond its record's are shown even where its artist tag
+    /// is the record's. A track naming no artist has nothing to show.
     pub fn differ(&self) -> bool {
+        if self.artist.iter().all(|p| p.text.is_empty()) {
+            return false;
+        }
         // `credit_parts` normalises a credit it cuts and not one it leaves
         // whole, so the two sides are compared normalised.
         fn text(parts: &[CreditPart]) -> impl Iterator<Item = char> + '_ {
@@ -115,14 +121,29 @@ impl RowCredits {
 /// The artists credited on a list of tracks and on their records, read once
 /// for the whole list: what `RowCredits` is built from for each row.
 #[derive(Debug, Default, Clone)]
-pub struct QueueCredits {
+pub struct ListCredits {
     /// Keyed by track.
     pub tracks: HashMap<i64, Vec<(i64, String)>>,
     /// Keyed by album.
     pub albums: HashMap<i64, Vec<(i64, String)>>,
 }
 
-impl QueueCredits {
+impl ListCredits {
+    /// The places of these library tracks and their credits: three
+    /// statements, whatever the length of the list. A read that fails leaves
+    /// the credits unlinked rather than failing the list.
+    pub fn read_tracks(conn: &Connection, track_ids: &[i64]) -> (HashMap<i64, Place>, Self) {
+        let places = places_for_tracks(conn, track_ids).unwrap_or_else(|e| {
+            log::warn!("track places unread, credits left unlinked: {e}");
+            HashMap::new()
+        });
+        let credits = Self::read(conn, &places).unwrap_or_else(|e| {
+            log::warn!("credited artists unread, credits left unlinked: {e}");
+            Self::default()
+        });
+        (places, credits)
+    }
+
     /// The credits of `places`' tracks and of the records they are on.
     pub fn read(conn: &Connection, places: &HashMap<i64, Place>) -> Result<Self, DbError> {
         let tracks: Vec<i64> = places.keys().copied().collect();
@@ -151,6 +172,28 @@ impl QueueCredits {
         let own = track.and_then(|id| self.tracks.get(&id)).map(Vec::as_slice);
         RowCredits::new(artist, album_artist, place, own, record)
     }
+}
+
+/// A record's credit, as `credit_parts` cuts it: `UNKNOWN_ARTIST` where the
+/// record names no artist, linked to `filed`.
+pub fn record_credit<S: AsRef<str>>(
+    credit: &str,
+    filed: Option<i64>,
+    artists: &[(i64, S)],
+) -> Vec<CreditPart> {
+    if credit.is_empty() {
+        return vec![CreditPart {
+            text: UNKNOWN_ARTIST.to_string(),
+            artist_id: filed,
+        }];
+    }
+    credit_parts(credit, filed, artists)
+}
+
+/// A credit as plain text, for what cannot hold a link: system now-playing
+/// metadata, accessibility labels, file names.
+pub fn credit_text(parts: &[CreditPart]) -> String {
+    parts.iter().map(|p| p.text.as_str()).collect()
 }
 
 /// A credit folded as names are matched: NFC, lowercased a character at a
@@ -395,5 +438,21 @@ mod tests {
             solo,
         );
         assert!(!row.differ());
+    }
+
+    #[test]
+    fn a_record_naming_no_artist_is_credited_to_unknown_artist() {
+        let place = Place {
+            album_id: Some(5),
+            artist_id: None,
+            album_artist_id: Some(3),
+        };
+        let row = RowCredits::new::<&str>("", "", place, None, &[]);
+        assert_eq!(read(&row.album_artist), [(UNKNOWN_ARTIST, Some(3))]);
+        // Nor does a track naming no artist have one to show.
+        assert!(!row.differ());
+        let row = RowCredits::new::<&str>("Someone", "", place, None, &[]);
+        assert!(row.differ());
+        assert_eq!(credit_text(&row.album_artist), UNKNOWN_ARTIST);
     }
 }

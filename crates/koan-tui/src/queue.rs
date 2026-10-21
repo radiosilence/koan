@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
-use koan_core::helpers::QueueCredits;
+use koan_core::helpers::ListCredits;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
@@ -185,7 +185,7 @@ impl Facts {
             None => None,
         };
         let places = queries::places_for_tracks(&db.conn, &ids).unwrap_or_default();
-        let credits = QueueCredits::read(&db.conn, &places).unwrap_or_default();
+        let credits = ListCredits::read(&db.conn, &places).unwrap_or_default();
         let own_credits = entries
             .iter()
             .filter_map(|e| {

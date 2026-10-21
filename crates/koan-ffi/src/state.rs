@@ -354,6 +354,7 @@ impl Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::RunRole;
     use std::time::Duration;
 
     fn anchor(position_ms: u64, playing: bool) -> Anchor {
@@ -418,6 +419,7 @@ mod tests {
                     artist_credit: Vec::new(),
                     album_artist_credit: Vec::new(),
                     credit_differs: false,
+                    run: RunRole::Opens,
                     album: "A Record With A Reasonably Long Title".into(),
                     year: Some("1994".into()),
                     codec: Some("flac".into()),
