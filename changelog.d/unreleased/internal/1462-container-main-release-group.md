@@ -1,0 +1,1 @@
+- **Release runs keep their image retag.** A release's `container-main` job queues in its own concurrency group, so a third queued run can no longer cancel it and end the release cancelled.
