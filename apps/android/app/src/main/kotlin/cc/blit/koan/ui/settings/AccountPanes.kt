@@ -419,7 +419,7 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
                 KoanText(
                     "Opening the link on a phone, tablet or computer with kōan installed signs in and loads the library, on " +
-                        "each device, for a week.",
+                        "each device, for a week. The QR code works for ten minutes.",
                     tone = KoanTone.Muted,
                 )
                 InviteCode(invite.qrLink)
