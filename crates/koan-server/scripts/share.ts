@@ -1,12 +1,12 @@
 // The share page: the shared tracks as one queue on koan's gapless player,
 // cued to the track the share starts on.
 (() => {
-  // The page's own elements, which its template always draws.
-  const $ = <E extends HTMLElement = HTMLElement>(id: string) => document.querySelector<E>(`#${id}`)!;
+  const $ = (id: string) => document.getElementById(id);
   const rows = [...document.querySelectorAll<HTMLElement>("#tracks li[data-src]")];
-  const start = Number($("tracks").dataset.start);
+  const start = Number($("tracks")?.dataset.start);
   const play = $("play"), prev = $("prev"), next = $("next");
-  const seek = $<HTMLInputElement>("seek"), pos = $("pos"), len = $("len"), cover = $("cover");
+  const seek = $("seek"), pos = $("pos"), len = $("len"), cover = $("cover");
+  if (!play || !prev || !next || !(seek instanceof HTMLInputElement) || !pos || !len || !cover) return;
   cover.addEventListener("error", () => { cover.hidden = true; });
   for (const img of document.querySelectorAll("img.art")) {
     img.addEventListener("error", () => img.classList.add("missing"));

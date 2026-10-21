@@ -1,7 +1,8 @@
 // Compiles the web UI's scripts, crates/koan-server/scripts/*.ts, into
 // crates/koan-server/assets/*.js by removing their types and nothing else, so
 // the output reads as the source does. `--check` writes nothing and fails if
-// the committed output is stale. Typechecking is tsc's (`just js`).
+// the committed output is stale. Either way, output left without a source fails
+// the run. Typechecking is tsc's (`just js`).
 //
 // Node blanks the types out with spaces, keeping every other character where it
 // was. Each blanked run, with the spaces inside it, is then cut, and a line left
@@ -13,6 +14,8 @@ import { join } from "node:path";
 const src = "crates/koan-server/scripts";
 const out = "crates/koan-server/assets";
 const check = process.argv.includes("--check");
+// Vendored, not compiled from a source here.
+const vendored = new Set(["datastar.js"]);
 
 function strip(ts) {
   const blanked = stripTypeScriptTypes(ts, { mode: "strip" });
@@ -49,7 +52,11 @@ for (const name of readdirSync(src)) {
   if (check) stale.push(path);
   else writeFileSync(path, js);
 }
-if (stale.length) {
-  console.error(`stale, run \`just js\`: ${stale.join(", ")}`);
-  process.exit(1);
-}
+// Output whose source was renamed or deleted.
+const sources = new Set(readdirSync(src).filter((n) => n.endsWith(".ts")).map((n) => n.replace(/\.ts$/, ".js")));
+const orphans = readdirSync(out)
+  .filter((n) => n.endsWith(".js") && !vendored.has(n) && !sources.has(n))
+  .map((n) => join(out, n));
+if (stale.length) console.error(`stale, run \`just js\`: ${stale.join(", ")}`);
+if (orphans.length) console.error(`no source in ${src}, delete them: ${orphans.join(", ")}`);
+if (stale.length || orphans.length) process.exit(1);

@@ -241,7 +241,7 @@ window.KoanPlayer = <T extends Track>(opts: PlayerOptions<T> = {}) => {
     on("pause", () => { if (playing) toggle(); });
     on("previoustrack", () => api.prev());
     on("nexttrack", () => api.next());
-    on("seekto", (d) => api.seek(d.seekTime ?? 0));
+    on("seekto", (d) => { if (d.seekTime != null) api.seek(d.seekTime); });
   }
 
   const api: Player<T> = {

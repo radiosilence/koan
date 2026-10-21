@@ -105,7 +105,7 @@
     for (const el of all("[data-np=title]")) el.textContent = track ? track.title ?? "" : "Nothing playing";
     for (const el of all("[data-np=artist]")) el.replaceChildren(...(track ? creditNodes(track) : []));
     for (const el of all("[data-np=sep]")) el.hidden = !(track && creditOf(track).length && track.album);
-    for (const el of all("[data-np=album]")) {
+    for (const el of all("a[data-np=album]")) {
       el.textContent = track?.album ?? "";
       if (track && track.albumId) el.href = `/album/${track.albumId}`;
       else el.removeAttribute("href");
@@ -326,7 +326,8 @@
   }
   // Opened at once, filled when the server answers; only the latest request
   // may fill it.
-  const properties = document.querySelector("#track-properties");
+  const dialog = document.getElementById("track-properties");
+  const properties = dialog instanceof HTMLDialogElement ? dialog : null;
   const propertiesBody = document.getElementById("track-properties-body");
   let asked = 0;
   async function showProperties(id) {
@@ -424,7 +425,8 @@
   // into a mail client keeps the button. Datastar can write only plain text.
   async function copyEmail(button) {
     const html = document.getElementById("invite-html")?.innerHTML ?? "";
-    const text = document.querySelector("#invite-text")?.value ?? "";
+    const invite = document.getElementById("invite-text");
+    const text = invite instanceof HTMLTextAreaElement ? invite.value : "";
     try {
       await navigator.clipboard.write([new ClipboardItem({
         "text/html": new Blob([html], { type: "text/html" }),
