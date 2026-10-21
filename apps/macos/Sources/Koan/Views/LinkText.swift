@@ -22,6 +22,9 @@ struct LinkText: View {
     var lines = 1
     /// Stepped back, as a played row's text is.
     var dimmed = false
+    /// Dragging the name drags what it names. Off where the view around it
+    /// drags something else, such as a tile carrying the records picked.
+    var drags = true
 
     @Environment(Navigator.self) private var nav
     #if os(iOS)
@@ -59,26 +62,15 @@ struct LinkText: View {
             .lineLimit(lines)
         #else
         if let target = followed {
-            Text(text)
-                .font(font ?? .role(.control, system: .callout))
-                .underline(hovering)
-                .foregroundStyle(hovering ? KoanTheme.style(.ink, system: .primary) : rest)
-                .lineLimit(lines)
-                .contentShape(.rect)
-                #if os(macOS)
-                .pointerStyle(.link)
-                #endif
-                .pointerHover { hovering = $0 }
-                // A row that scrolls or filters away while hovered never sees
-                // the exit, so it would come back still underlined.
-                .onDisappear { hovering = false }
-                .onTapGesture { nav.follow(target) }
+            if drags {
                 // Dragging the name drags what it names, which is not
                 // necessarily what the surrounding row or tile stands for: the
                 // artist link on an album tile queues the whole artist, while
                 // the artwork beside it queues just that record.
-                .dragSource(transfer(for: target))
-                .help("Go to \(text)")
+                link(target).dragSource(transfer(for: target))
+            } else {
+                link(target)
+            }
         } else {
             Text(text)
                 .font(font ?? .role(.control, system: .callout))
@@ -87,10 +79,31 @@ struct LinkText: View {
         }
         #endif
     }
+
+    #if !os(tvOS)
+    private func link(_ target: Target) -> some View {
+        Text(text)
+            .font(font ?? .role(.control, system: .callout))
+            .underline(hovering)
+            .foregroundStyle(hovering ? KoanTheme.style(.ink, system: .primary) : rest)
+            .lineLimit(lines)
+            .contentShape(.rect)
+            #if os(macOS)
+            .pointerStyle(.link)
+            #endif
+            .pointerHover { hovering = $0 }
+            // A row that scrolls or filters away while hovered never sees
+            // the exit, so it would come back still underlined.
+            .onDisappear { hovering = false }
+            .onTapGesture { nav.follow(target) }
+            .help("Go to \(text)")
+    }
+    #endif
 }
 
 extension Navigator {
     func follow(_ target: LinkText.Target) {
+        Trace.event("tap")
         switch target {
         case .artist(let id): open(artist: id)
         case .album(let id): open(album: id)
