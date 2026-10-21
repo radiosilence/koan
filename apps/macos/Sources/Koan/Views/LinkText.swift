@@ -22,8 +22,8 @@ struct LinkText: View {
     var lines = 1
     /// Stepped back, as a played row's text is.
     var dimmed = false
-    /// Dragging the name drags what it names. Off where the view around it
-    /// drags something else, such as a tile carrying the records picked.
+    /// Off where the view around it drags something else, such as a tile
+    /// carrying the records picked.
     var drags = true
 
     @Environment(Navigator.self) private var nav
@@ -95,7 +95,7 @@ struct LinkText: View {
             // A row that scrolls or filters away while hovered never sees
             // the exit, so it would come back still underlined.
             .onDisappear { hovering = false }
-            .onTapGesture { nav.follow(target) }
+            .onTapGesture { Trace.event("tap"); nav.follow(target) }
             .help("Go to \(text)")
     }
     #endif
@@ -103,7 +103,6 @@ struct LinkText: View {
 
 extension Navigator {
     func follow(_ target: LinkText.Target) {
-        Trace.event("tap")
         switch target {
         case .artist(let id): open(artist: id)
         case .album(let id): open(album: id)
