@@ -94,7 +94,8 @@ struct AlbumGridCell: View {
                 text: album.title,
                 target: .album(album.id),
                 font: .role(.control, system: .callout.weight(.medium)),
-                prominent: true
+                prominent: true,
+                drags: false
             )
 
             HStack(spacing: 4) {

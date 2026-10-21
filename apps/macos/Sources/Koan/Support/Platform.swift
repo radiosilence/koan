@@ -539,18 +539,24 @@ struct SystemSwitch: ToggleStyle {
 #endif
 
 #if os(iOS)
-/// A touch down on the view, reported until it lifts or a scroll takes it.
-/// Alongside the view's own tap, which it neither delays nor claims.
+/// A finger held on the view, reported once it has stayed 100 ms: a scroll
+/// that starts on the view moves it on before then, so scrolling does not
+/// flash every name it passes. Alongside the view's own tap, which it neither
+/// delays nor claims.
 private struct Pressing: ViewModifier {
     let action: (Bool) -> Void
-    @GestureState private var pressed = false
+    @GestureState private var held = false
 
     func body(content: Content) -> some View {
         content
             .simultaneousGesture(
-                LongPressGesture(minimumDuration: .infinity).updating($pressed) { _, pressed, _ in pressed = true }
+                LongPressGesture(minimumDuration: .infinity).updating($held) { _, held, _ in held = true }
             )
-            .onChange(of: pressed) { _, pressed in action(pressed) }
+            .task(id: held) {
+                guard held else { return action(false) }
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                action(true)
+            }
     }
 }
 #endif
@@ -565,13 +571,14 @@ extension View {
         #endif
     }
 
-    /// Hover for a link, and on a touch screen a finger held on it too: the one
-    /// sign a phone can give that a name leads somewhere before it is followed.
-    func linkHover(perform action: @escaping (Bool) -> Void) -> some View {
+    /// A finger held on the view, on a touch screen: the one sign a phone can
+    /// give that a link leads somewhere before it is followed. Nothing
+    /// elsewhere, where hover says it.
+    func onPress(perform action: @escaping (Bool) -> Void) -> some View {
         #if os(iOS)
-        pointerHover(perform: action).modifier(Pressing(action: action))
+        modifier(Pressing(action: action))
         #else
-        pointerHover(perform: action)
+        self
         #endif
     }
 
