@@ -67,8 +67,9 @@ static SHARE_IMPORTS: LazyLock<ImportMap> = LazyLock::new(|| ImportMap::player(&
 
 /// An inline import map naming the player `koan/player` at `url`, its
 /// versioned address, which the scripts import it by; and the CSP source that
-/// lets the map through. A relative import would fetch the player without its
-/// version, so a tab could pair a new script with an old player from cache.
+/// lets the map through. Importing "./player.js" would fetch the player
+/// without its version, so a tab could pair a new script with an old player
+/// from cache.
 pub(crate) struct ImportMap {
     pub json: String,
     pub csp: String,
