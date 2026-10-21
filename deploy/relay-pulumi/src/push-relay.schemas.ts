@@ -9,6 +9,9 @@ const ResourceQuantities = z.strictObject({
   memory: Quantity,
 });
 
+/** The relay refuses zero, and anything past 2^30. */
+const Limit = z.number().int().positive().max(2 ** 30).optional();
+
 const ApnsKey = z.strictObject({
   /** The key's ten-character id. */
   keyId: z.string().min(1),
@@ -51,6 +54,10 @@ export const PushRelayConfSchema = z.strictObject({
       teamId: z.string().min(1),
       production: ApnsKey.optional(),
       sandbox: ApnsKey.optional(),
+      /** HTTP/2 connections kept to each gateway. */
+      connections: z.number().int().min(1).max(64).default(4),
+      /** Pushes waiting on Apple at once; beyond it, 503. */
+      maxInFlight: z.number().int().positive().max(2 ** 30).default(4096),
     })
     .refine((v) => v.production || v.sandbox, {
       message: "apns.production or apns.sandbox is required",
@@ -98,8 +105,31 @@ export const PushRelayConfSchema = z.strictObject({
       image: z.string().default(VERSIONS.alpine),
     })
     .prefault({}),
-  /** Overrides for the relay's `[limits]`, by their snake_case names. */
-  limits: z.record(z.string().regex(/^[a-z_]+$/), z.number().int().positive()).default({}),
+  /**
+   * Overrides for the relay's quotas; anything unset keeps the relay's
+   * default. See `[limits]` in `docs/reference/protocol/push-relay.md`.
+   */
+  limits: z
+    .strictObject({
+      handleAlertsPerHour: Limit,
+      handleWakesPerHour: Limit,
+      deviceAlertsPerHour: Limit,
+      deviceWakesPerHour: Limit,
+      deviceRevocationsPerHour: Limit,
+      ipPushesPerMinute: Limit,
+      ipRegistrationsPerMinute: Limit,
+      ipRevocationsPerMinute: Limit,
+      globalPushesPerSecond: Limit,
+      proofsPerSecond: Limit,
+      ipBadTokensPerHour: Limit,
+      badTokensPerHour: Limit,
+      maxTracked: Limit,
+      maxRevocations: Limit,
+      maxRequests: Limit,
+    })
+    .prefault({}),
+  /** The relay's own log level; its libraries log at warn whatever this says. */
+  logLevel: z.enum(["error", "warn", "info", "debug", "trace"]).default("info"),
   /** Pin the pod to the node holding `store.hostPath`. */
   nodeSelector: z.record(z.string(), z.string()).default({}),
   resources: z

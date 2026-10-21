@@ -1,0 +1,252 @@
+name: CI/CD Relay
+
+# The push relay at push.koan.rocks, released on its own: its version is `crates/koan-push-relay/Cargo.toml`'s, not the
+# workspace's, so a kōan release does not redeploy it and a change to it is reviewed on its own. Pull requests check it
+# and build its image. On main, every build pushes the image under its commit; a push whose version is not released
+# yet tags the image with it, publishes `@radiosilence/koan-relay-pulumi` at it, cuts `koan-push-relay-v<version>`
+# after both exist, and asks the jaritanet deployment to pick it up. Tags are output: nothing reads one to decide what
+# to build. A manual run on main retries a release that failed part way.
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - "crates/koan-push-relay/**"
+      - "deploy/relay-pulumi/**"
+      - "Cargo.lock"
+      - "rust-toolchain*"
+      - ".github/workflows/relay.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Runs on main queue rather than cancel: a release cut short leaves an image tagged and no package.
+  group: relay-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/radiosilence/koan-push-relay
+
+jobs:
+  # The crate's version, which the package and its image pin must match, and whether it is out yet.
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/koan-push-relay/Cargo.toml)
+          package=$(node -p "require('./deploy/relay-pulumi/package.json').version")
+          pinned=$(sed -n 's/^export const APP_VERSION = "\(.*\)";/\1/p' deploy/relay-pulumi/src/versions.ts)
+          if [ -z "$version" ] || [ "$package" != "$version" ] || [ "$pinned" != "$version" ]; then
+            echo "::error::relay versions disagree: Cargo.toml '$version', package.json '$package', versions.ts '$pinned'"
+            exit 1
+          fi
+          release=false
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/koan-push-relay-v$version" > /dev/null 2> ref.err; then
+              echo "koan-push-relay-v$version is out"
+            elif grep -q 'HTTP 404' ref.err; then
+              release=true
+            else
+              cat ref.err >&2
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: relay
+      - run: cargo clippy --locked -p koan-push-relay --all-targets -- -D warnings
+      - run: cargo test --locked -p koan-push-relay
+
+  package:
+    name: Pulumi package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: deploy/relay-pulumi
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: deploy/relay-pulumi/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+  # Built on a runner of each architecture with the Rust cache, rather than inside Docker, as kōan's binaries are.
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned: the image's runtime must have at least this glibc.
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: relay-${{ matrix.arch }}
+      # Tarred, because an artifact does not keep the executable bit.
+      - run: |
+          cargo build --release --locked -p koan-push-relay
+          tar czf relay-${{ matrix.arch }}.tar.gz -C target/release koan-push-relay
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: relay-${{ matrix.arch }}
+          path: relay-${{ matrix.arch }}.tar.gz
+          retention-days: 7
+
+  # Both architectures in one image. A pull request builds it to prove it builds; main pushes it under the commit.
+  image:
+    name: Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: relay-*
+      - run: |
+          for arch in amd64 arm64; do
+            mkdir -p "dist/$arch"
+            tar xzf "relay-$arch/relay-$arch.tar.gz" -C "dist/$arch"
+          done
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: dist
+          file: crates/koan-push-relay/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+
+  # The gate, as `Checks` is for kōan: everything above passed or was skipped.
+  checks:
+    name: Relay checks
+    runs-on: ubuntu-latest
+    needs: [version, rust, package, image]
+    if: always()
+    steps:
+      - run: |
+          for result in ${{ join(needs.*.result, ' ') }}; do
+            case "$result" in success|skipped) ;; *) echo "::error::a relay check ended $result"; exit 1 ;; esac
+          done
+
+  # Image tag, then package, then the release: a published package promises an image that exists, a package version
+  # cannot be reused, and the tag says the rest is out. Each step passes over what an earlier attempt finished.
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [version, checks]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.version.outputs.release == 'true' }}
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: docker buildx imagetools create -t "$IMAGE:v$VERSION" -t "$IMAGE:latest" "$IMAGE:sha-$GITHUB_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          cache: npm
+          cache-dependency-path: deploy/relay-pulumi/package-lock.json
+      - working-directory: deploy/relay-pulumi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm ci
+          spec="$(node -p 'const p = require("./package.json"); `${p.name}@${p.version}`')"
+          if out=$(npm view "$spec" version 2>&1); then
+            echo "$spec is already published"
+          elif printf '%s' "$out" | grep -q E404; then
+            npm publish
+          else
+            echo "::error::cannot tell whether $spec is published: $out"
+            exit 1
+          fi
+      # Not marked latest: kōan's own releases are what `releases/latest` answers with.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "koan-push-relay-v$VERSION" --target "$GITHUB_SHA" --latest=false \
+            --title "koan-push-relay $VERSION" \
+            --notes "Image \`$IMAGE:v$VERSION\` and \`@radiosilence/koan-relay-pulumi@$VERSION\`."
+
+  # DEPLOYMENT_PAT needs `actions: write` on radiosilence/jaritanet; it triggers the updater, it doesn't commit.
+  deploy:
+    name: Ask the deployment to update
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: release
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.DEPLOYMENT_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::DEPLOYMENT_PAT isn't set, so the deployment wasn't asked to update"
+            exit 0
+          fi
+          gh workflow run update-apps.yml --repo radiosilence/jaritanet

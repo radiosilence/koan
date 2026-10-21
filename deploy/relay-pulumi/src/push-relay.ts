@@ -64,10 +64,19 @@ export function createPushRelay(
       { name: `KOAN_RELAY__APNS__${g.toUpperCase()}__KEY_ID`, value: conf.apns[g]!.keyId },
       { name: `KOAN_RELAY__APNS__${g.toUpperCase()}__KEY_PATH`, value: `${KEYS}/${g}.p8` },
     ]),
-    ...Object.entries(conf.limits).map(([limit, value]) => ({
-      name: `KOAN_RELAY__LIMITS__${limit.toUpperCase()}`,
-      value: String(value),
-    })),
+    { name: "KOAN_RELAY__APNS__CONNECTIONS", value: String(conf.apns.connections) },
+    { name: "KOAN_RELAY__APNS__MAX_IN_FLIGHT", value: String(conf.apns.maxInFlight) },
+    ...Object.entries(conf.limits).flatMap(([limit, value]) =>
+      value === undefined
+        ? []
+        : [
+            {
+              name: `KOAN_RELAY__LIMITS__${limit.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`,
+              value: String(value),
+            },
+          ],
+    ),
+    { name: "KOAN_RELAY_LOG", value: conf.logLevel },
   ];
 
   const deployment = new k8s.apps.v1.Deployment(
