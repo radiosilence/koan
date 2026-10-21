@@ -16,7 +16,7 @@ use koan_core::auth::Role;
 use koan_core::db::queries::batch::CreditsOf;
 use koan_core::db::queries::{self, AlbumRow, TrackRow};
 use koan_core::helpers::{
-    CreditPart, ListCredits, RowCredits, ShareTarget, credits_by_id, record_credit,
+    CreditPart, ListCredits, RowCredits, ShareTarget, credit_text, credits_by_id, record_credit,
 };
 
 use super::browse::{self, Browse, Kind};
@@ -431,6 +431,8 @@ struct TrackRowView<'a> {
 pub(super) struct TrackData<'a> {
     pub(super) t: &'a TrackRow,
     pub(super) cover: String,
+    /// The credit as text, for the player's now-playing metadata.
+    pub(super) artist: String,
     pub(super) credit: Html,
     /// The credit and record under the title.
     pub(super) sub: Html,
@@ -455,6 +457,7 @@ impl<'a> TrackData<'a> {
                 .album_id
                 .map(|a| cover_url(a, crate::covers::LARGE, versions))
                 .unwrap_or_default(),
+            artist: credit_text(&parts),
             credit: credit_data(&parts),
             sub: credit_line(t, artist.then_some(&parts[..]), album),
             heart: hearts.map(|h| h.track(t.id)).unwrap_or_default(),
