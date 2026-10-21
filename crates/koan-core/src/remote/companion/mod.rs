@@ -591,10 +591,10 @@ pub fn wake(addr: SocketAddr, credential: &Credential, name: &str) -> Result<(),
             Value::Array(vec!["SystemStatus".into(), "TVSystemStatus".into()]),
         )]),
     )?;
-    if let Ok(answer) = conn.request("FetchAttentionState", Value::dict([])) {
-        if let Some(state) = answer.get("_c").and_then(|c| c.get("state")) {
-            conn.status = state.as_int();
-        }
+    if let Ok(answer) = conn.request("FetchAttentionState", Value::dict([]))
+        && let Some(state) = answer.get("_c").and_then(|c| c.get("state"))
+    {
+        conn.status = state.as_int();
     }
     let asleep = conn.status != Some(AWAKE);
     if asleep {
