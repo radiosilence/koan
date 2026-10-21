@@ -2405,8 +2405,6 @@ pub(crate) mod bonjour {
     /// A service instance resolved: where it is and what it says of itself.
     pub struct Instance {
         pub name: String,
-        /// The interface it was resolved on.
-        pub interface: u32,
         pub host: String,
         pub port: u16,
         pub txt: Vec<u8>,
@@ -2484,10 +2482,9 @@ pub(crate) mod bonjour {
             }
             DNSServiceRefDeallocate(sd);
         }
-        let (interface, host, port, txt) = out?;
+        let (_, host, port, txt) = out?;
         Some(Instance {
             name: name.to_string_lossy().into_owned(),
-            interface,
             host,
             port,
             txt,
@@ -2581,19 +2578,6 @@ pub(crate) mod bonjour {
                 )
             })
             .collect()
-    }
-
-    /// Resolve the instance `name` of `regtype` in `local.`, on `interface`
-    /// (0 for any). A sleep proxy answers for a host asleep.
-    pub fn resolve_named(
-        name: &str,
-        regtype: &str,
-        interface: u32,
-        within: std::time::Duration,
-    ) -> Option<Instance> {
-        let name = CString::new(name).ok()?;
-        let regtype = CString::new(regtype).ok()?;
-        resolve_raw(0, interface, &name, &regtype, c"local.", within)
     }
 
     #[cfg(test)]
@@ -3091,6 +3075,7 @@ mod tests {
                 wakeable: None,
                 owner: None,
                 acks: false,
+                tv_pairing: None,
             }],
             None,
         );

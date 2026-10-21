@@ -2186,6 +2186,7 @@ pub(crate) mod tests {
             wakeable: None,
             owner: None,
             acks: false,
+            tv_pairing: None,
         }
     }
 
