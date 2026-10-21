@@ -6,7 +6,7 @@ Two ways a device signs in to a kōan server without anyone typing the account's
 
 An admin makes an invite for an account with `/rest/koanInvite?username=…` (or `koanCreateUser`, which makes the account too). The answer carries a token: a JWT signed with the server's key whose payload claims are `typ` (`koan-invite`), the account (`sub`, its id, and `username`), a mark of its password hash (`pwd`), when it was made (`iat`) and an expiry seven days on (`exp`). Nothing is stored when one is made, so a link signs in as many devices as its holder has until it expires or the account's password changes, which changes the mark. Resetting the password (`reset=true`) is how a link sent to the wrong place is withdrawn.
 
-The answer also carries `qrToken`, the same token with an expiry ten minutes on, for a client that shows the invite as a QR code: anyone who can see the screen, or a recording of it, can scan one. The link sent by email carries `token`. Servers before 0.66.5 send no `qrToken`; a client then shows `token`.
+The answer also carries `qrToken`, the same token with an expiry ten minutes on, for a client that shows the invite as a QR code: anyone who can see the screen, or a recording of it, can scan one. The link sent by email carries `token`. Servers older than it send no `qrToken`; a client then shows `token`.
 
 ### Link format
 
