@@ -5573,6 +5573,7 @@ impl KoanEngine {
                     asleep: d.asleep,
                     wakeable: d.wakeable,
                     tv_paired: d.tv_paired,
+                    tv_pairable: d.tv_pairable,
                     last_seen: d.last_seen,
                     waking: d.waking.as_ref().and_then(|w| match w {
                         koan_core::remote::devices::Waking::Tv => Some("tv".into()),

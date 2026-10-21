@@ -24,17 +24,6 @@ struct SignedInHere: Equatable {
     let at: Date
 }
 
-extension DeviceInfo {
-    /// One of the account's Apple TVs, which this device can pair to wake.
-    var canSetUpWaking: Bool {
-        #if os(tvOS)
-        false
-        #else
-        platform == "tvos" && account && owner == nil
-        #endif
-    }
-}
-
 /// The offer after a sign-in, and the sheet that pairs.
 struct TvWakePrompts: ViewModifier {
     let state: AppState
@@ -45,7 +34,7 @@ struct TvWakePrompts: ViewModifier {
     private var arrived: TvWakeTarget? {
         guard let signed = state.ui.signedInHere, signed.at.timeIntervalSinceNow > -300 else { return nil }
         return state.mirror.devices
-            .first { $0.canSetUpWaking && !$0.tvPaired && $0.awake && $0.name == signed.name }
+            .first { $0.tvPairable && !$0.tvPaired && $0.awake && $0.name == signed.name }
             .map { TvWakeTarget(id: $0.id, name: $0.name) }
     }
 

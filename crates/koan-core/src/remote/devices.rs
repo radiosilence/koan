@@ -57,6 +57,9 @@ pub struct Device {
     /// An Apple TV of the account's with a Companion pairing: woken and koan
     /// started on it from any device of the account on its network.
     pub tv_paired: bool,
+    /// An Apple TV of the account's that this device can pair to be woken:
+    /// it can reach one, and the server keeps pairings.
+    pub tv_pairable: bool,
     /// Unix seconds when it was last reachable; `None` if never, here.
     pub last_seen: Option<i64>,
     /// How far waking it has got, while it is being woken or once it failed.
@@ -720,9 +723,9 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
     });
 }
 
-/// Whether this platform can wake an Apple TV over the Companion protocol:
-/// it browses for the TV with the system's Bonjour.
-const COMPANION: bool = cfg!(target_vendor = "apple");
+/// Whether this platform wakes Apple TVs over the Companion protocol: it
+/// browses for them with the system's Bonjour. A television wakes no other.
+const COMPANION: bool = cfg!(any(target_os = "macos", target_os = "ios"));
 
 /// The Companion pairing of the account's Apple TV `id`, as the server keeps
 /// it.
@@ -774,6 +777,13 @@ pub fn begin_tv_pairing(id: &str) -> Result<(), String> {
     use crate::remote::companion;
     if !COMPANION {
         return Err("Waking an Apple TV is set up from an iPhone, iPad or Mac.".into());
+    }
+    if !crate::remote::profile::current()
+        .is_some_and(|p| p.offers(crate::remote::profile::TV_PAIRING))
+    {
+        return Err(
+            "Your server is too old to keep an Apple TV's pairing. Update it first.".into(),
+        );
     }
     let name = with(|s| {
         s.account
@@ -981,6 +991,9 @@ fn same_server(ours: &Option<String>, theirs: &Option<String>) -> bool {
 
 /// `list_at` for this device on the server `ours`.
 fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
+    let pairable = COMPANION
+        && crate::remote::profile::current()
+            .is_some_and(|p| p.offers(crate::remote::profile::TV_PAIRING));
     with(|s| {
         // A list kept from before the server was recorded is taken as this
         // one's: the next link replaces it.
@@ -1015,6 +1028,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                     // send with. One that says nothing lists only those.
                     wakeable: d.wakeable.unwrap_or(true) || (COMPANION && d.tv_pairing.is_some()),
                     tv_paired: d.tv_pairing.is_some(),
+                    tv_pairable: pairable && d.platform == "tvos" && d.owner.is_none(),
                     last_seen: live(&d.id),
                     waking: None,
                     // Met on the network, its own word is the latest.
@@ -1052,6 +1066,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                 asleep: false,
                 wakeable: false,
                 tv_paired: false,
+                tv_pairable: false,
                 last_seen: live(&n.hello.id),
                 waking: None,
                 same_library: same_server(&ours, &n.hello.library),
@@ -1081,6 +1096,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                 // one; one of the account's that left the list has no token.
                 wakeable: !g.account && s.linked,
                 tv_paired: false,
+                tv_pairable: false,
                 last_seen: last,
                 waking: None,
                 // One that left a list kept before servers were recorded
@@ -1113,6 +1129,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                 asleep: true,
                 wakeable: false,
                 tv_paired: false,
+                tv_pairable: false,
                 last_seen: live(&t.id),
                 waking: None,
                 same_library: true,
@@ -2032,6 +2049,7 @@ pub(crate) mod tests {
             asleep,
             wakeable,
             tv_paired: false,
+            tv_pairable: false,
             last_seen: None,
             waking: None,
             same_library: true,

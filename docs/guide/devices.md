@@ -166,6 +166,8 @@ if it can be woken.
 - **One a push can wake**, a phone on your account that iOS has suspended,
   can be chosen, and choosing it wakes it. That takes a push key on the
   server; without one, the phone is listed but cannot be woken.
+- **An Apple TV set up to be woken** can be chosen from a phone or Mac on its
+  network, push key or not.
 - **One that cannot be woken from here**, such as a stranger's phone on the
   network, is shown asleep and cannot be chosen. A Mac is one of these: macOS
   does not open a quit app for a push, so a Mac whose kōan was quit, or that is
@@ -199,12 +201,15 @@ on its own.
 Choosing an asleep device wakes it, trying each of these until it answers.
 The row says which it is on, and says so if none worked.
 
-1. **The local network**, if the device was seen there within the last minute:
+1. **An Apple TV set up to be woken** is turned on and kōan opened on it,
+   from a device on its network. See
+   [Playing to it while it sleeps](apple-tv.md#playing-to-it-while-it-sleeps).
+2. **The local network**, if the device was seen there within the last minute:
    it may not be suspended yet.
-2. **A background push** through your server. iOS delivers these when it sees
+3. **A background push** through your server. iOS delivers these when it sees
    fit. It delays or drops them to save battery and in Low Power Mode, and
    never delivers one to an app that was swiped away.
-3. **A notification** on the device, after about six seconds, saying this
+4. **A notification** on the device, after about six seconds, saying this
    device wants to play there. Tapping it opens kōan, which connects.
 
 A device of another account on your server can be woken too: one shared with

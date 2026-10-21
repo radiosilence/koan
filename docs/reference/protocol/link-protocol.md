@@ -80,6 +80,7 @@ A field marked `?` may be absent, and senders leave most of them out when they h
 | `share` | `grantee`, `allow` | Let account `grantee` control this device, or stop letting it. Only ever about the device sending it |
 | `forget` | `device` | Remove a device from the account |
 | `levels` | `f` | A frame of this device's audio levels, while watched |
+| `tvPairing` | `device`, `pairing?` | Keep `pairing` for the account's Apple TV `device`, or drop the one kept when it is absent ([Apple TV pairing](#apple-tv-pairing)) |
 
 `LinkReport` has one more variant, `hello`, which only a [nearby](nearby-protocol.md#handshake) listener sends.
 
@@ -93,7 +94,7 @@ A levels frame `f` is an array `[atMs, low, mid, high]`: milliseconds into the t
 
 ## Devices
 
-`koanDevices`. A link opened with `devices=1` is sent `devices` when it links and whenever one of the account's devices changes. Each device has `id`, `name`, `platform`, `linked`, and may carry `state` (its last report, with the playhead placed as of sending), `lastSeen` (Unix seconds, for one not linked), `wakeable` (the server can push to it), `owner` (for a device another account shares) and `acks`.
+`koanDevices`. A link opened with `devices=1` is sent `devices` when it links and whenever one of the account's devices changes. Each device has `id`, `name`, `platform`, `linked`, and may carry `state` (its last report, with the playhead placed as of sending), `lastSeen` (Unix seconds, for one not linked), `wakeable` (the server can push to it), `owner` (for a device another account shares), `acks`, and `tvPairing` (an Apple TV's pairing, for the account's own devices only: see [Apple TV pairing](#apple-tv-pairing)).
 
 A device commands another with a `command` report. The `ack`, when there is one, sits beside `to` and `command`, not inside `command`:
 
@@ -106,6 +107,14 @@ A device commands another with a `command` report. The `ack`, when there is one,
 A command for a device that is not linked is kept and delivered when it links. An iOS device that gave a push token is woken, if the server has a `[push]` key. `watchLevels` and `refreshOutputs` are only worth saying to a device that is there, so they are never kept or pushed.
 
 `/rest/koanCommand?to=<device id>&command=<command JSON>` sends one command in a single request, for a device whose own link is down, such as an iPhone acting from its lock screen. `ack` optionally names the command's id.
+
+## Apple TV pairing
+
+`koanTvPairing`. An Apple TV is woken, and kōan started on it, over Apple's Companion protocol (`_companion-link._tcp`), the one the Remote app uses. A device of the account on the TV's network pairs with the TV once: HomeKit pair-setup, with the PIN the TV shows. It reports the result as `tvPairing`, and the server keeps it for the account and sends it on that TV's entry in every `devices` list the account's own links receive. A device on the TV's network then wakes it with the pairing: pair-verify, the wake button, and a launch of `cc.blit.koan`, after which kōan there links as usual. No push is involved.
+
+A pairing is `{"tvId","tvKey","id","seed"}`: the TV's pairing identifier, which its `_companion-link._tcp` announcement carries as `rpMRtID` and by which a device finds it; the TV's Ed25519 public key; the controller's pairing identifier; and the controller's Ed25519 seed, the last two base64. The seed lets whoever holds it act as a remote for that TV, so it is handled like the account's API keys: it goes only to the account's own devices, never to devices shared with it or met on the network.
+
+The server takes a pairing only for a device that has linked as one of the account's with `platform` `tvos`, and keeps a paired TV however long it is away, where other devices are forgotten after 30 days. Forgetting the device drops its pairing. A server without `koanTvPairing` ignores the report, so a client offers pairing only where it is listed.
 
 ## Acks
 

@@ -55,7 +55,7 @@ class SettingsTest {
         problem: String? = null,
     ) = DeviceInfo(
         id = id, name = "Living room", platform = "tvos", account = true, owner = null, nearby = false,
-        awake = awake, asleep = asleep, wakeable = wakeable, tvPaired = false, lastSeen = lastSeen, waking = null, wakeFailed = null,
+        awake = awake, asleep = asleep, wakeable = wakeable, tvPaired = false, tvPairable = false, lastSeen = lastSeen, waking = null, wakeFailed = null,
         sameLibrary = sameLibrary, state = state, title = "Tone 300 Hz", artist = "Tone Settings",
         artistCredit = listOf(CreditPart("Tone Settings", null)), album = null,
         trackId = null, albumId = null, positionMs = 0u, durationMs = 0u, problem = problem,

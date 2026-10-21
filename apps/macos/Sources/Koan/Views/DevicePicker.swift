@@ -84,7 +84,7 @@ private struct DeviceRow: View {
         // A context menu on the Mac, a long press on iOS: where each looks
         // for what can be done to a row beyond choosing it.
         .contextMenu {
-            if device.canSetUpWaking {
+            if device.tvPairable {
                 if device.tvPaired {
                     Button("Stop Waking", koan: Icon.close) {
                         player.forgetTvPairing(device.id)
@@ -129,7 +129,7 @@ private struct DeviceRow: View {
             if device.wakeable {
                 return "Asleep\(seen). Choosing it wakes it; music sent here arrives as a notification to tap."
             }
-            if device.canSetUpWaking {
+            if device.tvPairable {
                 return "Asleep\(seen). Set Up Waking in its menu to turn it on from here."
             }
             // A Mac drops out when kōan is quit or the Mac is off, and nothing

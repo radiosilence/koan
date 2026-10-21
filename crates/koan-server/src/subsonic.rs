@@ -64,6 +64,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::SCROBBLING, &[1]),
     (koan_core::remote::profile::DSP_PROFILES, &[1]),
     (koan_core::remote::profile::DSP_DELETED, &[1]),
+    (koan_core::remote::profile::TV_PAIRING, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
