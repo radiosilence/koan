@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 25;
+pub const SCHEMA_VERSION: i64 = 26;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -220,6 +220,17 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             username    TEXT NOT NULL,
             token       TEXT NOT NULL,
             sandbox     INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            PRIMARY KEY (device, username)
+        );
+
+        -- An Apple TV's Companion pairing, made once by a device of the
+        -- account on the TV's network and handed to the account's devices,
+        -- which wake the TV with it: see koan-core's remote/companion.
+        CREATE TABLE IF NOT EXISTS link_tv (
+            device      TEXT NOT NULL,
+            username    TEXT NOT NULL,
+            pairing     TEXT NOT NULL,
             updated_at  INTEGER NOT NULL,
             PRIMARY KEY (device, username)
         );

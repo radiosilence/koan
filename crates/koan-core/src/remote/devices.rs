@@ -50,9 +50,13 @@ pub struct Device {
     /// Not reachable for longer than a heartbeat. Not reachable for less, it
     /// is neither awake nor asleep: reconnecting, as far as anyone can tell.
     pub asleep: bool,
-    /// Can be woken from asleep: the server holds a push token for it.
-    /// An asleep device that cannot be is shown, and cannot be chosen.
+    /// Can be woken from asleep: the server holds a push token for it, or it
+    /// is an Apple TV paired to be woken from here. An asleep device that
+    /// cannot be is shown, and cannot be chosen.
     pub wakeable: bool,
+    /// An Apple TV of the account's with a Companion pairing: woken and koan
+    /// started on it from any device of the account on its network.
+    pub tv_paired: bool,
     /// Unix seconds when it was last reachable; `None` if never, here.
     pub last_seen: Option<i64>,
     /// How far waking it has got, while it is being woken or once it failed.
@@ -177,10 +181,9 @@ struct Store {
     accounts: Vec<String>,
     /// The last command that did not simply arrive, for the app to say so.
     notice: Option<Notice>,
-    /// When each Apple TV was last looked for among AirPlay announcements, by
-    /// id and host: one with none, or none that matches, is not looked for
-    /// again at every hello.
-    tv_looked: HashMap<(String, String), Instant>,
+    /// Where each Apple TV's Companion service last answered, by id: tried
+    /// when browsing does not find it.
+    tv_addrs: HashMap<String, std::net::SocketAddr>,
 }
 
 /// A command that was queued for a device asleep, or did not reach one: what
@@ -232,9 +235,8 @@ pub type Then = Box<dyn FnOnce(Option<acks::AckOutcome>) + Send>;
 /// A stage of waking a device, in the order they are tried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Waking {
-    /// Knocking on an Apple TV's AirPlay service until the box answers: a
-    /// sleeping one is woken by the sleep proxy answering for it, so that the
-    /// push after this can reach koan there.
+    /// Waking an Apple TV over the Companion protocol and launching koan on
+    /// it, which then links: see `remote::companion`.
     Tv,
     /// Dialling it on the local network: seen there a moment ago, it may not
     /// be suspended yet.
@@ -299,9 +301,6 @@ pub struct SeenNearby {
     pub addr: String,
     /// Unix seconds.
     pub at: i64,
-    /// An Apple TV's AirPlay announcement, knocked on to wake it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tv: Option<crate::remote::airplay::Tv>,
 }
 
 /// A device not reached on the network in this long is forgotten.
@@ -696,19 +695,7 @@ pub fn remembered_nearby() -> Vec<SeenNearby> {
 }
 
 pub fn nearby_hello(hello: LinkHello, addr: &str) {
-    let host = crate::remote::airplay::host_of(addr).to_string();
-    let look = changed(|s| {
-        let kept = s
-            .seen
-            .iter()
-            .find(|n| n.id == hello.id)
-            .and_then(|n| n.tv.clone());
-        let look = hello.platform == "tvos"
-            && !crate::remote::airplay::current(kept.as_ref(), &host)
-            && look_for_tv(&mut s.tv_looked, &hello.id, &host, Instant::now());
-        // A record the look replaces is dropped; with no look, the one kept
-        // stands, as one matched by name rather than host does.
-        let tv = if look { None } else { kept };
+    changed(|s| {
         s.seen.retain(|n| n.id != hello.id);
         s.seen.push(SeenNearby {
             id: hello.id.clone(),
@@ -716,7 +703,6 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
             platform: hello.platform.clone(),
             addr: addr.to_string(),
             at: chrono::Utc::now().timestamp(),
-            tv,
         });
         s.save();
         s.live
@@ -726,73 +712,147 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
         s.lan_heard
             .insert(hello.id.clone(), chrono::Utc::now().timestamp());
         s.nearby.retain(|n| n.hello.id != hello.id);
-        let found = look.then(|| (hello.id.clone(), hello.name.clone()));
         s.nearby.push(Nearby {
             hello,
             state: None,
             at: Instant::now(),
         });
-        found
     });
-    if let Some((id, name)) = look {
-        record_tv(id, name, addr.to_string());
-    }
 }
 
-/// How long a look for an Apple TV's AirPlay announcement stands, found or
-/// not, before the same TV at the same host is looked for again.
-const TV_LOOK_AGAIN: Duration = Duration::from_secs(10 * 60);
+/// Whether this platform can wake an Apple TV over the Companion protocol:
+/// it browses for the TV with the system's Bonjour.
+const COMPANION: bool = cfg!(target_vendor = "apple");
 
-/// Whether to look for the AirPlay announcement of the Apple TV `id` at
-/// `host` now, noting the look if so. A look under way counts.
-fn look_for_tv(
-    looked: &mut HashMap<(String, String), Instant>,
-    id: &str,
-    host: &str,
-    now: Instant,
-) -> bool {
-    looked.retain(|_, at| now.saturating_duration_since(*at) < TV_LOOK_AGAIN);
-    let key = (id.to_string(), host.to_string());
-    if looked.contains_key(&key) {
-        return false;
-    }
-    looked.insert(key, now);
-    true
-}
-
-/// Find the AirPlay announcement of the Apple TV `id`, met at `addr`, and keep
-/// it to wake the TV by when koan there is asleep.
-fn record_tv(id: String, name: String, addr: String) {
-    let _ = std::thread::Builder::new()
-        .name("koan-airplay".into())
-        .spawn(move || {
-            let Some(tv) = crate::remote::airplay::record(&addr, &name) else {
-                log::info!("airplay: {name}: no AirPlay announcement from {addr}");
-                return;
-            };
-            log::info!(
-                "airplay: {name} is {} on {} ({})",
-                tv.name,
-                tv.host,
-                tv.mac.as_deref().unwrap_or("no MAC")
-            );
-            with(|s| {
-                if let Some(n) = s.seen.iter_mut().find(|n| n.id == id) {
-                    n.tv = Some(tv);
-                    s.save();
-                }
-            });
-        });
-}
-
-/// The Apple TV `id` is, as its AirPlay announcement had it while awake.
-fn tv_of(id: &str) -> Option<crate::remote::airplay::Tv> {
+/// The Companion pairing of the account's Apple TV `id`, as the server keeps
+/// it.
+fn tv_pairing_of(id: &str) -> Option<crate::remote::companion::Credential> {
     with(|s| {
+        s.account
+            .iter()
+            .find(|(d, _)| d.id == id)
+            .and_then(|(d, _)| d.tv_pairing.clone())
+    })
+}
+
+/// This device's name, as the TV lists its pairing and session.
+fn own_name() -> String {
+    LOCAL
+        .get()
+        .map_or_else(|| "kōan".to_string(), |l| l.identity.name.clone())
+}
+
+/// Wake the Apple TV `id`, named `name`, with `pairing`, and launch koan on
+/// it: found on this network by the identifier it paired with, or where it
+/// last answered. Why not, as the device's row says it.
+fn wake_tv(
+    id: &str,
+    name: &str,
+    pairing: &crate::remote::companion::Credential,
+) -> Result<(), String> {
+    use crate::remote::companion;
+    let found = companion::browse(TV_FIND)
+        .into_iter()
+        .find(|t| t.id.as_deref() == Some(pairing.tv_id.as_str()))
+        .map(|t| t.addr);
+    let addr = found
+        .or_else(|| with(|s| s.tv_addrs.get(id).copied()))
+        .ok_or_else(|| format!("{name} isn't on this network."))?;
+    companion::wake(addr, pairing, &own_name()).map_err(|e| e.to_string())?;
+    with(|s| s.tv_addrs.insert(id.to_string(), addr));
+    Ok(())
+}
+
+/// A pairing under way, for the Apple TV by id: the TV is showing its PIN.
+static PAIRING: Mutex<Option<(String, crate::remote::companion::Pairing)>> = Mutex::new(None);
+
+/// Ask the account's Apple TV `id` to pair, so that the account's devices can
+/// wake it: the TV shows a PIN, which `finish_tv_pairing` takes. Blocks for
+/// the few seconds finding the TV takes. The TV is the one on the host koan
+/// there was met at, else the one of its name, else the only one here.
+pub fn begin_tv_pairing(id: &str) -> Result<(), String> {
+    use crate::remote::companion;
+    if !COMPANION {
+        return Err("Waking an Apple TV is set up from an iPhone, iPad or Mac.".into());
+    }
+    let name = with(|s| {
+        s.account
+            .iter()
+            .find(|(d, _)| d.id == id && d.platform == "tvos" && d.owner.is_none())
+            .map(|(d, _)| d.name.clone())
+    })
+    .ok_or("Only an Apple TV signed in to your account can be set up to wake.")?;
+    let host = with(|s| {
         s.seen
             .iter()
             .find(|n| n.id == id)
-            .and_then(|n| n.tv.clone())
+            .map(|n| crate::remote::companion::host_of(&n.addr).to_string())
     })
+    .unwrap_or_default();
+    let tvs = companion::browse(TV_FIND);
+    let tv = companion::pick(&tvs, &host, &name).ok_or_else(|| match tvs.len() {
+        0 => format!(
+            "No Apple TV answers on this network. Is {name} on, and this device on the same Wi-Fi?"
+        ),
+        _ => format!("Couldn't tell which Apple TV here is {name}."),
+    })?;
+    log::info!("tv: pairing {name} at {} ({})", tv.addr, tv.name);
+    let pairing = companion::begin_pairing(tv.addr).map_err(|e| e.to_string())?;
+    *PAIRING.lock() = Some((id.to_string(), pairing));
+    Ok(())
+}
+
+/// Finish the pairing `begin_tv_pairing` started with the PIN on the TV,
+/// and have the server keep it for the account.
+pub fn finish_tv_pairing(pin: &str) -> Result<(), String> {
+    let (id, pairing) = PAIRING
+        .lock()
+        .take()
+        .ok_or("The TV is no longer waiting for a code. Start again.")?;
+    let credential = pairing
+        .finish(pin, &own_name())
+        .map_err(|e| e.to_string())?;
+    log::info!("tv: paired {id}");
+    // Kept here at once: a wake before the server's list comes back works.
+    changed(|s| {
+        if let Some((d, _)) = s.account.iter_mut().find(|(d, _)| d.id == id) {
+            d.tv_pairing = Some(credential.clone());
+            s.save();
+        }
+    });
+    if !link::report(LinkReport::TvPairing {
+        device: id,
+        pairing: Some(credential),
+    }) {
+        return Err(
+            "Paired, but not connected to your server to keep it. Try again once connected.".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Abandon the pairing under way; the TV takes its PIN down when the
+/// connection closes.
+pub fn cancel_tv_pairing() {
+    PAIRING.lock().take();
+}
+
+/// Stop waking the Apple TV `id`: the server drops its pairing for every
+/// device of the account. The TV still lists it under Remotes and Devices.
+pub fn forget_tv_pairing(id: &str) -> Result<(), String> {
+    if !link::report(LinkReport::TvPairing {
+        device: id.to_string(),
+        pairing: None,
+    }) {
+        return Err("Not connected to your server.".into());
+    }
+    changed(|s| {
+        if let Some((d, _)) = s.account.iter_mut().find(|(d, _)| d.id == id) {
+            d.tv_pairing = None;
+            s.save();
+        }
+    });
+    Ok(())
 }
 
 pub fn nearby_state(id: &str, state: LinkState) {
@@ -953,7 +1013,8 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                     asleep: !awake && !fresh(&d.id),
                     // As the server says: a push token, and a push key to
                     // send with. One that says nothing lists only those.
-                    wakeable: d.wakeable.unwrap_or(true),
+                    wakeable: d.wakeable.unwrap_or(true) || (COMPANION && d.tv_pairing.is_some()),
+                    tv_paired: d.tv_pairing.is_some(),
                     last_seen: live(&d.id),
                     waking: None,
                     // Met on the network, its own word is the latest.
@@ -990,6 +1051,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                 awake: true,
                 asleep: false,
                 wakeable: false,
+                tv_paired: false,
                 last_seen: live(&n.hello.id),
                 waking: None,
                 same_library: same_server(&ours, &n.hello.library),
@@ -1018,6 +1080,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                 // which does so for a device behind the same router as this
                 // one; one of the account's that left the list has no token.
                 wakeable: !g.account && s.linked,
+                tv_paired: false,
                 last_seen: last,
                 waking: None,
                 // One that left a list kept before servers were recorded
@@ -1049,6 +1112,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                 awake: false,
                 asleep: true,
                 wakeable: false,
+                tv_paired: false,
                 last_seen: live(&t.id),
                 waking: None,
                 same_library: true,
@@ -1106,16 +1170,15 @@ const NETWORK_RECENT: i64 = 60;
 const NETWORK_WAIT: Duration = Duration::from_secs(3);
 const PUSH_WAIT: Duration = Duration::from_secs(6);
 const NOTIFICATION_WAIT: Duration = Duration::from_secs(45);
-/// How long an Apple TV is knocked on before the push goes anyway.
-const TV_KNOCK: Duration = Duration::from_secs(20);
-/// After the box answers, how long koan there has to be heard from on the
-/// network before the push: it may only have been asleep with the box.
-const TV_WAIT: Duration = Duration::from_secs(2);
+/// How long an Apple TV's Companion service is looked for on the network.
+const TV_FIND: Duration = Duration::from_secs(2);
+/// After the TV is woken and koan launched there, how long koan has to link
+/// before the push: starting cold and signing in takes a few seconds.
+const TV_WAIT: Duration = Duration::from_secs(12);
 
 /// The stages to try, each with how long to wait on it. A device that
-/// nothing can wake through the server is only tried on the network. An
-/// Apple TV with an AirPlay announcement on record is woken first, so the
-/// box is up for what follows.
+/// nothing can wake through the server is only tried on the network. A
+/// paired Apple TV is woken first, which also launches koan there.
 fn wake_plan(tv: bool, seen_nearby_recently: bool, wakeable: bool) -> Vec<(Waking, Duration)> {
     let mut plan = Vec::new();
     if tv {
@@ -1280,9 +1343,9 @@ pub fn wake_to_send(id: &str) -> bool {
 }
 
 /// The longest `wake_to_send` waits: every stage before the notification,
-/// an Apple TV's knock included, and some for the steps between them.
+/// finding an Apple TV included, and some for the steps between them.
 const WAKE_TO_SEND: Duration = Duration::from_secs(
-    TV_KNOCK.as_secs() + TV_WAIT.as_secs() + NETWORK_WAIT.as_secs() + PUSH_WAIT.as_secs() + 5,
+    TV_FIND.as_secs() + TV_WAIT.as_secs() + NETWORK_WAIT.as_secs() + PUSH_WAIT.as_secs() + 5,
 );
 
 /// `wake`, with the notification to tap as its last stage when `notify`.
@@ -1296,9 +1359,19 @@ fn start_wake(id: &str, notify: bool) -> bool {
         return false;
     };
     let now = chrono::Utc::now().timestamp();
+    let tv = (COMPANION && device.platform == "tvos")
+        .then(|| tv_pairing_of(&id))
+        .flatten();
+    // The server's word on pushing to it: `wakeable` also counts a pairing.
     // A stranger on the network has nothing to answer a push with.
-    let tv = (device.platform == "tvos").then(|| tv_of(&id)).flatten();
-    let mut plan = wake_plan(tv.is_some(), recently_on_network(&id, now), device.wakeable);
+    let pushable = with(|s| {
+        s.account
+            .iter()
+            .find(|(d, _)| d.id == id)
+            .map(|(d, _)| d.wakeable.unwrap_or(true))
+    })
+    .unwrap_or(device.wakeable && !device.tv_paired);
+    let mut plan = wake_plan(tv.is_some(), recently_on_network(&id, now), pushable);
     plan.retain(|(stage, _)| notify || *stage != Waking::Notification);
     if plan.is_empty() {
         return false;
@@ -1314,7 +1387,7 @@ fn start_wake(id: &str, notify: bool) -> bool {
             let started = Instant::now();
             let ms = || started.elapsed().as_millis();
             let current = || wake_is_current(generation);
-            let mut box_silent = false;
+            let mut tv_failed = None;
             let ended = run_wake(
                 &plan,
                 current,
@@ -1323,14 +1396,16 @@ fn start_wake(id: &str, notify: bool) -> bool {
                     changed(|s| s.waking.insert(id.clone(), stage.clone()));
                     match stage {
                         Waking::Tv => {
-                            if let Some(tv) = &tv {
-                                let awake = crate::remote::airplay::wake(tv, TV_KNOCK, || {
-                                    !current() || reachable(&id)
-                                });
-                                box_silent = !awake && current() && !reachable(&id);
-                                // Awake, koan there may answer the network
-                                // before any push.
-                                crate::remote::nearby::dial_now();
+                            if let Some(pairing) = &tv {
+                                match wake_tv(&id, &name, pairing) {
+                                    // Launched, koan there may answer the
+                                    // network before its link is up.
+                                    Ok(()) => crate::remote::nearby::dial_now(),
+                                    Err(why) => {
+                                        log::warn!("wake: {name}: {why}");
+                                        tv_failed = Some(why);
+                                    }
+                                }
                             }
                             Ok(())
                         }
@@ -1366,11 +1441,9 @@ fn start_wake(id: &str, notify: bool) -> bool {
                     true
                 },
             );
-            let ended = match ended {
-                Ended::Failed(_) if box_silent => Ended::Failed(format!(
-                    "Couldn't wake {name}: the Apple TV did not answer on this network."
-                )),
-                ended => ended,
+            let ended = match (ended, tv_failed) {
+                (Ended::Failed(_), Some(why)) => Ended::Failed(why),
+                (ended, _) => ended,
             };
             match &ended {
                 Ended::Reached(stage) => {
@@ -1958,6 +2031,7 @@ pub(crate) mod tests {
             awake,
             asleep,
             wakeable,
+            tv_paired: false,
             last_seen: None,
             waking: None,
             same_library: true,
@@ -2085,65 +2159,6 @@ pub(crate) mod tests {
             "the server answered"
         );
         with(|s| *s = Store::default());
-    }
-
-    /// A TV dialled by address whose AirPlay record was matched by name, at
-    /// its `.local.` host: a second hello inside the window, which does not
-    /// look again, keeps the record to wake it by.
-    #[test]
-    fn a_hello_that_does_not_look_keeps_the_tv_record() {
-        let _held = STORE_LOCK.lock();
-        crate::config::isolate_config_for_tests();
-        with(|s| *s = Store::default());
-        let tv = crate::remote::airplay::Tv {
-            name: "Living Room".into(),
-            host: "Living-Room.local.".into(),
-            mac: Some("AA:BB:CC:DD:EE:FF".into()),
-            ip: Some("10.0.0.9".into()),
-        };
-        with(|s| {
-            s.seen.push(SeenNearby {
-                id: "tv".into(),
-                name: "Living Room".into(),
-                platform: "tvos".into(),
-                addr: "10.0.0.9:5626".into(),
-                at: 0,
-                tv: Some(tv.clone()),
-            });
-            s.tv_looked
-                .insert(("tv".into(), "10.0.0.9".into()), Instant::now());
-        });
-        let mut hello = hello("tv");
-        hello.platform = "tvos".into();
-        nearby_hello(hello, "10.0.0.9:5626");
-        assert_eq!(tv_of("tv").map(|t| t.host), Some(tv.host));
-    }
-
-    #[test]
-    fn an_apple_tv_is_looked_for_once_per_host_for_a_while() {
-        let mut looked = HashMap::new();
-        let t0 = Instant::now();
-        assert!(look_for_tv(&mut looked, "tv", "living-room.local.", t0));
-        assert!(!look_for_tv(
-            &mut looked,
-            "tv",
-            "living-room.local.",
-            t0 + Duration::from_secs(5)
-        ));
-        // Another host, or another TV, is looked for at once.
-        assert!(look_for_tv(
-            &mut looked,
-            "tv",
-            "10.0.0.7",
-            t0 + Duration::from_secs(5)
-        ));
-        assert!(look_for_tv(&mut looked, "other", "living-room.local.", t0));
-        assert!(look_for_tv(
-            &mut looked,
-            "tv",
-            "living-room.local.",
-            t0 + TV_LOOK_AGAIN
-        ));
     }
 
     #[test]
@@ -2666,7 +2681,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_apple_tv_on_record_is_woken_before_the_push() {
+    fn a_paired_apple_tv_is_woken_before_the_push() {
         let stages =
             |plan: Vec<(Waking, Duration)>| plan.into_iter().map(|(w, _)| w).collect::<Vec<_>>();
         assert_eq!(
@@ -2685,30 +2700,35 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_apple_tv_met_on_the_network_keeps_its_airplay_record() {
+    fn an_apple_tv_is_woken_by_the_pairing_the_server_keeps() {
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
-        // Named so that no TV on the network running the tests matches it.
-        let tv = crate::remote::airplay::Tv {
-            name: "koan test TV".into(),
-            host: "koan-test-tv.local.".into(),
-            mac: Some("AA:BB:CC:DD:EE:FF".into()),
-            ip: Some("10.0.0.4".into()),
+        let pairing = crate::remote::companion::Credential {
+            tv_id: "7A821767-01ED-442C-B4BB-6BDEA29109DA".into(),
+            tv_key: "a2V5".into(),
+            id: "ME".into(),
+            seed: "c2VlZA==".into(),
         };
-        let hello = |id: &str| LinkHello {
-            name: "koan test TV".into(),
+        let tv = LinkDevice {
             platform: "tvos".into(),
-            ..hello(id)
+            linked: false,
+            wakeable: Some(false),
+            tv_pairing: Some(pairing.clone()),
+            ..device("tv", false)
         };
-        nearby_hello(hello("tv"), "koan-test-tv.local:50000");
-        with(|s| s.seen[0].tv = Some(tv.clone()));
-        // Met again on the same host, on another port: the record stands.
-        nearby_hello(hello("tv"), "KOAN-test-tv.local:50001");
-        assert_eq!(tv_of("tv"), Some(tv));
-        // On another host, it is not that TV's any more.
-        nearby_hello(hello("tv"), "koan-test-other.local:50001");
-        assert_eq!(tv_of("tv"), None);
+        with(|s| {
+            s.account = vec![
+                (tv, Instant::now()),
+                (device("phone", false), Instant::now()),
+            ];
+            s.used.insert("tv".into());
+        });
+        assert_eq!(tv_pairing_of("tv"), Some(pairing));
+        assert_eq!(tv_pairing_of("phone"), None);
+        let listed = list().into_iter().find(|d| d.id == "tv").unwrap();
+        assert!(listed.tv_paired);
+        assert_eq!(listed.wakeable, COMPANION, "no push, but a pairing");
         with(|s| *s = Store::default());
     }
 

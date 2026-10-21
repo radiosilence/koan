@@ -2514,10 +2514,6 @@ pub(crate) mod bonjour {
         ))
     }
 
-    /// Asks the responder to send the sleeping host a magic packet through
-    /// whichever Bonjour Sleep Proxy is answering for it.
-    const FLAG_WAKE_ON_RESOLVE: u32 = 0x40000;
-
     /// Every instance of `regtype` announced within `within`, resolved.
     pub fn instances(regtype: &str, within: std::time::Duration) -> Vec<Instance> {
         let Ok(regtype) = CString::new(regtype) else {
@@ -2598,27 +2594,6 @@ pub(crate) mod bonjour {
         let name = CString::new(name).ok()?;
         let regtype = CString::new(regtype).ok()?;
         resolve_raw(0, interface, &name, &regtype, c"local.", within)
-    }
-
-    /// Have the responder send a magic packet to `mac` at `ip` on `interface`.
-    /// It reads the target from the instance name, `MAC@IP`, and only on a
-    /// named interface; nothing answers the resolve itself.
-    pub fn wake_on_resolve(mac: &str, ip: &str, regtype: &str, interface: u32) {
-        let (Ok(name), Ok(regtype)) = (CString::new(format!("{mac}@{ip}")), CString::new(regtype))
-        else {
-            return;
-        };
-        if interface == 0 {
-            return;
-        }
-        resolve_raw(
-            FLAG_WAKE_ON_RESOLVE,
-            interface,
-            &name,
-            &regtype,
-            c"local.",
-            std::time::Duration::from_millis(300),
-        );
     }
 
     #[cfg(test)]

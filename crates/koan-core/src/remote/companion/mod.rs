@@ -37,7 +37,9 @@ pub const BUNDLE_ID: &str = "cc.blit.koan";
 
 /// What pairing leaves: enough to authenticate to the TV again, and to know
 /// it is the same TV. Held by the server per account.
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Credential {
     /// The TV's pairing identifier, which its announcement carries as
     /// `rpMRtID`: how the TV is found again.
@@ -534,24 +536,38 @@ pub fn browse(_within: Duration) -> Vec<Tv> {
     Vec::new()
 }
 
+/// The host of an address as dialled, `host:port`.
+pub fn host_of(addr: &str) -> &str {
+    addr.rsplit_once(':').map_or(addr, |(h, _)| h)
+}
+
 fn same_host(a: &str, b: &str) -> bool {
     let a = a.trim_end_matches('.');
     let b = b.trim_end_matches('.');
     !a.is_empty() && a.eq_ignore_ascii_case(b)
 }
 
-/// Which of `tvs` is the koan device at `host` named `name`: the one on the
-/// same host, else the only one of that name. Two of one name and no host
-/// to tell them apart is not guessed between.
+/// Which of `tvs` is the koan device met at `host` (a name or an address)
+/// and named `name`: the one on that host, else the only one of that name,
+/// else the only one. Two that nothing tells apart are not guessed between.
 pub fn pick<'a>(tvs: &'a [Tv], host: &str, name: &str) -> Option<&'a Tv> {
-    if let Some(tv) = tvs.iter().find(|t| same_host(&t.host, host)) {
+    let ip = host
+        .trim_matches(['[', ']'])
+        .parse::<std::net::IpAddr>()
+        .ok();
+    if let Some(tv) = tvs
+        .iter()
+        .find(|t| same_host(&t.host, host) || Some(t.addr.ip()) == ip)
+    {
         return Some(tv);
     }
-    let mut named = tvs
+    let named: Vec<&Tv> = tvs
         .iter()
-        .filter(|t| t.name.trim().eq_ignore_ascii_case(name.trim()));
-    match (named.next(), named.next()) {
-        (Some(t), None) => Some(t),
+        .filter(|t| t.name.trim().eq_ignore_ascii_case(name.trim()))
+        .collect();
+    match (named.as_slice(), tvs) {
+        ([one], _) => Some(*one),
+        ([], [only]) => Some(only),
         _ => None,
     }
 }
@@ -591,6 +607,31 @@ mod tests {
             pick(&all, "10.0.0.4", "living room").unwrap().host,
             "Apple-TV.local."
         );
+    }
+
+    #[test]
+    fn an_address_finds_the_tv_at_it() {
+        let all = [
+            tv("Bedroom", "Bedroom.local."),
+            tv("Lounge", "Lounge.local."),
+        ];
+        let mut other = all.clone();
+        other[1].addr = "10.0.0.9:49152".parse().unwrap();
+        assert_eq!(pick(&other, "10.0.0.9", "Apple TV").unwrap().name, "Lounge");
+    }
+
+    #[test]
+    fn the_only_tv_is_the_one() {
+        let all = [tv("slagvision", "slagvision.local.")];
+        assert_eq!(pick(&all, "", "Apple TV").unwrap().name, "slagvision");
+        let two = [tv("A", "a.local."), tv("B", "b.local.")];
+        assert_eq!(pick(&two, "", "Apple TV"), None);
+    }
+
+    #[test]
+    fn an_address_gives_its_host() {
+        assert_eq!(host_of("Living-Room.local:51234"), "Living-Room.local");
+        assert_eq!(host_of("Living-Room.local"), "Living-Room.local");
     }
 
     #[test]

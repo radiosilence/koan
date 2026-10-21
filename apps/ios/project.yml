@@ -132,7 +132,7 @@ targets:
           and finds other koan apps on it to play music on.
         # How koan apps on one network find each other, and the Apple TVs
         # they knock on to wake. See `remote::nearby` and `remote::airplay`.
-        NSBonjourServices: [_koan._tcp, _airplay._tcp, _companion-link._tcp]
+        NSBonjourServices: [_koan._tcp, _companion-link._tcp]
         # Controlling another device shows it on the lock screen.
         NSSupportsLiveActivities: true
         # HTTPS and nothing else, which is exempt from export documentation.

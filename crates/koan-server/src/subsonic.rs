@@ -6247,6 +6247,14 @@ async fn link_session(
                                     }
                                 });
                             }
+                            Ok(LinkReport::TvPairing { device: tv, pairing }) => {
+                                let username = username.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(e) = registry.set_tv_pairing(&username, &tv, pairing.as_ref()) {
+                                        log::info!("devices: {e}");
+                                    }
+                                });
+                            }
                             Ok(LinkReport::Hello(_)) => {}
                             Err(e) => {
                                 log::debug!("link: not a report ({e}): {text}");
