@@ -34,7 +34,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. `koan-push-relay` stands apart: the service behind `push.koan.rocks`, depending on no other koan crate (see `docs/reference/protocol/push-relay.md`). Dependency rule, enforced by Cargo: none of the three front doors can import each other -- all depend only on `koan-core`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: none of the three front doors can import each other -- all depend only on `koan-core`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 

@@ -3020,29 +3020,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "koan-push-relay"
-version = "0.1.0"
-dependencies = [
- "aws-lc-rs",
- "axum",
- "base64 0.23.1",
- "env_logger",
- "figment",
- "hex",
- "jsonwebtoken",
- "log",
- "parking_lot",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower",
- "tower-http 0.7.1",
-]
-
-[[package]]
 name = "koan-server"
 version = "0.66.3"
 dependencies = [
