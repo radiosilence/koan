@@ -23,8 +23,14 @@ pub struct Config {
     /// The header a trusted proxy in front of the relay puts the caller's
     /// address in (`cf-connecting-ip`, `x-forwarded-for`). Absent, the
     /// connection's own address is the caller's. Set it only behind a proxy
-    /// that overwrites the header: anyone can send it.
+    /// that writes the header: anyone can send it. Behind Cloudflare,
+    /// `cf-connecting-ip`, which it sets to the caller alone.
     pub client_ip_header: Option<String>,
+    /// How many addresses at the end of the header the proxies in front of
+    /// the relay added: the caller is the one before them. 1 for one proxy
+    /// appending to `x-forwarded-for`, or for a header that holds only the
+    /// caller.
+    pub client_ip_hops: usize,
     /// The revocation table's SQLite file.
     pub store: PathBuf,
     /// The app's bundle id, which every push names.
@@ -44,6 +50,7 @@ impl Default for Config {
             listen: SocketAddr::from(([0, 0, 0, 0], 8080)),
             metrics_listen: None,
             client_ip_header: None,
+            client_ip_hops: 1,
             store: PathBuf::from("relay.db"),
             topic: "cc.blit.koan".into(),
             apns: ApnsConfig::default(),
@@ -155,10 +162,11 @@ pub struct Limits {
     /// Pushes from one address a minute. A server with many listeners sends
     /// from one address, so this is generous.
     pub ip_pushes_per_minute: u32,
-    /// Registrations from one address a minute. Generous: phones on a mobile
-    /// network share an address, and a registration is answered from memory.
+    /// Registrations from one address a minute. Each sends Apple a push to
+    /// prove the token. Phones on a mobile network share an address, but a
+    /// phone registers once per server every month or so.
     pub ip_registrations_per_minute: u32,
-    /// Revocations from one address a minute. Each costs a push to Apple.
+    /// Revocations from one address a minute. Each sends Apple a push.
     pub ip_revocations_per_minute: u32,
     /// Pushes sent to Apple a second, from everyone.
     pub global_pushes_per_second: u32,
@@ -179,8 +187,8 @@ impl Default for Limits {
             device_alerts_per_hour: 120,
             device_wakes_per_hour: 240,
             ip_pushes_per_minute: 6000,
-            ip_registrations_per_minute: 600,
-            ip_revocations_per_minute: 120,
+            ip_registrations_per_minute: 120,
+            ip_revocations_per_minute: 60,
             global_pushes_per_second: 20_000,
             max_tracked: 2_000_000,
             max_revocations: 1_000_000,

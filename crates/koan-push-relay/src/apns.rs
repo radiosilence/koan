@@ -236,9 +236,15 @@ impl Apns {
             // Only this reason is about the device; Apple's other 429s
             // are about the relay.
             (429, "TooManyRequests") => Delivery::Throttled,
-            (403, "ExpiredProviderToken" | "InvalidProviderToken") => {
+            // An expired token is re-signed by the next push. A token Apple
+            // calls invalid, or refreshed too often, takes an operator: a
+            // wrong key or team, or a relay re-signing in a loop.
+            (403, "ExpiredProviderToken") => {
                 gateway.forget_bearer(&bearer);
                 Delivery::Unavailable(format!("{status} {reason}"))
+            }
+            (403, "InvalidProviderToken") | (429, "TooManyProviderTokenUpdates") => {
+                Delivery::Rejected(format!("{status} {reason}"))
             }
             (429, _) | (500.., _) => Delivery::Unavailable(format!("{status} {reason}")),
             _ => Delivery::Rejected(format!("{status} {reason}")),

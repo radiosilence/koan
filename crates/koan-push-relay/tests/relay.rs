@@ -368,6 +368,54 @@ async fn apple_refusing_the_relay_asks_senders_to_wait_minutes() {
 }
 
 #[tokio::test]
+async fn proving_a_token_counts_against_its_wakes() {
+    let h = Harness::start(|cfg| cfg.limits.device_wakes_per_hour = 2).await;
+    h.register(TOKEN).await;
+    h.register(TOKEN).await;
+    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    assert_eq!(r.status(), 429);
+    assert_eq!(h.gateway.received().len(), 2);
+}
+
+#[tokio::test]
+async fn a_signing_key_apple_rejects_asks_senders_to_wait_minutes() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    for reason in ["InvalidProviderToken", "TooManyProviderTokenUpdates"] {
+        let status = if reason == "InvalidProviderToken" {
+            403
+        } else {
+            429
+        };
+        h.gateway.answer(status, reason);
+        let r = h.push(&handle, "wake", None).await;
+        assert_eq!(r.status(), 503, "{reason}");
+        assert_eq!(r.headers()["retry-after"], "300", "{reason}");
+    }
+}
+
+#[tokio::test]
+async fn an_absurd_lifetime_is_refused_not_wrapped() {
+    for days in [0, 366, u64::MAX / 1000] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config {
+            store: dir.path().join("relay.db"),
+            token_key: STANDARD.encode([3u8; 32]),
+            ..Config::default()
+        };
+        cfg.handles.keys = BTreeMap::from([("1".to_string(), STANDARD.encode([5u8; 32]))]);
+        cfg.handles.lifetime_days = days;
+        cfg.apns.team_id = "TEAM123456".into();
+        cfg.apns.production = Some(ApnsKey {
+            key_id: "KEY1234567".into(),
+            key: Some(pem()),
+            key_path: None,
+        });
+        assert!(Relay::new(&cfg).is_err(), "{days}");
+    }
+}
+
+#[tokio::test]
 async fn only_a_token_apple_accepts_can_be_revoked() {
     let h = Harness::start(|_| {}).await;
     let handle = h.register(TOKEN).await;
@@ -464,6 +512,42 @@ async fn behind_a_proxy_the_last_forwarded_address_is_the_caller() {
     // One IPv6 /64 is one caller.
     assert_eq!(register("2001:db8::1").await.unwrap().status(), 200);
     assert_eq!(register("2001:db8::2").await.unwrap().status(), 429);
+}
+
+#[tokio::test]
+async fn behind_two_proxies_the_caller_is_two_back() {
+    let h = Harness::start(|cfg| {
+        cfg.limits.ip_registrations_per_minute = 1;
+        cfg.client_ip_header = Some("x-forwarded-for".into());
+        cfg.client_ip_hops = 2;
+    })
+    .await;
+    let register = |forwarded: &'static str| {
+        h.http
+            .post(format!("{}/v1/register", h.url))
+            .header("x-forwarded-for", forwarded)
+            .json(&json!({ "token": TOKEN }))
+            .send()
+    };
+    // Callers behind one edge proxy are told apart by what it appended.
+    assert_eq!(
+        register("9.9.9.9, 198.51.100.1, 10.0.0.1")
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        register("198.51.100.2, 10.0.0.1").await.unwrap().status(),
+        200
+    );
+    assert_eq!(
+        register("8.8.8.8, 198.51.100.1, 10.0.0.1")
+            .await
+            .unwrap()
+            .status(),
+        429
+    );
 }
 
 #[tokio::test]

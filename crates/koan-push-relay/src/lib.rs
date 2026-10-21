@@ -25,7 +25,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::extract::rejection::JsonRejection;
+use axum::body::Bytes;
 use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -79,6 +79,7 @@ pub struct Relay {
     in_flight: Semaphore,
     max_in_flight: usize,
     client_ip_header: Option<HeaderName>,
+    client_ip_hops: usize,
     metrics: Metrics,
 }
 
@@ -95,9 +96,14 @@ impl Relay {
                 Ok((id, secret(&format!("handles.keys.{id}"), key)?))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let lifetime_ms = cfg.handles.lifetime_days * 24 * 60 * 60 * 1000;
-        if lifetime_ms == 0 || lifetime_ms > MAX_LIFETIME_MS {
-            return Err("handles.lifetime_days must be 1 to 365".into());
+        let lifetime_ms = cfg
+            .handles
+            .lifetime_days
+            .checked_mul(24 * 60 * 60 * 1000)
+            .filter(|ms| (1..=MAX_LIFETIME_MS).contains(ms))
+            .ok_or("handles.lifetime_days must be 1 to 365")?;
+        if cfg.client_ip_hops == 0 {
+            return Err("client_ip_hops must be at least 1".into());
         }
         let handles = Handles::new(&keys, cfg.handles.current, lifetime_ms)?;
         let hasher = TokenHasher::new(&secret("token_key", &cfg.token_key)?);
@@ -140,6 +146,7 @@ impl Relay {
             in_flight: Semaphore::new(cfg.apns.max_in_flight),
             max_in_flight: cfg.apns.max_in_flight,
             client_ip_header,
+            client_ip_hops: cfg.client_ip_hops,
             metrics: Metrics::default(),
         }))
     }
@@ -147,16 +154,24 @@ impl Relay {
     /// Who is calling, for per-address limits. IPv6 callers are counted by
     /// their /64, which is what one subscriber is usually given.
     fn caller(&self, headers: &HeaderMap, peer: SocketAddr) -> u128 {
+        // The proxies in front append, as a line of their own or to the
+        // caller's: counting `client_ip_hops` back from the end passes over
+        // them, and anything further back came from the caller.
         let ip = self
             .client_ip_header
             .as_ref()
-            // The last address is the one the nearest proxy added, whether
-            // it appended to the caller's header or added one of its own;
-            // anything before it came from the caller.
-            .and_then(|name| headers.get_all(name).iter().next_back())
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.rsplit(',').next())
-            .and_then(|v| v.trim().parse::<IpAddr>().ok())
+            .and_then(|name| {
+                let values: Vec<&str> = headers
+                    .get_all(name)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok())
+                    .collect();
+                values
+                    .join(",")
+                    .rsplit(',')
+                    .nth(self.client_ip_hops - 1)
+                    .and_then(|v| v.trim().parse::<IpAddr>().ok())
+            })
             .unwrap_or(peer.ip());
         match ip {
             IpAddr::V4(v4) => u128::from(v4.to_ipv6_mapped()),
@@ -359,11 +374,16 @@ impl Relay {
         if !self.apns.serves(sandbox) {
             return Err(Refusal::Bad("this relay does not serve that gateway"));
         }
-        self.global
-            .check(self.clock.now())
-            .map_err(|_| Refusal::Busy)?;
+        // A wake like any other: it counts against the device's ceiling, so
+        // registering over and over is no way to wake a phone.
+        let device = self.hasher.hash(&token);
+        let now = self.clock.now();
+        let mut charge = Charge::new(self);
+        self.device_wakes.check(device, now).map_err(limited)?;
+        charge.device = Some((&self.device_wakes, device));
+        self.global.check(now).map_err(|_| Refusal::Busy)?;
+        charge.global = true;
         let Ok(_permit) = self.in_flight.try_acquire() else {
-            self.global.refund();
             return Err(Refusal::Busy);
         };
         let probe = handle::Device {
@@ -373,13 +393,19 @@ impl Relay {
             id: [0; aws_lc_rs::aead::NONCE_LEN],
         };
         match self.apns.send(&probe, Kind::WakeNow, None).await {
-            Delivery::Sent => Ok(()),
-            Delivery::Gone => Err(Refusal::Bad("not a device token")),
-            Delivery::Throttled => Err(Refusal::Limited(Duration::from_secs(60))),
-            delivery => {
-                self.global.refund();
-                Err(unavailable(delivery))
+            Delivery::Sent => {
+                charge.spent = true;
+                Ok(())
             }
+            Delivery::Gone => {
+                charge.spent = true;
+                Err(Refusal::Bad("not a device token"))
+            }
+            Delivery::Throttled => {
+                charge.spent = true;
+                Err(Refusal::Limited(Duration::from_secs(60)))
+            }
+            delivery => Err(unavailable(delivery)),
         }
     }
 
@@ -399,7 +425,7 @@ async fn register(
     State(relay): State<Arc<Relay>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: Result<Json<TokenRequest>, JsonRejection>,
+    body: Bytes,
 ) -> Response {
     let answer = async {
         let caller = relay.caller(&headers, peer);
@@ -407,7 +433,7 @@ async fn register(
             .ip_registrations
             .check(caller, relay.clock.now())
             .map_err(limited)?;
-        let Json(req) = body.map_err(|_| Refusal::Bad("malformed request"))?;
+        let req: TokenRequest = parse(&body)?;
         let token = device_token(&req.token)?;
         let device = relay.hasher.hash(&token);
         relay.prove(token.clone(), req.sandbox).await?;
@@ -432,7 +458,7 @@ async fn revoke(
     State(relay): State<Arc<Relay>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: Result<Json<TokenRequest>, JsonRejection>,
+    body: Bytes,
 ) -> Response {
     let answer = async {
         let caller = relay.caller(&headers, peer);
@@ -440,7 +466,7 @@ async fn revoke(
             .ip_revocations
             .check(caller, relay.clock.now())
             .map_err(limited)?;
-        let Json(req) = body.map_err(|_| Refusal::Bad("malformed request"))?;
+        let req: TokenRequest = parse(&body)?;
         let token = device_token(&req.token)?;
         let device = relay.hasher.hash(&token);
         if !relay.revocations.has_room(&device) {
@@ -471,13 +497,13 @@ async fn push(
     State(relay): State<Arc<Relay>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: Result<Json<PushRequest>, JsonRejection>,
+    body: Bytes,
 ) -> Response {
     let answer = async {
         let caller = relay.caller(&headers, peer);
         let now = relay.clock.now();
         relay.ip_pushes.check(caller, now).map_err(limited)?;
-        let Json(req) = body.map_err(|_| Refusal::Bad("malformed request"))?;
+        let req: PushRequest = parse(&body)?;
         if let Some(blob) = &req.blob {
             if !req.kind.is_alert() {
                 return Err(Refusal::Bad("only a notification carries a blob"));
@@ -503,47 +529,78 @@ async fn push(
             (&relay.handle_wakes, &relay.device_wakes)
         };
         let handle_key = device.id;
+        let mut charge = Charge::new(&relay);
         per_handle.check(handle_key, now).map_err(limited)?;
-        if let Err(e) = per_device.check(hash, now) {
-            per_handle.refund(&handle_key);
-            return Err(limited(e));
-        }
-        // Spent only on a push that reaches Apple: one refused for the
-        // relay's or Apple's sake hands its allowance back.
-        let refund = |global: bool| {
-            per_handle.refund(&handle_key);
-            per_device.refund(&hash);
-            if global {
-                relay.global.refund();
-            }
-        };
-        if relay.global.check(now).is_err() {
-            refund(false);
-            return Err(Refusal::Busy);
-        }
+        charge.handle = Some((per_handle, handle_key));
+        per_device.check(hash, now).map_err(limited)?;
+        charge.device = Some((per_device, hash));
+        relay.global.check(now).map_err(|_| Refusal::Busy)?;
+        charge.global = true;
         let Ok(_permit) = relay.in_flight.try_acquire() else {
-            refund(true);
             return Err(Refusal::Busy);
         };
-        match relay
+        let delivery = relay
             .apns
             .send(&device, req.kind, req.blob.as_deref())
-            .await
-        {
+            .await;
+        if matches!(
+            delivery,
+            Delivery::Sent | Delivery::Gone | Delivery::Throttled
+        ) {
+            charge.spent = true;
+        }
+        match delivery {
             Delivery::Sent => {
                 relay.metrics.sent(req.kind);
                 Ok(StatusCode::NO_CONTENT.into_response())
             }
             Delivery::Gone => Err(Refusal::Gone),
             Delivery::Throttled => Err(Refusal::Limited(Duration::from_secs(60))),
-            delivery => {
-                refund(true);
-                Err(unavailable(delivery))
-            }
+            delivery => Err(unavailable(delivery)),
         }
     }
     .await;
     relay.answer(Route::Push, answer)
+}
+
+/// Allowances taken for one push to Apple, handed back when dropped unless
+/// the push reached Apple: one refused for the relay's or Apple's sake, or
+/// abandoned when its request timed out, costs its sender nothing.
+struct Charge<'a> {
+    relay: &'a Relay,
+    handle: Option<(&'a Keyed<HandleKey>, HandleKey)>,
+    device: Option<(&'a Keyed<TokenHash>, TokenHash)>,
+    global: bool,
+    spent: bool,
+}
+
+impl<'a> Charge<'a> {
+    fn new(relay: &'a Relay) -> Self {
+        Self {
+            relay,
+            handle: None,
+            device: None,
+            global: false,
+            spent: false,
+        }
+    }
+}
+
+impl Drop for Charge<'_> {
+    fn drop(&mut self) {
+        if self.spent {
+            return;
+        }
+        if let Some((limit, key)) = &self.handle {
+            limit.refund(key);
+        }
+        if let Some((limit, key)) = &self.device {
+            limit.refund(key);
+        }
+        if self.global {
+            self.relay.global.refund();
+        }
+    }
 }
 
 /// The refusal for a push Apple could not take, logged without anything that
@@ -619,6 +676,10 @@ fn refuse(status: StatusCode, error: &str, retry: Option<Duration>) -> Response 
             .insert(header::RETRY_AFTER, HeaderValue::from(secs.max(1)));
     }
     response
+}
+
+fn parse<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Refusal> {
+    serde_json::from_slice(body).map_err(|_| Refusal::Bad("malformed request"))
 }
 
 fn device_token(hex_token: &str) -> Result<Vec<u8>, Refusal> {

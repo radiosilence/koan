@@ -28,7 +28,7 @@ The relay keeps no record of handles. It can rotate its sealing key: handles sea
 
 ## Revocation
 
-A device revokes by sending its token. Every handle for that token minted at or before that moment stops opening; handles minted afterwards are unaffected. The app revokes when it signs out of a server, then registers again and gives each server it still uses a fresh handle. Because revoking needs the token, only the device can do it: a server cannot cut a device off from its other servers.
+A device revokes by sending its token. Every handle for that token minted at or before that moment stops opening; handles minted afterwards are unaffected. The app revokes when it signs out of a server, then registers again and gives each server it still uses a fresh handle. Because revoking needs the token, only a holder of the token can do it, and the app gives its token only to the relay and to servers that push with the developer's own key; any other server holds handles alone and cannot cut a device off from its other servers.
 
 The app waits for the revocation's `204` before registering again, and registers again after any revocation that succeeds, including a retried one: a revocation retires every handle minted before it reached the relay, whichever request asked for them.
 
@@ -106,11 +106,11 @@ Each relay process counts:
 | Device, across its handles: notifications | 120 an hour |
 | Device, across its handles: wakes | 240 an hour |
 | Caller address: pushes | 6000 a minute |
-| Caller address: registrations | 600 a minute |
-| Caller address: revocations | 120 a minute |
+| Caller address: registrations | 120 a minute |
+| Caller address: revocations | 60 a minute |
 | Everyone: pushes sent to Apple | 20,000 a second |
 
-A device is counted by its token, so its ceiling holds whichever servers hold its handles. A caller address is counted by its IPv4 address or its IPv6 /64. Each count allows its whole allowance as a burst and then refills evenly over the period. A push refused because the relay or Apple could not take it is not counted against its handle or device. Behind a proxy, the address is the last one in the last instance of the header the relay is configured to trust: the one the nearest proxy wrote.
+A device is counted by its token, so its ceiling holds whichever servers hold its handles. A caller address is counted by its IPv4 address or its IPv6 /64. Each count allows its whole allowance as a burst and then refills evenly over the period. A push refused because the relay or Apple could not take it is not counted against its handle or device. Behind proxies, the address is read from the header the relay is configured to trust, counting `client_ip_hops` addresses back from the end across all its lines: the proxies append, so anything further back came from the caller. The proof push sent on registration or revocation counts against the device's wake ceiling.
 
 ## What the relay sees and keeps
 
@@ -126,8 +126,12 @@ It keeps: the revocation table (a keyed hash of each revoking device's token and
 listen = "0.0.0.0:8080"
 # Prometheus metrics and /healthz, for the cluster only.
 metrics_listen = "0.0.0.0:9090"
-# Only behind a proxy that sets this header itself.
-client_ip_header = "x-forwarded-for"
+# Only behind a proxy that sets this header itself. Behind Cloudflare,
+# cf-connecting-ip holds the caller alone.
+client_ip_header = "cf-connecting-ip"
+# Addresses the proxies append at the end of the header: 1 for a header
+# holding only the caller, or one proxy appending to x-forwarded-for.
+client_ip_hops = 1
 store = "/data/relay.db"
 topic = "cc.blit.koan"
 # 32 random bytes, base64. Never rotated: revocations are found by it.
@@ -161,8 +165,8 @@ handle_wakes_per_hour = 60
 device_alerts_per_hour = 120
 device_wakes_per_hour = 240
 ip_pushes_per_minute = 6000
-ip_registrations_per_minute = 600
-ip_revocations_per_minute = 120
+ip_registrations_per_minute = 120
+ip_revocations_per_minute = 60
 global_pushes_per_second = 20000
 ```
 
