@@ -397,7 +397,8 @@ pub fn render_zoom(buf: &mut Buffer, app: &mut App, area: Rect) {
     let Some(e) = entry else {
         return;
     };
-    let subtitle = [e.artist.as_str(), e.album.as_str()]
+    let artist = app.queue.facts.credits_of(&e).artist;
+    let subtitle = [artist.as_str(), e.album.as_str()]
         .into_iter()
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
@@ -437,6 +438,7 @@ fn draw_words(
     let playing = app.state.playback_state() == PlaybackState::Playing;
     let output = output_name(app);
     let controlled = app.view.controlled.as_ref().map(|(n, r)| (n.as_str(), r));
+    let artist = entry.map(|e| app.queue.facts.credits_of(e).artist);
     let theme = &app.theme;
     let hits = &mut app.layout.now_playing;
     let bottom = area.y + area.height;
@@ -509,7 +511,10 @@ fn draw_words(
                 (area.x, row),
                 w,
                 &[(
-                    Span::styled(e.artist.as_str(), Style::new().fg(theme.tokens.accent)),
+                    Span::styled(
+                        artist.as_deref().unwrap_or(&e.artist),
+                        Style::new().fg(theme.tokens.accent),
+                    ),
                     track.map(|id| Act::Go(Link::ArtistOfTrack(id))),
                 )],
             );

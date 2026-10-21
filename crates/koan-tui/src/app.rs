@@ -869,7 +869,7 @@ impl App {
             }
             // Feed now-playing metadata for pleasures mode overlay.
             if let Some(entry) = playing.map(|i| &self.queue.vq_cache.entries[i]) {
-                self.visualizer.now_artist.clone_from(&entry.artist);
+                self.visualizer.now_artist = self.queue.facts.credits_of(entry).artist;
                 self.visualizer.now_album.clone_from(&entry.album);
             }
         }
@@ -3451,15 +3451,16 @@ impl App {
             .iter()
             .enumerate()
             .map(|(i, e)| {
-                let has_artist = !e.artist.is_empty() && e.artist != e.album_artist;
+                let credits = self.queue.facts.credits_of(e);
+                let has_artist = !credits.artist.is_empty() && credits.differ;
                 let display = if has_artist {
-                    format!("{} \u{2014} {}", e.artist, e.title)
+                    format!("{} \u{2014} {}", credits.artist, e.title)
                 } else {
                     e.title.clone()
                 };
                 let parts = if has_artist {
                     vec![
-                        (e.artist.clone(), PickerPartKind::Artist),
+                        (credits.artist.clone(), PickerPartKind::Artist),
                         (" \u{2014} ".into(), PickerPartKind::Separator),
                         (e.title.clone(), PickerPartKind::Title),
                     ]

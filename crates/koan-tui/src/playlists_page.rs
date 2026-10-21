@@ -600,7 +600,7 @@ fn lines_of(entries: &[PlaylistEntry], grouped: bool) -> (Vec<Line>, Vec<RunRole
 fn read_credits(entries: &[PlaylistEntry]) -> HashMap<i64, Credits> {
     koan_core::db::pool::shared()
         .get()
-        .map(|db| credits::of_tracks(&db.conn, entries.iter().map(|e| &e.track)))
+        .map(|db| credits::of_tracks(&db, entries.iter().map(|e| &e.track)))
         .unwrap_or_default()
 }
 

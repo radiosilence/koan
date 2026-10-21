@@ -23,6 +23,7 @@ use super::browse::{
     artist_tracks, credited_track, tile_grid, track_playable,
 };
 use super::cover_art::Gfx;
+use super::credits::Credited;
 use super::rows::{self, Columns, Emphasis, Row, Target};
 use super::theme::Theme;
 use super::transport::format_time;
@@ -160,11 +161,13 @@ pub struct ShelfPage {
     generation: u64,
     shown: u64,
     tx: Sender<Ask>,
-    rx: Receiver<(u64, Summary, Favourites)>,
+    rx: Receiver<(u64, Summary, Favourites, Credited)>,
+    /// The shown summary's credits, read with it.
+    credited: Credited,
 }
 
 /// Reads summaries off the UI thread, the last ask of a burst only.
-fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary, Favourites)>) {
+fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary, Favourites, Credited)>) {
     let (tx, req) = crossbeam_channel::unbounded::<Ask>();
     let (done, rx) = crossbeam_channel::unbounded();
     std::thread::Builder::new()
@@ -196,9 +199,15 @@ fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary, Favour
                     koan_core::remote::offline::active(),
                 );
                 let favourites = Favourites::read(&db);
+                let credited = summary.as_ref().map_or_else(
+                    |_| Credited::default(),
+                    |s| Credited::read(&db, &s.tracks.preview, &s.albums.preview),
+                );
                 drop(db);
                 if let Ok(summary) = summary
-                    && done.send((generation, summary, favourites)).is_err()
+                    && done
+                        .send((generation, summary, favourites, credited))
+                        .is_err()
                 {
                     return;
                 }
@@ -254,6 +263,7 @@ impl ShelfPage {
             shown: 0,
             tx,
             rx,
+            credited: Credited::default(),
         }
     }
 
@@ -288,8 +298,9 @@ impl ShelfPage {
     /// Takes in what the reader has finished. Returns whether anything came.
     pub fn poll(&mut self) -> bool {
         let mut any = false;
-        while let Ok((generation, summary, favourites)) = self.rx.try_recv() {
+        while let Ok((generation, summary, favourites, credited)) = self.rx.try_recv() {
             if generation == self.generation {
+                self.credited = credited;
                 self.fav_albums = favourites.albums;
                 self.fav_artists = favourites.artists;
                 self.fav_tracks = favourites.tracks;
@@ -1149,7 +1160,7 @@ impl ShelfPage {
                                 album: a,
                                 favourite: self.fav_albums.contains(&a.id),
                                 selected,
-                                name_artist: true,
+                                artist: Some(self.credited.album(a)),
                             }
                             .draw(
                                 buf, theme, gfx, thumbs, at, bottom, moving, hover_link, &mut links,
@@ -1164,7 +1175,7 @@ impl ShelfPage {
                                 lead: "",
                                 name: &a.title,
                                 artist: Some((
-                                    &a.artist_name,
+                                    self.credited.album(a),
                                     Some(Target::Credited(CreditsOf::Albums, a.id)),
                                 )),
                                 detail: Some((&year, None)),
@@ -1185,7 +1196,7 @@ impl ShelfPage {
                         favourite: favourites.contains(&t.id),
                         lead: "",
                         name: &t.title,
-                        artist: Some((&t.artist_name, credited_track(t))),
+                        artist: Some((self.credited.track(t), credited_track(t))),
                         detail: Some((&t.album_title, t.album_id.map(Target::Album))),
                         tail: &time,
                     }

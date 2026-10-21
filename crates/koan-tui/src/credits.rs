@@ -4,9 +4,9 @@
 
 use std::collections::HashMap;
 
+use koan_core::db::connection::Database;
 use koan_core::db::queries::{AlbumRow, CreditsOf, TrackRow};
 use koan_core::helpers::{ListCredits, RowCredits, credit_text, credits_by_id, record_credit};
-use rusqlite::Connection;
 
 /// A row's credit and its record's, as text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,12 +31,12 @@ impl Credits {
 
 /// The credits of library tracks, by track id.
 pub fn of_tracks<'a>(
-    conn: &Connection,
+    db: &Database,
     rows: impl IntoIterator<Item = &'a TrackRow>,
 ) -> HashMap<i64, Credits> {
     let rows: Vec<&TrackRow> = rows.into_iter().collect();
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let (places, credits) = ListCredits::read_tracks(conn, &ids);
+    let (places, credits) = ListCredits::read_tracks(&db.conn, &ids);
     rows.into_iter()
         .map(|r| {
             let place = places.get(&r.id).copied().unwrap_or_default();
@@ -48,12 +48,12 @@ pub fn of_tracks<'a>(
 
 /// The credits of albums, as text, by album id.
 pub fn of_albums<'a>(
-    conn: &Connection,
+    db: &Database,
     rows: impl IntoIterator<Item = &'a AlbumRow>,
 ) -> HashMap<i64, String> {
     let rows: Vec<&AlbumRow> = rows.into_iter().collect();
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let credited = credits_by_id(conn, CreditsOf::Albums, &ids).unwrap_or_default();
+    let credited = credits_by_id(&db.conn, CreditsOf::Albums, &ids).unwrap_or_default();
     rows.into_iter()
         .map(|r| {
             let artists = credited.get(&r.id).map_or(&[][..], Vec::as_slice);
@@ -61,4 +61,38 @@ pub fn of_albums<'a>(
             (r.id, credit_text(&credit))
         })
         .collect()
+}
+
+/// The credits of a listing's tracks and albums, read with the listing.
+#[derive(Debug, Default, Clone)]
+pub struct Credited {
+    pub tracks: HashMap<i64, Credits>,
+    pub albums: HashMap<i64, String>,
+}
+
+impl Credited {
+    pub fn read<'a>(
+        db: &Database,
+        tracks: impl IntoIterator<Item = &'a TrackRow>,
+        albums: impl IntoIterator<Item = &'a AlbumRow>,
+    ) -> Self {
+        Self {
+            tracks: of_tracks(db, tracks),
+            albums: of_albums(db, albums),
+        }
+    }
+
+    /// A track's artist as its credit reads: its tag until the credits are
+    /// read.
+    pub fn track<'a>(&'a self, t: &'a TrackRow) -> &'a str {
+        self.tracks.get(&t.id).map_or(&t.artist_name, |c| &c.artist)
+    }
+
+    /// An album's artist as its credit reads: its tag until the credits are
+    /// read.
+    pub fn album<'a>(&'a self, a: &'a AlbumRow) -> &'a str {
+        self.albums
+            .get(&a.id)
+            .map_or(&a.artist_name, String::as_str)
+    }
 }

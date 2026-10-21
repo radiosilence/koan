@@ -27,6 +27,7 @@ use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::artist_header::{ArtistHeader, HeaderHit};
 use super::cover_art::{Gfx, album_key};
+use super::credits::Credited;
 use super::rows::{self, Columns, Emphasis, Row, Target};
 use super::theme::Theme;
 use super::thumb_cache;
@@ -410,6 +411,7 @@ struct Listing {
     track_total: u64,
     /// The artist's name, on an artist's page.
     artist: Option<String>,
+    credited: Credited,
 }
 
 /// What is a favourite, read with each listing so the hearts drawn match it.
@@ -470,6 +472,7 @@ fn read(ask: &Ask) -> Listing {
                 .map(|a| a.name);
         }
     }
+    listing.credited = Credited::read(&db, &listing.tracks, &listing.albums);
     listing
 }
 
@@ -524,6 +527,8 @@ pub struct Browse {
     artists: Vec<ArtistRow>,
     tracks: Vec<TrackRow>,
     track_total: u64,
+    /// The listing's credits, read with it.
+    credited: Credited,
     cursor: usize,
     scroll: usize,
     /// Whether the next frame scrolls to the cursor; the wheel and the
@@ -582,6 +587,7 @@ impl Browse {
             artists: Vec::new(),
             tracks: Vec::new(),
             track_total: 0,
+            credited: Credited::default(),
             cursor: 0,
             scroll: 0,
             follow: true,
@@ -707,6 +713,7 @@ impl Browse {
         self.artists = listing.artists;
         self.tracks = listing.tracks;
         self.track_total = listing.track_total;
+        self.credited = listing.credited;
         self.fav_albums = listing.favourites.albums;
         self.fav_artists = listing.favourites.artists;
         self.fav_tracks = listing.favourites.tracks;
@@ -1439,7 +1446,7 @@ impl Browse {
                     album,
                     favourite: self.fav_albums.contains(&album.id),
                     selected: idx == self.cursor,
-                    name_artist,
+                    artist: name_artist.then(|| self.credited.album(album)),
                 }
                 .draw(
                     buf,
@@ -1521,7 +1528,7 @@ impl Browse {
                         favourite: favourites.contains(&t.id),
                         lead: &lead,
                         name: &t.title,
-                        artist: Some((&t.artist_name, credited_track(t))),
+                        artist: Some((self.credited.track(t), credited_track(t))),
                         detail: Some((&t.album_title, t.album_id.map(Target::Album))),
                         tail: &time,
                     }
@@ -1534,7 +1541,7 @@ impl Browse {
                         lead: "",
                         name: &a.title,
                         artist: Some((
-                            &a.artist_name,
+                            self.credited.album(a),
                             Some(Target::Credited(CreditsOf::Albums, a.id)),
                         )),
                         detail: None,
@@ -1642,13 +1649,14 @@ pub(super) fn tile_grid(width: u16, height: u16, gfx: &Gfx) -> (usize, u16, u16,
     (cols, tile_w, tile_h, rows)
 }
 
-/// One album as a tile: its cover, and under it its title and, when
-/// `name_artist`, its artist (else its year). Both names are links.
+/// One album as a tile: its cover, and under it its title and its artist,
+/// where it is given (else its year). Both names are links.
 pub(super) struct Tile<'a> {
     pub album: &'a AlbumRow,
     pub favourite: bool,
     pub selected: bool,
-    pub name_artist: bool,
+    /// The album's credit, unless the page is the artist's.
+    pub artist: Option<&'a str>,
 }
 
 impl Tile<'_> {
@@ -1716,7 +1724,7 @@ impl Tile<'_> {
                 theme.hint_desc
             };
             let year = year(album);
-            if self.name_artist {
+            if let Some(artist) = self.artist {
                 // The artist is a link; the year after it is not.
                 let target = Target::Credited(CreditsOf::Albums, album.id);
                 let drawn = rows::put(
@@ -1724,7 +1732,7 @@ impl Tile<'_> {
                     x + 1,
                     title_y + 1,
                     label,
-                    &album.artist_name,
+                    artist,
                     rows::link(quiet, hover == Some(target)),
                 );
                 links.push((drawn, target));

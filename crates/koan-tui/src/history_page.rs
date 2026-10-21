@@ -18,6 +18,7 @@ use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::browse::Action;
 use super::browse::track_playable;
+use super::credits::Credited;
 use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::text::{fit, width};
 use super::theme::Theme;
@@ -66,7 +67,7 @@ struct Reply {
     generation: u64,
     /// The history's version the plays were read at.
     version: u64,
-    entries: Option<Vec<PlayHistoryRow>>,
+    entries: Option<(Vec<PlayHistoryRow>, Credited)>,
     error: Option<String>,
 }
 
@@ -114,13 +115,16 @@ fn spawn_reader() -> (Sender<Request>, Receiver<Reply>) {
     (tx, rx)
 }
 
-fn read(filter: &str) -> Result<Vec<PlayHistoryRow>, String> {
+fn read(filter: &str) -> Result<(Vec<PlayHistoryRow>, Credited), String> {
     let db = koan_core::db::pool::shared()
         .get()
         .map_err(|e| format!("history could not be read: {e}"))?;
     let search = (!filter.is_empty()).then_some(filter);
-    queries::play_history_with_tracks(&db.conn, queries::LOCAL_USER, search, Some(LIMIT), 0)
-        .map_err(|e| format!("history could not be read: {e}"))
+    let plays =
+        queries::play_history_with_tracks(&db.conn, queries::LOCAL_USER, search, Some(LIMIT), 0)
+            .map_err(|e| format!("history could not be read: {e}"))?;
+    let credited = Credited::read(&db, plays.iter().map(|p| &p.track), []);
+    Ok((plays, credited))
 }
 
 fn forget_plays(forget: Forget) -> Result<(), String> {
@@ -139,6 +143,8 @@ fn forget_plays(forget: Forget) -> Result<(), String> {
 
 pub struct HistoryPage {
     entries: Vec<PlayHistoryRow>,
+    /// The plays' credits, read with them.
+    credited: Credited,
     lines: Vec<Line>,
     /// The line each entry is on.
     line_of: Vec<usize>,
@@ -191,6 +197,7 @@ impl HistoryPage {
         let (tx, rx) = spawn_reader();
         Self {
             entries: Vec::new(),
+            credited: Credited::default(),
             lines: Vec::new(),
             line_of: Vec::new(),
             today: Local::now().date_naive(),
@@ -226,7 +233,8 @@ impl HistoryPage {
             // A failed read still counts as shown, so the next play asks again.
             self.shown = reply.generation;
             self.seen = reply.version;
-            if let Some(entries) = reply.entries {
+            if let Some((entries, credited)) = reply.entries {
+                self.credited = credited;
                 self.take(entries);
             }
         }
@@ -856,13 +864,13 @@ impl HistoryPage {
         let album_x = artist_x + artist_w as u16 + 2;
         for (text, x, w, to) in [
             (
-                &t.artist_name,
+                self.credited.track(t),
                 artist_x,
                 artist_w,
                 t.artist_id.map(|_| Link::ArtistOfTrack(t.id)),
             ),
             (
-                &t.album_title,
+                t.album_title.as_str(),
                 album_x,
                 album_w,
                 t.album_id.map(Link::Album),

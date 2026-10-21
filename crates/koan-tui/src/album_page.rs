@@ -103,8 +103,8 @@ impl AlbumPage {
         let favourite = queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER)
             .is_ok_and(|set| set.contains(&id));
         let mut page = Self::new(album, tracks, favourite);
-        page.credits = credits::of_tracks(&db.conn, &page.tracks);
-        if let Some(credit) = credits::of_albums(&db.conn, [&page.album]).remove(&id) {
+        page.credits = credits::of_tracks(&db, &page.tracks);
+        if let Some(credit) = credits::of_albums(&db, [&page.album]).remove(&id) {
             page.album_credit = credit;
         }
         page.fav_tracks =

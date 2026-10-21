@@ -539,7 +539,7 @@ fn draw_heading(
     run: &[QueueEntry],
     selected: bool,
     links: Option<&Links>,
-    facts: Option<&Facts>,
+    library: Option<&Facts>,
 ) {
     let e = &run[0];
     let codec = run
@@ -549,7 +549,7 @@ fn draw_heading(
         .flatten();
     let ms = run.iter().filter_map(|t| t.duration_ms).sum();
     let facts = rows::facts(e.year.as_deref(), run.len(), ms, codec);
-    let credits = facts.map_or_else(|| Facts::default().credits_of(e), |f| f.credits_of(e));
+    let credits = library.map_or_else(|| Facts::default().credits_of(e), |f| f.credits_of(e));
     let artist = credits.album_artist.as_str();
     rows::heading(
         buf,
