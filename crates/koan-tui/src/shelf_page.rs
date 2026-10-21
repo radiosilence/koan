@@ -161,13 +161,16 @@ pub struct ShelfPage {
     generation: u64,
     shown: u64,
     tx: Sender<Ask>,
-    rx: Receiver<(u64, Summary, Favourites, Credited)>,
+    rx: Receiver<Read>,
     /// The shown summary's credits, read with it.
     credited: Credited,
 }
 
+/// A summary as read, with its generation and what goes with it.
+type Read = (u64, Summary, Favourites, Credited);
+
 /// Reads summaries off the UI thread, the last ask of a burst only.
-fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary, Favourites, Credited)>) {
+fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<Read>) {
     let (tx, req) = crossbeam_channel::unbounded::<Ask>();
     let (done, rx) = crossbeam_channel::unbounded();
     std::thread::Builder::new()

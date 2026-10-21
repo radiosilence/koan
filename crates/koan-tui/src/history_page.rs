@@ -1153,7 +1153,10 @@ mod tests {
         let reply = |generation, title: &str, error: Option<&str>| Reply {
             generation,
             version: koan_core::player::history::version(),
-            entries: Some(vec![entry(9, Local::now().timestamp(), title)]),
+            entries: Some((
+                vec![entry(9, Local::now().timestamp(), title)],
+                Credited::default(),
+            )),
             error: error.map(Into::into),
         };
         done.send(reply(p.generation - 1, "old", Some("could not forget")))
