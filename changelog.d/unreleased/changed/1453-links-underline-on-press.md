@@ -1,0 +1,1 @@
+- **Links underline while pressed on iPhone and iPad.** A finger held on an artist or album name underlines it, as hover does on the Mac, so a name shows it leads somewhere before it is followed.
