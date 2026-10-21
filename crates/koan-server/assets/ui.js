@@ -35,7 +35,7 @@
     return renewing;
   }
   const sameOrigin = (input) =>
-    new URL(typeof input === "string" ? input : input.url, location.href).origin === location.origin;
+    new URL(input instanceof Request ? input.url : input, location.href).origin === location.origin;
   // Every request this page makes, Datastar's included, renews once on a 401
   // and retries; a session that cannot be renewed reloads into the sign-in form.
   // Responses name the stylesheet their markup was written for. A tab open
@@ -102,11 +102,11 @@
 
   function render({ queue, cur, playing, track }) {
     document.body.classList.toggle("playing", playing);
-    for (const el of all("[data-np=title]")) el.textContent = track ? track.title : "Nothing playing";
+    for (const el of all("[data-np=title]")) el.textContent = track ? track.title ?? "" : "Nothing playing";
     for (const el of all("[data-np=artist]")) el.replaceChildren(...(track ? creditNodes(track) : []));
     for (const el of all("[data-np=sep]")) el.hidden = !(track && creditOf(track).length && track.album);
     for (const el of all("[data-np=album]")) {
-      el.textContent = track ? track.album : "";
+      el.textContent = track?.album ?? "";
       if (track && track.albumId) el.href = `/album/${track.albumId}`;
       else el.removeAttribute("href");
     }
@@ -116,7 +116,7 @@
       if (src && el.getAttribute("src") !== src) { el.classList.remove("missing"); el.src = src; }
     }
     for (const el of all("[data-np=len]")) el.textContent = fmt(track ? track.dur : 0);
-    for (const el of all("input[data-ctl=seek]")) el.max = track ? track.dur : 0;
+    for (const el of all("input[data-ctl=seek]")) el.max = String(track ? track.dur : 0);
     for (const el of all("progress[data-np=progress]")) el.max = track && track.dur ? track.dur : 1;
     for (const li of all("li[data-id]", main)) li.classList.toggle("playing", !!track && Number(li.dataset.id) === track.id);
     renderQueue(queue, cur);
@@ -144,7 +144,7 @@
     queue.forEach((t, i) => {
       const li = document.createElement("li");
       li.tabIndex = 0;
-      li.dataset.q = i;
+      li.dataset.q = String(i);
       Object.assign(li.dataset, {
         id: t.id, dur: t.dur, title: t.title, artist: t.artist ?? "", album: t.album ?? "",
         albumId: t.albumId || 0, artistId: t.artistId || 0, cover: t.cover ?? "",
@@ -153,10 +153,10 @@
       li.classList.toggle("playing", i === cur);
       const n = document.createElement("span");
       n.className = "n";
-      n.textContent = i + 1;
+      n.textContent = String(i + 1);
       const title = document.createElement("span");
       title.className = "t";
-      title.textContent = t.title;
+      title.textContent = t.title ?? "";
       const small = document.createElement("small");
       const credit = creditNodes(t);
       small.append(...credit);
@@ -190,8 +190,8 @@
   // Focus is no guide: a clicked range keeps it long after the drag ends.
   let dragging = null;
   // How far a slider's accent runs; see styles/controls.css.
-  const fill = (el) => el.style.setProperty("--fill", `${el.max > 0 ? (el.value / el.max) * 100 : 0}%`);
-  const isSeek = (t) => t && t.matches && t.matches("input[data-ctl=seek]");
+  const fill = (el) => el.style.setProperty("--fill", `${Number(el.max) > 0 ? (Number(el.value) / Number(el.max)) * 100 : 0}%`);
+  const isSeek = (t) => t instanceof Element && t.matches("input[data-ctl=seek]");
   for (const type of ["pointerdown", "touchstart"]) {
     document.addEventListener(type, (e) => { if (isSeek(e.target)) dragging = e.target; }, { passive: true });
   }
@@ -205,7 +205,7 @@
     const p = track ? player.position() : 0;
     for (const el of all("[data-np=pos]")) el.textContent = fmt(p);
     for (const el of all("input[data-ctl=seek]")) {
-      if (el !== dragging) el.value = p;
+      if (el !== dragging) el.value = String(p);
       fill(el);
     }
     for (const el of all("progress[data-np=progress]")) el.value = p;
@@ -230,12 +230,13 @@
       case "play": return player.play(albumRows(), 0);
       case "shuffle": return player.play(shuffle(albumRows()), 0);
       case "queue": return player.append(albumRows());
-      case "add": return player.append([trackOf(row)]);
+      case "add": return row && player.append([trackOf(row)]);
       case "menu": {
+        if (!row) return;
         const r = el.getBoundingClientRect();
         return openMenu(row, r.right, r.bottom);
       }
-      case "remove": return player.remove(Number(row.dataset.q));
+      case "remove": return row && player.remove(Number(row.dataset.q));
       case "clear": return player.clear();
     }
   }
@@ -260,7 +261,7 @@
     b.className = "quiet";
     b.setAttribute("role", "menuitem");
     b.textContent = label;
-    b.addEventListener("click", () => { menu.hidePopover(); run(); });
+    b.addEventListener("click", () => { menu?.hidePopover(); run(); });
     return b;
   }
   const group = (items) => (items.length ? [document.createElement("hr"), ...items] : []);
@@ -321,15 +322,15 @@
     } else {
       menu.style.left = menu.style.top = "";
     }
-    menu.querySelector("button").focus();
+    menu.querySelector("button")?.focus();
   }
   // Opened at once, filled when the server answers; only the latest request
   // may fill it.
-  const properties = document.getElementById("track-properties");
+  const properties = document.querySelector("#track-properties");
   const propertiesBody = document.getElementById("track-properties-body");
   let asked = 0;
   async function showProperties(id) {
-    if (!properties) return;
+    if (!properties || !propertiesBody) return;
     const mine = ++asked;
     const say = (text) => {
       const p = document.createElement("p");
@@ -358,6 +359,7 @@
   // padding or a selection dragged out of it, so only a press and release
   // both outside its box close it.
   const outside = (e) => {
+    if (!properties) return false;
     const r = properties.getBoundingClientRect();
     return e.target === properties &&
       (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
@@ -380,13 +382,13 @@
     return true;
   };
   document.addEventListener("pointerdown", (e) => {
-    if (menu && !menu.contains(e.target) && closeMenu()) dismissed = true;
+    if (menu && !(e.target instanceof Node && menu.contains(e.target)) && closeMenu()) dismissed = true;
   }, true);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
-  const menuRow = (e) => e.target.closest && e.target.closest("li[data-id]");
+  const menuRow = (e) => e.target instanceof Element && e.target.closest("li[data-id]");
   document.addEventListener("contextmenu", (e) => {
     const li = menuRow(e);
-    if (!li || e.target.closest("a:not(.t a), input")) return;
+    if (!li || !(e.target instanceof Element) || e.target.closest("a:not(.t a), input")) return;
     e.preventDefault();
     // The keyboard's menu key has no pointer: open it at the row.
     const r = li.getBoundingClientRect();
@@ -397,7 +399,7 @@
   let press = 0, pressed = false, pressAt = null;
   document.addEventListener("pointerdown", (e) => {
     const li = e.pointerType === "touch" && menuRow(e);
-    if (!li || e.target.closest("a:not(.t a), button, input, label")) return;
+    if (!li || !(e.target instanceof Element) || e.target.closest("a:not(.t a), button, input, label")) return;
     pressAt = [e.clientX, e.clientY];
     pressed = false;
     press = setTimeout(() => { pressed = true; openMenu(li, e.clientX, e.clientY); }, 500);
@@ -422,7 +424,7 @@
   // into a mail client keeps the button. Datastar can write only plain text.
   async function copyEmail(button) {
     const html = document.getElementById("invite-html")?.innerHTML ?? "";
-    const text = document.getElementById("invite-text")?.value ?? "";
+    const text = document.querySelector("#invite-text")?.value ?? "";
     try {
       await navigator.clipboard.write([new ClipboardItem({
         "text/html": new Blob([html], { type: "text/html" }),
@@ -434,6 +436,7 @@
     button.textContent = "Copied";
   }
   document.addEventListener("click", (e) => {
+    if (!(e.target instanceof Element)) return;
     const email = e.target.closest("[data-copy-email]");
     if (email) { copyEmail(email); return; }
     const ctl = e.target.closest("[data-ctl]");
@@ -450,21 +453,21 @@
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
-    const li = e.target.closest && e.target.closest("li[data-id], li[data-q]");
+    const li = e.target instanceof Element && e.target.closest("li[data-id], li[data-q]");
     if (li && e.target === li) { e.preventDefault(); pick(li); }
   });
   document.addEventListener("input", (e) => {
-    if (e.target.matches("input[data-ctl=seek]")) {
+    if (e.target instanceof HTMLInputElement && e.target.matches("input[data-ctl=seek]")) {
       for (const el of all("[data-np=pos]")) el.textContent = fmt(Number(e.target.value));
       fill(e.target);
     }
   });
   document.addEventListener("change", (e) => {
-    if (e.target.matches("input[data-ctl=seek]")) player.seek(Number(e.target.value));
+    if (e.target instanceof HTMLInputElement && e.target.matches("input[data-ctl=seek]")) player.seek(Number(e.target.value));
   });
   // A cover that is not there leaves an empty tile rather than a broken image.
   document.addEventListener("error", (e) => {
-    if (e.target.tagName !== "IMG") return;
+    if (!(e.target instanceof HTMLImageElement)) return;
     e.target.classList.add("missing");
     // With no source the image draws as its own empty box, not a broken icon.
     e.target.removeAttribute("src");
@@ -497,13 +500,13 @@
 
   function settle() {
     const page = main.firstElementChild;
-    const title = page && page.dataset.title;
+    const title = page instanceof HTMLElement && page.dataset.title;
     document.title = title ? `${title} · koan` : "koan";
     const section = { "": "albums", album: "albums", artist: "artists", playlist: "playlists" }[location.pathname.split("/")[1]]
       ?? location.pathname.split("/")[1];
     for (const a of all("a[data-nav]")) {
       // A phone's Library tab stands for several of the sidebar's links.
-      if (a.dataset.nav.split(" ").includes(section)) a.setAttribute("aria-current", "page");
+      if (a.dataset.nav?.split(" ").includes(section)) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     }
     const focus = main.querySelector("[autofocus]");
@@ -520,17 +523,17 @@
   const wide = matchMedia("(min-width: 721px)");
   function formUrl(form) {
     const params = new URLSearchParams();
-    for (const [k, v] of new FormData(form)) if (String(v).trim()) params.append(k, v);
+    for (const [k, v] of new FormData(form)) if (String(v).trim()) params.append(k, String(v));
     const q = params.toString();
     return form.getAttribute("action") + (q ? `?${q}` : "");
   }
   document.addEventListener("change", (e) => {
-    const form = e.target.closest && e.target.closest("form.toolbar");
+    const form = e.target instanceof Element && e.target.closest("form.toolbar");
     if (!form || !wide.matches || e.target.matches(TYPED)) return;
     navigate(formUrl(form), true);
   });
   document.addEventListener("submit", (e) => {
-    if (!e.target.matches("form.toolbar")) return;
+    if (!(e.target instanceof HTMLFormElement) || !e.target.matches("form.toolbar")) return;
     e.preventDefault();
     clearTimeout(typing);
     navigate(formUrl(e.target), true);
@@ -542,11 +545,12 @@
   const TYPED = "form.toolbar input[name=q], form.toolbar input[name=from], form.toolbar input[name=to]";
   let typing;
   document.addEventListener("input", (e) => {
-    if (!wide.matches || !e.target.matches(TYPED)) return;
+    if (!wide.matches || !(e.target instanceof HTMLInputElement) || !e.target.matches(TYPED)) return;
     const v = e.target.value.trim();
     if (e.target.name !== "q" && v && !/^\d{4}$/.test(v)) return;
     clearTimeout(typing);
     const form = e.target.form;
+    if (!form) return;
     typing = setTimeout(() => refilter(formUrl(form)), 250);
   });
   async function refilter(url) {
@@ -564,7 +568,7 @@
     next.innerHTML = html;
     const bar = main.querySelector("details.browse");
     const fresh = next.content.querySelector("details.browse");
-    if (!bar || !fresh) return;
+    if (!bar || !fresh || !bar.parentNode) return;
     while (bar.nextSibling) bar.nextSibling.remove();
     while (fresh.nextSibling) bar.parentNode.append(fresh.nextSibling);
     history.replaceState(null, "", url);
@@ -573,6 +577,7 @@
 
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!(e.target instanceof Element)) return;
     const a = e.target.closest("a[href]");
     if (!a || a.target || a.hasAttribute("download")) return;
     const url = new URL(a.href, location.href);

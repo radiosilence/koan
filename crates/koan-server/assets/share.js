@@ -1,7 +1,8 @@
 // The share page: the shared tracks as one queue on koan's gapless player,
 // cued to the track the share starts on.
 (() => {
-  const $ = (id) => document.getElementById(id);
+  // The page's own elements, which its template always draws.
+  const $ = (id) => document.querySelector(`#${id}`);
   const rows = [...document.querySelectorAll("#tracks li[data-src]")];
   const start = Number($("tracks").dataset.start);
   const play = $("play"), prev = $("prev"), next = $("next");
@@ -12,7 +13,7 @@
   }
 
   const tracks = rows.map((li) => ({
-    src: li.dataset.src,
+    src: li.dataset.src ?? "",
     dur: Number(li.dataset.dur) || 0,
     title: li.dataset.title,
     artist: li.dataset.artist,
@@ -29,7 +30,7 @@
   // no guide to whether the clock may move it.
   let dragging = false;
   // How far the slider's accent runs; see styles/controls.css.
-  const fill = () => seek.style.setProperty("--fill", `${seek.max > 0 ? (seek.value / seek.max) * 100 : 0}%`);
+  const fill = () => seek.style.setProperty("--fill", `${Number(seek.max) > 0 ? (Number(seek.value) / Number(seek.max)) * 100 : 0}%`);
   seek.addEventListener("input", fill);
   for (const type of ["pointerdown", "touchstart"]) seek.addEventListener(type, () => { dragging = true; }, { passive: true });
   for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "blur"]) {
@@ -38,7 +39,7 @@
   const show = () => {
     const p = player.position();
     pos.textContent = fmt(p);
-    if (!dragging) seek.value = p;
+    if (!dragging) seek.value = String(p);
     fill();
   };
 
@@ -47,7 +48,7 @@
       rows.forEach((li, k) => li.classList.toggle("playing", k === cur));
       play.textContent = playing ? "Pause" : "Play";
       len.textContent = fmt(track ? track.dur : 0);
-      seek.max = track ? track.dur : 0;
+      seek.max = String(track ? track.dur : 0);
       show();
     },
   });
