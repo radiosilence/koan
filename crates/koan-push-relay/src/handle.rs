@@ -35,10 +35,10 @@ pub const MAX_TOKEN: usize = 100;
 /// The longest handle, encoded, so a request can be refused before decoding.
 pub const MAX_HANDLE_LEN: usize = (HEADER_LEN + FIXED_LEN + MAX_TOKEN + TAG_LEN).div_ceil(3) * 4;
 
-/// How far ahead of the relay's clock a handle's mint time may be: the wall
-/// clock can be stepped back after a handle is minted, and the handle is no
-/// less genuine for it.
-const SKEW_MS: u64 = 60_000;
+/// The longest a handle may be configured to open for. Revocations are kept
+/// this long, so changing the configured lifetime never lets a revoked handle
+/// open again.
+pub const MAX_LIFETIME_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 
 /// What a handle holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,9 +142,10 @@ impl Handles {
         let sandbox = plain[0] & SANDBOX != 0;
         let minted_ms = u64::from_be_bytes(plain[1..FIXED_LEN].try_into().expect("eight bytes"));
         let token = plain[FIXED_LEN..].to_vec();
-        if minted_ms > now_ms.saturating_add(SKEW_MS)
-            || now_ms >= minted_ms.saturating_add(self.lifetime_ms)
-        {
+        // A mint time ahead of the clock is no forgery, since only the relay
+        // seals: the clock was stepped back, or the handle was minted after a
+        // revocation recorded under a later clock.
+        if now_ms >= minted_ms.saturating_add(self.lifetime_ms) {
             return Err(Invalid::Expired);
         }
         Ok(Device {
@@ -246,14 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn a_handle_from_the_future_is_refused() {
+    fn a_handle_minted_ahead_of_the_clock_still_opens() {
         let h = handles();
         let sealed = h.seal(&[5; 32], false, 10 * DAY);
-        assert_eq!(
-            h.open(&sealed, 10 * DAY - SKEW_MS - 1),
-            Err(Invalid::Expired)
-        );
-        assert!(h.open(&sealed, 10 * DAY - SKEW_MS).is_ok());
+        assert!(h.open(&sealed, DAY).is_ok());
     }
 
     #[test]

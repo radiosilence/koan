@@ -181,6 +181,21 @@ impl Global {
         }
     }
 
+    /// Hand back one request's allowance.
+    pub fn refund(&self) {
+        let mut current = self.tat.load(Ordering::Relaxed);
+        loop {
+            let tat = current.saturating_sub(self.rate.interval);
+            match self
+                .tat
+                .compare_exchange_weak(current, tat, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return,
+                Err(seen) => current = seen,
+            }
+        }
+    }
+
     pub fn check(&self, now: u64) -> Result<(), Duration> {
         let mut current = self.tat.load(Ordering::Relaxed);
         loop {

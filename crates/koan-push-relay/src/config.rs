@@ -121,7 +121,7 @@ pub struct HandlesConfig {
     /// once `lifetime_days` have passed since it stopped being current.
     pub keys: BTreeMap<String, String>,
     pub current: u8,
-    /// How long a handle opens. The app renews at half this.
+    /// How long a handle opens, at most 365. The app renews at half this.
     pub lifetime_days: u64,
 }
 

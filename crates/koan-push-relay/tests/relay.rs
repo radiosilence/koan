@@ -181,7 +181,8 @@ async fn a_wake_reaches_apple_as_a_bare_background_push() {
     let r = h.push(&handle, "wake", None).await;
     assert_eq!(r.status(), 204);
 
-    let got = h.gateway.received();
+    // The first push is registration's proof that the token is real.
+    let got = h.gateway.received()[1..].to_vec();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].token, TOKEN);
     assert_eq!(got[0].body, json!({ "aps": { "content-available": 1 } }));
@@ -192,7 +193,7 @@ async fn a_wake_reaches_apple_as_a_bare_background_push() {
     assert_eq!(header("apns-collapse-id"), "koan-wake");
 
     assert_eq!(h.push(&handle, "wake-now", None).await.status(), 204);
-    let now = &h.gateway.received()[1];
+    let now = &h.gateway.received()[2];
     assert_eq!(now.headers["apns-collapse-id"], "koan-wake-now");
     assert!(header("authorization").starts_with("bearer "));
 }
@@ -206,7 +207,7 @@ async fn a_notification_shows_only_the_relays_text() {
         204
     );
 
-    let body = &h.gateway.received()[0].body;
+    let body = &h.gateway.received()[1].body;
     assert_eq!(body["aps"]["alert"]["title"], ALERT_TITLE);
     assert_eq!(body["aps"]["alert"]["body"], ALERT_BODY);
     assert_eq!(body["koan-e2e"], "c2VjcmV0");
@@ -219,7 +220,7 @@ async fn a_notification_shows_only_the_relays_text() {
         )
         .await;
     assert_eq!(r.status(), 400);
-    assert_eq!(h.gateway.received().len(), 1);
+    assert_eq!(h.gateway.received().len(), 2);
 }
 
 #[tokio::test]
@@ -239,7 +240,7 @@ async fn a_blob_rides_only_on_a_notification_and_only_as_base64url() {
             .status(),
         400
     );
-    assert!(h.gateway.received().is_empty());
+    assert_eq!(h.gateway.received().len(), 1, "only registration's proof");
 }
 
 #[tokio::test]
@@ -253,7 +254,7 @@ async fn a_handle_the_relay_did_not_seal_is_gone() {
     forged[last] = if forged[last] == b'A' { b'B' } else { b'A' };
     let forged = String::from_utf8(forged).unwrap();
     assert_eq!(h.push(&forged, "wake", None).await.status(), 410);
-    assert!(h.gateway.received().is_empty());
+    assert_eq!(h.gateway.received().len(), 1, "only registration's proof");
 }
 
 #[tokio::test]
@@ -309,6 +310,7 @@ async fn the_request_limit_is_one_limit_across_routes() {
     let h = Harness::start(|cfg| cfg.limits.max_requests = 1).await;
     let handle = h.register(TOKEN).await;
     *h.gateway.delay.lock() = std::time::Duration::from_secs(5);
+    let before = h.gateway.arrived.load(std::sync::atomic::Ordering::SeqCst);
     let slow = {
         let http = h.http.clone();
         let url = format!("{}/v1/push", h.url);
@@ -322,7 +324,7 @@ async fn the_request_limit_is_one_limit_across_routes() {
         })
     };
     // The push holds the one slot once the gateway has it.
-    while h.gateway.arrived.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+    while h.gateway.arrived.load(std::sync::atomic::Ordering::SeqCst) == before {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
@@ -345,6 +347,24 @@ async fn a_revocation_retires_every_earlier_handle() {
 
     let new = h.register(TOKEN).await;
     assert_eq!(h.push(&new, "wake", None).await.status(), 204);
+}
+
+#[tokio::test]
+async fn only_a_token_apple_accepts_gets_a_handle() {
+    let h = Harness::start(|_| {}).await;
+    h.gateway.answer(400, "BadDeviceToken");
+    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn apple_refusing_the_relay_asks_senders_to_wait_minutes() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    h.gateway.answer(400, "TopicDisallowed");
+    let r = h.push(&handle, "wake", None).await;
+    assert_eq!(r.status(), 503);
+    assert_eq!(r.headers()["retry-after"], "300");
 }
 
 #[tokio::test]

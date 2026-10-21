@@ -20,7 +20,7 @@ version (1) | key id (1) | nonce (12) | sealed( flags (1) | minted ms (8, big-en
 
 The version and key id are authenticated with the rest. A handle is opaque to everyone but the relay: clients store it and send it back unchanged, and must not parse it. It is at most 188 characters.
 
-A handle opens for 60 days from minting (`expires` in the registration response). The app registers again before then, at half its lifetime, and gives its servers the new handle on their next link.
+A handle opens for 60 days from minting by default, and at most 365 (`expires` in the registration response). The app registers again before then, at half its lifetime, and gives its servers the new handle on their next link.
 
 The app registers once for each server and gives every server a handle of its own, never one handle to several. Each handle has its own quota, so a server that spends its allowance spends no other server's; the device's ceiling bounds them all together (see [Quotas](#quotas)).
 
@@ -32,9 +32,11 @@ A device revokes by sending its token. Every handle for that token minted at or 
 
 The app waits for the revocation's `204` before registering again, and registers again after any revocation that succeeds, including a retried one: a revocation retires every handle minted before it reached the relay, whichever request asked for them.
 
-Before recording a revocation the relay sends the token a background push, and records it only if Apple accepts it. The table therefore holds only devices that exist, and cannot be filled with made-up tokens. The app is open when it revokes, so the wake asks nothing of it.
+The relay stores one row per revoking device: a keyed hash of the token and the time. A row is kept for 365 days, the longest a handle can be configured to open, so changing the configured lifetime never lets a revoked handle open again.
 
-The relay stores one row per revoking device: a keyed hash of the token and the time. A row is deleted once every handle it could refuse has expired.
+## Proof of a device
+
+Before minting a handle or recording a revocation, the relay sends the token a background push (`wake-now`) and goes on only if Apple accepts it. Handles and revocations therefore exist only for real devices: neither can be had for a made-up token, so the revocation table cannot be filled and a relay's quotas cannot be multiplied with invented devices. The app is open when it registers or revokes, so the wake asks nothing of it.
 
 ## Endpoints
 
@@ -54,7 +56,7 @@ Called by the app.
 { "handle": "<handle>", "expires": 1767225600 }
 ```
 
-`expires` is in Unix seconds. `400` means the token is not 8 to 100 bytes of hex, or the relay holds no key for the requested gateway.
+`expires` is in Unix seconds. `400` means the token is not 8 to 100 bytes of hex, the relay holds no key for the requested gateway, or Apple refused the token; `429` and `503` are as for a push.
 
 ### `POST /v1/revoke`
 
@@ -89,7 +91,7 @@ The relay's notification is titled "kōan" and reads "Something is waiting to pl
 | `400` | The request is malformed | Fix the request |
 | `410` | The handle does not open (unknown, altered, expired, revoked), the relay no longer serves its gateway, or Apple says the token is no longer valid | Forget the handle; the app sends a new one when it next links |
 | `429` | A quota is spent, or Apple is throttling the device | Wait at least `Retry-After` seconds |
-| `503` | The relay or Apple cannot take the push now | Retry after `Retry-After` seconds |
+| `503` | The relay or Apple cannot take the push now, or Apple is refusing the relay itself (`Retry-After` is then minutes) | Retry after `Retry-After` seconds |
 
 Live Activity updates are not relayed. ActivityKit renders their content without passing it through the app, so they cannot be encrypted, and relaying them would show the relay what people are listening to.
 
@@ -114,7 +116,7 @@ A device is counted by its token, so its ceiling holds whichever servers hold it
 
 It sees, per request: a device token (registration and revocation only), a handle, which it opens to a token in memory, the kind of push, an encrypted blob it cannot read, and the caller's address.
 
-It keeps: the revocation table (a keyed hash of each revoking device's token and when it revoked, for at most 60 days), counters for quotas in memory (keyed hashes of tokens, handles' random nonces, and caller addresses as they are, IPv6 cut to its /64; each forgotten once its allowance has refilled), and aggregate request counts by route and outcome. It writes no request log, and nothing it writes to disk names a token, a handle, a caller or a server.
+It keeps: the revocation table (a keyed hash of each revoking device's token and when it revoked, for 365 days), counters for quotas in memory (keyed hashes of tokens, handles' random nonces, and caller addresses as they are, IPv6 cut to its /64; each forgotten once its allowance has refilled), and aggregate request counts by route and outcome. It writes no request log, and nothing it writes to disk or to its own log names a token, a handle, a caller or a server.
 
 ## Operating the relay
 
@@ -133,9 +135,10 @@ token_key = "…"
 
 [handles]
 current = 1
+# At most 365.
 lifetime_days = 60
 # 32 random bytes each, base64. Add a key and make it current to rotate;
-# remove the old one 60 days later.
+# remove the old one once lifetime_days have passed.
 keys = { "1" = "…" }
 
 [apns]

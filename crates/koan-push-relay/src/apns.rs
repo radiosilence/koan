@@ -58,6 +58,9 @@ pub enum Delivery {
     Throttled,
     /// Apple, or the way to it, failed. Worth trying again later.
     Unavailable(String),
+    /// Apple refused the relay itself: a wrong topic, key or environment.
+    /// Nothing a sender does will change it, and retrying soon is no use.
+    Rejected(String),
 }
 
 struct Gateway {
@@ -215,7 +218,8 @@ impl Apns {
         }
         let response = match request.json(&payload(kind, blob)).send().await {
             Ok(r) => r,
-            Err(e) => return Delivery::Unavailable(e.to_string()),
+            // The error's URL holds the device token, which goes no further.
+            Err(e) => return Delivery::Unavailable(e.without_url().to_string()),
         };
         let status = response.status();
         if status.is_success() {
@@ -236,7 +240,8 @@ impl Apns {
                 gateway.forget_bearer(&bearer);
                 Delivery::Unavailable(format!("{status} {reason}"))
             }
-            _ => Delivery::Unavailable(format!("{status} {reason}")),
+            (429, _) | (500.., _) => Delivery::Unavailable(format!("{status} {reason}")),
+            _ => Delivery::Rejected(format!("{status} {reason}")),
         }
     }
 }

@@ -38,7 +38,7 @@ use tokio::sync::Semaphore;
 
 use crate::apns::{Apns, Delivery, Kind, MAX_BLOB};
 use crate::config::{Config, secret};
-use crate::handle::{Handles, MAX_TOKEN, MIN_TOKEN, TokenHash, TokenHasher};
+use crate::handle::{Handles, MAX_LIFETIME_MS, MAX_TOKEN, MIN_TOKEN, TokenHash, TokenHasher};
 use crate::metrics::{Metrics, Outcome, Route};
 use crate::quota::{Clock, Global, Keyed, Rate, Refused};
 use crate::revocations::{Revocations, RevokeError};
@@ -51,6 +51,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// What a caller is told to wait when the relay, not the caller, is the
 /// reason for refusing.
 const BUSY_RETRY: Duration = Duration::from_secs(5);
+
+/// What a caller is told to wait when Apple refuses the relay itself, which
+/// takes an operator to fix.
+const BROKEN_RETRY: Duration = Duration::from_secs(5 * 60);
 
 const SWEEP_EVERY: Duration = Duration::from_secs(60);
 const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
@@ -92,8 +96,8 @@ impl Relay {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let lifetime_ms = cfg.handles.lifetime_days * 24 * 60 * 60 * 1000;
-        if lifetime_ms == 0 {
-            return Err("handles.lifetime_days must be at least 1".into());
+        if lifetime_ms == 0 || lifetime_ms > MAX_LIFETIME_MS {
+            return Err("handles.lifetime_days must be 1 to 365".into());
         }
         let handles = Handles::new(&keys, cfg.handles.current, lifetime_ms)?;
         let hasher = TokenHasher::new(&secret("token_key", &cfg.token_key)?);
@@ -101,7 +105,7 @@ impl Relay {
             &cfg.store,
             cfg.limits.max_revocations,
             unix_ms(),
-            lifetime_ms,
+            MAX_LIFETIME_MS,
         )?;
         let apns = Apns::new(&cfg.apns, &cfg.topic)?;
         let client_ip_header = cfg
@@ -181,7 +185,6 @@ pub fn router(relay: Arc<Relay>, max_requests: usize) -> Router {
         .route("/v1/register", post(register))
         .route("/v1/revoke", post(revoke))
         .route("/v1/push", post(push))
-        .route("/healthz", get(|| async { "ok" }))
         .with_state(relay)
         // Innermost so it is inside the timeout: a panic becomes a 500
         // rather than a dropped connection.
@@ -191,26 +194,28 @@ pub fn router(relay: Arc<Relay>, max_requests: usize) -> Router {
             StatusCode::REQUEST_TIMEOUT,
             REQUEST_TIMEOUT,
         ));
-    // A layer on a router wraps each route apart, so the limit goes around
-    // the whole router as one service: every request counts against it.
+    // Shed rather than queue: an overloaded relay tells the surplus to come
+    // back instead of answering everyone slowly. The limit wraps the routes
+    // as one service, so every request counts against it; a layer on a
+    // router would wrap each route apart.
+    let limited = tower::ServiceBuilder::new()
+        .layer(axum::error_handling::HandleErrorLayer::new(
+            |err: tower::BoxError| async move {
+                if err.is::<tower::load_shed::error::Overloaded>() {
+                    refuse(StatusCode::SERVICE_UNAVAILABLE, "busy", Some(BUSY_RETRY))
+                } else {
+                    refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", None)
+                }
+            },
+        ))
+        .load_shed()
+        .concurrency_limit(max_requests)
+        .service(routes);
+    // Outside the limit: a health check answered 503 under load gets a busy
+    // relay restarted.
     Router::new()
-        .fallback_service(routes)
-        // Shed rather than queue: an overloaded relay tells the surplus to
-        // come back instead of answering everyone slowly.
-        .layer(
-            tower::ServiceBuilder::new()
-                .layer(axum::error_handling::HandleErrorLayer::new(
-                    |err: tower::BoxError| async move {
-                        if err.is::<tower::load_shed::error::Overloaded>() {
-                            refuse(StatusCode::SERVICE_UNAVAILABLE, "busy", Some(BUSY_RETRY))
-                        } else {
-                            refuse(StatusCode::INTERNAL_SERVER_ERROR, "internal", None)
-                        }
-                    },
-                ))
-                .load_shed()
-                .concurrency_limit(max_requests),
-        )
+        .route("/healthz", get(|| async { "ok" }))
+        .fallback_service(limited)
 }
 
 /// Metrics and a health check, for the cluster.
@@ -304,7 +309,7 @@ async fn upkeep(relay: Arc<Relay>) {
             _ = prune.tick() => {
                 let relay = relay.clone();
                 let pruned = tokio::task::spawn_blocking(move || {
-                    relay.revocations.prune(unix_ms(), relay.handles.lifetime_ms())
+                    relay.revocations.prune(unix_ms(), MAX_LIFETIME_MS)
                 })
                 .await;
                 if let Ok(Err(e)) = pruned {
@@ -315,9 +320,10 @@ async fn upkeep(relay: Arc<Relay>) {
     }
 }
 
+/// What the app sends to register or revoke.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RegisterRequest {
+struct TokenRequest {
     /// The device token, hex.
     token: String,
     #[serde(default)]
@@ -329,14 +335,6 @@ struct Registered {
     handle: String,
     /// Unix seconds after which the handle no longer opens.
     expires: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RevokeRequest {
-    token: String,
-    #[serde(default)]
-    sandbox: bool,
 }
 
 /// A handle's own count, keyed by its nonce, which no two handles share.
@@ -352,113 +350,121 @@ struct PushRequest {
     blob: Option<String>,
 }
 
+impl Relay {
+    /// Send a token a background push, to learn that Apple knows it. A
+    /// handle is minted and a revocation recorded only for a real device,
+    /// so neither can be had for a made-up token. The app is open when it
+    /// registers or revokes, so the wake asks nothing of it.
+    async fn prove(&self, token: Vec<u8>, sandbox: bool) -> Result<(), Refusal> {
+        if !self.apns.serves(sandbox) {
+            return Err(Refusal::Bad("this relay does not serve that gateway"));
+        }
+        self.global
+            .check(self.clock.now())
+            .map_err(|_| Refusal::Busy)?;
+        let Ok(_permit) = self.in_flight.try_acquire() else {
+            self.global.refund();
+            return Err(Refusal::Busy);
+        };
+        let probe = handle::Device {
+            token,
+            sandbox,
+            minted_ms: 0,
+            id: [0; aws_lc_rs::aead::NONCE_LEN],
+        };
+        match self.apns.send(&probe, Kind::WakeNow, None).await {
+            Delivery::Sent => Ok(()),
+            Delivery::Gone => Err(Refusal::Bad("not a device token")),
+            Delivery::Throttled => Err(Refusal::Limited(Duration::from_secs(60))),
+            delivery => {
+                self.global.refund();
+                Err(unavailable(delivery))
+            }
+        }
+    }
+
+    /// Count a request's outcome and answer it.
+    fn answer(&self, route: Route, answer: Result<Response, Refusal>) -> Response {
+        match answer {
+            Ok(response) => {
+                self.metrics.count(route, Outcome::Ok);
+                response
+            }
+            Err(refusal) => refusal.respond(self, route),
+        }
+    }
+}
+
 async fn register(
     State(relay): State<Arc<Relay>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: Result<Json<RegisterRequest>, JsonRejection>,
+    body: Result<Json<TokenRequest>, JsonRejection>,
 ) -> Response {
-    let answer = (|| {
+    let answer = async {
         let caller = relay.caller(&headers, peer);
-        if let Err(e) = relay.ip_registrations.check(caller, relay.clock.now()) {
-            return Err(limited(e));
-        }
-        let Ok(Json(req)) = body else {
-            return Err(Refusal::Bad("malformed request"));
-        };
+        relay
+            .ip_registrations
+            .check(caller, relay.clock.now())
+            .map_err(limited)?;
+        let Json(req) = body.map_err(|_| Refusal::Bad("malformed request"))?;
         let token = device_token(&req.token)?;
-        if !relay.apns.serves(req.sandbox) {
-            return Err(Refusal::Bad("this relay does not serve that gateway"));
-        }
+        let device = relay.hasher.hash(&token);
+        relay.prove(token.clone(), req.sandbox).await?;
         let now = unix_ms();
         // A handle minted in the same millisecond as a revocation would be
         // revoked by it.
         let minted = relay
             .revocations
-            .revoked_at(&relay.hasher.hash(&token))
+            .revoked_at(&device)
             .map_or(now, |at| now.max(at + 1));
-        Ok(Registered {
+        Ok(Json(Registered {
             handle: relay.handles.seal(&token, req.sandbox, minted),
             expires: (minted + relay.handles.lifetime_ms()) / 1000,
         })
-    })();
-    match answer {
-        Ok(registered) => {
-            relay.metrics.count(Route::Register, Outcome::Ok);
-            Json(registered).into_response()
-        }
-        Err(refusal) => refusal.respond(&relay, Route::Register),
+        .into_response())
     }
+    .await;
+    relay.answer(Route::Register, answer)
 }
 
 async fn revoke(
     State(relay): State<Arc<Relay>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: Result<Json<RevokeRequest>, JsonRejection>,
+    body: Result<Json<TokenRequest>, JsonRejection>,
 ) -> Response {
-    let caller = relay.caller(&headers, peer);
-    if let Err(e) = relay.ip_revocations.check(caller, relay.clock.now()) {
-        return limited(e).respond(&relay, Route::Revoke);
-    }
-    let Ok(Json(req)) = body else {
-        return Refusal::Bad("malformed request").respond(&relay, Route::Revoke);
-    };
-    let token = match device_token(&req.token) {
-        Ok(t) => t,
-        Err(refusal) => return refusal.respond(&relay, Route::Revoke),
-    };
-    if !relay.apns.serves(req.sandbox) {
-        return Refusal::Bad("this relay does not serve that gateway")
-            .respond(&relay, Route::Revoke);
-    }
-    let device = relay.hasher.hash(&token);
-    if !relay.revocations.has_room(&device) {
-        return Refusal::Busy.respond(&relay, Route::Revoke);
-    }
-    // Only a token Apple accepts is recorded, so the table holds real
-    // devices and cannot be filled with made-up ones. The wake costs the
-    // device nothing: its app is open, revoking.
-    let Ok(_permit) = relay.in_flight.try_acquire() else {
-        return Refusal::Busy.respond(&relay, Route::Revoke);
-    };
-    let probe = handle::Device {
-        token,
-        sandbox: req.sandbox,
-        minted_ms: 0,
-        id: [0; aws_lc_rs::aead::NONCE_LEN],
-    };
-    match relay.apns.send(&probe, Kind::WakeNow, None).await {
-        Delivery::Sent => {}
-        Delivery::Gone => {
-            return Refusal::Bad("not a device token").respond(&relay, Route::Revoke);
+    let answer = async {
+        let caller = relay.caller(&headers, peer);
+        relay
+            .ip_revocations
+            .check(caller, relay.clock.now())
+            .map_err(limited)?;
+        let Json(req) = body.map_err(|_| Refusal::Bad("malformed request"))?;
+        let token = device_token(&req.token)?;
+        let device = relay.hasher.hash(&token);
+        if !relay.revocations.has_room(&device) {
+            return Err(Refusal::Busy);
         }
-        Delivery::Throttled => {
-            return Refusal::Limited(Duration::from_secs(60)).respond(&relay, Route::Revoke);
-        }
-        Delivery::Unavailable(reason) => {
-            log::warn!("apns: {reason}");
-            return Refusal::Busy.respond(&relay, Route::Revoke);
+        relay.prove(token, req.sandbox).await?;
+        let writer = relay.clone();
+        let revoked =
+            tokio::task::spawn_blocking(move || writer.revocations.revoke(device, unix_ms())).await;
+        match revoked {
+            Ok(Ok(())) => Ok(StatusCode::NO_CONTENT.into_response()),
+            Ok(Err(RevokeError::Full)) => Err(Refusal::Busy),
+            Ok(Err(RevokeError::Store(e))) => {
+                log::error!("recording a revocation: {e}");
+                Err(Refusal::Busy)
+            }
+            Err(e) => {
+                log::error!("recording a revocation: {e}");
+                Err(Refusal::Busy)
+            }
         }
     }
-    let writer = relay.clone();
-    let revoked =
-        tokio::task::spawn_blocking(move || writer.revocations.revoke(device, unix_ms())).await;
-    match revoked {
-        Ok(Ok(())) => {
-            relay.metrics.count(Route::Revoke, Outcome::Ok);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Ok(Err(RevokeError::Full)) => Refusal::Busy.respond(&relay, Route::Revoke),
-        Ok(Err(RevokeError::Store(e))) => {
-            log::error!("recording a revocation: {e}");
-            Refusal::Busy.respond(&relay, Route::Revoke)
-        }
-        Err(e) => {
-            log::error!("recording a revocation: {e}");
-            Refusal::Busy.respond(&relay, Route::Revoke)
-        }
-    }
+    .await;
+    relay.answer(Route::Revoke, answer)
 }
 
 async fn push(
@@ -467,13 +473,11 @@ async fn push(
     headers: HeaderMap,
     body: Result<Json<PushRequest>, JsonRejection>,
 ) -> Response {
-    let checked = (|| {
+    let answer = async {
         let caller = relay.caller(&headers, peer);
         let now = relay.clock.now();
         relay.ip_pushes.check(caller, now).map_err(limited)?;
-        let Ok(Json(req)) = body else {
-            return Err(Refusal::Bad("malformed request"));
-        };
+        let Json(req) = body.map_err(|_| Refusal::Bad("malformed request"))?;
         if let Some(blob) = &req.blob {
             if !req.kind.is_alert() {
                 return Err(Refusal::Bad("only a notification carries a blob"));
@@ -490,61 +494,71 @@ async fn push(
         if relay.revocations.revoked(&hash, device.minted_ms) {
             return Err(Refusal::Gone);
         }
-        Ok((req, device, hash, now))
-    })();
-    let (req, device, hash, now) = match checked {
-        Ok(ok) => ok,
-        Err(refusal) => return refusal.respond(&relay, Route::Push),
-    };
 
-    // Each handle has its own allowance, so one server spending its own
-    // cannot spend another's; the device's ceiling bounds them together.
-    let (per_handle, per_device) = if req.kind.is_alert() {
-        (&relay.handle_alerts, &relay.device_alerts)
-    } else {
-        (&relay.handle_wakes, &relay.device_wakes)
-    };
-    let handle_key = device.id;
-    if let Err(e) = per_handle.check(handle_key, now) {
-        return limited(e).respond(&relay, Route::Push);
-    }
-    // Spent only on a push that reaches Apple: one refused for the relay's
-    // or Apple's sake hands its allowance back.
-    let refund = || {
-        per_handle.refund(&handle_key);
-        per_device.refund(&hash);
-    };
-    if let Err(e) = per_device.check(hash, now) {
-        per_handle.refund(&handle_key);
-        return limited(e).respond(&relay, Route::Push);
-    }
-    if relay.global.check(now).is_err() {
-        refund();
-        return Refusal::Busy.respond(&relay, Route::Push);
-    }
-    let Ok(_permit) = relay.in_flight.try_acquire() else {
-        refund();
-        return Refusal::Busy.respond(&relay, Route::Push);
-    };
-    match relay
-        .apns
-        .send(&device, req.kind, req.blob.as_deref())
-        .await
-    {
-        Delivery::Sent => {
-            relay.metrics.count(Route::Push, Outcome::Ok);
-            relay.metrics.sent(req.kind);
-            StatusCode::NO_CONTENT.into_response()
+        // Each handle has its own allowance, so one server spending its own
+        // cannot spend another's; the device's ceiling bounds them together.
+        let (per_handle, per_device) = if req.kind.is_alert() {
+            (&relay.handle_alerts, &relay.device_alerts)
+        } else {
+            (&relay.handle_wakes, &relay.device_wakes)
+        };
+        let handle_key = device.id;
+        per_handle.check(handle_key, now).map_err(limited)?;
+        if let Err(e) = per_device.check(hash, now) {
+            per_handle.refund(&handle_key);
+            return Err(limited(e));
         }
-        Delivery::Gone => Refusal::Gone.respond(&relay, Route::Push),
-        Delivery::Throttled => {
-            Refusal::Limited(Duration::from_secs(60)).respond(&relay, Route::Push)
+        // Spent only on a push that reaches Apple: one refused for the
+        // relay's or Apple's sake hands its allowance back.
+        let refund = |global: bool| {
+            per_handle.refund(&handle_key);
+            per_device.refund(&hash);
+            if global {
+                relay.global.refund();
+            }
+        };
+        if relay.global.check(now).is_err() {
+            refund(false);
+            return Err(Refusal::Busy);
+        }
+        let Ok(_permit) = relay.in_flight.try_acquire() else {
+            refund(true);
+            return Err(Refusal::Busy);
+        };
+        match relay
+            .apns
+            .send(&device, req.kind, req.blob.as_deref())
+            .await
+        {
+            Delivery::Sent => {
+                relay.metrics.sent(req.kind);
+                Ok(StatusCode::NO_CONTENT.into_response())
+            }
+            Delivery::Gone => Err(Refusal::Gone),
+            Delivery::Throttled => Err(Refusal::Limited(Duration::from_secs(60))),
+            delivery => {
+                refund(true);
+                Err(unavailable(delivery))
+            }
+        }
+    }
+    .await;
+    relay.answer(Route::Push, answer)
+}
+
+/// The refusal for a push Apple could not take, logged without anything that
+/// names the device.
+fn unavailable(delivery: Delivery) -> Refusal {
+    match delivery {
+        Delivery::Rejected(reason) => {
+            log::error!("apns refused the relay: {reason}");
+            Refusal::Broken
         }
         Delivery::Unavailable(reason) => {
-            refund();
             log::warn!("apns: {reason}");
-            Refusal::Busy.respond(&relay, Route::Push)
+            Refusal::Busy
         }
+        Delivery::Sent | Delivery::Gone | Delivery::Throttled => Refusal::Busy,
     }
 }
 
@@ -555,6 +569,8 @@ enum Refusal {
     Limited(Duration),
     /// The relay or Apple cannot take it now.
     Busy,
+    /// Apple refuses the relay itself until an operator fixes it.
+    Broken,
 }
 
 impl Refusal {
@@ -572,6 +588,14 @@ impl Refusal {
             Refusal::Busy => (
                 Outcome::Unavailable,
                 refuse(StatusCode::SERVICE_UNAVAILABLE, "busy", Some(BUSY_RETRY)),
+            ),
+            Refusal::Broken => (
+                Outcome::Unavailable,
+                refuse(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "unavailable",
+                    Some(BROKEN_RETRY),
+                ),
             ),
         };
         relay.metrics.count(route, outcome);
