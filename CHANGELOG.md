@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.66.3
+
+### Security
+
+- **Distrusted emSign certificates are refused.** rustls-webpki 0.103.16 and webpki-roots 1.0.10 reject paths through the emSign intermediates whose private keys are public (RUSTSEC-2026-0381, -0382, -0383).
+
+### Changed
+
+- **One account of who a track is by, on every platform.** Artist credits, whether a row names its artists, and which rows sit under one record heading are now decided in koan-core and drawn by every app, the TUI and the web UI. Grouped playlist rows name their artists only where they differ from the record's, playlists show singles as one row, album pages decide per track, the transport and downloads link each credited artist, and system now-playing, share pages and share downloads use the credit as it reads.
+
+### Fixed
+
+- **The terminal queue shows featured artists.** A grouped track row names its artists whenever its credit differs from the record's, as the apps already did; koan-core now makes that decision for every client.
+
+### Internal
+
+- **Dependencies updated to their latest releases.** Includes lru 0.18 → 0.19 and sift-music 0.6 → 0.8.
+
 ## 0.66.2
 
 ### Fixed
