@@ -75,12 +75,14 @@ extension View {
 enum VerbatimContent {
     case plain
     case url
+    case digits
 
     #if !os(macOS)
     var keyboard: UIKeyboardType {
         switch self {
         case .plain: .asciiCapable
         case .url: .URL
+        case .digits: .numberPad
         }
     }
     #endif
