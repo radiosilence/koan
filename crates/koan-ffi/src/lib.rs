@@ -6346,8 +6346,8 @@ impl KoanEngine {
         let credits = koan_core::helpers::ListCredits::read_rows(&db.conn, &rows);
         rows.into_iter()
             .map(|r| {
-                let row = credits.track(&r);
-                Track::from_row(r, favs.contains(&r.id), row)
+                let (row, favourite) = (credits.track(&r), favs.contains(&r.id));
+                Track::from_row(r, favourite, row)
             })
             .collect()
     }
