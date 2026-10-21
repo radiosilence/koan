@@ -1644,7 +1644,12 @@ fn invite_token(
     user_id: i64,
 ) -> async_graphql::Result<String> {
     let keys = crate::auth::signing_keys()?;
-    Ok(koan_core::invite::mint_token(&db.conn, &keys.0, user_id)?)
+    Ok(koan_core::invite::mint_token(
+        &db.conn,
+        &keys.0,
+        user_id,
+        koan_core::invite::TOKEN_TTL_SECS,
+    )?)
 }
 
 /// Where an invite points: the caller's choice, else `server.url`.

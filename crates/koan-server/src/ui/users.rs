@@ -67,8 +67,8 @@ fn failure(text: &str) -> Event {
 
 /// The invite link as a QR code, for a phone to scan off the screen. Dark on
 /// white whatever the theme, since scanners expect that contrast; each module
-/// a whole 4px, so edges stay crisp. The code carries the invite's token, as
-/// the link beside it does.
+/// a whole 4px, so edges stay crisp. The code carries a token of its own that
+/// lapses in minutes, since anyone who sees the screen can scan it.
 fn invite_qr(link: &str) -> Option<Html> {
     use qrcode::render::svg;
     let code = match qrcode::QrCode::new(link) {
@@ -98,29 +98,35 @@ struct InvitePanel<'a> {
     email: Html,
 }
 
-fn invite_panel(invite: &Invite) -> Html {
+fn invite_panel((invite, qr_link): &(Invite, String)) -> Html {
     let link = invite.link();
     InvitePanel {
         invite,
-        qr: invite_qr(&link),
+        qr: invite_qr(qr_link),
         email: Html::trusted(invite.email_html()),
         link,
     }
     .html()
 }
 
-/// An invite carrying a token signed with this server's key.
+/// An invite carrying a token signed with this server's key, and the link for
+/// its QR code, whose token is short-lived.
 fn token_invite(
     s: &UiState,
     server: &str,
     id: i64,
     username: &str,
     password: Option<&str>,
-) -> Result<Invite, AccountError> {
+) -> Result<(Invite, String), AccountError> {
     let keys = crate::auth::signing_keys().map_err(|e| AccountError::Other(Box::new(e)))?;
     let db = open(&s.pool).ok_or_else(|| AccountError::Other("no database".into()))?;
-    let token = invite::mint_token(&db.conn, &keys.0, id)?;
-    Ok(Invite::with_token(server, username, &token, password))
+    let token = invite::mint_token(&db.conn, &keys.0, id, invite::TOKEN_TTL_SECS)?;
+    let qr_token = invite::mint_token(&db.conn, &keys.0, id, invite::QR_TOKEN_TTL_SECS)?;
+    let qr_link = Invite::with_token(server, username, &qr_token, None).link();
+    Ok((
+        Invite::with_token(server, username, &token, password),
+        qr_link,
+    ))
 }
 
 fn forbidden() -> Response {

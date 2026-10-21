@@ -5183,8 +5183,13 @@ fn invite_node(
     username: &str,
     password: Option<&str>,
 ) -> Result<XmlNode, SubsonicError> {
-    let token =
-        koan_core::invite::mint_token(conn, &keypair()?.0, user_id).map_err(account_error)?;
+    let token = koan_core::invite::mint_token(
+        conn,
+        &keypair()?.0,
+        user_id,
+        koan_core::invite::TOKEN_TTL_SECS,
+    )
+    .map_err(account_error)?;
     let node = XmlNode::new("invite")
         .attr("username", username)
         .attr("token", &token);
