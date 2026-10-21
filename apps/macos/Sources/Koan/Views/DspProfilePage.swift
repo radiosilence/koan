@@ -15,8 +15,8 @@ struct DspProfilePage: View {
     @State private var detail: DspProfileDetail?
     @State private var response: DspResponse?
     @State private var targets: DspTargets?
-    /// What `target` plays, for the one thing Used for offers on it.
-    @State private var targetOverview: DspOverview?
+    /// What `device` plays, for the one thing Used for offers on it.
+    @State private var deviceOverview: DspOverview?
     /// Every target, for what a ready-made EQ was made for.
     @State private var madeForChoices = TargetGroups()
     /// For a tuning: the target it looks made against, while it does not
@@ -65,6 +65,10 @@ struct DspProfilePage: View {
     /// The device whose filters and correction Used for acts on: the one the
     /// EQ page showed, else the output in use.
     private var target: String? { device ?? dsp.overview?.device }
+
+    /// What `target` plays. The output in use's is the overview the model
+    /// holds, which follows a route change.
+    private var targetOverview: DspOverview? { device == nil ? dsp.overview : deviceOverview }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -405,13 +409,14 @@ struct DspProfilePage: View {
             before = snapshot
             editsAtBefore = edits
         }
-        detail = await dsp.detail(name)
-        response = await dsp.response(name)
-        targets = await dsp.targets(name)
-        if let t = target {
-            targetOverview = await dsp.overview(for: t)
-        } else {
-            targetOverview = nil
+        async let d = dsp.detail(name)
+        async let r = dsp.response(name)
+        async let t = dsp.targets(name)
+        detail = await d
+        response = await r
+        targets = await t
+        if let device {
+            deviceOverview = await dsp.overview(for: device)
         }
         madeForChoices = await TargetGroups(
             over: dsp.targetsFor(inEar: false),

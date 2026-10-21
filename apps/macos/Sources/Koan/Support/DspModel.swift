@@ -304,11 +304,12 @@ final class DspModel {
         act { try await $0.dspSetTunings(device: device, tuning: entries) }
     }
 
-    /// Stop correcting `device` and make its tuning these EQs, in that order.
+    /// Make `device`'s tuning these EQs, then stop correcting it: should the
+    /// second fail, the device keeps its correction.
     func uncorrect(_ device: String, tunings entries: [DspTuningEntry]) {
         act {
-            try await $0.dspAssignDevice(device: device, profile: nil)
             try await $0.dspSetTunings(device: device, tuning: entries)
+            try await $0.dspAssignDevice(device: device, profile: nil)
         }
     }
 
