@@ -1255,10 +1255,33 @@ fn require_entity(
     resolve_entity(db, raw)
 }
 
-/// Song ids from a repeated parameter, skipping any that name no song.
-fn song_ids<'a>(db: &Database, raws: impl Iterator<Item = &'a str>) -> Vec<i64> {
-    raws.filter_map(|raw| resolve_as(db, raw, EntityKind::Song, "songId").ok())
-        .collect()
+/// Song ids from a repeated parameter. One that names no song refuses the
+/// whole call: a playlist write that kept the rest and answered ok would lose
+/// a track without anyone being told.
+fn song_ids<'a>(
+    db: &Database,
+    raws: impl Iterator<Item = &'a str>,
+    param: &str,
+) -> Result<Vec<i64>, SubsonicError> {
+    let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+    let mut exists = db
+        .conn
+        .prepare_cached("SELECT EXISTS (SELECT 1 FROM tracks WHERE id = ?1)")
+        .map_err(internal)?;
+    raws.map(|raw| {
+        let missing = || SubsonicError::not_found(&format!("Song {raw}"));
+        let id = resolve_as(db, raw, EntityKind::Song, param).map_err(|e| match e.code {
+            SubsonicErrorCode::NotFound => missing(),
+            _ => e,
+        })?;
+        // A row id is not looked up by `resolve_as`.
+        if exists.query_row([id], |r| r.get(0)).map_err(internal)? {
+            Ok(id)
+        } else {
+            Err(missing())
+        }
+    })
+    .collect()
 }
 
 /// The uid each row in a response is published as, read once per response.
@@ -4731,30 +4754,32 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 
         respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
             let user = caller.user_id;
-            let track_ids = song_ids(db, params.all("songId"));
-
-            // One transaction, so no reader sees the name without the tracks.
-            let id = queries::atomically(&db.conn, || match params.get("playlistId") {
-                Some(existing) => {
-                    let id = playlist_id(db, Some(existing))?;
-                    refuse_smart(&playlist_for(db, user, id, true)?)?;
-                    if let Some(name) = params.get("name") {
-                        queries::rename_playlist(&db.conn, id, name)
+            // One transaction, so no reader sees the name without the tracks,
+            // and no track named goes between being found and being added.
+            let id = queries::atomically(&db.conn, || {
+                let track_ids = song_ids(db, params.all("songId"), "songId")?;
+                match params.get("playlistId") {
+                    Some(existing) => {
+                        let id = playlist_id(db, Some(existing))?;
+                        refuse_smart(&playlist_for(db, user, id, true)?)?;
+                        if let Some(name) = params.get("name") {
+                            queries::rename_playlist(&db.conn, id, name)
+                                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                        }
+                        queries::set_playlist_tracks(&db.conn, id, &track_ids)
                             .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                        Ok(id)
                     }
-                    queries::set_playlist_tracks(&db.conn, id, &track_ids)
-                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    Ok(id)
-                }
-                None => {
-                    let name = params
-                        .get("name")
-                        .ok_or_else(|| SubsonicError::missing_param("name"))?;
-                    let id = queries::create_playlist(&db.conn, user, name, None)
-                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    queries::add_tracks(&db.conn, id, &track_ids)
-                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    Ok::<_, SubsonicError>(id)
+                    None => {
+                        let name = params
+                            .get("name")
+                            .ok_or_else(|| SubsonicError::missing_param("name"))?;
+                        let id = queries::create_playlist(&db.conn, user, name, None)
+                            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                        queries::add_tracks(&db.conn, id, &track_ids)
+                            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                        Ok::<_, SubsonicError>(id)
+                    }
                 }
             })?;
 
@@ -4791,12 +4816,12 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             {
                 refuse_smart(&list)?;
             }
-            let added = song_ids(db, params.all("songIdToAdd"));
 
             // One transaction: the indexes to remove are against the list as
             // the client last saw it, and another edit landing between the
             // read and the write would shift them.
             queries::atomically(&db.conn, || {
+                let added = song_ids(db, params.all("songIdToAdd"), "songIdToAdd")?;
                 if let Some(name) = params.get("name") {
                     queries::rename_playlist(&db.conn, id, name)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -9994,6 +10019,58 @@ mod tests {
             .unwrap();
         let left = queries::playlist_track_ids(&db.conn, row).unwrap();
         assert_eq!(left, vec![c, a]);
+    }
+
+    /// A song id that names no track refuses the write with "not found"
+    /// rather than keeping the others and answering ok.
+    #[tokio::test]
+    async fn playlist_writes_refuse_unknown_songs() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(state.pool.path()).unwrap();
+        let a = queries::upsert_track(&db.conn, &track_meta("/music/a.flac", "A", "Test Album", 1))
+            .unwrap();
+        let a_uid = queries::uids_for(&db.conn, queries::UidKind::Track, [a]).unwrap()[&a].clone();
+        drop(db);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/createPlaylist?{}&name=mix&songId={a_uid}",
+                auth_query("")
+            ),
+        )
+        .await;
+        let id = playlist_id_in(&body);
+
+        let stranger = uuid::Uuid::now_v7().to_string();
+        for unknown in [stranger.as_str(), "mf-99999", "99999"] {
+            for edit in [
+                format!("createPlaylist?name=other&songId={a_uid}&songId={unknown}"),
+                format!("createPlaylist?playlistId={id}&songId={unknown}"),
+                format!("updatePlaylist?playlistId={id}&songIdToAdd={a_uid}&songIdToAdd={unknown}"),
+            ] {
+                let (path, query) = edit.split_once('?').unwrap();
+                let app = build_test_router(state.clone());
+                let (_, body) =
+                    get_response(app, &format!("/rest/{path}?{}&{query}", auth_query(""))).await;
+                assert!(body.contains("code=\"70\""), "{edit}: {body}");
+                assert!(body.contains(unknown), "the error names the id: {body}");
+            }
+        }
+
+        let db = Database::open(state.pool.path()).unwrap();
+        let row = queries::id_for_uid(&db.conn, queries::UidKind::Playlist, &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(queries::playlist_track_ids(&db.conn, row).unwrap(), vec![a]);
+        let lists: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM playlists", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(lists, 1, "nothing half-made is left");
     }
 
     /// A smart playlist is served like any other, marked read-only, and its
