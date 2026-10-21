@@ -320,6 +320,8 @@ pub fn redeem(
     let key = DecodingKey::from_ed_pem(public_pem).map_err(other)?;
     let mut validation = Validation::new(Algorithm::EdDSA);
     validation.set_required_spec_claims(&["exp"]);
+    // Both clocks are the server's, so no skew to allow for.
+    validation.leeway = 0;
     let claims = jsonwebtoken::decode::<Claims>(token, &key, &validation)
         .map_err(|_| AccountError::BadInvite)?
         .claims;
@@ -656,6 +658,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::connection::Database::open(&dir.path().join("t.db")).unwrap();
         (dir, db)
+    }
+
+    #[test]
+    fn a_token_lasts_as_long_as_it_was_minted_for() {
+        let (_dir, db) = db();
+        let conn = &db.conn;
+        let (private, public) = auth::generate_keypair_pem().unwrap();
+        let made = create_account(conn, "sarita", Role::User).unwrap();
+        let key = DecodingKey::from_ed_pem(public.as_bytes()).unwrap();
+        for ttl in [TOKEN_TTL_SECS, QR_TOKEN_TTL_SECS] {
+            let token = mint_token(conn, private.as_bytes(), made.id, ttl).unwrap();
+            let claims =
+                jsonwebtoken::decode::<Claims>(&token, &key, &Validation::new(Algorithm::EdDSA))
+                    .unwrap()
+                    .claims;
+            assert_eq!(claims.exp - claims.iat, ttl);
+        }
     }
 
     #[test]

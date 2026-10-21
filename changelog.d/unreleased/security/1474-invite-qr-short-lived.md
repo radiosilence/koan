@@ -1,1 +1,1 @@
-- **An invite's QR code in the web UI lapses after ten minutes.** It carries a token of its own, so a screenshot or recording of the users page no longer signs a device in for the week the emailed link lasts.
+- **An invite's QR code in the web UI lapses after ten minutes.** It carries a token of its own, so scanning the code off a screenshot or recording of the users page no longer signs a device in for the week the emailed link lasts. The link shown beside it keeps the week-long token.
