@@ -13,6 +13,7 @@ pub mod browse_filter;
 pub mod context_menu;
 pub mod control;
 pub mod cover_art;
+pub mod credits;
 pub mod device_selector;
 pub mod downloads_page;
 pub mod dsp_selector;

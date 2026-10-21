@@ -3,7 +3,7 @@
 //! and play, shuffle, add and play next; then the tracks, under a heading per
 //! disc when there is more than one. Every button is a key too.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use koan_core::db::queries::{self, AlbumRow, CreditsOf, TrackRow};
@@ -16,6 +16,7 @@ use super::actions_menu::playable;
 use super::app::PickerAction;
 use super::browse::{Action, Thumbs, album_year, credited_track, track_playable};
 use super::cover_art::{Gfx, album_key};
+use super::credits::{self, Credits};
 use super::rows::{self, Columns, Emphasis, Row, Target};
 use super::theme::Theme;
 use super::transport::format_time;
@@ -53,6 +54,9 @@ struct Geom {
 pub struct AlbumPage {
     pub album: AlbumRow,
     tracks: Vec<TrackRow>,
+    /// Each track's credits, and the album's as its header draws it.
+    credits: HashMap<i64, Credits>,
+    album_credit: String,
     lines: Vec<Line>,
     /// Whether the album is a favourite.
     pub favourite: bool,
@@ -99,6 +103,10 @@ impl AlbumPage {
         let favourite = queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER)
             .is_ok_and(|set| set.contains(&id));
         let mut page = Self::new(album, tracks, favourite);
+        page.credits = credits::of_tracks(&db.conn, &page.tracks);
+        if let Some(credit) = credits::of_albums(&db.conn, [&page.album]).remove(&id) {
+            page.album_credit = credit;
+        }
         page.fav_tracks =
             queries::load_favourites(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         Some(page)
@@ -106,7 +114,9 @@ impl AlbumPage {
 
     fn new(album: AlbumRow, tracks: Vec<TrackRow>, favourite: bool) -> Self {
         Self {
+            album_credit: album.artist_name.clone(),
             album,
+            credits: HashMap::new(),
             lines: lines_of(&tracks),
             tracks,
             favourite,
@@ -370,7 +380,7 @@ impl AlbumPage {
                 tx,
                 y,
                 tw,
-                &self.album.artist_name,
+                &self.album_credit,
                 rows::link(theme.track_playing, hover == Some(AlbumHit::Link(target))),
             );
             hits.push((artist, AlbumHit::Link(target)));
@@ -443,11 +453,14 @@ impl AlbumPage {
             self.keep_cursor_visible();
         }
         self.scroll = self.scroll.min(self.lines.len().saturating_sub(rows_on));
-        // A track's artist is shown only where it is not the album's.
-        let mixed = self
-            .tracks
-            .iter()
-            .any(|t| t.artist_name != self.album.artist_name);
+        // The header names the album's artist; a row names its own only
+        // where it differs, and the column is there only if one does.
+        let differs = |t: &TrackRow| {
+            self.credits
+                .get(&t.id)
+                .map_or(t.artist_name != t.album_artist_name, |c| c.differ)
+        };
+        let mixed = self.tracks.iter().any(differs);
         let lead = self
             .tracks
             .iter()
@@ -483,7 +496,13 @@ impl AlbumPage {
                         favourite: favourites.contains(&t.id),
                         lead: &number,
                         name: &t.title,
-                        artist: mixed.then_some((t.artist_name.as_str(), credited_track(t))),
+                        artist: differs(t).then(|| {
+                            let artist = self
+                                .credits
+                                .get(&t.id)
+                                .map_or(t.artist_name.as_str(), |c| &c.artist);
+                            (artist, credited_track(t))
+                        }),
                         detail: None,
                         tail: &time,
                     }

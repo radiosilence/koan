@@ -3680,7 +3680,11 @@ impl App {
 
     /// Lays the queue's lines out again, grouped or a row per track.
     pub(super) fn relayout_queue(&mut self) {
-        self.queue.layout = queue::Layout::build(&self.queue.vq_cache.entries, !self.queue.flat);
+        self.queue.layout = queue::Layout::build(
+            &self.queue.vq_cache.entries,
+            !self.queue.flat,
+            &self.queue.facts,
+        );
     }
 
     pub fn visible_queue(&self) -> &[QueueEntry] {

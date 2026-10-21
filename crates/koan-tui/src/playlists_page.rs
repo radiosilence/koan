@@ -2,9 +2,11 @@
 //! of History's: rows with links and buttons, a scrollbar, and keys that do
 //! what the mouse does.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use koan_core::db::queries::{CreditsOf, PlaylistEntry, PlaylistRow};
+use koan_core::helpers::{RecordOf, RunRole, record_runs};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus};
 use ratatui::buffer::Buffer;
@@ -13,6 +15,7 @@ use ratatui::style::{Modifier, Style};
 
 use super::actions_menu::Item;
 use super::app::PickerAction;
+use super::credits::{self, Credits};
 use super::playlist_ops as ops;
 use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::text::fit;
@@ -554,34 +557,51 @@ enum Line {
     Entry(usize),
 }
 
-/// The entries in runs of one album, as they stand: by the album's id where
-/// both have one, else by its title and artist. A track without an album
-/// stands alone.
-fn lines_of(entries: &[PlaylistEntry], grouped: bool) -> Vec<Line> {
-    let same = |a: &PlaylistEntry, b: &PlaylistEntry| match (a.track.album_id, b.track.album_id) {
-        (Some(x), Some(y)) => x == y,
-        _ => {
-            a.track.album_title == b.track.album_title
-                && a.track.album_artist_name == b.track.album_artist_name
-        }
-    };
-    let mut out = Vec::with_capacity(entries.len());
+/// The entries as koan-core groups them (`record_runs`): a heading above
+/// each run of one record, an entry of its own for a single or a track on no
+/// record. Also each entry's place among the records.
+fn lines_of(entries: &[PlaylistEntry], grouped: bool) -> (Vec<Line>, Vec<RunRole>) {
+    if !grouped {
+        return (
+            (0..entries.len()).map(Line::Entry).collect(),
+            vec![RunRole::Alone; entries.len()],
+        );
+    }
+    let records: Vec<RecordOf> = entries
+        .iter()
+        .map(|e| RecordOf {
+            album_id: e.track.album_id,
+            album: &e.track.album_title,
+            album_artist: &e.track.album_artist_name,
+            title: &e.track.title,
+        })
+        .collect();
+    let runs = record_runs(&records);
+    let mut out = Vec::with_capacity(entries.len() + entries.len() / 8);
     let mut i = 0;
     while i < entries.len() {
-        if !grouped || entries[i].track.album_title.is_empty() {
+        if runs[i] != RunRole::Opens {
             out.push(Line::Entry(i));
             i += 1;
             continue;
         }
-        let last = (i..entries.len())
-            .take_while(|&j| same(&entries[i], &entries[j]))
-            .last()
-            .unwrap_or(i);
+        let last = i + runs[i + 1..]
+            .iter()
+            .take_while(|r| **r == RunRole::Continues)
+            .count();
         out.push(Line::Heading { first: i, last });
         out.extend((i..=last).map(Line::Entry));
         i = last + 1;
     }
-    out
+    (out, runs)
+}
+
+/// The entries' credits, by track.
+fn read_credits(entries: &[PlaylistEntry]) -> HashMap<i64, Credits> {
+    koan_core::db::pool::shared()
+        .get()
+        .map(|db| credits::of_tracks(&db.conn, entries.iter().map(|e| &e.track)))
+        .unwrap_or_default()
 }
 
 /// What the queue says of the playlist's entries while it plays them: the one
@@ -606,6 +626,10 @@ struct Geom {
 pub struct PlaylistPage {
     pub list: PlaylistRow,
     entries: Vec<PlaylistEntry>,
+    /// Each entry's credits, by track.
+    credits: HashMap<i64, Credits>,
+    /// Each entry's place among the playlist's records.
+    runs: Vec<RunRole>,
     lines: Vec<Line>,
     /// The line each entry is on.
     line_of: Vec<usize>,
@@ -621,13 +645,21 @@ pub struct PlaylistPage {
 
 impl PlaylistPage {
     pub fn load(id: i64) -> Option<Self> {
-        Some(Self::with(ops::get(id)?, ops::entries(id)))
+        let entries = ops::entries(id);
+        let credits = read_credits(&entries);
+        Some(Self::with(ops::get(id)?, entries, credits))
     }
 
-    fn with(list: PlaylistRow, entries: Vec<PlaylistEntry>) -> Self {
+    fn with(
+        list: PlaylistRow,
+        entries: Vec<PlaylistEntry>,
+        credits: HashMap<i64, Credits>,
+    ) -> Self {
         let mut page = Self {
             list,
+            credits,
             entries,
+            runs: Vec::new(),
             lines: Vec::new(),
             line_of: Vec::new(),
             cursor: 0,
@@ -643,7 +675,7 @@ impl PlaylistPage {
 
     #[cfg(test)]
     pub fn for_test(list: PlaylistRow, entries: Vec<PlaylistEntry>) -> Self {
-        Self::with(list, entries)
+        Self::with(list, entries, HashMap::new())
     }
 
     pub fn reload(&mut self) {
@@ -651,6 +683,7 @@ impl PlaylistPage {
             self.list = list;
         }
         self.entries = ops::entries(self.list.id);
+        self.credits = read_credits(&self.entries);
         self.relayout();
         self.cursor = self.cursor.min(self.entries.len().saturating_sub(1));
         self.follow = true;
@@ -663,7 +696,7 @@ impl PlaylistPage {
     }
 
     fn relayout(&mut self) {
-        self.lines = lines_of(&self.entries, self.grouped());
+        (self.lines, self.runs) = lines_of(&self.entries, self.grouped());
         self.line_of = vec![0; self.entries.len()];
         for (n, line) in self.lines.iter().enumerate() {
             if let Line::Entry(i) = line {
@@ -1120,11 +1153,10 @@ impl PlaylistPage {
             match line {
                 Line::Heading { first, .. } => {
                     let t = &self.entries[first].track;
-                    let artist = if t.album_artist_name.is_empty() {
-                        "Unknown Artist"
-                    } else {
-                        &t.album_artist_name
-                    };
+                    let artist = self
+                        .credits
+                        .get(&t.id)
+                        .map_or(t.album_artist_name.as_str(), |c| &c.album_artist);
                     rows::heading(
                         buf,
                         rect,
@@ -1163,6 +1195,14 @@ impl PlaylistPage {
                         Some(PlaylistHit::Row(n) | PlaylistHit::Heart(n) | PlaylistHit::Menu(n)) if n == i
                     );
                     let grouped = self.grouped();
+                    let credits = self.credits.get(&t.id);
+                    // Under a heading the record and its artist are named
+                    // already; a row names its own only where they differ.
+                    let alone = matches!(self.runs.get(i), Some(RunRole::Alone | RunRole::Single));
+                    let artist = credits.map_or(t.artist_name.as_str(), |c| &c.artist);
+                    let artist = (!grouped || alone || credits.is_none_or(|c| c.differ))
+                        .then_some(artist)
+                        .filter(|a| !a.is_empty());
                     let row = rows::Track {
                         marker: if selected {
                             rows::Marker::Cursor
@@ -1172,11 +1212,8 @@ impl PlaylistPage {
                         status,
                         number: Some(format!("{}", i + 1)),
                         title: &t.title,
-                        artist: Some((
-                            &t.artist_name,
-                            t.artist_id.map(|_| Link::ArtistOfTrack(t.id)),
-                        )),
-                        album: (!grouped)
+                        artist: artist.map(|a| (a, t.artist_id.map(|_| Link::ArtistOfTrack(t.id)))),
+                        album: (!grouped || alone)
                             .then_some((t.album_title.as_str(), t.album_id.map(Link::Album))),
                         avail,
                         favourite: Some(live.favourites.is_some_and(|f| f.contains(&t.id))),

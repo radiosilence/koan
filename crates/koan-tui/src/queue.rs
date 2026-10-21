@@ -9,11 +9,13 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
-use koan_core::helpers::ListCredits;
+use koan_core::db::queries::Place;
+use koan_core::helpers::{ListCredits, RecordOf, RowCredits, RunRole, record_runs};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
 use super::app::HoverZone;
+use super::credits::Credits;
 use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::theme::Theme;
 use super::track_rows::{self as rows, Avail, Marker, Status};
@@ -88,37 +90,45 @@ impl Layout {
 }
 
 impl Layout {
-    /// Contiguous runs of one album by one album artist, never sorted or
-    /// merged. A run of one that is its own album, a single, is a row of its
-    /// own, as is a track without an album.
-    pub fn build(entries: &[QueueEntry], grouped: bool) -> Self {
+    /// The queue as koan-core groups it (`record_runs`): a heading above
+    /// each run of one record, and a row of its own for a single or a track
+    /// on no record. Flat, every track is a row of its own.
+    pub fn build(entries: &[QueueEntry], grouped: bool, facts: &Facts) -> Self {
         let mut lines = Vec::with_capacity(entries.len() + entries.len() / 8);
         let mut line_of = Vec::with_capacity(entries.len());
-        fn key(e: &QueueEntry) -> (&str, &str) {
-            (&e.album_artist, &e.album)
-        }
+        let runs = if grouped {
+            let records: Vec<RecordOf> = entries
+                .iter()
+                .map(|e| RecordOf {
+                    album_id: e
+                        .db_id
+                        .and_then(|id| facts.places.get(&id))
+                        .and_then(|p| p.album_id),
+                    album: &e.album,
+                    album_artist: &e.album_artist,
+                    title: &e.title,
+                })
+                .collect();
+            record_runs(&records)
+        } else {
+            vec![RunRole::Alone; entries.len()]
+        };
         let mut i = 0;
         while i < entries.len() {
-            let e = &entries[i];
-            if !grouped || e.album.is_empty() {
+            if runs[i] != RunRole::Opens {
                 line_of.push(lines.len());
                 lines.push(Line::Single(i));
                 i += 1;
                 continue;
             }
-            let last = (i..entries.len())
-                .take_while(|&j| key(&entries[j]) == key(e))
-                .last()
-                .unwrap_or(i);
-            if last == i && e.title.trim().to_lowercase() == e.album.trim().to_lowercase() {
+            let last = i + runs[i + 1..]
+                .iter()
+                .take_while(|r| **r == RunRole::Continues)
+                .count();
+            lines.push(Line::Heading { first: i, last });
+            for j in i..=last {
                 line_of.push(lines.len());
-                lines.push(Line::Single(i));
-            } else {
-                lines.push(Line::Heading { first: i, last });
-                for j in i..=last {
-                    line_of.push(lines.len());
-                    lines.push(Line::Track(j));
-                }
+                lines.push(Line::Track(j));
             }
             i = last + 1;
         }
@@ -154,11 +164,12 @@ impl Layout {
 pub struct Facts {
     /// (on the server, on this device) for each library track.
     pub sources: HashMap<i64, (bool, bool)>,
+    /// Where each library track is filed: its record, for grouping.
+    pub places: HashMap<i64, Place>,
     /// What the queue is, when it is exactly a playlist or an album.
     pub lock: Option<String>,
-    /// Each library track's credit as drawn, where it reads differently from
-    /// its record's (`RowCredits::differ`): the artist line of a grouped row.
-    pub own_credits: HashMap<i64, Option<String>>,
+    /// Each entry's credits as koan-core builds them.
+    pub credits: HashMap<QueueItemId, Credits>,
 }
 
 impl Facts {
@@ -167,42 +178,62 @@ impl Facts {
         state: &koan_core::player::state::SharedPlayerState,
     ) -> Self {
         use koan_core::db::queries;
-        let Ok(db) = koan_core::db::pool::shared().get() else {
-            return Self::default();
-        };
+        let db = koan_core::db::pool::shared().get().ok();
         let ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
-        let lock = match koan_core::playlists::queue_lock(&db, state) {
-            Some(koan_core::playlists::QueueLock::Playlist(id)) => {
-                queries::get_playlist(&db.conn, id)
-                    .ok()
-                    .flatten()
-                    .map(|p| p.name)
-            }
-            Some(koan_core::playlists::QueueLock::Album(id)) => queries::get_album(&db.conn, id)
-                .ok()
-                .flatten()
-                .map(|a| a.title),
-            None => None,
-        };
-        let places = queries::places_for_tracks(&db.conn, &ids).unwrap_or_default();
-        let credits = ListCredits::read(&db.conn, &places).unwrap_or_default();
-        let own_credits = entries
+        let lock = db
+            .as_ref()
+            .and_then(|db| match koan_core::playlists::queue_lock(db, state) {
+                Some(koan_core::playlists::QueueLock::Playlist(id)) => {
+                    queries::get_playlist(&db.conn, id)
+                        .ok()
+                        .flatten()
+                        .map(|p| p.name)
+                }
+                Some(koan_core::playlists::QueueLock::Album(id)) => {
+                    queries::get_album(&db.conn, id)
+                        .ok()
+                        .flatten()
+                        .map(|a| a.title)
+                }
+                None => None,
+            });
+        let (places, library) = db
+            .as_ref()
+            .map(|db| ListCredits::read_tracks(&db.conn, &ids))
+            .unwrap_or_default();
+        let credits = entries
             .iter()
-            .filter_map(|e| {
-                let id = e.db_id?;
-                let place = places.get(&id).copied().unwrap_or_default();
-                let row = credits.row(Some(id), place, &e.artist, &e.album_artist);
-                let own = row
-                    .differ()
-                    .then(|| row.artist.iter().map(|p| p.text.as_str()).collect());
-                Some((id, own))
+            .map(|e| {
+                let place = e
+                    .db_id
+                    .and_then(|id| places.get(&id).copied())
+                    .unwrap_or_default();
+                let row = library.row(e.db_id, place, &e.artist, &e.album_artist);
+                (e.id, Credits::of(row))
             })
             .collect();
         Self {
-            sources: queries::sources_for_tracks(&db.conn, &ids).unwrap_or_default(),
+            sources: db
+                .as_ref()
+                .and_then(|db| queries::sources_for_tracks(&db.conn, &ids).ok())
+                .unwrap_or_default(),
+            places,
             lock,
-            own_credits,
+            credits,
         }
+    }
+
+    /// `e`'s credits: as read, or, before a reading, from its tags alone.
+    pub fn credits_of(&self, e: &QueueEntry) -> Credits {
+        self.credits.get(&e.id).cloned().unwrap_or_else(|| {
+            Credits::of(RowCredits::new::<&str>(
+                &e.artist,
+                &e.album_artist,
+                Place::default(),
+                None,
+                &[],
+            ))
+        })
     }
 }
 
@@ -421,21 +452,26 @@ fn track_of<'e>(
     };
     let e = &entries[i];
     let single = matches!(line, Line::Single(_));
+    let credits = look.and_then(|l| l.facts?.credits.get(&e.id));
+    // Drawn without a reading of the library, as a test does: the tags.
+    let (artist, album_artist, differ) = match credits {
+        Some(c) => (c.artist.as_str(), c.album_artist.as_str(), c.differ),
+        None => (
+            e.artist.as_str(),
+            e.album_artist.as_str(),
+            e.artist != e.album_artist,
+        ),
+    };
     let artist = if single {
-        Some(if e.artist.is_empty() {
-            e.album_artist.as_str()
+        Some(if artist.is_empty() {
+            album_artist
         } else {
-            e.artist.as_str()
+            artist
         })
     } else {
-        match e.db_id.and_then(|id| look?.facts?.own_credits.get(&id)) {
-            Some(own) => own.as_deref(),
-            // Not a library track, or no reading of the library: the tags
-            // are all there is to go on.
-            None => (e.artist != e.album_artist).then_some(e.artist.as_str()),
-        }
-        .filter(|a| !a.is_empty())
-    };
+        differ.then_some(artist)
+    }
+    .filter(|a| !a.is_empty());
     let number = match (single, e.disc, e.track_number) {
         (true, ..) if !grouped => None,
         (true, ..) => Some(String::new()),
@@ -503,6 +539,7 @@ fn draw_heading(
     run: &[QueueEntry],
     selected: bool,
     links: Option<&Links>,
+    facts: Option<&Facts>,
 ) {
     let e = &run[0];
     let codec = run
@@ -512,11 +549,8 @@ fn draw_heading(
         .flatten();
     let ms = run.iter().filter_map(|t| t.duration_ms).sum();
     let facts = rows::facts(e.year.as_deref(), run.len(), ms, codec);
-    let artist = if e.album_artist.is_empty() {
-        "Unknown Artist"
-    } else {
-        &e.album_artist
-    };
+    let credits = facts.map_or_else(|| Facts::default().credits_of(e), |f| f.credits_of(e));
+    let artist = credits.album_artist.as_str();
     rows::heading(
         buf,
         rect,
@@ -540,7 +574,11 @@ impl Widget for QueueView<'_> {
         let layout = if self.layout.fits(self.entries) {
             self.layout
         } else {
-            rebuilt = Layout::build(self.entries, self.layout.grouped);
+            rebuilt = Layout::build(
+                self.entries,
+                self.layout.grouped,
+                self.facts.unwrap_or(&Facts::default()),
+            );
             &rebuilt
         };
         let theme = self.theme;
@@ -585,6 +623,7 @@ impl Widget for QueueView<'_> {
                         &self.entries[first..=last],
                         all,
                         self.links,
+                        self.facts,
                     );
                 }
                 Line::Track(i) | Line::Single(i) => {
@@ -756,7 +795,7 @@ mod tests {
     ) -> Terminal<TestBackend> {
         let theme = Theme::default();
         let selected = HashSet::new();
-        let layout = Layout::build(entries, true);
+        let layout = Layout::build(entries, true, &Facts::default());
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal
             .draw(|f| {
@@ -805,7 +844,7 @@ mod tests {
         let mut offset = 0usize;
         for cursor in 0..entries.len() {
             offset = scroll_for_cursor(
-                &Layout::build(&entries, true),
+                &Layout::build(&entries, true, &Facts::default()),
                 cursor,
                 offset,
                 visible_height,
@@ -813,7 +852,12 @@ mod tests {
             let terminal = draw(&entries, cursor, offset, w, h);
             let row = cursor_row(&terminal, w, h);
             assert_eq!(
-                QueueView::queue_index_at_y(&Layout::build(&entries, true), area, offset, row),
+                QueueView::queue_index_at_y(
+                    &Layout::build(&entries, true, &Facts::default()),
+                    area,
+                    offset,
+                    row
+                ),
                 Some(cursor),
                 "cursor {} drawn on row {} with offset {}",
                 cursor,
@@ -843,7 +887,7 @@ mod tests {
             .collect();
         let area = Rect::new(0, 0, 60, 20);
         // Row 0 is the first album header.
-        let layout = Layout::build(&entries, true);
+        let layout = Layout::build(&entries, true, &Facts::default());
         assert_eq!(QueueView::queue_index_at_y(&layout, area, 0, 0), None);
         assert_eq!(
             QueueView::album_group_at_y(&layout, area, 0, 0),
@@ -935,13 +979,26 @@ mod tests {
         entries[1].album.clear();
         let area = Rect::new(0, 0, 60, 20);
         // heading, 0, 1, heading, 2
-        assert_eq!(display_line_count(&Layout::build(&entries, true)), 5);
         assert_eq!(
-            QueueView::album_group_at_y(&Layout::build(&entries, true), area, 0, 0),
+            display_line_count(&Layout::build(&entries, true, &Facts::default())),
+            5
+        );
+        assert_eq!(
+            QueueView::album_group_at_y(
+                &Layout::build(&entries, true, &Facts::default()),
+                area,
+                0,
+                0
+            ),
             Some((0, 0))
         );
         assert_eq!(
-            QueueView::album_group_at_y(&Layout::build(&entries, true), area, 0, 3),
+            QueueView::album_group_at_y(
+                &Layout::build(&entries, true, &Facts::default()),
+                area,
+                0,
+                3
+            ),
             Some((2, 2))
         );
     }
@@ -950,7 +1007,7 @@ mod tests {
     fn rows_below_the_list_are_no_track() {
         let entries: Vec<_> = (0..3).map(|n| entry(n, "")).collect();
         let area = Rect::new(0, 5, 60, 2);
-        let layout = Layout::build(&entries, true);
+        let layout = Layout::build(&entries, true, &Facts::default());
         assert_eq!(QueueView::queue_index_at_y(&layout, area, 0, 4), None);
         assert_eq!(QueueView::queue_index_at_y(&layout, area, 0, 5), Some(0));
         assert_eq!(
@@ -1059,7 +1116,7 @@ mod tests {
 
     fn render(entries: &[QueueEntry], grouped: bool, w: u16, h: u16) -> Buffer {
         let theme = Theme::default();
-        let layout = Layout::build(entries, grouped);
+        let layout = Layout::build(entries, grouped, &Facts::default());
         let mut facts = Facts::default();
         for e in entries {
             facts.sources.insert(
@@ -1081,7 +1138,7 @@ mod tests {
     #[test]
     fn a_single_and_a_loose_track_have_no_heading() {
         let entries = fixture();
-        let layout = Layout::build(&entries, true);
+        let layout = Layout::build(&entries, true, &Facts::default());
         let singles: Vec<usize> = layout
             .lines()
             .iter()
@@ -1097,7 +1154,7 @@ mod tests {
             .filter(|l| matches!(l, Line::Heading { .. }))
             .count();
         assert_eq!(headings, 4, "the repeated track opens a run of its own");
-        let flat = Layout::build(&entries, false);
+        let flat = Layout::build(&entries, false, &Facts::default());
         assert!(flat.lines().iter().all(|l| matches!(l, Line::Single(_))));
     }
 
@@ -1132,7 +1189,7 @@ mod tests {
     #[test]
     fn the_heading_says_what_is_queued() {
         let entries = fixture();
-        let layout = Layout::build(&entries, true);
+        let layout = Layout::build(&entries, true, &Facts::default());
         let facts = Facts {
             lock: Some("No More Violence".into()),
             ..Default::default()
