@@ -2,13 +2,14 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android. Five crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android. Six crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core only. Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
+- **koan-push-relay** — binary crate (`koan-push-relay`), the service at `push.koan.rocks` that forwards pushes for servers without Apple's key. Depends on no other koan crate. Not published to crates.io. See `docs/reference/protocol/push-relay.md`.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 

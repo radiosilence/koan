@@ -8,6 +8,7 @@ kōan's apps talk to a kōan server over Subsonic, and to each other through it 
 | [Nearby](nearby-protocol.md) | Devices on one network finding and controlling each other without the server: discovery, the handshake, trust |
 | [Pairing and invites](pairing-and-invites.md) | Signing a device in without typing the password on it |
 | [Server extensions](server-extensions.md) | Each `koan*` OpenSubsonic extension: endpoints, parameters, answers, credentials |
+| [Push relay](push-relay.md) | `push.koan.rocks`: how servers without Apple's key reach a suspended iPhone, and what the relay sees |
 
 ## Schema
 
