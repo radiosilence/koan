@@ -351,7 +351,7 @@ fn render(
     let artist = subject.artist.as_ref();
     let one_album = tracks
         .first()
-        .filter(|f| tracks.iter().all(|t| t.album_id == f.album_id))
+        .filter(|f| f.album_id.is_some() && tracks.iter().all(|t| t.album_id == f.album_id))
         .map(|f| {
             (
                 f.album_title.clone(),
@@ -633,7 +633,7 @@ fn archive(
     let credited = |t: &TrackRow| credits.track(t);
     let one_album = tracks
         .first()
-        .filter(|f| tracks.iter().all(|t| t.album_id == f.album_id));
+        .filter(|f| f.album_id.is_some() && tracks.iter().all(|t| t.album_id == f.album_id));
     let folder = match (artist, one_album) {
         (Some(a), _) => a.name.clone(),
         (None, Some(t)) if share.slice.kind == ShareKind::Album => {

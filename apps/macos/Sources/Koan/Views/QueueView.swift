@@ -816,7 +816,6 @@ extension QueueView {
                         id: "album:\(first.queueItemId)",
                         group: QueueGroup(
                             id: first.queueItemId,
-                            albumArtist: first.albumArtist,
                             album: first.album,
                             items: items
                         )
@@ -846,7 +845,6 @@ extension QueueItem {
 
 struct QueueGroup: Identifiable {
     let id: String
-    let albumArtist: String
     let album: String
     var items: [QueueItem]
 

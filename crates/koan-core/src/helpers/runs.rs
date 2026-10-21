@@ -29,12 +29,14 @@ pub struct RecordOf<'a> {
 }
 
 impl RecordOf<'_> {
-    /// Two records can share a title and artist, as editions do; the id tells
-    /// them apart where both rows have one.
-    fn same(&self, other: &Self) -> bool {
-        match (self.album_id, other.album_id) {
+    /// Whether this row is on the record of a run opened by `first`, the run
+    /// so far filed under `id`. Two records can share a title and artist, as
+    /// editions do: the id tells them apart wherever the run and the row both
+    /// have one, whichever row of the run gave it.
+    fn joins(&self, first: &Self, id: Option<i64>) -> bool {
+        match (id, self.album_id) {
             (Some(a), Some(b)) => a == b,
-            _ => self.album == other.album && self.album_artist == other.album_artist,
+            _ => self.album == first.album && self.album_artist == first.album_artist,
         }
     }
 
@@ -55,7 +57,15 @@ pub fn record_runs(rows: &[RecordOf]) -> Vec<RunRole> {
             i += 1;
             continue;
         }
-        let len = rows[i..].iter().take_while(|r| r.same(first)).count();
+        let mut id = first.album_id;
+        let len = 1 + rows[i + 1..]
+            .iter()
+            .take_while(|r| {
+                let joins = r.joins(first, id);
+                id = id.or(r.album_id);
+                joins
+            })
+            .count();
         if len == 1 && first.titled_as_record() {
             roles.push(RunRole::Single);
         } else {
@@ -107,5 +117,12 @@ mod tests {
             row(Some(2), "Record", "Four"),
         ];
         assert_eq!(record_runs(&rows), [Opens, Opens, Continues, Continues]);
+        // A run opened without an id takes the first id it meets.
+        let rows = [
+            row(None, "Record", "One"),
+            row(Some(1), "Record", "Two"),
+            row(Some(2), "Record", "Three"),
+        ];
+        assert_eq!(record_runs(&rows), [Opens, Continues, Opens]);
     }
 }

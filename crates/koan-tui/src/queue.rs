@@ -16,7 +16,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
 use super::app::HoverZone;
-use super::credits::Credits;
+use super::credits::{self, Credits};
 use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::theme::Theme;
 use super::track_rows::{self as rows, Avail, Marker, Status};
@@ -235,13 +235,7 @@ impl Facts {
 
 /// An entry's credits from its tags alone, as before the library is read.
 fn tag_credits(e: &QueueEntry) -> Credits {
-    Credits::of(RowCredits::new::<&str>(
-        &e.artist,
-        &e.album_artist,
-        Place::default(),
-        None,
-        &[],
-    ))
+    credits::of_names(&e.artist, &e.album_artist)
 }
 
 /// What the queue's toolbar controls do; each is a key as well.
@@ -462,24 +456,15 @@ fn track_of<'e>(
     let credits = look.and_then(|l| l.facts?.credits.get(&e.id));
     // Drawn without a reading of the library, as a test does: the tags, as
     // koan-core reads them.
-    let (artist, album_artist, differ) = match credits {
-        Some(c) => (c.artist.as_str(), c.album_artist.as_str(), c.differ),
-        None => (
-            e.artist.as_str(),
-            e.album_artist.as_str(),
-            tag_credits(e).differ,
-        ),
+    let (artist, differ) = match credits {
+        Some(c) => (c.artist.as_str(), c.differ),
+        None => (e.artist.as_str(), tag_credits(e).differ),
     };
-    let artist = if single {
-        Some(if artist.is_empty() {
-            album_artist
-        } else {
-            artist
-        })
-    } else {
-        differ.then_some(artist)
-    }
-    .filter(|a| !a.is_empty());
+    // A row standing alone says who it is by; under a heading, only where
+    // that differs from the record's.
+    let artist = (single || differ)
+        .then_some(artist)
+        .filter(|a| !a.is_empty());
     let number = match (single, e.disc, e.track_number) {
         (true, ..) if !grouped => None,
         (true, ..) => Some(String::new()),

@@ -31,9 +31,14 @@ impl Credits {
 
 /// A track's credits from its tags alone, as before its credits are read.
 pub fn of_tags(t: &TrackRow) -> Credits {
+    of_names(&t.artist_name, &t.album_artist_name)
+}
+
+/// Credits from an artist and an album artist alone, as koan-core reads them.
+pub fn of_names(artist: &str, album_artist: &str) -> Credits {
     Credits::of(RowCredits::new::<&str>(
-        &t.artist_name,
-        &t.album_artist_name,
+        artist,
+        album_artist,
         Default::default(),
         None,
         &[],

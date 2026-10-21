@@ -195,8 +195,8 @@ struct PlaylistView: View {
                         isCurrent: isCurrent
                     ),
                     isCurrent: isCurrent,
-                    showArtist: !grouped || entry.standsAlone || entry.track.creditDiffers,
-                    artwork: !grouped || entry.standsAlone
+                    showArtist: entry.showsArtist(grouped: grouped),
+                    artwork: entry.showsArtwork(grouped: grouped)
                 ))
             }
         }
@@ -652,6 +652,11 @@ extension PlaylistEntry {
     /// A row the playlist's grouping leaves without a heading above it: on no
     /// record, or a single.
     var standsAlone: Bool { run == .alone || run == .single }
+
+    /// Under headings, a row in a record's run leaves the record and its
+    /// artist to the heading, and names its own artists only where they differ.
+    func showsArtist(grouped: Bool) -> Bool { !grouped || standsAlone || track.creditDiffers }
+    func showsArtwork(grouped: Bool) -> Bool { !grouped || standsAlone }
 }
 
 /// One entry, wearing whatever the queue currently thinks of it.
@@ -662,8 +667,6 @@ private struct PlaylistEntryRow: View {
     let entry: PlaylistEntry
     let position: Int
     let count: Int
-    /// Under headings, a row in a record's run leaves the record and its
-    /// artist to the heading, and names its own artists only where they differ.
     let grouped: Bool
 
     @Environment(PlayerModel.self) private var player
@@ -682,8 +685,8 @@ private struct PlaylistEntryRow: View {
                 isCurrent: isCurrent
             ),
             isCurrent: isCurrent,
-            showArtist: !grouped || entry.standsAlone || entry.track.creditDiffers,
-            artwork: !grouped || entry.standsAlone
+            showArtist: entry.showsArtist(grouped: grouped),
+            artwork: entry.showsArtwork(grouped: grouped)
         )
     }
 }

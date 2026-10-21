@@ -6058,27 +6058,26 @@ impl KoanEngine {
             item.album_artist.clone(),
             library,
         );
-        let mut held = self.cursor_reading.lock();
-        if let Some(r) = held.as_ref().filter(|r| r.key == key) {
+        if let Some(r) = self.cursor_reading.lock().as_ref().filter(|r| r.key == key) {
             return (r.place, r.credits.clone());
         }
+        // Read without the lock held, so a concurrent reader is not kept
+        // waiting on the database.
         let ids: Vec<i64> = item.db_id.into_iter().collect();
-        let (places, credits) = self
-            .db()
+        let db = self.db();
+        let (places, credits) = db
+            .as_ref()
             .map(|db| koan_core::helpers::ListCredits::read_tracks(&db.conn, &ids))
             .unwrap_or_default();
-        let place = item.db_id.and_then(|id| places.get(&id).copied());
-        let credits = credits.row(
-            item.db_id,
-            place.unwrap_or_default(),
-            &item.artist,
-            &item.album_artist,
-        );
-        let place = place.unwrap_or_default();
-        // A library track the read did not find is asked about again on the
-        // next wake rather than held unlinked until the library moves.
-        if item.db_id.is_none_or(|id| places.contains_key(&id)) {
-            *held = Some(CursorReading {
+        let place = item
+            .db_id
+            .and_then(|id| places.get(&id).copied())
+            .unwrap_or_default();
+        let credits = credits.row(item.db_id, place, &item.artist, &item.album_artist);
+        // Held once read, found or not, until the library moves; a database
+        // that could not be opened is asked again on the next wake.
+        if db.is_ok() {
+            *self.cursor_reading.lock() = Some(CursorReading {
                 key,
                 place,
                 credits: credits.clone(),

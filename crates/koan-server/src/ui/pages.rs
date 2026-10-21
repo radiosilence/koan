@@ -322,9 +322,18 @@ pub(super) struct Credits {
 
 impl Credits {
     pub(super) fn load(conn: &rusqlite::Connection, tracks: &[TrackRow], albums: &[i64]) -> Self {
+        let list = ListCredits::read_rows(conn, tracks);
+        // The tracks' records are read with them.
+        let records: std::collections::HashSet<i64> =
+            tracks.iter().filter_map(|t| t.album_id).collect();
+        let albums: Vec<i64> = albums
+            .iter()
+            .copied()
+            .filter(|a| !records.contains(a))
+            .collect();
         Self {
-            list: ListCredits::read_rows(conn, tracks),
-            albums: credits_by_id(conn, CreditsOf::Albums, albums).unwrap_or_default(),
+            list,
+            albums: credits_by_id(conn, CreditsOf::Albums, &albums).unwrap_or_default(),
         }
     }
 

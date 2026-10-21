@@ -104,7 +104,12 @@ impl AlbumPage {
             .is_ok_and(|set| set.contains(&id));
         let mut page = Self::new(album, tracks, favourite);
         page.credits = credits::of_tracks(&db, &page.tracks);
-        if let Some(credit) = credits::of_albums(&db, [&page.album]).remove(&id) {
+        // The record's credit is read with its tracks', where it has any.
+        let read = page.tracks.first().and_then(|t| page.credits.get(&t.id));
+        if let Some(credit) = read
+            .map(|c| c.album_artist.clone())
+            .or_else(|| credits::of_albums(&db, [&page.album]).remove(&id))
+        {
             page.album_credit = credit;
         }
         page.fav_tracks =
