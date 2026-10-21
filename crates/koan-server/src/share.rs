@@ -41,8 +41,8 @@ static PAGE_CSP: LazyLock<HeaderValue> = LazyLock::new(|| {
 });
 
 /// The gapless queue player, shared with the web UI.
-pub(crate) const ENGINE_JS: &str = include_str!("../assets/player.js");
-const PLAYER_JS: &str = include_str!("../assets/share.js");
+pub(crate) const ENGINE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/player.js"));
+const PLAYER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/share.js"));
 const PAGE_CSS: &str = include_str!("../assets/share.css");
 /// `path` with a hash of `body`, the asset served there. Assets are cached for
 /// an hour, and the markup depends on its stylesheet: after an upgrade the new

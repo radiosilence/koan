@@ -70,7 +70,7 @@ static PAGE_CSP_HEADER: std::sync::LazyLock<HeaderValue> =
 const PARTIAL: &str = "x-koan-partial";
 
 const UI_CSS: &str = include_str!("../../assets/ui.css");
-const UI_JS: &str = include_str!("../../assets/ui.js");
+const UI_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/ui.js"));
 const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
 const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
 

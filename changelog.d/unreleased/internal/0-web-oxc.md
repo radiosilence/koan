@@ -1,0 +1,1 @@
+- **Cargo compiles the web UI's scripts.** koan-server's build script strips the types from `scripts/*.ts` with oxc as it builds, so the compiled JavaScript is no longer committed, `cargo build` and `cargo install koan` need no JavaScript toolchain, and the check for stale output is gone. Node is no longer a dev tool; TypeScript still typechecks the scripts (`just js`).
