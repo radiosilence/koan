@@ -572,7 +572,8 @@ pub struct QueueItem {
     /// the record's heading, the row names its artists only when this is set.
     /// See `koan_core::helpers::RowCredits::differ`.
     pub credit_differs: bool,
-    /// Its place among the queue's records.
+    /// Its place among the queue's records. `Alone` on `NowPlaying`'s entry,
+    /// which is read outside the list.
     pub run: RunRole,
     pub album: String,
     pub year: Option<String>,

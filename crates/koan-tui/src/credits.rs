@@ -29,6 +29,17 @@ impl Credits {
     }
 }
 
+/// A track's credits from its tags alone, as before its credits are read.
+pub fn of_tags(t: &TrackRow) -> Credits {
+    Credits::of(RowCredits::new::<&str>(
+        &t.artist_name,
+        &t.album_artist_name,
+        Default::default(),
+        None,
+        &[],
+    ))
+}
+
 /// The credits of library tracks, by track id.
 pub fn of_tracks<'a>(
     db: &Database,

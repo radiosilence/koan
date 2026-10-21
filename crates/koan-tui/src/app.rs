@@ -869,7 +869,9 @@ impl App {
             }
             // Feed now-playing metadata for pleasures mode overlay.
             if let Some(entry) = playing.map(|i| &self.queue.vq_cache.entries[i]) {
-                self.visualizer.now_artist = self.queue.facts.credits_of(entry).artist;
+                self.visualizer
+                    .now_artist
+                    .clone_from(&self.queue.facts.credits_of(entry).artist);
                 self.visualizer.now_album.clone_from(&entry.album);
             }
         }
@@ -1854,6 +1856,9 @@ impl App {
     /// read it as they open.
     fn reload_library_pages(&mut self) {
         self.thumbs.retry_missing();
+        // The queue's grouping and credits are the library's reading of it.
+        self.queue.facts = queue::Facts::read(&self.queue.vq_cache.entries, &self.state);
+        self.relayout_queue();
         match self.page() {
             Page::History => self.history_page.reload(),
             Page::Settings => self.settings_page.reload(),

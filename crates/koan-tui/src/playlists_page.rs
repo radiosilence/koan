@@ -1153,10 +1153,14 @@ impl PlaylistPage {
             match line {
                 Line::Heading { first, .. } => {
                     let t = &self.entries[first].track;
-                    let artist = self
-                        .credits
-                        .get(&t.id)
-                        .map_or(t.album_artist_name.as_str(), |c| &c.album_artist);
+                    let tags;
+                    let artist = match self.credits.get(&t.id) {
+                        Some(c) => &c.album_artist,
+                        None => {
+                            tags = credits::of_tags(t);
+                            &tags.album_artist
+                        }
+                    };
                     rows::heading(
                         buf,
                         rect,
@@ -1200,9 +1204,11 @@ impl PlaylistPage {
                     // already; a row names its own only where they differ.
                     let alone = matches!(self.runs.get(i), Some(RunRole::Alone | RunRole::Single));
                     let artist = credits.map_or(t.artist_name.as_str(), |c| &c.artist);
-                    let artist = (!grouped || alone || credits.is_none_or(|c| c.differ))
-                        .then_some(artist)
-                        .filter(|a| !a.is_empty());
+                    let artist = (!grouped
+                        || alone
+                        || credits.map_or_else(|| credits::of_tags(t).differ, |c| c.differ))
+                    .then_some(artist)
+                    .filter(|a| !a.is_empty());
                     let row = rows::Track {
                         marker: if selected {
                             rows::Marker::Cursor

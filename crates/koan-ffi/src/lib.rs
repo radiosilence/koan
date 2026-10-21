@@ -5519,7 +5519,10 @@ impl KoanEngine {
             .collect();
         let rows = self.rows_for_remote(&playing);
         let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
-        let joins = self.queue_joins(&row_ids);
+        let (places, library) = self
+            .db()
+            .map(|db| koan_core::helpers::ListCredits::read_tracks(&db.conn, &row_ids))
+            .unwrap_or_default();
         list.iter()
             .map(|d| {
                 let st = d.state.clone().unwrap_or_default();
@@ -5528,8 +5531,11 @@ impl KoanEngine {
                     .and_then(|r| rows.get(r));
                 let artist_credit = st.artist.as_deref().map_or_else(Vec::new, |artist| {
                     let album_artist = row.map_or(artist, |r| r.album_artist_name.as_str());
-                    types::Credits::from(joins.credits(row.map(|r| r.id), artist, album_artist))
-                        .artist
+                    let id = row.map(|r| r.id);
+                    let place = id
+                        .and_then(|id| places.get(&id).copied())
+                        .unwrap_or_default();
+                    types::Credits::from(library.row(id, place, artist, album_artist)).artist
                 });
                 DeviceInfo {
                     id: d.id.clone(),
@@ -6071,16 +6077,23 @@ impl KoanEngine {
             .db()
             .map(|db| koan_core::helpers::ListCredits::read_tracks(&db.conn, &ids))
             .unwrap_or_default();
-        let place = item
-            .db_id
-            .and_then(|id| places.get(&id).copied())
-            .unwrap_or_default();
-        let credits = credits.row(item.db_id, place, &item.artist, &item.album_artist);
-        *held = Some(CursorReading {
-            key,
-            place,
-            credits: credits.clone(),
-        });
+        let place = item.db_id.and_then(|id| places.get(&id).copied());
+        let credits = credits.row(
+            item.db_id,
+            place.unwrap_or_default(),
+            &item.artist,
+            &item.album_artist,
+        );
+        let place = place.unwrap_or_default();
+        // A library track the read did not find is asked about again on the
+        // next wake rather than held unlinked until the library moves.
+        if item.db_id.is_none_or(|id| places.contains_key(&id)) {
+            *held = Some(CursorReading {
+                key,
+                place,
+                credits: credits.clone(),
+            });
+        }
         (place, credits)
     }
 

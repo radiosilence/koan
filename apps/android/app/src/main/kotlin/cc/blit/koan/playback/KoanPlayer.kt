@@ -94,7 +94,7 @@ class KoanPlayer(
                         .setTitle(item.title)
                         .setArtist(item.artistCredit.text)
                         .setAlbumTitle(item.album)
-                        .setAlbumArtist(item.albumArtistCredit.text)
+                        .setAlbumArtist(item.albumArtistCredit.text.takeIf { item.albumArtist.isNotEmpty() })
                         .setArtworkUri(ArtProvider.uri(artAuthority, item.albumId, item.trackId))
                         .setTrackNumber(item.trackNumber?.toInt())
                         .setDiscNumber(item.disc?.toInt())

@@ -458,7 +458,7 @@ impl AlbumPage {
         let differs = |t: &TrackRow| {
             self.credits
                 .get(&t.id)
-                .map_or(t.artist_name != t.album_artist_name, |c| c.differ)
+                .map_or_else(|| credits::of_tags(t).differ, |c| c.differ)
         };
         let mixed = self.tracks.iter().any(differs);
         let lead = self

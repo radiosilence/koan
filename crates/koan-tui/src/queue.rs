@@ -2,6 +2,7 @@
 //! what each track is doing, where its bytes are, and the links to its album
 //! and artist, as the apps' queue lays it out.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use ratatui::buffer::Buffer;
@@ -224,17 +225,23 @@ impl Facts {
     }
 
     /// `e`'s credits: as read, or, before a reading, from its tags alone.
-    pub fn credits_of(&self, e: &QueueEntry) -> Credits {
-        self.credits.get(&e.id).cloned().unwrap_or_else(|| {
-            Credits::of(RowCredits::new::<&str>(
-                &e.artist,
-                &e.album_artist,
-                Place::default(),
-                None,
-                &[],
-            ))
-        })
+    pub fn credits_of(&self, e: &QueueEntry) -> Cow<'_, Credits> {
+        match self.credits.get(&e.id) {
+            Some(c) => Cow::Borrowed(c),
+            None => Cow::Owned(tag_credits(e)),
+        }
     }
+}
+
+/// An entry's credits from its tags alone, as before the library is read.
+fn tag_credits(e: &QueueEntry) -> Credits {
+    Credits::of(RowCredits::new::<&str>(
+        &e.artist,
+        &e.album_artist,
+        Place::default(),
+        None,
+        &[],
+    ))
 }
 
 /// What the queue's toolbar controls do; each is a key as well.
@@ -453,13 +460,14 @@ fn track_of<'e>(
     let e = &entries[i];
     let single = matches!(line, Line::Single(_));
     let credits = look.and_then(|l| l.facts?.credits.get(&e.id));
-    // Drawn without a reading of the library, as a test does: the tags.
+    // Drawn without a reading of the library, as a test does: the tags, as
+    // koan-core reads them.
     let (artist, album_artist, differ) = match credits {
         Some(c) => (c.artist.as_str(), c.album_artist.as_str(), c.differ),
         None => (
             e.artist.as_str(),
             e.album_artist.as_str(),
-            e.artist != e.album_artist,
+            tag_credits(e).differ,
         ),
     };
     let artist = if single {
@@ -549,7 +557,7 @@ fn draw_heading(
         .flatten();
     let ms = run.iter().filter_map(|t| t.duration_ms).sum();
     let facts = rows::facts(e.year.as_deref(), run.len(), ms, codec);
-    let credits = library.map_or_else(|| Facts::default().credits_of(e), |f| f.credits_of(e));
+    let credits = library.map_or_else(|| Cow::Owned(tag_credits(e)), |f| f.credits_of(e));
     let artist = credits.album_artist.as_str();
     rows::heading(
         buf,
