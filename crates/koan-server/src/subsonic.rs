@@ -1255,33 +1255,40 @@ fn require_entity(
     resolve_entity(db, raw)
 }
 
-/// Song ids from a repeated parameter. One that names no song refuses the
-/// whole call: a playlist write that kept the rest and answered ok would lose
-/// a track without anyone being told.
+/// Song ids from a repeated parameter. One that names no song, malformed or
+/// another kind's included, refuses the whole call: a playlist write that kept
+/// the rest and answered ok would lose a track without anyone being told. An
+/// empty value names nothing and is skipped, as `songId=` empties a playlist.
 fn song_ids<'a>(
     db: &Database,
     raws: impl Iterator<Item = &'a str>,
-    param: &str,
 ) -> Result<Vec<i64>, SubsonicError> {
     let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
     let mut exists = db
         .conn
         .prepare_cached("SELECT EXISTS (SELECT 1 FROM tracks WHERE id = ?1)")
         .map_err(internal)?;
-    raws.map(|raw| {
-        let missing = || SubsonicError::not_found(&format!("Song {raw}"));
-        let id = resolve_as(db, raw, EntityKind::Song, param).map_err(|e| match e.code {
-            SubsonicErrorCode::NotFound => missing(),
-            _ => e,
-        })?;
-        // A row id is not looked up by `resolve_as`.
-        if exists.query_row([id], |r| r.get(0)).map_err(internal)? {
-            Ok(id)
-        } else {
-            Err(missing())
-        }
-    })
-    .collect()
+    raws.filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            let missing = || SubsonicError::not_found(&format!("Song {raw}"));
+            match parse_entity_id(raw) {
+                Some((None | Some(EntityKind::Song), id)) => {
+                    if exists.query_row([id], |r| r.get(0)).map_err(internal)? {
+                        Ok(id)
+                    } else {
+                        Err(missing())
+                    }
+                }
+                Some(_) => Err(missing()),
+                None if queries::is_uid(raw) => {
+                    queries::id_for_uid(&db.conn, queries::UidKind::Track, raw)
+                        .map_err(internal)?
+                        .ok_or_else(missing)
+                }
+                None => Err(missing()),
+            }
+        })
+        .collect()
 }
 
 /// The uid each row in a response is published as, read once per response.
@@ -4757,7 +4764,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             // One transaction, so no reader sees the name without the tracks,
             // and no track named goes between being found and being added.
             let id = queries::atomically(&db.conn, || {
-                let track_ids = song_ids(db, params.all("songId"), "songId")?;
+                let track_ids = song_ids(db, params.all("songId"))?;
                 match params.get("playlistId") {
                     Some(existing) => {
                         let id = playlist_id(db, Some(existing))?;
@@ -4821,7 +4828,7 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             // the client last saw it, and another edit landing between the
             // read and the write would shift them.
             queries::atomically(&db.conn, || {
-                let added = song_ids(db, params.all("songIdToAdd"), "songIdToAdd")?;
+                let added = song_ids(db, params.all("songIdToAdd"))?;
                 if let Some(name) = params.get("name") {
                     queries::rename_playlist(&db.conn, id, name)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -10046,7 +10053,14 @@ mod tests {
         let id = playlist_id_in(&body);
 
         let stranger = uuid::Uuid::now_v7().to_string();
-        for unknown in [stranger.as_str(), "mf-99999", "99999"] {
+        let album = format!("al-{a}");
+        for unknown in [
+            stranger.as_str(),
+            "mf-99999",
+            "99999",
+            "nonsense",
+            album.as_str(),
+        ] {
             for edit in [
                 format!("createPlaylist?name=other&songId={a_uid}&songId={unknown}"),
                 format!("createPlaylist?playlistId={id}&songId={unknown}"),
@@ -10066,6 +10080,27 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(queries::playlist_track_ids(&db.conn, row).unwrap(), vec![a]);
+        drop(db);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/createPlaylist?{}&playlistId={id}&songId=",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(
+            body.contains("status=\"ok\""),
+            "an empty songId empties it: {body}"
+        );
+        let db = Database::open(state.pool.path()).unwrap();
+        assert!(
+            queries::playlist_track_ids(&db.conn, row)
+                .unwrap()
+                .is_empty()
+        );
         let lists: i64 = db
             .conn
             .query_row("SELECT COUNT(*) FROM playlists", [], |r| r.get(0))
