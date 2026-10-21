@@ -1,0 +1,1 @@
+- **The album title under a tile is a link like the names beside it.** On the Mac it shows the link pointer and a tooltip, and while records are being picked it no longer opens the album.
