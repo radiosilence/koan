@@ -60,6 +60,29 @@
         }
       ]
     },
+    "Credential": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "string"
+        },
+        "tvId": {
+          "type": "string"
+        },
+        "tvKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tvId",
+        "tvKey",
+        "id",
+        "seed"
+      ],
+      "type": "object"
+    },
     "Frame": {
       "maxItems": 4,
       "minItems": 4,
@@ -791,6 +814,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LinkState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tvPairing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Credential"
             },
             {
               "type": "null"
