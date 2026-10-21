@@ -21,6 +21,14 @@ final class UIState {
     var pendingInvite: Invite?
     /// A device waiting to be signed in as this account, waiting for a yes.
     var pendingPairing: PairingRequest?
+    /// A device just signed in from here, by its name: if it is an Apple TV,
+    /// setting it up to be woken is offered once it links.
+    var signedInHere: SignedInHere?
+    /// The Apple TV being set up to be woken, while its sheet is up.
+    var tvWake: TvWakeTarget?
+    /// An Apple TV that has just linked after being signed in from here, for
+    /// "set it up to be woken?".
+    var tvWakeOffer: TvWakeTarget?
 
     /// The main window's content size, measured by `RootView`.
     ///

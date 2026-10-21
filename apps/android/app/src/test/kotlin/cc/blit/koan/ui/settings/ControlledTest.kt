@@ -19,7 +19,7 @@ class ControlledTest {
     private fun mac(waking: String? = null) =
         DeviceInfo(
             id = "mac", name = "Studio Mac", platform = "macos", account = true, owner = null, nearby = false,
-            awake = waking == null, asleep = waking != null, wakeable = waking != null, lastSeen = null, waking = waking, wakeFailed = null,
+            awake = waking == null, asleep = waking != null, wakeable = waking != null, tvPaired = false, tvPairable = false, lastSeen = null, waking = waking, wakeFailed = null,
             sameLibrary = true, state = PlayState.PLAYING, title = null, artist = null, artistCredit = emptyList(), album = null,
             trackId = null, albumId = null, positionMs = 0u, durationMs = 0u, problem = null,
         )

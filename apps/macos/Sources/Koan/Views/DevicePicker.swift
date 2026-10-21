@@ -62,6 +62,7 @@ enum DevicePicker {
 
 private struct DeviceRow: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(UIState.self) private var ui
     let device: DeviceInfo
 
     var body: some View {
@@ -83,6 +84,17 @@ private struct DeviceRow: View {
         // A context menu on the Mac, a long press on iOS: where each looks
         // for what can be done to a row beyond choosing it.
         .contextMenu {
+            if device.tvPairable {
+                if device.tvPaired {
+                    Button("Stop Waking", koan: Icon.close) {
+                        player.forgetTvPairing(device.id)
+                    }
+                } else {
+                    Button("Set Up Waking…", koan: Icon.television) {
+                        ui.tvWake = TvWakeTarget(id: device.id, name: device.name)
+                    }
+                }
+            }
             if !device.awake {
                 Button("Forget", koan: Icon.clear, role: .destructive) {
                     player.forget(device.id)
@@ -97,7 +109,7 @@ private struct DeviceRow: View {
         }
         if let stage = device.waking {
             return switch stage {
-            case "tv": "Waking… waking the Apple TV"
+            case "tv": "Waking… turning the Apple TV on"
             case "network": "Waking… trying it on this network"
             case "push": "Waking… sent a wake through your server"
             default: "Waking… tap the notification on \(device.name)"
@@ -111,8 +123,14 @@ private struct DeviceRow: View {
             if let failed = device.wakeFailed {
                 return "\(failed) Asleep\(seen)."
             }
+            if device.tvPaired && device.wakeable {
+                return "Asleep\(seen). Choosing it turns the TV on and opens kōan."
+            }
             if device.wakeable {
                 return "Asleep\(seen). Choosing it wakes it; music sent here arrives as a notification to tap."
+            }
+            if device.tvPairable {
+                return "Asleep\(seen). Set Up Waking in its menu to turn it on from here."
             }
             // A Mac drops out when kōan is quit or the Mac is off, and nothing
             // reaches it until someone opens kōan there.

@@ -2636,6 +2636,42 @@ impl KoanEngine {
         .await
     }
 
+    /// Ask the account's Apple TV `id` to pair so that the account's devices
+    /// can wake it and start koan there. Returns the name of the TV asked
+    /// once it is showing a PIN; `finish_tv_pairing` takes it, within half a
+    /// minute.
+    pub async fn begin_tv_pairing(self: Arc<Self>, id: String) -> Result<String, KoanError> {
+        offload::offload(move || {
+            koan_core::remote::devices::begin_tv_pairing(&id)
+                .map_err(|message| KoanError::Remote { message })
+        })
+        .await
+    }
+
+    /// Finish the pairing under way with the PIN the TV shows. Returns once
+    /// the server has kept it for every device of the account.
+    pub async fn finish_tv_pairing(self: Arc<Self>, pin: String) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::remote::devices::finish_tv_pairing(&pin)
+                .map_err(|message| KoanError::Remote { message })
+        })
+        .await
+    }
+
+    /// Abandon the pairing under way, which takes the PIN off the TV.
+    pub fn cancel_tv_pairing(&self) {
+        koan_core::remote::devices::cancel_tv_pairing();
+    }
+
+    /// Stop waking the Apple TV `id` from any device of the account.
+    pub async fn forget_tv_pairing(self: Arc<Self>, id: String) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::remote::devices::forget_tv_pairing(&id)
+                .map_err(|message| KoanError::Remote { message })
+        })
+        .await
+    }
+
     /// Hang up the connection to this device that `key` names
     /// (`ConnectedInfo::key`). To keep a stranger from dialling again, add its
     /// address to `devices_refused` too.
@@ -5537,6 +5573,8 @@ impl KoanEngine {
                     awake: d.awake,
                     asleep: d.asleep,
                     wakeable: d.wakeable,
+                    tv_paired: d.tv_paired,
+                    tv_pairable: d.tv_pairable,
                     last_seen: d.last_seen,
                     waking: d.waking.as_ref().and_then(|w| match w {
                         koan_core::remote::devices::Waking::Tv => Some("tv".into()),

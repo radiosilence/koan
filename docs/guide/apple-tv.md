@@ -81,22 +81,29 @@ with kōan in the background as well as on screen.
 
 ## Playing to it while it sleeps
 
-Choosing an Apple TV that is asleep in Control wakes it before anything is
-sent. While the TV is awake, a phone or Mac that meets kōan on it on the local
-network notes the TV's AirPlay announcement, which the TV keeps up through a
-Bonjour Sleep Proxy while it sleeps. To wake it, the phone or Mac opens a
-connection to that announcement, which has the proxy wake the TV, and waits for
-the TV to answer. Then your server sends the usual wake push to kōan there, and
-the music follows once kōan links.
+An iPhone, iPad or Mac on the TV's network can turn the TV on and open kōan
+there, the way the Remote app in Control Center does. It has to be set up once
+per TV, and then works from every device signed in to your account.
 
-The picker reads "Waking… waking the Apple TV" during the first step. If the
-TV does not answer within twenty seconds the push is still tried; if nothing
-reaches kōan either, the row says the TV could not be woken.
+To set it up, sign the TV in from a phone or Mac: once the TV is signed in,
+kōan asks whether to wake it from there. Or choose **Set Up Waking…** from the
+TV's menu in Play on (a long press on iOS, a right click on the Mac). The TV
+shows a four-digit code; type it on the phone or Mac. The TV waits about half
+a minute for it, and **Try Again** asks for a fresh one. Your server keeps
+the pairing for your account, which needs a server from this version on.
 
-The phone or Mac has to have met the TV on the same network at least once, and
-asks for the Local Network permission it already uses to find kōan apps. A TV
-reached only through your server, from another network, is woken by the push
-alone.
+From then on, choosing the TV in Control while it is asleep turns it on and
+opens kōan, which signs in to your server, and the music follows. The picker
+reads "Waking… turning the Apple TV on" meanwhile. If the TV has more than one
+user, tvOS shows its profile picker as it wakes; kōan plays behind it.
+
+The TV lists the pairing under Settings › Remotes and Devices. **Stop Waking**
+in the TV's menu removes it for all your devices; removing it on the TV makes
+the next wake fail with a note to set it up again.
+
+The phone or Mac has to be on the TV's network, and asks for the Local Network
+permission it already uses to find kōan apps. Away from home, a TV is woken
+only by your server's push, where the server has a push key.
 
 ## Sample rates
 

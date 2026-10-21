@@ -341,6 +341,31 @@ impl Registry {
         outbox::save_push(username, device, token, sandbox);
     }
 
+    /// Keep `pairing` for `username`'s Apple TV `device`, or drop the one
+    /// kept, and tell the account's devices. Only a TV the account has
+    /// linked is taken.
+    pub fn set_tv_pairing(
+        &self,
+        username: &str,
+        device: &str,
+        pairing: Option<&koan_core::remote::companion::Credential>,
+    ) -> Result<(), String> {
+        if pairing.is_some() && !outbox::is_tv(username, device) {
+            return Err(format!("{device} is not one of {username}'s Apple TVs"));
+        }
+        outbox::save_tv_pairing(username, device, pairing);
+        log::info!(
+            "devices: {username} {} the Apple TV {device}",
+            if pairing.is_some() {
+                "paired"
+            } else {
+                "unpaired"
+            }
+        );
+        self.announce(username);
+        Ok(())
+    }
+
     /// Close every link `username` has open. Dropping an entry's sender ends
     /// its session, and the client must then sign in again to reconnect.
     pub fn disconnect(&self, username: &str) {
@@ -466,6 +491,7 @@ impl Registry {
             return;
         }
         let asleep = outbox::push_targets(Some(username));
+        let tvs = outbox::tv_pairings(username);
         // Waking takes a push key as well as the device's token.
         let can_push = crate::push::pusher().is_some();
         let entries = self.entries.lock();
@@ -491,11 +517,19 @@ impl Registry {
                 wakeable: Some(can_push && asleep.iter().any(|t| t.device == e.device)),
                 owner: None,
                 acks: e.info.acks,
+                tv_pairing: tvs
+                    .iter()
+                    .find(|t| t.device == e.device)
+                    .map(|t| t.pairing.clone()),
             })
             .collect();
         for t in asleep {
             if !all.iter().any(|d| d.id == t.device) {
                 all.push(LinkDevice {
+                    tv_pairing: tvs
+                        .iter()
+                        .find(|p| p.device == t.device)
+                        .map(|p| p.pairing.clone()),
                     id: t.device,
                     name: t.name,
                     platform: t.platform,
@@ -505,6 +539,23 @@ impl Registry {
                     wakeable: Some(can_push),
                     owner: None,
                     acks: false,
+                });
+            }
+        }
+        // A paired Apple TV is woken by the account's devices, push or no.
+        for t in tvs {
+            if !all.iter().any(|d| d.id == t.device) {
+                all.push(LinkDevice {
+                    id: t.device,
+                    name: t.name,
+                    platform: t.platform,
+                    linked: false,
+                    state: None,
+                    last_seen: Some(t.last_seen),
+                    wakeable: Some(false),
+                    owner: None,
+                    acks: false,
+                    tv_pairing: Some(t.pairing),
                 });
             }
         }
@@ -545,6 +596,7 @@ impl Registry {
                     wakeable: Some(can_push),
                     owner: Some(g.owner.clone()),
                     acks: e.info.acks,
+                    tv_pairing: None,
                 }),
                 None => {
                     if let Some(t) = outbox::push_targets(Some(&g.owner))
@@ -561,6 +613,7 @@ impl Registry {
                             wakeable: Some(can_push),
                             owner: Some(g.owner.clone()),
                             acks: false,
+                            tv_pairing: None,
                         });
                     }
                 }
@@ -1726,13 +1779,17 @@ mod outbox {
             "DELETE FROM link_outbox WHERE created_at < ?1",
             [now - KEEP_SECS],
         );
+        // A paired Apple TV is kept however long it sleeps: the pairing was
+        // a deliberate act, and waking it is what links it again.
         let _ = conn.execute(
             "DELETE FROM link_push WHERE (device, username) IN
-               (SELECT device, username FROM link_devices WHERE last_seen < ?1)",
+               (SELECT device, username FROM link_devices WHERE last_seen < ?1)
+               AND (device, username) NOT IN (SELECT device, username FROM link_tv)",
             [now - KEEP_SECS],
         );
         let _ = conn.execute(
-            "DELETE FROM link_devices WHERE last_seen < ?1",
+            "DELETE FROM link_devices WHERE last_seen < ?1
+               AND (device, username) NOT IN (SELECT device, username FROM link_tv)",
             [now - KEEP_SECS],
         );
     }
@@ -1820,6 +1877,16 @@ mod outbox {
             Ok::<_, rusqlite::Error>(queued)
         })
         .unwrap_or_default()
+    }
+
+    /// An Apple TV of the account's, paired to be woken.
+    pub struct TvPairing {
+        pub device: String,
+        pub name: String,
+        pub platform: String,
+        /// Unix seconds.
+        pub last_seen: i64,
+        pub pairing: koan_core::remote::companion::Credential,
     }
 
     /// A device Apple's push service can reach.
@@ -1951,6 +2018,75 @@ mod outbox {
         );
     }
 
+    /// Whether `device` is an Apple TV that has linked as `username`'s.
+    pub fn is_tv(username: &str, device: &str) -> bool {
+        let Some(db) = db() else { return false };
+        db.conn
+            .query_row(
+                "SELECT 1 FROM link_devices WHERE device = ?1 AND username = ?2 AND platform = 'tvos'",
+                [device, username],
+                |_| Ok(()),
+            )
+            .is_ok()
+    }
+
+    pub fn save_tv_pairing(
+        username: &str,
+        device: &str,
+        pairing: Option<&koan_core::remote::companion::Credential>,
+    ) {
+        let Some(db) = db() else { return };
+        let _ = match pairing.and_then(|p| serde_json::to_string(p).ok()) {
+            Some(json) => db.conn.execute(
+                "INSERT INTO link_tv (device, username, pairing, updated_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (device, username) DO UPDATE SET pairing = ?3, updated_at = ?4",
+                rusqlite::params![device, username, json, chrono::Utc::now().timestamp()],
+            ),
+            None => db.conn.execute(
+                "DELETE FROM link_tv WHERE device = ?1 AND username = ?2",
+                [device, username],
+            ),
+        };
+    }
+
+    /// `username`'s paired Apple TVs.
+    pub fn tv_pairings(username: &str) -> Vec<TvPairing> {
+        let Some(db) = db() else { return Vec::new() };
+        tv_pairings_in(&db.conn, username)
+    }
+
+    pub(super) fn tv_pairings_in(conn: &rusqlite::Connection, username: &str) -> Vec<TvPairing> {
+        conn.prepare(
+            "SELECT t.device, d.name, d.platform, d.last_seen, t.pairing
+               FROM link_tv t JOIN link_devices d ON d.device = t.device AND d.username = t.username
+              WHERE t.username = ?1",
+        )
+        .and_then(|mut s| {
+            s.query_map([username], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(device, name, platform, last_seen, pairing)| {
+            Some(TvPairing {
+                device,
+                name,
+                platform,
+                last_seen,
+                pairing: serde_json::from_str(&pairing).ok()?,
+            })
+        })
+        .collect()
+    }
+
     pub fn forget_push(username: &str, device: &str) {
         if let Some(db) = db() {
             let _ = db.conn.execute(
@@ -2003,7 +2139,7 @@ mod outbox {
     }
 
     pub(super) fn forget_device_in(conn: &rusqlite::Connection, device: &str, username: &str) {
-        for table in ["link_push", "link_outbox", "link_devices"] {
+        for table in ["link_push", "link_tv", "link_outbox", "link_devices"] {
             let _ = conn.execute(
                 &format!("DELETE FROM {table} WHERE device = ?1 AND username = ?2"),
                 [device, username],
@@ -2926,5 +3062,42 @@ mod tests {
         };
         assert_eq!(left("link_devices"), ["mac"]);
         assert_eq!(left("link_push"), ["mac"]);
+    }
+
+    #[test]
+    fn a_paired_apple_tv_is_kept_however_long_it_sleeps() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        koan_core::db::schema::create_tables(&conn).unwrap();
+        let now = 100 * 24 * 60 * 60;
+        let long_ago = now - 90 * 24 * 60 * 60;
+        for (device, platform) in [("tv", "tvos"), ("other-tv", "tvos")] {
+            conn.execute(
+                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, 'j', 'Living Room', ?2, ?3)",
+                rusqlite::params![device, platform, long_ago],
+            )
+            .unwrap();
+        }
+        let pairing = koan_core::remote::companion::Credential {
+            tv_id: "7A821767-01ED-442C-B4BB-6BDEA29109DA".into(),
+            tv_key: "a2V5".into(),
+            id: "ME".into(),
+            seed: "c2VlZA==".into(),
+        };
+        conn.execute(
+            "INSERT INTO link_tv (device, username, pairing, updated_at) VALUES ('tv', 'j', ?1, 0)",
+            [serde_json::to_string(&pairing).unwrap()],
+        )
+        .unwrap();
+        outbox::forget_stale(&conn, &[], now);
+        let paired = outbox::tv_pairings_in(&conn, "j");
+        assert_eq!(paired.len(), 1);
+        assert_eq!(paired[0].device, "tv");
+        assert_eq!(paired[0].name, "Living Room");
+        assert_eq!(paired[0].pairing, pairing);
+        assert!(outbox::tv_pairings_in(&conn, "someone").is_empty());
+        let devices: i64 = conn
+            .query_row("SELECT COUNT(*) FROM link_devices", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(devices, 1, "the unpaired TV is forgotten as before");
     }
 }

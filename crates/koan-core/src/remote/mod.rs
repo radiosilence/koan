@@ -1,6 +1,6 @@
 pub mod acks;
-pub mod airplay;
 pub mod client;
+pub mod companion;
 pub mod connections;
 pub mod control;
 pub mod devices;

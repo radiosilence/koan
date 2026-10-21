@@ -3053,6 +3053,7 @@ dependencies = [
  "md5",
  "notify",
  "nucleo",
+ "num-bigint",
  "opus-rs",
  "parking_lot",
  "pem 4.0.0",

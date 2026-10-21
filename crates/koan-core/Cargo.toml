@@ -33,6 +33,7 @@ log = "0.4"
 # Subsonic/Navidrome
 getrandom = "0.4"
 md5 = "0.8"
+num-bigint = "0.4"
 url = "2"
 # Async/threading
 nucleo = "0.5"

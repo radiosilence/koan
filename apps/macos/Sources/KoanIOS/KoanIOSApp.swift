@@ -46,6 +46,7 @@ struct KoanIOSApp: App {
                         .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
                         #if !os(tvOS)
+                        .modifier(TvWakePrompts(state: state))
                         // In front only: a profile read after a background
                         // wake would ask where iOS cannot show the question.
                         .onChange(

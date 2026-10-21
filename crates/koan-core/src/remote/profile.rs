@@ -61,6 +61,10 @@ pub const MCP: &str = "koanMcp";
 /// lists a suspended phone by them.
 pub const APNS: &str = "koanApns";
 
+/// The server keeps an Apple TV's Companion pairing for the account and hands
+/// it to the account's devices: `LinkReport::TvPairing` up, `tvPairing` on
+/// each device in `LinkCommand::Devices`. See `remote::companion`.
+pub const TV_PAIRING: &str = "koanTvPairing";
 /// The server relays devices' answers to commands sent with an id, and
 /// answers `koanCommand` with how it went: see `remote::acks`.
 pub const ACK: &str = "koanAck";

@@ -60,6 +60,29 @@
         }
       ]
     },
+    "Credential": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "string"
+        },
+        "tvId": {
+          "type": "string"
+        },
+        "tvKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tvId",
+        "tvKey",
+        "id",
+        "seed"
+      ],
+      "type": "object"
+    },
     "Frame": {
       "maxItems": 4,
       "minItems": 4,
@@ -797,6 +820,16 @@
             }
           ]
         },
+        "tvPairing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Credential"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "wakeable": {
           "type": [
             "boolean",
@@ -1445,6 +1478,32 @@
       "required": [
         "type",
         "f"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "pairing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Credential"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "tvPairing",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "device"
       ],
       "type": "object"
     }

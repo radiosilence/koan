@@ -498,6 +498,11 @@ final class PlayerModel {
         attempt { try await self.engine.forgetDevice(id: id) }
     }
 
+    /// Stop waking the Apple TV `id` from the account's devices.
+    func forgetTvPairing(_ id: String) {
+        attempt { try await self.engine.forgetTvPairing(id: id) }
+    }
+
     /// The renderer playing this device's music, if one is.
     var renderer: RendererOutput? { mirror.rendererOutput }
 

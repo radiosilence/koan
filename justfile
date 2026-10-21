@@ -234,7 +234,7 @@ macos-bundle: macos-build
              is dropped without a word, so no UPnP renderer or nearby koan
              appears. The iOS bundle declares the same. -->
         <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_airplay._tcp</string><string>_companion-link._tcp</string></array>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
         <key>CFBundleURLTypes</key>
         <array>
             <dict>
@@ -723,7 +723,7 @@ ios-bundle: macos-ffi ios-ffi
                 <key>CFBundleURLSchemes</key><array><string>koan</string></array>
             </dict>
         </array>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_airplay._tcp</string><string>_companion-link._tcp</string></array>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
         <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps on your network to play music on.</string>
     </dict>
     </plist>

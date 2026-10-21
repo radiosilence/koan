@@ -251,11 +251,17 @@ final class AudioSession {
     /// The app is in front again. An interruption nothing ended leaves the
     /// output stopped by iOS; have it rebuilt, so pressing play plays. The
     /// session itself is left alone until then: whatever interrupted koan may
-    /// still be playing. Resuming is the person's to do.
+    /// still be playing. Resuming is the person's to do on a phone. On a
+    /// television, koan in front is what is being listened to, and the
+    /// interruption is the box waking as music was sent to it: it resumes.
     func recoverIfInterrupted() {
         guard interrupted else { return }
         note?("session still interrupted on returning; rebuilding the output")
+        #if os(tvOS)
+        end(resume: true)
+        #else
         end(resume: false)
+        #endif
     }
 
     /// Have the output rebuilt: the unit iOS stopped for the interruption will
@@ -273,10 +279,15 @@ final class AudioSession {
         reportRoute()
         // The only reason that must pause. The others — a better route
         // appearing, a category change — are not the user walking away.
+        // Nor is it on a television: HDMI drops for a moment whenever the
+        // display or receiver wakes or changes input, as it does when the
+        // TV is woken to play.
+        #if !os(tvOS)
         if reason == .oldDeviceUnavailable {
             routeLostAt = Date()
             onRouteLost?()
         }
+        #endif
     }
 
     deinit {
