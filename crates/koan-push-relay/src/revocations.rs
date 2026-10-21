@@ -13,6 +13,11 @@ use rusqlite::Connection;
 
 use crate::handle::TokenHash;
 
+/// How far past a revocation's recorded time it reaches. A handle minted
+/// before the revocation still falls inside it if the clock has since been
+/// stepped back by up to this much; registration mints past it.
+pub const SLACK_MS: u64 = 10 * 60 * 1000;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum RevokeError {
     Full,
@@ -66,7 +71,8 @@ impl Revocations {
     /// Whether a handle for this device minted at `minted_ms` has been
     /// revoked.
     pub fn revoked(&self, device: &TokenHash, minted_ms: u64) -> bool {
-        self.revoked_at(device).is_some_and(|at| minted_ms <= at)
+        self.revoked_at(device)
+            .is_some_and(|at| minted_ms <= at.saturating_add(SLACK_MS))
     }
 
     /// When this device last revoked its handles.
@@ -142,7 +148,11 @@ mod tests {
         r.revoke(device, 10).unwrap();
         assert!(r.revoked(&device, 5));
         assert!(r.revoked(&device, 10));
-        assert!(!r.revoked(&device, 11));
+        assert!(
+            r.revoked(&device, 10 + SLACK_MS),
+            "a clock stepped back is allowed for"
+        );
+        assert!(!r.revoked(&device, 11 + SLACK_MS));
         assert!(!r.revoked(&[2; 16], 5));
     }
 
@@ -156,8 +166,8 @@ mod tests {
             r.revoke([1; 16], 50).unwrap();
         }
         let r = Revocations::open(&path, 10, 200, 60 * DAY).unwrap();
-        assert!(r.revoked(&[1; 16], 100));
-        assert!(!r.revoked(&[1; 16], 101));
+        assert!(r.revoked(&[1; 16], 100 + SLACK_MS));
+        assert!(!r.revoked(&[1; 16], 101 + SLACK_MS));
     }
 
     #[test]

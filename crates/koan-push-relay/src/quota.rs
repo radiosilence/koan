@@ -110,6 +110,14 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
         }
     }
 
+    /// Whether `check` would admit this caller now, without counting
+    /// anything or starting to track the caller.
+    pub fn admits(&self, key: &K, now: u64) -> Result<(), Refused> {
+        let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
+        let mut tat = shard.lock().map.get(key).copied().unwrap_or(0);
+        self.rate.admit(&mut tat, now).map_err(Refused::Limited)
+    }
+
     pub fn check(&self, key: K, now: u64) -> Result<(), Refused> {
         let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
         let mut shard = shard.lock();
@@ -178,6 +186,28 @@ impl Global {
         Self {
             rate,
             tat: AtomicU64::new(0),
+        }
+    }
+
+    /// Whether `check` would admit a request now, without counting it.
+    pub fn admits(&self, now: u64) -> bool {
+        let mut tat = self.tat.load(Ordering::Relaxed);
+        self.rate.admit(&mut tat, now).is_ok()
+    }
+
+    /// Count a request whether or not it is within the limit: for counting
+    /// what has already happened, such as Apple refusing a token.
+    pub fn charge(&self, now: u64) {
+        let mut current = self.tat.load(Ordering::Relaxed);
+        loop {
+            let tat = current.max(now) + self.rate.interval;
+            match self
+                .tat
+                .compare_exchange_weak(current, tat, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return,
+                Err(seen) => current = seen,
+            }
         }
     }
 
@@ -314,6 +344,26 @@ mod tests {
         );
         assert_eq!(swept_at(key), Some(5 * SEC));
         assert!(limit.check(same_shard, 11 * SEC).is_ok());
+    }
+
+    #[test]
+    fn admits_looks_without_counting() {
+        let limit = Keyed::new(Rate::per(1, Duration::from_secs(60)), 100);
+        assert!(limit.admits(&1u8, 0).is_ok());
+        assert!(limit.admits(&1u8, 0).is_ok());
+        assert_eq!(limit.tracked(), 0, "looking tracks nobody");
+        assert!(limit.check(1, 0).is_ok());
+        assert!(limit.admits(&1, 0).is_err());
+
+        let global = Global::new(Rate::per(2, Duration::from_secs(60)));
+        assert!(global.admits(0));
+        global.charge(0);
+        global.charge(0);
+        assert!(!global.admits(0), "charges count even past the limit");
+        // A third charge past the limit pushes recovery further out.
+        global.charge(0);
+        assert!(!global.admits(59 * SEC));
+        assert!(global.admits(60 * SEC));
     }
 
     #[test]

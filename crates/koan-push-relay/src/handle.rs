@@ -41,7 +41,7 @@ pub const MAX_HANDLE_LEN: usize = (HEADER_LEN + FIXED_LEN + MAX_TOKEN + TAG_LEN)
 pub const MAX_LIFETIME_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 
 /// What a handle holds.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Device {
     pub token: Vec<u8>,
     pub sandbox: bool,
@@ -49,6 +49,16 @@ pub struct Device {
     /// The handle's nonce, random at sealing: what tells one of a device's
     /// handles from another.
     pub id: [u8; NONCE_LEN],
+}
+
+/// Never shows the token: a `{:?}` in a log line must not leak one.
+impl std::fmt::Debug for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Device")
+            .field("sandbox", &self.sandbox)
+            .field("minted_ms", &self.minted_ms)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why a handle does not open. Callers are told only that it is gone.
@@ -142,10 +152,13 @@ impl Handles {
         let sandbox = plain[0] & SANDBOX != 0;
         let minted_ms = u64::from_be_bytes(plain[1..FIXED_LEN].try_into().expect("eight bytes"));
         let token = plain[FIXED_LEN..].to_vec();
-        // A mint time ahead of the clock is no forgery, since only the relay
-        // seals: the clock was stepped back, or the handle was minted after a
-        // revocation recorded under a later clock.
-        if now_ms >= minted_ms.saturating_add(self.lifetime_ms) {
+        // A mint time somewhat ahead of the clock is no forgery, since only
+        // the relay seals: the clock was stepped back, or the handle was
+        // minted past a revocation's window. One a whole lifetime ahead was
+        // never minted here, and would outlive expiry and revocation alike.
+        if minted_ms > now_ms.saturating_add(self.lifetime_ms)
+            || now_ms >= minted_ms.saturating_add(self.lifetime_ms)
+        {
             return Err(Invalid::Expired);
         }
         Ok(Device {
@@ -247,10 +260,20 @@ mod tests {
     }
 
     #[test]
-    fn a_handle_minted_ahead_of_the_clock_still_opens() {
+    fn a_handle_minted_ahead_of_the_clock_opens_up_to_a_lifetime_ahead() {
         let h = handles();
         let sealed = h.seal(&[5; 32], false, 10 * DAY);
         assert!(h.open(&sealed, DAY).is_ok());
+        let far = h.seal(&[5; 32], false, 100 * DAY);
+        assert_eq!(h.open(&far, DAY), Err(Invalid::Expired));
+    }
+
+    #[test]
+    fn a_device_never_prints_its_token() {
+        let h = handles();
+        let device = h.open(&h.seal(&[0xab; 32], false, 0), 0).unwrap();
+        assert!(!format!("{device:?}").contains("171"));
+        assert!(!format!("{device:?}").to_lowercase().contains("ab, ab"));
     }
 
     #[test]

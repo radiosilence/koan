@@ -379,14 +379,12 @@ async fn proving_a_token_counts_against_its_wakes() {
 
 #[tokio::test]
 async fn a_signing_key_apple_rejects_asks_senders_to_wait_minutes() {
-    let h = Harness::start(|_| {}).await;
-    let handle = h.register(TOKEN).await;
-    for reason in ["InvalidProviderToken", "TooManyProviderTokenUpdates"] {
-        let status = if reason == "InvalidProviderToken" {
-            403
-        } else {
-            429
-        };
+    for (status, reason) in [
+        (403, "InvalidProviderToken"),
+        (429, "TooManyProviderTokenUpdates"),
+    ] {
+        let h = Harness::start(|_| {}).await;
+        let handle = h.register(TOKEN).await;
         h.gateway.answer(status, reason);
         let r = h.push(&handle, "wake", None).await;
         assert_eq!(r.status(), 503, "{reason}");
@@ -434,21 +432,127 @@ async fn only_a_token_apple_accepts_can_be_revoked() {
 #[tokio::test]
 async fn apples_answers_reach_the_sender_as_the_relays() {
     let h = Harness::start(|_| {}).await;
-    let handle = h.register(TOKEN).await;
+    let cases = [
+        (410, "Unregistered", 410),
+        (400, "BadDeviceToken", 410),
+        (429, "TooManyRequests", 429),
+        (500, "InternalServerError", 503),
+    ];
+    for (i, (status, reason, expected)) in cases.into_iter().enumerate() {
+        // A device of its own each: a gone device's handles are retired.
+        let token = format!("{:064x}", i + 1);
+        h.gateway.accept();
+        let handle = h.register(&token).await;
+        h.gateway.answer(status, reason);
+        let r = h.push(&handle, "wake", None).await;
+        assert_eq!(r.status(), expected, "{reason}");
+        if expected == 503 {
+            assert!(r.headers().contains_key("retry-after"));
+        }
+    }
+}
 
+#[tokio::test]
+async fn a_device_apple_calls_gone_is_never_sent_to_again() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
     h.gateway.answer(410, "Unregistered");
     assert_eq!(h.push(&handle, "wake", None).await.status(), 410);
+    let reached = h.gateway.received().len();
+    h.gateway.accept();
+    // Retiring is recorded off the request; give it a moment.
+    for _ in 0..100 {
+        if h.push(&handle, "wake", None).await.status() == 410 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(h.push(&handle, "summon", None).await.status(), 410);
+    assert!(h.gateway.received().len() <= reached + 1);
+}
 
-    h.gateway.answer(400, "BadDeviceToken");
-    assert_eq!(h.push(&handle, "wake", None).await.status(), 410);
-
-    h.gateway.answer(429, "TooManyRequests");
-    assert_eq!(h.push(&handle, "wake", None).await.status(), 429);
-
-    h.gateway.answer(500, "InternalServerError");
-    let r = h.push(&handle, "wake", None).await;
+#[tokio::test]
+async fn a_relay_apple_refuses_stops_sending() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    h.gateway.answer(403, "InvalidProviderToken");
+    assert_eq!(h.push(&handle, "wake", None).await.status(), 503);
+    let reached = h.gateway.received().len();
+    for _ in 0..5 {
+        let r = h.push(&handle, "wake", None).await;
+        assert_eq!(r.status(), 503);
+        assert_eq!(r.headers()["retry-after"], "300");
+    }
+    assert_eq!(
+        h.gateway.received().len(),
+        reached,
+        "refused here, not sent"
+    );
+    // Registration stops too: a proof would carry the same refused key.
+    let r = h
+        .post("/v1/register", json!({ "token": "ff".repeat(32) }))
+        .await;
     assert_eq!(r.status(), 503);
-    assert!(r.headers().contains_key("retry-after"));
+    assert_eq!(h.gateway.received().len(), reached);
+}
+
+#[tokio::test]
+async fn made_up_tokens_stop_proofs_once_apple_has_refused_enough() {
+    let h = Harness::start(|cfg| cfg.limits.bad_tokens_per_hour = 2).await;
+    h.gateway.answer(400, "BadDeviceToken");
+    for i in 0..2 {
+        let token = format!("{:064x}", i + 1);
+        let r = h.post("/v1/register", json!({ "token": token })).await;
+        assert_eq!(r.status(), 400);
+    }
+    let reached = h.gateway.received().len();
+    let r = h
+        .post("/v1/register", json!({ "token": "ee".repeat(32) }))
+        .await;
+    assert_eq!(r.status(), 503);
+    assert_eq!(h.gateway.received().len(), reached, "no proof sent");
+}
+
+#[tokio::test]
+async fn ipv6_registrations_are_counted_by_slash_48() {
+    let h = Harness::start(|cfg| {
+        cfg.limits.ip_registrations_per_minute = 1;
+        cfg.client_ip_header = Some("x-forwarded-for".into());
+    })
+    .await;
+    let register = |forwarded: &'static str| {
+        h.http
+            .post(format!("{}/v1/register", h.url))
+            .header("x-forwarded-for", forwarded)
+            .json(&json!({ "token": TOKEN }))
+            .send()
+    };
+    assert_eq!(register("2001:db8:0:1::1").await.unwrap().status(), 200);
+    assert_eq!(register("2001:db8:0:2::1").await.unwrap().status(), 429);
+    assert_eq!(register("2001:db8:1::1").await.unwrap().status(), 200);
+}
+
+#[tokio::test]
+async fn spending_a_devices_wakes_does_not_stop_it_revoking() {
+    let h = Harness::start(|cfg| cfg.limits.device_wakes_per_hour = 1).await;
+    h.register(TOKEN).await;
+    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    assert_eq!(r.status(), 429);
+    let r = h.post("/v1/revoke", json!({ "token": TOKEN })).await;
+    assert_eq!(r.status(), 204);
+}
+
+#[tokio::test]
+async fn relayed_notifications_do_not_break_through_a_focus() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    for kind in ["summon", "notify"] {
+        assert_eq!(h.push(&handle, kind, None).await.status(), 204);
+    }
+    for got in &h.gateway.received()[1..] {
+        assert_eq!(got.body["aps"]["interruption-level"], "active");
+        assert!(got.headers.contains_key("apns-collapse-id"));
+    }
 }
 
 #[tokio::test]

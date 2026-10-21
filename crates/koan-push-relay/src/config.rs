@@ -12,7 +12,8 @@ use figment::Figment;
 use figment::providers::{Env, Format, Toml};
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+/// No `Debug`: it holds secrets.
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     /// Where servers and apps reach the relay.
@@ -61,7 +62,8 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+/// No `Debug`: it holds secrets.
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ApnsConfig {
     /// The developer team the keys belong to.
@@ -97,7 +99,8 @@ impl Default for ApnsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+/// No `Debug`: it holds the key.
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApnsKey {
     /// The key's ten-character id.
@@ -120,7 +123,8 @@ impl ApnsKey {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+/// No `Debug`: it holds secrets.
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct HandlesConfig {
     /// Sealing keys by id (`"1"` to `"255"`), base64, 32 bytes each. Every
@@ -149,16 +153,22 @@ impl Default for HandlesConfig {
 pub struct Limits {
     /// Notifications sent through one handle an hour. The app gives each
     /// server a handle of its own, so this is one server's allowance for one
-    /// device, and a server that spends it spends no other server's.
+    /// device, and a server that spends it spends no other server's. Kept
+    /// low: a notification is something a person asked for, a few times an
+    /// hour at most.
     pub handle_alerts_per_hour: u32,
     /// Background wakes through one handle an hour.
     pub handle_wakes_per_hour: u32,
     /// Notifications one device can be sent an hour, from every server
     /// together.
     pub device_alerts_per_hour: u32,
-    /// Background wakes one device can be sent an hour. iOS throttles these
-    /// itself; this bounds what reaches Apple.
+    /// Background wakes one device can be sent an hour, the proofs of its
+    /// registrations included. iOS throttles these itself, to two or three an
+    /// hour; this bounds what reaches Apple.
     pub device_wakes_per_hour: u32,
+    /// Revocations one device can make an hour. Counted apart from its
+    /// wakes, so a server spending those cannot stop the device revoking.
+    pub device_revocations_per_hour: u32,
     /// Pushes from one address a minute. A server with many listeners sends
     /// from one address, so this is generous.
     pub ip_pushes_per_minute: u32,
@@ -170,6 +180,14 @@ pub struct Limits {
     pub ip_revocations_per_minute: u32,
     /// Pushes sent to Apple a second, from everyone.
     pub global_pushes_per_second: u32,
+    /// Proof pushes, for registrations and revocations, sent to Apple a
+    /// second from everyone. Each may be for a token Apple has never issued.
+    pub proofs_per_second: u32,
+    /// Tokens Apple refuses as unknown an hour, from proofs, before the
+    /// relay stops proving any until the count falls back. A run of made-up
+    /// tokens then reaches Apple at this rate at most, at the price of
+    /// registrations waiting while it lasts.
+    pub bad_tokens_per_hour: u32,
     /// Callers each limiter keeps a count for. Past this, a caller it has no
     /// count for is refused until the idle ones are swept.
     pub max_tracked: usize,
@@ -182,15 +200,18 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            handle_alerts_per_hour: 30,
-            handle_wakes_per_hour: 60,
-            device_alerts_per_hour: 120,
-            device_wakes_per_hour: 240,
+            handle_alerts_per_hour: 6,
+            handle_wakes_per_hour: 12,
+            device_alerts_per_hour: 20,
+            device_wakes_per_hour: 30,
+            device_revocations_per_hour: 10,
             ip_pushes_per_minute: 6000,
             ip_registrations_per_minute: 120,
             ip_revocations_per_minute: 60,
             global_pushes_per_second: 20_000,
-            max_tracked: 2_000_000,
+            proofs_per_second: 20,
+            bad_tokens_per_hour: 600,
+            max_tracked: 1_000_000,
             max_revocations: 1_000_000,
             max_requests: 50_000,
         }

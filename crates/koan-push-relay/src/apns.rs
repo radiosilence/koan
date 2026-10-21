@@ -167,6 +167,13 @@ impl Apns {
         };
         let production = gateway(&cfg.production_url, &cfg.production)?;
         let sandbox = gateway(&cfg.sandbox_url, &cfg.sandbox)?;
+        // Sign once now, so a key that cannot sign stops the relay starting
+        // rather than failing every push.
+        for gateway in production.iter().chain(sandbox.iter()) {
+            gateway
+                .bearer()
+                .map_err(|e| format!("signing with key {}: {e}", gateway.key_id))?;
+        }
         if production.is_none() && sandbox.is_none() {
             return Err("no APNs key: set apns.production or apns.sandbox".into());
         }
@@ -268,8 +275,9 @@ fn headers(kind: Kind) -> Headers {
         // expires in a minute would lose the wake.
         Kind::WakeNow => ("background", "5", 60, Some("koan-wake-now")),
         Kind::Summon => ("alert", "10", 2 * 60, Some("koan-summon")),
-        // "Play this" an hour late is not what anyone asked for.
-        Kind::Notify => ("alert", "10", 10 * 60, None),
+        // "Play this" an hour late is not what anyone asked for, and a newer
+        // request replaces an older one rather than stacking.
+        Kind::Notify => ("alert", "10", 10 * 60, Some("koan-play")),
     };
     Headers {
         push_type,
@@ -288,7 +296,10 @@ pub fn payload(kind: Kind, blob: Option<&str>) -> Value {
         "aps": {
             "alert": { "title": ALERT_TITLE, "body": ALERT_BODY },
             "sound": "default",
-            "interruption-level": "time-sensitive",
+            // Never time-sensitive: a relayed notification comes from a
+            // server the relay cannot vouch for, and does not break through
+            // a Focus.
+            "interruption-level": "active",
         },
     });
     if let Some(blob) = blob {

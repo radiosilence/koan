@@ -5,9 +5,15 @@
 //! short: an app registers its device token and gets back a handle, the token
 //! sealed under a key only the relay holds, which it gives its servers. A
 //! server sends the relay a handle and a kind of push, plus for a
-//! notification a blob encrypted to the app. The relay writes everything a
-//! phone shows itself, so a hostile server can do no more than send koan's
-//! own generic text, within quotas, to people who signed in to it.
+//! notification a blob encrypted to the app. The relay writes everything
+//! Apple is sent itself; what a phone shows beyond its generic text is the
+//! app's notification extension's to decide, from a fixed template.
+//!
+//! Everything that reaches Apple is bounded with the developer's account in
+//! mind: tokens are proven before they get a handle, proofs are rate limited
+//! and stop when Apple starts refusing tokens, a token Apple calls gone is
+//! retired, and a credential Apple refuses stops the relay sending until an
+//! operator fixes it.
 //!
 //! Every push is answered from memory: handles carry their device, quotas are
 //! counters, and the revocation table is held whole. The disk is touched only
@@ -41,7 +47,7 @@ use crate::config::{Config, secret};
 use crate::handle::{Handles, MAX_LIFETIME_MS, MAX_TOKEN, MIN_TOKEN, TokenHash, TokenHasher};
 use crate::metrics::{Metrics, Outcome, Route};
 use crate::quota::{Clock, Global, Keyed, Rate, Refused};
-use crate::revocations::{Revocations, RevokeError};
+use crate::revocations::{Revocations, RevokeError, SLACK_MS};
 
 /// The largest request body: a push is a handle, a kind and a blob.
 const MAX_BODY: usize = 8 * 1024;
@@ -62,6 +68,17 @@ const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
 const HOUR: Duration = Duration::from_secs(60 * 60);
 const MINUTE: Duration = Duration::from_secs(60);
 
+/// How long the relay stops sending once Apple refuses the relay itself, and
+/// how often it lets one push through meanwhile to learn whether that is
+/// fixed.
+const BREAKER_OPEN: Duration = Duration::from_secs(5 * 60);
+const BREAKER_PROBE: Duration = Duration::from_secs(60);
+
+/// IPv6 callers to registration and revocation are counted by /48, the
+/// largest block one site is commonly given; pushes by /64.
+const PROOF_PREFIX: u32 = 48;
+const PUSH_PREFIX: u32 = 64;
+
 pub struct Relay {
     handles: Handles,
     hasher: TokenHasher,
@@ -72,10 +89,14 @@ pub struct Relay {
     handle_wakes: Keyed<HandleKey>,
     device_alerts: Keyed<TokenHash>,
     device_wakes: Keyed<TokenHash>,
+    device_revocations: Keyed<TokenHash>,
     ip_pushes: Keyed<u128>,
     ip_registrations: Keyed<u128>,
     ip_revocations: Keyed<u128>,
     global: Global,
+    proofs: Global,
+    bad_tokens: Global,
+    breaker: Breaker,
     in_flight: Semaphore,
     max_in_flight: usize,
     client_ip_header: Option<HeaderName>,
@@ -130,6 +151,10 @@ impl Relay {
             handle_wakes: Keyed::new(Rate::per(l.handle_wakes_per_hour, HOUR), l.max_tracked),
             device_alerts: Keyed::new(Rate::per(l.device_alerts_per_hour, HOUR), l.max_tracked),
             device_wakes: Keyed::new(Rate::per(l.device_wakes_per_hour, HOUR), l.max_tracked),
+            device_revocations: Keyed::new(
+                Rate::per(l.device_revocations_per_hour, HOUR),
+                l.max_tracked,
+            ),
             ip_pushes: Keyed::new(Rate::per(l.ip_pushes_per_minute, MINUTE), l.max_tracked),
             ip_registrations: Keyed::new(
                 Rate::per(l.ip_registrations_per_minute, MINUTE),
@@ -143,6 +168,9 @@ impl Relay {
                 l.global_pushes_per_second,
                 Duration::from_secs(1),
             )),
+            proofs: Global::new(Rate::per(l.proofs_per_second, Duration::from_secs(1))),
+            bad_tokens: Global::new(Rate::per(l.bad_tokens_per_hour, HOUR)),
+            breaker: Breaker::default(),
             in_flight: Semaphore::new(cfg.apns.max_in_flight),
             max_in_flight: cfg.apns.max_in_flight,
             client_ip_header,
@@ -151,9 +179,9 @@ impl Relay {
         }))
     }
 
-    /// Who is calling, for per-address limits. IPv6 callers are counted by
-    /// their /64, which is what one subscriber is usually given.
-    fn caller(&self, headers: &HeaderMap, peer: SocketAddr) -> u128 {
+    /// Who is calling, for per-address limits: an IPv4 address, or an IPv6
+    /// address cut to `prefix` bits, since one subscriber holds a block.
+    fn caller(&self, headers: &HeaderMap, peer: SocketAddr, prefix: u32) -> u128 {
         // The proxies in front append, as a line of their own or to the
         // caller's: counting `client_ip_hops` back from the end passes over
         // them, and anything further back came from the caller.
@@ -177,7 +205,7 @@ impl Relay {
             IpAddr::V4(v4) => u128::from(v4.to_ipv6_mapped()),
             IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
                 Some(v4) => u128::from(v4.to_ipv6_mapped()),
-                None => u128::from(v6) & !((1u128 << 64) - 1),
+                None => u128::from(v6) & (u128::MAX << (128 - prefix)),
             },
         }
     }
@@ -188,6 +216,7 @@ impl Relay {
         self.handle_wakes.sweep(now);
         self.device_alerts.sweep(now);
         self.device_wakes.sweep(now);
+        self.device_revocations.sweep(now);
         self.ip_pushes.sweep(now);
         self.ip_registrations.sweep(now);
         self.ip_revocations.sweep(now);
@@ -366,21 +395,50 @@ struct PushRequest {
 }
 
 impl Relay {
+    /// Send to Apple, unless Apple has lately refused the relay itself:
+    /// then nothing goes but one push a minute, to learn whether that has
+    /// been fixed, and the rest are refused here.
+    async fn send(&self, device: &handle::Device, kind: Kind, blob: Option<&str>) -> Delivery {
+        let now = self.clock.now();
+        if !self.breaker.allows(now) {
+            return Delivery::Rejected(String::new());
+        }
+        let delivery = self.apns.send(device, kind, blob).await;
+        match &delivery {
+            Delivery::Rejected(_) => self.breaker.trip(self.clock.now()),
+            Delivery::Unavailable(_) => {}
+            Delivery::Sent | Delivery::Gone | Delivery::Throttled => self.breaker.reset(),
+        }
+        delivery
+    }
+
     /// Send a token a background push, to learn that Apple knows it. A
     /// handle is minted and a revocation recorded only for a real device,
     /// so neither can be had for a made-up token. The app is open when it
     /// registers or revokes, so the wake asks nothing of it.
-    async fn prove(&self, token: Vec<u8>, sandbox: bool) -> Result<(), Refusal> {
+    ///
+    /// Proofs are where made-up tokens reach Apple, so they have limits of
+    /// their own: a rate for everyone, and a count of tokens Apple refused,
+    /// past which no proof is sent until it falls back. The device's own
+    /// allowance (`per_device`) is looked at first and spent only once Apple
+    /// has accepted the token, so a made-up token is never tracked.
+    async fn prove(
+        &self,
+        token: Vec<u8>,
+        sandbox: bool,
+        per_device: &Keyed<TokenHash>,
+    ) -> Result<(), Refusal> {
         if !self.apns.serves(sandbox) {
             return Err(Refusal::Bad("this relay does not serve that gateway"));
         }
-        // A wake like any other: it counts against the device's ceiling, so
-        // registering over and over is no way to wake a phone.
         let device = self.hasher.hash(&token);
         let now = self.clock.now();
+        per_device.admits(&device, now).map_err(limited)?;
+        if !self.bad_tokens.admits(now) {
+            return Err(Refusal::Busy);
+        }
+        self.proofs.check(now).map_err(|_| Refusal::Busy)?;
         let mut charge = Charge::new(self);
-        self.device_wakes.check(device, now).map_err(limited)?;
-        charge.device = Some((&self.device_wakes, device));
         self.global.check(now).map_err(|_| Refusal::Busy)?;
         charge.global = true;
         let Ok(_permit) = self.in_flight.try_acquire() else {
@@ -392,13 +450,17 @@ impl Relay {
             minted_ms: 0,
             id: [0; aws_lc_rs::aead::NONCE_LEN],
         };
-        match self.apns.send(&probe, Kind::WakeNow, None).await {
+        match self.send(&probe, Kind::WakeNow, None).await {
             Delivery::Sent => {
                 charge.spent = true;
+                // Spent now that the token is known real. Two proofs racing
+                // past the look above may both land; the next is refused.
+                let _ = per_device.check(device, self.clock.now());
                 Ok(())
             }
             Delivery::Gone => {
                 charge.spent = true;
+                self.bad_tokens.charge(self.clock.now());
                 Err(Refusal::Bad("not a device token"))
             }
             Delivery::Throttled => {
@@ -407,6 +469,16 @@ impl Relay {
             }
             delivery => Err(unavailable(delivery)),
         }
+    }
+
+    /// Retire every handle for a device Apple says is gone, so no server
+    /// can keep sending to it. Off the request: the answer is already known.
+    fn retire(self: &Arc<Self>, device: TokenHash) {
+        let relay = self.clone();
+        tokio::task::spawn_blocking(move || match relay.revocations.revoke(device, unix_ms()) {
+            Ok(()) | Err(RevokeError::Full) => {}
+            Err(RevokeError::Store(e)) => log::error!("retiring a gone token: {e}"),
+        });
     }
 
     /// Count a request's outcome and answer it.
@@ -428,7 +500,7 @@ async fn register(
     body: Bytes,
 ) -> Response {
     let answer = async {
-        let caller = relay.caller(&headers, peer);
+        let caller = relay.caller(&headers, peer, PROOF_PREFIX);
         relay
             .ip_registrations
             .check(caller, relay.clock.now())
@@ -436,14 +508,16 @@ async fn register(
         let req: TokenRequest = parse(&body)?;
         let token = device_token(&req.token)?;
         let device = relay.hasher.hash(&token);
-        relay.prove(token.clone(), req.sandbox).await?;
+        relay
+            .prove(token.clone(), req.sandbox, &relay.device_wakes)
+            .await?;
         let now = unix_ms();
-        // A handle minted in the same millisecond as a revocation would be
-        // revoked by it.
+        // Past the reach of the device's last revocation, which would
+        // otherwise retire this handle too.
         let minted = relay
             .revocations
             .revoked_at(&device)
-            .map_or(now, |at| now.max(at + 1));
+            .map_or(now, |at| now.max(at + SLACK_MS + 1));
         Ok(Json(Registered {
             handle: relay.handles.seal(&token, req.sandbox, minted),
             expires: (minted + relay.handles.lifetime_ms()) / 1000,
@@ -461,7 +535,7 @@ async fn revoke(
     body: Bytes,
 ) -> Response {
     let answer = async {
-        let caller = relay.caller(&headers, peer);
+        let caller = relay.caller(&headers, peer, PROOF_PREFIX);
         relay
             .ip_revocations
             .check(caller, relay.clock.now())
@@ -472,7 +546,9 @@ async fn revoke(
         if !relay.revocations.has_room(&device) {
             return Err(Refusal::Busy);
         }
-        relay.prove(token, req.sandbox).await?;
+        relay
+            .prove(token, req.sandbox, &relay.device_revocations)
+            .await?;
         let writer = relay.clone();
         let revoked =
             tokio::task::spawn_blocking(move || writer.revocations.revoke(device, unix_ms())).await;
@@ -500,7 +576,7 @@ async fn push(
     body: Bytes,
 ) -> Response {
     let answer = async {
-        let caller = relay.caller(&headers, peer);
+        let caller = relay.caller(&headers, peer, PUSH_PREFIX);
         let now = relay.clock.now();
         relay.ip_pushes.check(caller, now).map_err(limited)?;
         let req: PushRequest = parse(&body)?;
@@ -539,10 +615,7 @@ async fn push(
         let Ok(_permit) = relay.in_flight.try_acquire() else {
             return Err(Refusal::Busy);
         };
-        let delivery = relay
-            .apns
-            .send(&device, req.kind, req.blob.as_deref())
-            .await;
+        let delivery = relay.send(&device, req.kind, req.blob.as_deref()).await;
         if matches!(
             delivery,
             Delivery::Sent | Delivery::Gone | Delivery::Throttled
@@ -554,7 +627,10 @@ async fn push(
                 relay.metrics.sent(req.kind);
                 Ok(StatusCode::NO_CONTENT.into_response())
             }
-            Delivery::Gone => Err(Refusal::Gone),
+            Delivery::Gone => {
+                relay.retire(hash);
+                Err(Refusal::Gone)
+            }
             Delivery::Throttled => Err(Refusal::Limited(Duration::from_secs(60))),
             delivery => Err(unavailable(delivery)),
         }
@@ -607,8 +683,12 @@ impl Drop for Charge<'_> {
 /// names the device.
 fn unavailable(delivery: Delivery) -> Refusal {
     match delivery {
+        // Empty when the breaker refused it here, which was logged when it
+        // tripped.
         Delivery::Rejected(reason) => {
-            log::error!("apns refused the relay: {reason}");
+            if !reason.is_empty() {
+                log::error!("apns refused the relay: {reason}");
+            }
             Refusal::Broken
         }
         Delivery::Unavailable(reason) => {
@@ -616,6 +696,50 @@ fn unavailable(delivery: Delivery) -> Refusal {
             Refusal::Busy
         }
         Delivery::Sent | Delivery::Gone | Delivery::Throttled => Refusal::Busy,
+    }
+}
+
+/// Open while Apple refuses the relay itself: a wrong key, team, topic or
+/// environment. Sending on with a credential Apple has refused is what gets
+/// a key looked at, so the relay stops, and probes now and then.
+#[derive(Default)]
+struct Breaker {
+    /// Until when it stays open, in `Clock` time; zero when closed.
+    open_until: std::sync::atomic::AtomicU64,
+    /// When the next probe may go while open.
+    next_probe: std::sync::atomic::AtomicU64,
+}
+
+impl Breaker {
+    fn allows(&self, now: u64) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        if now >= self.open_until.load(Relaxed) {
+            return true;
+        }
+        let next = self.next_probe.load(Relaxed);
+        now >= next
+            && self
+                .next_probe
+                .compare_exchange(
+                    next,
+                    now + BREAKER_PROBE.as_nanos() as u64,
+                    Relaxed,
+                    Relaxed,
+                )
+                .is_ok()
+    }
+
+    fn trip(&self, now: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.open_until
+            .store(now + BREAKER_OPEN.as_nanos() as u64, Relaxed);
+        self.next_probe
+            .store(now + BREAKER_PROBE.as_nanos() as u64, Relaxed);
+    }
+
+    fn reset(&self) {
+        self.open_until
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
