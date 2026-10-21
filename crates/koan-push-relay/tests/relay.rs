@@ -576,6 +576,36 @@ async fn a_proven_token_apple_now_refuses_is_retired() {
 }
 
 #[tokio::test]
+async fn a_burst_to_one_stale_device_does_not_stop_the_gateway() {
+    let h = Harness::start(|_| {}).await;
+    let stale = h.register(TOKEN).await;
+    let other = h.register(&"ff".repeat(32)).await;
+    h.gateway.answer(400, "BadDeviceToken");
+    *h.gateway.delay.lock() = std::time::Duration::from_millis(200);
+    let burst: Vec<_> = (0..8)
+        .map(|_| {
+            let http = h.http.clone();
+            let url = format!("{}/v1/push", h.url);
+            let stale = stale.clone();
+            tokio::spawn(async move {
+                http.post(url)
+                    .json(&json!({ "handle": stale, "kind": "wake" }))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+            })
+        })
+        .collect();
+    for push in burst {
+        assert_eq!(push.await.unwrap(), 410);
+    }
+    *h.gateway.delay.lock() = std::time::Duration::ZERO;
+    h.gateway.accept();
+    assert_eq!(h.push(&other, "wake", None).await.status(), 204);
+}
+
+#[tokio::test]
 async fn proven_tokens_refused_across_devices_stop_the_gateway() {
     let h = Harness::start(|_| {}).await;
     let mut handles = Vec::new();

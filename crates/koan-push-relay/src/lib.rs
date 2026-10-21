@@ -74,9 +74,9 @@ const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
 const HOUR: Duration = Duration::from_secs(60 * 60);
 const MINUTE: Duration = Duration::from_secs(60);
 
-/// Proven tokens Apple refuses, across devices, before the relay takes it
-/// that its own topic or gateway is wrong and stops the gateway. One alone
-/// is a single stale token, retired like a gone one.
+/// Devices whose proven token Apple refuses, on one gateway, before the
+/// relay takes it that its own topic or gateway is wrong and stops that
+/// gateway. One alone is a single stale token, retired like a gone one.
 const REFUSED_PROVEN: u32 = 5;
 const REFUSED_PROVEN_WINDOW: Duration = Duration::from_secs(10 * 60);
 
@@ -109,7 +109,13 @@ pub struct Relay {
     global: Global,
     proofs: Global,
     bad_tokens: Global,
-    refused_proven: Global,
+    /// Devices whose proven token Apple refused lately, per gateway.
+    refused_proven: [Global; 2],
+    /// Devices Apple has called gone and the relay is retiring, or could not
+    /// retire for want of room: pushes to them stop here, so a burst to a
+    /// gone device costs Apple no more than its first answer.
+    gone: parking_lot::Mutex<std::collections::HashSet<TokenHash>>,
+    max_gone: usize,
     in_flight: Arc<Semaphore>,
     max_in_flight: usize,
     requests: Semaphore,
@@ -205,7 +211,10 @@ impl Relay {
             global: Global::new(Rate::per(l.global_pushes_per_second, second)),
             proofs: Global::new(Rate::per(l.proofs_per_second, second)),
             bad_tokens: Global::new(Rate::per(l.bad_tokens_per_hour, HOUR)),
-            refused_proven: Global::new(Rate::per(REFUSED_PROVEN, REFUSED_PROVEN_WINDOW)),
+            refused_proven: [(); 2]
+                .map(|_| Global::new(Rate::per(REFUSED_PROVEN, REFUSED_PROVEN_WINDOW))),
+            gone: Default::default(),
+            max_gone: l.max_tracked,
             in_flight: Arc::new(Semaphore::new(cfg.apns.max_in_flight)),
             max_in_flight: cfg.apns.max_in_flight,
             requests: Semaphore::new(l.max_requests),
@@ -432,24 +441,44 @@ impl Relay {
                 // refuses: no server may send to it again.
                 (Delivery::Unregistered | Delivery::BadToken, false) => {
                     charge.spent = true;
-                    let writer = relay.clone();
-                    let device = job.device;
-                    let retired = tokio::task::spawn_blocking(move || {
-                        writer.revocations.revoke(device, unix_ms())
-                    })
-                    .await;
-                    if let Ok(Err(RevokeError::Store(e))) = retired {
-                        log::error!("retiring a gone token: {e}");
-                    }
-                    // Several proven tokens refused in a short while say the
-                    // relay's topic or gateway has changed under them.
-                    if delivery == Delivery::BadToken {
-                        relay.refused_proven.charge(now);
-                        if !relay.refused_proven.admits(now) {
-                            log::error!(
-                                "apns refuses proven tokens: is the topic or gateway right?"
-                            );
-                            relay.apns.trip(job.sandbox);
+                    // The first answer for a device retires it; pushes that
+                    // were already on their way add nothing.
+                    let first = {
+                        let mut gone = relay.gone.lock();
+                        gone.len() < relay.max_gone && gone.insert(job.device)
+                    };
+                    if first {
+                        let writer = relay.clone();
+                        let device = job.device;
+                        let retired = tokio::task::spawn_blocking(move || {
+                            writer.revocations.revoke(device, unix_ms())
+                        })
+                        .await;
+                        match retired {
+                            // Retired on disk: the revocation table answers
+                            // for it from now on.
+                            Ok(Ok(())) => {
+                                relay.gone.lock().remove(&job.device);
+                            }
+                            // No room: it stays stopped here.
+                            Ok(Err(RevokeError::Full)) => {}
+                            Ok(Err(RevokeError::Store(e))) => {
+                                log::error!("retiring a gone token: {e}");
+                            }
+                            Err(e) => log::error!("retiring a gone token: {e}"),
+                        }
+                        // Several devices' proven tokens refused in a short
+                        // while say the relay's topic or gateway has changed
+                        // under them.
+                        if delivery == Delivery::BadToken {
+                            let refused = &relay.refused_proven[usize::from(job.sandbox)];
+                            refused.charge(now);
+                            if !refused.admits(now) {
+                                log::error!(
+                                    "apns refuses proven tokens: is the topic or gateway right?"
+                                );
+                                relay.apns.trip(job.sandbox);
+                            }
                         }
                     }
                 }
@@ -842,7 +871,7 @@ async fn push(
             return Err(Refusal::Bad("a revoker is not a handle"));
         }
         let hash = relay.hasher.hash(&device.token);
-        if relay.revocations.revoked(&hash, device.minted_ms) {
+        if relay.revocations.revoked(&hash, device.minted_ms) || relay.gone.lock().contains(&hash) {
             return Err(Refusal::Gone);
         }
 
