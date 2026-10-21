@@ -1055,7 +1055,10 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
             .filter_map(|(d, at)| {
                 let near = s.nearby.iter().find(|n| n.hello.id == d.id);
                 let awake = d.linked || near.is_some();
-                if !awake && !kept(&d.id) {
+                // A paired Apple TV was set up to be woken: listed asleep
+                // whether or not it was used here.
+                let paired = COMPANION && d.tv_pairing.is_some();
+                if !awake && !kept(&d.id) && !paired {
                     return None;
                 }
                 Some(Device {
@@ -2797,6 +2800,12 @@ pub(crate) mod tests {
         let listed = list().into_iter().find(|d| d.id == "tv").unwrap();
         assert!(listed.tv_paired);
         assert_eq!(listed.wakeable, COMPANION, "no push, but a pairing");
+        with(|s| s.used.clear());
+        assert_eq!(
+            list().iter().any(|d| d.id == "tv"),
+            COMPANION,
+            "listed asleep though never used here"
+        );
         with(|s| *s = Store::default());
     }
 
