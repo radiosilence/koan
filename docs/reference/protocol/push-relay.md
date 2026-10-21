@@ -242,7 +242,7 @@ The revocation table is a SQLite file, so one process writes it. Replicas each k
 
 ### Deploying
 
-Each release publishes the relay as the image `ghcr.io/radiosilence/koan-push-relay` and the Pulumi component [`@radiosilence/koan-relay-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-relay-pulumi), both at kōan's version, so a pinned package deploys exactly that image. `createPushRelay` makes the Deployment, its Service and a NetworkPolicy; the deployer routes the hostname to the Service, and supplies a Secret holding the credentials (`token-key`, `handle-key-<id>`, and each gateway's `.p8`), so none of them appears in the Deployment.
+The relay is versioned apart from kōan: a kōan release does not change it, and a change to it ships on its own. Each relay release publishes the image `ghcr.io/radiosilence/koan-push-relay` and the Pulumi component [`@radiosilence/koan-relay-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-relay-pulumi) at the relay's version, so a pinned package deploys exactly that image, and is tagged `koan-push-relay-v<version>`. `createPushRelay` makes the Deployment, its Service and a NetworkPolicy; the deployer routes the hostname to the Service, and supplies a Secret holding the credentials (`token-key`, `handle-key-<id>`, and each gateway's `.p8`), so none of them appears in the Deployment.
 
 ```ts
 import { createPushRelay } from "@radiosilence/koan-relay-pulumi";
@@ -257,6 +257,8 @@ createPushRelay(provider, "koan", "push.koan.rocks", {
   },
   store: { hostPath: "/var/lib/koan-push-relay" },
   nodeSelector: { "kubernetes.io/hostname": "…" },
+  // Any of the quotas above, by their camelCase names.
+  limits: { handleAlertsPerHour: 30 },
 });
 ```
 

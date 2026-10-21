@@ -1,6 +1,6 @@
 {
   "name": "@radiosilence/koan-relay-pulumi",
-  "version": "0.66.3",
+  "version": "0.1.0",
   "description": "Pulumi component that deploys koan's push relay into Kubernetes",
   "license": "MIT",
   "author": "James Cleveland <jc@blit.cc>",

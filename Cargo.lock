@@ -3021,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "koan-push-relay"
-version = "0.66.3"
+version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "axum",
