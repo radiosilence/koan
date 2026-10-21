@@ -71,14 +71,17 @@ git switch -c "$branch" origin/main --no-track
 # The workspace version and the internal crates' pins, which must move together.
 sed -i.bak -e "s/^version = \"$current\"/version = \"$version\"/" \
   -e "/^koan-.*path = \"crates\//s/version = \"$current\"/version = \"$version\"/" Cargo.toml
-sed -i.bak "s/^  \"version\": \"$current\"/  \"version\": \"$version\"/" deploy/pulumi/package.json
-sed -i.bak "s/^export const APP_VERSION = \"$current\";/export const APP_VERSION = \"$version\";/" deploy/pulumi/src/versions.ts
+for pkg in deploy/pulumi deploy/relay-pulumi; do
+  sed -i.bak "s/^  \"version\": \"$current\"/  \"version\": \"$version\"/" "$pkg/package.json"
+  sed -i.bak "s/^export const APP_VERSION = \"$current\";/export const APP_VERSION = \"$version\";/" "$pkg/src/versions.ts"
+  rm -f "$pkg/package.json.bak" "$pkg/src/versions.ts.bak"
+  grep -q "\"version\": \"$version\"" "$pkg/package.json"
+  grep -q "APP_VERSION = \"$version\"" "$pkg/src/versions.ts"
+done
 sed -i.bak "s/^        versionName = \"$current\"/        versionName = \"$version\"/" apps/android/app/build.gradle.kts
-rm -f Cargo.toml.bak deploy/pulumi/package.json.bak deploy/pulumi/src/versions.ts.bak apps/android/app/build.gradle.kts.bak
+rm -f Cargo.toml.bak apps/android/app/build.gradle.kts.bak
 
 grep -q "^version = \"$version\"" Cargo.toml
-grep -q "\"version\": \"$version\"" deploy/pulumi/package.json
-grep -q "APP_VERSION = \"$version\"" deploy/pulumi/src/versions.ts
 grep -q "versionName = \"$version\"" apps/android/app/build.gradle.kts
 
 # Only the workspace's own entries change in Cargo.lock.

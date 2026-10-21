@@ -1,0 +1,12 @@
+/**
+ * The version this package deploys: the workspace's version, and the
+ * package's own. The relay and the package that deploys it ship together, so
+ * one number says exactly which build a pin gets. CI refuses a release where
+ * `Cargo.toml`, `package.json` and this disagree.
+ */
+export const APP_VERSION = "0.66.2";
+
+export const VERSIONS = {
+  relay: `ghcr.io/radiosilence/koan-push-relay:v${APP_VERSION}`,
+  alpine: "alpine:3.21",
+} as const;

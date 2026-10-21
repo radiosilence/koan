@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2024",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    // The sources import each other as `./x.ts`, which is what lets them be
+    // read directly in a workspace. On emit TypeScript rewrites those to `.js`
+    // — a published package lands inside node_modules, where Node's type
+    // stripping does not apply, so it has to ship real JavaScript.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

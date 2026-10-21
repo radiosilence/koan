@@ -24,10 +24,10 @@ pub struct Config {
     /// absent.
     pub metrics_listen: Option<SocketAddr>,
     /// The header a trusted proxy in front of the relay puts the caller's
-    /// address in (`cf-connecting-ip`, `x-forwarded-for`). Absent, the
-    /// connection's own address is the caller's. Set it only behind a proxy
-    /// that writes the header: anyone can send it. Behind Cloudflare,
-    /// `cf-connecting-ip`, which it sets to the caller alone.
+    /// address in (`x-real-ip`, `x-forwarded-for`). Absent, the connection's
+    /// own address is the caller's. Set it only behind a proxy that writes
+    /// the header: anyone can send it. Behind Traefik, `x-real-ip`, which it
+    /// sets to the caller alone.
     pub client_ip_header: Option<String>,
     /// Which address in that header, counting back from the end, is the
     /// caller: 1 for the last, which is the caller in a header that holds

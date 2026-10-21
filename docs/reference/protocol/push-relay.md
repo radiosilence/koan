@@ -175,9 +175,10 @@ It writes no request log, and nothing it writes to disk or to its own log names 
 listen = "0.0.0.0:8080"
 # Prometheus metrics and /healthz, for the cluster only.
 metrics_listen = "0.0.0.0:9090"
-# Only behind a proxy that sets this header itself. Behind Cloudflare,
-# cf-connecting-ip holds the caller alone.
-client_ip_header = "cf-connecting-ip"
+# Only behind a proxy that sets this header itself. Traefik overwrites
+# x-real-ip with the address it saw on every request from a source it does
+# not trust, so it holds the caller alone.
+client_ip_header = "x-real-ip"
 # Which address in that header, counting back from the end, is the caller:
 # 1 for a header holding only the caller, or one proxy appending what it saw
 # to x-forwarded-for; 2 behind two proxies that each append.
@@ -238,3 +239,25 @@ Every push is answered from memory, so Apple's round trip, carried over `connect
 `/metrics` on the metrics listener counts requests by route and outcome, pushes sent by kind, proofs by Apple's answer, and shows each gateway's breaker (`koan_relay_production_held`, `koan_relay_sandbox_held`), which is worth an alert.
 
 The revocation table is a SQLite file, so one process writes it. Replicas each keep their own quotas, which multiplies the allowances by the number of replicas, and would need a shared revocation table; until there is a need for more than one process, there is one.
+
+### Deploying
+
+Each release publishes the relay as the image `ghcr.io/radiosilence/koan-push-relay` and the Pulumi component [`@radiosilence/koan-relay-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-relay-pulumi), both at kōan's version, so a pinned package deploys exactly that image. `createPushRelay` makes the Deployment, its Service and a NetworkPolicy; the deployer routes the hostname to the Service, and supplies a Secret holding the credentials (`token-key`, `handle-key-<id>`, and each gateway's `.p8`), so none of them appears in the Deployment.
+
+```ts
+import { createPushRelay } from "@radiosilence/koan-relay-pulumi";
+
+createPushRelay(provider, "koan", "push.koan.rocks", {
+  existingSecret: "koan-push-relay",
+  apns: {
+    teamId: "…",
+    // A team key serves both gateways from one entry.
+    production: { keyId: "…", secretKey: "apns-key" },
+    sandbox: { keyId: "…", secretKey: "apns-key" },
+  },
+  store: { hostPath: "/var/lib/koan-push-relay" },
+  nodeSelector: { "kubernetes.io/hostname": "…" },
+});
+```
+
+The component runs one replica and replaces it rather than rolling it, since a rollout would briefly run two writers. A `store.hostPath` needs the pod pinned to that node. Only the proxy may reach the relay's port, since the relay limits callers by the address that proxy writes: anything else reaching it could choose its own address. By default that is Traefik, by its pod label; `networkPolicy.from` names another.

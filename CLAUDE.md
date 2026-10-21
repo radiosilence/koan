@@ -9,7 +9,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core only. Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
-- **koan-push-relay** — binary crate (`koan-push-relay`), the service at `push.koan.rocks` that forwards pushes for servers without Apple's key. Depends on no other koan crate. Not published to crates.io. See `docs/reference/protocol/push-relay.md`.
+- **koan-push-relay** — binary crate (`koan-push-relay`), the service at `push.koan.rocks` that forwards pushes for servers without Apple's key. Depends on no other koan crate. Not published to crates.io; released as the `koan-push-relay` image and deployed with `@radiosilence/koan-relay-pulumi` (`deploy/relay-pulumi`). See `docs/reference/protocol/push-relay.md`.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
@@ -85,7 +85,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 ## Releasing
 
-`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, and the changelog section as notes) and the Homebrew formulae. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
+`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, the `package.json` and `src/versions.ts` of `deploy/pulumi` and `deploy/relay-pulumi`, and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container images (koan and the push relay), the Pulumi packages, the GitHub release (binaries, the macOS app, the Android APK, and the changelog section as notes) and the Homebrew formulae. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
 
 ## Docs and site
 
@@ -154,7 +154,7 @@ Development builds are signed with a self-signed certificate — `just macos-sig
 
 Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git push` and refuses the push if it changed anything. Clippy and the tests are CI's, so a push is never held up running them locally.
 
-`deploy/pulumi/package.json`'s `version` and `deploy/pulumi/src/versions.ts`'s `APP_VERSION` move with the workspace version in `Cargo.toml`; `check-version` in CI fails a build where they drift.
+The `version` in `package.json` and `APP_VERSION` in `src/versions.ts`, in both `deploy/pulumi` and `deploy/relay-pulumi`, move with the workspace version in `Cargo.toml`; `check-version` in CI fails a build where they drift.
 
 **Zero warnings policy.** Fix all clippy/compiler/lint warnings immediately. Run fmt after every change.
 

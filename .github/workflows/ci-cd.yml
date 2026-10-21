@@ -173,7 +173,7 @@ jobs:
             # the image only when the recipe changed; main whenever what they
             # contain did, since CD ships them.
             if [ "$EVENT" = "pull_request" ] || [ "$rust" = false ]; then
-              touches '^Dockerfile$|^\.github/' || docker=false
+              touches '(^|/)Dockerfile$|^\.github/' || docker=false
             fi
             if [ "$EVENT" = "pull_request" ]; then
               # A new advisory can land on any day; main audits every push.
@@ -415,21 +415,25 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   pulumi-package:
-    name: Pulumi package
+    name: Pulumi package (${{ matrix.package }})
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.package == 'true'
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [pulumi, relay-pulumi]
     defaults:
       run:
-        working-directory: deploy/pulumi
+        working-directory: deploy/${{ matrix.package }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: deploy/pulumi/package-lock.json
+          cache-dependency-path: deploy/${{ matrix.package }}/package-lock.json
       - run: npm ci
       - run: npm run check
       - run: npm run build
@@ -452,8 +456,10 @@ jobs:
         include:
           # Pinned: the image's runtime must have at least this glibc.
           - name: koan-linux-x86_64
+            relay: push-relay-linux-x86_64
             runner: ubuntu-24.04
           - name: koan-linux-arm64
+            relay: push-relay-linux-arm64
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -465,16 +471,24 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: ${{ matrix.name }}
-      # The CLI alone: the workspace would also build koan-ffi, which no
-      # binary here contains. Tarred, because an artifact does not keep the
-      # executable bit; the tarball is the release's download as it stands.
+      # The CLI and the push relay: the workspace would also build koan-ffi,
+      # which no binary here contains. Tarred, because an artifact does not
+      # keep the executable bit; the CLI's tarball is the release's download
+      # as it stands. The relay's artifact is not named `koan-*`, which the
+      # release attaches.
       - run: |
-          cargo build --release --locked -p koan-cli
+          cargo build --release --locked -p koan-cli -p koan-push-relay
           tar czf "${{ matrix.name }}.tar.gz" -C target/release koan
+          tar czf "${{ matrix.relay }}.tar.gz" -C target/release koan-push-relay
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}.tar.gz
+          retention-days: ${{ needs.changes.outputs.release == 'true' && 90 || 7 }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.relay }}
+          path: ${{ matrix.relay }}.tar.gz
           retention-days: ${{ needs.changes.outputs.release == 'true' && 90 || 7 }}
 
   # The binaries above in a runtime image, for both architectures. A pull
@@ -483,28 +497,40 @@ jobs:
   # `main`, and a release's version and `latest`, onto it only once `Checks`
   # has passed.
   container:
-    name: Container image
+    name: Container image (${{ matrix.image }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [changes, linux-build]
     if: ${{ !cancelled() && needs.linux-build.result == 'success' }}
     concurrency:
-      group: container-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: container-${{ matrix.image }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: koan
+            artifact: koan-linux
+            file: Dockerfile
+          - image: koan-push-relay
+            artifact: push-relay-linux
+            file: crates/koan-push-relay/Dockerfile
     env:
-      IMAGE: ghcr.io/radiosilence/koan
+      IMAGE: ghcr.io/radiosilence/${{ matrix.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: koan-linux-*
-      - run: |
+          pattern: ${{ matrix.artifact }}-*
+      - env:
+          A: ${{ matrix.artifact }}
+        run: |
           mkdir -p dist/amd64 dist/arm64
-          tar xzf koan-linux-x86_64/koan-linux-x86_64.tar.gz -C dist/amd64
-          tar xzf koan-linux-arm64/koan-linux-arm64.tar.gz -C dist/arm64
+          tar xzf "$A-x86_64/$A-x86_64.tar.gz" -C dist/amd64
+          tar xzf "$A-arm64/$A-arm64.tar.gz" -C dist/arm64
       # The runtime layer's package installs run emulated for arm64. They
       # depend on nothing of koan's, so the registry cache keeps them.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -523,7 +549,7 @@ jobs:
           DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: dist
-          file: Dockerfile
+          file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ env.IMAGE }}:${{ github.sha }}
@@ -770,19 +796,21 @@ jobs:
             echo "$BAD"
             exit 1
           fi
-          # The package is published at the app's own version, so the two must
-          # move together or it ships pointing at the wrong image.
-          PKG_VERSION=$(node -p "require('./deploy/pulumi/package.json').version")
-          PKG_APP_VERSION=$(sed -n 's/^export const APP_VERSION = "\(.*\)";/\1/p' deploy/pulumi/src/versions.ts)
-          if [ "$PKG_VERSION" != "$CURRENT_VERSION" ] || [ "$PKG_APP_VERSION" != "$CURRENT_VERSION" ]; then
-            echo "::error::deploy/pulumi out of sync with ${CURRENT_VERSION}: package.json $PKG_VERSION, versions.ts $PKG_APP_VERSION"
-            exit 1
-          fi
+          # The packages are published at the app's own version, so they must
+          # move together or one ships pointing at the wrong image.
+          for pkg in deploy/pulumi deploy/relay-pulumi; do
+            PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
+            PKG_APP_VERSION=$(sed -n 's/^export const APP_VERSION = "\(.*\)";/\1/p' "$pkg/src/versions.ts")
+            if [ "$PKG_VERSION" != "$CURRENT_VERSION" ] || [ "$PKG_APP_VERSION" != "$CURRENT_VERSION" ]; then
+              echo "::error::$pkg out of sync with ${CURRENT_VERSION}: package.json $PKG_VERSION, versions.ts $PKG_APP_VERSION"
+              exit 1
+            fi
+          done
 
   # `main` follows the last commit whose checks passed. Retagging needs no
   # rebuild.
   container-main:
-    name: Container image (main)
+    name: Container image (main, ${{ matrix.image }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [container, check-version]
@@ -790,13 +818,17 @@ jobs:
     # One at a time across runs: two that read the tag together could both
     # see their commit ahead, and the one finishing last would win.
     concurrency:
-      group: container-main
+      group: container-main-${{ matrix.image }}
       cancel-in-progress: false
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [koan, koan-push-relay]
     env:
-      IMAGE: ghcr.io/radiosilence/koan
+      IMAGE: ghcr.io/radiosilence/${{ matrix.image }}
     steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -967,7 +999,7 @@ jobs:
   # and `latest` once the release's builds have passed: a failed release must
   # not move `latest`. Retagging needs no rebuild, and repeats safely.
   container-release:
-    name: Container image (release tags)
+    name: Container image (release tags, ${{ matrix.image }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [check-version, container, macos-release]
@@ -975,8 +1007,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [koan, koan-push-relay]
     env:
-      IMAGE: ghcr.io/radiosilence/koan
+      IMAGE: ghcr.io/radiosilence/${{ matrix.image }}
       VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -1054,9 +1090,13 @@ jobs:
         run: rm -rf target/package
 
   publish-package:
-    name: Publish Pulumi package
+    name: Publish Pulumi package (${{ matrix.package }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [pulumi, relay-pulumi]
     # Before the release: the updater that deploys koan follows releases, and
     # a release it finds must already have its package. After the image's
     # version tag, which the package pins: a published package promises an
@@ -1068,7 +1108,7 @@ jobs:
       contents: read
     defaults:
       run:
-        working-directory: deploy/pulumi
+        working-directory: deploy/${{ matrix.package }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -1076,7 +1116,7 @@ jobs:
           node-version: 24
           registry-url: https://npm.pkg.github.com
           cache: npm
-          cache-dependency-path: deploy/pulumi/package-lock.json
+          cache-dependency-path: deploy/${{ matrix.package }}/package-lock.json
       - run: npm ci
       # A version cannot be published twice, so a release retried after this
       # step passed finds it out and moves on. Only a 404 means it is not.
