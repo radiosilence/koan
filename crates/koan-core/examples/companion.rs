@@ -9,6 +9,7 @@ use koan_core::remote::companion;
 use std::time::Duration;
 
 fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let addr = || args[1].parse().expect("HOST:PORT");
     match args.first().map(String::as_str) {

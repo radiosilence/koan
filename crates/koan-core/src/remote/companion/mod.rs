@@ -80,9 +80,10 @@ impl From<opack::Malformed> for Error {
 const ANSWER: Duration = Duration::from_secs(3);
 /// How long connecting is given.
 const CONNECT: Duration = Duration::from_secs(4);
-/// The longest `wake` can take: connecting, then the two pair-verify round
-/// trips and the four requests, each waited on for `ANSWER`.
-pub const LONGEST_WAKE: Duration = Duration::from_secs(CONNECT.as_secs() + 6 * ANSWER.as_secs());
+/// The longest `wake` can take: connecting, the two pair-verify round trips
+/// and the seven requests, each waited on for `ANSWER`, and the TV coming up.
+pub const LONGEST_WAKE: Duration =
+    Duration::from_secs(CONNECT.as_secs() + 9 * ANSWER.as_secs() + AWAKE_WITHIN.as_secs());
 /// The largest frame read. A TV's answers are a few kilobytes; a length past
 /// this is from something that is not one.
 const MAX_FRAME: usize = 1 << 20;
@@ -97,7 +98,8 @@ enum Frame {
     Encrypted = 8,
 }
 
-/// Request, as `_t` says.
+/// An event, a request and its response, as `_t` says.
+const EVENT: i64 = 1;
 const REQUEST: i64 = 2;
 const RESPONSE: i64 = 3;
 
@@ -173,7 +175,19 @@ struct Conn {
     stream: TcpStream,
     cipher: Option<Cipher>,
     xid: i64,
+    /// The TV's system status as it last said, once subscribed: asleep,
+    /// screensaver or awake (`AWAKE`).
+    status: Option<i64>,
 }
+
+/// The system status of a TV that is on, out of its screensaver.
+const AWAKE: i64 = 3;
+/// How long a TV waking is given to say it is awake.
+const AWAKE_WITHIN: Duration = Duration::from_secs(8);
+/// After a TV that says nothing of its status is woken, how long before
+/// koan is launched: launched while the box is still coming up, it is sent
+/// to the background as the home screen arrives, and suspended there.
+const SETTLE: Duration = Duration::from_secs(3);
 
 impl Conn {
     fn open(addr: SocketAddr) -> Result<Self, Error> {
@@ -184,6 +198,7 @@ impl Conn {
             stream,
             cipher: None,
             xid: i64::from(u16::from_le_bytes(random())),
+            status: None,
         })
     }
 
@@ -274,11 +289,9 @@ impl Conn {
         ]);
         self.send(Frame::Encrypted, &opack::pack(&msg))?;
         loop {
-            let (kind, body) = self.receive()?;
-            if kind != Frame::Encrypted as u8 || body.is_empty() {
+            let Some(answer) = self.message()? else {
                 continue;
-            }
-            let answer = opack::unpack(&body)?;
+            };
             if answer.get("_t").and_then(Value::as_int) != Some(RESPONSE)
                 || answer.get("_x").and_then(Value::as_int) != Some(xid)
             {
@@ -289,6 +302,64 @@ impl Conn {
             }
             return Ok(answer);
         }
+    }
+
+    /// Send an event, which has no answer.
+    fn event(&mut self, name: &str, content: Value) -> Result<(), Error> {
+        let xid = self.xid;
+        self.xid += 1;
+        let msg = Value::dict([
+            ("_i", name.into()),
+            ("_t", EVENT.into()),
+            ("_c", content),
+            ("_x", xid.into()),
+        ]);
+        self.send(Frame::Encrypted, &opack::pack(&msg))
+    }
+
+    /// The next message, noting a system status event on the way. `None`
+    /// for a frame that is not one.
+    fn message(&mut self) -> Result<Option<Value>, Error> {
+        let (kind, body) = self.receive()?;
+        if kind != Frame::Encrypted as u8 || body.is_empty() {
+            return Ok(None);
+        }
+        let msg = opack::unpack(&body)?;
+        let status = matches!(
+            msg.get("_i").and_then(Value::as_str),
+            Some("SystemStatus" | "TVSystemStatus")
+        );
+        if status && let Some(state) = msg.get("_c").and_then(|c| c.get("state")) {
+            self.status = state.as_int();
+            log::info!("companion: system status {:?}", self.status);
+        }
+        Ok(Some(msg))
+    }
+
+    /// Wait up to `within` for the TV to say it is awake. Whether it did.
+    fn await_awake(&mut self, within: Duration) -> Result<bool, Error> {
+        let until = std::time::Instant::now() + within;
+        while self.status != Some(AWAKE) {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(false);
+            }
+            self.stream.set_read_timeout(Some(left))?;
+            match self.message() {
+                Ok(_) => {}
+                Err(Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(false);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        self.stream.set_read_timeout(Some(ANSWER))?;
+        Ok(true)
     }
 }
 
@@ -506,11 +577,40 @@ pub fn wake(addr: SocketAddr, credential: &Credential, name: &str) -> Result<(),
             ("_sid", i64::from(u32::from_le_bytes(random())).into()),
         ]),
     )?;
-    // The wake button, released: what the Remote app sends.
-    conn.request(
-        "_hidC",
-        Value::dict([("_hBtS", 2.into()), ("_hidC", 13.into())]),
+    // What the TV says of its status, asleep or awake: tvOS answers
+    // `FetchAttentionState` only within a remote session, and some releases
+    // not at all, so the events are what is waited on.
+    let _ = conn.request(
+        "TVRCSessionStart",
+        Value::dict([("ProtocolVersionKey", "1.2".into())]),
+    );
+    conn.event(
+        "_interest",
+        Value::dict([(
+            "_regEvents",
+            Value::Array(vec!["SystemStatus".into(), "TVSystemStatus".into()]),
+        )]),
     )?;
+    if let Ok(answer) = conn.request("FetchAttentionState", Value::dict([])) {
+        if let Some(state) = answer.get("_c").and_then(|c| c.get("state")) {
+            conn.status = state.as_int();
+        }
+    }
+    let asleep = conn.status != Some(AWAKE);
+    if asleep {
+        // The wake button, released: what the Remote app sends.
+        conn.request(
+            "_hidC",
+            Value::dict([("_hBtS", 2.into()), ("_hidC", 13.into())]),
+        )?;
+        // Launched before the TV is up, koan is sent to the background when
+        // the home screen arrives, and suspended there.
+        let known = conn.status.is_some();
+        if !conn.await_awake(AWAKE_WITHIN)? && !known {
+            std::thread::sleep(SETTLE);
+        }
+    }
+    log::info!("companion: launching (was asleep: {asleep})");
     conn.request("_launchApp", Value::dict([("_bundleID", BUNDLE_ID.into())]))?;
     Ok(())
 }
