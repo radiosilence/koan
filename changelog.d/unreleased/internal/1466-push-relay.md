@@ -1,0 +1,1 @@
+- **Push relay.** `koan-push-relay`, the service behind `push.koan.rocks`, forwards pushes to Apple for kōan servers that do not hold the developer's key. Servers hold sealed handles instead of device tokens and choose only the kind of push, so the relay writes everything a phone shows. Nothing uses it yet.
