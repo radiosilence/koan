@@ -540,7 +540,10 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     let csp = full.headers[header::CONTENT_SECURITY_POLICY]
         .to_str()
         .unwrap();
-    assert!(csp.contains("script-src 'self' 'unsafe-eval';") && !csp.contains("unsafe-inline"));
+    assert!(
+        csp.contains("script-src 'self' 'unsafe-eval' 'sha256-") && !csp.contains("unsafe-inline")
+    );
+    assert!(crate::share::import_map_allowed(&full.body, csp), "{csp}");
     // The stylesheet's URL changes with its contents, so an upgrade never pairs
     // new markup with a cached stylesheet.
     let css = &super::ASSETS.css;

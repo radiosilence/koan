@@ -9,7 +9,8 @@
 //!
 //! The page is plain HTML that works without script; with it, koan's browser
 //! player (`scripts/player.ts`, shared with the web UI) plays the tracks
-//! gaplessly. Its CSP allows this server's own scripts and nothing else.
+//! gaplessly. Its CSP allows this server's own scripts and the import map
+//! naming the player, and nothing else.
 
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
@@ -27,14 +28,21 @@ use koan_core::helpers::{ListCredits, RowCredits, credit_text, record_credit};
 
 use crate::html::{Html, Render};
 
-/// The page's own script and stylesheet, from this server and nowhere else;
-/// `connect-src` is for the player fetching the tracks it decodes.
-const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; \
-     media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/// The page's own scripts and stylesheet, from this server and nowhere else,
+/// and the import map naming the player; `connect-src` is for the player
+/// fetching the tracks it decodes.
+static PAGE_CSP: LazyLock<HeaderValue> = LazyLock::new(|| {
+    let csp = format!(
+        "default-src 'none'; script-src 'self' {}; style-src 'self'; font-src 'self'; img-src 'self'; \
+         media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        SHARE_IMPORTS.csp
+    );
+    HeaderValue::from_str(&csp).expect("the CSP is ASCII")
+});
 
 /// The gapless queue player, shared with the web UI.
-pub(crate) const ENGINE_JS: &str = include_str!("../assets/player.js");
-const PLAYER_JS: &str = include_str!("../assets/share.js");
+pub(crate) const ENGINE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/player.js"));
+const PLAYER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/share.js"));
 const PAGE_CSS: &str = include_str!("../assets/share.css");
 /// `path` with a hash of `body`, the asset served there. Assets are cached for
 /// an hour, and the markup depends on its stylesheet: after an upgrade the new
@@ -56,6 +64,48 @@ static SHARE_JS_URL: LazyLock<String> =
     LazyLock::new(|| versioned("/share/assets/share.js", PLAYER_JS));
 static SHARE_ENGINE_URL: LazyLock<String> =
     LazyLock::new(|| versioned("/share/assets/player.js", ENGINE_JS));
+static SHARE_IMPORTS: LazyLock<ImportMap> = LazyLock::new(|| ImportMap::player(&SHARE_ENGINE_URL));
+
+/// An inline import map naming the player `koan/player` at `url`, its
+/// versioned address, which the scripts import it by; and the CSP source that
+/// lets the map through. Importing "./player.js" would fetch the player
+/// without its version, so a tab could pair a new script with an old player
+/// from cache.
+pub(crate) struct ImportMap {
+    pub json: String,
+    pub csp: String,
+}
+
+impl ImportMap {
+    pub(crate) fn player(url: &str) -> Self {
+        let json = serde_json::json!({ "imports": { "koan/player": url } }).to_string();
+        Self {
+            csp: csp_hash(&json),
+            json,
+        }
+    }
+}
+
+/// The CSP source allowing an inline script whose text is `text`.
+pub(crate) fn csp_hash(text: &str) -> String {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+    let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(text));
+    format!("'sha256-{hash}'")
+}
+
+/// Whether `csp` allows the import map inline in `html` by its hash: the map
+/// as the page carries it, not as the server meant to write it.
+#[cfg(test)]
+pub(crate) fn import_map_allowed(html: &str, csp: &str) -> bool {
+    let Some((_, rest)) = html.split_once("<script type=\"importmap\">") else {
+        return false;
+    };
+    let Some((json, _)) = rest.split_once("</script>") else {
+        return false;
+    };
+    csp.contains(&csp_hash(json))
+}
 
 /// The classes in `html` that `css` has no rule for, bar `hooks`: the names
 /// scripts select on. A class Tailwind did not see when it compiled `css` (an
@@ -319,6 +369,7 @@ struct SharePage<'a> {
     albums: Option<Vec<AlbumSection<'a>>>,
     css: &'a str,
     engine: &'a str,
+    imports: &'a str,
     js: &'a str,
 }
 
@@ -506,6 +557,7 @@ fn render(
         albums,
         css: &SHARE_CSS_URL,
         engine: &SHARE_ENGINE_URL,
+        imports: &SHARE_IMPORTS.json,
         js: &SHARE_JS_URL,
     }
     .html()
@@ -540,10 +592,7 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     )
         .into_response();
     let h = resp.headers_mut();
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(PAGE_CSP),
-    );
+    h.insert(header::CONTENT_SECURITY_POLICY, PAGE_CSP.clone());
     h.insert(
         "x-robots-tag",
         HeaderValue::from_static("noindex, nofollow"),
@@ -944,6 +993,7 @@ mod tests {
             "{csp}"
         );
         assert!(!html.contains("<script>"), "no inline script");
+        assert!(super::import_map_allowed(&html, csp), "{csp}");
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@
 @import "tailwindcss" source(none);
 @source "../src/share.rs";
 @source "../templates/share";
-@source "../assets/share.js";
+@source "../scripts/share.ts";
 @import "../../../site/src/theme.css";
 @import "./controls.css";
 

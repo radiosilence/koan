@@ -164,9 +164,9 @@ jobs:
 
             # Anything cargo compiles or that decides how.
             touches '^crates/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^justfile$|^mise\.toml$|^\.github/' || rust=false
-            # The web UI's compiled stylesheets and scripts: their sources,
-            # everything Tailwind reads class names from, and the tools.
-            touches '^crates/koan-server/|^site/src/theme\.css$|^scripts/strip-types\.mjs$|^mise\.toml$|^justfile$|^\.github/' || web=false
+            # The web UI's stylesheets and scripts: their sources, everything
+            # Tailwind reads class names from, and the tools.
+            touches '^crates/koan-server/|^site/src/theme\.css$|^mise\.toml$|^justfile$|^\.github/' || web=false
             touches '^deploy/|^\.github/' || package=false
             # The image is the Linux binaries in a runtime layer. The Rust
             # jobs already check the code, so a pull request builds them and
@@ -332,8 +332,8 @@ jobs:
       - name: Compiled stylesheets match their sources
         run: git diff --exit-code crates/koan-server/assets
 
-  # The web UI's scripts are TypeScript, typechecked and stripped to the
-  # JavaScript the server embeds, which is committed.
+  # The web UI's scripts are TypeScript. Cargo strips their types as it
+  # builds koan-server; this typechecks them.
   js:
     name: Scripts
     runs-on: ubuntu-latest
@@ -344,8 +344,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
-          install_args: just node github:microsoft/typescript-go
-      - run: just js --check
+          install_args: just github:microsoft/typescript-go
+      - run: just js
 
   # Clippy and the tests on one runner, with one target directory and one
   # cache: they share build scripts and proc-macros, which separate jobs each

@@ -1,0 +1,4 @@
+# Compiled from crates/koan-server/styles (`just css`) and committed because the
+# server embeds them.
+crates/koan-server/assets/ui.css linguist-generated=true
+crates/koan-server/assets/share.css linguist-generated=true

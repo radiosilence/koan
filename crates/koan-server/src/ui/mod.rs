@@ -51,16 +51,26 @@ use crate::covers::Covers;
 use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
-/// Everything else is this server's own, and nothing is inline.
-const PAGE_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; font-src 'self'; \
-     img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; \
-     frame-ancestors 'none'";
+/// Everything else is this server's own, and nothing is inline but the import
+/// map naming the player, allowed by its hash.
+static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "default-src 'none'; script-src 'self' 'unsafe-eval' {}; style-src 'self'; font-src 'self'; \
+         img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; \
+         frame-ancestors 'none'",
+        ASSETS.imports.csp
+    )
+});
+/// `PAGE_CSP` as the header every page sends; OAuth's consent page widens the
+/// text instead.
+static PAGE_CSP_HEADER: std::sync::LazyLock<HeaderValue> =
+    std::sync::LazyLock::new(|| HeaderValue::from_str(&PAGE_CSP).expect("the CSP is ASCII"));
 
 /// Sent by the UI's own navigation, which wants the page content without the shell.
 const PARTIAL: &str = "x-koan-partial";
 
 const UI_CSS: &str = include_str!("../../assets/ui.css");
-const UI_JS: &str = include_str!("../../assets/ui.js");
+const UI_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/ui.js"));
 const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
 const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
 
@@ -70,16 +80,19 @@ pub(super) struct AssetUrls {
     pub css_hash: String,
     pub ui_js: String,
     pub player_js: String,
+    pub imports: crate::share::ImportMap,
     pub datastar_js: String,
 }
 
 pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
     use crate::share::versioned;
+    let player_js = versioned("/ui/assets/player.js", crate::share::ENGINE_JS);
     AssetUrls {
         css: versioned("/ui/assets/ui.css", UI_CSS),
         css_hash: crate::share::content_hash(UI_CSS),
         ui_js: versioned("/ui/assets/ui.js", UI_JS),
-        player_js: versioned("/ui/assets/player.js", crate::share::ENGINE_JS),
+        imports: crate::share::ImportMap::player(&player_js),
+        player_js,
         datastar_js: versioned("/ui/assets/datastar.js", DATASTAR_JS),
     }
 });
@@ -399,10 +412,7 @@ fn html(status: StatusCode, body: impl Into<String>) -> Response {
     );
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     h.insert(header::VARY, HeaderValue::from_static("x-koan-partial"));
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(PAGE_CSP),
-    );
+    h.insert(header::CONTENT_SECURITY_POLICY, PAGE_CSP_HEADER.clone());
     h.insert(
         header::REFERRER_POLICY,
         HeaderValue::from_static("same-origin"),
