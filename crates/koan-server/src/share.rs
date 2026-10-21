@@ -23,6 +23,7 @@ use koan_core::db::connection::Database;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries::shares::{ShareKind, ShareRow};
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
+use koan_core::helpers::{ListCredits, RowCredits, credit_text, record_credit};
 
 use crate::html::{Html, Render};
 
@@ -284,8 +285,11 @@ struct Row<'a> {
     n: usize,
     secs: i64,
     dur: String,
-    /// Whether the row names its artist: an album's tracks by the album's
-    /// artist leave it to the heading; a loose list names everyone.
+    /// The track's credit, as koan-core builds it.
+    artist: String,
+    /// Whether the row names its artist: under an album's or an artist's
+    /// heading, only where its credit differs from its record's
+    /// (`RowCredits::differ`); a loose list names everyone.
     credited: bool,
 }
 
@@ -327,8 +331,15 @@ fn render(
     share: &ShareRow,
     tracks: &[TrackRow],
     subject: &Subject,
+    credits: &ListCredits,
     server_url: Option<&str>,
 ) -> Html {
+    let rows_credited: Vec<RowCredits> = tracks.iter().map(|t| credits.track(t)).collect();
+    let artist_of = |i: usize| credit_text(&rows_credited[i].artist);
+    let record_of = |a: &AlbumRow| {
+        let artists = credits.albums.get(&a.id).map_or(&[][..], Vec::as_slice);
+        credit_text(&record_credit(&a.artist_name, Some(a.artist_id), artists))
+    };
     // The slice as recorded, unless what it names has since left the library.
     let album = match share.slice.kind {
         ShareKind::Album => subject
@@ -341,7 +352,12 @@ fn render(
     let one_album = tracks
         .first()
         .filter(|f| tracks.iter().all(|t| t.album_id == f.album_id))
-        .map(|f| (f.album_title.clone(), f.album_artist_name.clone()));
+        .map(|f| {
+            (
+                f.album_title.clone(),
+                credit_text(&rows_credited[0].album_artist),
+            )
+        });
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
     let count = plural(tracks.len(), "track");
     let start = share
@@ -351,23 +367,24 @@ fn render(
     let note = share.description.clone().filter(|d| !d.trim().is_empty());
 
     let (title, sub, og_type, og_title, og_desc) = if let Some(album) = album {
-        let mut sub = vec![album.artist_name.clone()];
+        let by = record_of(album);
+        let mut sub = vec![by.clone()];
         sub.extend(year(album.date.as_deref()).map(str::to_owned));
         sub.push(count.clone());
         sub.push(duration(Some(total)));
-        match start.map(|i| &tracks[i]) {
-            Some(t) => (
+        match start {
+            Some(i) => (
                 album.title.clone(),
                 sub,
                 "music.song",
-                format!("{} · {}", t.title, t.artist_name),
-                format!("From {} by {}", album.title, album.artist_name),
+                format!("{} · {}", tracks[i].title, artist_of(i)),
+                format!("From {} by {by}", album.title),
             ),
             None => (
                 album.title.clone(),
                 sub.clone(),
                 "music.album",
-                format!("{} · {}", album.title, album.artist_name),
+                format!("{} · {by}", album.title),
                 sub[1..].join(" · "),
             ),
         }
@@ -436,8 +453,9 @@ fn render(
             },
             secs: t.duration_ms.unwrap_or(0) / 1000,
             dur: duration(t.duration_ms),
+            artist: artist_of(i),
             credited: if one_album.is_some() || artist.is_some() {
-                t.artist_name != t.album_artist_name
+                rows_credited[i].differ()
             } else {
                 true
             },
@@ -498,11 +516,13 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
         let (db, share, tracks) = live(&s.pool, &id)?;
         let _ = queries::shares::record_visit(&db.conn, &id, now());
         let subject = subject(&db, &share, &tracks);
+        let credits = ListCredits::read_rows(&db.conn, &tracks);
         Some(render(
             &id,
             &share,
             &tracks,
             &subject,
+            &credits,
             s.server_url.as_deref(),
         ))
     })
@@ -607,21 +627,35 @@ fn archive(
     share: &ShareRow,
     tracks: &[TrackRow],
     subject: &Subject,
+    credits: &ListCredits,
 ) -> (String, Vec<(String, PathBuf)>) {
     let artist = subject.artist.as_ref();
+    let credited = |t: &TrackRow| credits.track(t);
     let one_album = tracks
         .first()
         .filter(|f| tracks.iter().all(|t| t.album_id == f.album_id));
     let folder = match (artist, one_album) {
         (Some(a), _) => a.name.clone(),
         (None, Some(t)) if share.slice.kind == ShareKind::Album => {
-            format!("{} - {}", t.album_artist_name, t.album_title)
+            format!(
+                "{} - {}",
+                credit_text(&credited(t).album_artist),
+                t.album_title
+            )
         }
         _ => share
             .description
             .clone()
             .filter(|d| !d.trim().is_empty())
-            .or_else(|| one_album.map(|t| format!("{} - {}", t.album_artist_name, t.album_title)))
+            .or_else(|| {
+                one_album.map(|t| {
+                    format!(
+                        "{} - {}",
+                        credit_text(&credited(t).album_artist),
+                        t.album_title
+                    )
+                })
+            })
             .unwrap_or_else(|| "koan share".into()),
     };
     let files = tracks
@@ -636,7 +670,7 @@ fn archive(
             let credit = if one_album.is_some() || artist.is_some() {
                 String::new()
             } else {
-                format!("{} - ", t.artist_name)
+                format!("{} - ", credit_text(&credited(t).artist))
             };
             let name = file_name(&format!("{:02} {credit}{}", i + 1, t.title));
             let name = match artist {
@@ -672,7 +706,8 @@ async fn download(State(s): State<ShareState>, Path(id): Path<String>) -> Respon
     let found = blocking(move || {
         let (db, share, tracks) = live(&s.pool, &id)?;
         let subject = subject(&db, &share, &tracks);
-        let (folder, files) = archive(&share, &tracks, &subject);
+        let credits = ListCredits::read_rows(&db.conn, &tracks);
+        let (folder, files) = archive(&share, &tracks, &subject, &credits);
         (!files.is_empty()).then_some((folder, files))
     })
     .await;

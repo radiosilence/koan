@@ -3,8 +3,8 @@
 <ol class="grid">
 {%- for r in rows %}
 {#- share.js marks the row playing. #}
-<li class="group flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-hover/30 focus-visible:bg-hover/30 focus-visible:outline-none max-wide:px-0" tabindex="0" data-src="/share/{{ id }}/{{ r.pos }}" data-dur="{{ r.secs }}" data-title="{{ r.track.title }}" data-artist="{{ r.track.artist_name }}" data-album="{{ r.track.album_title }}"><span class="w-[1.5em] text-right text-muted tabular-nums group-[.playing]:text-brand">{{ r.n }}</span>
-<span class="min-w-0 flex-1 truncate group-[.playing]:text-brand">{{ r.track.title }}{% if r.credited %}<small class="block truncate text-meta text-muted">{{ r.track.artist_name }}</small>{% endif %}</span>
+<li class="group flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-hover/30 focus-visible:bg-hover/30 focus-visible:outline-none max-wide:px-0" tabindex="0" data-src="/share/{{ id }}/{{ r.pos }}" data-dur="{{ r.secs }}" data-title="{{ r.track.title }}" data-artist="{{ r.artist }}" data-album="{{ r.track.album_title }}"><span class="w-[1.5em] text-right text-muted tabular-nums group-[.playing]:text-brand">{{ r.n }}</span>
+<span class="min-w-0 flex-1 truncate group-[.playing]:text-brand">{{ r.track.title }}{% if r.credited %}<small class="block truncate text-meta text-muted">{{ r.artist }}</small>{% endif %}</span>
 <span class="text-meta text-muted tabular-nums">{{ r.dur }}</span></li>
 {%- endfor %}
 </ol>

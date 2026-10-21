@@ -348,12 +348,7 @@ pub struct PlayHistoryEntry {
 impl Track {
     /// The row, with its record's artist and the credits `ListCredits` built
     /// for it.
-    pub(crate) fn from_row(
-        r: TrackRow,
-        is_favourite: bool,
-        album_artist_id: Option<i64>,
-        credits: helpers::RowCredits,
-    ) -> Self {
+    pub(crate) fn from_row(r: TrackRow, is_favourite: bool, credits: helpers::RowCredits) -> Self {
         let path = r.path.clone().or_else(|| r.cached_path.clone());
         let credits = Credits::from(credits);
         Self {
@@ -362,7 +357,7 @@ impl Track {
             artist_credit: credits.artist,
             album_artist_credit: credits.album_artist,
             credit_differs: credits.differ,
-            album_artist_id,
+            album_artist_id: r.album_artist_id,
             artist_name: r.artist_name,
             album_artist_name: r.album_artist_name,
             album_title: r.album_title,

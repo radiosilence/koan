@@ -15,7 +15,9 @@ use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
 use koan_core::db::queries::batch::CreditsOf;
 use koan_core::db::queries::{self, AlbumRow, TrackRow};
-use koan_core::helpers::{CreditPart, ShareTarget, credit_parts, credits_by_id};
+use koan_core::helpers::{
+    CreditPart, ListCredits, RowCredits, ShareTarget, credits_by_id, record_credit,
+};
 
 use super::browse::{self, Browse, Kind};
 use super::favourite::Hearts;
@@ -309,28 +311,31 @@ pub(super) fn link(kind: &str, id: Option<i64>, name: &str) -> Html {
 }
 
 /// The artists credited on a page's tracks and albums, read once for the
-/// page. Where the read fails each credit is one link, to the artist it is
-/// filed under.
+/// page, as koan-core builds every credit. Where the read fails each credit
+/// is one link, to the artist it is filed under.
 #[derive(Default)]
 pub(super) struct Credits {
-    tracks: HashMap<i64, Vec<(i64, String)>>,
+    list: ListCredits,
+    /// The albums the page lists as albums, beside its tracks' records.
     albums: HashMap<i64, Vec<(i64, String)>>,
 }
 
 impl Credits {
     pub(super) fn load(conn: &rusqlite::Connection, tracks: &[TrackRow], albums: &[i64]) -> Self {
-        let read = |of, ids: &[i64]| credits_by_id(conn, of, ids).unwrap_or_default();
-        let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
         Self {
-            tracks: read(CreditsOf::Tracks, &ids),
-            albums: read(CreditsOf::Albums, albums),
+            list: ListCredits::read_rows(conn, tracks),
+            albums: credits_by_id(conn, CreditsOf::Albums, albums).unwrap_or_default(),
         }
+    }
+
+    /// A track's credit and its record's.
+    pub(super) fn row(&self, t: &TrackRow) -> RowCredits {
+        self.list.track(t)
     }
 
     /// A track's artist credit.
     pub(super) fn track(&self, t: &TrackRow) -> Vec<CreditPart> {
-        let artists = self.tracks.get(&t.id).map(Vec::as_slice).unwrap_or(&[]);
-        credit_parts(&t.artist_name, t.artist_id, artists)
+        self.row(t).artist
     }
 
     /// An album's artist credit, `credit` as the row names it.
@@ -341,10 +346,10 @@ impl Credits {
         filed: Option<i64>,
     ) -> Vec<CreditPart> {
         let artists = id
-            .and_then(|id| self.albums.get(&id))
+            .and_then(|id| self.albums.get(&id).or_else(|| self.list.albums.get(&id)))
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        credit_parts(credit, filed, artists)
+        record_credit(credit, filed, artists)
     }
 }
 
@@ -588,14 +593,7 @@ pub(super) async fn album(
             let heading = (discs.len() > 1 && disc != Some(d)).then_some(d);
             disc = Some(d);
             let n = t.track_number.map_or(i + 1, |n| n as usize);
-            let row = track_row(
-                t,
-                n,
-                t.artist_name != album.artist_name,
-                false,
-                can_share,
-                &data,
-            );
+            let row = track_row(t, n, credits.row(t).differ(), false, can_share, &data);
             (heading, row)
         })
         .collect();
