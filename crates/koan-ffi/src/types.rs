@@ -2538,6 +2538,11 @@ pub struct DeviceInfo {
     /// Can be woken from asleep. An asleep device that cannot is shown and
     /// cannot be chosen.
     pub wakeable: bool,
+    /// An Apple TV of the account's that is set up to be woken: see
+    /// `begin_tv_pairing`.
+    pub tv_paired: bool,
+    /// An Apple TV of the account's that this device can set up to be woken.
+    pub tv_pairable: bool,
     /// Unix seconds when it was last reachable.
     pub last_seen: Option<i64>,
     /// While it is being woken, the stage: `network`, `push` or

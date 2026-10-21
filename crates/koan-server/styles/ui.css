@@ -9,7 +9,7 @@
 @source "../src/ui";
 @source "../templates";
 @source not "../templates/share";
-@source "../assets/ui.js";
+@source "../scripts/ui.ts";
 @import "../../../site/src/theme.css";
 @import "./controls.css";
 

@@ -831,6 +831,7 @@ mod tests {
                 wakeable: None,
                 owner: None,
                 acks: false,
+                tv_pairing: None,
             }],
             Some("elsewhere".into()),
         );

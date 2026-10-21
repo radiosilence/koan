@@ -42,3 +42,8 @@ apps/ios/Koan.xcodeproj/
 
 # Python bytecode, rewritten by every run of the scripts
 __pycache__/
+
+# Built from crates/koan-server/scripts by its build.rs
+crates/koan-server/assets/ui.js
+crates/koan-server/assets/player.js
+crates/koan-server/assets/share.js

@@ -491,6 +491,11 @@ pub struct LinkDevice {
     /// `remote::acks`. False from a server or a device that predates that.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub acks: bool,
+    /// An Apple TV's Companion pairing, which wakes it and starts koan there
+    /// from a device on its network: see `remote::companion`. Only ever sent
+    /// for the account's own devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tv_pairing: Option<crate::remote::companion::Credential>,
 }
 
 impl LinkCommand {
@@ -675,6 +680,13 @@ pub enum LinkReport {
     /// `LinkCommand::WatchLevels`. Sent at the analyser's rate, so short.
     Levels {
         f: crate::remote::levels::Frame,
+    },
+    /// Keep `pairing` for the account's Apple TV `device`, made by this
+    /// device on the TV's network, or with `None` drop the one kept. The
+    /// server hands it to the account's devices on `LinkDevice::tv_pairing`.
+    TvPairing {
+        device: String,
+        pairing: Option<crate::remote::companion::Credential>,
     },
 }
 

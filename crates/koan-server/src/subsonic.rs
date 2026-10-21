@@ -64,6 +64,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::SCROBBLING, &[1]),
     (koan_core::remote::profile::DSP_PROFILES, &[1]),
     (koan_core::remote::profile::DSP_DELETED, &[1]),
+    (koan_core::remote::profile::TV_PAIRING, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -6243,6 +6244,14 @@ async fn link_session(
                                 let username = username.clone();
                                 tokio::task::spawn_blocking(move || {
                                     if let Err(e) = registry.forget(&username, &forgotten) {
+                                        log::info!("devices: {e}");
+                                    }
+                                });
+                            }
+                            Ok(LinkReport::TvPairing { device: tv, pairing }) => {
+                                let username = username.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(e) = registry.set_tv_pairing(&username, &tv, pairing.as_ref()) {
                                         log::info!("devices: {e}");
                                     }
                                 });

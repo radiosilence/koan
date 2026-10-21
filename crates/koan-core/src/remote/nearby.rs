@@ -2405,8 +2405,6 @@ pub(crate) mod bonjour {
     /// A service instance resolved: where it is and what it says of itself.
     pub struct Instance {
         pub name: String,
-        /// The interface it was resolved on.
-        pub interface: u32,
         pub host: String,
         pub port: u16,
         pub txt: Vec<u8>,
@@ -2484,10 +2482,9 @@ pub(crate) mod bonjour {
             }
             DNSServiceRefDeallocate(sd);
         }
-        let (interface, host, port, txt) = out?;
+        let (_, host, port, txt) = out?;
         Some(Instance {
             name: name.to_string_lossy().into_owned(),
-            interface,
             host,
             port,
             txt,
@@ -2513,10 +2510,6 @@ pub(crate) mod bonjour {
             i.txt("server"),
         ))
     }
-
-    /// Asks the responder to send the sleeping host a magic packet through
-    /// whichever Bonjour Sleep Proxy is answering for it.
-    const FLAG_WAKE_ON_RESOLVE: u32 = 0x40000;
 
     /// Every instance of `regtype` announced within `within`, resolved.
     pub fn instances(regtype: &str, within: std::time::Duration) -> Vec<Instance> {
@@ -2585,40 +2578,6 @@ pub(crate) mod bonjour {
                 )
             })
             .collect()
-    }
-
-    /// Resolve the instance `name` of `regtype` in `local.`, on `interface`
-    /// (0 for any). A sleep proxy answers for a host asleep.
-    pub fn resolve_named(
-        name: &str,
-        regtype: &str,
-        interface: u32,
-        within: std::time::Duration,
-    ) -> Option<Instance> {
-        let name = CString::new(name).ok()?;
-        let regtype = CString::new(regtype).ok()?;
-        resolve_raw(0, interface, &name, &regtype, c"local.", within)
-    }
-
-    /// Have the responder send a magic packet to `mac` at `ip` on `interface`.
-    /// It reads the target from the instance name, `MAC@IP`, and only on a
-    /// named interface; nothing answers the resolve itself.
-    pub fn wake_on_resolve(mac: &str, ip: &str, regtype: &str, interface: u32) {
-        let (Ok(name), Ok(regtype)) = (CString::new(format!("{mac}@{ip}")), CString::new(regtype))
-        else {
-            return;
-        };
-        if interface == 0 {
-            return;
-        }
-        resolve_raw(
-            FLAG_WAKE_ON_RESOLVE,
-            interface,
-            &name,
-            &regtype,
-            c"local.",
-            std::time::Duration::from_millis(300),
-        );
     }
 
     #[cfg(test)]
@@ -3116,6 +3075,7 @@ mod tests {
                 wakeable: None,
                 owner: None,
                 acks: false,
+                tv_pairing: None,
             }],
             None,
         );

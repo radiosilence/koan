@@ -53,12 +53,10 @@ css:
     tailwindcss --input crates/koan-server/styles/ui.css --output crates/koan-server/assets/ui.css
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
 
-# Compile the web UI and share page scripts (crates/koan-server/scripts/*.ts):
-# typecheck, then strip the types into assets/. The output is committed, since
-# the server embeds it; `--check` fails if it is stale.
-js *args:
+# Typecheck the web UI and share page scripts (crates/koan-server/scripts/*.ts).
+# Cargo strips their types when it builds koan-server (build.rs).
+js:
     tsc -p crates/koan-server/scripts
-    node --disable-warning=ExperimentalWarning scripts/strip-types.mjs {{args}}
 
 # Compile the kōan icon set (apps/macos/Resources/Icons/*.svg) into
 # Support/KoanGlyphs.swift and the web's crates/koan-server/src/icon/glyphs.rs. The output is committed; `--check` fails if stale.
@@ -236,7 +234,7 @@ macos-bundle: macos-build
              is dropped without a word, so no UPnP renderer or nearby koan
              appears. The iOS bundle declares the same. -->
         <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_airplay._tcp</string><string>_companion-link._tcp</string></array>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
         <key>CFBundleURLTypes</key>
         <array>
             <dict>
@@ -725,7 +723,7 @@ ios-bundle: macos-ffi ios-ffi
                 <key>CFBundleURLSchemes</key><array><string>koan</string></array>
             </dict>
         </array>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_airplay._tcp</string><string>_companion-link._tcp</string></array>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
         <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps on your network to play music on.</string>
     </dict>
     </plist>
