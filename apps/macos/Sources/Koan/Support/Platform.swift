@@ -546,16 +546,23 @@ struct SystemSwitch: ToggleStyle {
 private struct Pressing: ViewModifier {
     let action: (Bool) -> Void
     @GestureState private var held = false
+    @State private var delay: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: .infinity).updating($held) { _, held, _ in held = true }
             )
-            .task(id: held) {
+            .onChange(of: held) { _, held in
+                delay?.cancel()
                 guard held else { return action(false) }
-                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-                action(true)
+                delay = Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    // A lift right at the deadline cancels a sleep that has
+                    // already finished.
+                    guard !Task.isCancelled else { return }
+                    action(true)
+                }
             }
     }
 }

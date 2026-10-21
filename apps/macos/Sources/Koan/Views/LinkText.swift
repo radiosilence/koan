@@ -195,7 +195,6 @@ struct PlayableArtwork: View {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var hovering = false
-    @State private var pressed = false
     @State private var loading = false
 
     var body: some View {

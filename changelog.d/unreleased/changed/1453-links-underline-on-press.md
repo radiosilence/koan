@@ -1,1 +1,1 @@
-- **Links underline while pressed on iPhone and iPad.** A finger held on an artist or album name underlines it, as hover does on the Mac, so a name shows it leads somewhere before it is followed.
+- **Links underline while pressed on iPhone and iPad.** A finger held on an artist or album name underlines it, as hover does on the Mac, so a name shows it leads somewhere before it is followed. The album title under a tile is now a link like the names beside it: it shows the link pointer on the Mac, and while records are being picked it no longer opens the album.
