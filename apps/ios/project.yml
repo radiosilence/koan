@@ -78,6 +78,9 @@ targets:
       path: ../../target/ios-project/koan.entitlements
       properties:
         aps-environment: development
+        # SSDP, which UPnP renderers are found by, is multicast, and iOS
+        # refuses multicast to an app without this.
+        com.apple.developer.networking.multicast: true
         # A request to play reaches through Focus: it was asked for just now.
         com.apple.developer.usernotifications.time-sensitive: true
         # Invite links open the app rather than the join page.
@@ -129,7 +132,8 @@ targets:
         # Transport Security does not apply; local network privacy does.
         NSLocalNetworkUsageDescription: >-
           koan connects to your music server when it is on your local network,
-          and finds other koan apps on it to play music on.
+          finds other koan apps on it to play music on, and finds amplifiers
+          and speakers to play through.
         # How koan apps on one network find each other, and the Apple TVs
         # they wake. See `remote::nearby` and `remote::companion`.
         NSBonjourServices: [_koan._tcp, _companion-link._tcp]

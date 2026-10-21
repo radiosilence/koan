@@ -1,0 +1,1 @@
+- **UPnP on iPhone.** The iPhone finds UPnP and DLNA amplifiers on the network and plays through them, as the Mac and Android do. Apple's multicast entitlement, which finding them needs, is now granted to kōan.
