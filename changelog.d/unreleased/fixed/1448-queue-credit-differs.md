@@ -1,0 +1,1 @@
+- **The terminal queue shows featured artists.** A grouped track row names its artists whenever its credit differs from the record's, as the apps already did; koan-core now makes that decision for every client.

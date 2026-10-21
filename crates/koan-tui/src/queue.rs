@@ -9,6 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
+use koan_core::helpers::QueueCredits;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
@@ -155,6 +156,9 @@ pub struct Facts {
     pub sources: HashMap<i64, (bool, bool)>,
     /// What the queue is, when it is exactly a playlist or an album.
     pub lock: Option<String>,
+    /// Each library track's credit as drawn, where it reads differently from
+    /// its record's (`RowCredits::differ`): the artist line of a grouped row.
+    pub own_credits: HashMap<i64, Option<String>>,
 }
 
 impl Facts {
@@ -180,9 +184,24 @@ impl Facts {
                 .map(|a| a.title),
             None => None,
         };
+        let places = queries::places_for_tracks(&db.conn, &ids).unwrap_or_default();
+        let credits = QueueCredits::read(&db.conn, &places).unwrap_or_default();
+        let own_credits = entries
+            .iter()
+            .filter_map(|e| {
+                let id = e.db_id?;
+                let place = places.get(&id).copied().unwrap_or_default();
+                let row = credits.row(Some(id), place, &e.artist, &e.album_artist);
+                let own = row
+                    .differ()
+                    .then(|| row.artist.iter().map(|p| p.text.as_str()).collect());
+                Some((id, own))
+            })
+            .collect();
         Self {
             sources: queries::sources_for_tracks(&db.conn, &ids).unwrap_or_default(),
             lock,
+            own_credits,
         }
     }
 }
@@ -394,7 +413,7 @@ fn track_of<'e>(
     entries: &'e [QueueEntry],
     grouped: bool,
     line: Line,
-    look: Option<&Look>,
+    look: Option<&Look<'e>>,
     current: bool,
 ) -> rows::Track<'e> {
     let (Line::Track(i) | Line::Single(i)) = line else {
@@ -409,7 +428,13 @@ fn track_of<'e>(
             e.artist.as_str()
         })
     } else {
-        (!e.artist.is_empty() && e.artist != e.album_artist).then_some(e.artist.as_str())
+        match e.db_id.and_then(|id| look?.facts?.own_credits.get(&id)) {
+            Some(own) => own.as_deref(),
+            // Not a library track, or no reading of the library: the tags
+            // are all there is to go on.
+            None => (e.artist != e.album_artist).then_some(e.artist.as_str()),
+        }
+        .filter(|a| !a.is_empty())
     };
     let number = match (single, e.disc, e.track_number) {
         (true, ..) if !grouped => None,

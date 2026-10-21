@@ -257,7 +257,7 @@ struct QueueView: View {
             QueueLine(id: item.queueItemId, kind: .track(
                 QueueRowContent(item: item, numbering: numbering),
                 isCurrent: item.status == .playing,
-                showArtist: !grouped || item.artistCredit.map(\.text).joined() != item.albumArtistCredit.map(\.text).joined(),
+                showArtist: !grouped || item.creditDiffers,
                 artwork: !grouped
             ))
         }
@@ -512,7 +512,7 @@ struct QueueView: View {
                 sent: item,
                 // Ungrouped there is no heading above to say what record this
                 // is, so the row says it itself.
-                showArtist: !grouped || item.artistCredit.map(\.text).joined() != item.albumArtistCredit.map(\.text).joined(),
+                showArtist: !grouped || item.creditDiffers,
                 artwork: !grouped,
                 numbering: numbering
             )
