@@ -278,11 +278,6 @@ final class DspModel {
 
     // MARK: - Choosing
 
-    /// Play the output in use through `profile`, or untouched.
-    func use(_ profile: String?) {
-        act { try await $0.dspAssign(profile: profile) }
-    }
-
     /// Play `device` through `profile`, or untouched, whether or not it is
     /// the output in use. A renderer is named by its UDN.
     func assign(_ profile: String?, to device: String) {
@@ -307,6 +302,14 @@ final class DspModel {
     /// Make `device`'s tuning these EQs, in the order they play.
     func setTunings(_ entries: [DspTuningEntry], for device: String) {
         act { try await $0.dspSetTunings(device: device, tuning: entries) }
+    }
+
+    /// Stop correcting `device` and make its tuning these EQs, in that order.
+    func uncorrect(_ device: String, tunings entries: [DspTuningEntry]) {
+        act {
+            try await $0.dspAssignDevice(device: device, profile: nil)
+            try await $0.dspSetTunings(device: device, tuning: entries)
+        }
     }
 
     /// The profiles, and what `device` plays: the output in use with nil.
