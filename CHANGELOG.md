@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.66.3
+
+### Security
+
+- **Distrusted emSign certificates are refused.** rustls-webpki 0.103.16 and webpki-roots 1.0.10 reject paths through the emSign intermediates whose private keys are public (RUSTSEC-2026-0381, -0382, -0383).
+
+### Changed
+
+- **One account of who a track is by, on every platform.** Artist credits, whether a row names its artists, and which rows sit under one record heading are now decided in koan-core and drawn by every app, the TUI and the web UI. Grouped playlist rows name their artists only where they differ from the record's, playlists show singles as one row, album pages decide per track, the transport and downloads link each credited artist, and system now-playing, share pages and share downloads use the credit as it reads.
+- **The album title under a tile is a link like the names beside it.** On the Mac it shows the link pointer and a tooltip, as the artist name under it does.
+
+### Fixed
+
+- **The terminal queue shows featured artists.** A grouped track row names its artists whenever its credit differs from the record's, as the apps already did; koan-core now makes that decision for every client.
+- **A tuning's page adds it to the device's filters.** On the Mac and iPhone, an EQ's page offered only "Use for", which made a tuning the device's correction in place of the real one, and always acted on the output in use. It now offers one action by the EQ's role and what the device plays, on the device the page was opened for, as Android does.
+- **Subsonic playlist writes refuse a song they cannot find.** `createPlaylist` and `updatePlaylist` answered ok while dropping any song id that named no track; such an id now fails the call with error 70, naming it, and nothing is written.
+
+### Internal
+
+- **Dependencies updated to their latest releases.** Includes lru 0.18 → 0.19 and sift-music 0.6 → 0.8.
+- **The web UI's scripts are TypeScript.** `ui.js`, `player.js` and `share.js` are compiled from `crates/koan-server/scripts/*.ts`, typechecked by TypeScript 7's native compiler and stripped of their types by Node, so the committed JavaScript reads as the source does and `cargo build` still needs no JavaScript toolchain. `just js` builds them; CI fails a build whose output is stale.
+- **Release runs keep their image retag.** A release's `container-main` job queues in its own concurrency group, so a third queued run can no longer cancel it and end the release cancelled.
+
 ## 0.66.2
 
 ### Fixed
