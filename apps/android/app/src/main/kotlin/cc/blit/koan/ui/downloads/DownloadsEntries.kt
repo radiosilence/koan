@@ -33,7 +33,7 @@ import cc.blit.koan.ui.library.Shelf
 import cc.blit.koan.ui.library.ShelfRoute
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.albumName
-import cc.blit.koan.ui.library.artistName
+import cc.blit.koan.ui.library.artistCredit
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.playlists.CollectionRow
@@ -160,7 +160,7 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
     val names = when (transfer.state) {
         TransferState.FAILED -> listOf(Named(transfer.failureReason ?: "Couldn't be fetched"))
         else -> buildList {
-            add(artistName(transfer.artist, transfer.artistId))
+            add(artistCredit(transfer.artistCredit))
             add(albumName(transfer.album, transfer.albumId, transfer.trackId))
             when (transfer.state) {
                 TransferState.QUEUED -> add(Named("waiting"))

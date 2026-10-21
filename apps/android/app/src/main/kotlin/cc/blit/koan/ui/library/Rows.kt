@@ -210,7 +210,7 @@ fun AlbumTile(
         }
         KoanText(album.title, role = KoanType.Control, maxLines = 1)
         NameLine(
-            listOfNotNull(artistCredit(album.artistCredit, album.artistName, album.artistId, except = onArtistPage).takeIf { showArtist }, album.year?.let { Named("$it") }),
+            listOfNotNull(artistCredit(album.artistCredit, except = onArtistPage).takeIf { showArtist }, album.year?.let { Named("$it") }),
             role = KoanType.Fine,
             linked = selection?.active != true,
             dense = true,
@@ -289,7 +289,7 @@ fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection<P
     ) {
         TitleAndDetail(
             album.title,
-            listOfNotNull(artistCredit(album.artistCredit, album.artistName, album.artistId), album.year?.let { Named("$it") }, album.codec?.let { Named(it.uppercase()) }),
+            listOfNotNull(artistCredit(album.artistCredit), album.year?.let { Named("$it") }, album.codec?.let { Named(it.uppercase()) }),
             linked = selection?.active != true,
         )
     }
@@ -370,8 +370,8 @@ fun TrackRow(
         TitleAndDetail(
             track.title,
             listOfNotNull(
-                artistCredit(track.artistCredit, track.artistName, track.artistId, except = onArtistPage)
-                    .takeIf { mixed || track.artistName != track.albumArtistName },
+                artistCredit(track.artistCredit, except = onArtistPage)
+                    .takeIf { mixed || track.creditDiffers },
                 albumName(track.albumTitle, track.albumId, track.id).takeIf { mixed },
             ),
             linked = selection?.active != true,

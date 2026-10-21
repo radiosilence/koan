@@ -2,11 +2,12 @@ package cc.blit.koan.ui.queue
 
 import cc.blit.koan.ffi.EntryStatus
 import cc.blit.koan.ffi.QueueItem
+import cc.blit.koan.ffi.RunRole
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class QueueRowsTest {
-    private fun item(id: String, album: String, title: String = "t$id", artist: String = "A", ms: Long? = 60_000) = QueueItem(
+    private fun item(id: String, album: String, run: RunRole, title: String = "t$id", artist: String = "A", ms: Long? = 60_000) = QueueItem(
         queueItemId = id,
         trackId = id.hashCode().toLong(),
         albumId = null,
@@ -18,6 +19,7 @@ class QueueRowsTest {
         artistCredit = emptyList(),
         albumArtistCredit = emptyList(),
         creditDiffers = false,
+        run = run,
         album = album,
         year = "2007",
         codec = "flac",
@@ -32,11 +34,11 @@ class QueueRowsTest {
     )
 
     private val queue = listOf(
-        item("1", "X"),
-        item("2", "X"),
-        item("3", ""),
-        item("4", "Y", title = "Y"),
-        item("5", "X"),
+        item("1", "X", RunRole.OPENS),
+        item("2", "X", RunRole.CONTINUES),
+        item("3", "", RunRole.ALONE),
+        item("4", "Y", RunRole.SINGLE, title = "Y"),
+        item("5", "X", RunRole.OPENS),
     )
 
     @Test
@@ -85,7 +87,7 @@ class QueueRowsTest {
 
     @Test
     fun groupDetail() {
-        assertEquals("2007 · 2 tracks · 2:00 · FLAC", QueueGroup("A", "X", queue.take(2)).detail)
+        assertEquals("2007 · 2 tracks · 2:00 · FLAC", QueueGroup("X", queue.take(2)).detail)
         assertEquals("1:01:01", duration(3_661_000))
     }
 }

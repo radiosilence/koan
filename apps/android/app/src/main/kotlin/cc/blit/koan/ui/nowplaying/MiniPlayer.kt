@@ -36,6 +36,7 @@ import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.Cover
 import cc.blit.koan.ui.library.PlayingBars
+import cc.blit.koan.ui.library.text
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.settings.PlayOnButton
 import cc.blit.koan.ui.settings.Reach
@@ -114,7 +115,7 @@ fun MiniPlayer() {
                         KoanIcon(KoanIcons.devices, contentDescription = null, size = 12.sp, color = KoanTheme.color(tone))
                         KoanText(c.headline, role = KoanType.Fine, tone = tone, maxLines = 1)
                     }
-                    !entry?.artist.isNullOrEmpty() -> KoanText(entry!!.artist, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
+                    !entry?.artistCredit?.text.isNullOrEmpty() -> KoanText(entry!!.artistCredit.text, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
                 }
             }
             // Reachable with nothing playing here, which is when a phone is

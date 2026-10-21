@@ -204,7 +204,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, times: PlayClock, selection: Sel
                 track.title,
                 null,
                 names = listOf(
-                    artistCredit(track.artistCredit, track.artistName, track.artistId),
+                    artistCredit(track.artistCredit),
                     albumName(track.albumTitle, track.albumId, track.id),
                     Named(elsewhere),
                 ),

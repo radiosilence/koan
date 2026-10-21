@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.queue
 
 import cc.blit.koan.ffi.QueueItem
+import cc.blit.koan.ffi.RunRole
 
 /**
  * A row of the queue list: a record's heading, one of its tracks, or a track
@@ -47,11 +48,9 @@ sealed interface QueueRow {
 
     companion object {
         /**
-         * Contiguous runs, as the TUI and the Apple apps group them: queue
-         * order is the listener's, and collapsing two separate visits to the
-         * same record into one heading would misrepresent it. Tracks with no
-         * album stand alone; a run of one whose title is the record's is a
-         * single.
+         * The queue as the engine grouped it: a heading above each row that
+         * opens a record's run, the run's rows beneath it, and rows on no
+         * record or of a single standing alone.
          */
         fun build(queue: List<QueueItem>, grouped: Boolean): List<QueueRow> {
             if (!grouped) return queue.map(::Track)
@@ -59,21 +58,24 @@ sealed interface QueueRow {
             var index = 0
             while (index < queue.size) {
                 val first = queue[index]
-                if (first.album.isEmpty()) {
-                    rows += Track(first)
-                    index++
-                    continue
+                when (first.run) {
+                    RunRole.ALONE, RunRole.CONTINUES -> {
+                        rows += Track(first)
+                        index++
+                    }
+                    RunRole.SINGLE -> {
+                        rows += Single(first)
+                        index++
+                    }
+                    RunRole.OPENS -> {
+                        var end = index + 1
+                        while (end < queue.size && queue[end].run == RunRole.CONTINUES) end++
+                        val run = queue.subList(index, end).toList()
+                        rows += Album(QueueGroup(first.album, run))
+                        run.mapTo(rows, ::Track)
+                        index = end
+                    }
                 }
-                var end = index + 1
-                while (end < queue.size && queue[end].album == first.album && queue[end].albumArtist == first.albumArtist) end++
-                val run = queue.subList(index, end)
-                if (run.size == 1 && first.title.trim().equals(first.album.trim(), ignoreCase = true)) {
-                    rows += Single(first)
-                } else {
-                    rows += Album(QueueGroup(first.albumArtist, first.album, run.toList()))
-                    run.mapTo(rows, ::Track)
-                }
-                index = end
             }
             return rows
         }
@@ -83,8 +85,8 @@ sealed interface QueueRow {
     }
 }
 
-data class QueueGroup(val albumArtist: String, val album: String, val items: List<QueueItem>) {
-    val title get() = album.ifEmpty { albumArtist.ifEmpty { "Unknown Artist" } }
+data class QueueGroup(val album: String, val items: List<QueueItem>) {
+    val title get() = album
 
     /** "2007 · 11 tracks · 59:10 · FLAC". The codec only when the whole run shares one. */
     val detail: String

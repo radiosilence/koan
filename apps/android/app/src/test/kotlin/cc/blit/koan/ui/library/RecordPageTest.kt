@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
 @Config(application = Application::class, sdk = [35])
 class RecordPageTest {
     private fun track(id: Long, disc: Int?, number: Int) = Track(
-        id, "Track $id", "Artist", emptyList(), "Artist", "Record", 1, 1, disc, number, 180_000, "FLAC",
+        id, "Track $id", "Artist", emptyList(), "Artist", 1, emptyList(), false, "Record", 1, 1, disc, number, 180_000, "FLAC",
         44_100, 16, 2, null, null, "remote", true, false, null, false,
     )
 

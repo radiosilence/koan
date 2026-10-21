@@ -13,6 +13,7 @@ import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.RepeatMode
+import cc.blit.koan.ui.library.text
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -91,9 +92,9 @@ class KoanPlayer(
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(item.title)
-                        .setArtist(item.artist)
+                        .setArtist(item.artistCredit.text)
                         .setAlbumTitle(item.album)
-                        .setAlbumArtist(item.albumArtist)
+                        .setAlbumArtist(item.albumArtistCredit.text)
                         .setArtworkUri(ArtProvider.uri(artAuthority, item.albumId, item.trackId))
                         .setTrackNumber(item.trackNumber?.toInt())
                         .setDiscNumber(item.disc?.toInt())

@@ -88,7 +88,7 @@ internal fun AlbumTile(album: Album, selection: Selection<Playable>) {
             maxLines = 1,
         )
         NameLine(
-            listOfNotNull(artistCredit(album.artistCredit, album.artistName, album.artistId), album.year?.let { Named("$it") }),
+            listOfNotNull(artistCredit(album.artistCredit), album.year?.let { Named("$it") }),
             Modifier.fillMaxWidth().pickable(playable, selection, showMenu) { nav.push(AlbumRoute(album.id)) },
             role = KoanType.Fine,
             linked = !selection.active,
@@ -118,7 +118,7 @@ internal fun TrackRow(track: Track, selection: Selection<Playable>) {
             Column(Modifier.weight(1f)) {
                 KoanText(track.title, maxLines = 1)
                 NameLine(
-                    listOf(artistCredit(track.artistCredit, track.artistName, track.artistId), albumName(track.albumTitle, track.albumId, track.id)),
+                    listOf(artistCredit(track.artistCredit), albumName(track.albumTitle, track.albumId, track.id)),
                     role = KoanType.Fine,
                     linked = !selection.active,
                     dense = true,
