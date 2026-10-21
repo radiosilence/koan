@@ -1,0 +1,1 @@
+- **TestFlight uploads run in parallel.** iOS and tvOS each upload from a runner of their own, so a release no longer waits for one platform to finish before the other starts.
