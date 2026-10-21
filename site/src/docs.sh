@@ -37,6 +37,7 @@ pages=(
   "Protocol|docs/reference/protocol/nearby-protocol.md"
   "Protocol|docs/reference/protocol/pairing-and-invites.md"
   "Protocol|docs/reference/protocol/server-extensions.md"
+  "Protocol|docs/reference/protocol/push-relay.md"
 )
 
 slug() { basename "$1" .md | tr '[:upper:]' '[:lower:]'; }
