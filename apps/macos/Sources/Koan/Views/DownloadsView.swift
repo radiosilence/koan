@@ -201,10 +201,9 @@ private struct DownloadRow: View {
 
             // The artist and record on a line of their own: sharing one with
             // the status, a long name squeezed the rest down to a glyph wide.
-            if !transfer.artist.isEmpty {
+            if !transfer.artistCredit.text.isEmpty {
                 ArtistAlbumLine(
-                    artist: transfer.artist,
-                    artistId: transfer.artistId,
+                    artist: transfer.artistCredit,
                     album: transfer.album,
                     albumId: transfer.albumId
                 )

@@ -547,7 +547,7 @@ struct QueueView: View {
         Button {
             Share.link(
                 trackIds: group.items.compactMap(\.trackId),
-                named: "\(group.albumArtist) — \(group.album)",
+                named: "\(group.artistCredit.text) — \(group.album)",
                 engine: library.engine,
                 player: player
             )
@@ -794,42 +794,36 @@ extension QueueView {
             rows.filter { rowIds.contains($0.id) }.flatMap(\.itemIds)
         }
 
-        /// Contiguous runs, mirroring the TUI: queue order is the user's, and
-        /// collapsing two separate visits to the same record into one heading
-        /// would misrepresent it. A heading precedes each run; tracks with no
-        /// album stand alone.
+        /// The queue as the engine grouped it: a heading above each row that
+        /// opens a record's run, the run's rows beneath it, and rows on no
+        /// record or of a single standing alone.
         static func build(from queue: [QueueItem]) -> [Row] {
             var rows: [Row] = []
             var index = 0
             while index < queue.count {
                 let first = queue[index]
-                guard !first.album.isEmpty else {
+                switch first.run {
+                case .alone, .continues:
                     rows.append(.track(first))
                     index += 1
-                    continue
-                }
-                let run = queue[index...].prefix {
-                    $0.album == first.album && $0.albumArtist == first.albumArtist
-                }
-                if run.count == 1,
-                   first.title.trimmingCharacters(in: .whitespaces)
-                       .caseInsensitiveCompare(first.album.trimmingCharacters(in: .whitespaces))
-                       == .orderedSame {
+                case .single:
                     rows.append(.single(first))
                     index += 1
-                    continue
+                case .opens:
+                    let run = queue[(index + 1)...].prefix { $0.run == .continues }
+                    let items = [first] + run
+                    rows.append(.album(
+                        id: "album:\(first.queueItemId)",
+                        group: QueueGroup(
+                            id: first.queueItemId,
+                            albumArtist: first.albumArtist,
+                            album: first.album,
+                            items: items
+                        )
+                    ))
+                    rows.append(contentsOf: items.map { Row.track($0) })
+                    index += items.count
                 }
-                rows.append(.album(
-                    id: "album:\(first.queueItemId)",
-                    group: QueueGroup(
-                        id: first.queueItemId,
-                        albumArtist: first.albumArtist,
-                        album: first.album,
-                        items: Array(run)
-                    )
-                ))
-                rows.append(contentsOf: run.map { Row.track($0) })
-                index += run.count
             }
             return rows
         }
@@ -859,15 +853,9 @@ struct QueueGroup: Identifiable {
     var year: String? { items.first?.year }
 
     /// The record's artist as its heading links it.
-    var artistCredit: [CreditPart] {
-        if albumArtist.isEmpty { return [CreditPart(text: "Unknown Artist", artistId: items.first?.albumArtistId)] }
-        return items.first?.albumArtistCredit ?? [CreditPart(text: albumArtist, artistId: nil)]
-    }
+    var artistCredit: [CreditPart] { items.first?.albumArtistCredit ?? [] }
 
-    var title: String {
-        if !album.isEmpty { return album }
-        return albumArtist.isEmpty ? "Unknown Artist" : albumArtist
-    }
+    var title: String { album }
 
     /// "2007 · 11 tracks · 59:10 · FLAC". The codec only earns its place when
     /// the whole run shares one — a mixed group would be lying.

@@ -50,7 +50,7 @@ final class RemoteActivityController {
             device: device.name,
             linked: device.awake,
             title: device.title,
-            artist: device.artist,
+            artist: device.artistCredit.isEmpty ? nil : device.artistCredit.text,
             album: device.album,
             playing: device.state == .playing,
             positionMs: device.positionMs,

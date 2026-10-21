@@ -42,7 +42,7 @@ struct AlbumGridCell: View {
                 Text(album.title)
                     .font(.role(.control, system: .callout.weight(.medium)))
                     .lineLimit(1)
-                Text([showArtist ? album.artistName : nil, album.year.map { String($0) }]
+                Text([showArtist ? album.artistCredit.text : nil, album.year.map { String($0) }]
                     .compactMap { $0 }
                     .joined(separator: " · "))
                     .font(.role(.fine, system: .caption))

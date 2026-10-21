@@ -125,7 +125,7 @@ struct NowPlayingSheet: View {
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             } else if let entry = player.currentEntry {
                 CreditLinks(
-                    parts: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],
+                    parts: player.currentArtistCredit,
                     font: .role(.body, system: .body)
                 )
                 .lineLimit(1)

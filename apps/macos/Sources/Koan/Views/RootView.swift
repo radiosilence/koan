@@ -170,7 +170,7 @@ struct RootView: View {
                 ArtworkViewer(
                     source: sleeve,
                     title: player.currentEntry?.title ?? "",
-                    subtitle: player.currentEntry.map { "\($0.artist) · \($0.album)" }
+                    subtitle: player.currentEntry.map { "\($0.artistCredit.text) · \($0.album)" }
                 )
             }
         }

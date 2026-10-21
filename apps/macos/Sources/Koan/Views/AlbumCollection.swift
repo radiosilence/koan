@@ -710,7 +710,7 @@ final class AlbumTile: NSCollectionViewItem {
         self.album = album
         self.context = context
         titleLabel.stringValue = album.title
-        artistLabel.stringValue = CreditLabel.text(album.artistCredit)
+        artistLabel.stringValue = album.artistCredit.text
         artistLabel.toolTip = nil
         // The labels were just set plain, so whatever hover marks there were
         // are to be drawn again.
@@ -718,7 +718,7 @@ final class AlbumTile: NSCollectionViewItem {
         yearLabel.stringValue = album.year.map { "· \($0)" } ?? ""
         codec.string = album.codec?.uppercased()
         badge.isHidden = album.codec == nil
-        view.setAccessibilityLabel([album.title, album.artistName, album.year.map(String.init)].compactMap { $0 }.joined(separator: ", "))
+        view.setAccessibilityLabel([album.title, album.artistCredit.text, album.year.map(String.init)].compactMap { $0 }.joined(separator: ", "))
         view.setAccessibilityRole(.group)
         // What the SwiftUI tile's buttons offered VoiceOver.
         view.setAccessibilityCustomActions([

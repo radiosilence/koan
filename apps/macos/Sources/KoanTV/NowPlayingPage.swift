@@ -105,7 +105,7 @@ struct NowPlayingPage: View {
                     .koanText(.display, .strong)
                     .lineLimit(2)
                     .rainbowShimmer()
-                Text(entry.artist)
+                Text(entry.artistCredit.text)
                     .koanText(.titleSmall, .muted)
                     .lineLimit(1)
                 if !entry.album.isEmpty {
@@ -246,7 +246,7 @@ private struct UpNext: View {
                                     .frame(width: 96, height: 96)
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(item.title).koanText(.body, .strong).lineLimit(1)
-                                        Text(item.artist).koanText(.fine, .muted).lineLimit(1)
+                                        Text(item.artistCredit.text).koanText(.fine, .muted).lineLimit(1)
                                     }
                                     .frame(width: 240, alignment: .leading)
                                 }

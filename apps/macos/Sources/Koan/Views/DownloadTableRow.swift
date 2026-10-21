@@ -14,7 +14,8 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         let open: (LinkText.Target) -> Void
     }
 
-    private enum Part { case artist, album, showInLibrary }
+    /// The artist is the credit part under the pointer.
+    private enum Part: Equatable { case artist(Int), album, showInLibrary }
 
     static let identifier = NSUserInterfaceItemIdentifier("DownloadTableRow")
     static let height: CGFloat = 60
@@ -75,8 +76,8 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
             hoveredPart = nil
             showSleeve(transfer.trackId, art: context.art)
         }
-        artist.stringValue = transfer.artist
-        album.stringValue = transfer.artist.isEmpty ? "" : transfer.album
+        artist.stringValue = transfer.artistCredit.text
+        album.stringValue = artist.stringValue.isEmpty ? "" : transfer.album
         self.transfer = transfer
         self.context = context
         title.stringValue = transfer.title
@@ -163,7 +164,7 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         title.textColor = selected ? onAccent : .koanLabel
         figure.textColor = selected ? onAccent : .koanSecondaryLabel
         subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? NSColor.koanBad(.systemOrange) : .koanSecondaryLabel)
-        artist.isHidden = transfer.artist.isEmpty
+        artist.isHidden = artist.stringValue.isEmpty
         statusDot.isHidden = artist.isHidden
         album.isHidden = album.stringValue.isEmpty
         dot.isHidden = album.isHidden
@@ -171,7 +172,13 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         let ink = { (part: Part, id: Int64?) -> NSColor in
             selected ? onAccent : (self.hoveredPart == part && id != nil ? .koanLabel : .koanSecondaryLabel)
         }
-        artist.styleLink(font: Self.captionFont, colour: ink(.artist, transfer.artistId), underlined: hoveredPart == .artist)
+        var linked: Int?
+        if case .artist(let i) = hoveredPart, transfer.artistCredit.indices.contains(i) { linked = i }
+        artist.attributedStringValue = CreditLabel.attributed(
+            transfer.artistCredit, font: Self.captionFont,
+            colour: selected ? onAccent : .koanSecondaryLabel,
+            linked: linked, linkColour: selected ? onAccent : .koanLabel
+        )
         album.styleLink(font: Self.captionFont, colour: ink(.album, transfer.albumId), underlined: hoveredPart == .album)
         link.isHidden = !hovered
         var attributes: [NSAttributedString.Key: Any] = [
@@ -258,7 +265,12 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     private func part(at point: NSPoint) -> Part? {
         guard let transfer else { return nil }
         if hovered, link.frame.contains(point) { return .showInLibrary }
-        if transfer.artistId != nil, !artist.isHidden, artist.frame.contains(point) { return .artist }
+        if !artist.isHidden, artist.frame.contains(point) {
+            return CreditLabel.artist(
+                at: point.x - artist.frame.minX, in: transfer.artistCredit,
+                font: Self.captionFont, width: artist.frame.width
+            ).map(Part.artist)
+        }
         if transfer.albumId != nil, !album.isHidden, album.frame.contains(point) { return .album }
         return nil
     }
@@ -278,7 +290,9 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
         guard let transfer, let context else { return .plain }
         switch part(at: point) {
         case .showInLibrary: return .button { context.showInLibrary(transfer) }
-        case .artist: return transfer.artistId.map { id in .link { context.open(.artist(id)) } } ?? .plain
+        case .artist(let i):
+            guard transfer.artistCredit.indices.contains(i), let id = transfer.artistCredit[i].artistId else { return .plain }
+            return .link { context.open(.artist(id)) }
         case .album: return transfer.albumId.map { id in .link { context.open(.album(id)) } } ?? .plain
         case nil: return .plain
         }

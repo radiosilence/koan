@@ -158,15 +158,15 @@ final class QueueTableRow: TableCell, TableRow {
         case .heading(let heading):
             title.font = Self.headingFont
             title.stringValue = Format.title(heading.title)
-            artist.stringValue = CreditLabel.text(heading.artist ?? [])
+            artist.stringValue = (heading.artist ?? []).text
             album.stringValue = ""
             detail.stringValue = heading.detail ?? ""
             showSleeve(heading.sleeve, art: context.art, corner: 5)
         case .track(let content, _, let showArtist, let artwork):
             title.font = Self.titleFont
             title.stringValue = Format.title(content.title)
-            artist.stringValue = CreditLabel.text(credit)
-            album.stringValue = !showArtist || content.artist.isEmpty || !artwork ? "" : content.album
+            artist.stringValue = credit.text
+            album.stringValue = !showArtist || content.artistCredit.text.isEmpty || !artwork ? "" : content.album
             number.stringValue = content.place
             placeTemplate = content.placeTemplate
             codec.stringValue = content.codec?.uppercased() ?? ""

@@ -195,8 +195,8 @@ struct PlaylistView: View {
                         isCurrent: isCurrent
                     ),
                     isCurrent: isCurrent,
-                    showArtist: true,
-                    artwork: !grouped
+                    showArtist: !grouped || entry.standsAlone || entry.track.creditDiffers,
+                    artwork: !grouped || entry.standsAlone
                 ))
             }
         }
@@ -420,7 +420,7 @@ struct PlaylistView: View {
         case .album(_, let group):
             PlaylistAlbumHeader(group: group).rowBehaviour()
         case .entry(let entry, let position):
-            PlaylistEntryRow(entry: entry, position: position, count: entries.count, artwork: !grouped)
+            PlaylistEntryRow(entry: entry, position: position, count: entries.count, grouped: grouped)
                 .rowBehaviour()
                 .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
         }
@@ -616,19 +616,18 @@ extension PlaylistView {
             var index = 0
             while index < entries.count {
                 let first = entries[index]
-                guard !first.track.albumTitle.isEmpty else {
+                guard first.run == .opens else {
                     rows.append(.entry(first, position: index))
                     index += 1
                     continue
                 }
-                let run = entries[index...].prefix { sameRecord($0.track, first.track) }
+                let run = [first] + entries[(index + 1)...].prefix { $0.run == .continues }
                 rows.append(.album(
                     id: "album:\(first.entryId)",
                     group: PlaylistGroup(
                         album: first.track.albumTitle,
-                        artist: first.track.albumArtistName,
                         positions: Array(index..<(index + run.count)),
-                        entries: Array(run)
+                        entries: run
                     )
                 ))
                 rows.append(contentsOf: run.enumerated().map { Row.entry($1, position: index + $0) })
@@ -636,27 +635,23 @@ extension PlaylistView {
             }
             return rows
         }
-
-        /// Two records can share a title; the id tells them apart where there is one.
-        private static func sameRecord(_ a: Track, _ b: Track) -> Bool {
-            if let id = a.albumId, let other = b.albumId { return id == other }
-            return a.albumTitle == b.albumTitle && a.albumArtistName == b.albumArtistName
-        }
     }
 }
 
 /// A contiguous run of one record inside a playlist.
 struct PlaylistGroup {
     let album: String
-    let artist: String
     let positions: [Int]
     let entries: [PlaylistEntry]
 
     /// The record's artist as its heading links it.
-    var artistCredit: [CreditPart] {
-        if artist.isEmpty { return [CreditPart(text: "Unknown Artist", artistId: entries.first?.albumArtistId)] }
-        return entries.first?.albumArtistCredit ?? [CreditPart(text: artist, artistId: nil)]
-    }
+    var artistCredit: [CreditPart] { entries.first?.track.albumArtistCredit ?? [] }
+}
+
+extension PlaylistEntry {
+    /// A row the playlist's grouping leaves without a heading above it: on no
+    /// record, or a single.
+    var standsAlone: Bool { run == .alone || run == .single }
 }
 
 /// One entry, wearing whatever the queue currently thinks of it.
@@ -667,9 +662,9 @@ private struct PlaylistEntryRow: View {
     let entry: PlaylistEntry
     let position: Int
     let count: Int
-    /// Ungrouped there is no heading above to say what record this is, so the
-    /// row says it itself.
-    let artwork: Bool
+    /// Under headings, a row in a record's run leaves the record and its
+    /// artist to the heading, and names its own artists only where they differ.
+    let grouped: Bool
 
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
@@ -687,8 +682,8 @@ private struct PlaylistEntryRow: View {
                 isCurrent: isCurrent
             ),
             isCurrent: isCurrent,
-            showArtist: true,
-            artwork: artwork
+            showArtist: !grouped || entry.standsAlone || entry.track.creditDiffers,
+            artwork: !grouped || entry.standsAlone
         )
     }
 }

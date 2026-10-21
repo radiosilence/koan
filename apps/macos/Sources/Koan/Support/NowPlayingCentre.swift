@@ -158,7 +158,7 @@ final class NowPlayingCentre {
         // finally arriving.
         let source = player.currentArtwork
         let artwork = source.flatMap { art.cached($0, size: .tile) }
-        let item = [entry.queueItemId, entry.title, entry.artist, entry.album]
+        let item = [entry.queueItemId, entry.title, entry.artistCredit.text, entry.album]
         // A transport that plays but a playhead that holds still — waiting for
         // a download, or run dry at a track's end — is rate 0 to the system.
         let rate = now.state == .playing && mirror.playhead.playing && !now.waiting ? 1.0 : 0.0
@@ -175,7 +175,8 @@ final class NowPlayingCentre {
 
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: entry.title,
-            MPMediaItemPropertyArtist: entry.artist,
+            MPMediaItemPropertyArtist: entry.artistCredit.text,
+            MPMediaItemPropertyAlbumArtist: entry.albumArtistCredit.text,
             MPMediaItemPropertyAlbumTitle: entry.album,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(positionMs) / 1000,
             MPNowPlayingInfoPropertyPlaybackRate: rate,

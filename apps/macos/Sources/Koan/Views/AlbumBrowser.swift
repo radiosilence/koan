@@ -217,7 +217,7 @@ struct AlbumDetailView: View {
 
     private var subtitle: String {
         guard let record, let album = record.album else { return "" }
-        var parts = [album.artistName]
+        var parts = [album.artistCredit.text]
         if let year = album.year { parts.append(String(year)) }
         if let codec = album.codec { parts.append(codec.uppercased()) }
         let total = record.tracks.compactMap(\.durationMs).reduce(0, +)

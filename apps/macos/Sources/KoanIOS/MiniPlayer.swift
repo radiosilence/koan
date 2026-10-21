@@ -39,10 +39,10 @@ struct MiniPlayer: View {
                             .foregroundStyle(.tint)
                             .lineLimit(1)
                     }
-                } else if player.resolving == nil, let entry, !entry.artist.isEmpty {
+                } else if player.resolving == nil, let entry, !entry.artistCredit.text.isEmpty {
                     // Plain text: the bar is too small a target to share with
                     // links. Now Playing has them.
-                    Text(entry.album.isEmpty ? entry.artist : "\(entry.artist) · \(entry.album)")
+                    Text(entry.album.isEmpty ? entry.artistCredit.text : "\(entry.artistCredit.text) · \(entry.album)")
                         .font(.role(.fine, system: .caption))
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         .lineLimit(1)

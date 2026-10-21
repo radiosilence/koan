@@ -441,9 +441,9 @@ struct TrackRow: View {
         let isCurrent = player.currentTrackId == track.id
         let isSelected = prominence == .increased
         let compact = width == .compact
-        // A record's tracks by its own artist are credited in the header; a
-        // phone has no room to say it again on every row.
-        let credited = showsAlbum || !compact || track.artistName != track.albumArtistName
+        // On a record's page the header names its artist; a row names its own
+        // only where they differ from it.
+        let credited = showsAlbum || track.creditDiffers
 
         HStack(spacing: compact ? 8 : 12) {
             // The row number becomes bars for whatever is playing. The longest
