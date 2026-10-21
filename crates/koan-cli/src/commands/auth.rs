@@ -770,7 +770,12 @@ pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
             None
         };
         let (private, _) = auth::load_or_generate_keypair()?;
-        let token = koan_core::invite::mint_token(&db.conn, &private, user.id)?;
+        let token = koan_core::invite::mint_token(
+            &db.conn,
+            &private,
+            user.id,
+            koan_core::invite::TOKEN_TTL_SECS,
+        )?;
         Ok(koan_core::invite::Invite::with_token(
             &server,
             username,

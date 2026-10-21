@@ -42,6 +42,10 @@ pub const MAC_DOWNLOAD: &str = "https://github.com/radiosilence/koan/releases/la
 
 /// How long an invite link signs devices in for.
 pub const TOKEN_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// How long an invite shown as a QR code signs devices in for. A code on a
+/// screen is seen by whoever can see the screen, or a recording of it, so it
+/// lasts as long as a device pairing waits.
+pub const QR_TOKEN_TTL_SECS: u64 = 10 * 60;
 const TOKEN_TYP: &str = "koan-invite";
 
 const MAX_USERNAME: usize = 64;
@@ -273,11 +277,13 @@ fn password_mark(password_hash: &str) -> String {
     auth::sha256_hex(password_hash)[..16].to_owned()
 }
 
-/// A token for the account `user_id`, signed with the server's private key.
+/// A token for the account `user_id`, signed with the server's private key and
+/// good for `ttl_secs`.
 pub fn mint_token(
     conn: &Connection,
     private_pem: &[u8],
     user_id: i64,
+    ttl_secs: u64,
 ) -> Result<String, AccountError> {
     let user = users::get_user_by_id(conn, user_id)
         .map_err(other)?
@@ -289,7 +295,7 @@ pub fn mint_token(
         username: user.username,
         pwd: password_mark(&user.password_hash),
         iat: now,
-        exp: now + TOKEN_TTL_SECS,
+        exp: now + ttl_secs,
     };
     let key = EncodingKey::from_ed_pem(private_pem).map_err(other)?;
     jsonwebtoken::encode(&Header::new(Algorithm::EdDSA), &claims, &key).map_err(other)
@@ -658,7 +664,7 @@ mod tests {
         let conn = &db.conn;
         let (private, public) = auth::generate_keypair_pem().unwrap();
         let made = create_account(conn, "sarita", Role::User).unwrap();
-        let token = mint_token(conn, private.as_bytes(), made.id).unwrap();
+        let token = mint_token(conn, private.as_bytes(), made.id, TOKEN_TTL_SECS).unwrap();
 
         let phone = redeem(conn, public.as_bytes(), &token, "Sarita's iPhone").unwrap();
         let mac = redeem(conn, public.as_bytes(), &token, "").unwrap();
@@ -703,13 +709,13 @@ mod tests {
         let conn = &db.conn;
         let (private, public) = auth::generate_keypair_pem().unwrap();
         let made = create_account(conn, "sarita", Role::User).unwrap();
-        let sent = mint_token(conn, private.as_bytes(), made.id).unwrap();
+        let sent = mint_token(conn, private.as_bytes(), made.id, TOKEN_TTL_SECS).unwrap();
         set_password(conn, "sarita", None).unwrap();
         assert!(matches!(
             redeem(conn, public.as_bytes(), &sent, "x"),
             Err(AccountError::BadInvite)
         ));
-        let again = mint_token(conn, private.as_bytes(), made.id).unwrap();
+        let again = mint_token(conn, private.as_bytes(), made.id, TOKEN_TTL_SECS).unwrap();
         redeem(conn, public.as_bytes(), &again, "x").unwrap();
     }
 
