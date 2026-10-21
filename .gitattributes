@@ -1,0 +1,7 @@
+# Compiled from crates/koan-server/scripts and styles (`just js`, `just css`) and
+# committed because the server embeds them. datastar.js is vendored, not generated.
+crates/koan-server/assets/ui.js linguist-generated=true
+crates/koan-server/assets/player.js linguist-generated=true
+crates/koan-server/assets/share.js linguist-generated=true
+crates/koan-server/assets/ui.css linguist-generated=true
+crates/koan-server/assets/share.css linguist-generated=true
