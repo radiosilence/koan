@@ -18,7 +18,7 @@
 
 {#- A track row's opening tag, carrying what the player and the track menu read from it (assets/ui.js). `row` is a `TrackData`. -#}
 {% macro track_open(row) %}
-<li tabindex="0" data-id="{{ row.t.id }}" data-dur="{{ row.t.duration_ms.unwrap_or(0) / 1000 }}" data-title="{{ row.t.title }}" data-artist="{{ row.t.artist_name }}" data-album="{{ row.t.album_title }}" data-album-id="{{ row.t.album_id.unwrap_or(0) }}" data-artist-id="{{ row.t.artist_id.unwrap_or(0) }}" data-cover="{{ row.cover }}"{{ row.credit }}>
+<li tabindex="0" data-id="{{ row.t.id }}" data-dur="{{ row.t.duration_ms.unwrap_or(0) / 1000 }}" data-title="{{ row.t.title }}" data-artist="{{ row.artist }}" data-album="{{ row.t.album_title }}" data-album-id="{{ row.t.album_id.unwrap_or(0) }}" data-artist-id="{{ row.t.artist_id.unwrap_or(0) }}" data-cover="{{ row.cover }}"{{ row.credit }}>
 {%- endmacro %}
 
 {#- A track row's actions and its closing tag: the heart, anything the row adds (the caller's body), add to queue, the favourite mark, and on a narrow screen one button opening the row's menu, which right-click and long-press open on any screen. -#}

@@ -293,7 +293,7 @@ fn queue_survives_every_size_and_title() {
     let selected: HashSet<usize> = [0usize, 2].into_iter().collect();
     let favourites: HashSet<i64> = [1].into_iter().collect();
 
-    let layout = queue::Layout::build(&entries, true);
+    let layout = queue::Layout::build(&entries, true, &queue::Facts::default());
     for &(w, h) in SIZES {
         {
             // Cursor and scroll offset past the end must not index out of bounds.

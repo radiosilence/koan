@@ -2,22 +2,23 @@ package cc.blit.koan.ui.playlists
 
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ffi.PlaylistEntry
+import cc.blit.koan.ffi.RunRole
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.library.Selection
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class PlaylistRowsTest {
-    private fun entry(id: Long, album: String, albumId: Long?, artist: String = "Tone Collective") = PlaylistEntry(
+    private fun entry(id: Long, album: String, albumId: Long?, run: RunRole = RunRole.OPENS, artist: String = "Tone Collective") = PlaylistEntry(
         entryId = id,
         track = Track(
-            id = id * 10, title = "Track $id", artistName = artist, artistCredit = emptyList(), albumArtistName = artist, albumTitle = album,
+            id = id * 10, title = "Track $id", artistName = artist, artistCredit = emptyList(), albumArtistName = artist,
+            albumArtistId = 1, albumArtistCredit = emptyList(), creditDiffers = false, albumTitle = album,
             albumId = albumId, artistId = 1, disc = 1, trackNumber = id.toInt(), durationMs = 60_000, codec = "FLAC",
             sampleRate = 44_100, bitDepth = 16, channels = 2, bitrate = null, genre = null, source = "remote",
             onServer = true, onDisk = false, path = null, isFavourite = false,
         ),
-        albumArtistId = 1,
-        albumArtistCredit = emptyList(),
+        run = run,
     )
 
     private fun playlist(smart: Boolean = false, readonly: Boolean = false, fromFile: Boolean = false, tracks: UInt = 3u) = Playlist(
@@ -33,7 +34,7 @@ class PlaylistRowsTest {
 
     @Test
     fun groupedHeadsEachRunOfARecord() {
-        val entries = listOf(entry(1, "A", 1), entry(2, "A", 1), entry(3, "B", 2), entry(4, "A", 1))
+        val entries = listOf(entry(1, "A", 1), entry(2, "A", 1, RunRole.CONTINUES), entry(3, "B", 2), entry(4, "A", 1))
         assertEquals(
             listOf("album:1", "entry:1", "entry:2", "album:3", "entry:3", "album:4", "entry:4"),
             playlistRows(entries, grouped = true).map { it.key },
@@ -41,14 +42,8 @@ class PlaylistRowsTest {
     }
 
     @Test
-    fun recordsSharingATitleAreToldApartById() {
-        val entries = listOf(entry(1, "Greatest Hits", 1), entry(2, "Greatest Hits", 2))
-        assertEquals(2, playlistRows(entries, grouped = true).count { it is PlaylistRow.Heading })
-    }
-
-    @Test
-    fun aTrackWithNoRecordGetsNoHeading() {
-        val entries = listOf(entry(1, "", null), entry(2, "", null))
+    fun aTrackWithNoRecordOrASingleGetsNoHeading() {
+        val entries = listOf(entry(1, "", null, RunRole.ALONE), entry(2, "Song", 3, RunRole.SINGLE))
         assertEquals(listOf("entry:1", "entry:2"), playlistRows(entries, grouped = true).map { it.key })
     }
 

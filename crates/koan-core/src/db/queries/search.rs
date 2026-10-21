@@ -38,7 +38,7 @@ pub fn search_tracks_paged(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks_fts f
          JOIN tracks t ON t.id = f.rowid
          LEFT JOIN artists a ON t.artist_id = a.id

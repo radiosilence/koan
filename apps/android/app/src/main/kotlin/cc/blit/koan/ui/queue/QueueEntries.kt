@@ -72,11 +72,11 @@ import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.library.SelectionBarFrame
 import cc.blit.koan.ui.library.albumName
 import cc.blit.koan.ui.library.artistCredit
-import cc.blit.koan.ui.library.artistName
 import cc.blit.koan.ui.library.creditedArtists
 import cc.blit.koan.ui.library.favourite
 import cc.blit.koan.ui.library.favourites
 import cc.blit.koan.ui.library.share
+import cc.blit.koan.ui.library.text
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.nowplaying.LocalShowTrackInfo
@@ -396,16 +396,8 @@ private fun AlbumHeading(group: QueueGroup, linked: Boolean) {
         Spacer(Modifier.width(KoanSpace.m))
         Column {
             val first = group.items.first()
-            if (group.album.isNotEmpty()) {
-                NameLine(listOf(albumName(group.title, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
-                val artist = when {
-                    group.albumArtist.isEmpty() -> artistName("Unknown Artist", first.albumArtistId)
-                    else -> artistCredit(first.albumArtistCredit, group.albumArtist, first.albumArtistId)
-                }
-                NameLine(listOf(artist), linked = linked)
-            } else {
-                KoanText(group.title, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 2)
-            }
+            NameLine(listOf(albumName(group.title, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
+            NameLine(listOf(artistCredit(first.albumArtistCredit)), linked = linked)
             KoanText(group.detail, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
         }
     }
@@ -439,10 +431,10 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
                 },
                 maxLines = 1,
             )
-            if (showArtist && item.artist.isNotEmpty()) {
+            if (showArtist && item.artistCredit.text.isNotEmpty()) {
                 NameLine(
                     listOfNotNull(
-                        artistCredit(item.artistCredit, item.artist, item.artistId),
+                        artistCredit(item.artistCredit),
                         albumName(item.album, item.albumId, item.trackId).takeIf { sleeve },
                     ),
                     role = KoanType.Fine,

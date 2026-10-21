@@ -17,7 +17,7 @@ use super::{AlbumRow, ArtistRow, TrackRow};
 const TRACK_COLUMNS: &str = "t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path";
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id";
 
 const TRACK_JOINS: &str = "FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
@@ -203,7 +203,7 @@ pub fn tracks_for_artists(
     let mut stmt = conn.prepare_cached(&sql)?;
     let ids = json_list(artist_ids);
     let rows = stmt.query_map([&ids, &ids, &ids], |row| {
-        Ok((row_to_track_row(row)?, row.get::<_, Option<i64>>(20)?))
+        Ok((row_to_track_row(row)?, row.get::<_, Option<i64>>(21)?))
     })?;
 
     let wanted: HashSet<i64> = artist_ids.iter().copied().collect();

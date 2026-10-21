@@ -103,17 +103,8 @@ final class PlayerModel {
     /// follower that observes its own output re-runs until it happens to
     /// settle, and "happens to" is not a property worth relying on.
     private func followEngine() {
-        let trackId = mirror.playback.entry?.trackId
-        let position = mirror.playhead.at()
-        if trackId != followedTrackId {
-            followedTrackId = trackId
-            resolveCurrentPlace(trackId: trackId)
-        }
-        settlePendingSeek(position: position)
+        settlePendingSeek(position: mirror.playhead.at())
     }
-
-    /// The track `followEngine` last acted on. Unobserved on purpose — see there.
-    @ObservationIgnored private var followedTrackId: Int64?
 
     // MARK: - What is playing
     //
@@ -179,58 +170,18 @@ final class PlayerModel {
 
     // MARK: - Where what is playing lives
 
-    /// The record and the artist behind what is playing, so the transport bar
-    /// can link to them.
-    ///
-    /// A `QueueItem` carries names, not ids — it has to stand for things that
-    /// were never in the library. Resolved once when the track changes rather
-    /// than per frame: this is a database read.
-    private(set) var currentAlbumId: Int64?
+    /// The record and the credit behind what is playing, as the engine read
+    /// them from the library, so the transport can link to them.
+    var currentAlbumId: Int64? { mirror.playback.entry?.albumId }
     /// The playing track's artist credit, each credited artist linked.
-    private(set) var currentArtistCredit: [CreditPart]?
-    /// The track `currentAlbumId` has been resolved for, as opposed to
-    /// one still being looked up. Only `currentArtwork` cares, and it cares a
-    /// lot — see there.
-    private var placeResolvedFor: Int64?
+    var currentArtistCredit: [CreditPart] { mirror.playback.entry?.artistCredit ?? [] }
 
-    /// The sleeve to draw for what is playing.
-    ///
-    /// The record wherever we know it, so every track off one album shares a
-    /// single fetch and a single cached bitmap. `nil` while the lookup is still
-    /// in flight rather than the track: falling back for those few hundred
-    /// milliseconds would fetch the sleeve keyed by track and then fetch the
-    /// identical image again keyed by album, which is the duplication this is
-    /// here to avoid. A beat of placeholder is cheaper.
+    /// The sleeve to draw for what is playing: the record wherever the library
+    /// knows it, so every track off one album shares a single fetch and a
+    /// single cached bitmap.
     var currentArtwork: AlbumArtwork.Source? {
         if let currentAlbumId { return .album(currentAlbumId) }
-        guard placeResolvedFor == currentTrackId else { return nil }
         return currentTrackId.map { .track($0) }
-    }
-
-    private func resolveCurrentPlace(trackId: Int64?) {
-        guard let trackId else {
-            currentAlbumId = nil
-            currentArtistCredit = nil
-            placeResolvedFor = nil
-            return
-        }
-        placeResolvedFor = nil
-        // The last track's credit would draw beside this one's title until
-        // the lookup lands; the entry's own name stands in meanwhile.
-        if currentArtistCredit != nil { currentArtistCredit = nil }
-        let engine = self.engine
-        Task {
-            let track = (try? await engine.track(trackId: trackId)) ?? nil
-            // The track moved on while we were asking, so whatever came back
-            // belongs to something that is no longer playing.
-            guard trackId == self.currentTrackId else { return }
-            // Written only where the answer moved. `@Observable` has no
-            // opinion about equality, so the next track off the same record
-            // would otherwise re-run everything coloured by it.
-            if self.currentAlbumId != track?.albumId { self.currentAlbumId = track?.albumId }
-            if self.currentArtistCredit != track?.artistCredit { self.currentArtistCredit = track?.artistCredit }
-            self.placeResolvedFor = trackId
-        }
     }
 
     // MARK: - Transport
@@ -694,7 +645,7 @@ final class PlayerModel {
         guard !items.isEmpty else { return }
         Pasteboard.write(
             trackIds: items.compactMap(\.trackId),
-            text: items.map { "\($0.artist) — \($0.title)" }.joined(separator: "\n")
+            text: items.map { "\($0.artistCredit.text) — \($0.title)" }.joined(separator: "\n")
         )
     }
 

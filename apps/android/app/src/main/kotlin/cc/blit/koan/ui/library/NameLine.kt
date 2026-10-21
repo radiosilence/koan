@@ -42,18 +42,17 @@ data class Named(
     fun page() = if (artist != null) ArtistRoute(artist) else AlbumRoute(album!!, track)
 }
 
-fun artistName(name: String, id: Long?) = Named(name, artist = id)
-
 /**
- * An artist credit as its parts read, each credited artist a link but the one
- * whose page the line is on. A credit the engine has not split is `name`,
- * linked to `id`.
+ * An artist credit as the engine built it, each credited artist a link but the
+ * one whose page the line is on.
  */
-fun artistCredit(credit: List<CreditPart>, name: String, id: Long?, except: Long? = null): Named {
-    if (credit.isEmpty()) return artistName(name, id?.takeIf { it != except })
+fun artistCredit(credit: List<CreditPart>, except: Long? = null): Named {
     val parts = credit.map { if (it.artistId != null && it.artistId == except) it.copy(artistId = null) else it }
-    return Named(parts.joinToString("") { it.text }, credit = parts)
+    return Named(parts.text, credit = parts)
 }
+
+/** A credit as plain text, for what cannot hold a link: the media session, a share. */
+val List<CreditPart>.text get() = joinToString("") { it.text }
 
 /** The artists a credit links, in the order it names them. */
 fun creditedArtists(credit: List<CreditPart>) = credit.filter { it.artistId != null }

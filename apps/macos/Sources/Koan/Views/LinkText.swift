@@ -157,14 +157,6 @@ struct ArtistAlbumLine: View {
     }
 }
 
-extension ArtistAlbumLine {
-    /// For an artist known by one name and id, with no credit split into
-    /// parts: a queue item, a download.
-    init(artist: String, artistId: Int64?, album: String? = nil, albumId: Int64? = nil, dimmed: Bool = false) {
-        self.init(artist: [CreditPart(text: artist, artistId: artistId)], album: album, albumId: albumId, dimmed: dimmed)
-    }
-}
-
 /// Album art that plays the record when clicked and opens it, with the
 /// affordance only showing on hover so a wall of covers stays a wall of covers.
 ///
