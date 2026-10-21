@@ -1,0 +1,1 @@
+- **Subsonic playlist writes refuse a song they cannot find.** `createPlaylist` and `updatePlaylist` answered ok while dropping any song id that named no track; such an id now fails the call with error 70, naming it, and nothing is written.
