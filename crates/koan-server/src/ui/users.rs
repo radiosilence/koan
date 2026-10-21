@@ -98,35 +98,31 @@ struct InvitePanel<'a> {
     email: Html,
 }
 
-fn invite_panel((invite, qr_link): &(Invite, String)) -> Html {
+fn invite_panel(invite: &Invite) -> Html {
     let link = invite.link();
     InvitePanel {
         invite,
-        qr: invite_qr(qr_link),
+        qr: invite_qr(&invite.qr_link()),
         email: Html::trusted(invite.email_html()),
         link,
     }
     .html()
 }
 
-/// An invite carrying a token signed with this server's key, and the link for
-/// its QR code, whose token is short-lived.
+/// An invite carrying tokens signed with this server's key: the link's, and
+/// the QR code's, which is short-lived.
 fn token_invite(
     s: &UiState,
     server: &str,
     id: i64,
     username: &str,
     password: Option<&str>,
-) -> Result<(Invite, String), AccountError> {
+) -> Result<Invite, AccountError> {
     let keys = crate::auth::signing_keys().map_err(|e| AccountError::Other(Box::new(e)))?;
     let db = open(&s.pool).ok_or_else(|| AccountError::Other("no database".into()))?;
     let token = invite::mint_token(&db.conn, &keys.0, id, invite::TOKEN_TTL_SECS)?;
     let qr_token = invite::mint_token(&db.conn, &keys.0, id, invite::QR_TOKEN_TTL_SECS)?;
-    let qr_link = Invite::with_token(server, username, &qr_token, None).link();
-    Ok((
-        Invite::with_token(server, username, &token, password),
-        qr_link,
-    ))
+    Ok(Invite::with_token(server, username, &token, password).with_qr_token(Some(&qr_token)))
 }
 
 fn forbidden() -> Response {

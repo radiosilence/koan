@@ -2292,6 +2292,9 @@ pub struct Invite {
     pub token: Option<String>,
     pub password: Option<String>,
     pub link: String,
+    /// The link for a QR code: its token lapses in minutes where the server
+    /// gives one, since anyone who sees the screen can scan it.
+    pub qr_link: String,
     pub email_subject: String,
     pub email_text: String,
     pub email_html: String,
@@ -2351,6 +2354,7 @@ impl From<koan_core::invite::Invite> for Invite {
     fn from(i: koan_core::invite::Invite) -> Self {
         Self {
             link: i.link(),
+            qr_link: i.qr_link(),
             email_subject: i.email_subject(),
             email_text: i.email_text(),
             email_html: i.email_html(),

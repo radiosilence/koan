@@ -62,6 +62,9 @@ pub struct Invite {
     /// The account's password: generated with the account and put in the
     /// email once, or taken from an address. Never in a link.
     pub password: Option<String>,
+    /// A token good for `QR_TOKEN_TTL_SECS`, for the QR code: absent from a
+    /// parsed link, and from servers older than it.
+    pub qr_token: Option<String>,
 }
 
 impl Invite {
@@ -73,6 +76,7 @@ impl Invite {
             username: username.to_owned(),
             token: Some(token.to_owned()),
             password: password.map(str::to_owned),
+            qr_token: None,
         }
     }
 
@@ -84,14 +88,22 @@ impl Invite {
             username: username.to_owned(),
             token: None,
             password: Some(password.to_owned()),
+            qr_token: None,
         }
     }
 
-    fn params(&self) -> String {
+    pub fn with_qr_token(self, qr_token: Option<&str>) -> Self {
+        Self {
+            qr_token: qr_token.map(str::to_owned),
+            ..self
+        }
+    }
+
+    fn params(&self, token: Option<&str>) -> String {
         let mut p = form_urlencoded::Serializer::new(String::new());
         p.append_pair("server", &self.server)
             .append_pair("username", &self.username);
-        if let Some(token) = &self.token {
+        if let Some(token) = token {
             p.append_pair("invite", token);
         }
         p.finish()
@@ -99,12 +111,20 @@ impl Invite {
 
     /// The link to send: a universal link into the app, or the join page.
     pub fn link(&self) -> String {
-        format!("{JOIN_PAGE}#{}", self.params())
+        format!("{JOIN_PAGE}#{}", self.params(self.token.as_deref()))
+    }
+
+    /// The link to show as a QR code: anyone who sees the screen, or a
+    /// recording of it, can scan one, so it carries the short-lived token
+    /// where there is one.
+    pub fn qr_link(&self) -> String {
+        let token = self.qr_token.as_deref().or(self.token.as_deref());
+        format!("{JOIN_PAGE}#{}", self.params(token))
     }
 
     /// The app's own scheme, for where universal links do not reach.
     pub fn app_link(&self) -> String {
-        format!("koan://join?{}", self.params())
+        format!("koan://join?{}", self.params(self.token.as_deref()))
     }
 
     /// Reads either form of the link, or a server address with the account
@@ -568,6 +588,18 @@ mod tests {
         };
         assert_eq!(Invite::parse(&i.link()), Some(read.clone()));
         assert_eq!(Invite::parse(&i.app_link()), Some(read));
+    }
+
+    #[test]
+    fn the_qr_link_carries_the_short_token_where_there_is_one() {
+        let i = invite();
+        assert_eq!(i.qr_link(), i.link());
+        let shown = i.clone().with_qr_token(Some("short"));
+        assert_eq!(shown.link(), i.link());
+        assert_eq!(
+            Invite::parse(&shown.qr_link()).and_then(|r| r.token),
+            Some("short".into())
+        );
     }
 
     #[test]

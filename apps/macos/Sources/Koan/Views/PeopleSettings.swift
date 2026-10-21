@@ -231,7 +231,7 @@ struct InviteSheet: View {
                     Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
                         .koanText(.body, .muted)
                     QRCodeView(
-                        text: invite.link, side: 168, margin: 12, radius: 8,
+                        text: invite.qrLink, side: 168, margin: 12, radius: 8,
                         caption: "Scan with a phone's camera to open it there."
                     )
                     .frame(maxWidth: .infinity)

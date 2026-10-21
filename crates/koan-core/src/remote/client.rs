@@ -1496,6 +1496,10 @@ pub struct KoanInvite {
     pub username: String,
     pub token: String,
     pub password: Option<String>,
+    /// A token for the QR code, lapsing in minutes. Absent from servers older
+    /// than it.
+    #[serde(rename = "qrToken")]
+    pub qr_token: Option<String>,
 }
 
 /// An invite redeemed: the account it was for and the API key made for this

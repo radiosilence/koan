@@ -5190,9 +5190,17 @@ fn invite_node(
         koan_core::invite::TOKEN_TTL_SECS,
     )
     .map_err(account_error)?;
+    let qr_token = koan_core::invite::mint_token(
+        conn,
+        &keypair()?.0,
+        user_id,
+        koan_core::invite::QR_TOKEN_TTL_SECS,
+    )
+    .map_err(account_error)?;
     let node = XmlNode::new("invite")
         .attr("username", username)
-        .attr("token", &token);
+        .attr("token", &token)
+        .attr("qrToken", &qr_token);
     Ok(match password {
         Some(p) => node.attr("password", p),
         None => node,
