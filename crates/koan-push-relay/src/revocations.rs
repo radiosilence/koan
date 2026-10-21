@@ -97,6 +97,13 @@ impl Revocations {
         Ok(())
     }
 
+    /// Whether a revocation for this device would be recorded rather than
+    /// refused for want of room.
+    pub fn has_room(&self, device: &TokenHash) -> bool {
+        let map = self.map.read();
+        map.len() < self.max || map.contains_key(device)
+    }
+
     /// Drop revocations older than any handle that could still open. Blocks
     /// on the disk.
     pub fn prune(&self, now_ms: u64, lifetime_ms: u64) -> Result<(), String> {

@@ -20,13 +20,19 @@ version (1) | key id (1) | nonce (12) | sealed( flags (1) | minted ms (8, big-en
 
 The version and key id are authenticated with the rest. A handle is opaque to everyone but the relay: clients store it and send it back unchanged, and must not parse it. It is at most 188 characters.
 
-A handle opens for 60 days from minting (`expires` in the registration response). The app registers again before then, at half its lifetime, and gives its servers the new handle on their next link. Every handle for one device token shares that device's quotas.
+A handle opens for 60 days from minting (`expires` in the registration response). The app registers again before then, at half its lifetime, and gives its servers the new handle on their next link.
+
+The app registers once for each server and gives every server a handle of its own, never one handle to several. Each handle has its own quota, so a server that spends its allowance spends no other server's; the device's ceiling bounds them all together (see [Quotas](#quotas)).
 
 The relay keeps no record of handles. It can rotate its sealing key: handles sealed under a key it still lists keep opening, and a key is retired once every handle sealed under it has expired.
 
 ## Revocation
 
 A device revokes by sending its token. Every handle for that token minted at or before that moment stops opening; handles minted afterwards are unaffected. The app revokes when it signs out of a server, then registers again and gives each server it still uses a fresh handle. Because revoking needs the token, only the device can do it: a server cannot cut a device off from its other servers.
+
+The app waits for the revocation's `204` before registering again, and registers again after any revocation that succeeds, including a retried one: a revocation retires every handle minted before it reached the relay, whichever request asked for them.
+
+Before recording a revocation the relay sends the token a background push, and records it only if Apple accepts it. The table therefore holds only devices that exist, and cannot be filled with made-up tokens. The app is open when it revokes, so the wake asks nothing of it.
 
 The relay stores one row per revoking device: a keyed hash of the token and the time. A row is deleted once every handle it could refuse has expired.
 
@@ -55,10 +61,10 @@ Called by the app.
 Called by the app.
 
 ```json
-{ "token": "<device token, hex>" }
+{ "token": "<device token, hex>", "sandbox": false }
 ```
 
-The answer is `204` once the revocation is on disk.
+The answer is `204` once the revocation is on disk. `400` means the token is malformed, the relay holds no key for the gateway, or Apple refused the token; `429` and `503` are as for a push.
 
 ### `POST /v1/push`
 
@@ -93,19 +99,21 @@ Each relay process counts:
 
 | Counted per | Default |
 |-------------|---------|
-| Device: notifications | 30 an hour |
-| Device: wakes | 60 an hour |
+| Handle: notifications | 30 an hour |
+| Handle: wakes | 60 an hour |
+| Device, across its handles: notifications | 120 an hour |
+| Device, across its handles: wakes | 240 an hour |
 | Caller address: pushes | 6000 a minute |
 | Caller address: registrations and revocations | 30 a minute |
 | Everyone: pushes sent to Apple | 20,000 a second |
 
-A device is counted by its token, so all its handles share one count whichever servers hold them. A caller address is counted by its IPv4 address or its IPv6 /64. Each count allows its whole allowance as a burst and then refills evenly over the period. Behind a proxy, the address is the last one in the header the relay is configured to trust.
+A device is counted by its token, so its ceiling holds whichever servers hold its handles. A caller address is counted by its IPv4 address or its IPv6 /64. Each count allows its whole allowance as a burst and then refills evenly over the period. A push refused because the relay or Apple could not take it is not counted against its handle or device. Behind a proxy, the address is the last one in the last instance of the header the relay is configured to trust: the one the nearest proxy wrote.
 
 ## What the relay sees and keeps
 
 It sees, per request: a device token (registration and revocation only), a handle, which it opens to a token in memory, the kind of push, an encrypted blob it cannot read, and the caller's address.
 
-It keeps: the revocation table (a keyed hash of each revoking device's token and when it revoked, for at most 60 days), counters for quotas in memory (keyed hashes of tokens and caller addresses, forgotten once their allowance has refilled), and aggregate request counts by route and outcome. It writes no request log, and nothing it stores names a token, a handle or a server.
+It keeps: the revocation table (a keyed hash of each revoking device's token and when it revoked, for at most 60 days), counters for quotas in memory (keyed hashes of tokens, handles' random nonces, and caller addresses as they are, IPv6 cut to its /64; each forgotten once its allowance has refilled), and aggregate request counts by route and outcome. It writes no request log, and nothing it writes to disk names a token, a handle, a caller or a server.
 
 ## Operating the relay
 
@@ -144,8 +152,10 @@ key_id = "…"
 key_path = "/secrets/sandbox.p8"
 
 [limits]
-device_alerts_per_hour = 30
-device_wakes_per_hour = 60
+handle_alerts_per_hour = 30
+handle_wakes_per_hour = 60
+device_alerts_per_hour = 120
+device_wakes_per_hour = 240
 ip_pushes_per_minute = 6000
 ip_registrations_per_minute = 30
 global_pushes_per_second = 20000

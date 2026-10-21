@@ -140,7 +140,14 @@ impl Default for HandlesConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Limits {
-    /// Notifications one device can be sent an hour, from every server.
+    /// Notifications sent through one handle an hour. The app gives each
+    /// server a handle of its own, so this is one server's allowance for one
+    /// device, and a server that spends it spends no other server's.
+    pub handle_alerts_per_hour: u32,
+    /// Background wakes through one handle an hour.
+    pub handle_wakes_per_hour: u32,
+    /// Notifications one device can be sent an hour, from every server
+    /// together.
     pub device_alerts_per_hour: u32,
     /// Background wakes one device can be sent an hour. iOS throttles these
     /// itself; this bounds what reaches Apple.
@@ -164,8 +171,10 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            device_alerts_per_hour: 30,
-            device_wakes_per_hour: 60,
+            handle_alerts_per_hour: 30,
+            handle_wakes_per_hour: 60,
+            device_alerts_per_hour: 120,
+            device_wakes_per_hour: 240,
             ip_pushes_per_minute: 6000,
             ip_registrations_per_minute: 30,
             global_pushes_per_second: 20_000,

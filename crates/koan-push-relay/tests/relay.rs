@@ -31,6 +31,8 @@ struct Gateway {
     received: Arc<Mutex<Vec<Received>>>,
     /// What the gateway answers: a status and a reason.
     answer: Arc<Mutex<Option<(u16, &'static str)>>>,
+    /// How long the gateway takes to answer.
+    delay: Arc<Mutex<std::time::Duration>>,
 }
 
 impl Gateway {
@@ -41,6 +43,10 @@ impl Gateway {
     fn answer(&self, status: u16, reason: &'static str) {
         *self.answer.lock() = Some((status, reason));
     }
+
+    fn accept(&self) {
+        *self.answer.lock() = None;
+    }
 }
 
 async fn gateway_push(
@@ -49,6 +55,8 @@ async fn gateway_push(
     headers: HeaderMap,
     body: axum::Json<Value>,
 ) -> (StatusCode, axum::Json<Value>) {
+    let delay = *gw.delay.lock();
+    tokio::time::sleep(delay).await;
     gw.received.lock().push(Received {
         token,
         headers,
@@ -242,28 +250,75 @@ async fn a_handle_the_relay_did_not_seal_is_gone() {
 }
 
 #[tokio::test]
-async fn notifications_to_one_device_are_capped_across_all_its_handles() {
-    let h = Harness::start(|cfg| cfg.limits.device_alerts_per_hour = 3).await;
-    let first = h.register(TOKEN).await;
-    let second = h.register(TOKEN).await;
-    assert_ne!(first, second);
-    for handle in [&first, &second, &first] {
-        assert_eq!(h.push(handle, "summon", None).await.status(), 204);
+async fn each_handle_has_its_own_allowance_under_the_devices_ceiling() {
+    let h = Harness::start(|cfg| {
+        cfg.limits.handle_alerts_per_hour = 2;
+        cfg.limits.device_alerts_per_hour = 3;
+    })
+    .await;
+    let hostile = h.register(TOKEN).await;
+    let friendly = h.register(TOKEN).await;
+    assert_ne!(hostile, friendly);
+
+    for _ in 0..2 {
+        assert_eq!(h.push(&hostile, "summon", None).await.status(), 204);
     }
-    let r = h.push(&second, "summon", None).await;
+    let r = h.push(&hostile, "summon", None).await;
     assert_eq!(r.status(), 429);
     let retry: u64 = r.headers()["retry-after"]
         .to_str()
         .unwrap()
         .parse()
         .unwrap();
-    assert!((1..=1200).contains(&retry), "{retry}");
+    assert!((1..=1800).contains(&retry), "{retry}");
+
+    // The server that spent its allowance has not spent the other's.
+    assert_eq!(h.push(&friendly, "summon", None).await.status(), 204);
+    // But the device's ceiling holds across both.
+    assert_eq!(h.push(&friendly, "summon", None).await.status(), 429);
 
     // Wakes are counted apart.
-    assert_eq!(h.push(&first, "wake", None).await.status(), 204);
+    assert_eq!(h.push(&hostile, "wake", None).await.status(), 204);
     // And another device has its own count.
     let other = h.register(&"ff".repeat(32)).await;
     assert_eq!(h.push(&other, "summon", None).await.status(), 204);
+}
+
+#[tokio::test]
+async fn a_push_apple_could_not_take_spends_no_allowance() {
+    let h = Harness::start(|cfg| cfg.limits.handle_alerts_per_hour = 1).await;
+    let handle = h.register(TOKEN).await;
+    h.gateway.answer(500, "InternalServerError");
+    for _ in 0..3 {
+        assert_eq!(h.push(&handle, "notify", None).await.status(), 503);
+    }
+    h.gateway.accept();
+    assert_eq!(h.push(&handle, "notify", None).await.status(), 204);
+    assert_eq!(h.push(&handle, "notify", None).await.status(), 429);
+}
+
+#[tokio::test]
+async fn the_request_limit_is_one_limit_across_routes() {
+    let h = Harness::start(|cfg| cfg.limits.max_requests = 1).await;
+    let handle = h.register(TOKEN).await;
+    *h.gateway.delay.lock() = std::time::Duration::from_millis(500);
+    let slow = {
+        let http = h.http.clone();
+        let url = format!("{}/v1/push", h.url);
+        tokio::spawn(async move {
+            http.post(url)
+                .json(&json!({ "handle": handle, "kind": "wake" }))
+                .send()
+                .await
+                .unwrap()
+                .status()
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let r = h.post("/v1/register", json!({ "token": TOKEN })).await;
+    assert_eq!(r.status(), 503);
+    assert!(r.headers().contains_key("retry-after"));
+    assert_eq!(slow.await.unwrap(), 204);
 }
 
 #[tokio::test]
@@ -280,6 +335,22 @@ async fn a_revocation_retires_every_earlier_handle() {
 
     let new = h.register(TOKEN).await;
     assert_eq!(h.push(&new, "wake", None).await.status(), 204);
+}
+
+#[tokio::test]
+async fn only_a_token_apple_accepts_can_be_revoked() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    h.gateway.answer(400, "BadDeviceToken");
+    let r = h.post("/v1/revoke", json!({ "token": TOKEN })).await;
+    assert_eq!(r.status(), 400);
+    h.gateway.accept();
+    assert_eq!(h.push(&handle, "wake", None).await.status(), 204);
+
+    // The proof is a bare wake, which the app, open and revoking, ignores.
+    let probe = &h.gateway.received()[0];
+    assert_eq!(probe.token, TOKEN);
+    assert_eq!(probe.body, json!({ "aps": { "content-available": 1 } }));
 }
 
 #[tokio::test]
@@ -363,6 +434,25 @@ async fn behind_a_proxy_the_last_forwarded_address_is_the_caller() {
     // One IPv6 /64 is one caller.
     assert_eq!(register("2001:db8::1").await.unwrap().status(), 200);
     assert_eq!(register("2001:db8::2").await.unwrap().status(), 429);
+}
+
+#[tokio::test]
+async fn a_proxys_own_header_line_wins_over_the_callers() {
+    let h = Harness::start(|cfg| {
+        cfg.limits.ip_registrations_per_minute = 1;
+        cfg.client_ip_header = Some("x-forwarded-for".into());
+    })
+    .await;
+    let register = |forged: &'static str| {
+        h.http
+            .post(format!("{}/v1/register", h.url))
+            .header("x-forwarded-for", forged)
+            .header("x-forwarded-for", "203.0.113.9")
+            .json(&json!({ "token": TOKEN }))
+            .send()
+    };
+    assert_eq!(register("1.1.1.1").await.unwrap().status(), 200);
+    assert_eq!(register("2.2.2.2").await.unwrap().status(), 429);
 }
 
 #[tokio::test]

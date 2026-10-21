@@ -114,6 +114,15 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
         Ok(())
     }
 
+    /// Hand back one request's allowance, for one that was admitted and
+    /// then not carried out.
+    pub fn refund(&self, key: &K) {
+        let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
+        if let Some(tat) = shard.lock().get_mut(key) {
+            *tat = tat.saturating_sub(self.rate.interval);
+        }
+    }
+
     /// Forget callers whose limit has fully recovered: to the limit, they
     /// are the same as callers never seen.
     pub fn sweep(&self, now: u64) {
@@ -196,6 +205,23 @@ mod tests {
         assert!(limit.check(1, 60 * SEC).is_ok());
         assert!(limit.check(1, 60 * SEC).is_ok());
         assert!(limit.check(1, 60 * SEC).is_err());
+    }
+
+    #[test]
+    fn a_refund_hands_one_request_back() {
+        let limit = Keyed::new(Rate::per(2, Duration::from_secs(60)), 100);
+        assert!(limit.check(1u8, 0).is_ok());
+        assert!(limit.check(1, 0).is_ok());
+        assert!(limit.check(1, 0).is_err());
+        limit.refund(&1);
+        assert!(limit.check(1, 0).is_ok());
+        assert!(limit.check(1, 0).is_err());
+        limit.refund(&9);
+        assert_eq!(
+            limit.tracked(),
+            1,
+            "refunding an unknown caller adds nothing"
+        );
     }
 
     #[test]

@@ -35,8 +35,9 @@ pub const MAX_TOKEN: usize = 100;
 /// The longest handle, encoded, so a request can be refused before decoding.
 pub const MAX_HANDLE_LEN: usize = (HEADER_LEN + FIXED_LEN + MAX_TOKEN + TAG_LEN).div_ceil(3) * 4;
 
-/// How far ahead of the relay's clock a handle's mint time may be, for
-/// replicas whose clocks disagree.
+/// How far ahead of the relay's clock a handle's mint time may be: the wall
+/// clock can be stepped back after a handle is minted, and the handle is no
+/// less genuine for it.
 const SKEW_MS: u64 = 60_000;
 
 /// What a handle holds.
@@ -45,6 +46,9 @@ pub struct Device {
     pub token: Vec<u8>,
     pub sandbox: bool,
     pub minted_ms: u64,
+    /// The handle's nonce, random at sealing: what tells one of a device's
+    /// handles from another.
+    pub id: [u8; NONCE_LEN],
 }
 
 /// Why a handle does not open. Callers are told only that it is gone.
@@ -129,8 +133,8 @@ impl Handles {
         }
         let header = [raw[0], raw[1]];
         let key = self.keys.get(&header[1]).ok_or(Invalid::UnknownKey)?;
-        let nonce = Nonce::try_assume_unique_for_key(&raw[2..HEADER_LEN])
-            .map_err(|_| Invalid::Malformed)?;
+        let id: [u8; NONCE_LEN] = raw[2..HEADER_LEN].try_into().expect("nonce length");
+        let nonce = Nonce::assume_unique_for_key(id);
         let plain = key
             .open_in_place(nonce, Aad::from(header), &mut raw[HEADER_LEN..])
             .map_err(|_| Invalid::Forged)?;
@@ -147,6 +151,7 @@ impl Handles {
             token,
             sandbox,
             minted_ms,
+            id,
         })
     }
 }
@@ -185,13 +190,13 @@ mod tests {
         let token = [0xab; 32];
         let sealed = h.seal(&token, true, 1_000);
         assert!(sealed.len() <= MAX_HANDLE_LEN);
-        assert_eq!(
-            h.open(&sealed, 2_000).unwrap(),
-            Device {
-                token: token.to_vec(),
-                sandbox: true,
-                minted_ms: 1_000
-            }
+        let device = h.open(&sealed, 2_000).unwrap();
+        assert_eq!(device.token, token);
+        assert!(device.sandbox);
+        assert_eq!(device.minted_ms, 1_000);
+        assert_ne!(
+            device.id,
+            h.open(&h.seal(&token, true, 1_000), 2_000).unwrap().id
         );
     }
 
