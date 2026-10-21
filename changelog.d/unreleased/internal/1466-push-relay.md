@@ -1,0 +1,1 @@
+- **Push relay protocol.** The protocol reference specifies the relay at `push.koan.rocks`, which forwards pushes to Apple for kōan servers that do not hold the developer's key: servers hold sealed handles instead of device tokens, and the relay writes the whole of what Apple is sent. The relay itself lives in radiosilence/koan-push-relay. Nothing uses it yet.
