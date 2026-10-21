@@ -237,7 +237,7 @@ pub fn play_history_with_tracks(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path,
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id,
                 h.id, h.played_at, h.duration_ms, COALESCE(h.source, 'local')
          FROM play_history h
          JOIN tracks t ON t.id = h.track_id
@@ -270,10 +270,10 @@ pub fn play_history_with_tracks(
         .query_map(rusqlite::params_from_iter(params.iter()), |row| {
             Ok(PlayHistoryRow {
                 track: super::row_to_track_row(row)?,
-                id: row.get(20)?,
-                played_at: row.get(21)?,
-                listened_ms: row.get(22)?,
-                source: row.get(23)?,
+                id: row.get(21)?,
+                played_at: row.get(22)?,
+                listened_ms: row.get(23)?,
+                source: row.get(24)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

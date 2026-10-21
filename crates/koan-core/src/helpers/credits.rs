@@ -6,6 +6,7 @@ use rusqlite::Connection;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::db::connection::DbError;
+use crate::db::queries::TrackRow;
 use crate::db::queries::batch::{CreditsOf, Place, credited_artists, places_for_tracks};
 
 /// What a record whose album artist is not known is credited to.
@@ -142,6 +143,22 @@ impl ListCredits {
             Self::default()
         });
         (places, credits)
+    }
+
+    /// The credits of these track rows and of their records: two
+    /// statements, the rows carrying their own places. A read that fails
+    /// leaves the credits unlinked rather than failing the list.
+    pub fn read_rows<'a>(conn: &Connection, rows: impl IntoIterator<Item = &'a TrackRow>) -> Self {
+        let places: HashMap<i64, Place> = rows.into_iter().map(|r| (r.id, r.place())).collect();
+        Self::read(conn, &places).unwrap_or_else(|e| {
+            log::warn!("credited artists unread, credits left unlinked: {e}");
+            Self::default()
+        })
+    }
+
+    /// A track row's credits.
+    pub fn track(&self, r: &TrackRow) -> RowCredits {
+        self.row(Some(r.id), r.place(), &r.artist_name, &r.album_artist_name)
     }
 
     /// The credits of `places`' tracks and of the records they are on.

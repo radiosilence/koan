@@ -547,6 +547,7 @@ mod tests {
             track_number: Some(n),
             title: title.into(),
             artist_id: Some(9),
+            album_artist_id: None,
             ..crate::browse::tests::track(id, 1)
         }
     }

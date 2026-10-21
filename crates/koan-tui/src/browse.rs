@@ -1835,6 +1835,7 @@ pub(super) mod tests {
             id,
             album_id: Some(album),
             artist_id: Some(album),
+            album_artist_id: None,
             artist_name: "artist".into(),
             album_artist_name: "artist".into(),
             album_title: format!("album {album}"),

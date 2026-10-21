@@ -46,14 +46,9 @@ pub fn of_tracks<'a>(
     rows: impl IntoIterator<Item = &'a TrackRow>,
 ) -> HashMap<i64, Credits> {
     let rows: Vec<&TrackRow> = rows.into_iter().collect();
-    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let (places, credits) = ListCredits::read_tracks(&db.conn, &ids);
+    let credits = ListCredits::read_rows(&db.conn, rows.iter().copied());
     rows.into_iter()
-        .map(|r| {
-            let place = places.get(&r.id).copied().unwrap_or_default();
-            let row = credits.row(Some(r.id), place, &r.artist_name, &r.album_artist_name);
-            (r.id, Credits::of(row))
-        })
+        .map(|r| (r.id, Credits::of(credits.track(r))))
         .collect()
 }
 

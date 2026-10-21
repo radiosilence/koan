@@ -367,7 +367,7 @@ pub fn playlist_entries(conn: &Connection, id: i64) -> Result<Vec<PlaylistEntry>
                 t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM playlist_tracks pt
          JOIN tracks t ON t.id = pt.track_id
          LEFT JOIN artists a ON t.artist_id = a.id
@@ -429,7 +429,7 @@ pub fn playlist_tracks(conn: &Connection, id: i64) -> Result<Vec<TrackRow>, DbEr
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM playlist_tracks pt
          JOIN tracks t ON t.id = pt.track_id
          LEFT JOIN artists a ON t.artist_id = a.id

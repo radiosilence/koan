@@ -12,7 +12,7 @@ use super::{PlaybackSource, TrackMeta, TrackRow};
 /// id, album_id, artist_id, artist_name, album_artist_name, album_title,
 /// disc, track_number, title, duration_ms, path,
 /// codec, sample_rate, bit_depth, channels, bitrate,
-/// genre, source, remote_id, cached_path
+/// genre, source, remote_id, cached_path, album artist id
 pub(crate) fn row_to_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackRow> {
     row_to_track_row_at(row, 0)
 }
@@ -42,6 +42,7 @@ pub(crate) fn row_to_track_row_at(row: &rusqlite::Row, at: usize) -> rusqlite::R
         source: row.get(at + 17)?,
         remote_id: row.get(at + 18)?,
         cached_path: row.get(at + 19)?,
+        album_artist_id: row.get(at + 20)?,
     })
 }
 
@@ -507,7 +508,7 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -536,7 +537,7 @@ pub fn all_tracks_by_path(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -584,7 +585,7 @@ pub fn tracks_by_paths(
             "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                     t.disc, t.track_number, t.title, t.duration_ms, t.path,
                     t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                    t.genre, t.source, t.remote_id, t.cached_path
+                    t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
              FROM tracks t
              LEFT JOIN artists a ON t.artist_id = a.id
              LEFT JOIN albums al ON t.album_id = al.id
@@ -617,7 +618,7 @@ pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -713,7 +714,7 @@ pub fn random_tracks_where(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -738,7 +739,7 @@ pub fn all_tracks_paged(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -762,7 +763,7 @@ pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, Db
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -790,7 +791,7 @@ pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow
             "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -1066,7 +1067,7 @@ pub fn tracks_page(conn: &Connection, limit: u32, offset: u32) -> Result<Vec<Tra
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -1086,7 +1087,7 @@ pub fn tracks_for_album(conn: &Connection, album_id: i64) -> Result<Vec<TrackRow
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -1119,7 +1120,7 @@ pub fn cover_track_for_album(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -1251,7 +1252,7 @@ pub fn favourite_tracks(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
+                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id

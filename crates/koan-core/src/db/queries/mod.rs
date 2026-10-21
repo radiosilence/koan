@@ -167,6 +167,8 @@ pub struct TrackRow {
     pub id: i64,
     pub album_id: Option<i64>,
     pub artist_id: Option<i64>,
+    /// The artist its record is filed under.
+    pub album_artist_id: Option<i64>,
     pub artist_name: String,
     pub album_artist_name: String,
     pub album_title: String,
@@ -184,6 +186,17 @@ pub struct TrackRow {
     pub source: String,
     pub remote_id: Option<String>,
     pub cached_path: Option<String>,
+}
+
+impl TrackRow {
+    /// Where the track is filed: its record and both artists.
+    pub fn place(&self) -> Place {
+        Place {
+            album_id: self.album_id,
+            artist_id: self.artist_id,
+            album_artist_id: self.album_artist_id,
+        }
+    }
 }
 
 /// Where to get audio data for playback. Local always wins.

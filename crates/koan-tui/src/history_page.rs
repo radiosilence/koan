@@ -900,6 +900,7 @@ mod tests {
                 id,
                 album_id: Some(1),
                 artist_id: Some(2),
+                album_artist_id: None,
                 artist_name: "artist".into(),
                 album_artist_name: "artist".into(),
                 album_title: "record".into(),

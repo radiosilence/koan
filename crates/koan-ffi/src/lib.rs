@@ -5334,9 +5334,11 @@ impl KoanEngine {
                             .into_iter()
                             .map(|r| (r.id, r))
                             .collect();
-                        let (places, credits) = db
+                        let credits = db
                             .as_ref()
-                            .map(|db| koan_core::helpers::ListCredits::read_tracks(&db.conn, &ids))
+                            .map(|db| {
+                                koan_core::helpers::ListCredits::read_rows(&db.conn, rows.values())
+                            })
                             .unwrap_or_default();
                         out.publish(StateSlice::Transfers {
                             transfers: transfers
@@ -5344,17 +5346,7 @@ impl KoanEngine {
                                 .map(|d| {
                                     let row = rows.get(&d.track_id);
                                     let credit = match row {
-                                        Some(r) => {
-                                            let place =
-                                                places.get(&r.id).copied().unwrap_or_default();
-                                            let row = credits.row(
-                                                Some(r.id),
-                                                place,
-                                                &r.artist_name,
-                                                &r.album_artist_name,
-                                            );
-                                            types::Credits::from(row).artist
-                                        }
+                                        Some(r) => types::Credits::from(credits.track(r)).artist,
                                         None => types::credit_parts(&d.artist, None, &[]),
                                     };
                                     Transfer::of(d, row, credit)
@@ -5518,10 +5510,9 @@ impl KoanEngine {
             .filter_map(|d| current_entry(d.state.as_ref()?)?.track_id.clone())
             .collect();
         let rows = self.rows_for_remote(&playing);
-        let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
-        let (places, library) = self
+        let library = self
             .db()
-            .map(|db| koan_core::helpers::ListCredits::read_tracks(&db.conn, &row_ids))
+            .map(|db| koan_core::helpers::ListCredits::read_rows(&db.conn, rows.values()))
             .unwrap_or_default();
         list.iter()
             .map(|d| {
@@ -5530,12 +5521,11 @@ impl KoanEngine {
                     .and_then(|e| e.track_id.as_ref())
                     .and_then(|r| rows.get(r));
                 let artist_credit = st.artist.as_deref().map_or_else(Vec::new, |artist| {
-                    let album_artist = row.map_or(artist, |r| r.album_artist_name.as_str());
-                    let id = row.map(|r| r.id);
-                    let place = id
-                        .and_then(|id| places.get(&id).copied())
-                        .unwrap_or_default();
-                    types::Credits::from(library.row(id, place, artist, album_artist)).artist
+                    let credits = match row {
+                        Some(r) => library.row(Some(r.id), r.place(), artist, &r.album_artist_name),
+                        None => library.row(None, Default::default(), artist, artist),
+                    };
+                    types::Credits::from(credits).artist
                 });
                 DeviceInfo {
                     id: d.id.clone(),
@@ -6348,23 +6338,16 @@ impl KoanEngine {
     /// whichever path a track happens to have, and a never-cached remote track
     /// only has a URL.
     ///
-    /// Each track's place and credits come in the same pass, a few queries
-    /// for the listing (`ListCredits::read_tracks`).
+    /// Each track's credits come in the same pass, two queries for the
+    /// listing (`ListCredits::read_rows`).
     fn decorate(&self, db: &Database, rows: Vec<queries::TrackRow>) -> Vec<Track> {
         let favs: HashSet<i64> =
             queries::favourite_track_ids_batch(&db.conn, queries::LOCAL_USER).unwrap_or_default();
-        let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-        let (places, credits) = koan_core::helpers::ListCredits::read_tracks(&db.conn, &ids);
+        let credits = koan_core::helpers::ListCredits::read_rows(&db.conn, &rows);
         rows.into_iter()
             .map(|r| {
-                let is_fav = favs.contains(&r.id);
-                let place = places.get(&r.id).copied().unwrap_or(queries::Place {
-                    album_id: r.album_id,
-                    artist_id: r.artist_id,
-                    album_artist_id: None,
-                });
-                let row = credits.row(Some(r.id), place, &r.artist_name, &r.album_artist_name);
-                Track::from_row(r, is_fav, place.album_artist_id, row)
+                let row = credits.track(&r);
+                Track::from_row(r, favs.contains(&r.id), row)
             })
             .collect()
     }

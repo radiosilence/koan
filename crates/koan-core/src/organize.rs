@@ -1671,6 +1671,7 @@ mod tests {
             id: 1,
             album_id: Some(1),
             artist_id: Some(1),
+            album_artist_id: None,
             artist_name: artist.into(),
             album_artist_name: artist.into(),
             album_title: album.into(),
