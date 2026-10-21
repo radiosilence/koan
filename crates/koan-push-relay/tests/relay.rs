@@ -97,9 +97,11 @@ impl Harness {
         tokio::spawn(async move { axum::serve(gw_listener, app).await });
 
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = Config::default();
-        cfg.store = dir.path().join("relay.db");
-        cfg.token_key = STANDARD.encode([3u8; 32]);
+        let mut cfg = Config {
+            store: dir.path().join("relay.db"),
+            token_key: STANDARD.encode([3u8; 32]),
+            ..Config::default()
+        };
         cfg.handles.keys = BTreeMap::from([("1".to_string(), STANDARD.encode([5u8; 32]))]);
         cfg.handles.current = 1;
         cfg.apns.team_id = "TEAM123456".into();
