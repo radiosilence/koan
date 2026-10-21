@@ -8,7 +8,7 @@
 //! standalone server proxies for nobody.
 //!
 //! The page is plain HTML that works without script; with it, koan's browser
-//! player (`assets/player.js`, shared with the web UI) plays the tracks
+//! player (`scripts/player.ts`, shared with the web UI) plays the tracks
 //! gaplessly. Its CSP allows this server's own scripts and nothing else.
 
 use std::path::PathBuf;

@@ -16,7 +16,7 @@
 {#- A heading with its buttons, above a track list. The row keeps the space a heading would, above and below, since buttons beside it are taller than it and would otherwise sit on the list. -#}
 {% macro list_head() %}mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0{% endmacro %}
 
-{#- A track row's opening tag, carrying what the player and the track menu read from it (assets/ui.js). `row` is a `TrackData`. -#}
+{#- A track row's opening tag, carrying what the player and the track menu read from it (scripts/ui.ts). `row` is a `TrackData`. -#}
 {% macro track_open(row) %}
 <li tabindex="0" data-id="{{ row.t.id }}" data-dur="{{ row.t.duration_ms.unwrap_or(0) / 1000 }}" data-title="{{ row.t.title }}" data-artist="{{ row.artist }}" data-album="{{ row.t.album_title }}" data-album-id="{{ row.t.album_id.unwrap_or(0) }}" data-artist-id="{{ row.t.artist_id.unwrap_or(0) }}" data-cover="{{ row.cover }}"{{ row.credit }}>
 {%- endmacro %}

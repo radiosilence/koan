@@ -26,23 +26,23 @@ window.KoanPlayer = (opts = {}) => {
   let resumeAt = 0;         // where a restored queue resumes
   let playing = false;
   let gen = 0;              // bumped on every jump, so stale callbacks do nothing
-  let mode = null;          // "buffer", "stream", or null when stopped
-  let ctx = null;           // AudioContext, made on the first press
-  let source = null, startedAt = 0;          // buffer mode
-  let queued = null;        // { source, at }: the next track, scheduled gaplessly
-  const buffers = new Map();                 // src -> Promise<AudioBuffer|null>
+  let mode = null; // null when stopped
+  let ctx = null; // made on the first press
+  let source = null, startedAt = 0; // buffer mode
+  let queued = null; // the next track, scheduled gaplessly
+  const buffers = new Map(); // by src
   const el = new Audio();                     // stream mode
   el.preload = "auto";
-  let dest = null;                            // MediaStream the graph plays into
+  let dest = null; // MediaStream the graph plays into
   const out = new Audio();                    // what is heard in buffer mode
   out.setAttribute("playsinline", "");
   // Paused or played from outside (lock screen, headphones, another app's
   // audio): follow it, so the clock and what is heard agree.
   out.addEventListener("pause", () => {
-    if (playing && mode === "buffer") { playing = false; ctx.suspend(); notify(); }
+    if (playing && mode === "buffer") { playing = false; ctx?.suspend(); notify(); }
   });
   out.addEventListener("play", () => {
-    if (!playing && mode === "buffer") { playing = true; ctx.resume(); notify(); }
+    if (!playing && mode === "buffer") { playing = true; ctx?.resume(); notify(); }
   });
 
   const decodable = (t) => t && t.dur > 0 && t.dur <= LONG;
@@ -71,12 +71,12 @@ window.KoanPlayer = (opts = {}) => {
   }
 
   function buffer(i) {
-    const t = queue[i];
-    if (!ctx || !decodable(t)) return Promise.resolve(null);
+    const t = queue[i], c = ctx;
+    if (!c || !decodable(t)) return Promise.resolve(null);
     if (!buffers.has(t.src)) {
       buffers.set(t.src, fetch(t.src, { credentials: "same-origin" })
         .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(r.status)))
-        .then((b) => ctx.decodeAudioData(b))
+        .then((b) => c.decodeAudioData(b))
         .catch(() => null));
     }
     // Hold the current neighbourhood only: decoded audio is large.
@@ -124,7 +124,7 @@ window.KoanPlayer = (opts = {}) => {
 
   function setPlaying(p) { playing = p; notify(); }
 
-  function startBuffer(buf, from, at) {
+  function startBuffer(ctx, buf, from, at) {
     const s = ctx.createBufferSource();
     s.buffer = buf;
     s.connect(dest || ctx.destination);
@@ -152,15 +152,15 @@ window.KoanPlayer = (opts = {}) => {
     const i = cur + 1;
     if (mode !== "buffer" || !source || queued || !decodable(queue[i])) return;
     const buf = await buffer(i);
-    if (g !== gen || !buf || !source || queued || cur + 1 !== i) return;
+    if (g !== gen || !buf || !ctx || !source?.buffer || queued || cur + 1 !== i) return;
     const at = startedAt + source.buffer.duration;
     if (at < ctx.currentTime + 0.05) return; // too late to be seamless; onended will follow on
-    queued = { source: startBuffer(buf, 0, at), at };
+    queued = { source: startBuffer(ctx, buf, 0, at), at };
   }
 
   // The track after this one changed: drop what was scheduled for the old one.
   function requeue() {
-    if (queued && queued.at <= ctx.currentTime) return; // already sounding
+    if (queued && ctx && queued.at <= ctx.currentTime) return; // already sounding
     unqueue();
     queueNext(gen);
   }
@@ -176,12 +176,12 @@ window.KoanPlayer = (opts = {}) => {
     // inside the gesture; a decode that fails falls back to it afterwards.
     const buf = ctx && decodable(queue[i]) ? await buffer(i) : null;
     if (g !== gen) return;
-    if (buf) {
+    if (buf && ctx) {
       mode = "buffer";
       if (dest) out.play().catch(() => {});
       if (ctx.state !== "running") await ctx.resume();
       const at = ctx.currentTime + 0.03;
-      source = startBuffer(buf, from, at);
+      source = startBuffer(ctx, buf, from, at);
       startedAt = at - from;
       source.onended = onBufferEnded(g);
       queueNext(g);
@@ -213,7 +213,7 @@ window.KoanPlayer = (opts = {}) => {
 
   function position() {
     if (cur < 0) return 0;
-    if (mode === "buffer") return Math.max(0, ctx.currentTime - startedAt);
+    if (mode === "buffer" && ctx) return Math.max(0, ctx.currentTime - startedAt);
     if (mode === "stream") return el.currentTime;
     return resumeAt;
   }
@@ -226,10 +226,10 @@ window.KoanPlayer = (opts = {}) => {
     // leave it alone.
     if (playing) {
       playing = false;
-      if (mode === "buffer") { out.pause(); await ctx.suspend(); } else el.pause();
+      if (mode === "buffer") { out.pause(); await ctx?.suspend(); } else el.pause();
     } else {
       playing = true;
-      if (mode === "buffer") { if (dest) out.play().catch(() => {}); await ctx.resume(); } else await el.play().catch(() => {});
+      if (mode === "buffer") { if (dest) out.play().catch(() => {}); await ctx?.resume(); } else await el.play().catch(() => {});
     }
     notify();
   }
@@ -241,7 +241,7 @@ window.KoanPlayer = (opts = {}) => {
     on("pause", () => { if (playing) toggle(); });
     on("previoustrack", () => api.prev());
     on("nexttrack", () => api.next());
-    on("seekto", (d) => api.seek(d.seekTime));
+    on("seekto", (d) => { if (d.seekTime != null) api.seek(d.seekTime); });
   }
 
   const api = {
@@ -301,7 +301,7 @@ window.KoanPlayer = (opts = {}) => {
 // text we put there.
 document.addEventListener("pointerover", (e) => {
   for (let el = e.target; el instanceof Element && el !== document.body; el = el.parentElement) {
-    if (getComputedStyle(el).textOverflow !== "ellipsis") continue;
+    if (!(el instanceof HTMLElement) || getComputedStyle(el).textOverflow !== "ellipsis") continue;
     const ours = el.hasAttribute("data-cut") && el.title === el.dataset.cut;
     if (el.title && !ours) continue;
     if (el.scrollWidth > el.clientWidth) {
