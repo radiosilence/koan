@@ -788,9 +788,11 @@ jobs:
     needs: [container, check-version]
     if: ${{ !cancelled() && needs.container.result == 'success' && needs.check-version.result == 'success' }}
     # One at a time across runs: two that read the tag together could both
-    # see their commit ahead, and the one finishing last would win.
+    # see their commit ahead, and the one finishing last would win. A group
+    # keeps one pending job and cancels it when another queues, which would
+    # end a release run cancelled, so a release waits in a group of its own.
     concurrency:
-      group: container-main
+      group: container-main${{ needs.check-version.outputs.should_release == 'true' && '-release' || '' }}
       cancel-in-progress: false
     permissions:
       contents: read
