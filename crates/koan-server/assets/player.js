@@ -31,7 +31,7 @@ export class Player {
   #gen = 0;                 // bumped on every jump, so stale callbacks do nothing
   // Decoded audio on the context's clock, a stream, or null when stopped.
   #mode = null;
-  #ctx = null; // made on the first press
+  #ctx = null; // made on the first press; always there in buffer mode
   #source = null; // buffer mode
   #startedAt = 0;
   #queued = null; // the next track, scheduled gaplessly
@@ -49,10 +49,10 @@ export class Player {
     // Paused or played from outside (lock screen, headphones, another app's
     // audio): follow it, so the clock and what is heard agree.
     this.#out.addEventListener("pause", () => {
-      if (this.#playing && this.#mode?.kind === "buffer") { this.#playing = false; this.#mode.ctx.suspend(); this.#notify(); }
+      if (this.#playing && this.#mode === "buffer") { this.#playing = false; this.#ctx?.suspend(); this.#notify(); }
     });
     this.#out.addEventListener("play", () => {
-      if (!this.#playing && this.#mode?.kind === "buffer") { this.#playing = true; this.#mode.ctx.resume(); this.#notify(); }
+      if (!this.#playing && this.#mode === "buffer") { this.#playing = true; this.#ctx?.resume(); this.#notify(); }
     });
 
     if ("mediaSession" in navigator) {
@@ -73,8 +73,8 @@ export class Player {
 
   get position() {
     if (this.#cur < 0) return 0;
-    if (this.#mode?.kind === "buffer") return Math.max(0, this.#mode.ctx.currentTime - this.#startedAt);
-    if (this.#mode?.kind === "stream") return this.#el.currentTime;
+    if (this.#mode === "buffer" && this.#ctx) return Math.max(0, this.#ctx.currentTime - this.#startedAt);
+    if (this.#mode === "stream") return this.#el.currentTime;
     return this.#resumeAt;
   }
 
@@ -97,7 +97,7 @@ export class Player {
       this.#elUnlocked = true;
       this.#el.src = t.src;
       // Silenced again unless this tap is what starts it streaming.
-      this.#el.play().then(() => { if (this.#mode?.kind !== "stream") this.#el.pause(); }).catch(() => {});
+      this.#el.play().then(() => { if (this.#mode !== "stream") this.#el.pause(); }).catch(() => {});
     }
   }
 
@@ -177,8 +177,8 @@ export class Player {
 
   async #queueNext(g) {
     const i = this.#cur + 1;
-    if (this.#mode?.kind !== "buffer" || !this.#source || this.#queued || !decodable(this.#queue[i])) return;
-    const { ctx } = this.#mode;
+    const ctx = this.#ctx;
+    if (this.#mode !== "buffer" || !ctx || !this.#source || this.#queued || !decodable(this.#queue[i])) return;
     const buf = await this.#buffer(i);
     if (g !== this.#gen || !buf || !this.#source?.buffer || this.#queued || this.#cur + 1 !== i) return;
     const at = this.#startedAt + this.#source.buffer.duration;
@@ -188,7 +188,7 @@ export class Player {
 
   // The track after this one changed: drop what was scheduled for the old one.
   #requeue() {
-    if (this.#mode?.kind === "buffer" && this.#queued && this.#queued.at <= this.#mode.ctx.currentTime) return; // already sounding
+    if (this.#queued && this.#ctx && this.#queued.at <= this.#ctx.currentTime) return; // already sounding
     this.#unqueue();
     this.#queueNext(this.#gen);
   }
@@ -206,7 +206,7 @@ export class Player {
     const buf = ctx && decodable(this.#queue[i]) ? await this.#buffer(i) : null;
     if (g !== this.#gen) return;
     if (ctx && buf) {
-      this.#mode = { kind: "buffer", ctx };
+      this.#mode = "buffer";
       if (this.#dest) this.#out.play().catch(() => {});
       if (ctx.state !== "running") await ctx.resume();
       const at = ctx.currentTime + 0.03;
@@ -216,7 +216,7 @@ export class Player {
       source.onended = () => this.#ended(g);
       this.#queueNext(g);
     } else {
-      this.#mode = { kind: "stream" };
+      this.#mode = "stream";
       this.#out.pause();
       const el = this.#el, t = this.#queue[i];
       let retried = false;
@@ -249,10 +249,10 @@ export class Player {
     // leave it alone.
     if (this.#playing) {
       this.#playing = false;
-      if (this.#mode.kind === "buffer") { this.#out.pause(); await this.#mode.ctx.suspend(); } else this.#el.pause();
+      if (this.#mode === "buffer") { this.#out.pause(); await this.#ctx?.suspend(); } else this.#el.pause();
     } else {
       this.#playing = true;
-      if (this.#mode.kind === "buffer") { if (this.#dest) this.#out.play().catch(() => {}); await this.#mode.ctx.resume(); } else await this.#el.play().catch(() => {});
+      if (this.#mode === "buffer") { if (this.#dest) this.#out.play().catch(() => {}); await this.#ctx?.resume(); } else await this.#el.play().catch(() => {});
     }
     this.#notify();
   }
@@ -275,14 +275,14 @@ export class Player {
   // Queue these after the playing track, without interrupting it.
   playNext(tracks) {
     this.#queue.splice(this.#cur + 1, 0, ...tracks);
-    if (this.#mode?.kind === "buffer") this.#requeue();
+    if (this.#mode === "buffer") this.#requeue();
     this.#notify();
   }
 
   append(tracks) {
     const wasLast = this.#cur === this.#queue.length - 1;
     this.#queue.push(...tracks);
-    if (wasLast && this.#mode?.kind === "buffer") this.#requeue();
+    if (wasLast && this.#mode === "buffer") this.#requeue();
     this.#notify();
   }
 
@@ -297,7 +297,7 @@ export class Player {
       return;
     }
     if (i < this.#cur) this.#cur--;
-    else if (i === this.#cur + 1 && this.#mode?.kind === "buffer") this.#requeue();
+    else if (i === this.#cur + 1 && this.#mode === "buffer") this.#requeue();
     this.#notify();
   }
 

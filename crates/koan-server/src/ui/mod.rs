@@ -61,6 +61,10 @@ static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         ASSETS.imports.csp
     )
 });
+/// `PAGE_CSP` as the header every page sends; OAuth's consent page widens the
+/// text instead.
+static PAGE_CSP_HEADER: std::sync::LazyLock<HeaderValue> =
+    std::sync::LazyLock::new(|| HeaderValue::from_str(&PAGE_CSP).expect("the CSP is ASCII"));
 
 /// Sent by the UI's own navigation, which wants the page content without the shell.
 const PARTIAL: &str = "x-koan-partial";
@@ -408,10 +412,7 @@ fn html(status: StatusCode, body: impl Into<String>) -> Response {
     );
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     h.insert(header::VARY, HeaderValue::from_static("x-koan-partial"));
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_str(&PAGE_CSP).expect("the CSP is ASCII"),
-    );
+    h.insert(header::CONTENT_SECURITY_POLICY, PAGE_CSP_HEADER.clone());
     h.insert(
         header::REFERRER_POLICY,
         HeaderValue::from_static("same-origin"),

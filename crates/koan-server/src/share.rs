@@ -31,12 +31,13 @@ use crate::html::{Html, Render};
 /// The page's own scripts and stylesheet, from this server and nowhere else,
 /// and the import map naming the player; `connect-src` is for the player
 /// fetching the tracks it decodes.
-static PAGE_CSP: LazyLock<String> = LazyLock::new(|| {
-    format!(
+static PAGE_CSP: LazyLock<HeaderValue> = LazyLock::new(|| {
+    let csp = format!(
         "default-src 'none'; script-src 'self' {}; style-src 'self'; font-src 'self'; img-src 'self'; \
          media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         SHARE_IMPORTS.csp
-    )
+    );
+    HeaderValue::from_str(&csp).expect("the CSP is ASCII")
 });
 
 /// The gapless queue player, shared with the web UI.
@@ -77,31 +78,33 @@ pub(crate) struct ImportMap {
 
 impl ImportMap {
     pub(crate) fn player(url: &str) -> Self {
-        use base64::Engine as _;
-        use sha2::{Digest, Sha256};
-        let json = format!(r#"{{"imports":{{"koan/player":"{url}"}}}}"#);
-        let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&json));
+        let json = serde_json::json!({ "imports": { "koan/player": url } }).to_string();
         Self {
-            csp: format!("'sha256-{hash}'"),
+            csp: csp_hash(&json),
             json,
         }
     }
+}
+
+/// The CSP source allowing an inline script whose text is `text`.
+pub(crate) fn csp_hash(text: &str) -> String {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+    let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(text));
+    format!("'sha256-{hash}'")
 }
 
 /// Whether `csp` allows the import map inline in `html` by its hash: the map
 /// as the page carries it, not as the server meant to write it.
 #[cfg(test)]
 pub(crate) fn import_map_allowed(html: &str, csp: &str) -> bool {
-    use base64::Engine as _;
-    use sha2::{Digest, Sha256};
     let Some((_, rest)) = html.split_once("<script type=\"importmap\">") else {
         return false;
     };
     let Some((json, _)) = rest.split_once("</script>") else {
         return false;
     };
-    let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(json));
-    csp.contains(&format!("'sha256-{hash}'"))
+    csp.contains(&csp_hash(json))
 }
 
 /// The classes in `html` that `css` has no rule for, bar `hooks`: the names
@@ -589,10 +592,7 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     )
         .into_response();
     let h = resp.headers_mut();
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_str(&PAGE_CSP).expect("the CSP is ASCII"),
-    );
+    h.insert(header::CONTENT_SECURITY_POLICY, PAGE_CSP.clone());
     h.insert(
         "x-robots-tag",
         HeaderValue::from_static("noindex, nofollow"),
