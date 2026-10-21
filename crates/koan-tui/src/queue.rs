@@ -11,7 +11,7 @@ use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
 use koan_core::db::queries::Place;
-use koan_core::helpers::{ListCredits, RecordOf, RowCredits, RunRole, record_runs};
+use koan_core::helpers::{ListCredits, RecordOf, RunRole, record_runs};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
