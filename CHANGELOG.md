@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.66.4
+
+### Added
+
+- **An Apple TV wakes from any of your devices on its network.** Set up once with the code the TV shows, from the TV's menu in Play on or straight after signing it in, and choosing the TV turns it on and opens kōan there, over the protocol the Remote app uses. The server keeps the pairing for the account, so it needs no push key and works for self-hosted servers; the old AirPlay knock, which woke nothing on current Apple TVs, is gone.
+
+### Internal
+
+- **The web UI's scripts are ES modules, compiled by Cargo.** koan-server's build script strips the types from `scripts/*.ts` with oxc as it builds, so no compiled JavaScript is committed and `cargo build` and `cargo install koan` need no JavaScript toolchain; TypeScript still typechecks the scripts (`just js`). `ui.ts` and `share.ts` import the player as a class from `koan/player`, which an inline import map names at its versioned URL, so a cached old player is never paired with a new page script; the CSP allows the map by its hash.
+
 ## 0.66.3
 
 ### Security
