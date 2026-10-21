@@ -4,6 +4,10 @@
 //! the device only through the relay, and the relay keeps no record of
 //! devices: everything it needs to push is inside the handle.
 //!
+//! Registration also mints a revoker: the same sealed form with a flag
+//! set, which only the app keeps. It cannot be pushed to, and revoking
+//! takes one, so a server, which holds handles alone, cannot revoke.
+//!
 //! Each handle also carries a slot: sixteen bytes the app chose for the
 //! server it gave the handle to, and keeps for that server across renewals.
 //! The relay counts a server's allowance by it, and stamps it on what it
@@ -33,6 +37,7 @@ const HEADER_LEN: usize = 2 + NONCE_LEN;
 pub const SLOT_LEN: usize = 16;
 const FIXED_LEN: usize = 1 + 8 + SLOT_LEN;
 const SANDBOX: u8 = 1;
+const REVOKER: u8 = 2;
 
 /// The shortest and longest device token accepted, in bytes. Apple's are 32
 /// today and documented as variable in length.
@@ -56,6 +61,8 @@ pub struct Device {
     pub sandbox: bool,
     pub minted_ms: u64,
     pub slot: Slot,
+    /// A revoker, which only revokes, rather than a handle to push through.
+    pub revoker: bool,
 }
 
 /// Never shows the token: a `{:?}` in a log line must not leak one.
@@ -65,6 +72,7 @@ impl std::fmt::Debug for Device {
             .field("sandbox", &self.sandbox)
             .field("minted_ms", &self.minted_ms)
             .field("slot", &self.slot)
+            .field("revoker", &self.revoker)
             .finish_non_exhaustive()
     }
 }
@@ -117,14 +125,21 @@ impl Handles {
     }
 
     /// A handle for `token`, for the server `slot` stands for, minted at
-    /// `now_ms`.
-    pub fn seal(&self, token: &[u8], slot: &Slot, sandbox: bool, now_ms: u64) -> String {
+    /// `now_ms`; or with `revoker`, the app's own key to revoke it.
+    pub fn seal(
+        &self,
+        token: &[u8],
+        slot: &Slot,
+        sandbox: bool,
+        now_ms: u64,
+        revoker: bool,
+    ) -> String {
         let mut nonce = [0u8; NONCE_LEN];
         aws_lc_rs::rand::fill(&mut nonce).expect("the system's random source failed");
         let header = [VERSION, self.current];
 
         let mut body = Vec::with_capacity(FIXED_LEN + token.len() + TAG_LEN);
-        body.push(if sandbox { SANDBOX } else { 0 });
+        body.push(if sandbox { SANDBOX } else { 0 } | if revoker { REVOKER } else { 0 });
         body.extend_from_slice(&now_ms.to_be_bytes());
         body.extend_from_slice(slot);
         body.extend_from_slice(token);
@@ -163,6 +178,7 @@ impl Handles {
             .map_err(|_| Invalid::Forged)?;
 
         let sandbox = plain[0] & SANDBOX != 0;
+        let revoker = plain[0] & REVOKER != 0;
         let minted_ms = u64::from_be_bytes(plain[1..9].try_into().expect("eight bytes"));
         let slot: Slot = plain[9..FIXED_LEN].try_into().expect("slot length");
         let token = plain[FIXED_LEN..].to_vec();
@@ -181,6 +197,7 @@ impl Handles {
             sandbox,
             minted_ms,
             slot,
+            revoker,
         })
     }
 }
@@ -218,7 +235,7 @@ mod tests {
     fn a_handle_opens_to_what_was_sealed() {
         let h = handles();
         let token = [0xab; 32];
-        let sealed = h.seal(&token, &SLOT, true, 1_000);
+        let sealed = h.seal(&token, &SLOT, true, 1_000, false);
         assert!(sealed.len() <= MAX_HANDLE_LEN);
         let device = h.open(&sealed, 2_000).unwrap();
         assert_eq!(device.token, token);
@@ -228,18 +245,33 @@ mod tests {
     }
 
     #[test]
+    fn a_revoker_is_marked_and_a_handle_is_not() {
+        let h = handles();
+        assert!(
+            !h.open(&h.seal(&[1; 32], &SLOT, false, 0, false), 0)
+                .unwrap()
+                .revoker
+        );
+        assert!(
+            h.open(&h.seal(&[1; 32], &SLOT, false, 0, true), 0)
+                .unwrap()
+                .revoker
+        );
+    }
+
+    #[test]
     fn two_handles_for_one_token_differ() {
         let h = handles();
         assert_ne!(
-            h.seal(&[1; 32], &SLOT, false, 0),
-            h.seal(&[1; 32], &SLOT, false, 0)
+            h.seal(&[1; 32], &SLOT, false, 0, false),
+            h.seal(&[1; 32], &SLOT, false, 0, false)
         );
     }
 
     #[test]
     fn every_altered_byte_is_refused() {
         let h = handles();
-        let sealed = h.seal(&[3; 32], &SLOT, false, 0);
+        let sealed = h.seal(&[3; 32], &SLOT, false, 0, false);
         let raw = URL_SAFE_NO_PAD.decode(&sealed).unwrap();
         for i in 0..raw.len() {
             let mut bad = raw.clone();
@@ -254,7 +286,7 @@ mod tests {
     #[test]
     fn a_retired_key_opens_nothing_and_an_old_one_still_opens() {
         let old = Handles::new(&[(1, [7; 32])], 1, 60 * DAY).unwrap();
-        let sealed = old.seal(&[4; 32], &SLOT, false, 0);
+        let sealed = old.seal(&[4; 32], &SLOT, false, 0, false);
         assert!(handles().open(&sealed, 1).is_ok());
         let retired = Handles::new(&[(2, [9; 32])], 2, 60 * DAY).unwrap();
         assert_eq!(retired.open(&sealed, 1), Err(Invalid::UnknownKey));
@@ -263,14 +295,14 @@ mod tests {
     #[test]
     fn another_relays_key_is_a_forgery() {
         let other = Handles::new(&[(2, [1; 32])], 2, 60 * DAY).unwrap();
-        let sealed = other.seal(&[4; 32], &SLOT, false, 0);
+        let sealed = other.seal(&[4; 32], &SLOT, false, 0, false);
         assert_eq!(handles().open(&sealed, 1), Err(Invalid::Forged));
     }
 
     #[test]
     fn a_handle_expires_after_its_lifetime() {
         let h = handles();
-        let sealed = h.seal(&[5; 32], &SLOT, false, 10 * DAY);
+        let sealed = h.seal(&[5; 32], &SLOT, false, 10 * DAY, false);
         assert!(h.open(&sealed, 70 * DAY - 1).is_ok());
         assert_eq!(h.open(&sealed, 70 * DAY), Err(Invalid::Expired));
     }
@@ -278,16 +310,18 @@ mod tests {
     #[test]
     fn a_handle_minted_ahead_of_the_clock_opens_up_to_a_lifetime_ahead() {
         let h = handles();
-        let sealed = h.seal(&[5; 32], &SLOT, false, 10 * DAY);
+        let sealed = h.seal(&[5; 32], &SLOT, false, 10 * DAY, false);
         assert!(h.open(&sealed, DAY).is_ok());
-        let far = h.seal(&[5; 32], &SLOT, false, 100 * DAY);
+        let far = h.seal(&[5; 32], &SLOT, false, 100 * DAY, false);
         assert_eq!(h.open(&far, DAY), Err(Invalid::Future));
     }
 
     #[test]
     fn a_device_never_prints_its_token() {
         let h = handles();
-        let device = h.open(&h.seal(&[0xab; 32], &SLOT, false, 0), 0).unwrap();
+        let device = h
+            .open(&h.seal(&[0xab; 32], &SLOT, false, 0, false), 0)
+            .unwrap();
         assert!(!format!("{device:?}").contains("171"));
         assert!(!format!("{device:?}").to_lowercase().contains("ab, ab"));
     }
@@ -318,7 +352,7 @@ mod tests {
     #[test]
     fn the_longest_token_fits_the_longest_handle() {
         let h = handles();
-        let sealed = h.seal(&[6; MAX_TOKEN], &SLOT, false, 0);
+        let sealed = h.seal(&[6; MAX_TOKEN], &SLOT, false, 0, false);
         assert!(sealed.len() <= MAX_HANDLE_LEN);
         assert!(h.open(&sealed, 0).is_ok());
     }

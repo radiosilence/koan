@@ -11,9 +11,9 @@
 //!
 //! Everything that reaches Apple is bounded with the developer's account in
 //! mind: tokens are proven before they get a handle, proofs are rate limited
-//! and stop for an address whose tokens Apple refuses, a token Apple calls
-//! gone is retired, and a credential Apple refuses stops its gateway sending
-//! until a probe shows it is fixed.
+//! and stop for an address whose tokens Apple refuses, revoking asks nothing
+//! of Apple, a token Apple calls gone is retired, and a credential Apple
+//! refuses stops its gateway sending until a probe shows it is fixed.
 //!
 //! Every push is answered from memory: handles carry their device, quotas are
 //! counters, and the revocation table is held whole. The disk is touched only
@@ -74,6 +74,12 @@ const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
 const HOUR: Duration = Duration::from_secs(60 * 60);
 const MINUTE: Duration = Duration::from_secs(60);
 
+/// Proven tokens Apple refuses, across devices, before the relay takes it
+/// that its own topic or gateway is wrong and stops the gateway. One alone
+/// is a single stale token, retired like a gone one.
+const REFUSED_PROVEN: u32 = 5;
+const REFUSED_PROVEN_WINDOW: Duration = Duration::from_secs(10 * 60);
+
 /// IPv6 callers to registration and revocation are counted by /48, the
 /// largest block one site is commonly given, so a site cannot spread made-up
 /// tokens across its addresses; the price is that neighbours in one /48
@@ -103,6 +109,7 @@ pub struct Relay {
     global: Global,
     proofs: Global,
     bad_tokens: Global,
+    refused_proven: Global,
     in_flight: Arc<Semaphore>,
     max_in_flight: usize,
     requests: Semaphore,
@@ -198,6 +205,7 @@ impl Relay {
             global: Global::new(Rate::per(l.global_pushes_per_second, second)),
             proofs: Global::new(Rate::per(l.proofs_per_second, second)),
             bad_tokens: Global::new(Rate::per(l.bad_tokens_per_hour, HOUR)),
+            refused_proven: Global::new(Rate::per(REFUSED_PROVEN, REFUSED_PROVEN_WINDOW)),
             in_flight: Arc::new(Semaphore::new(cfg.apns.max_in_flight)),
             max_in_flight: cfg.apns.max_in_flight,
             requests: Semaphore::new(l.max_requests),
@@ -209,33 +217,51 @@ impl Relay {
 
     /// Who is calling, for per-address limits: an IPv4 address, or an IPv6
     /// address cut to `prefix` bits, since one subscriber holds a block.
-    fn caller(&self, headers: &HeaderMap, peer: SocketAddr, prefix: u32) -> u128 {
-        // The proxies in front append, as a line of their own or to the
-        // caller's: counting `client_ip_hops` back from the end passes over
-        // them, and anything further back came from the caller.
-        let ip = self
-            .client_ip_header
-            .as_ref()
-            .and_then(|name| {
+    ///
+    /// Behind a proxy (`client_ip_header`), a request without a readable
+    /// address there is refused: counting it as the proxy's own address
+    /// would put every such caller in one bucket, where one could spend
+    /// everyone's allowance.
+    fn caller(&self, headers: &HeaderMap, peer: SocketAddr, prefix: u32) -> Result<u128, Refusal> {
+        let ip = match &self.client_ip_header {
+            None => peer.ip(),
+            Some(name) => {
+                // The proxies in front append, as a line of their own or to
+                // the caller's: counting `client_ip_hops` back from the end
+                // passes over them, and anything further back came from the
+                // caller.
                 let values: Vec<&str> = headers
                     .get_all(name)
                     .iter()
                     .filter_map(|v| v.to_str().ok())
                     .collect();
-                values
+                let found = values
                     .join(",")
                     .rsplit(',')
                     .nth(self.client_ip_hops - 1)
-                    .and_then(|v| v.trim().parse::<IpAddr>().ok())
-            })
-            .unwrap_or(peer.ip());
-        match ip {
+                    .and_then(|v| v.trim().parse::<IpAddr>().ok());
+                match found {
+                    Some(ip) => ip,
+                    None => {
+                        static SAID: std::sync::atomic::AtomicBool =
+                            std::sync::atomic::AtomicBool::new(false);
+                        if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                            log::error!(
+                                "a request came without a readable caller in {name}: is the proxy setting it?"
+                            );
+                        }
+                        return Err(Refusal::Bad("no caller address"));
+                    }
+                }
+            }
+        };
+        Ok(match ip {
             IpAddr::V4(v4) => u128::from(v4.to_ipv6_mapped()),
             IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
                 Some(v4) => u128::from(v4.to_ipv6_mapped()),
                 None => u128::from(v6) & (u128::MAX << (128 - prefix)),
             },
-        }
+        })
     }
 
     fn sweep(&self) {
@@ -257,11 +283,10 @@ impl Relay {
             Allowance::HandleWakes(k) => self.handle_wakes.check(k, now).map_err(limited),
             Allowance::DeviceAlerts(k) => self.device_alerts.check(k, now).map_err(limited),
             Allowance::DeviceWakes(k) => self.device_wakes.check(k, now).map_err(limited),
-            Allowance::DeviceRevocations(k) => {
-                self.device_revocations.check(k, now).map_err(limited)
-            }
             Allowance::Global => self.global.check(now).map_err(|_| Refusal::Busy),
             Allowance::Proofs => self.proofs.check(now).map_err(|_| Refusal::Busy),
+            Allowance::RefusedFrom(k) => self.ip_bad_tokens.check(k, now).map_err(limited),
+            Allowance::Refused => self.bad_tokens.check(now).map_err(|_| Refusal::Busy),
         }
     }
 
@@ -271,9 +296,10 @@ impl Relay {
             Allowance::HandleWakes(k) => self.handle_wakes.refund(&k),
             Allowance::DeviceAlerts(k) => self.device_alerts.refund(&k),
             Allowance::DeviceWakes(k) => self.device_wakes.refund(&k),
-            Allowance::DeviceRevocations(k) => self.device_revocations.refund(&k),
             Allowance::Global => self.global.refund(),
             Allowance::Proofs => self.proofs.refund(),
+            Allowance::RefusedFrom(k) => self.ip_bad_tokens.refund(&k),
+            Allowance::Refused => self.bad_tokens.refund(),
         }
     }
 
@@ -296,9 +322,13 @@ enum Allowance {
     HandleWakes(SlotKey),
     DeviceAlerts(TokenHash),
     DeviceWakes(TokenHash),
-    DeviceRevocations(TokenHash),
     Global,
     Proofs,
+    /// A proof's room in its caller's count of refused tokens, and in
+    /// everyone's: taken before it is sent, so racing proofs cannot overrun
+    /// either, and handed back if Apple accepts the token.
+    RefusedFrom(u128),
+    Refused,
 }
 
 /// Allowances taken for one push to Apple, handed back when dropped unless
@@ -312,6 +342,19 @@ struct Charge {
 }
 
 impl Charge {
+    /// Hand back the room taken in the counts of refused tokens: the token
+    /// was real.
+    fn not_refused(&mut self) {
+        let relay = &self.relay;
+        self.taken.retain(|a| match a {
+            Allowance::RefusedFrom(_) | Allowance::Refused => {
+                relay.give_back(*a);
+                false
+            }
+            _ => true,
+        });
+    }
+
     fn new(relay: &Arc<Relay>) -> Self {
         Self {
             relay: relay.clone(),
@@ -345,9 +388,8 @@ struct Job {
     kind: Kind,
     blob: Option<String>,
     device: TokenHash,
-    /// For a proof, the address that asked for it, which answers for a
-    /// token Apple refuses.
-    prover: Option<u128>,
+    /// Whether this is the relay's own proof of a token.
+    proof: bool,
 }
 
 impl Relay {
@@ -372,18 +414,23 @@ impl Relay {
             };
             let delivery = relay.apns.send(&to, job.kind, job.blob.as_deref()).await;
             let now = relay.clock.now();
-            match (&delivery, job.prover) {
-                (Delivery::Sent, None) => {
+            match (&delivery, job.proof) {
+                (Delivery::Sent, false) => {
                     charge.spent = true;
                     relay.metrics.sent(job.kind);
                 }
-                (Delivery::Sent, Some(_)) => {
+                (Delivery::Sent, true) => {
+                    charge.not_refused();
                     charge.spent = true;
                     relay.metrics.proof(true);
                 }
-                (Delivery::Throttled, _) => charge.spent = true,
-                // A device the app has left: no server may send to it again.
-                (Delivery::Unregistered, None) => {
+                (Delivery::Throttled, _) => {
+                    charge.not_refused();
+                    charge.spent = true;
+                }
+                // A device the app has left, or a proven token Apple now
+                // refuses: no server may send to it again.
+                (Delivery::Unregistered | Delivery::BadToken, false) => {
                     charge.spent = true;
                     let writer = relay.clone();
                     let device = job.device;
@@ -394,23 +441,28 @@ impl Relay {
                     if let Ok(Err(RevokeError::Store(e))) = retired {
                         log::error!("retiring a gone token: {e}");
                     }
+                    // Several proven tokens refused in a short while say the
+                    // relay's topic or gateway has changed under them.
+                    if delivery == Delivery::BadToken {
+                        relay.refused_proven.charge(now);
+                        if !relay.refused_proven.admits(now) {
+                            log::error!(
+                                "apns refuses proven tokens: is the topic or gateway right?"
+                            );
+                            relay.apns.trip(job.sandbox);
+                        }
+                    }
                 }
-                // A token proven when its handle was minted, refused now: the
-                // relay's topic or gateway has changed under it, so the relay
-                // is what is wrong. Stop the gateway until it is fixed.
-                (Delivery::BadToken, None) => {
-                    charge.spent = true;
-                    log::error!("apns refused a proven token: is the topic or gateway right?");
-                    relay.apns.trip(job.sandbox);
-                }
-                // A proof Apple refused: made up, or an app long gone. The
-                // address that asked answers for it, and so does everyone's
-                // count, which holds registrations past its limit.
-                (Delivery::Unregistered | Delivery::BadToken, Some(prover)) => {
+                // A proof Apple refused: made up, or an app long gone, or
+                // refused for a reason the relay does not know. It stays
+                // counted against its caller and against everyone.
+                (Delivery::Unregistered | Delivery::BadToken | Delivery::Refused(_), true) => {
                     charge.spent = true;
                     relay.metrics.proof(false);
-                    relay.ip_bad_tokens.charge(prover, now);
-                    relay.bad_tokens.charge(now);
+                }
+                (Delivery::Refused(reason), false) => {
+                    charge.spent = true;
+                    log::error!("apns refused a push: {reason}");
                 }
                 (Delivery::Rejected(reason), _) => {
                     log::error!("apns refused the relay: {reason}");
@@ -424,37 +476,31 @@ impl Relay {
             .unwrap_or_else(|e| Delivery::Unavailable(format!("delivery task: {e}")))
     }
 
-    /// Send a token a background push, to learn that Apple knows it. A
-    /// handle is minted and a revocation recorded only for a real device,
-    /// so neither can be had for a made-up token. The app is open when it
-    /// registers or revokes, so the wake asks nothing of it.
+    /// Send a token a background push, to learn that Apple knows it, before
+    /// minting it a handle, so none can be had for a made-up token. The app
+    /// is open when it registers, so the wake asks nothing of it.
     ///
     /// Proofs are where made-up tokens reach Apple, so they have limits of
-    /// their own: a rate for everyone, a count per address of tokens Apple
-    /// refused, past which that address proves nothing more for a while,
-    /// and, for registration only (`hold`), the same count across everyone.
-    /// A proof is counted against the device's allowance (`per_device`)
-    /// before it is sent, so racing requests cannot exceed it.
+    /// their own: a rate for everyone, and room in two counts of tokens
+    /// Apple refused, one for the address asking and one for everyone,
+    /// taken before the proof is sent and handed back if Apple accepts it.
+    /// A proof is a wake like any other to the device it is for.
     async fn prove(
         self: &Arc<Self>,
         token: Vec<u8>,
         sandbox: bool,
         prover: u128,
-        per_device: fn(TokenHash) -> Allowance,
-        hold: bool,
     ) -> Result<TokenHash, Refusal> {
         if !self.apns.serves(sandbox) {
             return Err(Refusal::Bad("this relay does not serve that gateway"));
         }
         let device = self.hasher.hash(&token);
         let now = self.clock.now();
-        self.ip_bad_tokens.admits(&prover, now).map_err(limited)?;
-        if hold && !self.bad_tokens.admits(now) {
-            return Err(Refusal::Busy);
-        }
         let mut charge = Charge::new(self);
+        charge.take(Allowance::RefusedFrom(prover), now)?;
+        charge.take(Allowance::Refused, now)?;
         charge.take(Allowance::Proofs, now)?;
-        charge.take(per_device(device), now)?;
+        charge.take(Allowance::DeviceWakes(device), now)?;
         charge.take(Allowance::Global, now)?;
         let permit = self
             .in_flight
@@ -468,11 +514,13 @@ impl Relay {
             kind: Kind::WakeNow,
             blob: None,
             device,
-            prover: Some(prover),
+            proof: true,
         };
         match self.deliver(charge, permit, job).await {
             Delivery::Sent => Ok(device),
-            Delivery::Unregistered | Delivery::BadToken => Err(Refusal::Bad("not a device token")),
+            Delivery::Unregistered | Delivery::BadToken | Delivery::Refused(_) => {
+                Err(Refusal::Bad("not a device token"))
+            }
             Delivery::Unserved => Err(Refusal::Bad("this relay does not serve that gateway")),
             Delivery::Throttled => Err(Refusal::Limited(Duration::from_secs(60))),
             Delivery::Unavailable(_) => Err(Refusal::Busy),
@@ -633,15 +681,17 @@ struct RegisterRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RevokeRequest {
-    token: String,
-    #[serde(default)]
-    sandbox: bool,
+    /// A revoker from any registration of the device's that has not expired.
+    revoker: String,
 }
 
 #[derive(Serialize)]
 struct Registered {
     handle: String,
-    /// Unix seconds after which the handle no longer opens.
+    /// The app's own key to revoke the device's handles. Never given to a
+    /// server.
+    revoker: String,
+    /// Unix seconds after which the handle and revoker no longer open.
     expires: u64,
 }
 
@@ -663,7 +713,7 @@ async fn register(
 ) -> Response {
     let answer = async {
         json_only(&headers)?;
-        let caller = relay.caller(&headers, peer, PROOF_PREFIX);
+        let caller = relay.caller(&headers, peer, PROOF_PREFIX)?;
         relay
             .ip_registrations
             .check(caller, relay.clock.now())
@@ -672,25 +722,25 @@ async fn register(
         let _working = relay.requests.try_acquire().map_err(|_| Refusal::Busy)?;
         let token = device_token(&req.token)?;
         let slot = slot(&req.slot)?;
-        let device = relay
-            .prove(
-                token.clone(),
-                req.sandbox,
-                caller,
-                Allowance::DeviceWakes,
-                true,
-            )
-            .await?;
+        let device = relay.prove(token.clone(), req.sandbox, caller).await?;
         let now = unix_ms();
         // Past the reach of the device's last revocation, which would
-        // otherwise retire this handle too.
+        // otherwise retire this handle too. Only the clock's own reading
+        // moves the relay's latest mint time, so registering cannot push it
+        // ahead.
+        relay.revocations.minted(now);
         let minted = relay
             .revocations
             .revoked_at(&device)
             .map_or(now, |at| now.max(at + SLACK_MS + 1));
-        relay.revocations.minted(minted);
+        let seal = |revoker| {
+            relay
+                .handles
+                .seal(&token, &slot, req.sandbox, minted, revoker)
+        };
         Ok(Json(Registered {
-            handle: relay.handles.seal(&token, &slot, req.sandbox, minted),
+            handle: seal(false),
+            revoker: seal(true),
             expires: (minted + relay.handles.lifetime_ms()) / 1000,
         })
         .into_response())
@@ -707,28 +757,37 @@ async fn revoke(
 ) -> Response {
     let answer = async {
         json_only(&headers)?;
-        let caller = relay.caller(&headers, peer, PROOF_PREFIX);
+        let caller = relay.caller(&headers, peer, PROOF_PREFIX)?;
         relay
             .ip_revocations
             .check(caller, relay.clock.now())
             .map_err(limited)?;
         let req: RevokeRequest = read(body).await?;
         let _working = relay.requests.try_acquire().map_err(|_| Refusal::Busy)?;
-        let token = device_token(&req.token)?;
-        if !relay.revocations.has_room(&relay.hasher.hash(&token)) {
+        // Revoking asks nothing of Apple: a revoker is proof enough, since
+        // the relay minted it only for a token Apple accepted, and only the
+        // app holds one.
+        let revoker = relay
+            .handles
+            .open(&req.revoker, unix_ms())
+            .map_err(|e| match e {
+                Invalid::Future => Refusal::Busy,
+                _ => Refusal::Gone,
+            })?;
+        if !revoker.revoker {
+            return Err(Refusal::Bad("not a revoker"));
+        }
+        let device = relay.hasher.hash(&revoker.token);
+        if relay.revocations.revoked(&device, revoker.minted_ms) {
+            return Err(Refusal::Gone);
+        }
+        if !relay.revocations.has_room(&device) {
             return Err(Refusal::Busy);
         }
-        // Never held by everyone's count of refused tokens, so nobody else's
-        // made-up tokens can stop a device revoking.
-        let device = relay
-            .prove(
-                token,
-                req.sandbox,
-                caller,
-                Allowance::DeviceRevocations,
-                false,
-            )
-            .await?;
+        relay
+            .device_revocations
+            .check(device, relay.clock.now())
+            .map_err(limited)?;
         let writer = relay.clone();
         let revoked =
             tokio::task::spawn_blocking(move || writer.revocations.revoke(device, unix_ms())).await;
@@ -757,7 +816,7 @@ async fn push(
 ) -> Response {
     let answer = async {
         json_only(&headers)?;
-        let caller = relay.caller(&headers, peer, PUSH_PREFIX);
+        let caller = relay.caller(&headers, peer, PUSH_PREFIX)?;
         relay
             .ip_pushes
             .check(caller, relay.clock.now())
@@ -779,6 +838,9 @@ async fn push(
                 Invalid::Future => Refusal::Busy,
                 _ => Refusal::Gone,
             })?;
+        if device.revoker {
+            return Err(Refusal::Bad("a revoker is not a handle"));
+        }
         let hash = relay.hasher.hash(&device.token);
         if relay.revocations.revoked(&hash, device.minted_ms) {
             return Err(Refusal::Gone);
@@ -810,14 +872,14 @@ async fn push(
             kind: req.kind,
             blob: req.blob,
             device: hash,
-            prover: None,
+            proof: false,
         };
         match relay.deliver(charge, permit, job).await {
             Delivery::Sent => Ok(StatusCode::NO_CONTENT.into_response()),
-            Delivery::Unregistered | Delivery::Unserved => Err(Refusal::Gone),
+            Delivery::Unregistered | Delivery::BadToken | Delivery::Unserved => Err(Refusal::Gone),
             Delivery::Throttled => Err(Refusal::Limited(Duration::from_secs(60))),
             Delivery::Unavailable(_) => Err(Refusal::Busy),
-            Delivery::BadToken | Delivery::Rejected(_) | Delivery::Held => Err(Refusal::Broken),
+            Delivery::Refused(_) | Delivery::Rejected(_) | Delivery::Held => Err(Refusal::Broken),
         }
     }
     .await;

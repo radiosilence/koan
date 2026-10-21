@@ -178,7 +178,7 @@ pub struct Limits {
     /// prove the token. Phones on a mobile network share an address, but a
     /// phone registers once per server every month or so.
     pub ip_registrations_per_minute: u32,
-    /// Revocations from one address a minute. Each sends Apple a push.
+    /// Revocations from one address a minute.
     pub ip_revocations_per_minute: u32,
     /// Pushes sent to Apple a second, from everyone.
     pub global_pushes_per_second: u32,
@@ -192,8 +192,7 @@ pub struct Limits {
     /// The same count across everyone, past which no registration is proved
     /// until it falls back: a backstop for made-up tokens from many
     /// addresses, at the price of registrations waiting while it lasts.
-    /// Revocations are never held by it, so it cannot stop a device
-    /// revoking.
+    /// Revocation asks nothing of Apple, so it is never held.
     pub bad_tokens_per_hour: u32,
     /// Callers each limiter keeps a count for. Past this, a caller it has no
     /// count for is refused until the idle ones are swept.
@@ -218,7 +217,7 @@ impl Default for Limits {
             global_pushes_per_second: 20_000,
             proofs_per_second: 20,
             ip_bad_tokens_per_hour: 10,
-            bad_tokens_per_hour: 3600,
+            bad_tokens_per_hour: 360,
             max_tracked: 1_000_000,
             max_revocations: 1_000_000,
             max_requests: 50_000,

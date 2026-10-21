@@ -110,14 +110,6 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
         }
     }
 
-    /// Whether `check` would admit this caller now, without counting
-    /// anything or starting to track the caller.
-    pub fn admits(&self, key: &K, now: u64) -> Result<(), Refused> {
-        let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
-        let mut tat = shard.lock().map.get(key).copied().unwrap_or(0);
-        self.rate.admit(&mut tat, now).map_err(Refused::Limited)
-    }
-
     pub fn check(&self, key: K, now: u64) -> Result<(), Refused> {
         let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
         let mut shard = shard.lock();
@@ -145,23 +137,6 @@ impl<K: Hash + Eq + Copy> Keyed<K> {
         shard.map.insert(key, tat);
         self.len.fetch_add(1, Ordering::Relaxed);
         Ok(())
-    }
-
-    /// Count a request whether or not it is within the limit: for counting
-    /// what has already happened, such as Apple refusing a token. A caller
-    /// with no room to be tracked is not counted.
-    pub fn charge(&self, key: K, now: u64) {
-        let shard = &self.shards[self.hasher.hash_one(key) as usize % SHARDS];
-        let mut shard = shard.lock();
-        let interval = self.rate.interval;
-        if let Some(tat) = shard.map.get_mut(&key) {
-            *tat = (*tat).max(now) + interval;
-            return;
-        }
-        if shard.map.len() < self.per_shard {
-            shard.map.insert(key, now + interval);
-            self.len.fetch_add(1, Ordering::Relaxed);
-        }
     }
 
     /// Hand back one request's allowance, for one that was admitted and
@@ -365,20 +340,6 @@ mod tests {
 
     #[test]
     fn admits_looks_without_counting() {
-        let limit = Keyed::new(Rate::per(1, Duration::from_secs(60)), 100);
-        assert!(limit.admits(&1u8, 0).is_ok());
-        assert!(limit.admits(&1u8, 0).is_ok());
-        assert_eq!(limit.tracked(), 0, "looking tracks nobody");
-        assert!(limit.check(1, 0).is_ok());
-        assert!(limit.admits(&1, 0).is_err());
-
-        limit.charge(2, 0);
-        limit.charge(2, 0);
-        assert!(
-            limit.admits(&2, 0).is_err(),
-            "a charge counts even past the limit"
-        );
-
         let global = Global::new(Rate::per(2, Duration::from_secs(60)));
         assert!(global.admits(0));
         global.charge(0);

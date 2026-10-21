@@ -162,12 +162,18 @@ impl Harness {
 
     /// A handle for the server the app gave `slot`.
     async fn register_for(&self, token: &str, slot: &str) -> String {
+        self.register_with_revoker(token, slot).await.0
+    }
+
+    /// A handle, and the revoker only the app keeps.
+    async fn register_with_revoker(&self, token: &str, slot: &str) -> (String, String) {
         let r = self
             .post("/v1/register", json!({ "token": token, "slot": slot }))
             .await;
         assert_eq!(r.status(), 200);
         let body: Value = r.json().await.unwrap();
-        body["handle"].as_str().unwrap().to_string()
+        let field = |name: &str| body[name].as_str().unwrap().to_string();
+        (field("handle"), field("revoker"))
     }
 
     async fn push(&self, handle: &str, kind: &str, blob: Option<&str>) -> reqwest::Response {
@@ -341,7 +347,7 @@ async fn only_json_is_taken() {
             .post(format!("{}{path}", h.url))
             .header("content-type", "text/plain")
             .body(
-                json!({ "token": TOKEN, "slot": SLOT, "handle": handle, "kind": "wake" })
+                json!({ "token": TOKEN, "slot": SLOT, "handle": handle, "kind": "wake", "revoker": handle })
                     .to_string(),
             )
             .send()
@@ -425,14 +431,21 @@ async fn the_request_limit_is_one_limit_across_routes() {
 #[tokio::test]
 async fn a_revocation_retires_every_earlier_handle() {
     let h = Harness::start(|_| {}).await;
-    let old = h.register(TOKEN).await;
+    let (old, revoker) = h.register_with_revoker(TOKEN, SLOT).await;
+    let other_server = h.register_for(TOKEN, &"77".repeat(16)).await;
+    let reached = h.gateway.received().len();
+    let r = h.post("/v1/revoke", json!({ "revoker": revoker })).await;
+    assert_eq!(r.status(), 204);
     assert_eq!(
-        h.post("/v1/revoke", json!({ "token": TOKEN }))
-            .await
-            .status(),
-        204
+        h.gateway.received().len(),
+        reached,
+        "revoking asks nothing of Apple"
     );
     assert_eq!(h.push(&old, "wake", None).await.status(), 410);
+    assert_eq!(h.push(&other_server, "wake", None).await.status(), 410);
+    // A revoker revokes once: it is retired with the rest.
+    let r = h.post("/v1/revoke", json!({ "revoker": revoker })).await;
+    assert_eq!(r.status(), 410);
 
     let new = h.register(TOKEN).await;
     assert_eq!(h.push(&new, "wake", None).await.status(), 204);
@@ -506,16 +519,20 @@ async fn an_absurd_lifetime_is_refused_not_wrapped() {
 }
 
 #[tokio::test]
-async fn only_a_token_apple_accepts_can_be_revoked() {
+async fn only_the_apps_revoker_revokes() {
     let h = Harness::start(|_| {}).await;
-    let handle = h.register(TOKEN).await;
-    h.gateway.answer(400, "BadDeviceToken");
+    let (handle, revoker) = h.register_with_revoker(TOKEN, SLOT).await;
+    // What a server holds is not enough, and neither is the raw token.
+    let r = h.post("/v1/revoke", json!({ "revoker": handle })).await;
+    assert_eq!(r.status(), 400);
     let r = h.post("/v1/revoke", json!({ "token": TOKEN })).await;
     assert_eq!(r.status(), 400);
-    h.gateway.accept();
+    // And a revoker cannot be pushed through.
+    assert_eq!(h.push(&revoker, "summon", None).await.status(), 400);
     assert_eq!(h.push(&handle, "wake", None).await.status(), 204);
 
-    // The proof is a bare wake, which the app, open and revoking, ignores.
+    // Registration's proof is a bare wake, which the app, open and
+    // registering, ignores.
     let probe = &h.gateway.received()[0];
     assert_eq!(probe.token, TOKEN);
     assert_eq!(probe.body, json!({ "aps": { "content-available": 1 } }));
@@ -544,20 +561,89 @@ async fn apples_answers_reach_the_sender_as_the_relays() {
 }
 
 #[tokio::test]
-async fn a_proven_token_apple_now_refuses_stops_the_gateway_not_the_device() {
+async fn a_proven_token_apple_now_refuses_is_retired() {
     let h = Harness::start(|_| {}).await;
     let handle = h.register(TOKEN).await;
+    let other = h.register(&"ff".repeat(32)).await;
+    h.gateway.answer(400, "BadDeviceToken");
+    assert_eq!(h.push(&handle, "wake", None).await.status(), 410);
+    h.gateway.accept();
+    // That device is retired; the gateway carries on for everyone else.
+    let reached = h.gateway.received().len();
+    assert_eq!(h.push(&handle, "wake", None).await.status(), 410);
+    assert_eq!(h.gateway.received().len(), reached);
+    assert_eq!(h.push(&other, "wake", None).await.status(), 204);
+}
+
+#[tokio::test]
+async fn proven_tokens_refused_across_devices_stop_the_gateway() {
+    let h = Harness::start(|_| {}).await;
+    let mut handles = Vec::new();
+    for i in 0..6 {
+        handles.push(h.register(&format!("{:064x}", i + 1)).await);
+    }
     // What Apple says to every token when the relay's topic or gateway is
-    // wrong: the relay is at fault, and stops.
+    // wrong.
     h.gateway.answer(400, "DeviceTokenNotForTopic");
+    for handle in &handles[..5] {
+        assert_eq!(h.push(handle, "wake", None).await.status(), 410);
+    }
+    h.gateway.accept();
+    let reached = h.gateway.received().len();
+    let r = h.push(&handles[5], "wake", None).await;
+    assert_eq!(r.status(), 503);
+    assert_eq!(r.headers()["retry-after"], "300");
+    assert_eq!(h.gateway.received().len(), reached, "held, not sent");
+}
+
+#[tokio::test]
+async fn an_answer_the_relay_does_not_know_does_not_stop_the_gateway() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    h.gateway.answer(400, "SomethingApplesAddedLater");
     let r = h.push(&handle, "wake", None).await;
     assert_eq!(r.status(), 503);
     assert_eq!(r.headers()["retry-after"], "300");
-    let reached = h.gateway.received().len();
     h.gateway.accept();
-    assert_eq!(h.push(&handle, "wake", None).await.status(), 503);
-    assert_eq!(h.gateway.received().len(), reached, "held, not sent");
+    assert_eq!(h.push(&handle, "wake", None).await.status(), 204);
 }
+
+#[tokio::test]
+async fn an_expired_token_signed_moments_ago_is_the_clock_not_apple() {
+    let h = Harness::start(|_| {}).await;
+    let handle = h.register(TOKEN).await;
+    h.gateway.answer(403, "ExpiredProviderToken");
+    let r = h.push(&handle, "wake", None).await;
+    assert_eq!(r.status(), 503);
+    assert_eq!(
+        r.headers()["retry-after"],
+        "300",
+        "held, not re-signed in a loop"
+    );
+    let reached = h.gateway.received().len();
+    assert_eq!(h.push(&handle, "wake", None).await.status(), 503);
+    assert_eq!(h.gateway.received().len(), reached);
+}
+
+#[tokio::test]
+async fn behind_a_proxy_a_request_without_a_caller_is_refused() {
+    let h = Harness::start(|cfg| cfg.client_ip_header = Some("cf-connecting-ip".into())).await;
+    let r = h
+        .post("/v1/register", json!({ "token": TOKEN, "slot": SLOT }))
+        .await;
+    assert_eq!(r.status(), 400);
+    let r = h
+        .http
+        .post(format!("{}/v1/register", h.url))
+        .header("cf-connecting-ip", "1.2.3.4:5678")
+        .json(&json!({ "token": TOKEN, "slot": SLOT }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    assert!(h.gateway.received().is_empty());
+}
+
 #[tokio::test]
 async fn a_device_apple_calls_gone_is_never_sent_to_again() {
     let h = Harness::start(|_| {}).await;
@@ -682,6 +768,17 @@ async fn made_up_tokens_from_everywhere_hold_registration_but_never_revocation()
             .json(&body)
             .send()
     };
+    let r = post(
+        "/v1/register",
+        "203.0.113.1".into(),
+        json!({ "token": TOKEN, "slot": SLOT }),
+    )
+    .await
+    .unwrap();
+    let revoker = r.json::<Value>().await.unwrap()["revoker"]
+        .as_str()
+        .unwrap()
+        .to_string();
     h.gateway.answer(400, "BadDeviceToken");
     for i in 0..2 {
         let token = format!("{:064x}", i + 1);
@@ -695,6 +792,7 @@ async fn made_up_tokens_from_everywhere_hold_registration_but_never_revocation()
         assert_eq!(r.status(), 400);
     }
     h.gateway.accept();
+    let reached = h.gateway.received().len();
     let r = post(
         "/v1/register",
         "203.0.113.1".into(),
@@ -703,15 +801,17 @@ async fn made_up_tokens_from_everywhere_hold_registration_but_never_revocation()
     .await
     .unwrap();
     assert_eq!(r.status(), 503);
+    assert_eq!(h.gateway.received().len(), reached, "no proof sent");
     let r = post(
         "/v1/revoke",
         "203.0.113.1".into(),
-        json!({ "token": TOKEN }),
+        json!({ "revoker": revoker }),
     )
     .await
     .unwrap();
     assert_eq!(r.status(), 204);
 }
+
 #[tokio::test]
 async fn ipv6_registrations_are_counted_by_slash_48() {
     let h = Harness::start(|cfg| {
@@ -734,12 +834,12 @@ async fn ipv6_registrations_are_counted_by_slash_48() {
 #[tokio::test]
 async fn spending_a_devices_wakes_does_not_stop_it_revoking() {
     let h = Harness::start(|cfg| cfg.limits.device_wakes_per_hour = 1).await;
-    h.register(TOKEN).await;
+    let (_, revoker) = h.register_with_revoker(TOKEN, SLOT).await;
     let r = h
         .post("/v1/register", json!({ "token": TOKEN, "slot": SLOT }))
         .await;
     assert_eq!(r.status(), 429);
-    let r = h.post("/v1/revoke", json!({ "token": TOKEN })).await;
+    let r = h.post("/v1/revoke", json!({ "revoker": revoker })).await;
     assert_eq!(r.status(), 204);
 }
 

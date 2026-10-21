@@ -21,6 +21,7 @@ use crate::quota::Clock;
 /// Apple rejects a provider token older than an hour and throttles one
 /// refreshed more often than every twenty minutes.
 const TOKEN_LIFE: Duration = Duration::from_secs(50 * 60);
+const MIN_REFRESH: Duration = Duration::from_secs(20 * 60);
 
 /// How often a gateway Apple has refused lets one push through, to learn
 /// whether that has been fixed.
@@ -80,6 +81,9 @@ pub enum Delivery {
     Unserved,
     /// Apple, or the way to it, failed. Worth trying again shortly.
     Unavailable(String),
+    /// Apple refused this push for a reason the relay does not know. Not
+    /// worth trying again soon, and not a reason to stop the gateway.
+    Refused(String),
     /// Apple refused the relay itself: a wrong key, team, topic or
     /// environment. The gateway's breaker is open from now.
     Rejected(String),
@@ -198,16 +202,22 @@ impl Gateway {
         Ok(token)
     }
 
-    /// Drop the provider token `used`, which Apple refused, unless another
-    /// push has already replaced it: every push in flight with it is refused
-    /// together, and Apple throttles a token refreshed too often.
-    fn forget_bearer(&self, used: &Arc<str>) {
+    /// Apple calls the provider token `used` expired. Drop it, unless
+    /// another push has already replaced it: every push in flight with it is
+    /// refused together. One signed under twenty minutes ago is not expired;
+    /// the relay's clock is wrong, and signing again would only be throttled,
+    /// so that is an operator's to fix: `false`.
+    fn expire_bearer(&self, used: &Arc<str>) -> bool {
         let mut cached = self.bearer.write();
-        if cached
-            .as_ref()
-            .is_some_and(|(token, _)| Arc::ptr_eq(token, used))
-        {
-            *cached = None;
+        match cached.as_ref() {
+            Some((token, at)) if Arc::ptr_eq(token, used) => {
+                if at.elapsed() < MIN_REFRESH {
+                    return false;
+                }
+                *cached = None;
+                true
+            }
+            _ => true,
         }
     }
 
@@ -346,14 +356,37 @@ impl Apns {
                 // operator: a wrong key or team, or a relay re-signing in a
                 // loop.
                 (403, "ExpiredProviderToken") => {
-                    gateway.forget_bearer(&bearer);
-                    Delivery::Unavailable(format!("{status} {reason}"))
+                    if gateway.expire_bearer(&bearer) {
+                        Delivery::Unavailable(format!("{status} {reason}"))
+                    } else {
+                        Delivery::Rejected(format!(
+                            "{status} {reason} for a token signed under twenty minutes ago: is the clock right?"
+                        ))
+                    }
                 }
-                (403, "InvalidProviderToken") | (429, "TooManyProviderTokenUpdates") => {
+                // Answers about the relay's own credential, topic or
+                // environment: every push through the gateway would get them.
+                (
+                    403,
+                    "InvalidProviderToken"
+                    | "MissingProviderToken"
+                    | "Forbidden"
+                    | "BadEnvironmentKeyIdInToken"
+                    | "UnrelatedKeyIdInToken",
+                )
+                | (
+                    400,
+                    "BadTopic"
+                    | "TopicDisallowed"
+                    | "MissingTopic"
+                    | "BadCertificate"
+                    | "BadCertificateEnvironment",
+                )
+                | (429, "TooManyProviderTokenUpdates") => {
                     Delivery::Rejected(format!("{status} {reason}"))
                 }
                 (429, _) | (500.., _) => Delivery::Unavailable(format!("{status} {reason}")),
-                _ => Delivery::Rejected(format!("{status} {reason}")),
+                _ => Delivery::Refused(format!("{status} {reason}")),
             }
         };
         match &delivery {

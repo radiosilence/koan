@@ -129,9 +129,14 @@ impl Revocations {
     }
 
     /// Revoke every handle for this device minted up to `now_ms`, or up to
-    /// the latest mint time if the clock reads earlier. Blocks on the disk.
+    /// the latest mint time if the clock reads earlier, and always past the
+    /// device's previous revocation, which a handle minted since reaches
+    /// beyond. Blocks on the disk.
     pub fn revoke(&self, device: TokenHash, now_ms: u64) -> Result<(), RevokeError> {
-        let now_ms = now_ms.max(self.minted.load(Ordering::Relaxed));
+        let after_last = self.revoked_at(&device).map_or(0, |at| at + 1);
+        let now_ms = now_ms
+            .max(self.minted.load(Ordering::Relaxed))
+            .max(after_last);
         // One writer at a time keeps the size check and the insert together.
         let db = self.db.lock();
         {
@@ -216,9 +221,10 @@ mod tests {
             r.revoke([1; 16], 100).unwrap();
             r.revoke([1; 16], 50).unwrap();
         }
+        // The second, read as earlier, is recorded just past the first.
         let r = Revocations::open(&path, 10, 200, 60 * DAY).unwrap();
-        assert!(r.revoked(&[1; 16], 100 + SLACK_MS));
-        assert!(!r.revoked(&[1; 16], 101 + SLACK_MS));
+        assert!(r.revoked(&[1; 16], 101 + SLACK_MS));
+        assert!(!r.revoked(&[1; 16], 102 + SLACK_MS));
     }
 
     #[test]
@@ -235,6 +241,19 @@ mod tests {
         let r = Revocations::open(&path, 10, 90 * DAY, 60 * DAY).unwrap();
         assert_eq!(r.len(), 2);
         assert!(r.revoked(&[2; 16], 30 * DAY));
+    }
+
+    #[test]
+    fn a_revocation_reaches_a_handle_minted_past_the_last_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = Revocations::open(&dir.path().join("r.db"), 10, 0, 60 * DAY).unwrap();
+        r.revoke([1; 16], 1000).unwrap();
+        // Registration mints past the window; a quick second revocation must
+        // still reach it.
+        let minted = 1000 + SLACK_MS + 1;
+        assert!(!r.revoked(&[1; 16], minted));
+        r.revoke([1; 16], 1001).unwrap();
+        assert!(r.revoked(&[1; 16], minted));
     }
 
     #[test]
