@@ -1,0 +1,1 @@
+- **Public file playlists.** `library.public_playlists` makes the playlists read from `.m3u` and `.nsp` files in the library visible to every account, read-only, as Navidrome's `DefaultPlaylistPublicVisibility` does. Off by default.

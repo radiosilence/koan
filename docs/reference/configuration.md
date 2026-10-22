@@ -261,6 +261,8 @@ One or more directories to scan for music. Subdirectories are scanned recursivel
 
 None by default: kōan reads no folder you have not named. Looking in `~/Music` unasked meant reading the Apple Music library inside it, and macOS asking whether kōan may. Versions before 0.61.1 used `~/Music` when no folder was set; if your library was indexed from there, the first newer kōan to open it writes `~/Music` into `config.local.toml`, so nothing is lost. A `folders` key in either file, an empty list included, is left as it is.
 
+`public_playlists = true` (`KOAN_LIBRARY__PUBLIC_PLAYLISTS`) makes the playlists read from `.m3u`, `.m3u8` and `.nsp` files in the library public, so every account on a server sees them, read-only. Off by default: they are the first admin's alone, as Navidrome imports them. It applies at each scan to every file's playlist, those read before included; playlists made in kōan keep their own setting.
+
 ---
 
 ## `[remote]`
