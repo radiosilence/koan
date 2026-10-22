@@ -1,0 +1,1 @@
+- **Now Playing keeps the artwork when paused from the lock screen.** On iPhone, pausing with the app in the background published the track again without its sleeve, because iOS had emptied the bitmap cache; the artwork already published is now reused.
