@@ -73,6 +73,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         disc             INTEGER,
         disc_total       INTEGER,
         release_types    TEXT,
+        original_date    TEXT,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -106,6 +107,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         disc             INTEGER,
         disc_total       INTEGER,
         release_types    TEXT,
+        original_date    TEXT,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -138,7 +140,7 @@ pub(crate) const SOURCE_TABLES: &str = "
 const COLUMNS: &str = "title, artist, album_artist, album, date, disc, track_number, genre,
     label, duration_ms, codec, sample_rate, bit_depth, channels, bitrate, size_bytes, mtime,
     path, remote_id, remote_url, album_remote_id, artist_remote_id, mbid, album_mbid,
-    album_added_at, credits, disc_total, release_types";
+    album_added_at, credits, disc_total, release_types, original_date";
 
 /// A source row as stored, in `COLUMNS` order from `at`.
 fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<TrackMeta> {
@@ -186,6 +188,7 @@ fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<Tra
             .unwrap_or_default(),
         disc_total: row.get(at + 26)?,
         release_types: row.get(at + 27)?,
+        original_date: row.get(at + 28)?,
     })
 }
 
@@ -408,7 +411,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
     conn.prepare_cached(&format!(
         "INSERT INTO {} (track_id, slot_key, artist_key, {COLUMNS})
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
+                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)
          ON CONFLICT({}) DO UPDATE SET
              track_id = excluded.track_id, slot_key = excluded.slot_key,
              artist_key = excluded.artist_key, title = excluded.title,
@@ -424,7 +427,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
              artist_remote_id = excluded.artist_remote_id, mbid = excluded.mbid,
              album_mbid = excluded.album_mbid, album_added_at = excluded.album_added_at,
              credits = excluded.credits, disc_total = excluded.disc_total,
-             release_types = excluded.release_types",
+             release_types = excluded.release_types, original_date = excluded.original_date",
         kind.table(),
         kind.key()
     ))?
@@ -464,6 +467,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
             .then(|| serde_json::to_string(&meta.credits).expect("credits serialise")),
         meta.disc_total,
         meta.release_types,
+        meta.original_date,
     ])?;
     Ok(())
 }
@@ -585,7 +589,9 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
     } else {
         get_or_create_artist(conn, &primary.artist, None)?
     };
-    let date = pick(|m| m.date.clone());
+    // An album is dated by its first release where a source says when that
+    // was, so a reissue sits where the record does in a discography.
+    let date = pick(|m| m.original_date.clone()).or_else(|| pick(|m| m.date.clone()));
     let label = pick(|m| m.label.clone());
     let codec = pick(|m| m.codec.clone());
     let added_at = [local.as_ref(), remote.as_ref()]
@@ -931,26 +937,55 @@ pub(crate) const RELEASE_TYPES: &str = "(SELECT COALESCE(f.release_types, r.rele
       WHERE t.album_id = albums.id AND v IS NOT NULL
       GROUP BY v ORDER BY COUNT(*) DESC, v LIMIT 1)";
 
+/// An album's original release date as a correlated subquery on `albums`: the
+/// earliest any of its tracks' sources gives. NULL when none does, and the
+/// album keeps the date its tracks were released on.
+pub(crate) const ORIGINAL_DATE: &str = "(SELECT MIN(COALESCE(f.original_date, r.original_date))
+       FROM tracks t
+       LEFT JOIN local_files f ON f.track_id = t.id
+       LEFT JOIN remote_entries r ON r.track_id = t.id
+      WHERE t.album_id = albums.id)";
+
 /// Derive what an album takes from all its tracks' sources again after its
-/// tracks changed: its disc total and its release types.
+/// tracks changed: its disc total, its release types, and its date where any
+/// source names the original release. Album-wide, so a reissue whose bonus
+/// tracks carry no original date, or an album reached through the server's
+/// id, is dated the same whichever track derived last.
 pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqlite::Result<()> {
-    type Found = (Option<i32>, Option<i32>, Option<String>, Option<String>);
+    type Found = (
+        Option<i32>,
+        Option<i32>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
     let found: Option<Found> = conn
         .prepare_cached(&format!(
-            "SELECT total_discs, {DISC_TOTAL}, release_types, {RELEASE_TYPES}
+            "SELECT total_discs, {DISC_TOTAL}, release_types, {RELEASE_TYPES}, date,
+                    {ORIGINAL_DATE}
                FROM albums WHERE id = ?1"
         ))?
         .query_row(params![album], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })
         .optional()?;
-    if let Some((_, discs, _, types)) =
-        found.filter(|(discs, d_discs, types, d_types)| discs != d_discs || types != d_types)
-    {
+    let Some((discs, d_discs, types, d_types, date, original)) = found else {
+        return Ok(());
+    };
+    let d_date = original.or_else(|| date.clone());
+    if (discs, &types, &date) != (d_discs, &d_types, &d_date) {
         conn.prepare_cached(
-            "UPDATE albums SET total_discs = ?1, release_types = ?2 WHERE id = ?3",
+            "UPDATE albums SET total_discs = ?1, release_types = ?2, date = ?3 WHERE id = ?4",
         )?
-        .execute(params![discs, types, album])?;
+        .execute(params![d_discs, d_types, d_date, album])?;
     }
     Ok(())
 }
@@ -1721,7 +1756,7 @@ pub(crate) fn build_from_tracks(conn: &Connection) -> Result<(), DbError> {
                     al.date, t.disc, t.track_number, t.genre, al.label, t.duration_ms,
                     t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                     t.size_bytes, t.mtime, t.path, t.remote_id, t.remote_url,
-                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL, NULL, NULL
+                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL, NULL, NULL, NULL
                FROM tracks t
                LEFT JOIN artists a ON a.id = t.artist_id
                LEFT JOIN albums al ON al.id = t.album_id

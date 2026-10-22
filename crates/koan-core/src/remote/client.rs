@@ -1678,6 +1678,38 @@ pub struct SubsonicAlbum {
     /// MusicBrainz release group types, primary first: `["album", "live"]`.
     #[serde(default)]
     pub release_types: Vec<String>,
+    #[serde(default, deserialize_with = "item_date")]
+    pub original_release_date: Option<ItemDate>,
+}
+
+/// OpenSubsonic's `ItemDate`: a date with as much of it as is known.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ItemDate {
+    pub year: Option<i64>,
+    pub month: Option<i64>,
+    pub day: Option<i64>,
+}
+
+/// An `ItemDate` the server may have sent in some other shape, as absent
+/// rather than failing the album it came with.
+fn item_date<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<ItemDate>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
+impl ItemDate {
+    /// As tags write dates: `1979`, `1979-11` or `1979-11-30`. `None` without
+    /// a year, which servers send as zeroes.
+    pub fn text(&self) -> Option<String> {
+        let year = self.year.filter(|y| *y > 0)?;
+        Some(
+            match (self.month.filter(|m| *m > 0), self.day.filter(|d| *d > 0)) {
+                (Some(m), Some(d)) => format!("{year:04}-{m:02}-{d:02}"),
+                (Some(m), None) => format!("{year:04}-{m:02}"),
+                _ => format!("{year:04}"),
+            },
+        )
+    }
 }
 
 /// A bare `{"name": "..."}` object. The server uses this shape for record
@@ -1708,6 +1740,8 @@ pub struct SubsonicAlbumFull {
     /// MusicBrainz release group types, primary first: `["album", "live"]`.
     #[serde(default)]
     pub release_types: Vec<String>,
+    #[serde(default, deserialize_with = "item_date")]
+    pub original_release_date: Option<ItemDate>,
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
 }
@@ -2358,6 +2392,28 @@ mod tests {
         assert_eq!(result.album[0].name, "Album One");
         assert_eq!(result.song.len(), 1);
         assert_eq!(result.song[0].title, "Song One");
+    }
+
+    #[test]
+    fn item_dates_read_as_tags_write_them() {
+        let date = |json: &str| serde_json::from_str::<ItemDate>(json).unwrap().text();
+        assert_eq!(
+            date(r#"{"year": 1979, "month": 6, "day": 15}"#).as_deref(),
+            Some("1979-06-15")
+        );
+        assert_eq!(
+            date(r#"{"year": 1979, "month": 6}"#).as_deref(),
+            Some("1979-06")
+        );
+        assert_eq!(date(r#"{"year": 1979}"#).as_deref(), Some("1979"));
+        assert_eq!(date(r#"{"year": 0, "month": 0, "day": 0}"#), None);
+
+        // Any other shape is no date, not a failed album.
+        let album: SubsonicAlbum = serde_json::from_str(
+            r#"{"id": "1", "name": "A", "originalReleaseDate": "1979-06-15"}"#,
+        )
+        .unwrap();
+        assert!(album.original_release_date.is_none());
     }
 
     #[test]

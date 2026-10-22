@@ -245,7 +245,7 @@ internal fun integrationsShown(c: ConnectionInfo?) = c?.scrobbling == true || c.
 
 /** Whether the Account page has anything on it: a password to change, or keys to manage. */
 internal fun accountShown(c: ConnectionInfo?) =
-    c.offers(PASSWORDS) || c.offers(API_KEYS) || (c.offers(APP_PASSWORDS) && c?.offline != true)
+    c.offers(INVITE) || c.offers(PASSWORDS) || c.offers(API_KEYS) || (c.offers(APP_PASSWORDS) && c?.offline != true)
 
 /** Whether the server listed `extension`. Features beyond Subsonic are used only where it does. */
 internal fun ConnectionInfo?.offers(extension: String) = this?.extensions?.any { it.name == extension } == true

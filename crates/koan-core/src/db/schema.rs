@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 28;
+pub const SCHEMA_VERSION: i64 = 29;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -774,6 +774,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("local_files", "release_types", "TEXT"),
     ("remote_entries", "release_types", "TEXT"),
     ("albums", "release_types", "TEXT"),
+    // When the recording was first released, which dates the album ahead of
+    // the edition's own date.
+    ("local_files", "original_date", "TEXT"),
+    ("remote_entries", "original_date", "TEXT"),
     // The device a key signed in, and the public key that device proves
     // itself with to the account's other devices on the local network. On the
     // key's row, so revoking the key drops it. See `api_keys::device_keys`.
@@ -1112,9 +1116,10 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         conn.execute("DELETE FROM scan_cache", [])?;
     }
 
-    // Release types were read from neither tags nor servers. Files are read
-    // again on the next scan, and the next sync walks every album.
-    if found < 27 {
+    // Release types (27) and original release dates (29) were read from
+    // neither tags nor servers. Files are read again on the next scan, and
+    // the next sync walks every album.
+    if found < 29 {
         conn.execute_batch(
             "DELETE FROM scan_cache;
              UPDATE remote_servers SET library_version = NULL;",
