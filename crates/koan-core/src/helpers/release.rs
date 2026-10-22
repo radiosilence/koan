@@ -115,9 +115,18 @@ mod tests {
 
     #[test]
     fn folds_and_splits_tag_values() {
-        assert_eq!(release_types(["Album", "Live"]).as_deref(), Some("album;live"));
-        assert_eq!(release_types(["album; compilation"]).as_deref(), Some("album;compilation"));
-        assert_eq!(release_types(["EP/Remix", "ep"]).as_deref(), Some("ep;remix"));
+        assert_eq!(
+            release_types(["Album", "Live"]).as_deref(),
+            Some("album;live")
+        );
+        assert_eq!(
+            release_types(["album; compilation"]).as_deref(),
+            Some("album;compilation")
+        );
+        assert_eq!(
+            release_types(["EP/Remix", "ep"]).as_deref(),
+            Some("ep;remix")
+        );
         assert_eq!(release_types(["", " "]), None);
     }
 
@@ -138,7 +147,10 @@ mod tests {
         assert_eq!(release_badge(Some("single")).as_deref(), Some("Single"));
         assert_eq!(release_badge(Some("album;live")).as_deref(), Some("Live"));
         assert_eq!(release_badge(Some("ep;remix")).as_deref(), Some("Remix EP"));
-        assert_eq!(release_badge(Some("broadcast;live")).as_deref(), Some("Live"));
+        assert_eq!(
+            release_badge(Some("broadcast;live")).as_deref(),
+            Some("Live")
+        );
         assert_eq!(release_badge(Some("other")), None);
     }
 
@@ -146,12 +158,27 @@ mod tests {
     fn sections() {
         assert_eq!(ReleaseSection::of(None), ReleaseSection::Albums);
         assert_eq!(ReleaseSection::of(Some("album")), ReleaseSection::Albums);
-        assert_eq!(ReleaseSection::of(Some("ep")), ReleaseSection::EpsAndSingles);
-        assert_eq!(ReleaseSection::of(Some("single")), ReleaseSection::EpsAndSingles);
+        assert_eq!(
+            ReleaseSection::of(Some("ep")),
+            ReleaseSection::EpsAndSingles
+        );
+        assert_eq!(
+            ReleaseSection::of(Some("single")),
+            ReleaseSection::EpsAndSingles
+        );
         assert_eq!(ReleaseSection::of(Some("ep;live")), ReleaseSection::Live);
-        assert_eq!(ReleaseSection::of(Some("album;compilation")), ReleaseSection::Compilations);
-        assert_eq!(ReleaseSection::of(Some("album;soundtrack")), ReleaseSection::Other);
+        assert_eq!(
+            ReleaseSection::of(Some("album;compilation")),
+            ReleaseSection::Compilations
+        );
+        assert_eq!(
+            ReleaseSection::of(Some("album;soundtrack")),
+            ReleaseSection::Other
+        );
         assert_eq!(ReleaseSection::of(Some("broadcast")), ReleaseSection::Other);
-        assert_eq!(ReleaseSection::of(Some("something-new")), ReleaseSection::Albums);
+        assert_eq!(
+            ReleaseSection::of(Some("something-new")),
+            ReleaseSection::Albums
+        );
     }
 }

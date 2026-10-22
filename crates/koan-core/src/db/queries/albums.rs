@@ -775,7 +775,14 @@ pub fn enrich_remote_album(
              label         = COALESCE(label, ?5),
              release_types = COALESCE(release_types, ?6)
          WHERE remote_id = ?1",
-        params![remote_id, mbid, sort_name, total_tracks, label, release_types],
+        params![
+            remote_id,
+            mbid,
+            sort_name,
+            total_tracks,
+            label,
+            release_types
+        ],
     )?;
     Ok(())
 }

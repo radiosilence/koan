@@ -793,7 +793,13 @@ mod tests {
         )
         .unwrap();
 
-        type Row = (Option<String>, Option<String>, Option<i32>, Option<String>, Option<String>);
+        type Row = (
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            Option<String>,
+            Option<String>,
+        );
         let row: Row = db
             .conn
             .query_row(
