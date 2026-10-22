@@ -76,6 +76,13 @@ pub fn resume(url: &str) {
     LEFT.lock().retain(|l| l != url);
 }
 
+/// What a walk reports its progress to, and reads to know it should stop.
+#[derive(Clone, Copy)]
+struct Watch<'a> {
+    progress: &'a (dyn Fn(SyncProgress) + Sync),
+    cancel: &'a AtomicBool,
+}
+
 fn check(cancel: &AtomicBool) -> Result<(), SyncError> {
     if cancel.load(Ordering::Relaxed) {
         Err(SyncError::Cancelled)
@@ -265,8 +272,7 @@ pub fn sync_library(
             total,
             &mut result,
             &mut song_ids,
-            progress,
-            cancel,
+            &Watch { progress, cancel },
         )?;
     if !walked {
         let all: Vec<&SubsonicAlbum> = albums.iter().collect();
@@ -277,8 +283,7 @@ pub fn sync_library(
             total,
             &mut result,
             &mut song_ids,
-            progress,
-            cancel,
+            &Watch { progress, cancel },
         )?;
     }
 
@@ -441,9 +446,9 @@ fn sync_all_songs(
     total: Option<u64>,
     result: &mut SyncResult,
     song_ids: &mut HashSet<String>,
-    progress: &(dyn Fn(SyncProgress) + Sync),
-    cancel: &AtomicBool,
+    watch: &Watch,
 ) -> Result<bool, SyncError> {
+    let Watch { progress, cancel } = *watch;
     check(cancel)?;
     let first = match client.all_songs_page(PAGE_SIZE, 0) {
         Ok(songs) if !songs.is_empty() => songs,
@@ -628,9 +633,9 @@ fn sync_by_album(
     total: Option<u64>,
     result: &mut SyncResult,
     song_ids: &mut HashSet<String>,
-    progress: &(dyn Fn(SyncProgress) + Sync),
-    cancel: &AtomicBool,
+    watch: &Watch,
 ) -> Result<(), SyncError> {
+    let Watch { progress, cancel } = *watch;
     for batch in albums.chunks(ALBUM_BATCH) {
         check(cancel)?;
         let failures = AtomicUsize::new(0);
