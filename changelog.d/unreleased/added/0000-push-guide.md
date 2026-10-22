@@ -1,0 +1,1 @@
+- **Push and the relay, explained.** A guide page with a diagram explains why kōan's servers push through the relay at `push.koan.rocks`, what it sees and keeps, and how to turn it off. Every server example shows the `push` setting, the privacy policy covers the relay, and the protocol page describes the claim a play notification carries and the relay text the phone shows.

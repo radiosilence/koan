@@ -48,6 +48,10 @@ playground = false        # GraphiQL IDE
 [subsonic]
 enabled = true            # serve /rest/* on the main port
 port = 4040               # and on a port of its own (optional)
+
+# config.toml — waking iPhones through kōan's push relay
+[push]
+enabled = true            # false keeps the server off the relay
 ```
 
 Or via environment variables:
@@ -57,6 +61,7 @@ export KOAN_SERVER__URL=https://music.example.com
 export KOAN_GRAPHQL__PORT=8080
 export KOAN_GRAPHQL__BIND=0.0.0.0
 export KOAN_GRAPHQL__PLAYGROUND=true
+export KOAN_PUSH__ENABLED=true    # false keeps the server off the push relay
 ```
 
 ## Remote TUI
@@ -292,7 +297,7 @@ Every mutation that addresses one app, apart from `handOffClient` with its `from
 
 Track ids are the server's; an app that has not seen one syncs first, and its pages show what the sync brought in. Every account, admin included, sees and commands only its own apps, so a server shared by several people never sends one person's music to another's phone.
 
-An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. A server with [`[push]`](../reference/configuration.md#push) on, as it is by default, wakes a suspended phone through kōan's push relay to relink and take the command, choosing the one seen most recently when no `client` is named, since a reinstalled app leaves its old entry behind under the same name; a request to play arrives as a notification to tap, since iOS does not let an app start audio from the background. Opening the app relinks at once.
+An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. A server with [`[push]`](../reference/configuration.md#push) on, as it is by default, wakes a suspended phone through kōan's [push relay](push.md) to relink and take the command, choosing the one seen most recently when no `client` is named, since a reinstalled app leaves its old entry behind under the same name; a request to play arrives as a notification to tap, since iOS does not let an app start audio from the background. Opening the app relinks at once.
 
 ## In a container
 
@@ -335,6 +340,7 @@ const koan = createKoan(provider, ns.metadata.name, {
   hostname: "music.example.com",
   library: { existingClaim: "music" },
   state: { existingClaim: "koan-state" },
+  push: { enabled: true }, // false keeps the server off kōan's push relay
 });
 
 export const routes = koan.routes;
@@ -348,7 +354,7 @@ export const routes = koan.routes;
 | `state` | `existingClaim` or `hostPath`, mounted at `/config`. Unset, it is an `emptyDir` and the index and accounts go with the pod |
 | `image` | `repository`, `tag` (defaults to the package's version), `pullPolicy` |
 | `nodeSelector` | Needed with a `hostPath`, which is one node's disk |
-| `push` | `enabled` (default `true`): whether the server wakes the iOS app through kōan's push relay when it is suspended. Set `enabled: false` to keep the server off the relay |
+| `push` | `enabled` (default `true`): whether the server wakes the iOS app through kōan's [push relay](push.md) when it is suspended. Set `enabled: false` to keep the server off the relay |
 | `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
 | `demo` | `enabled` (default `false`) makes a public demo, as demo.koan.rocks is; `library`, required with it, is an image holding the music under `/music`. See below |
 | `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
@@ -386,6 +392,7 @@ services:
       KOAN_GRAPHQL__COOKIE_SECURE: "true"
       KOAN_SERVER__URL: https://${KOAN_HOST}
       KOAN_SUBSONIC__ENABLED: "true"
+      KOAN_PUSH__ENABLED: "true"   # "false" keeps the server off kōan's push relay
     volumes:
       # The image runs as uid 1000; a bind mount here has to be writable by it.
       - koan-config:/config

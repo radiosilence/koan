@@ -4,7 +4,7 @@ Apple delivers pushes to the kōan iOS app only when they are signed with a key 
 
 The key belongs to the developer's Apple account, which answers to Apple for every push sent under it, so the relay is built to bound what anyone can cause through it. The worst a hostile server can do is make a phone show kōan's own text, within small quotas, to people who chose to sign in to it. Nobody can make the relay send Apple a flood, a stream of errors, or anything a server wrote.
 
-That bound holds only together with the app: its notification service extension shows nothing a server wrote, only its own template (see [What a phone shows](#what-a-phone-shows)).
+That bound holds only together with the app, which shows the relay's text and nothing a server wrote (see [What a phone shows](#what-a-phone-shows)).
 
 A registration on the production gateway needs an [App Attest](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity) assertion, Apple's word that it comes from kōan's app on a real device: nothing reaches Apple for one without it. The app attests through `/v1/challenge` and `/v1/attest` and signs each registration; the sandbox gateway, for development builds, does without when the app cannot attest.
 
@@ -16,7 +16,7 @@ The relay is built, released and deployed from its own repository, [radiosilence
 
 - **The app** holds its APNs device token. It registers the token with the relay once for each server it uses, gives each server the handle it gets back, and keeps the revoker for itself. It gives its raw tokens, the device's and its Live Activities', to no server; every server, the developer's own included, pushes through the relay.
 - **A server** holds the handles its users' apps gave it, and asks the relay to push to them.
-- **The relay** opens handles, applies quotas and writes everything Apple is sent, apart from an encrypted blob a server may attach to a notification.
+- **The relay** opens handles, applies quotas and writes everything Apple is sent, apart from an opaque blob a server may attach to a notification.
 
 ## Handles
 
@@ -121,12 +121,9 @@ A push whose sender hangs up once it has been accepted for sending still goes to
 
 ### What a phone shows
 
-The extension decrypts the blob, but decrypting proves only that the sender holds the device's public key, which every server the person signed in to does. So the extension shows nothing a server wrote:
+The relay's text is what the phone shows: the app's notification service extension passes a relayed notification through unchanged.
 
-- It names the server from `koan-from`, the slot the relay stamped, mapped to the server the app gave that slot, never from anything in the blob. Cover art is fetched only from that server's own origin, must be an image, and is capped in size.
-- The blob carries structured fields, never display text: the command, and the title and artist of what it would play. The extension fills its own template with them, capped in length and stripped of links, phone numbers, addresses and control characters. A title or body in the blob is ignored.
-- Tapping runs only playback commands.
-- When the blob does not decrypt, or `koan-from` names no server the app knows, the relay's text stands and tapping opens the app.
+A kōan server sends a play request as a `notify` whose blob is a claim: sixteen random bytes, base64url, under which the server keeps the command for ten minutes. The claim is not encrypted, and needs not be: the server honours it once, and only from the device and account it was kept for, over that device's own link. When the person taps the notification, the app looks up the server it gave the slot in `koan-from` to, and sends that server the claim over its link (`claim` in the [link protocol](link-protocol.md)). The claim waits up to ten minutes for a link to that server. One whose slot the app does not know goes to the next server it links to, which ignores a claim it did not issue.
 
 Live Activity updates are relayed too: the app registers each activity's token with its revoker and gives the server the handle, and the relay bounds what the server puts in them. The full rules are in the relay's own specification.
 
@@ -159,7 +156,7 @@ When Apple refuses a gateway's credential (an invalid, missing or over-refreshed
 
 ## What the relay sees and keeps
 
-It sees, per request: a device token (registration and revocation only), a handle, which it opens to a token in memory, the kind of push, an encrypted blob it cannot read, and the caller's address.
+It sees, per request: a device token (registration and revocation only), a handle, which it opens to a token in memory, the kind of push, a blob it does not read (from a kōan server, a claim that means nothing without that server), and the caller's address.
 
 It keeps:
 

@@ -46,7 +46,7 @@ not that.
   app is playing, and shows the same kind of notification instead. Waking and
   notifications need a server with push on
   ([`[push]`](../reference/configuration.md#push), on by default), which
-  sends them through kōan's push relay; with push off, a suspended phone is
+  sends them through kōan's [push relay](push.md); with push off, a suspended phone is
   listed but takes what was sent only when it is next opened. The app asks to
   show notifications only on a server with push on, so elsewhere a phone
   refused the audio shows nothing either, unless notifications were allowed

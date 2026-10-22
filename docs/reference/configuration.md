@@ -521,7 +521,8 @@ Apple accepts pushes to the app only under the key of the team that ships it,
 so the server sends them through kōan's push relay, which holds that key. The
 server holds handles the app gave it, never a device token, and the relay
 decides what a phone shows: its own text, never the server's. What the relay
-sees and keeps, and why, is in the [push relay protocol](protocol/push-relay.md).
+sees and keeps, and why, is in [Push and the relay](../guide/push.md), and its
+API in the [push relay protocol](protocol/push-relay.md).
 The relay is not configurable: the app registers with kōan's, the only one
 holding that key, and the server must push where the app registered.
 
