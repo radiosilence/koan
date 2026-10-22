@@ -1,0 +1,1 @@
+- **The phone's own speaker can be chosen from Output.** On iPhone the Output sheet has a row that opens the system's route picker, so a phone on a Bluetooth speaker or AirPlay can be sent back to its speaker without finding the AirPlay button in Now Playing.
