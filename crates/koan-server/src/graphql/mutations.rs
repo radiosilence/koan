@@ -777,12 +777,14 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            let id = queries::create_playlist(&db.conn, user, &name, None)
-                .map_err(|e| super::internal_error("db", e))?;
-            if let Some(track_ids) = &track_ids {
-                queries::add_tracks(&db.conn, id, track_ids)
-                    .map_err(|e| super::internal_error("db", e))?;
-            }
+            let id = queries::atomically(&db.conn, || {
+                let id = queries::create_playlist(&db.conn, user, &name, None)?;
+                if let Some(track_ids) = &track_ids {
+                    queries::add_tracks(&db.conn, id, track_ids)?;
+                }
+                Ok(id)
+            })
+            .map_err(super::playlist_write_error)?;
             koan_core::playlists::push_to_remote(id);
             crate::clients::changed();
             queries::get_playlist(&db.conn, id)
@@ -969,7 +971,7 @@ impl MutationRoot {
         with_db(ctx, move |db| {
             super::fillable_playlist(db, user, id)?;
             let added = queries::add_tracks(&db.conn, id, &track_ids)
-                .map_err(|e| super::internal_error("db", e))?;
+                .map_err(super::playlist_write_error)?;
             koan_core::playlists::push_to_remote(id);
             crate::clients::changed();
             Ok(GqlStatus::success(format!(
@@ -995,7 +997,7 @@ impl MutationRoot {
         with_db(ctx, move |db| {
             super::fillable_playlist(db, user, id)?;
             queries::set_playlist_tracks(&db.conn, id, &track_ids)
-                .map_err(|e| super::internal_error("db", e))?;
+                .map_err(super::playlist_write_error)?;
             koan_core::playlists::push_to_remote(id);
             crate::clients::changed();
             Ok(GqlStatus::success(format!(
