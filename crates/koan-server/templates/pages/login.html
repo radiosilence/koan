@@ -2,7 +2,7 @@
 {% block body %}
 {%- let label = crate::ui::pages::SIGNIN_LABEL -%}
 {%- if let Some((username, password)) = demo %}
-<p class="mb-4 border border-brand p-3 text-body text-ink">This is kōan's demo server. Sign in as <strong>{{ username }}</strong>, password <strong>{{ password }}</strong>, here or in the apps. Everyone shares the account, and everything resets on the hour.</p>
+<p class="mb-4 border border-brand p-3 text-body text-ink">This is kōan's demo server. Sign in as <strong>{{ username }}</strong>, password <strong>{{ password }}</strong>, here or in the apps. Everyone shares the account, and everything resets at midnight UTC.</p>
 {%- endif %}
 <form class="grid gap-3.5" method="post" action="/login"><input type="hidden" name="next" value="{{ next }}">
 <label class="{{ label }}">Username<input class="text-input" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus{% if let Some((username, _)) = demo %} value="{{ username }}"{% endif %}></label>

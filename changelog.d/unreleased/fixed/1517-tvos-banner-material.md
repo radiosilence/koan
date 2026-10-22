@@ -1,0 +1,1 @@
+- **The Apple TV app builds again.** The server banner used the bar material, which tvOS lacks, so 0.67.3's tvOS build failed; on the TV it uses the regular material.

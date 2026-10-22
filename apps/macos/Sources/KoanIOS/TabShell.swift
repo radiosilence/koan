@@ -198,10 +198,12 @@ struct TabShell: View {
         .onChange(of: sidebar) { regroup() }
         .onChange(of: playlists.playlists.map(\.id)) { _, ids in dropDeleted(ids) }
         #endif
+        #if os(tvOS)
         .safeAreaInset(edge: .top, spacing: 0) {
             ServerBanner { tab.wrappedValue = .settings }
                 .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
         }
+        #endif
         .toggleStyle(SystemSwitch())
         .modifier(Transport(
             showingNowPlaying: $showingNowPlaying,
@@ -332,6 +334,14 @@ struct TabShell: View {
                     .environment(\.onStage, showing && route == routes.last)
             }
         }
+        #if os(iOS)
+        // On each stack rather than the tab view, whose inset a stack's list
+        // does not scroll clear of: the banner covered the first rows.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ServerBanner(signIn: openServerSettings)
+                .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
+        }
+        #endif
         .id(resets[tab, default: 0])
     }
 
@@ -545,6 +555,15 @@ struct TabShell: View {
                 player.lastError = SettingsModel.describe(error)
             }
         }
+    }
+    #endif
+
+    #if os(iOS)
+    /// Settings, opened at Server, from wherever the banner was tapped.
+    private func openServerSettings() {
+        paths[.settings] = []
+        tab.wrappedValue = .settings
+        app.ui.showingServerSettings = true
     }
     #endif
 

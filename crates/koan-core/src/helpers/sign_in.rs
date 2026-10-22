@@ -724,6 +724,11 @@ mod standing_tests {
 
     #[test]
     fn a_remembered_server_without_a_credential_is_signed_out() {
+        // Offline mode is process-wide, and another test turns it on under
+        // this lock.
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut cfg = Config::default();
         assert_eq!(
             server_standing(&cfg),

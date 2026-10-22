@@ -16,6 +16,9 @@ final class UIState {
     var showingPicker = false
     var showingArtwork = false
     var showingShortcuts = false
+    /// Settings → Server, asked for by the server banner's Sign In, which the
+    /// Settings tab pushes.
+    var showingServerSettings = false
     /// An invite that would replace the account already signed in, waiting
     /// for a yes.
     var pendingInvite: Invite?
