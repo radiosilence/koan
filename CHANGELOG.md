@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.66.6
+
+### Added
+
+- **UPnP on iPhone.** The iPhone finds UPnP and DLNA amplifiers on the network and plays through them, as the Mac and Android do. Apple's multicast entitlement, which finding them needs, is now granted to kōan.
+
+### Security
+
+- **An invite's QR code in the Mac, iOS and Android apps lapses after ten minutes.** The server sends a short-lived `qrToken` with each invite and the apps draw it, as the web UI does; the emailed link keeps the week-long token. Against an older server the apps show the week-long token as before.
+
+### Internal
+
+- **Push relay protocol.** The protocol reference specifies the relay at `push.koan.rocks`, which forwards pushes to Apple for kōan servers that do not hold the developer's key: servers hold sealed handles instead of device tokens, and the relay writes the whole of what Apple is sent. The relay itself lives in radiosilence/koan-push-relay. Nothing uses it yet.
+- **TestFlight uploads run in parallel.** iOS and tvOS each upload from a runner of their own, so a release no longer waits for one platform to finish before the other starts.
+
 ## 0.66.5
 
 ### Security
