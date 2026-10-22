@@ -186,6 +186,10 @@ fun AlbumTile(
         Box(Modifier.fillMaxWidth().aspectRatio(1f).tap(playable, selection, { menu = true }, rememberPlayNow(playable))) {
             Sleeve(Art.album(album.id), Modifier.matchParentSize())
             album.codec?.let { KoanBadge(it.uppercase(), Modifier.align(Alignment.TopEnd).padding(KoanSpace.s)) }
+            // The tick takes this corner while picking.
+            if (selection?.active != true) {
+                album.releaseBadge?.let { KoanBadge(it, Modifier.align(Alignment.TopStart).padding(KoanSpace.s)) }
+            }
             album.onDevice?.let { on ->
                 if (on.total > 0u) DownloadedBar(on.have.toFloat() / on.total.toFloat(), Modifier.align(Alignment.BottomStart))
             }

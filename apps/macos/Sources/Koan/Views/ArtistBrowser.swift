@@ -275,6 +275,14 @@ struct ArtistDetailView: View {
     private var features: [Album] { record?.features ?? [] }
     private var info: ArtistInfo? { record?.info }
 
+    /// The artist's own records under their release types' headings, in the
+    /// core's section order.
+    private var sections: [(section: ReleaseSection, albums: [Album])] {
+        let grouped = Dictionary(grouping: albums, by: \.releaseSection)
+        return [ReleaseSection.albums, .epsAndSingles, .live, .compilations, .other]
+            .compactMap { section in grouped[section].map { (section, $0) } }
+    }
+
     private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
 
     var body: some View {
@@ -304,12 +312,21 @@ struct ArtistDetailView: View {
                     header
                 }
 
-                LazyVGrid(columns: columns, spacing: 22) {
-                    ForEach(albums, id: \.id) { album in
-                        AlbumGridCell(album: album, showArtist: false, selection: library.artistSelection)
+                ForEach(sections, id: \.section) { section, albums in
+                    // A discography of albums alone, or one nobody tagged,
+                    // needs no heading.
+                    if sections.count > 1 {
+                        Text(releaseSectionTitle(section: section)).koanCase()
+                            .font(.role(.body, system: .headline))
+                            .padding(.top, section == sections.first?.section ? 0 : 10)
                     }
+                    LazyVGrid(columns: columns, spacing: 22) {
+                        ForEach(albums, id: \.id) { album in
+                            AlbumGridCell(album: album, showArtist: false, selection: library.artistSelection)
+                        }
+                    }
+                    .modifier(SelectionDrag(selection: library.artistSelection))
                 }
-                .modifier(SelectionDrag(selection: library.artistSelection))
 
                 if !features.isEmpty {
                     FeaturesOn(albums: features)

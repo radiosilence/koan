@@ -500,6 +500,7 @@ fn group_by_album(
                     music_brainz_id: album.music_brainz_id.clone(),
                     sort_name: album.sort_name.clone(),
                     record_labels: album.record_labels.clone(),
+                    release_types: album.release_types.clone(),
                     song: Vec::new(),
                 },
                 None => SubsonicAlbumFull {
@@ -514,6 +515,7 @@ fn group_by_album(
                     music_brainz_id: None,
                     sort_name: None,
                     record_labels: Vec::new(),
+                    release_types: Vec::new(),
                     song: Vec::new(),
                 },
             });
@@ -638,6 +640,7 @@ fn write_albums(
                 track_number: song.track,
                 genre: song.genre.clone().or_else(|| album.genre.clone()),
                 label: None,
+                release_types: None,
                 duration_ms: song.duration.map(|d| d * 1000),
                 codec: song.codec.clone().or_else(|| song.suffix.clone()),
                 // OpenSubsonic servers report these; a plain Subsonic one
@@ -688,6 +691,8 @@ fn write_albums(
                 .iter()
                 .map(|l| l.name.as_str())
                 .find(|l| !l.is_empty()),
+            crate::helpers::release_types(album.release_types.iter().map(String::as_str))
+                .as_deref(),
         ) {
             log::warn!("failed to record album metadata for {}: {}", album.name, e);
         }
@@ -735,6 +740,7 @@ mod tests {
             track_number: Some(1),
             genre: Some("Electronic".into()),
             label: None,
+            release_types: None,
             duration_ms: Some(240_000),
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),
@@ -783,21 +789,25 @@ mod tests {
             Some("volume one"),
             Some(6),
             Some("Off The Disk"),
+            Some("album;compilation"),
         )
         .unwrap();
 
-        let row: (Option<String>, Option<String>, Option<i32>, Option<String>) = db
+        type Row = (Option<String>, Option<String>, Option<i32>, Option<String>, Option<String>);
+        let row: Row = db
             .conn
             .query_row(
-                "SELECT mbid, sort_name, total_tracks, label FROM albums WHERE title = 'Volume One'",
+                "SELECT mbid, sort_name, total_tracks, label, release_types FROM albums
+                  WHERE title = 'Volume One'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
         assert_eq!(row.0.as_deref(), Some("mb-album-1"));
         assert_eq!(row.1.as_deref(), Some("volume one"));
         assert_eq!(row.2, Some(6));
         assert_eq!(row.3.as_deref(), Some("Off The Disk"));
+        assert_eq!(row.4.as_deref(), Some("album;compilation"));
     }
 
     /// Enrichment fills blanks. A locally-scanned album whose tags named a
@@ -817,6 +827,7 @@ mod tests {
             None,
             None,
             Some("From The Server"),
+            None,
         )
         .unwrap();
 

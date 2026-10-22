@@ -178,6 +178,46 @@ pub struct Album {
     /// How much of it can play here: set where a listing is narrowed to this
     /// device, the Downloaded shelf and offline.
     pub on_device: Option<AlbumOnDevice>,
+    /// What kind of release it is, as its tile shows it (`EP`, `Live`).
+    /// Absent for an album, and where nobody tagged the type.
+    pub release_badge: Option<String>,
+    /// The heading it sits under on its artist's page.
+    pub release_section: ReleaseSection,
+}
+
+/// The sections of an artist's page, in page order. Titled by
+/// `release_section_title`.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReleaseSection {
+    Albums,
+    EpsAndSingles,
+    Live,
+    Compilations,
+    Other,
+}
+
+impl From<helpers::ReleaseSection> for ReleaseSection {
+    fn from(s: helpers::ReleaseSection) -> Self {
+        match s {
+            helpers::ReleaseSection::Albums => Self::Albums,
+            helpers::ReleaseSection::EpsAndSingles => Self::EpsAndSingles,
+            helpers::ReleaseSection::Live => Self::Live,
+            helpers::ReleaseSection::Compilations => Self::Compilations,
+            helpers::ReleaseSection::Other => Self::Other,
+        }
+    }
+}
+
+impl From<ReleaseSection> for helpers::ReleaseSection {
+    fn from(s: ReleaseSection) -> Self {
+        match s {
+            ReleaseSection::Albums => Self::Albums,
+            ReleaseSection::EpsAndSingles => Self::EpsAndSingles,
+            ReleaseSection::Live => Self::Live,
+            ReleaseSection::Compilations => Self::Compilations,
+            ReleaseSection::Other => Self::Other,
+        }
+    }
 }
 
 /// Of a record's tracks, how many can play here.
@@ -210,6 +250,8 @@ impl Album {
                 have: d.have,
                 total: d.total,
             }),
+            release_badge: helpers::release_badge(r.release_types.as_deref()),
+            release_section: helpers::ReleaseSection::of(r.release_types.as_deref()).into(),
         }
     }
 }

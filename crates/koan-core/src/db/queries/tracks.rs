@@ -1654,6 +1654,33 @@ mod tests {
     }
 
     #[test]
+    fn an_albums_release_types_come_from_its_files() {
+        let db = test_db();
+        let types = || -> Option<String> {
+            db.conn
+                .query_row(
+                    "SELECT release_types FROM albums WHERE title = 'Archangel'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        let mut file = sample_meta("Archangel", "Burial", "Archangel");
+        file.path = Some("/music/Archangel/01.flac".into());
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types(), None, "untagged");
+
+        file.release_types = Some("single".into());
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types().as_deref(), Some("single"));
+
+        file.release_types = Some("ep".into());
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types().as_deref(), Some("ep"), "a retag replaces the type");
+    }
+
+    #[test]
     fn test_dedup_never_merges_two_local_files() {
         let db = test_db();
 

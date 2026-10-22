@@ -79,6 +79,18 @@ struct AlbumGridCell: View {
                             .padding(6)
                     }
                 }
+                .overlay(alignment: .topLeading) {
+                    // The pick's mark takes this corner while picking.
+                    if let release = album.releaseBadge, !selecting {
+                        Text(release)
+                            .font(.role(.fine, system: .system(size: 9, weight: .semibold)))
+                            .foregroundStyle(KoanTheme.style(.ink, system: .white))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .glass(.clear, fallback: .ultraThinMaterial, in: .capsule)
+                            .padding(6)
+                    }
+                }
                 #if os(iOS)
                 .overlay {
                     if album.onDevice != nil {

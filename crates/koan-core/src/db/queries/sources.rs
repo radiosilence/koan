@@ -72,6 +72,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         date             TEXT,
         disc             INTEGER,
         disc_total       INTEGER,
+        release_types    TEXT,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -104,6 +105,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         date             TEXT,
         disc             INTEGER,
         disc_total       INTEGER,
+        release_types    TEXT,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -136,7 +138,7 @@ pub(crate) const SOURCE_TABLES: &str = "
 const COLUMNS: &str = "title, artist, album_artist, album, date, disc, track_number, genre,
     label, duration_ms, codec, sample_rate, bit_depth, channels, bitrate, size_bytes, mtime,
     path, remote_id, remote_url, album_remote_id, artist_remote_id, mbid, album_mbid,
-    album_added_at, credits, disc_total";
+    album_added_at, credits, disc_total, release_types";
 
 /// A source row as stored, in `COLUMNS` order from `at`.
 fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<TrackMeta> {
@@ -183,6 +185,7 @@ fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<Tra
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default(),
         disc_total: row.get(at + 26)?,
+        release_types: row.get(at + 27)?,
     })
 }
 
@@ -405,7 +408,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
     conn.prepare_cached(&format!(
         "INSERT INTO {} (track_id, slot_key, artist_key, {COLUMNS})
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)
+                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
          ON CONFLICT({}) DO UPDATE SET
              track_id = excluded.track_id, slot_key = excluded.slot_key,
              artist_key = excluded.artist_key, title = excluded.title,
@@ -420,7 +423,8 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
              remote_url = excluded.remote_url, album_remote_id = excluded.album_remote_id,
              artist_remote_id = excluded.artist_remote_id, mbid = excluded.mbid,
              album_mbid = excluded.album_mbid, album_added_at = excluded.album_added_at,
-             credits = excluded.credits, disc_total = excluded.disc_total",
+             credits = excluded.credits, disc_total = excluded.disc_total,
+             release_types = excluded.release_types",
         kind.table(),
         kind.key()
     ))?
@@ -459,6 +463,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
         (!meta.credits.is_empty())
             .then(|| serde_json::to_string(&meta.credits).expect("credits serialise")),
         meta.disc_total,
+        meta.release_types,
     ])?;
     Ok(())
 }
@@ -582,6 +587,7 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
     };
     let date = pick(|m| m.date.clone());
     let label = pick(|m| m.label.clone());
+    let release_types = pick(|m| m.release_types.clone());
     let codec = pick(|m| m.codec.clone());
     let added_at = [local.as_ref(), remote.as_ref()]
         .into_iter()
@@ -619,6 +625,7 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
                 None,
                 codec.as_deref(),
                 label.as_deref(),
+                release_types.as_deref(),
                 pick(|m| m.album_mbid.clone()).as_deref(),
                 added_at,
             )?,
@@ -1698,7 +1705,7 @@ pub(crate) fn build_from_tracks(conn: &Connection) -> Result<(), DbError> {
                     al.date, t.disc, t.track_number, t.genre, al.label, t.duration_ms,
                     t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                     t.size_bytes, t.mtime, t.path, t.remote_id, t.remote_url,
-                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL, NULL
+                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL, NULL, NULL
                FROM tracks t
                LEFT JOIN artists a ON a.id = t.artist_id
                LEFT JOIN albums al ON al.id = t.album_id
