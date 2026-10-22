@@ -28,6 +28,10 @@ pub enum SyncError {
 static RUNNING: parking_lot::Mutex<Vec<(String, Arc<AtomicBool>)>> =
     parking_lot::Mutex::new(Vec::new());
 
+/// Servers left by [`cancel`] and not signed in to again: a sync of one that
+/// starts afterwards, from a client made before, stops at once.
+static LEFT: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+
 /// A sync's place in [`RUNNING`], held for as long as it runs.
 pub(crate) struct Running {
     pub(crate) cancel: Arc<AtomicBool>,
@@ -35,10 +39,9 @@ pub(crate) struct Running {
 
 impl Running {
     pub(crate) fn enter(url: &str) -> Self {
-        let cancel = Arc::new(AtomicBool::new(false));
-        RUNNING
-            .lock()
-            .push((url.trim_end_matches('/').to_owned(), cancel.clone()));
+        let url = url.trim_end_matches('/');
+        let cancel = Arc::new(AtomicBool::new(LEFT.lock().iter().any(|l| l == url)));
+        RUNNING.lock().push((url.to_owned(), cancel.clone()));
         Self { cancel }
     }
 }
@@ -51,13 +54,26 @@ impl Drop for Running {
     }
 }
 
-/// Stop every sync of the server at `url`, running or waiting for its turn.
-/// Each stops at its next page or step and returns [`SyncError::Cancelled`].
+/// Stop every sync of the server at `url`, running or waiting for its turn,
+/// and any that starts until [`resume`] is called for it. Each stops at its
+/// next page or step and returns [`SyncError::Cancelled`].
 pub fn cancel(url: &str) {
     let url = url.trim_end_matches('/');
+    {
+        let mut left = LEFT.lock();
+        if !left.iter().any(|l| l == url) {
+            left.push(url.to_owned());
+        }
+    }
     for (_, cancel) in RUNNING.lock().iter().filter(|(of, _)| of == url) {
         cancel.store(true, Ordering::Relaxed);
     }
+}
+
+/// Let syncs of the server at `url` run again: it has been signed in to.
+pub fn resume(url: &str) {
+    let url = url.trim_end_matches('/');
+    LEFT.lock().retain(|l| l != url);
 }
 
 fn check(cancel: &AtomicBool) -> Result<(), SyncError> {
@@ -1501,18 +1517,7 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
         let walks = || state.list_types.lock().unwrap().len();
-        let sync = |walk| {
-            sync_remote(
-                &db,
-                &client,
-                walk,
-                &server.url(),
-                "u",
-                &|_| {},
-                &AtomicBool::new(false),
-            )
-            .unwrap()
-        };
+        let sync = |walk| sync_remote(&db, &client, walk, &server.url(), "u", &|_| {}).unwrap();
 
         sync(Walk::IfChanged);
         let first = walks();
@@ -1543,29 +1548,11 @@ mod tests {
         });
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_remote(
-            &db,
-            &client,
-            Walk::IfChanged,
-            &server.url(),
-            "u",
-            &|_| {},
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
         let walks = state.list_types.lock().unwrap().len();
 
         update_last_sync(&db, &server.url(), "u", 1).unwrap();
-        sync_remote(
-            &db,
-            &client,
-            Walk::IfChanged,
-            &server.url(),
-            "u",
-            &|_| {},
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
         assert_eq!(
             state.list_types.lock().unwrap().len(),
             walks,
@@ -1587,27 +1574,9 @@ mod tests {
         let client = SubsonicClient::new(&server.url(), "u", "p");
         let walks = || state.list_types.lock().unwrap().len();
 
-        sync_remote(
-            &db,
-            &client,
-            Walk::IfChanged,
-            &server.url(),
-            "u",
-            &|_| {},
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
         let first = walks();
-        sync_remote(
-            &db,
-            &client,
-            Walk::IfChanged,
-            &server.url(),
-            "u",
-            &|_| {},
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
         assert!(walks() > first);
     }
 
@@ -1629,19 +1598,25 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
                 .unwrap()
         };
+        let pages = || state.song_pages.lock().unwrap().len();
 
         let signed_out = format!("{}/", server.url());
         let cancelled = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {
             cancel(&signed_out)
         });
         assert!(matches!(cancelled, Err(SyncError::Cancelled)));
-        assert!(
-            state.song_pages.lock().unwrap().is_empty(),
-            "no page asked for after the cancel"
-        );
+        assert_eq!(pages(), 0, "no page asked for after the cancel");
         assert_eq!(tracks(), 0);
         assert_eq!(get_last_sync(&db, &server.url()).unwrap(), None);
 
+        let later = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {});
+        assert!(
+            matches!(later, Err(SyncError::Cancelled)),
+            "a sync started after leaving the server stops too"
+        );
+        assert_eq!(pages(), 0);
+
+        resume(&server.url());
         let other = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {
             cancel("http://elsewhere.invalid")
         })
