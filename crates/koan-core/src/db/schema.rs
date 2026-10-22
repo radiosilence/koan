@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 28;
+pub const SCHEMA_VERSION: i64 = 29;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -1125,20 +1125,20 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         )?;
     }
 
-    // Original release dates were read from neither tags nor servers, as
-    // release types were not before 27.
-    if found < 28 {
-        conn.execute_batch(
-            "DELETE FROM scan_cache;
-             UPDATE remote_servers SET library_version = NULL;",
-        )?;
-    }
-
     // Push goes through the relay, by handles the apps give: the device
     // tokens kept for pushing directly are no use to anyone now, and are not
     // kept.
     if found < 28 {
         conn.execute("DROP TABLE IF EXISTS link_push", [])?;
+    }
+
+    // Original release dates were read from neither tags nor servers, as
+    // release types were not before 27.
+    if found < 29 {
+        conn.execute_batch(
+            "DELETE FROM scan_cache;
+             UPDATE remote_servers SET library_version = NULL;",
+        )?;
     }
 
     Ok(())
