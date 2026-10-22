@@ -494,7 +494,8 @@ pub fn adopt_moved_files(
 }
 
 /// What playing an artist plays: every track on the records they are the album
-/// artist of, ordered chronologically (album date, disc, track#). The records
+/// artist of, by section as their page groups them and then chronologically
+/// (album date, disc, track#). The records
 /// they only feature on are left out — see `AlbumQuery::features_of`. An
 /// artist with no records of their own has the tracks credited to them
 /// instead, so playing them always plays something.
@@ -517,7 +518,8 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
             OR ((t.artist_id = ?1
                  OR t.id IN (SELECT track_id FROM track_credits WHERE artist_id = ?1))
                 AND NOT EXISTS (SELECT 1 FROM album_artist_links WHERE artist_id = ?1))
-         ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
+         ORDER BY koan_release_section(al.release_types), al.date, al.title COLLATE LIBRARY,
+                  t.disc, t.track_number",
     )?;
     let rows = stmt
         .query_map(params![artist_id], row_to_track_row)?
@@ -1651,6 +1653,48 @@ mod tests {
 
         remove_stale_tracks(&db.conn, Path::new("/music/Ring Cycle/CD2"), true).unwrap();
         assert_eq!(total("Ring Cycle"), Some(1), "disc 2 gone");
+    }
+
+    #[test]
+    fn an_albums_release_types_come_from_its_files() {
+        let db = test_db();
+        let types = || -> Option<String> {
+            db.conn
+                .query_row(
+                    "SELECT release_types FROM albums WHERE title = 'Archangel'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        let mut file = sample_meta("Archangel", "Burial", "Archangel");
+        file.path = Some("/music/Archangel/01.flac".into());
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types(), None, "untagged");
+
+        file.release_types = Some("single".into());
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types().as_deref(), Some("single"));
+
+        file.release_types = Some("ep".into());
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types().as_deref(), Some("ep"), "a retag replaces the type");
+
+        file.release_types = None;
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types(), None, "a removed tag clears it");
+
+        let mut server = sample_meta("Archangel", "Burial", "Archangel");
+        server.source = "remote".into();
+        server.remote_id = Some("s-1".into());
+        server.release_types = Some("single".into());
+        upsert_track(&db.conn, &server).unwrap();
+        assert_eq!(
+            types().as_deref(),
+            Some("single"),
+            "the server's, where the file names none"
+        );
     }
 
     #[test]

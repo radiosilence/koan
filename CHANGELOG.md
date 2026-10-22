@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.66.7
+
+### Added
+
+- **Release types.** Album tiles name a record's release type (EP, Single, Live), and artist pages group records under Albums, EPs & Singles, Live, Compilations and Other releases. Read from MusicBrainz release type tags or an OpenSubsonic server's `releaseTypes`; the next scan and sync read every file and album again to fill them in.
+
+### Changed
+
+- **The device being controlled is named in a badge.** On the Mac's transport bar and the Apple TV's Now Playing, so it is clear that play acts there.
+
 ## 0.66.6
 
 ### Added

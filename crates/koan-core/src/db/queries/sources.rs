@@ -72,6 +72,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         date             TEXT,
         disc             INTEGER,
         disc_total       INTEGER,
+        release_types    TEXT,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -104,6 +105,7 @@ pub(crate) const SOURCE_TABLES: &str = "
         date             TEXT,
         disc             INTEGER,
         disc_total       INTEGER,
+        release_types    TEXT,
         track_number     INTEGER,
         genre            TEXT,
         label            TEXT,
@@ -136,7 +138,7 @@ pub(crate) const SOURCE_TABLES: &str = "
 const COLUMNS: &str = "title, artist, album_artist, album, date, disc, track_number, genre,
     label, duration_ms, codec, sample_rate, bit_depth, channels, bitrate, size_bytes, mtime,
     path, remote_id, remote_url, album_remote_id, artist_remote_id, mbid, album_mbid,
-    album_added_at, credits, disc_total";
+    album_added_at, credits, disc_total, release_types";
 
 /// A source row as stored, in `COLUMNS` order from `at`.
 fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<TrackMeta> {
@@ -183,6 +185,7 @@ fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<Tra
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default(),
         disc_total: row.get(at + 26)?,
+        release_types: row.get(at + 27)?,
     })
 }
 
@@ -405,7 +408,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
     conn.prepare_cached(&format!(
         "INSERT INTO {} (track_id, slot_key, artist_key, {COLUMNS})
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)
+                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
          ON CONFLICT({}) DO UPDATE SET
              track_id = excluded.track_id, slot_key = excluded.slot_key,
              artist_key = excluded.artist_key, title = excluded.title,
@@ -420,7 +423,8 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
              remote_url = excluded.remote_url, album_remote_id = excluded.album_remote_id,
              artist_remote_id = excluded.artist_remote_id, mbid = excluded.mbid,
              album_mbid = excluded.album_mbid, album_added_at = excluded.album_added_at,
-             credits = excluded.credits, disc_total = excluded.disc_total",
+             credits = excluded.credits, disc_total = excluded.disc_total,
+             release_types = excluded.release_types",
         kind.table(),
         kind.key()
     ))?
@@ -459,6 +463,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
         (!meta.credits.is_empty())
             .then(|| serde_json::to_string(&meta.credits).expect("credits serialise")),
         meta.disc_total,
+        meta.release_types,
     ])?;
     Ok(())
 }
@@ -736,9 +741,9 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
         before.album_id.filter(|a| Some(*a) != after.album_id),
         before.artist_id.filter(|a| Some(*a) != after.artist_id),
     )?;
-    derive_disc_total(conn, album_id)?;
+    derive_album_from_sources(conn, album_id)?;
     if let Some(left) = before.album_id.filter(|a| *a != album_id) {
-        derive_disc_total(conn, left)?;
+        derive_album_from_sources(conn, left)?;
     }
     Ok(None)
 }
@@ -915,19 +920,37 @@ pub(crate) const DISC_TOTAL: &str = "(SELECT CASE WHEN COUNT(*) > 0 THEN
        LEFT JOIN remote_entries r ON r.track_id = t.id
       WHERE t.album_id = albums.id)";
 
-/// Derive an album's disc total again after its tracks changed.
-pub(crate) fn derive_disc_total(conn: &Connection, album: i64) -> rusqlite::Result<()> {
-    let found = conn
+/// An album's release types as a correlated subquery on `albums`: what most
+/// of its tracks say, each by its file where the file names them and its
+/// server entry otherwise. One stray file tagged otherwise does not move the
+/// record; NULL when none names a type.
+pub(crate) const RELEASE_TYPES: &str = "(SELECT COALESCE(f.release_types, r.release_types) AS v
+       FROM tracks t
+       LEFT JOIN local_files f ON f.track_id = t.id
+       LEFT JOIN remote_entries r ON r.track_id = t.id
+      WHERE t.album_id = albums.id AND v IS NOT NULL
+      GROUP BY v ORDER BY COUNT(*) DESC, v LIMIT 1)";
+
+/// Derive what an album takes from all its tracks' sources again after its
+/// tracks changed: its disc total and its release types.
+pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqlite::Result<()> {
+    type Found = (Option<i32>, Option<i32>, Option<String>, Option<String>);
+    let found: Option<Found> = conn
         .prepare_cached(&format!(
-            "SELECT total_discs, {DISC_TOTAL} FROM albums WHERE id = ?1"
+            "SELECT total_discs, {DISC_TOTAL}, release_types, {RELEASE_TYPES}
+               FROM albums WHERE id = ?1"
         ))?
         .query_row(params![album], |r| {
-            Ok((r.get::<_, Option<i32>>(0)?, r.get::<_, Option<i32>>(1)?))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })
         .optional()?;
-    if let Some((_, derived)) = found.filter(|(stored, derived)| stored != derived) {
-        conn.prepare_cached("UPDATE albums SET total_discs = ?1 WHERE id = ?2")?
-            .execute(params![derived, album])?;
+    if let Some((_, discs, _, types)) =
+        found.filter(|(discs, d_discs, types, d_types)| discs != d_discs || types != d_types)
+    {
+        conn.prepare_cached(
+            "UPDATE albums SET total_discs = ?1, release_types = ?2 WHERE id = ?3",
+        )?
+        .execute(params![discs, types, album])?;
     }
     Ok(())
 }
@@ -1168,7 +1191,7 @@ fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError
     super::tracks::prune_if_empty(conn, album, artist)?;
     if let Some(album) = album {
         derive_album_credits(conn, album)?;
-        derive_disc_total(conn, album)?;
+        derive_album_from_sources(conn, album)?;
     }
     for artist in credited {
         super::tracks::prune_if_empty(conn, None, Some(artist))?;
@@ -1256,7 +1279,7 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
     }
     if let Some(album) = album {
         recount_album_credits(conn, album)?;
-        derive_disc_total(conn, album)?;
+        derive_album_from_sources(conn, album)?;
     }
     for artist in credited {
         super::tracks::prune_if_empty(conn, None, Some(artist))?;
@@ -1698,7 +1721,7 @@ pub(crate) fn build_from_tracks(conn: &Connection) -> Result<(), DbError> {
                     al.date, t.disc, t.track_number, t.genre, al.label, t.duration_ms,
                     t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                     t.size_bytes, t.mtime, t.path, t.remote_id, t.remote_url,
-                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL, NULL
+                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL, NULL, NULL
                FROM tracks t
                LEFT JOIN artists a ON a.id = t.artist_id
                LEFT JOIN albums al ON al.id = t.album_id

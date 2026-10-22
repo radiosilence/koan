@@ -275,6 +275,18 @@ struct ArtistDetailView: View {
     private var features: [Album] { record?.features ?? [] }
     private var info: ArtistInfo? { record?.info }
 
+    /// The artist's own records under their release types' headings. The
+    /// core lists them section by section, so a section is a run of them.
+    private static func sections(of albums: [Album]) -> [(section: ReleaseSection, albums: [Album])] {
+        albums.reduce(into: []) { runs, album in
+            if runs.last?.section == album.releaseSection {
+                runs[runs.count - 1].albums.append(album)
+            } else {
+                runs.append((album.releaseSection, [album]))
+            }
+        }
+    }
+
     private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
 
     var body: some View {
@@ -304,12 +316,22 @@ struct ArtistDetailView: View {
                     header
                 }
 
-                LazyVGrid(columns: columns, spacing: 22) {
-                    ForEach(albums, id: \.id) { album in
-                        AlbumGridCell(album: album, showArtist: false, selection: library.artistSelection)
+                let sections = Self.sections(of: albums)
+                ForEach(sections, id: \.section) { section, albums in
+                    // A discography of albums alone, or one nobody tagged,
+                    // needs no heading.
+                    if sections.count > 1 {
+                        Text(releaseSectionTitle(section: section)).koanCase()
+                            .font(.role(.body, system: .headline))
+                            .padding(.top, section == sections.first?.section ? 0 : 10)
                     }
+                    LazyVGrid(columns: columns, spacing: 22) {
+                        ForEach(albums, id: \.id) { album in
+                            AlbumGridCell(album: album, showArtist: false, selection: library.artistSelection)
+                        }
+                    }
+                    .modifier(SelectionDrag(selection: library.artistSelection))
                 }
-                .modifier(SelectionDrag(selection: library.artistSelection))
 
                 if !features.isEmpty {
                     FeaturesOn(albums: features)

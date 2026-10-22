@@ -140,6 +140,9 @@ fn read_metadata_lofty(
     let album_mbid = musicbrainz(ItemKey::MusicBrainzReleaseId);
     let credits = tag.map(credits_of).unwrap_or_default();
     let disc_total = tag.and_then(|t| t.disk_total()).map(|d| d as i32);
+    let release_types = tag.and_then(|t| {
+        crate::helpers::release_types(t.get_strings(ItemKey::MusicBrainzReleaseType))
+    });
 
     let (title, artist, album_artist, album, date, disc, track_number, genre, label) =
         if let Some(tag) = tag {
@@ -195,6 +198,7 @@ fn read_metadata_lofty(
         track_number,
         genre,
         label,
+        release_types,
         duration_ms: Some(duration_ms),
         codec: Some(codec),
         sample_rate,
@@ -312,6 +316,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         track_number: tags.track_number,
         genre: tags.genre,
         label: None,
+        release_types: None,
         duration_ms: props.duration_ms,
         codec: props.codec,
         sample_rate: props.sample_rate,
@@ -666,6 +671,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         track_number,
         genre,
         label,
+        release_types: None,
         duration_ms: None,
         codec: None,
         sample_rate: None,

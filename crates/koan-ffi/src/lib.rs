@@ -421,6 +421,14 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
     config::parse_size_bytes(&text)
 }
 
+/// The heading over a section of an artist's records.
+#[uniffi::export]
+pub fn release_section_title(section: ReleaseSection) -> String {
+    koan_core::helpers::ReleaseSection::from(section)
+        .title()
+        .into()
+}
+
 /// `text` as a QR code, for a platform with no encoder of its own: Android.
 /// Absent when the text is too long for one.
 #[uniffi::export]
@@ -6969,6 +6977,7 @@ mod restore_tests {
             track_number: Some(1),
             genre: None,
             label: None,
+            release_types: None,
             duration_ms: Some(240_000),
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),

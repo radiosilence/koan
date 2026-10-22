@@ -601,6 +601,11 @@ final class AlbumTile: NSCollectionViewItem {
     private let badge = CALayer()
     private let codec = CATextLayer()
     private static var codecFont: NSFont { NSFont.role(.fine, system: NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold)) }
+    /// What kind of release it is, opposite the codec. Gives way to the tick
+    /// while picking, which takes the same corner.
+    private let releaseBadge = CALayer()
+    private let release = CATextLayer()
+    private static var releaseFont: NSFont { NSFont.role(.fine, system: NSFont.systemFont(ofSize: 9, weight: .semibold)) }
     /// Made while there is a heart to show: the tile is hovered or the
     /// record a favourite. See `spinner`.
     private var heart: HeartButton?
@@ -673,6 +678,14 @@ final class AlbumTile: NSCollectionViewItem {
         codec.alignmentMode = .center
         badge.addSublayer(codec)
         layer.addSublayer(badge)
+        releaseBadge.backgroundColor = badge.backgroundColor
+        releaseBadge.cornerCurve = .continuous
+        release.font = Self.releaseFont
+        release.fontSize = Self.releaseFont.pointSize
+        release.foregroundColor = NSColor.white.cgColor
+        release.alignmentMode = .center
+        releaseBadge.addSublayer(release)
+        layer.addSublayer(releaseBadge)
 
         ring.cornerRadius = KoanTheme.radius(6)
         ring.cornerCurve = .continuous
@@ -718,7 +731,8 @@ final class AlbumTile: NSCollectionViewItem {
         yearLabel.stringValue = album.year.map { "· \($0)" } ?? ""
         codec.string = album.codec?.uppercased()
         badge.isHidden = album.codec == nil
-        view.setAccessibilityLabel([album.title, album.artistCredit.text, album.year.map(String.init)].compactMap { $0 }.joined(separator: ", "))
+        release.string = album.releaseBadge
+        view.setAccessibilityLabel([album.title, album.releaseBadge, album.artistCredit.text, album.year.map(String.init)].compactMap { $0 }.joined(separator: ", "))
         view.setAccessibilityRole(.group)
         // What the SwiftUI tile's buttons offered VoiceOver.
         view.setAccessibilityCustomActions([
@@ -755,6 +769,7 @@ final class AlbumTile: NSCollectionViewItem {
         downloadBar.show(album.onDevice, downloading: !arriving.isEmpty, tint: context.tint.cgColor, muted: muted)
         context.meter?.follow(downloadBar, transfers: arriving)
         tick.isHidden = !context.selecting
+        releaseBadge.isHidden = context.selecting || album.releaseBadge == nil
         if context.selecting {
             tick.contents = selected
                 ? Symbol.image(Icon.picked, size: 20, colours: [.white, context.tint])
@@ -925,6 +940,13 @@ final class AlbumTile: NSCollectionViewItem {
         badge.cornerRadius = KoanTheme.radius(badge.frame.height / 2)
         codec.frame = CGRect(x: 6, y: 2, width: textWidth, height: textHeight)
         codec.contentsScale = view.window?.backingScaleFactor ?? 2
+        let releaseText = release.string as? String ?? ""
+        let releaseWidth = ceil((releaseText as NSString).size(withAttributes: [.font: Self.releaseFont]).width)
+        let releaseHeight = Self.lineHeight(Self.releaseFont)
+        releaseBadge.frame = CGRect(x: 6, y: 6, width: releaseWidth + 12, height: releaseHeight + 4)
+        releaseBadge.cornerRadius = KoanTheme.radius(releaseBadge.frame.height / 2)
+        release.frame = CGRect(x: 6, y: 2, width: releaseWidth, height: releaseHeight)
+        release.contentsScale = view.window?.backingScaleFactor ?? 2
         downloadBar.frame = DownloadBarLayer.frame(side: side)
         CATransaction.commit()
 

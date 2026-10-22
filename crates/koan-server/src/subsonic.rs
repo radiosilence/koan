@@ -1542,6 +1542,14 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
                 .iter()
                 .map(|l| XmlNode::new("recordLabels").attr("name", l)),
         )
+        .list(
+            "releaseTypes",
+            album
+                .release_types
+                .iter()
+                .flat_map(|t| t.split(';'))
+                .map(|t| XmlNode::scalar("releaseTypes", AttrValue::Str(t.into()))),
+        )
 }
 
 /// An artist as an `ArtistID3` element, without `albumCount`, which each
@@ -7238,6 +7246,7 @@ mod tests {
             server_path: None,
             date: Some("2020".into()),
             label: None,
+            release_types: None,
             size_bytes: None,
             mtime: None,
             source: "local".into(),
@@ -11259,6 +11268,7 @@ mod tests {
         meta.mbid = Some("rec-mbid".into());
         meta.album_mbid = Some("rel-mbid".into());
         meta.label = Some("Warp".into());
+        meta.release_types = Some("ep;live".into());
         queries::upsert_track(&db.conn, &meta).unwrap();
         let track = queries::all_tracks(&db.conn).unwrap().remove(0);
         let album_id = track.album_id.unwrap();
@@ -11278,6 +11288,7 @@ mod tests {
         assert_eq!(album["genre"], "Rock");
         assert_eq!(album["genres"], serde_json::json!([{"name": "Rock"}]));
         assert_eq!(album["recordLabels"], serde_json::json!([{"name": "Warp"}]));
+        assert_eq!(album["releaseTypes"], serde_json::json!(["ep", "live"]));
         assert_eq!(
             album["releaseDate"],
             serde_json::json!({"year": 2020, "month": 5, "day": 17})

@@ -38,6 +38,7 @@ fn meta(artist: &str, album: &str, title: &str, n: Option<i32>) -> TrackMeta {
         track_number: n,
         genre: Some("Electronic".into()),
         label: None,
+        release_types: None,
         duration_ms: Some(215_000),
         codec: Some("FLAC".into()),
         sample_rate: Some(44_100),

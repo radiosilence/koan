@@ -18,6 +18,7 @@ fn album_row(row: &rusqlite::Row) -> rusqlite::Result<AlbumRow> {
         label: row.get(8)?,
         remote_id: row.get(9)?,
         added_at: row.get(10)?,
+        release_types: row.get(11)?,
         on_device: None,
     })
 }
@@ -188,7 +189,7 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         }
         // The tracks it gave up count towards the album they joined.
         super::sources::recount_album_credits(conn, keep)?;
-        super::sources::derive_disc_total(conn, keep)?;
+        super::sources::derive_album_from_sources(conn, keep)?;
         for artist in credited {
             super::tracks::prune_if_empty(conn, None, Some(artist))?;
         }
@@ -412,7 +413,7 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
     let mut sql = format!(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                 al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
-                al.added_at{}
+                al.added_at, al.release_types{}
          {body} ORDER BY ",
         if counted { ON_DEVICE_COLUMNS } else { "" }
     );
@@ -420,6 +421,11 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         AlbumOrder::LastPlayed if q.played.is_none() => AlbumOrder::RecentlyAdded,
         order => order,
     };
+    // An artist's records come grouped as their page draws them, so a pick
+    // across the grid and the page's order agree.
+    if q.artist_id.is_some() && !matches!(order, AlbumOrder::Random(_)) {
+        sql.push_str("koan_release_section(al.release_types), ");
+    }
     match (order, q.search, q.ids) {
         (AlbumOrder::Random(seed), ..) => {
             params.push(Box::new(seed));
@@ -456,8 +462,8 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
             let mut album = album_row(row)?;
             if counted {
                 album.on_device = Some(OnDevice {
-                    have: row.get(11)?,
-                    total: row.get(12)?,
+                    have: row.get(12)?,
+                    total: row.get(13)?,
                 });
             }
             Ok(album)
@@ -611,7 +617,7 @@ pub fn played_albums(
     let sql = format!(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                 al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
-                al.added_at
+                al.added_at, al.release_types
          FROM (SELECT t.album_id, MAX(h.played_at) AS last, COUNT(*) AS plays
                  FROM play_history h JOIN tracks t ON t.id = h.track_id
                 WHERE h.user_id = ?1 AND t.album_id IS NOT NULL
@@ -642,7 +648,7 @@ pub fn highest_rated_albums(
     let mut stmt = conn.prepare_cached(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                 al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
-                al.added_at
+                al.added_at, al.release_types
          FROM album_ratings r
          JOIN albums al ON al.id = r.album_id
          LEFT JOIN artists a ON al.artist_id = a.id
@@ -701,7 +707,7 @@ pub fn get_album(conn: &Connection, album_id: i64) -> Result<Option<AlbumRow>, D
         .prepare_cached(
             "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                     al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
-                al.added_at
+                al.added_at, al.release_types
              FROM albums al
              LEFT JOIN artists a ON al.artist_id = a.id
              WHERE al.id = ?1",

@@ -500,6 +500,7 @@ fn group_by_album(
                     music_brainz_id: album.music_brainz_id.clone(),
                     sort_name: album.sort_name.clone(),
                     record_labels: album.record_labels.clone(),
+                    release_types: album.release_types.clone(),
                     song: Vec::new(),
                 },
                 None => SubsonicAlbumFull {
@@ -514,6 +515,7 @@ fn group_by_album(
                     music_brainz_id: None,
                     sort_name: None,
                     record_labels: Vec::new(),
+                    release_types: Vec::new(),
                     song: Vec::new(),
                 },
             });
@@ -621,6 +623,8 @@ fn write_albums(
 
     for album in albums {
         let artist_name = album.artist.as_deref().unwrap_or("Unknown Artist");
+        let release_types =
+            crate::helpers::release_types(album.release_types.iter().map(String::as_str));
 
         for song in &album.song {
             song_ids.insert(song.id.clone());
@@ -638,6 +642,7 @@ fn write_albums(
                 track_number: song.track,
                 genre: song.genre.clone().or_else(|| album.genre.clone()),
                 label: None,
+                release_types: release_types.clone(),
                 duration_ms: song.duration.map(|d| d * 1000),
                 codec: song.codec.clone().or_else(|| song.suffix.clone()),
                 // OpenSubsonic servers report these; a plain Subsonic one
@@ -735,6 +740,7 @@ mod tests {
             track_number: Some(1),
             genre: Some("Electronic".into()),
             label: None,
+            release_types: None,
             duration_ms: Some(240_000),
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),

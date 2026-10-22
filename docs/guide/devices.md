@@ -8,7 +8,9 @@ Playing, make the two choices:
 - **Control** (a remote) is which kōan the transport, the queue and Now Playing
   show and command: this device, or another kōan app this one can reach. It
   appears once there is another to pick, and on the phone it is also the
-  mini player's button.
+  mini player's button. While another device is controlled, the Mac's
+  transport and the Apple TV's Now Playing name it in an accent badge, since
+  play and pause there then act on that device.
 - **Output** (a speaker) is where the device in view plays. For this device,
   that is each of its audio devices (built-in speakers, a USB DAC, a display;
   on a phone, the route the system chose) and, on the Mac, iPhone and Android, the UPnP amplifiers it can see. Picking

@@ -204,6 +204,7 @@ mod tests {
             label: None,
             remote_id: None,
             added_at: None,
+            release_types: None,
             on_device: None,
         }
     }
