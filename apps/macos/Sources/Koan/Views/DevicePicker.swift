@@ -668,11 +668,14 @@ struct ControlButton: View {
     }
 }
 
+/// The badge's shape and colour in the host's font: a badge sets a
+/// monospaced one for figures, and this holds a name.
 private struct ControlledBadge: ViewModifier {
     let on: Bool
+    @Environment(\.font) private var font
 
     func body(content: Content) -> some View {
-        if on { content.koanBadge(accent: true) } else { content }
+        if on { content.font(font).koanBadge(accent: true) } else { content }
     }
 }
 
