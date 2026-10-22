@@ -711,7 +711,11 @@ mod standing_tests {
     #[test]
     fn a_remembered_server_without_a_credential_is_signed_out() {
         let mut cfg = Config::default();
-        assert_eq!(server_standing(&cfg), ServerStanding::Fine, "never signed in");
+        assert_eq!(
+            server_standing(&cfg),
+            ServerStanding::Fine,
+            "never signed in"
+        );
         cfg.remote.url = "https://standing.invalid".into();
         cfg.remote.username = "koan".into();
         assert_eq!(server_standing(&cfg), ServerStanding::SignedOut);
