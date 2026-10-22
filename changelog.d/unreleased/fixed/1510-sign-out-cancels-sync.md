@@ -1,0 +1,1 @@
+- **Signing out stops a sync.** A sync from the server in progress, or waiting to start, stops when the device signs out of it, rather than paging the old server and writing its rows.
