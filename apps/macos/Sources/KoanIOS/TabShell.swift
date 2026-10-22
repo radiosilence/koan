@@ -198,6 +198,10 @@ struct TabShell: View {
         .onChange(of: sidebar) { regroup() }
         .onChange(of: playlists.playlists.map(\.id)) { _, ids in dropDeleted(ids) }
         #endif
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ServerBanner { tab.wrappedValue = .settings }
+                .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
+        }
         .toggleStyle(SystemSwitch())
         .modifier(Transport(
             showingNowPlaying: $showingNowPlaying,
@@ -211,6 +215,7 @@ struct TabShell: View {
         .shareCodes(player)
         .onChange(of: selection) { Task { await checkSignedIn() } }
         .onChange(of: mirror.connection?.linked) { Task { await checkSignedIn() } }
+        .onChange(of: mirror.connection?.standing) { Task { await checkSignedIn() } }
         .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
             Task { await checkSignedIn() }
         }

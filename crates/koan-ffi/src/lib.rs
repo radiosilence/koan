@@ -6708,6 +6708,7 @@ fn connection_info() -> ConnectionInfo {
         offline: koan_core::remote::offline::active(),
         offline_manual: koan_core::remote::offline::manual(),
         sign_in_refused: koan_core::helpers::sign_in_refused(&Config::cached()),
+        standing: koan_core::helpers::server_standing(&Config::cached()).into(),
         nearby_servers: nearby::servers()
             .into_iter()
             .map(|(url, devices)| NearbyServer { url, devices })

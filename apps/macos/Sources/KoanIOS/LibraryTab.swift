@@ -48,26 +48,22 @@ struct LibraryTab: View {
     }
 }
 
-/// Why the library shows less than it holds: the server refused the sign-in,
-/// or koan is offline, by hand, with the way back, or with the server out of
-/// reach, which lifts by itself. Atop the Library tab, and the iPad's sidebar.
+/// Why the library shows less than it holds: koan is offline, by hand, with
+/// the way back, or with the server out of reach, which lifts by itself and
+/// which `ServerBanner` names. Atop the Library tab, and the iPad's sidebar.
 struct LibraryStatus: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(LibraryModel.self) private var library
 
     static func showing(_ mirror: EngineMirror) -> Bool {
-        mirror.signInRefused || mirror.connection?.offline == true
+        mirror.connection?.offline == true
     }
 
     var body: some View {
-        if mirror.signInRefused {
-            Label(EngineMirror.signInRefusedDetail, koan: Icon.warning)
-                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
-        } else if let connection = mirror.connection, connection.offline {
-            Label(
-                connection.offlineManual ? "Offline mode is on" : "Can't reach your server",
-                koan: Icon.offline
-            )
+        if let connection = mirror.connection, connection.offline {
+            if connection.offlineManual {
+                Label("Offline mode is on", koan: Icon.offline)
+            }
             Text("Showing what is on this \(Self.device).")
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
