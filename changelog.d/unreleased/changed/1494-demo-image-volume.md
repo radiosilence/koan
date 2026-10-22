@@ -1,1 +1,0 @@
-- **The demo's library is mounted, not copied.** The Pulumi chart's demo mode mounts `demo.library` as an image volume, so a demo pod starts without copying its music; it needs Kubernetes 1.35 or later.

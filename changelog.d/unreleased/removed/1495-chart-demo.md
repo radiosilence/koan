@@ -1,0 +1,1 @@
+- **The Pulumi chart's `demo` and `name` options.** How a demo server is deployed is the deployment's own business; `server.demo` is unchanged. A stack setting either option is refused.
