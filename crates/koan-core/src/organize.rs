@@ -1645,6 +1645,7 @@ mod tests {
             genre: Some("Rock".into()),
             label: None,
             release_types: None,
+            original_date: None,
             duration_ms: Some(240_000),
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),

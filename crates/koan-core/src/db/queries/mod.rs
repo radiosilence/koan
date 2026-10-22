@@ -237,6 +237,9 @@ pub struct TrackMeta {
     /// The release's MusicBrainz types, folded and `;`-separated
     /// (`helpers::release_types`).
     pub release_types: Option<String>,
+    /// When the recording was first released (`ORIGINALDATE`, `TDOR`), where
+    /// `date` is this edition's. What the album is dated by when known.
+    pub original_date: Option<String>,
     pub duration_ms: Option<i64>,
     pub codec: Option<String>,
     pub sample_rate: Option<i32>,
@@ -380,6 +383,7 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         genre: Some("Electronic".into()),
         label: None,
         release_types: None,
+        original_date: None,
         duration_ms: Some(240_000),
         codec: Some("FLAC".into()),
         sample_rate: Some(44100),

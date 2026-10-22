@@ -140,6 +140,7 @@ fn read_metadata_lofty(
     let album_mbid = musicbrainz(ItemKey::MusicBrainzReleaseId);
     let credits = tag.map(credits_of).unwrap_or_default();
     let disc_total = tag.and_then(|t| t.disk_total()).map(|d| d as i32);
+    let original_date = musicbrainz(ItemKey::OriginalReleaseDate);
     let release_types = tag.and_then(|t| {
         crate::helpers::release_types(t.get_strings(ItemKey::MusicBrainzReleaseType))
     });
@@ -199,6 +200,7 @@ fn read_metadata_lofty(
         genre,
         label,
         release_types,
+        original_date,
         duration_ms: Some(duration_ms),
         codec: Some(codec),
         sample_rate,
@@ -317,6 +319,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         genre: tags.genre,
         label: None,
         release_types: None,
+        original_date: None,
         duration_ms: props.duration_ms,
         codec: props.codec,
         sample_rate: props.sample_rate,
@@ -621,6 +624,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
     let mut track_number: Option<i32> = None;
     let mut genre: Option<String> = None;
     let mut label: Option<String> = None;
+    let mut original_date: Option<String> = None;
 
     // A non-empty text tag replaces the field; empty values are ignored so a
     // blank tag never shadows a later populated one or the fallback.
@@ -641,10 +645,8 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
             StandardTag::ReleaseYear(y) | StandardTag::RecordingYear(y) if date.is_none() => {
                 date = Some(y.to_string())
             }
-            StandardTag::OriginalReleaseDate(v) | StandardTag::OriginalRecordingDate(v)
-                if date.is_none() =>
-            {
-                set_text(&mut date, v)
+            StandardTag::OriginalReleaseDate(v) | StandardTag::OriginalRecordingDate(v) => {
+                set_text(&mut original_date, v)
             }
             StandardTag::OriginalReleaseYear(y) | StandardTag::OriginalRecordingYear(y)
                 if date.is_none() =>
@@ -672,6 +674,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         genre,
         label,
         release_types: None,
+        original_date,
         duration_ms: None,
         codec: None,
         sample_rate: None,

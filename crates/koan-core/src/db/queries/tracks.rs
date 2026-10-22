@@ -1656,6 +1656,33 @@ mod tests {
     }
 
     #[test]
+    fn an_album_is_dated_by_its_first_release() {
+        let db = test_db();
+        let date = || -> Option<String> {
+            db.conn
+                .query_row(
+                    "SELECT date FROM albums WHERE title = 'Unknown Pleasures'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let mut reissue = sample_meta("Disorder", "Joy Division", "Unknown Pleasures");
+        reissue.path = Some("/music/Unknown Pleasures/01.flac".into());
+        reissue.date = Some("2007-09-17".into());
+        upsert_track(&db.conn, &reissue).unwrap();
+        assert_eq!(
+            date().as_deref(),
+            Some("2007-09-17"),
+            "no original date tagged"
+        );
+
+        reissue.original_date = Some("1979-06-15".into());
+        upsert_track(&db.conn, &reissue).unwrap();
+        assert_eq!(date().as_deref(), Some("1979-06-15"));
+    }
+
+    #[test]
     fn an_albums_release_types_come_from_its_files() {
         let db = test_db();
         let types = || -> Option<String> {
