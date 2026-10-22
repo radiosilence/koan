@@ -189,16 +189,6 @@ pub fn forget(folder: &Path) -> String {
     }
 }
 
-pub fn forget_remote() -> String {
-    let Ok(db) = pool::shared().get() else {
-        return "the library could not be opened".into();
-    };
-    match helpers::forget_remote(&db) {
-        Ok(n) => format!("signed out and forgot {n} tracks"),
-        Err(e) => format!("signed out, but the server's tracks could not be forgotten: {e}"),
-    }
-}
-
 pub fn rebuild_index() -> String {
     let Ok(db) = pool::shared().get() else {
         return "the library could not be opened".into();

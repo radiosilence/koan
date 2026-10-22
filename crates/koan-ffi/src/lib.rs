@@ -4640,9 +4640,9 @@ impl KoanEngine {
         .await
     }
 
-    /// Forget the server, and the queue and transfers that came from it.
-    /// Leaves the synced library alone — those tracks are still real, they
-    /// just cannot be fetched until you sign in again.
+    /// Forget the server and everything this device held for it: its
+    /// library, the account's favourites, history and playlists, the queue
+    /// and the downloads (`helpers::sign_out`). Local files stay.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
         offload::sequenced(move || {
             koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
@@ -4651,6 +4651,7 @@ impl KoanEngine {
             // This device's own queue, never a controlled device's. A player
             // that has stopped has nothing left to clear.
             let _ = self.send_local(PlayerCommand::SignedOut);
+            self.bump_library();
             Ok(())
         })
         .await
@@ -4665,19 +4666,6 @@ impl KoanEngine {
             let db = self.db()?;
             let removed =
                 koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)?;
-            self.bump_library();
-            Ok(removed)
-        })
-        .await
-    }
-
-    /// Forget everything that only existed on the server.
-    ///
-    /// A track held locally as well keeps its row and loses its remote id.
-    pub async fn forget_remote(self: Arc<Self>) -> Result<u64, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            let removed = koan_core::helpers::forget_remote(&db).map_err(db_err)?;
             self.bump_library();
             Ok(removed)
         })

@@ -754,15 +754,10 @@ private struct RemoteSettings: View {
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button("Sign Out and Forget Its Tracks", role: .destructive) {
-                model.signOut(forgetTracks: true)
-            }
-            Button("Sign Out and Keep Its Tracks") {
-                model.signOut(forgetTracks: false)
-            }
+            Button("Sign Out", role: .destructive) { model.signOut() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
+            Text("Its tracks, favourites, history, playlists and downloads are removed from this device. Signing in again brings them back. Local files stay.")
         }
     }
 

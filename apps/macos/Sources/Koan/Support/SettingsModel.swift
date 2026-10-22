@@ -214,33 +214,27 @@ final class SettingsModel {
         }
     }
 
-    func signOut(forgetTracks: Bool) {
+    /// Signs out and forgets everything held for the server: its library, the
+    /// account's favourites, history and playlists, and the downloads, which
+    /// the next sign-in pulls again. Local files stay.
+    func signOut() {
+        let engine = self.engine
         Task {
-            do {
-                try await engine.signOutRemote()
-                lastResult = "Signed out"
-                lastError = nil
-                NotificationCenter.default.post(name: .koanSignedOut, object: nil)
-            } catch {
-                lastError = Self.describe(error)
-                reload()
-                return
-            }
-            guard forgetTracks else {
-                reload()
-                return
-            }
             // Local rows too: it takes the server off the ones that were on
             // both, so a scan writing them would be writing the same rows.
             let result = await activity.run(
-                "Forgetting the server's tracks",
+                "Signing out",
                 uses: [.remoteTracks, .localTracks]
             ) {
-                try await self.engine.forgetRemote()
+                try await engine.signOutRemote()
             }
             switch result {
-            case .success(let n): lastResult = "Signed out and forgot \(n.formatted(.number)) tracks"
-            case .failure(let e): lastError = Self.describe(e)
+            case .success:
+                lastResult = "Signed out"
+                lastError = nil
+                NotificationCenter.default.post(name: .koanSignedOut, object: nil)
+            case .failure(let e):
+                lastError = Self.describe(e)
             }
             reload()
         }

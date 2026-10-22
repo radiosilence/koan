@@ -32,7 +32,6 @@ class ModelsTest {
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
         fake.answers["settings"] = { current }
-        fake.answers["forgetRemote"] = { 3uL }
     }
 
     @After fun tearDown() = Dispatchers.resetMain()
@@ -100,26 +99,17 @@ class ModelsTest {
         val model = settingsModel()
         advanceUntilIdle()
         assertEquals(true, account.state.value.signedIn)
-        model.signOut(forgetTracks = true, then = account::signedOut)
+        model.signOut(then = account::signedOut)
         advanceUntilIdle()
         assertEquals(1, fake.called("signOutRemote").size)
-        assertEquals(1, fake.called("forgetRemote").size)
         assertEquals(false, account.state.value.signedIn)
-    }
-
-    @Test fun signingOutKeepingTracksForgetsNothing() = runTest(dispatcher) {
-        val model = settingsModel()
-        model.signOut(forgetTracks = false) {}
-        advanceUntilIdle()
-        assertEquals(1, fake.called("signOutRemote").size)
-        assertTrue(fake.called("forgetRemote").isEmpty())
     }
 
     @Test fun aFailedSignOutStaysSignedIn() = runTest(dispatcher) {
         fake.answers["signOutRemote"] = { throw KoanException.Database("locked") }
         var out = false
         val model = settingsModel()
-        model.signOut(forgetTracks = true) { out = true }
+        model.signOut { out = true }
         advanceUntilIdle()
         assertFalse(out)
         assertEquals("locked", model.state.value.error)

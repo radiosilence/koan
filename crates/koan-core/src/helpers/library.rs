@@ -190,7 +190,8 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
     Ok(removed)
 }
 
-/// How many times a sign-in has replaced the library with another server's.
+/// How many times a sign-out, or a sign-in as another account, has forgotten
+/// the last server.
 static REPLACED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Read before and after a sign-in: a change means the library was replaced,
@@ -200,23 +201,41 @@ pub fn libraries_replaced() -> u64 {
     REPLACED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Forget the server signed in to before another, so the library is as a new
-/// install signed in to the next would have it: what `forget_remote` forgets,
-/// the server's playlists, what was recorded about syncing it, and every
-/// download, since the cache holds that server's files and no others. Local
-/// files and their tracks stay. Returns the number of tracks removed.
+/// Forget everything this device holds for the server it was signed in to,
+/// so it is as a new install: what `forget_remote` forgets, and the
+/// account's favourites, ratings, play history, playlists and saved queue,
+/// which the server keeps and the next sign-in pulls again; what was
+/// recorded about syncing it; and every download, since the cache holds that
+/// server's files and no others. Local files and their tracks stay, as do
+/// playlists read from files in the library folders, EQ profiles and this
+/// device's settings. Returns the number of tracks removed.
 pub fn forget_server(
     db: &Database,
     cfg: &crate::config::Config,
 ) -> Result<u64, crate::db::connection::DbError> {
     let removed = forget_remote(db)?;
-    db.conn.execute_batch(
-        "DELETE FROM playlists WHERE remote_id IS NOT NULL;
+    let tx = crate::db::queries::write_transaction(&db.conn)?;
+    tx.execute_batch(&format!(
+        "DELETE FROM favourites WHERE user_id = {user};
+         DELETE FROM favourite_albums WHERE user_id = {user};
+         DELETE FROM favourite_artists WHERE user_id = {user};
+         DELETE FROM track_ratings WHERE user_id = {user};
+         DELETE FROM album_ratings WHERE user_id = {user};
+         DELETE FROM artist_ratings WHERE user_id = {user};
+         DELETE FROM bookmarks WHERE user_id = {user};
+         DELETE FROM play_history;
+         DELETE FROM play_history_forgotten;
+         DELETE FROM playlists WHERE source_path IS NULL;
+         DELETE FROM playback_state;
+         DELETE FROM playback_position;
          DELETE FROM remote_servers;",
-    )?;
+        user = crate::db::queries::LOCAL_USER
+    ))?;
+    tx.commit()?;
     super::clear_download_cache(db, cfg);
+    crate::player::history::changed();
     REPLACED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    log::info!("forgot the last server's library: {removed} track(s)");
+    log::info!("forgot the server's library and account: {removed} track(s)");
     Ok(removed)
 }
 

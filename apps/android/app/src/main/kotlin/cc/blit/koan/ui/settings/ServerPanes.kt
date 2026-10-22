@@ -118,18 +118,14 @@ fun ServerPane(model: SettingsModel) {
             onDismissRequest = { signingOut = false },
             title = { KoanText("Sign out of ${host(s.remoteUrl)}?", role = KoanType.TitleSmall) },
             text = {
-                KoanText("Keeping its tracks leaves records in the library that cannot be played until you sign in again.")
+                KoanText("Its tracks, favourites, history, playlists and downloads are removed from this device. Signing in again brings them back.")
             },
             confirmButton = {
                 Column(horizontalAlignment = Alignment.End) {
-                    KoanButton("Sign out and forget its tracks", {
+                    KoanButton("Sign out", {
                         signingOut = false
-                        model.signOut(forgetTracks = true, then = account::signedOut)
+                        model.signOut(then = account::signedOut)
                     }, destructive = true)
-                    KoanButton("Sign out and keep its tracks", {
-                        signingOut = false
-                        model.signOut(forgetTracks = false, then = account::signedOut)
-                    })
                     KoanButton("Cancel", { signingOut = false })
                 }
             },
