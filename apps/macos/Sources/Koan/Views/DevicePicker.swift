@@ -608,7 +608,8 @@ private struct LocalNetworkBlocked: View {
 }
 
 /// The button that opens Control, and names the device controlled when it is
-/// not this one.
+/// not this one. Labelled, that name is an accent badge, since everything the
+/// host shows is then the other device's and its transport plays there.
 struct ControlButton: View {
     @Environment(PlayerModel.self) private var player
     /// Held by the host. On iOS the sheet hangs off a view that outlives the
@@ -631,7 +632,7 @@ struct ControlButton: View {
                 KoanIcon(player.controlledOutOfReach ? Icon.warning : Action.control.glyph)
                     .font(iconSize.map { .system(size: $0) })
                     .foregroundStyle(iconStyle)
-                if labelled, let name = controlled {
+                if let name = label {
                     Text(name)
                         .lineLimit(1)
                         .foregroundStyle(
@@ -639,6 +640,7 @@ struct ControlButton: View {
                                 ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.ink, system: .primary))
                 }
             }
+            .modifier(ControlledBadge(on: label != nil, outOfReach: player.controlledOutOfReach))
             .frame(minWidth: target, minHeight: target)
             .contentShape(Rectangle())
         }
@@ -654,6 +656,8 @@ struct ControlButton: View {
         player.isControllingAnother ? player.controlled?.name ?? "another device" : nil
     }
 
+    private var label: String? { labelled ? controlled : nil }
+
     private var iconStyle: AnyShapeStyle {
         if player.controlledOutOfReach { return KoanTheme.style(.bad, system: .orange) }
         return player.isControllingAnother ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary)
@@ -662,6 +666,27 @@ struct ControlButton: View {
     private var help: String {
         if let note = player.controlledReachNote { return note }
         return controlled.map { "Controlling \($0)" } ?? "Control another kōan"
+    }
+}
+
+/// The badge's shape and colour in the host's font: a badge sets a
+/// monospaced one for figures, and this holds a name. In the warning colour
+/// while the device is out of reach, as the icon and name inside it are.
+private struct ControlledBadge: ViewModifier {
+    let on: Bool
+    let outOfReach: Bool
+    @Environment(\.font) private var font
+
+    func body(content: Content) -> some View {
+        if on {
+            if outOfReach {
+                content.font(font).koanBadge(accent: true).tint(KoanTheme.style(.bad, system: .orange))
+            } else {
+                content.font(font).koanBadge(accent: true)
+            }
+        } else {
+            content
+        }
     }
 }
 

@@ -1,0 +1,1 @@
+- **The device being controlled is named in a badge.** On the Mac's transport bar and the Apple TV's Now Playing, so it is clear that play acts there.
