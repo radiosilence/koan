@@ -26,6 +26,8 @@ I did use AI-assisted coding for this project. I've been building fairly high-qu
 
 ## Install
 
+To look around first, sign in to [demo.koan.rocks](https://demo.koan.rocks) as `demo`, password `demo`, from a browser or any of the apps. It resets on the hour.
+
 macOS App:
 
 ```bash
