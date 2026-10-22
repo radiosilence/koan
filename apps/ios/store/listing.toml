@@ -85,7 +85,7 @@ Navidrome or a kōan server. It is the iOS version of the open-source kōan Mac 
 content, and works the same in every region. It operates in no regulated industry.
 
 To review it with a library, sign in to kōan's public demonstration server, which holds only Creative Commons and \
-public-domain music and resets every hour:
+public-domain music and resets every day at midnight UTC:
 
 1. Open Settings (a tab at the bottom on iPhone, a row in the sidebar on iPad) and choose Server.
 2. Server: https://demo.koan.rocks
@@ -154,7 +154,7 @@ open-source Mac app (https://github.com/radiosilence/koan). It provides no music
 no user-generated content, and works the same in every region. It operates in no regulated industry.
 
 To review it with a library, sign in to kōan's public demonstration server, which holds only Creative Commons and \
-public-domain music and resets every hour:
+public-domain music and resets every day at midnight UTC:
 
 1. On first launch the TV shows "Sign in to kōan". In the address field, enter https://demo.koan.rocks
 2. Choose "Use a Password or API Key", and enter Username: demo, Password: demo.
