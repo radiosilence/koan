@@ -102,6 +102,10 @@ pub struct ServerConfig {
     /// sign-in and know the server by it. `koan serve` needs it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// A public demo: one account strangers share, whose password, keys and
+    /// scrobbling nobody can change. See koan-server's `demo`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub demo: bool,
 }
 
 /// Deprecated: `server.url` replaces `public_url`, which is read only while

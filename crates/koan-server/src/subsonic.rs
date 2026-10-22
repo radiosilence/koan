@@ -457,6 +457,15 @@ impl SubsonicResponse {
     }
 }
 
+/// A Subsonic "not authorized" error carrying `message`, for refusals made
+/// before a request reaches its endpoint.
+pub(crate) fn not_authorized(json: bool, message: &str) -> Response {
+    SubsonicResponse::error(
+        json,
+        &SubsonicError::new(SubsonicErrorCode::NotAuthorized, message),
+    )
+}
+
 /// Marks a response that refused a credential, for [`throttle_auth`] to count.
 #[derive(Clone, Copy)]
 struct AuthFailed;

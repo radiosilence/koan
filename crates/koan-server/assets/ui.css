@@ -568,6 +568,9 @@
     border-left-style: var(--tw-border-style);
     border-left-width: 2px;
   }
+  .border-brand {
+    border-color: var(--brand);
+  }
   .border-ink {
     border-color: var(--ink);
   }
@@ -606,6 +609,9 @@
   }
   .p-1 {
     padding: var(--spacing);
+  }
+  .p-3 {
+    padding: calc(var(--spacing) * 3);
   }
   .px-0 {
     padding-inline: 0px;
@@ -702,6 +708,10 @@
   }
   .align-\[-2px\] {
     vertical-align: -2px;
+  }
+  .text-body {
+    font-size: var(--text-body);
+    line-height: var(--tw-leading, var(--text-body--line-height));
   }
   .text-\[11px\] {
     font-size: 11px;

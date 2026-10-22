@@ -290,6 +290,10 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
             access_ttl,
             refresh_ttl
         );
+        if cfg.server.demo {
+            let db = pool.get().map_err(|e| format!("demo: {e}"))?;
+            crate::demo::start(&db.conn).map_err(|e| format!("demo: {e}"))?;
+        }
         let no_accounts = pool
             .get()
             .ok()
@@ -399,7 +403,15 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
         // remote TUI bridge builds its stream URL off the GraphQL base. Built
         // once and cloned for the dedicated listener, since each build reads
         // the config from disk.
-        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers, users);
+        // The demo guard goes on Subsonic itself as well as round everything,
+        // so a dedicated Subsonic port has it too.
+        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers, users).map(|sub| {
+            if cfg.server.demo {
+                sub.layer(axum::middleware::from_fn(crate::demo::guard))
+            } else {
+                sub
+            }
+        });
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
@@ -420,6 +432,9 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
         // Outermost: a request whose `Host` we do not recognise is refused
         // before anything else looks at it. Without this a DNS-rebinding page
         // reaches the API as same-origin and CORS stops mattering.
+        if cfg.server.demo {
+            app = app.layer(axum::middleware::from_fn(crate::demo::guard));
+        }
         let app = app.layer(cors).layer(axum::middleware::from_fn_with_state(
             browser_policy.clone(),
             host_guard,
