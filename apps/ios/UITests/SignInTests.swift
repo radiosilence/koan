@@ -58,15 +58,15 @@ final class SignInTests: XCTestCase {
         }()
         self.bar = bar
         let button = (bar?.buttons ?? app.buttons)[any: name]
-        if bar == nil, !button.waitForExistence(timeout: 5) {
-            // An iPad's sidebar: rows whose label is their text.
-            let row = app.staticTexts[any: name]
-            XCTAssert(row.waitForExistence(timeout: 5), "no \(name) tab")
-            row.tap()
+        if button.waitForExistence(timeout: 10) {
+            button.tap()
             return
         }
-        XCTAssert(button.waitForExistence(timeout: 10), "no \(name) tab")
-        button.tap()
+        // An iPad's sidebar: rows whose label is their text. Its tab bar is
+        // still in the tree, hidden, so finding one decides nothing.
+        let row = app.staticTexts[any: name]
+        XCTAssert(row.waitForExistence(timeout: 5), "no \(name) tab")
+        row.tap()
     }
 
     private func field(_ query: XCUIElementQuery, _ placeholder: String) -> XCUIElement {
