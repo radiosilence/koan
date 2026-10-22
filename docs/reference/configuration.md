@@ -27,7 +27,7 @@ Three kinds of setting are machine-scoped and always land in
 
 | Kind | Settings |
 |------|----------|
-| Secrets | `remote.password/api_key/device_key`, `subsonic.password`, `auth.refresh_token`, `push.key/key_path/key_id/team_id`, `lastfm.api_key`, `lastfm.secret` |
+| Secrets | `remote.password/api_key/device_key`, `subsonic.password`, `auth.refresh_token`, `lastfm.api_key`, `lastfm.secret` |
 | This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username/server_url`, `remote.cache_dir`, `remote.cache_limit`, `remote.download_ahead`, `remote.play_queue`, `server.url`, `auth.server`, `playback.output_device/renderer/renderer_name/renderers/muted/rate_switch_lead_in_ms`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, `appearance.text_size`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size/art_graphics/tui_theme/queue_grouped`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake`, `appearance.rainbow` |
 
@@ -464,7 +464,7 @@ The server runs at most one transcode per CPU core and three per account; beyond
 url = "https://music.example.com"
 ```
 
-The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, the invites it makes, MCP's OAuth, push covers and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
+The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, the invites it makes, MCP's OAuth and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
 
 `sharing.public_url`, which this replaces, is still read while `server.url` is unset, with a warning in the log. It will be removed in a later release.
 
@@ -502,34 +502,31 @@ Push notifications to kōan's iOS app, for a server whose linked phones should
 stay reachable once iOS has suspended the app.
 
 ```toml
-# config.local.toml -- the APNs key is a secret
 [push]
-key_path = "/path/to/AuthKey_XXXXXXXXXX.p8"  # or `key` (KOAN_PUSH__KEY) with the PEM itself
-key_id = "XXXXXXXXXX"
-team_id = "XXXXXXXXXX"
-topic = "cc.blit.koan"                       # the app's bundle id (default)
+enabled = true    # false: no push, and phones are asked for no notifications
 ```
 
 A linked app is reached over its WebSocket. iOS suspends a backgrounded app
-that is not playing, and the socket goes with it. With a key configured, the
-server then sends the app a background push, which wakes it to link and take
-what waits in its outbox (syncs, evictions), and turns a request to play on it
+that is not playing, and the socket goes with it. With push on, the server
+then sends the app a background push, which wakes it to link and take what
+waits in its outbox (syncs, evictions), and turns a request to play on it
 into a notification the person taps: iOS does not let a suspended app start
-playing on its own. GraphQL's `playOnClient` says which happened.
+playing on its own. The notification carries only a claim; tapping it opens
+the app, which hands the claim back over its link, and the server runs what
+it kept for it. GraphQL's `playOnClient` says which happened.
 
-With `server.url` set, that notification shows the album's cover. It
-carries a link to `/push/cover/…` that opens that one cover for ten minutes,
-signed with a key the server mints at start-up and never stores, so the app's
-notification extension can fetch it without a login.
+Apple accepts pushes to the app only under the key of the team that ships it,
+so the server sends them through kōan's push relay, which holds that key. The
+server holds handles the app gave it, never a device token, and the relay
+decides what a phone shows: its own text, never the server's. What the relay
+sees and keeps, and why, is in the [push relay protocol](protocol/push-relay.md).
+The relay is not configurable: the app registers with kōan's, the only one
+holding that key, and the server must push where the app registered.
 
-Apple accepts pushes only signed with the key of the team that ships the app,
-so only a server holding that key can send them. Without one, phones are
-reached only while linked; anything sent while a phone is suspended is applied
-when the app next opens. A server with a key lists the `koanApns` extension,
-and the app asks to show notifications only on a server that lists it, since
-elsewhere none would arrive. Development builds of the app use Apple's sandbox
-gateway and release builds the production one; the app says which with its
-token, and the key works for both.
+With `enabled = false` the server does not use the relay at all: it does not
+list the `koanPush` extension, apps signed in to it ask for no notifications
+and give it no handles, and phones are reached only while linked; anything
+sent while a phone is suspended is applied when the app next opens.
 
 ---
 

@@ -1,10 +1,10 @@
 import Foundation
 import UserNotifications
 
-/// Attaches the album cover to a "Play on this iPhone" notification before iOS
-/// shows it. The server puts a short-lived, self-authorising link to the cover
-/// under `image`, so nothing here needs the app's sign-in. Anything that goes
-/// wrong shows the notification as it came, without art.
+/// Attaches the album cover to a notification that names one under `image`
+/// before iOS shows it. Notifications through the push relay name none yet
+/// and pass through unchanged, with the relay's own text (#1484). Anything
+/// that goes wrong shows the notification as it came, without art.
 final class NotificationService: UNNotificationServiceExtension, @unchecked Sendable {
     private let lock = NSLock()
     private var pending: (content: UNMutableNotificationContent, deliver: (UNNotificationContent) -> Void)?

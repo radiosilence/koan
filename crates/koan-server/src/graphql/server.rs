@@ -394,7 +394,6 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
             cfg.server_url(),
             covers.clone(),
         )
-        .merge(crate::push::router(pool.clone(), covers.clone()))
         .layer(tower_http::catch_panic::CatchPanicLayer::new());
         // Subsonic on the GraphQL port whenever `[subsonic]` is enabled: the
         // remote TUI bridge builds its stream URL off the GraphQL base. Built

@@ -103,7 +103,7 @@ the next wake fail with a note to set it up again.
 
 The phone or Mac has to be on the TV's network, and asks for the Local Network
 permission it already uses to find kōan apps. Away from home, a TV is woken
-only by your server's push, where the server has a push key.
+only by your server's push, where the server has push on.
 
 ## Sample rates
 

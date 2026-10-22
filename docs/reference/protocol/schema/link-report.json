@@ -1282,10 +1282,7 @@
     },
     {
       "properties": {
-        "sandbox": {
-          "type": "boolean"
-        },
-        "token": {
+        "handle": {
           "type": "string"
         },
         "type": {
@@ -1295,8 +1292,23 @@
       },
       "required": [
         "type",
-        "token",
-        "sandbox"
+        "handle"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "claim",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
       ],
       "type": "object"
     },
@@ -1376,11 +1388,7 @@
             "null"
           ]
         },
-        "sandbox": {
-          "default": false,
-          "type": "boolean"
-        },
-        "token": {
+        "handle": {
           "type": [
             "string",
             "null"

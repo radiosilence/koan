@@ -166,18 +166,7 @@ export function createKoan(
                   // Share links and MCP's OAuth are built on the address
                   // strangers reach.
                   { name: "KOAN_SERVER__URL", value: `https://${conf.hostname}` },
-                  ...(conf.push.existingSecret
-                    ? [
-                        {
-                          name: "KOAN_PUSH__KEY",
-                          valueFrom: {
-                            secretKeyRef: { name: conf.push.existingSecret, key: "apns-key" },
-                          },
-                        },
-                        { name: "KOAN_PUSH__KEY_ID", value: conf.push.keyId },
-                        { name: "KOAN_PUSH__TEAM_ID", value: conf.push.teamId },
-                      ]
-                    : []),
+                  { name: "KOAN_PUSH__ENABLED", value: String(conf.push.enabled) },
                 ],
                 ports: [{ name: "api", containerPort: conf.api.port }],
                 readinessProbe: { tcpSocket: { port: "api" }, periodSeconds: 10 },
