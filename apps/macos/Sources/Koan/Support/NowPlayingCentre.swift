@@ -44,20 +44,19 @@ final class NowPlayingCentre {
     /// HTTP round trip — so the first publish for a track carries none, and
     /// without this nothing would ever publish it: the guard below sees an
     /// unchanged track, an unchanged state and no seek, and returns.
-    private var publishedArtwork: ObjectIdentifier?
-    /// The artwork for the sleeve on screen and the bitmap it was made from,
-    /// kept until the sleeve changes.
+    private var publishedArtwork: MPMediaItemArtwork?
+    /// The artwork for the sleeve on screen, kept until the sleeve changes.
     ///
     /// The bitmap cache is an `NSCache`, which iOS empties when the app goes to
     /// the background. A pause from the lock screen republishes, and rebuilding
     /// the artwork from the cache then would publish the track without it.
-    private var held: (source: AlbumArtwork.Source, image: ObjectIdentifier, artwork: MPMediaItemArtwork)?
+    private var held: (source: AlbumArtwork.Source, artwork: MPMediaItemArtwork)?
     /// The modes last shown on the shuffle and repeat commands.
     private var publishedShuffle: Bool?
     private var publishedRepeat: RepeatMode?
-    /// The sleeve a fetch has already been started for, so a record with no art,
-    /// or one whose fetch failed, doesn't start one on every tick.
-    private var requestedArtwork: AlbumArtwork.Source?
+    /// The sleeve a fetch was last started for, and when, so a fetch that
+    /// failed is retried now and then rather than on every tick.
+    private var requestedArtwork: (source: AlbumArtwork.Source, at: ContinuousClock.Instant)?
 
     init(player: PlayerModel, mirror: EngineMirror, art: CoverArtCache) {
         self.player = player
@@ -168,20 +167,19 @@ final class NowPlayingCentre {
         // finally arriving.
         let source = player.currentArtwork
         if held?.source != source { held = nil }
-        if requestedArtwork != source { requestedArtwork = nil }
+        if requestedArtwork?.source != source { requestedArtwork = nil }
         if let source {
-            // The cache wins when it has the bitmap, so a replaced cover is
-            // published; held art covers a purge; a record with no art has none.
-            if let image = art.cached(source, size: .tile) {
-                hold(image, for: source)
-            } else if art.isAbsent(source) {
+            if art.isAbsent(source) {
                 held = nil
             } else if held == nil {
-                fetchArtwork(source)
+                if let image = art.cached(source, size: .tile) {
+                    held = (source, Self.artwork(for: image))
+                } else {
+                    fetchArtwork(source)
+                }
             }
         }
         let artwork = held?.artwork
-        let artworkID = artwork.map(ObjectIdentifier.init)
         let item = [entry.queueItemId, entry.title, entry.artistCredit.text, entry.album, entry.albumArtistCredit.text]
         // A transport that plays but a playhead that holds still — waiting for
         // a download, or run dry at a track's end — is rate 0 to the system.
@@ -191,7 +189,7 @@ final class NowPlayingCentre {
         if now.durationMs > 0 { extrapolated = min(extrapolated, Int64(now.durationMs)) }
         let drifted = abs(Int64(positionMs) - extrapolated) > 2000
         guard item != publishedItem || now.state != publishedState || rate != publishedRate || drifted
-            || artworkID != publishedArtwork
+            || artwork !== publishedArtwork
         else {
             return
         }
@@ -227,12 +225,7 @@ final class NowPlayingCentre {
         publishedRate = rate
         publishedPosition = positionMs
         publishedAt = .now
-        publishedArtwork = artworkID
-    }
-
-    private func hold(_ image: PlatformImage, for source: AlbumArtwork.Source) {
-        guard held?.source != source || held?.image != ObjectIdentifier(image) else { return }
-        held = (source, ObjectIdentifier(image), Self.artwork(for: image))
+        publishedArtwork = artwork
     }
 
     /// Show the play mode on the system's shuffle and repeat controls, when it
@@ -256,14 +249,17 @@ final class NowPlayingCentre {
     /// Playing depend on a view being on screen. The cache shares one fetch per
     /// key, so asking twice costs nothing.
     private func fetchArtwork(_ source: AlbumArtwork.Source) {
-        guard requestedArtwork != source else { return }
-        requestedArtwork = source
+        if let requested = requestedArtwork, requested.source == source,
+           ContinuousClock.now - requested.at < .seconds(30) { return }
+        requestedArtwork = (source, .now)
         Task {
             // Held straight away, since the cache can drop the bitmap before
             // `refresh` reads it. A fetch that lands after the sleeve changed,
-            // or after playback stopped, no longer matches the request.
-            guard let image = await art.image(for: source, size: .tile), requestedArtwork == source else { return }
-            hold(image, for: source)
+            // after playback stopped, or after art was found another way is
+            // dropped.
+            guard let image = await art.image(for: source, size: .tile),
+                  requestedArtwork?.source == source, held == nil else { return }
+            held = (source, Self.artwork(for: image))
             refresh()
         }
     }
