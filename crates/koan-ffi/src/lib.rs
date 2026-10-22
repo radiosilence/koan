@@ -391,7 +391,9 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
 /// The heading over a section of an artist's records.
 #[uniffi::export]
 pub fn release_section_title(section: ReleaseSection) -> String {
-    helpers::ReleaseSection::from(section).title().into()
+    koan_core::helpers::ReleaseSection::from(section)
+        .title()
+        .into()
 }
 
 /// `text` as a QR code, for a platform with no encoder of its own: Android.
