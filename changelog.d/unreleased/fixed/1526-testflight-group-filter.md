@@ -1,0 +1,1 @@
+- **Releases reach the public TestFlight group.** The release step that adds builds to it asked App Store Connect for the group in a way it refuses, and stopped when a build of the same version was already in beta review.
