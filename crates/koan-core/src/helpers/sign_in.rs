@@ -191,10 +191,11 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
 /// kind was there.
 ///
 /// Signing in to another server than the one kept replaces the library: the
-/// last server's syncs are stopped and its tracks, playlists and downloads
-/// forgotten (`forget_server`) before the new server is kept, so the device
+/// last server's syncs are stopped and, once the new server is kept, its
+/// tracks, playlists and downloads forgotten (`forget_server`), so the device
 /// starts from the new server's library alone. The same server, at any
-/// address it is known by, keeps what is there.
+/// address it is known by, keeps what is there, as does a server whose
+/// profile could not be read.
 fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
     let before = Config::load();
     let switching = before
@@ -204,32 +205,26 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
         retire_push(before);
     }
     // The address the server gives for itself, which tells one server reached
-    // at two addresses from two servers.
-    let server_url =
-        SubsonicClient::from_auth(SubsonicAuth::with(url, username, credential.clone()))
-            .profile()
-            .ok()
-            .and_then(|p| p.url)
-            .map(|u| u.trim().trim_end_matches('/').to_owned())
-            .unwrap_or_default();
-    let leaving = before
+    // at two addresses from two servers. Without an answer there is no
+    // telling, and the library is kept: forgetting it is not undone.
+    let profile = SubsonicClient::from_auth(SubsonicAuth::with(url, username, credential.clone()))
+        .profile()
+        .inspect_err(|e| log::warn!("sign in: no profile from {url}, library kept: {e}"))
+        .ok();
+    let server_url = profile
         .as_ref()
-        .ok()
-        .filter(|c| !c.remote.url.is_empty() && !same_server(&c.remote, url, &server_url));
+        .and_then(|p| p.url.as_deref())
+        .map(|u| u.trim().trim_end_matches('/').to_owned())
+        .unwrap_or_default();
+    let leaving = before.as_ref().ok().filter(|c| {
+        profile.is_some() && !c.remote.url.is_empty() && !same_server(&c.remote, url, &server_url)
+    });
     if let Some(old) = leaving {
         crate::remote::sync::cancel(&old.remote.url);
     }
-    // Held until the new server is kept: no sync of the last one writes
-    // under the forgetting, and none of the new one starts before it.
+    // Held until the last server is forgotten: no sync of it writes under
+    // the forgetting, and none of the new one starts before it.
     let _syncs = leaving.map(|_| crate::helpers::hold_syncs());
-    if let Some(old) = leaving {
-        let forgotten = crate::db::pool::shared()
-            .get()
-            .and_then(|db| crate::helpers::forget_server(&db, old));
-        if let Err(e) = forgotten {
-            log::warn!("sign in: could not forget the last server's library: {e}");
-        }
-    }
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
         cfg.remote.server_url = server_url;
@@ -246,6 +241,17 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(_) => String::new(),
         };
     })?;
+    // Only once the new server is kept, so a sign-in that fails leaves the
+    // last server and its library as they were.
+    if let Some(old) = leaving {
+        let forgotten = crate::db::pool::shared()
+            .get()
+            .and_then(|db| crate::helpers::forget_server(&db, old));
+        if let Err(e) = forgotten {
+            log::warn!("sign in: could not forget the last server's library: {e}");
+        }
+    }
+    drop(_syncs);
     if switching {
         let forgotten = crate::db::pool::shared()
             .get()
