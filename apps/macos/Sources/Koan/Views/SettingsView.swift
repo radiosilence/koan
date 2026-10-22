@@ -875,11 +875,17 @@ private struct AccountSettings: View {
     /// Whether there is anything here: signed in to a server with either.
     static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
         model.settings.remoteSignedIn
-            && (mirror.offers(PasswordChange.extensionName) || mirror.offers(ApiKeysSettings.extensionName))
+            && (mirror.offers(PeopleModel.extensionName) || mirror.offers(PasswordChange.extensionName)
+                || mirror.offers(ApiKeysSettings.extensionName))
     }
 
     var body: some View {
         KoanForm {
+            #if !os(tvOS)
+            if mirror.offers(PeopleModel.extensionName) {
+                LinkDeviceSection(username: model.settings.remoteUsername)
+            }
+            #endif
             if mirror.offers(PasswordChange.extensionName) {
                 Section {
                     LabeledContent("User", value: model.settings.remoteUsername)

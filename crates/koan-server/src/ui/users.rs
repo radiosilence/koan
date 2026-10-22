@@ -69,7 +69,7 @@ fn failure(text: &str) -> Event {
 /// white whatever the theme, since scanners expect that contrast; each module
 /// a whole 4px, so edges stay crisp. The code carries a token of its own that
 /// lapses in minutes, since anyone who sees the screen can scan it.
-fn invite_qr(link: &str) -> Option<Html> {
+pub(super) fn invite_qr(link: &str) -> Option<Html> {
     use qrcode::render::svg;
     let code = match qrcode::QrCode::new(link) {
         Ok(code) => code,

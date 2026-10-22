@@ -1,3 +1,4 @@
+{%- import "copy.html" as copy -%}
 {%- import "account/macros.html" as account -%}
 <h1>Account</h1>
 {%- match credentials %}
@@ -6,6 +7,13 @@
 {%- when Some((keys, passwords)) %}
 <form class="{{ crate::ui::pages::SUB }} flex flex-wrap items-center gap-x-3 gap-y-1" method="post" action="/auth/signout"><span>Signed in as <strong class="text-ink">{{ username }}</strong></span>
 <button class="quiet px-0">Sign out</button></form>
+{%- if let Some(link) = link %}
+<section class="mt-6 mb-8 flex flex-wrap items-center gap-x-8 gap-y-4 border border-brand p-5 max-w-panel">
+<div class="bg-white p-3 [&_svg]:block [&_svg]:size-64 [&_svg]:max-w-full" role="img" aria-label="Sign-in link as a QR code">{{ link.qr }}</div>
+<div class="min-w-0 flex-1 basis-64"><h2 class="mt-0">Link a device</h2><p class="text-body text-ink">Scan this with your phone's camera to sign it in as <strong>{{ username }}</strong>.</p><p class="{{ crate::ui::pages::SUB }}">kōan opens and loads the library, or the page offers the download first. The code works for ten minutes; reload the page for a fresh one. On this device, open the link instead.</p>
+<div class="{{ crate::ui::pages::COPY_ROW }}">{% call copy::field("link-device", link.link, "Sign-in link", "Copy link") %}{% endcall %}</div></div>
+</section>
+{%- endif %}
 <h2>API keys</h2><p class="{{ crate::ui::pages::SUB }}">A Subsonic client that supports API keys can sign in with one instead of your password. It acts as you, with your permissions, until you revoke it.</p>
 {% call account::create_form("/account/keys", "keyname", "Name, e.g. phone", "Key name", "Create key", "key-result") %}{% endcall %}{{ keys }}
 <h2>App passwords</h2><p class="{{ crate::ui::pages::SUB }}">For a Subsonic app that only signs in with a username and password: give it your username and an app password in place of yours. Make one per app. kōan keeps it encrypted, never shows it again, and it stops working when you revoke it or change your password.</p>

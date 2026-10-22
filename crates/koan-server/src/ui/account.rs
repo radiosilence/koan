@@ -1,6 +1,8 @@
 //! The signed-in user's account: who they are, signing out, and the
 //! credentials Subsonic clients sign in with — API keys and app passwords, each
-//! shown once when made, listed with when it was last used, revocable.
+//! shown once when made, listed with when it was last used, revocable. Above
+//! them, a QR code that signs another device in as this account, minted on
+//! every load.
 
 use askama::Template;
 use axum::Extension;
@@ -12,6 +14,7 @@ use axum::response::sse::Event;
 use koan_core::auth::Role;
 use koan_core::db::queries::api_keys::{self, ApiKeyRow};
 use koan_core::db::queries::app_passwords::{self, AppPasswordRow};
+use koan_core::invite::{self, Invite};
 
 use super::pages::{COPY_ERROR, Failed, respond};
 use super::{UiState, events, open, patch};
@@ -81,14 +84,33 @@ fn app_password_list(passwords: &[AppPasswordRow]) -> Html {
     .html()
 }
 
+/// A QR code for this account's invite, and the link it carries. The token
+/// is the short-lived QR one: anyone who sees the screen can scan it.
+struct LinkDevice {
+    qr: Html,
+    link: String,
+}
+
 /// The account page. `credentials` is the rendered key and app password
-/// lists, absent when the server runs without sign-in.
+/// lists, absent when the server runs without sign-in. `link` is absent too
+/// without `server.url`, which the code has to name.
 #[derive(Template)]
 #[template(path = "pages/account.html")]
 struct AccountPage<'a> {
     username: &'a str,
     admin: bool,
+    link: Option<LinkDevice>,
     credentials: Option<(Html, Html)>,
+}
+
+fn link_device(conn: &rusqlite::Connection, server: &str, user: &AuthUser) -> Option<LinkDevice> {
+    let keys = crate::auth::signing_keys().ok()?;
+    let token = invite::mint_token(conn, &keys.0, user.user_id, invite::QR_TOKEN_TTL_SECS).ok()?;
+    let link = Invite::with_token(server, &user.username, &token, None).qr_link();
+    Some(LinkDevice {
+        qr: super::users::invite_qr(&link)?,
+        link,
+    })
 }
 
 pub(super) async fn page(
@@ -96,25 +118,29 @@ pub(super) async fn page(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let credentials = if s.auth_enabled {
+    let (link, credentials) = if s.auth_enabled {
         let st = s.clone();
-        let user_id = user.user_id;
-        let (keys, passwords) = blocking(move || {
+        let u = user.clone();
+        let (link, keys, passwords) = blocking(move || {
             let db = open(&st.pool)?;
             Some((
-                api_keys::list_api_keys(&db.conn, Some(user_id)).ok()?,
-                app_passwords::list_app_passwords(&db.conn, user_id).ok()?,
+                st.server_url
+                    .as_deref()
+                    .and_then(|server| link_device(&db.conn, server, &u)),
+                api_keys::list_api_keys(&db.conn, Some(u.user_id)).ok()?,
+                app_passwords::list_app_passwords(&db.conn, u.user_id).ok()?,
             ))
         })
         .await
         .unwrap_or_default();
-        Some((key_list(&keys), app_password_list(&passwords)))
+        (link, Some((key_list(&keys), app_password_list(&passwords))))
     } else {
-        None
+        (None, None)
     };
     let inner = AccountPage {
         username: &user.username,
         admin: user.role == Role::Admin,
+        link,
         credentials,
     }
     .html();

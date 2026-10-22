@@ -5253,13 +5253,21 @@ async fn koan_create_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
     .await
 }
 
+/// An invite for an account. Any account may have its own, to sign in
+/// another of its devices; an admin's may name any account, and with
+/// `reset=true` give it a new password.
 async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
-        respond_admin(&state, &params.auth(), |db, _, b| {
-            let username = username_param(&params)?;
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let username = username_param(&params)?.trim();
+            let reset = params.get("reset") == Some("true");
+            if caller.role != Role::Admin && (username != caller.username || reset) {
+                return Err(SubsonicError::not_authorized());
+            }
             let user = koan_core::invite::account(&db.conn, username).map_err(account_error)?;
-            let password = if params.get("reset") == Some("true") {
+            let password = if reset {
                 let p = koan_core::invite::set_password(&db.conn, username, None)
                     .map_err(account_error)?;
                 crate::clients::registry().disconnect(username);
@@ -8473,6 +8481,26 @@ mod tests {
         let key = v["subsonic-response"]["join"]["apiKey"].as_str().unwrap();
         let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
         assert!(body.contains("status=\"ok\""), "{body}");
+        // Any account has an invite of its own, to link another device, and
+        // only its own.
+        let sarita = format!("apiKey={key}&v=1.16.1&c=test&f=json");
+        let body = call(format!("/rest/koanInvite?username=sarita&{sarita}")).await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["subsonic-response"]["invite"]["username"], "sarita",
+            "{body}"
+        );
+        assert!(
+            v["subsonic-response"]["invite"]["password"].is_null(),
+            "{body}"
+        );
+        for path in [
+            "koanInvite?username=owner&",
+            "koanInvite?username=sarita&reset=true&",
+        ] {
+            let body = call(format!("/rest/{path}{sarita}")).await;
+            assert!(body.contains("\"code\":50"), "{path}: {body}");
+        }
         let body = call(format!("/rest/koanJoin?invite={qr_token}&name=iPad&f=json")).await;
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(

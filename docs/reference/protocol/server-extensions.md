@@ -30,19 +30,19 @@ Trades the account's password for an API key, so a device sends the password onc
 
 ### `koanInvite`
 
-Invite links: an admin mints a signed token for an account, and a device trades it for an API key without the password. The token, the link format and redeeming it are on [Pairing and invites](pairing-and-invites.md#invites-koaninvite).
+Invite links: an admin mints a signed token for an account, or any account for itself, and a device trades it for an API key without the password. The token, the link format and redeeming it are on [Pairing and invites](pairing-and-invites.md#invites-koaninvite).
 
 | Endpoint | Caller | Parameters | Answer |
 |----------|--------|------------|--------|
 | `koanJoin` | none: the token is the credential | `invite`, `name` | `join` with `username`, `apiKey` |
-| `koanInvite` | admin | `username`, `reset=true` to set a new random password and disconnect the account's links | `invite` with `username`, `token`, `qrToken`, and `password` when reset |
+| `koanInvite` | any account for its own `username`; an admin for any, and for `reset` | `username`, `reset=true` to set a new random password and disconnect the account's links | `invite` with `username`, `token`, `qrToken`, and `password` when reset |
 | `koanCreateUser` | admin | `username`, `role` (`admin`, `user`, `readonly`) | `invite` with `username`, `token`, `qrToken`, `password` |
 | `koanUsers` | admin | | `users`, one `user` per account with `username`, `role` |
 | `koanSetUserRole` | admin | `username`, `role` | empty |
 | `koanDeleteUser` | admin | `username`; not the caller's own | empty; the account's links are disconnected |
 | `koanRevokeKey` | API key | | empty; revokes the key the request is signed with |
 
-These are not listed as extensions of their own and are present wherever `koanInvite` is. The admin endpoints need an admin's own password or API key. `koanRevokeKey` is how an app gives up a key it has replaced, such as the one a join superseded.
+These are not listed as extensions of their own and are present wherever `koanInvite` is. The admin endpoints, and `koanInvite` for oneself, need the account's own password or API key. `koanRevokeKey` is how an app gives up a key it has replaced, such as the one a join superseded.
 
 ### `koanPasswords`
 
