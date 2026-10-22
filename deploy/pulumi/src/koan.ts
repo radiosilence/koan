@@ -210,7 +210,7 @@ export function createKoan(
                   capabilities: { drop: ["ALL"] },
                 },
                 volumeMounts: [
-                  // The image holds the library under /music.
+                  // A demo's image holds the library under /music.
                   { name: "music", mountPath: "/music", readOnly: true, ...(conf.demo.enabled && { subPath: "music" }) },
                   { name: "state", mountPath: STATE_MOUNT_PATH },
                   // Caches (artwork, lyrics) go under $HOME; they are
