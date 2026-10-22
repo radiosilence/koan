@@ -11,6 +11,8 @@ repository = "https://github.com/radiosilence/koan"
 license = "MIT"
 
 [workspace.dependencies]
+# kōan's push relay's client: radiosilence/koan-push-relay.
+koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
 # a stale pin here publishes members that resolve against the wrong sibling.
 koan-core = { path = "crates/koan-core", version = "0.66.7" }

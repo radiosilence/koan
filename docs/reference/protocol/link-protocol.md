@@ -71,11 +71,12 @@ A field marked `?` may be absent, and senders leave most of them out when they h
 | `type` | Fields | Meaning |
 |--------|--------|---------|
 | `state` | see below | What the device is playing |
-| `push` | `token`, `sandbox` | Where Apple's push service reaches this device once iOS suspends it; `sandbox` for a development build |
+| `push` | `handle` | The [push relay](push-relay.md)'s handle for this device, so the server can wake it once iOS suspends it. Sent only to a server listing `koanPush`; never the device token |
+| `claim` | `id` | A notification the person tapped: the server runs the command it kept under `id` for this device, once, within ten minutes |
 | `command` | `to`, `command`, `ack?` | Send `command` to device `to` ([Devices](#devices)) |
 | `received` | `ack` | A command sent under `ack` came off this link, before it is acted on |
 | `ack` | `ack`, `outcome` | This device's answer to a command sent under `ack` |
-| `activity` | `token?`, `device?`, `sandbox?` | Where to push updates to a Live Activity showing device `device`; `null` for both when the activity has ended |
+| `activity` | `handle?`, `device?` | The push relay's handle for a Live Activity showing device `device`; `null` for both when the activity has ended |
 | `wake` | `to`, `notify?` | Wake device `to`, which is not linked: with a background push, or with `notify` a notification to tap |
 | `share` | `grantee`, `allow` | Let account `grantee` control this device, or stop letting it. Only ever about the device sending it |
 | `forget` | `device` | Remove a device from the account |
@@ -104,7 +105,7 @@ A device commands another with a `command` report. The `ack`, when there is one,
 
 `to` names the first linked device whose id, link id or name (without regard to case) equals it; a client should send the device id, since names need not be unique and one could equal another device's id. The server relays the command when `to` is one of the caller's devices or one shared with the caller. Only commands one device gives another are relayed (`LinkCommand::relayable`): the server's own news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `levels`, `acked`) is refused, so a forged copy cannot pass as the server's. Levels go only between live links, by their own route: a controller sends `{"type":"command","to":…,"command":{"type":"watchLevels","on":true}}`, and the server forwards the watched device's `levels` reports to it as `levels` news. `watchLevels` works only as a link report; `koanCommand` refuses it.
 
-A command for a device that is not linked is kept and delivered when it links. An iOS device that gave a push token is woken, if the server has a `[push]` key. `watchLevels` and `refreshOutputs` are only worth saying to a device that is there, so they are never kept or pushed.
+A command for a device that is not linked is kept and delivered when it links. An iOS device that gave a push handle is woken, if the server has push on. A command to play becomes a notification carrying only a claim: tapping it sends `claim` up the link, and the command runs then. `watchLevels` and `refreshOutputs` are only worth saying to a device that is there, so they are never kept or pushed.
 
 `/rest/koanCommand?to=<device id>&command=<command JSON>` sends one command in a single request, for a device whose own link is down, such as an iPhone acting from its lock screen. `ack` optionally names the command's id.
 

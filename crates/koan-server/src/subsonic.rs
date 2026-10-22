@@ -103,10 +103,9 @@ struct AppState {
     /// clients to know the server by. Without it, MCP's sign-in cannot work,
     /// so none is offered.
     server_url: Option<String>,
-    /// Whether `[push]` holds an APNs key. Apple takes pushes for the app only
-    /// when signed by its developer's team, so most servers cannot send them,
-    /// and the app asks to show notifications only where one can.
-    apns: bool,
+    /// Whether `[push]` is enabled: the server pushes through the relay, and
+    /// the app asks to show notifications only where it does.
+    push: bool,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -4503,8 +4502,8 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
-    let apns: &[(&str, &[i64])] = if state.apns {
-        &[(koan_core::remote::profile::APNS, &[1])]
+    let push: &[(&str, &[i64])] = if state.push {
+        &[(koan_core::remote::profile::PUSH, &[1])]
     } else {
         &[]
     };
@@ -4516,7 +4515,7 @@ async fn get_open_subsonic_extensions(
                 .chain(transcode)
                 .chain(mcp)
                 .chain(app_passwords)
-                .chain(apns)
+                .chain(push)
                 .map(|(name, versions)| {
                     XmlNode::new("openSubsonicExtensions")
                         .attr("name", name)
@@ -6164,12 +6163,21 @@ async fn link_session(
                                 })
                                 .await;
                             }
-                            Ok(LinkReport::Push { token, sandbox }) => {
+                            Ok(LinkReport::Push { handle }) => {
                                 let (username, device) = (username.clone(), device.clone());
                                 let _ = tokio::task::spawn_blocking(move || {
-                                    registry.set_push(&username, &device, &token, sandbox);
+                                    registry.set_push(&username, &device, &handle);
                                 })
                                 .await;
+                            }
+                            // A notification tapped: what it was for goes down
+                            // this link, in order with what follows, and with
+                            // the ack id it was asked with.
+                            Ok(LinkReport::Claim { id }) => {
+                                match crate::clients::claims::take(&device, &username, &id) {
+                                    Some(envelope) => registry.send_kept(&username, &device, envelope),
+                                    None => log::info!("link: {device} claimed nothing, or too late"),
+                                }
                             }
                             Ok(LinkReport::Command {
                                 to,
@@ -6215,8 +6223,8 @@ async fn link_session(
                                     registry.answered(&username, &device, ack, outcome);
                                 });
                             }
-                            Ok(LinkReport::Activity { token, device: shown, sandbox }) => {
-                                let activity = token.zip(shown).map(|(t, d)| (t, d, sandbox));
+                            Ok(LinkReport::Activity { handle, device: shown }) => {
+                                let activity = handle.zip(shown);
                                 let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
                                     registry.set_activity(&username, &device, activity);
@@ -6700,7 +6708,7 @@ pub fn subsonic_router(
         last_modified: Default::default(),
         transcoder,
         server_url: cfg.server_url(),
-        apns: crate::push::pusher().is_some(),
+        push: crate::push::pusher().is_some(),
     });
     // Once per process, though the router may be built for two ports.
     static KEYS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
@@ -6747,7 +6755,7 @@ mod tests {
             last_modified: Default::default(),
             transcoder: None,
             server_url: None,
-            apns: false,
+            push: false,
         });
         (state, dir)
     }
@@ -8369,9 +8377,9 @@ mod tests {
         assert_eq!(v["error"]["code"], 40, "signed in only: {v}");
     }
 
-    /// Notifications are offered only by a server holding an APNs key.
+    /// Notifications are offered only by a server that pushes.
     #[tokio::test]
-    async fn notifications_are_offered_with_an_apns_key() {
+    async fn notifications_are_offered_only_where_push_is_on() {
         let extensions = |state: Arc<AppState>| async move {
             get_response(
                 build_test_router(state),
@@ -8381,12 +8389,12 @@ mod tests {
             .1
         };
         let (state, _dir) = test_state();
-        assert!(!extensions(state).await.contains("koanApns"));
+        assert!(!extensions(state).await.contains("koanPush"));
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.apns = true;
-        assert!(extensions(Arc::new(inner)).await.contains("koanApns"));
+        inner.push = true;
+        assert!(extensions(Arc::new(inner)).await.contains("koanPush"));
     }
 
     /// An app password must not mint keys that outlive it, nor revoke the

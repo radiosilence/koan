@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 27;
+pub const SCHEMA_VERSION: i64 = 28;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -214,13 +214,13 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             PRIMARY KEY (device, username)
         );
 
-        -- Where Apple's push service reaches each linked iOS app, kept after
-        -- its socket closes: reaching a suspended app is what it is for.
-        CREATE TABLE IF NOT EXISTS link_push (
+        -- The push relay's handle for each linked iOS app, kept after its
+        -- socket closes: reaching a suspended app is what it is for. A handle,
+        -- never a device token: only the relay can open it.
+        CREATE TABLE IF NOT EXISTS link_handles (
             device      TEXT NOT NULL,
             username    TEXT NOT NULL,
-            token       TEXT NOT NULL,
-            sandbox     INTEGER NOT NULL,
+            handle      TEXT NOT NULL,
             updated_at  INTEGER NOT NULL,
             PRIMARY KEY (device, username)
         );
@@ -1119,6 +1119,13 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             "DELETE FROM scan_cache;
              UPDATE remote_servers SET library_version = NULL;",
         )?;
+    }
+
+    // Push goes through the relay, by handles the apps give: the device
+    // tokens kept for pushing directly are no use to anyone now, and are not
+    // kept.
+    if found < 28 {
+        conn.execute("DROP TABLE IF EXISTS link_push", [])?;
     }
 
     Ok(())

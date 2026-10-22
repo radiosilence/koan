@@ -81,6 +81,10 @@ targets:
         # SSDP, which UPnP renderers are found by, is multicast, and iOS
         # refuses multicast to an app without this.
         com.apple.developer.networking.multicast: true
+        # App Attest, which the push relay asks of every registration on the
+        # production gateway: Apple's development environment for builds
+        # signed for a device.
+        com.apple.developer.devicecheck.appattest-environment: development
         # A request to play reaches through Focus: it was asked for just now.
         com.apple.developer.usernotifications.time-sensitive: true
         # Invite links open the app rather than the join page.
@@ -212,6 +216,9 @@ targets:
       path: ../../target/ios-project/koan-tv.entitlements
       properties:
         aps-environment: development
+        # App Attest, as the phone has it: the TV registers with the push
+        # relay too.
+        com.apple.developer.devicecheck.appattest-environment: development
     info:
       path: ../../target/ios-project/TV-Info.plist
       properties:

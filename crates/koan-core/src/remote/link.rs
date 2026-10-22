@@ -621,12 +621,16 @@ impl LinkState {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LinkReport {
     State(LinkState),
-    /// Where Apple's push service reaches this device, so the server can wake
-    /// it once iOS has suspended it and the socket is gone. `sandbox` for a
-    /// development build, whose tokens only the sandbox gateway accepts.
+    /// The push relay's handle for this device, so the server can wake it
+    /// once iOS has suspended it and the socket is gone. Never the device
+    /// token: see `remote::relay`.
     Push {
-        token: String,
-        sandbox: bool,
+        handle: String,
+    },
+    /// A notification the person tapped: run the command the server kept
+    /// under `id` for it.
+    Claim {
+        id: String,
     },
     /// Send `command` to the device `to` on the same account. `ack` asks the
     /// server to relay `to`'s answer: see `remote::acks`. A server that
@@ -648,13 +652,11 @@ pub enum LinkReport {
         ack: u64,
         outcome: crate::remote::acks::AckOutcome,
     },
-    /// Where to push updates to a Live Activity showing the device `device`;
+    /// The relay's handle for a Live Activity showing the device `device`;
     /// `None` for both when the activity has ended.
     Activity {
-        token: Option<String>,
+        handle: Option<String>,
         device: Option<String>,
-        #[serde(default)]
-        sandbox: bool,
     },
     /// Who is at the other end of a connection made on the local network.
     Hello(LinkHello),
@@ -727,18 +729,112 @@ pub fn library_fingerprint(cfg: &Config) -> Option<String> {
     Some(format!("{:x}", md5::compute(url.as_bytes())))
 }
 
-/// This device's push token, once the OS has issued one. Set by the app; sent
-/// up each link as it opens, and again if it changes.
+/// This device's push token, once the OS has issued one, and whether it is
+/// the sandbox's. Set by the app; registered with the push relay, never sent
+/// to a server.
 static PUSH_TOKEN: Mutex<Option<(String, bool)>> = Mutex::new(None);
 
+/// The relay's handle for this device, by server, and when it was last
+/// checked against the store, which renews it at half its life.
+static HANDLES: LazyLock<Mutex<HashMap<String, (String, Instant)>>> =
+    LazyLock::new(Default::default);
+const RECHECK_HANDLE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The relay's handle for the Live Activity in `ACTIVITY`: the server, the
+/// activity's token, and the handle.
+static ACTIVITY_HANDLE: Mutex<Option<(String, String, String)>> = Mutex::new(None);
+
+/// Registrations with the relay under way, and when each last failed, by
+/// what they register: a link asks again only after a while, not on every
+/// frame, and one failing holds up no other.
+static REGISTERING: LazyLock<Mutex<HashMap<String, Attempt>>> = LazyLock::new(Default::default);
+/// Whether it is under way, and when it last failed.
+type Attempt = (bool, Option<Instant>);
+const RETRY_REGISTERING: Duration = Duration::from_secs(5 * 60);
+
+/// Claims of tapped notifications waiting for a link: the claim, the server
+/// it is for (`None` when the notification named none this device knows),
+/// and when it was tapped.
+static CLAIMS: Mutex<Vec<Claim>> = Mutex::new(Vec::new());
+type Claim = (String, Option<String>, Instant);
+/// The server keeps a claim this long (`clients::claims` on the server).
+const CLAIM_LIFE: Duration = Duration::from_secs(10 * 60);
+
+/// Run what a tapped notification was for: `id` is the claim it carried,
+/// `from` the slot the relay stamped on it (`koan-from`), which names the
+/// server it came through.
+pub fn claim(id: String, from: Option<String>) {
+    let server = from.and_then(|slot| crate::remote::relay::server_of_slot(&slot));
+    CLAIMS.lock().push((id, server, Instant::now()));
+    nudge();
+    if let Some(up) = LINK.lock().as_ref() {
+        up.waker.wake();
+    }
+}
+
+/// The claims for a link to `server`. A claim goes to the server whose
+/// notification carried it, and waits for a link to that server for as long
+/// as the server keeps it.
+fn take_claims(server: Option<&str>) -> Vec<Claim> {
+    let mut taken = Vec::new();
+    CLAIMS.lock().retain(|claim| {
+        let (_, for_server, at) = claim;
+        if at.elapsed() > CLAIM_LIFE {
+            return false;
+        }
+        if for_server.as_deref().is_some_and(|s| Some(s) != server) {
+            return true;
+        }
+        taken.push(claim.clone());
+        false
+    });
+    taken
+}
+
+/// Forget every handle the relay gave this device: they were revoked.
+pub fn forget_handles() {
+    HANDLES.lock().clear();
+    *ACTIVITY_HANDLE.lock() = None;
+    REGISTERING.lock().clear();
+}
+
+/// Run `work`, a registration with the relay, off the link's thread, then
+/// wake the link to send what came back. `key` names what it registers; a
+/// `false` from `work` is a failure, and that registration is not tried
+/// again for a while.
+fn register_in_background(
+    key: String,
+    work: impl FnOnce() -> bool + Send + 'static,
+    waker: Arc<Waker>,
+) {
+    {
+        let mut registering = REGISTERING.lock();
+        let entry = registering.entry(key.clone()).or_default();
+        if entry.0 || entry.1.is_some_and(|at| at.elapsed() < RETRY_REGISTERING) {
+            return;
+        }
+        entry.0 = true;
+    }
+    let _ = std::thread::Builder::new()
+        .name("koan-push-relay".into())
+        .spawn(move || {
+            let worked = work();
+            REGISTERING
+                .lock()
+                .insert(key, (false, (!worked).then(Instant::now)));
+            waker.wake();
+        });
+}
+
 /// A Live Activity on this device showing another: its push token, the device
-/// it shows, and whether the token is the sandbox's. Sent up each link as it
-/// opens, and again when it changes; `None` once the activity has ended.
+/// it shows, and whether the token is the sandbox's. Registered with the push
+/// relay, and the relay's handle sent up each link; `None` once the activity
+/// has ended.
 type ActivityToken = (String, String, bool);
 static ACTIVITY: Mutex<Option<Option<ActivityToken>>> = Mutex::new(None);
 
-/// Record where the server should push updates to this device's Live
-/// Activity, or that there is none now.
+/// Record this device's Live Activity, for the relay to register and the
+/// server to update, or that there is none now.
 pub fn set_activity(activity: Option<ActivityToken>) {
     *ACTIVITY.lock() = Some(activity);
     if let Some(up) = LINK.lock().as_ref() {
@@ -752,9 +848,13 @@ pub fn parse_command(json: &str) -> Result<LinkCommand, String> {
     serde_json::from_str(json).map_err(|e| e.to_string())
 }
 
-/// Record the push token the OS issued this app, and link now to send it.
+/// Record the push token the OS issued this app, and link now to register it.
 pub fn set_push_token(token: String, sandbox: bool) {
-    *PUSH_TOKEN.lock() = Some((token, sandbox));
+    let changed = PUSH_TOKEN.lock().replace((token.clone(), sandbox)) != Some((token, sandbox));
+    if changed {
+        HANDLES.lock().clear();
+        REGISTERING.lock().clear();
+    }
     nudge();
     if let Some(up) = LINK.lock().as_ref() {
         up.waker.wake();
@@ -1050,8 +1150,11 @@ fn serve(
         outbox: Vec::new(),
     });
     crate::remote::devices::set_linked(true);
+    let pushes = profile::current().is_some_and(|p| p.offers(profile::PUSH));
     let mut session = LinkSession {
         local,
+        pushes,
+        claimed: Vec::new(),
         sent: None,
         sent_push: None,
         sent_activity: None,
@@ -1061,14 +1164,24 @@ fn serve(
         account,
         library,
     };
-    wire::drive(socket, fd, &waker, &mut session)
+    let served = wire::drive(socket, fd, &waker, &mut session);
+    // Claims sent down a link that then failed may not have arrived: they go
+    // up the next one. One the server already ran claims nothing there.
+    if served.is_err() {
+        CLAIMS.lock().append(&mut session.claimed);
+    }
+    served
 }
 
 struct LinkSession<'a> {
     local: &'a Local,
+    /// The server offers `koanPush`, as probed before the link opened.
+    pushes: bool,
+    /// Claims sent on this link.
+    claimed: Vec<Claim>,
     sent: Option<(LinkState, Instant)>,
-    sent_push: Option<(String, bool)>,
-    sent_activity: Option<Option<ActivityToken>>,
+    sent_push: Option<String>,
+    sent_activity: Option<Option<(String, String)>>,
     waker: Arc<Waker>,
     /// Set while the server says a device of the account is watching this
     /// one's levels. It counts the watchers; this link holds one watch.
@@ -1082,28 +1195,88 @@ struct LinkSession<'a> {
     library: Option<String>,
 }
 
+impl LinkSession<'_> {
+    /// The relay's handles for this device and its Live Activity, to a server
+    /// that pushes (`koanPush`): registered in the background the first time,
+    /// sent once there are some. A server that does not push is given
+    /// nothing.
+    fn relay(&mut self, out: &mut Vec<LinkReport>) {
+        let (Some(server), true) = (self.library.clone(), self.pushes) else {
+            return;
+        };
+        let Some((token, sandbox)) = PUSH_TOKEN.lock().clone() else {
+            return;
+        };
+        let held = HANDLES.lock().get(&server).cloned();
+        if held
+            .as_ref()
+            .is_none_or(|(_, checked)| checked.elapsed() > RECHECK_HANDLE)
+        {
+            let server = server.clone();
+            register_in_background(
+                format!("device {server}"),
+                move || match crate::remote::relay::handle_for(&server, &token, sandbox) {
+                    Some(handle) => {
+                        HANDLES.lock().insert(server, (handle, Instant::now()));
+                        true
+                    }
+                    None => false,
+                },
+                self.waker.clone(),
+            );
+        }
+        // A handle due a recheck is still sent while it runs: it opens for
+        // weeks past it.
+        let Some((handle, _)) = held else { return };
+        if self.sent_push.as_ref() != Some(&handle) {
+            out.push(LinkReport::Push {
+                handle: handle.clone(),
+            });
+            self.sent_push = Some(handle);
+        }
+        let wanted = ACTIVITY.lock().clone();
+        let shown = match wanted {
+            None => return,
+            Some(None) => None,
+            Some(Some((token, device, _))) => match ACTIVITY_HANDLE.lock().clone() {
+                Some((at, held, handle)) if at == server && held == token => Some((handle, device)),
+                _ => {
+                    let server = server.clone();
+                    register_in_background(
+                        format!("activity {server}"),
+                        move || match crate::remote::relay::activity_handle(&server, &token) {
+                            Some(handle) => {
+                                *ACTIVITY_HANDLE.lock() = Some((server, token, handle));
+                                true
+                            }
+                            None => false,
+                        },
+                        self.waker.clone(),
+                    );
+                    return;
+                }
+            },
+        };
+        if self.sent_activity.as_ref() != Some(&shown) {
+            let (handle, device) = match shown.clone() {
+                Some((h, d)) => (Some(h), Some(d)),
+                None => (None, None),
+            };
+            out.push(LinkReport::Activity { handle, device });
+            self.sent_activity = Some(shown);
+        }
+    }
+}
+
 impl wire::Session for LinkSession<'_> {
     fn outgoing(&mut self) -> Vec<String> {
         let mut out = Vec::new();
-        let push = PUSH_TOKEN.lock().clone();
-        if let Some((token, sandbox)) = push.clone()
-            && push != self.sent_push
-        {
-            out.push(LinkReport::Push { token, sandbox });
-            self.sent_push = push;
-        }
-        let activity = ACTIVITY.lock().clone();
-        if activity.is_some() && activity != self.sent_activity {
-            let (token, device, sandbox) = match activity.clone().flatten() {
-                Some((t, d, s)) => (Some(t), Some(d), s),
-                None => (None, None, false),
-            };
-            out.push(LinkReport::Activity {
-                token,
-                device,
-                sandbox,
+        self.relay(&mut out);
+        for claim in take_claims(self.library.as_deref()) {
+            out.push(LinkReport::Claim {
+                id: claim.0.clone(),
             });
-            self.sent_activity = activity;
+            self.claimed.push(claim);
         }
         if let Some(up) = LINK.lock().as_mut() {
             out.append(&mut up.outbox);
@@ -1353,6 +1526,28 @@ fn percent_encode(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_claim_waits_for_its_own_server() {
+        use super::{CLAIMS, take_claims};
+        use std::time::Instant;
+        CLAIMS.lock().extend([
+            (
+                "a".to_string(),
+                Some("server-a".to_string()),
+                Instant::now(),
+            ),
+            (
+                "b".to_string(),
+                Some("server-b".to_string()),
+                Instant::now(),
+            ),
+            ("any".to_string(), None, Instant::now()),
+        ]);
+        let ids = |claims: Vec<super::Claim>| claims.into_iter().map(|c| c.0).collect::<Vec<_>>();
+        assert_eq!(ids(take_claims(Some("server-a"))), ["a", "any"]);
+        assert!(take_claims(Some("server-a")).is_empty());
+        assert_eq!(ids(take_claims(Some("server-b"))), ["b"]);
+    }
 
     #[test]
     fn levels_cross_the_link_compactly() {
@@ -1499,14 +1694,23 @@ mod tests {
     }
 
     #[test]
-    fn a_push_token_is_a_tagged_report() {
+    fn a_push_handle_is_a_tagged_report() {
         let report = LinkReport::Push {
-            token: "ab12".into(),
-            sandbox: true,
+            handle: "AQEo".into(),
         };
         let text = serde_json::to_string(&report).unwrap();
-        assert_eq!(text, r#"{"type":"push","token":"ab12","sandbox":true}"#);
+        assert_eq!(text, r#"{"type":"push","handle":"AQEo"}"#);
         assert_eq!(serde_json::from_str::<LinkReport>(&text).unwrap(), report);
+    }
+
+    #[test]
+    fn a_device_token_from_an_older_app_is_no_report() {
+        // An app from before the relay sends its raw token: the server cannot
+        // push with one, so it is not read as anything.
+        assert!(
+            serde_json::from_str::<LinkReport>(r#"{"type":"push","token":"ab12","sandbox":true}"#)
+                .is_err()
+        );
     }
 
     #[test]

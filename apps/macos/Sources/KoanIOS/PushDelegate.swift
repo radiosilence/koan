@@ -2,14 +2,16 @@ import KoanFFI
 import UIKit
 import UserNotifications
 
-/// Apple's push service: how a koan server reaches this app once iOS has
-/// suspended it and its link has gone.
+/// Push: how a kōan server reaches this app once iOS has suspended it and its
+/// link has gone, through kōan's push relay. The token goes to the relay
+/// alone; servers get the relay's handles (`koan_core::remote::relay`).
 ///
 /// Two kinds arrive. A background push wakes the app for half a minute: it
 /// links, and whatever waited in the server's outbox (a sync, an eviction)
 /// comes down the link. A notification asks for music; iOS will not let a
 /// suspended app start playing on its own, so it waits for a tap, and the
-/// command it carries runs then.
+/// claim it carries (`koan-e2e`) goes up the link then, for the server to
+/// run what it kept for it.
 ///
 /// tvOS shows no notifications, so a TV takes background pushes only.
 @MainActor
@@ -21,7 +23,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
     }
 
     private static var token: String?
-    private static var waiting: [String] = []
+    private static var waiting: [(claim: String, from: String?)] = []
     /// Pushes holding the app awake from before the engine was up: a push
     /// after iOS ended the app launches it, and arrives first.
     private static var holdsWaiting = 0
@@ -93,9 +95,11 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let command = Self.command(in: response.notification.request.content.userInfo)
+        let info = response.notification.request.content.userInfo
+        let claim = info["koan-e2e"] as? String
+        let from = info["koan-from"] as? String
         Task { @MainActor in
-            if let command { Self.run(command) }
+            if let claim { Self.run(claim, from: from) }
         }
         completionHandler()
     }
@@ -111,9 +115,9 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
     }
     #endif
 
-    /// What a server lists when it holds an APNs key and so can send
-    /// notifications: only one signed by the app's own developer can.
-    static let extensionName = "koanApns"
+    /// What a server lists when it pushes, through the relay. Where it is
+    /// not listed, the app asks for no notifications.
+    static let extensionName = "koanPush"
 
     /// Ask to show notifications. Called once the signed-in server offers
     /// them; iOS asks the person only the first time.
@@ -124,21 +128,12 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         #endif
     }
 
-    #if !os(tvOS)
-    private nonisolated static func command(in userInfo: [AnyHashable: Any]) -> String? {
-        guard let koan = userInfo["koan"],
-              let data = try? JSONSerialization.data(withJSONObject: koan)
-        else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-    #endif
-
-    private static func run(_ command: String) {
+    private static func run(_ claim: String, from: String?) {
         guard let engine else {
-            waiting.append(command)
+            waiting.append((claim, from))
             return
         }
-        Task { try? await engine.runPushedCommand(command: command) }
+        engine.claimNotification(claim: claim, from: from)
     }
 
     private static func flush() {
@@ -147,14 +142,15 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
             engine.holdAwake()
         }
         holdsWaiting = 0
+        engine.setPushAttester(attester: AppAttest())
         if let token {
             engine.setPushToken(token: token, sandbox: sandbox)
-            NSLog("koan: push token handed to the link")
+            NSLog("koan: push token handed to the engine, for the relay")
         }
-        let commands = waiting
+        let claims = waiting
         waiting = []
-        for command in commands {
-            run(command)
+        for (claim, from) in claims {
+            run(claim, from: from)
         }
     }
 }

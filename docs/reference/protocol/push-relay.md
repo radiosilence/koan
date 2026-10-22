@@ -6,13 +6,15 @@ The key belongs to the developer's Apple account, which answers to Apple for eve
 
 That bound holds only together with the app: its notification service extension shows nothing a server wrote, only its own template (see [What a phone shows](#what-a-phone-shows)).
 
-The relay does not serve real traffic until registration also requires an [App Attest](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity) assertion (#1418). Until then, made-up tokens are bounded by rate, as below, but not by who asks.
+A registration on the production gateway needs an [App Attest](https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity) assertion, Apple's word that it comes from kōan's app on a real device: nothing reaches Apple for one without it. The app attests through `/v1/challenge` and `/v1/attest` and signs each registration; the sandbox gateway, for development builds, does without when the app cannot attest.
+
+This page is kōan's summary. The relay's own repository holds its full specification, [`docs/push-relay.md`](https://github.com/radiosilence/koan-push-relay/blob/main/docs/push-relay.md), which is authoritative where they differ.
 
 The relay is built, released and deployed from its own repository, [radiosilence/koan-push-relay](https://github.com/radiosilence/koan-push-relay), which also says how to run it. This page specifies the API kōan servers and the app use.
 
 ## Parties
 
-- **The app** holds its APNs device token. It registers the token with the relay once for each server it uses, gives each server the handle it gets back, and keeps the revoker for itself. It gives the raw token to no server except one that pushes with the developer's own key (`koanApns`).
+- **The app** holds its APNs device token. It registers the token with the relay once for each server it uses, gives each server the handle it gets back, and keeps the revoker for itself. It gives its raw tokens, the device's and its Live Activities', to no server; every server, the developer's own included, pushes through the relay.
 - **A server** holds the handles its users' apps gave it, and asks the relay to push to them.
 - **The relay** opens handles, applies quotas and writes everything Apple is sent, apart from an encrypted blob a server may attach to a notification.
 
@@ -126,7 +128,7 @@ The extension decrypts the blob, but decrypting proves only that the sender hold
 - Tapping runs only playback commands.
 - When the blob does not decrypt, or `koan-from` names no server the app knows, the relay's text stands and tapping opens the app.
 
-Live Activity updates are not relayed. ActivityKit renders their content without passing it through the app, so they cannot be encrypted or constrained.
+Live Activity updates are relayed too: the app registers each activity's token with its revoker and gives the server the handle, and the relay bounds what the server puts in them. The full rules are in the relay's own specification.
 
 ## Quotas
 

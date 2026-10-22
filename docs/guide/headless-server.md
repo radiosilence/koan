@@ -184,7 +184,6 @@ kōan reads the header only on web UI pages and the MCP consent page (`/oauth/au
 | `/oauth/register`, `/oauth/token` | MCP clients signing in |
 | `/.well-known` | MCP clients discovering the OAuth server |
 | `/share` | Public share links, for people without an account |
-| `/push/cover` | Album art in iOS notifications, fetched by the app's notification extension through a signed link |
 
 Exempt these exact paths, never whole `/auth` or `/oauth` prefixes. On a path the proxy does not cover it sets no header of its own, so whatever a client sent passes through from the proxy's address. Have the proxy remove the header from every incoming request before it authenticates, so a mistaken exemption carries no header at all. With Caddy:
 
@@ -192,7 +191,7 @@ Exempt these exact paths, never whole `/auth` or `/oauth` prefixes. On a path th
 music.example.com {
     request_header -Remote-User
 
-    @public path /rest/* /graphql /graphql/* /mcp /mcp/* /auth/login /auth/refresh /auth/logout /oauth/register /oauth/token /.well-known/* /share/* /push/cover/*
+    @public path /rest/* /graphql /graphql/* /mcp /mcp/* /auth/login /auth/refresh /auth/logout /oauth/register /oauth/token /.well-known/* /share/*
     handle @public {
         reverse_proxy koan:4000
     }
@@ -293,7 +292,7 @@ Every mutation that addresses one app, apart from `handOffClient` with its `from
 
 Track ids are the server's; an app that has not seen one syncs first, and its pages show what the sync brought in. Every account, admin included, sees and commands only its own apps, so a server shared by several people never sends one person's music to another's phone.
 
-An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. A server with [`[push]`](../reference/configuration.md#push) configured wakes a suspended phone to relink and take the command, choosing the one seen most recently when no `client` is named, since a reinstalled app leaves its old entry behind under the same name; a request to play arrives as a notification to tap, since iOS does not let an app start audio from the background. Opening the app relinks at once.
+An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. A server with [`[push]`](../reference/configuration.md#push) on, as it is by default, wakes a suspended phone through kōan's push relay to relink and take the command, choosing the one seen most recently when no `client` is named, since a reinstalled app leaves its old entry behind under the same name; a request to play arrives as a notification to tap, since iOS does not let an app start audio from the background. Opening the app relinks at once.
 
 ## In a container
 
@@ -348,7 +347,7 @@ export const routes = koan.routes;
 | `state` | `existingClaim` or `hostPath`, mounted at `/config`. Unset, it is an `emptyDir` and the index and accounts go with the pod |
 | `image` | `repository`, `tag` (defaults to the package's version), `pullPolicy` |
 | `nodeSelector` | Needed with a `hostPath`, which is one node's disk |
-| `push` | `existingSecret` holding the APNs key under `apns-key`, plus `keyId` and `teamId`: wakes the iOS app when it is suspended |
+| `push` | `enabled` (default `true`): whether the server wakes the iOS app through kōan's push relay when it is suspended. Set `enabled: false` to keep the server off the relay |
 | `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
 | `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
 

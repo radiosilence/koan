@@ -119,10 +119,10 @@ struct Activity {
     watcher: String,
     /// The device it shows.
     target: String,
-    token: String,
-    sandbox: bool,
+    /// The relay's handle for the activity.
+    handle: String,
     /// What it was last sent, so only a change goes out: Apple budgets these.
-    sent: Option<crate::push::ActivityState>,
+    sent: Option<koan_relay_client::ActivityState>,
 }
 
 /// "When this album is in the library, queue it on my device": a request made
@@ -336,9 +336,9 @@ impl Registry {
         }
     }
 
-    /// Record where Apple's push service reaches this device.
-    pub fn set_push(&self, username: &str, device: &str, token: &str, sandbox: bool) {
-        outbox::save_push(username, device, token, sandbox);
+    /// Record the relay's handle for this device.
+    pub fn set_push(&self, username: &str, device: &str, handle: &str) {
+        outbox::save_push(username, device, handle);
     }
 
     /// Keep `pairing` for `username`'s Apple TV `device`, or drop the one
@@ -446,6 +446,19 @@ impl Registry {
                     f,
                 },
             );
+        }
+    }
+
+    /// Send `envelope` down `device`'s link as it stands, ack id and all, as
+    /// its outbox is when it links: a command kept for it while it was away.
+    pub(crate) fn send_kept(&self, username: &str, device: &str, envelope: Envelope) {
+        if let Some(e) = self
+            .entries
+            .lock()
+            .iter()
+            .find(|e| e.info.username == username && e.device == device)
+        {
+            let _ = e.tx.send(envelope);
         }
     }
 
@@ -770,24 +783,19 @@ impl Registry {
             return;
         }
         let Some(pusher) = crate::push::pusher() else {
-            log::info!("wake: no push key, so {to} cannot be woken");
+            log::info!("wake: push is off, so {to} cannot be woken");
             return;
         };
         let Some(target) = outbox::push_targets(Some(username))
             .into_iter()
             .find(|t| t.device == to)
         else {
-            log::info!("wake: {to} has given no push token");
+            log::info!("wake: {to} has given no push handle");
             return;
         };
         let (push, how) = if notify {
-            (
-                crate::push::Push::Summon {
-                    title: format!("{from_name} wants to play here"),
-                    body: "Tap to open kōan and let it.".into(),
-                },
-                "notification",
-            )
+            log::info!("wake: {from_name} asks {to} to let it play");
+            (crate::push::Push::Summon, "notification")
         } else {
             (crate::push::Push::WakeNow, "wake push")
         };
@@ -799,7 +807,7 @@ impl Registry {
             let started = std::time::Instant::now();
             deliver_push(pusher, &target, &push);
             log::info!(
-                "wake: {how} for {} answered by APNs in {}ms",
+                "wake: {how} for {} answered by the relay in {}ms",
                 target.name,
                 started.elapsed().as_millis()
             );
@@ -902,23 +910,17 @@ impl Registry {
 
     /// Where to push a Live Activity's updates: `watcher` shows `target`.
     /// `None` ends it.
-    pub fn set_activity(
-        &self,
-        username: &str,
-        watcher: &str,
-        activity: Option<(String, String, bool)>,
-    ) {
+    pub fn set_activity(&self, username: &str, watcher: &str, activity: Option<(String, String)>) {
         let mut activities = self.activities.lock();
         activities.retain(|a| !(a.username == username && a.watcher == watcher));
-        let Some((token, target, sandbox)) = activity else {
+        let Some((handle, target)) = activity else {
             return;
         };
         activities.push(Activity {
             username: username.to_string(),
             watcher: watcher.to_string(),
             target: target.clone(),
-            token,
-            sandbox,
+            handle,
             sent: None,
         });
         drop(activities);
@@ -951,29 +953,26 @@ impl Registry {
             .map(|g| g.grantee.clone())
             .chain(std::iter::once(owner.clone()))
             .collect();
-        let state = crate::push::ActivityState::of(&info);
+        let state = crate::push::activity_state(&info);
         let mut due = Vec::new();
         for a in self.activities.lock().iter_mut() {
             if watchers.contains(&a.username)
                 && a.target == target
-                && a.sent.as_ref().is_none_or(|s| s.differs(&state))
+                && a.sent
+                    .as_ref()
+                    .is_none_or(|s| crate::push::differs(&state, s))
             {
                 a.sent = Some(state.clone());
-                due.push((
-                    a.token.clone(),
-                    a.sandbox,
-                    a.watcher.clone(),
-                    a.username.clone(),
-                ));
+                due.push((a.handle.clone(), a.watcher.clone(), a.username.clone()));
             }
         }
         if due.is_empty() {
             return;
         }
         std::thread::spawn(move || {
-            for (token, sandbox, watcher, username) in due {
+            for (handle, watcher, username) in due {
                 let push = crate::push::Push::Activity(state.clone());
-                match pusher.send(&token, sandbox, &push) {
+                match pusher.send(&handle, &push) {
                     crate::push::Outcome::Sent => {}
                     crate::push::Outcome::Gone => {
                         log::info!("push: a Live Activity on {watcher} has ended");
@@ -1485,14 +1484,16 @@ fn reach_absent(
         _ => None,
     };
     let push = match verb {
-        Some(verb) => crate::push::Push::Notify {
-            title: format!("{verb} on {}", target.name),
-            body: outbox::describe(asked).unwrap_or_else(|| "From your koan server".into()),
-            command: serde_json::to_value(&envelope).ok()?,
-            image: cover_track(asked)
-                .and_then(outbox::track_row)
-                .and_then(|t| pusher.cover_link(t)),
-        },
+        Some(verb) => {
+            log::info!(
+                "push: {verb} on {}: {}",
+                target.name,
+                outbox::describe(asked).unwrap_or_default()
+            );
+            crate::push::Push::Notify {
+                claim: claims::keep(&target.device, &target.username, envelope),
+            }
+        }
         None => {
             outbox::queue_for(&target.device, &target.username, &envelope);
             crate::push::Push::Wake
@@ -1502,35 +1503,76 @@ fn reach_absent(
     Some(Ok(info))
 }
 
-/// The track whose album cover a notification for `cmd` shows. Commands carry
-/// uids, so this is the id as sent; see `outbox::track_row`.
-fn cover_track(cmd: &LinkCommand) -> Option<&str> {
-    match cmd {
-        LinkCommand::Play {
-            track_ids,
-            start_at,
-            ..
-        } => track_ids
-            .get(*start_at as usize)
-            .or(track_ids.first())
-            .map(String::as_str),
-        LinkCommand::JumpTo { track_id } => Some(track_id),
-        _ => None,
+/// Commands a notification asked the person to tap for, kept for the app to
+/// claim over the link once they do. The notification carries only the
+/// claim's id, which tells the relay, and anyone else, nothing. In memory: a
+/// notification lives ten minutes, and a claim no longer than that.
+pub mod claims {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    use koan_core::remote::acks::Envelope;
+    use parking_lot::Mutex;
+
+    /// As long as the relay keeps a notification: one tapped later than this
+    /// has nothing to claim.
+    const LIFE: Duration = Duration::from_secs(10 * 60);
+
+    struct Claim {
+        device: String,
+        username: String,
+        envelope: Envelope,
+        at: Instant,
+    }
+
+    static CLAIMS: Mutex<Option<HashMap<String, Claim>>> = Mutex::new(None);
+
+    /// Keep `envelope` for `device`, and the id it is claimed by.
+    pub fn keep(device: &str, username: &str, envelope: Envelope) -> String {
+        use base64::Engine;
+        let mut raw = [0u8; 16];
+        getrandom::fill(&mut raw).expect("system randomness");
+        let id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+        let mut claims = CLAIMS.lock();
+        let claims = claims.get_or_insert_with(HashMap::new);
+        claims.retain(|_, c| c.at.elapsed() < LIFE);
+        claims.insert(
+            id.clone(),
+            Claim {
+                device: device.to_string(),
+                username: username.to_string(),
+                envelope,
+                at: Instant::now(),
+            },
+        );
+        id
+    }
+
+    /// The command kept under `id`, once, for the device it was kept for.
+    pub fn take(device: &str, username: &str, id: &str) -> Option<Envelope> {
+        let mut claims = CLAIMS.lock();
+        let claims = claims.as_mut()?;
+        let claim = claims.get(id)?;
+        if claim.device != device || claim.username != username || claim.at.elapsed() >= LIFE {
+            return None;
+        }
+        claims.remove(id).map(|c| c.envelope)
     }
 }
 
-/// Send one push, forgetting a token Apple says is no longer good.
+/// Send one push, forgetting a handle the relay says no longer reaches the
+/// device.
 fn deliver_push(
     pusher: &crate::push::Pusher,
     target: &outbox::PushTarget,
     push: &crate::push::Push,
 ) {
     use crate::push::Outcome;
-    match pusher.send(&target.token, target.sandbox, push) {
+    match pusher.send(&target.handle, push) {
         Outcome::Sent => log::info!("push: sent to {}", target.name),
         Outcome::Gone => {
             log::info!(
-                "push: {}'s token is no longer valid; forgotten",
+                "push: {}'s handle no longer reaches it; forgotten",
                 target.name
             );
             outbox::forget_push(&target.username, &target.device);
@@ -1782,7 +1824,7 @@ mod outbox {
         // A paired Apple TV is kept however long it sleeps: the pairing was
         // a deliberate act, and waking it is what links it again.
         let _ = conn.execute(
-            "DELETE FROM link_push WHERE (device, username) IN
+            "DELETE FROM link_handles WHERE (device, username) IN
                (SELECT device, username FROM link_devices WHERE last_seen < ?1)
                AND (device, username) NOT IN (SELECT device, username FROM link_tv)",
             [now - KEEP_SECS],
@@ -1896,8 +1938,8 @@ mod outbox {
         pub username: String,
         pub name: String,
         pub platform: String,
-        pub token: String,
-        pub sandbox: bool,
+        /// The push relay's handle for it.
+        pub handle: String,
         /// Unix seconds.
         pub last_seen: i64,
     }
@@ -2009,12 +2051,12 @@ mod outbox {
         }
     }
 
-    pub fn save_push(username: &str, device: &str, token: &str, sandbox: bool) {
+    pub fn save_push(username: &str, device: &str, handle: &str) {
         let Some(db) = db() else { return };
         let _ = db.conn.execute(
-            "INSERT INTO link_push (device, username, token, sandbox, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT (device, username) DO UPDATE SET token = ?3, sandbox = ?4, updated_at = ?5",
-            rusqlite::params![device, username, token, sandbox, chrono::Utc::now().timestamp()],
+            "INSERT INTO link_handles (device, username, handle, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (device, username) DO UPDATE SET handle = ?3, updated_at = ?4",
+            rusqlite::params![device, username, handle, chrono::Utc::now().timestamp()],
         );
     }
 
@@ -2090,7 +2132,7 @@ mod outbox {
     pub fn forget_push(username: &str, device: &str) {
         if let Some(db) = db() {
             let _ = db.conn.execute(
-                "DELETE FROM link_push WHERE device = ?1 AND username = ?2",
+                "DELETE FROM link_handles WHERE device = ?1 AND username = ?2",
                 [device, username],
             );
         }
@@ -2108,8 +2150,8 @@ mod outbox {
     ) -> Vec<PushTarget> {
         conn
             .prepare(
-                "SELECT p.device, p.username, d.name, d.platform, p.token, p.sandbox, d.last_seen
-                   FROM link_push p JOIN link_devices d ON d.device = p.device AND d.username = p.username
+                "SELECT p.device, p.username, d.name, d.platform, p.handle, d.last_seen
+                   FROM link_handles p JOIN link_devices d ON d.device = p.device AND d.username = p.username
                   WHERE ?1 IS NULL OR p.username = ?1
                   ORDER BY d.last_seen DESC",
             )
@@ -2120,9 +2162,8 @@ mod outbox {
                         username: r.get(1)?,
                         name: r.get(2)?,
                         platform: r.get(3)?,
-                        token: r.get(4)?,
-                        sandbox: r.get(5)?,
-                        last_seen: r.get(6)?,
+                        handle: r.get(4)?,
+                        last_seen: r.get(5)?,
                     })
                 })?
                 .collect()
@@ -2139,20 +2180,12 @@ mod outbox {
     }
 
     pub(super) fn forget_device_in(conn: &rusqlite::Connection, device: &str, username: &str) {
-        for table in ["link_push", "link_tv", "link_outbox", "link_devices"] {
+        for table in ["link_handles", "link_tv", "link_outbox", "link_devices"] {
             let _ = conn.execute(
                 &format!("DELETE FROM {table} WHERE device = ?1 AND username = ?2"),
                 [device, username],
             );
         }
-    }
-
-    /// The row id of a track a command names by uid or row id.
-    pub fn track_row(id: &str) -> Option<i64> {
-        let db = db()?;
-        queries::resolve_id(&db.conn, queries::UidKind::Track, id)
-            .ok()
-            .flatten()
     }
 
     /// What a playback command would play, for a notification to say:
@@ -2486,18 +2519,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_notification_cover_is_named_by_the_uid_the_command_carries() {
-        // Commands carry uids; parsing them as row ids found no cover.
-        let uid = "0190a5b2-7c3d-7e4f-8a1b-2c3d4e5f6a7b".to_string();
-        let play = LinkCommand::Play {
-            track_ids: vec!["x".into(), uid.clone()],
-            start_at: 1,
-            position_ms: 0,
-            paused: false,
-            handoff: false,
-            mode: koan_core::player::state::QueueMode::Keep,
+    fn a_claim_runs_once_and_only_on_its_device() {
+        let envelope = Envelope {
+            command: LinkCommand::Pause,
+            ack: None,
         };
-        assert_eq!(cover_track(&play), Some(uid.as_str()));
+        let id = claims::keep("phone", "j", envelope);
+        assert!(claims::take("tablet", "j", &id).is_none(), "another device");
+        assert!(claims::take("phone", "k", &id).is_none(), "another account");
+        assert_eq!(
+            claims::take("phone", "j", &id).map(|e| e.command),
+            Some(LinkCommand::Pause)
+        );
+        assert!(claims::take("phone", "j", &id).is_none(), "taken once");
+        assert!(claims::take("phone", "j", "made-up").is_none());
     }
 
     #[test]
@@ -2968,7 +3003,7 @@ mod tests {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO link_push (device, username, token, sandbox, updated_at) VALUES ('dev-phone', ?1, 't', 0, 1)",
+                "INSERT INTO link_handles (device, username, handle, updated_at) VALUES ('dev-phone', ?1, 'h', 1)",
                 [user],
             )
             .unwrap();
@@ -3046,7 +3081,7 @@ mod tests {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO link_push (device, username, token, sandbox, updated_at) VALUES (?1, 'j', 't', 0, ?2)",
+                "INSERT INTO link_handles (device, username, handle, updated_at) VALUES (?1, 'j', 'h', ?2)",
                 rusqlite::params![device, long_ago],
             )
             .unwrap();
@@ -3061,7 +3096,7 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(left("link_devices"), ["mac"]);
-        assert_eq!(left("link_push"), ["mac"]);
+        assert_eq!(left("link_handles"), ["mac"]);
     }
 
     #[test]

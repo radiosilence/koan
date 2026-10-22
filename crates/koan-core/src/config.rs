@@ -147,38 +147,23 @@ pub struct McpConfig {
 }
 
 /// Push notifications to koan's iOS app, which reach a phone iOS has
-/// suspended. Apple accepts them only signed with the key of the team that
-/// ships the app, so only a server holding that key can send them; without one
-/// a server reaches phones only while they are linked.
+/// suspended. Apple accepts them only under the key of the team that ships
+/// the app, so every server sends them through kōan's push relay, which holds
+/// that key and sees no more than it needs (`docs/reference/protocol/push-relay.md`).
+/// The relay is not configurable: the app registers with kōan's, the only
+/// one holding the key, and a server must push where its apps registered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PushConfig {
-    /// The APNs auth key (`AuthKey_XXXXXXXXXX.p8`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key_path: Option<PathBuf>,
-    /// The key itself, PEM, for a deployment that hands secrets over as
-    /// environment (`KOAN_PUSH__KEY`) rather than files.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    /// The key's ten-character id.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub key_id: String,
-    /// The Apple developer team the key belongs to.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub team_id: String,
-    /// The app's bundle id, which every push names.
-    pub topic: String,
+    /// Whether this server pushes at all. Off, it reaches phones only while
+    /// they are linked, does not offer `koanPush`, and the apps signed in to
+    /// it do not ask for notifications.
+    pub enabled: bool,
 }
 
 impl Default for PushConfig {
     fn default() -> Self {
-        Self {
-            key_path: None,
-            key: None,
-            key_id: String::new(),
-            team_id: String::new(),
-            topic: "cc.blit.koan".into(),
-        }
+        Self { enabled: true }
     }
 }
 
@@ -1451,10 +1436,6 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.device_key"
         | "subsonic.password"
         | "auth.refresh_token"
-        | "push.key"
-        | "push.key_path"
-        | "push.key_id"
-        | "push.team_id"
         | "lastfm.api_key"
         | "lastfm.secret"
         // This machine's paths, disk and account.
@@ -1836,6 +1817,25 @@ fn write_document(
     Ok(())
 }
 
+/// Write `contents` to `path` as the configuration files are written: whole,
+/// readable by this user alone, and on tvOS kept through a purge of Caches.
+pub(crate) fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let target = link_target(path);
+    let temp = unique_beside(&target);
+    let written =
+        write_new(&temp, &target, contents, true).and_then(|()| fs::rename(&temp, &target));
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written?;
+    #[cfg(target_os = "tvos")]
+    kept::written(path, contents);
+    Ok(())
+}
+
 /// Where a write to `path` lands: a symlink, as dotfiles keep, is followed
 /// rather than replaced, even when what it points at does not exist yet.
 fn link_target(path: &Path) -> PathBuf {
@@ -2091,7 +2091,9 @@ mod kept {
         kCFPreferencesCurrentApplication,
     };
 
-    const FILES: [&str; 2] = ["config.toml", "config.local.toml"];
+    /// The push relay's registrations are kept too: without the revoker, a
+    /// television could not retire the handles its servers hold.
+    const FILES: [&str; 3] = ["config.toml", "config.local.toml", "push-relay.json"];
 
     /// Once per process: a file that is missing comes back from the
     /// preferences, and one that is present is copied into them, which is how
