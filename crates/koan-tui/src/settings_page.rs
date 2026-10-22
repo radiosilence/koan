@@ -87,8 +87,6 @@ pub enum Task {
     Sync,
     /// Forget the tracks of a folder taken out of the library.
     ForgetFolder(PathBuf),
-    /// Forget the tracks only the server had, after signing out.
-    ForgetRemote,
     ClearCache,
     RebuildIndex,
 }
@@ -105,11 +103,9 @@ pub enum Outcome {
     OpenOutputs,
     OpenUrl(String),
     Copy(String),
-    /// The server was signed out of: the player lets go of its queue and
-    /// downloads, and its tracks are forgotten too when asked.
-    SignedOut {
-        forget: bool,
-    },
+    /// The server was signed out of, and everything held for it forgotten:
+    /// the player lets go of its queue and downloads.
+    SignedOut,
 }
 
 /// A text the page asks for, kept as typed until it is used.
@@ -182,9 +178,7 @@ pub(crate) enum Op {
     Outcome(Outcome),
     SignIn,
     AskSignOut,
-    SignOut {
-        forget: bool,
-    },
+    SignOut,
     AddFolder,
     AskRemoveFolder(PathBuf),
     RemoveFolder {

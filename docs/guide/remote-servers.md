@@ -42,7 +42,7 @@ Signing out stops a sync from that server where it is, including one waiting for
 
 ## Changing servers
 
-Signing in to a different server replaces the library with that server's. The last server's tracks, playlists and downloads are removed, along with its play history, favourites and the record of its syncs, and the queue is cleared; tracks from local files stay. A server counts as the same one at any address it is known by, the one typed or the one it gives for itself (`server.url`), and signing in to it again keeps the library as it is. A server that does not answer for itself during sign-in cannot be told apart, so its library is kept. Keeping each server's library aside to switch back to is not supported, so returning to a server syncs its library afresh.
+Signing out of a server removes everything this device held for it: its tracks, the account's favourites, ratings, play history and playlists, the queue, the downloads and the record of its syncs. The server keeps all of these and the next sign-in pulls them again. Tracks from local files, playlists read from files in the library folders, EQ profiles and this device's settings stay. Signing in as another account, or at another address, signs out of the last one first; signing in again as the same account at the same address keeps what is there.
 
 ## How merging works
 

@@ -1630,11 +1630,12 @@ mod tests {
         assert_eq!(tracks(), 3);
     }
 
-    /// Signing in to another server leaves its library alone: the last
-    /// server's tracks, playlists, downloads and sync record go, local files
-    /// stay, and nothing in the cache is adopted for the new server's tracks.
+    /// Signing out leaves the device as a new install: the server's tracks,
+    /// the account's favourites, history and playlists, the downloads and the
+    /// sync record go; local files and playlists read from files stay, and
+    /// nothing in the cache is adopted for the next server's tracks.
     #[test]
-    fn another_server_replaces_the_library() {
+    fn signing_out_leaves_a_new_install() {
         use crate::helpers::{Walk, adopt_cached_files, forget_server, sync_remote};
         let (db, dir) = test_db();
         let mut cfg = crate::config::Config::default();
@@ -1676,11 +1677,20 @@ mod tests {
         queries::set_cached_path(&db.conn, downloaded, &file.to_string_lossy()).unwrap();
         std::fs::write(cache.join("unrecorded.flac"), b"fLaC").unwrap();
         queries::add_favourite(&db.conn, queries::LOCAL_USER, downloaded).unwrap();
+        let local_id: i64 = db
+            .conn
+            .query_row("SELECT id FROM tracks WHERE remote_id IS NULL", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        queries::add_favourite(&db.conn, queries::LOCAL_USER, local_id).unwrap();
         db.conn
-            .execute(
-                "INSERT INTO playlists (name, remote_id) VALUES ('Mix', 'pl-1')",
-                [],
-            )
+            .execute_batch(&format!(
+                "INSERT INTO playlists (name, remote_id) VALUES ('Mix', 'pl-1');
+                 INSERT INTO playlists (name) VALUES ('Made Here');
+                 INSERT INTO playlists (name, source_path) VALUES ('From File', '/music/a.m3u');
+                 INSERT INTO play_history (track_id, played_at) VALUES ({local_id}, 1);"
+            ))
             .unwrap();
         assert_eq!(titles().len(), 3);
 
@@ -1691,11 +1701,20 @@ mod tests {
             0,
             "no download of the last server's is left"
         );
-        let playlists: i64 = db
+        let playlists: Vec<String> = db
             .conn
-            .query_row("SELECT COUNT(*) FROM playlists", [], |r| r.get(0))
+            .prepare("SELECT name FROM playlists")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(playlists, 0);
+        assert_eq!(playlists, vec!["From File"]);
+        let plays: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM play_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(plays, 0);
         assert!(
             queries::load_favourites(&db.conn, queries::LOCAL_USER)
                 .unwrap()

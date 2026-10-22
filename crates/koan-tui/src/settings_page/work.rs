@@ -271,25 +271,20 @@ impl SettingsPage {
                 self.dialog = Some(
                     Dialog::new(
                         format!("sign out of {}?", self.cfg.remote.url),
-                        "Tracks you also have as local files are kept either way. Keeping the \
-                         rest leaves albums in the library that cannot be played until you sign \
-                         in again.",
+                        "Its tracks, favourites, history, playlists and downloads are removed \
+                         from this device. Signing in again brings them back. Local files stay.",
                     )
-                    .choice(
-                        "sign out and forget its tracks",
-                        Op::SignOut { forget: true },
-                    )
-                    .choice("sign out and keep them", Op::SignOut { forget: false })
+                    .choice("sign out", Op::SignOut)
                     .choice("cancel", Op::Cancel),
                 );
                 None
             }
-            Op::SignOut { forget } => {
+            Op::SignOut => {
                 let out = helpers::sign_out();
                 self.reload();
                 match out {
                     Err(e) => Some(Outcome::Say(format!("could not sign out: {e}"))),
-                    Ok(()) => Some(Outcome::SignedOut { forget }),
+                    Ok(()) => Some(Outcome::SignedOut),
                 }
             }
 

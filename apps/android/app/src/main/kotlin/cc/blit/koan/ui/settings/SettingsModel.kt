@@ -103,24 +103,15 @@ class SettingsModel(
         }
     }
 
-    fun signOut(forgetTracks: Boolean, then: () -> Unit) {
+    /** Signs out and forgets everything held for the server; the next sign-in pulls it again. */
+    fun signOut(then: () -> Unit) {
         viewModelScope.launch {
-            val engine = engine()
             try {
-                engine.signOutRemote()
+                activity.run("Signing out") { engine().signOutRemote() }
             } catch (e: KoanException) {
                 failed(e)
                 reload()
                 return@launch
-            }
-            if (forgetTracks) {
-                // Local rows too: it takes the server off the ones that were
-                // on both.
-                try {
-                    activity.run("Forgetting the server's tracks") { engine.forgetRemote() }
-                } catch (e: KoanException) {
-                    failed(e)
-                }
             }
             then()
         }

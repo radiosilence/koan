@@ -1768,13 +1768,9 @@ impl App {
                 copy_to_clipboard(&text);
                 self.say("copied");
             }
-            Outcome::SignedOut { forget } => {
+            Outcome::SignedOut => {
                 self.local_tx.send(PlayerCommand::SignedOut).ok();
-                if forget {
-                    self.run_task(Task::ForgetRemote);
-                } else {
-                    self.say("signed out");
-                }
+                self.say("signed out");
             }
         }
     }
@@ -1801,9 +1797,6 @@ impl App {
                 .spawn_work("forgetting the folder's tracks...", move || {
                     tasks::forget(&path)
                 }),
-            Task::ForgetRemote => {
-                self.spawn_work("forgetting the server's tracks...", tasks::forget_remote)
-            }
         }
     }
 
