@@ -28,6 +28,9 @@ LIMIT = 4000
 # Processing usually takes a few minutes; past this the build has a problem
 # the upload step already reported.
 PATIENCE = 45 * 60
+# App Store Connect lists an upload within minutes. A build still unlisted
+# past this never arrived: its upload failed.
+UNLISTED = 15 * 60
 
 
 def notes(version):
@@ -60,7 +63,8 @@ def main():
         sys.exit(f"no changelog section for {version}")
 
     app = call("GET", f"/v1/apps?filter[bundleId]={BUNDLE_ID}")["data"][0]
-    deadline = time.time() + PATIENCE
+    started = time.time()
+    deadline = started + PATIENCE
     while True:
         builds = call(
             "GET",
@@ -73,6 +77,8 @@ def main():
             break
         if state in ("FAILED", "INVALID"):
             sys.exit(f"build {build_number} is {state}")
+        if not builds and time.time() > started + UNLISTED:
+            sys.exit(f"build {build_number} not listed after {UNLISTED // 60} minutes")
         if time.time() > deadline:
             sys.exit(f"build {build_number} still {state} after {PATIENCE // 60} minutes")
         print(f"build {build_number}: {state}, waiting")

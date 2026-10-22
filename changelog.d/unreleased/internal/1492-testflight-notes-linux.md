@@ -1,0 +1,1 @@
+- **TestFlight notes wait on Linux.** Setting a build's What to Test waits for App Store Connect to process the upload; that wait now runs in its own job on a Linux runner instead of holding the macOS one that built the app.
