@@ -1680,6 +1680,21 @@ mod tests {
         file.release_types = Some("ep".into());
         upsert_track(&db.conn, &file).unwrap();
         assert_eq!(types().as_deref(), Some("ep"), "a retag replaces the type");
+
+        file.release_types = None;
+        upsert_track(&db.conn, &file).unwrap();
+        assert_eq!(types(), None, "a removed tag clears it");
+
+        let mut server = sample_meta("Archangel", "Burial", "Archangel");
+        server.source = "remote".into();
+        server.remote_id = Some("s-1".into());
+        server.release_types = Some("single".into());
+        upsert_track(&db.conn, &server).unwrap();
+        assert_eq!(
+            types().as_deref(),
+            Some("single"),
+            "the server's, where the file names none"
+        );
     }
 
     #[test]
