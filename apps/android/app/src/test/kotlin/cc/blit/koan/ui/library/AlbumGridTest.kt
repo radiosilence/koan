@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.ffi.Album
+import cc.blit.koan.ffi.ReleaseSection
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -28,7 +29,7 @@ import org.robolectric.annotation.Config
 class AlbumGridTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun album(id: Long) = Album(id, "Album $id", 1, "Artist", emptyList(), null, null, null, null, null, null, null)
+    private fun album(id: Long) = Album(id, "Album $id", 1, "Artist", emptyList(), null, null, null, null, null, null, null, null, ReleaseSection.ALBUMS)
 
     private val library = (1L..10_000L).map(::album)
 

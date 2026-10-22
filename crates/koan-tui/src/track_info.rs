@@ -362,6 +362,7 @@ mod tests {
             track_number: Some(3),
             genre: Some(String::new()),
             label: None,
+            release_types: None,
             duration_ms: Some(200_000),
             codec: Some("FLAC".into()),
             sample_rate: Some(44_100),

@@ -1675,6 +1675,9 @@ pub struct SubsonicAlbum {
     pub sort_name: Option<String>,
     #[serde(default)]
     pub record_labels: Vec<SubsonicName>,
+    /// MusicBrainz release group types, primary first: `["album", "live"]`.
+    #[serde(default)]
+    pub release_types: Vec<String>,
 }
 
 /// A bare `{"name": "..."}` object. The server uses this shape for record
@@ -1702,6 +1705,9 @@ pub struct SubsonicAlbumFull {
     pub sort_name: Option<String>,
     #[serde(default)]
     pub record_labels: Vec<SubsonicName>,
+    /// MusicBrainz release group types, primary first: `["album", "live"]`.
+    #[serde(default)]
+    pub release_types: Vec<String>,
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
 }

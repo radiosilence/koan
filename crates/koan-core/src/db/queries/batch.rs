@@ -56,7 +56,7 @@ pub fn albums_for_artists(
     let sql = format!(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                 al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
-                al.added_at, l.artist_id
+                al.added_at, al.release_types, l.artist_id
          FROM album_artist_links l
          JOIN albums al ON al.id = l.album_id
          LEFT JOIN artists a ON al.artist_id = a.id
@@ -66,7 +66,7 @@ pub fn albums_for_artists(
     let mut stmt = conn.prepare_cached(&sql)?;
     let rows = stmt.query_map([json_list(artist_ids)], |row| {
         Ok((
-            row.get::<_, i64>(11)?,
+            row.get::<_, i64>(12)?,
             AlbumRow {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -79,6 +79,7 @@ pub fn albums_for_artists(
                 label: row.get(8)?,
                 remote_id: row.get(9)?,
                 added_at: row.get(10)?,
+                release_types: row.get(11)?,
                 on_device: None,
             },
         ))

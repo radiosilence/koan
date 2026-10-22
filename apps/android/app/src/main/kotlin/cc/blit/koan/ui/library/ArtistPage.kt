@@ -36,6 +36,8 @@ import cc.blit.koan.art.Art
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.ArtistInfo
+import cc.blit.koan.ffi.ReleaseSection
+import cc.blit.koan.ffi.releaseSectionTitle
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.KoanButton
@@ -108,7 +110,27 @@ fun ArtistPage(artistId: Long) {
                     item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
                         Header(artistId, artist, count(held.albums.size.toLong(), "album"), info, looking, Modifier.padding(horizontal = 4.dp))
                     }
-                    items(held.albums, key = { it.id }, contentType = { "album" }) { AlbumTile(it, selection = selection, showArtist = false) }
+                    // A discography of albums alone, or one nobody tagged, needs no headings.
+                    // The core lists them section by section, so a section is a run of them.
+                    val sections = held.albums.fold(mutableListOf<Pair<ReleaseSection, MutableList<Album>>>()) { runs, album ->
+                        runs.also {
+                            if (it.lastOrNull()?.first == album.releaseSection) it.last().second += album
+                            else it += album.releaseSection to mutableListOf(album)
+                        }
+                    }
+                    sections.forEachIndexed { i, (section, albums) ->
+                        if (sections.size > 1) {
+                            item(key = "section-$section", span = { GridItemSpan(maxLineSpan) }) {
+                                KoanText(
+                                    releaseSectionTitle(section),
+                                    Modifier.padding(start = 4.dp, end = 4.dp, top = if (i == 0) 0.dp else KoanSpace.l),
+                                    role = KoanType.Control,
+                                    appText = true,
+                                )
+                            }
+                        }
+                        items(albums, key = { it.id }, contentType = { "album" }) { AlbumTile(it, selection = selection, showArtist = false) }
+                    }
                     if (held.features.isNotEmpty()) {
                         item(key = "features", span = { GridItemSpan(maxLineSpan) }) {
                             FeaturesOn(held.features, Modifier.padding(start = 4.dp, end = 4.dp, top = KoanSpace.l))

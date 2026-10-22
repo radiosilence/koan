@@ -157,6 +157,9 @@ pub struct AlbumRow {
     /// When the album entered the library — the server's `created` for remote
     /// albums, otherwise the time it was first indexed.
     pub added_at: Option<String>,
+    /// Its MusicBrainz types, folded and `;`-separated
+    /// (`helpers::release_types`).
+    pub release_types: Option<String>,
     /// How much of it can play here, when the listing was narrowed to this
     /// device or ordered by it.
     pub on_device: Option<OnDevice>,
@@ -231,6 +234,9 @@ pub struct TrackMeta {
     pub track_number: Option<i32>,
     pub genre: Option<String>,
     pub label: Option<String>,
+    /// The release's MusicBrainz types, folded and `;`-separated
+    /// (`helpers::release_types`).
+    pub release_types: Option<String>,
     pub duration_ms: Option<i64>,
     pub codec: Option<String>,
     pub sample_rate: Option<i32>,
@@ -373,6 +379,7 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         track_number: Some(1),
         genre: Some("Electronic".into()),
         label: None,
+        release_types: None,
         duration_ms: Some(240_000),
         codec: Some("FLAC".into()),
         sample_rate: Some(44100),

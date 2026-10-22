@@ -1,0 +1,1 @@
+- **Release types.** Album tiles name a record's release type (EP, Single, Live), and artist pages group records under Albums, EPs & Singles, Live, Compilations and Other releases. Read from MusicBrainz release type tags or an OpenSubsonic server's `releaseTypes`; the next scan and sync read every file and album again to fill them in.

@@ -884,6 +884,7 @@ mod tests {
             server_path: None,
             date: Some("2019".into()),
             label: None,
+            release_types: None,
             size_bytes: None,
             mtime: None,
             source: "local".into(),
