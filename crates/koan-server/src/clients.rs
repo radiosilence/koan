@@ -2175,14 +2175,6 @@ mod outbox {
         }
     }
 
-    /// The row id of a track a command names by uid or row id.
-    pub fn track_row(id: &str) -> Option<i64> {
-        let db = db()?;
-        queries::resolve_id(&db.conn, queries::UidKind::Track, id)
-            .ok()
-            .flatten()
-    }
-
     /// What a playback command would play, for a notification to say:
     /// "Golden Standard — Tony Petersen", or a track and how many follow.
     pub fn describe(cmd: &LinkCommand) -> Option<String> {
@@ -2514,18 +2506,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_notification_cover_is_named_by_the_uid_the_command_carries() {
-        // Commands carry uids; parsing them as row ids found no cover.
-        let uid = "0190a5b2-7c3d-7e4f-8a1b-2c3d4e5f6a7b".to_string();
-        let play = LinkCommand::Play {
-            track_ids: vec!["x".into(), uid.clone()],
-            start_at: 1,
-            position_ms: 0,
-            paused: false,
-            handoff: false,
-            mode: koan_core::player::state::QueueMode::Keep,
+    fn a_claim_runs_once_and_only_on_its_device() {
+        let envelope = Envelope {
+            command: LinkCommand::Pause,
+            ack: None,
         };
-        assert_eq!(cover_track(&play), Some(uid.as_str()));
+        let id = claims::keep("phone", "j", envelope);
+        assert!(claims::take("tablet", "j", &id).is_none(), "another device");
+        assert!(claims::take("phone", "k", &id).is_none(), "another account");
+        assert_eq!(
+            claims::take("phone", "j", &id).map(|e| e.command),
+            Some(LinkCommand::Pause)
+        );
+        assert!(claims::take("phone", "j", &id).is_none(), "taken once");
+        assert!(claims::take("phone", "j", "made-up").is_none());
     }
 
     #[test]

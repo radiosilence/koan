@@ -29,15 +29,11 @@ describe("KoanConfSchema", () => {
     expect(() => KoanConfSchema.parse({ ...base, library: { hostPath: "music" } })).toThrow();
   });
 
-  it("leaves push off by default, and wants the key's ids with its Secret", () => {
-    expect(KoanConfSchema.parse(base).push.existingSecret).toBe("");
+  it("pushes through kōan's relay by default, and can be turned off", () => {
+    const c = KoanConfSchema.parse(base);
+    expect(c.push).toEqual({ enabled: true, relay: "https://push.koan.rocks" });
+    expect(KoanConfSchema.parse({ ...base, push: { enabled: false } }).push.enabled).toBe(false);
     expect(() => KoanConfSchema.parse({ ...base, push: { existingSecret: "koan-apns" } })).toThrow();
-    expect(() =>
-      KoanConfSchema.parse({
-        ...base,
-        push: { existingSecret: "koan-apns", keyId: "ABC123DEFG", teamId: "TEAM123456" },
-      }),
-    ).not.toThrow();
   });
 
   it("refuses invalid resource quantities and unknown keys", () => {

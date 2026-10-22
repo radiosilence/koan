@@ -42,12 +42,14 @@ not that.
   notification to tap, since iOS does not let an app it woke start playing.
   A phone still awake in the background is refused the audio while another
   app is playing, and shows the same kind of notification instead. Waking and
-  notifications need a server that can push to the app
-  ([`[push]`](../reference/configuration.md#push)); with any other, a
-  suspended phone is listed but takes what was sent only when it is next
-  opened. The app asks to show notifications only on a server that can push,
-  so elsewhere a phone refused the audio shows nothing either, unless
-  notifications were allowed for kōan in iOS Settings.
+  notifications need a server with push on
+  ([`[push]`](../reference/configuration.md#push), on by default), which
+  sends them through kōan's push relay; with push off, a suspended phone is
+  listed but takes what was sent only when it is next opened. The app asks to
+  show notifications only on a server with push on, so elsewhere a phone
+  refused the audio shows nothing either, unless notifications were allowed
+  for kōan in iOS Settings. The notification is the relay's own ("Something is
+  waiting to play"); tapping it opens kōan, and the music starts.
 - **Anyone's device on this network.** Apps find each other over Bonjour and
   connect directly, with no server involved and whoever is signed in. A device
   playing from a different server can be controlled but not sent music, since
@@ -164,10 +166,10 @@ at once, used or not. While nothing can reach it, it can be chosen only
 if it can be woken.
 
 - **One a push can wake**, a phone on your account that iOS has suspended,
-  can be chosen, and choosing it wakes it. That takes a push key on the
-  server; without one, the phone is listed but cannot be woken.
+  can be chosen, and choosing it wakes it. That takes push on the server;
+  with push off, the phone is listed but cannot be woken.
 - **An Apple TV set up to be woken** can be chosen from a phone or Mac on its
-  network, push key or not.
+  network, push on or not.
 - **One that cannot be woken from here**, such as a stranger's phone on the
   network, is shown asleep and cannot be chosen. A Mac is one of these: macOS
   does not open a quit app for a push, so a Mac whose kōan was quit, or that is
@@ -206,7 +208,7 @@ The row says which it is on, and says so if none worked.
    [Playing to it while it sleeps](apple-tv.md#playing-to-it-while-it-sleeps).
 2. **The local network**, if the device was seen there within the last minute:
    it may not be suspended yet.
-3. **A background push** through your server. iOS delivers these when it sees
+3. **A background push** through your server and kōan's push relay. iOS delivers these when it sees
    fit. It delays or drops them to save battery and in Low Power Mode, and
    never delivers one to an app that was swiped away.
 4. **A notification** on the device, after about six seconds, saying this
@@ -221,7 +223,7 @@ may then be done to the device follows the network and sharing rules above. A
 phone on mobile data has another address; sharing covers that.
 
 Each step is logged, on the device choosing (`wake: <name>: Push at +12ms`),
-on the server (`wake: wake push for <name> answered by APNs in 140ms`,
+on the server (`wake: wake push for <name> answered by the relay in 140ms`,
 `wake: <name> linked 2310ms after its wake push`) and on the phone woken
 (`app: push: woken`), so a wake that did not happen shows where it stopped.
 
@@ -348,9 +350,9 @@ Review rejects, so this is the supported way to put a remote on the lock
 screen.
 
 The app updates it while it runs. Once iOS suspends the app, the server pushes
-each change the controlled device reports, which needs the server's `[push]`
-key (see [Configuration](../reference/configuration.md#push)); without one the
-activity keeps the last state it was given. Its buttons work either way: they
+each change the controlled device reports through the push relay, which needs
+push on the server (see [Configuration](../reference/configuration.md#push));
+with push off the activity keeps the last state it was given. Its buttons work either way: they
 send the command in one request to the server when the app's link is down.
 
 ## What the server has to support

@@ -88,6 +88,10 @@ The standing WebSocket at `/rest/koanLink` through which the server commands a c
 
 The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. See [Link: Devices](link-protocol.md#devices).
 
+### `koanPush`
+
+The server pushes to the iOS app through kōan's [push relay](push-relay.md): wakes it once iOS has suspended it, asks it to play, updates its Live Activities. Listed only where `[push]` is on. Where it is listed, the app asks to show notifications, registers with the relay and sends the relay's handles up the link (`push`, `activity`), and runs a tapped notification's command by sending its `claim`. Where it is not, the app asks for nothing and sends the server nothing.
+
 ### `koanAck`
 
 Commands answered once acted on, relayed back to the sender, with `koanCommand` waiting for the answer. See [Link: Acks](link-protocol.md#acks).

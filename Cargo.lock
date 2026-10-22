@@ -3046,7 +3046,9 @@ dependencies = [
  "figment",
  "flacenc",
  "getrandom 0.4.3",
+ "hex",
  "jsonwebtoken",
+ "koan-relay-client",
  "libc",
  "lofty",
  "log",
@@ -3114,6 +3116,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "koan-relay-client"
+version = "0.1.1"
+source = "git+https://github.com/radiosilence/koan-push-relay?rev=e77960f5a25fc6b39f32b4c5fc7d43e544703095#e77960f5a25fc6b39f32b4c5fc7d43e544703095"
+dependencies = [
+ "base64 0.23.1",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "koan-server"
 version = "0.66.6"
 dependencies = [
@@ -3134,6 +3149,7 @@ dependencies = [
  "ipnet",
  "jsonwebtoken",
  "koan-core",
+ "koan-relay-client",
  "log",
  "lru 0.19.0",
  "md5",
