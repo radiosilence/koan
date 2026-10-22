@@ -63,7 +63,7 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$le
 flat = "%artist% - %title%"
 ```
 
-`va-aware` puts the track artist in the file name and drops the year when the album artist is Various Artists. [Format strings](../format-strings.md) has more examples and every function.
+`va-aware` puts the track artist in the file name and drops the year when the album artist is Various Artists. `%date%` is the date the library shows for the album: the original release date (`ORIGINALDATE`) where one is tagged, otherwise the release date, so a reissue is filed under the year the record came out. Files the library does not yet know are read the same way, so the preview and the move agree. [Format strings](../format-strings.md) has more examples and every function.
 
 ## Safety
 

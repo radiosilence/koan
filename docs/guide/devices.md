@@ -20,8 +20,8 @@ Playing, make the two choices:
   System Settings or Control Centre; playing to the system default, the music
   moves to the speaker chosen there, from where it was. On a phone or an Apple TV the route
   is the only audio device, so Output appears only once an amplifier answers
-  (Android looks for them as Now Playing opens; the iOS app cannot yet) or
-  while another device is controlled.
+  (the iPhone and Android look for them as Now Playing opens) or while another
+  device is controlled.
 
 While another device is controlled, Output lists that device's outputs: its
 audio devices, the amplifiers it can see, which one it plays through and the
@@ -241,7 +241,7 @@ each is checked as the app comes to the front.
 
 Network amplifiers and streamers that act as UPnP/DLNA renderers (WiiM,
 Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
-player" amps) are listed under **Output** in the Mac and Android
+player" amps) are listed under **Output** in the Mac, iPhone and Android
 apps, and in the output device list (`D`) in the TUI, where they are marked
 `· UPnP`. Kodi with
 "Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli

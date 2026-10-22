@@ -1,0 +1,1 @@
+- **The site and guides describe 0.67.** The homepage covers release types, the Link a device code, invite codes that lapse, waking an Apple TV and UPnP on iPhone; the devices guide lists the iPhone among the apps that play to UPnP amplifiers, and Organize's `%date%` is documented as the original release date the library shows.
