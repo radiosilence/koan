@@ -8,7 +8,7 @@ build:
 cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
-# Run tests + clippy
+# Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
 # `isolate_config_for_tests` would otherwise open the real library and run the
 # branch's migrations on it; here it writes into the canary and fails the check.
@@ -24,6 +24,7 @@ check:
         exit 1
     fi
     cargo clippy --all-targets -- -D warnings
+    actionlint
 
 # Write the protocol's JSON Schema into docs/reference/protocol/schema/ from
 # the Rust types. `just check` fails while the committed files are stale.

@@ -110,7 +110,7 @@ The manager coordinates and does not write features. It keeps the context, makes
 ## Build & check
 
 ```bash
-just check          # cargo test + clippy -D warnings
+just check          # cargo test + clippy -D warnings + actionlint
 just fmt            # cargo fmt
 just release VER    # X.Y.Z or patch/minor/major: branch, bump, changelog, commit, PR
 just theme-leaks    # styling in the apps that bypasses the kōan theme's roles

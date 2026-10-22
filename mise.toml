@@ -1,6 +1,8 @@
 [tools]
 rust = "latest"
 just = "latest"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:koalaman/shellcheck" = "0.11.0"
 lefthook = "2.2.2"
 "github:tailwindlabs/tailwindcss" = "4.3.3"
 # Typechecks the web UI's scripts; build.rs strips their types.

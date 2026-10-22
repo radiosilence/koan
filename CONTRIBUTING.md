@@ -14,7 +14,7 @@ PRs welcome.
 git clone https://github.com/radiosilence/koan.git && cd koan
 cargo build --release
 
-# run checks (tests + clippy)
+# run checks (tests + clippy + actionlint)
 just check
 
 # format
