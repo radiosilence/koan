@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use crate::db::connection::Database;
 use crate::db::queries::{self, TrackMeta};
@@ -17,6 +18,77 @@ pub enum SyncError {
     Subsonic(#[from] super::client::SubsonicError),
     #[error("db error: {0}")]
     Db(#[from] crate::db::connection::DbError),
+    /// Stopped by [`cancel`]: the device signed out of the server, or in to
+    /// another. What was written stays; nothing is recorded as synced.
+    #[error("the sync was cancelled")]
+    Cancelled,
+}
+
+/// The syncs running or waiting to run, by the server each is of.
+static RUNNING: parking_lot::Mutex<Vec<(String, Arc<AtomicBool>)>> =
+    parking_lot::Mutex::new(Vec::new());
+
+/// Servers left by [`cancel`] and not signed in to again: a sync of one that
+/// starts afterwards, from a client made before, stops at once.
+static LEFT: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+
+/// A sync's place in [`RUNNING`], held for as long as it runs.
+pub(crate) struct Running {
+    pub(crate) cancel: Arc<AtomicBool>,
+}
+
+impl Running {
+    pub(crate) fn enter(url: &str) -> Self {
+        let url = url.trim_end_matches('/');
+        let cancel = Arc::new(AtomicBool::new(LEFT.lock().iter().any(|l| l == url)));
+        RUNNING.lock().push((url.to_owned(), cancel.clone()));
+        Self { cancel }
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING
+            .lock()
+            .retain(|(_, cancel)| !Arc::ptr_eq(cancel, &self.cancel));
+    }
+}
+
+/// Stop every sync of the server at `url`, running or waiting for its turn,
+/// and any that starts until [`resume`] is called for it. Each stops at its
+/// next page or step and returns [`SyncError::Cancelled`].
+pub fn cancel(url: &str) {
+    let url = url.trim_end_matches('/');
+    {
+        let mut left = LEFT.lock();
+        if !left.iter().any(|l| l == url) {
+            left.push(url.to_owned());
+        }
+    }
+    for (_, cancel) in RUNNING.lock().iter().filter(|(of, _)| of == url) {
+        cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Let syncs of the server at `url` run again: it has been signed in to.
+pub fn resume(url: &str) {
+    let url = url.trim_end_matches('/');
+    LEFT.lock().retain(|l| l != url);
+}
+
+/// What a walk reports its progress to, and reads to know it should stop.
+#[derive(Clone, Copy)]
+struct Watch<'a> {
+    progress: &'a (dyn Fn(SyncProgress) + Sync),
+    cancel: &'a AtomicBool,
+}
+
+fn check(cancel: &AtomicBool) -> Result<(), SyncError> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(SyncError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -160,12 +232,16 @@ const PAGE_ATTEMPTS: u32 = 3;
 ///
 /// Deduplication happens in `upsert_track`, which merges a server's copy of a
 /// track onto the local row for it instead of creating a duplicate.
+///
+/// `cancel` is read between pages and between the steps after them; set, the
+/// walk stops there with [`SyncError::Cancelled`].
 pub fn sync_library(
     db: &Database,
     client: &SubsonicClient,
     server_url: &str,
     username: &str,
     progress: &(dyn Fn(SyncProgress) + Sync),
+    cancel: &AtomicBool,
 ) -> Result<SyncResult, SyncError> {
     let mut result = SyncResult::default();
     log::info!("syncing the library from {server_url}");
@@ -175,7 +251,7 @@ pub fn sync_library(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let albums = list_albums(client, progress)?;
+    let albums = list_albums(client, progress, cancel)?;
 
     let expected: u64 = albums
         .iter()
@@ -196,7 +272,7 @@ pub fn sync_library(
             total,
             &mut result,
             &mut song_ids,
-            progress,
+            &Watch { progress, cancel },
         )?;
     if !walked {
         let all: Vec<&SubsonicAlbum> = albums.iter().collect();
@@ -207,10 +283,11 @@ pub fn sync_library(
             total,
             &mut result,
             &mut song_ids,
-            progress,
+            &Watch { progress, cancel },
         )?;
     }
 
+    check(cancel)?;
     // Artist rows are created by track upserts, which carry no MusicBrainz id
     // or sort name. Applied last, because the rows do not exist until their
     // tracks have been written.
@@ -223,6 +300,7 @@ pub fn sync_library(
     });
     write_artists(db, &artists, &mut result);
 
+    check(cancel)?;
     progress(SyncProgress {
         phase: SyncPhase::Finishing,
         done: 0,
@@ -237,8 +315,9 @@ pub fn sync_library(
     let mut live_albums: std::collections::HashSet<String> =
         albums.iter().map(|a| a.id.clone()).collect();
     if result.is_complete() && !live_albums.is_empty() {
-        confirm_missing_albums(db, client, &mut live_albums);
+        confirm_missing_albums(db, client, &mut live_albums, cancel);
     }
+    check(cancel)?;
     let albums_short = live_albums.len() > albums.len();
 
     // What the server deleted or renumbered: an album gone from the list, or a
@@ -290,7 +369,12 @@ pub fn sync_library(
 /// album deleted from an earlier page mid-walk shifts the next page by one, and
 /// the album pushed off the boundary is missing from the list without being
 /// gone. Only "not found" confirms a deletion; any other failure keeps it.
-fn confirm_missing_albums(db: &Database, client: &SubsonicClient, live: &mut HashSet<String>) {
+fn confirm_missing_albums(
+    db: &Database,
+    client: &SubsonicClient,
+    live: &mut HashSet<String>,
+    cancel: &AtomicBool,
+) {
     let held: Vec<String> = db
         .conn
         .prepare(
@@ -304,6 +388,9 @@ fn confirm_missing_albums(db: &Database, client: &SubsonicClient, live: &mut Has
         .unwrap_or_default();
     let missing: Vec<String> = held.into_iter().filter(|id| !live.contains(id)).collect();
     for id in missing {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
         match client.get_album(&id) {
             Err(SubsonicError::Api { code: 70, .. }) => {}
             Ok(_) => {
@@ -322,6 +409,7 @@ fn confirm_missing_albums(db: &Database, client: &SubsonicClient, live: &mut Has
 fn list_albums(
     client: &SubsonicClient,
     progress: &(dyn Fn(SyncProgress) + Sync),
+    cancel: &AtomicBool,
 ) -> Result<Vec<SubsonicAlbum>, SyncError> {
     let mut albums = Vec::new();
     // Guards against an album appearing on two pages when the server-side list
@@ -329,6 +417,7 @@ fn list_albums(
     let mut seen: HashSet<String> = HashSet::new();
     let mut offset = 0u32;
     loop {
+        check(cancel)?;
         let page = client.get_album_list("alphabeticalByName", PAGE_SIZE, offset)?;
         let count = page.len() as u32;
         offset += count;
@@ -357,8 +446,10 @@ fn sync_all_songs(
     total: Option<u64>,
     result: &mut SyncResult,
     song_ids: &mut HashSet<String>,
-    progress: &(dyn Fn(SyncProgress) + Sync),
+    watch: &Watch,
 ) -> Result<bool, SyncError> {
+    let Watch { progress, cancel } = *watch;
+    check(cancel)?;
     let first = match client.all_songs_page(PAGE_SIZE, 0) {
         Ok(songs) if !songs.is_empty() => songs,
         Ok(_) => {
@@ -377,6 +468,7 @@ fn sync_all_songs(
                      result: &mut SyncResult,
                      song_ids: &mut HashSet<String>|
      -> Result<(), SyncError> {
+        check(cancel)?;
         let batch = group_by_album(songs, &by_id);
         albums_seen.extend(batch.iter().map(|a| a.id.clone()));
         write_albums(db, client, &batch, result, song_ids)?;
@@ -409,7 +501,7 @@ fn sync_all_songs(
                 scope.spawn(move || {
                     loop {
                         let offset = next.fetch_add(PAGE_SIZE, Ordering::Relaxed);
-                        if offset >= end.load(Ordering::Relaxed) {
+                        if offset >= end.load(Ordering::Relaxed) || cancel.load(Ordering::Relaxed) {
                             return;
                         }
                         let page = fetch_page(client, offset);
@@ -541,9 +633,11 @@ fn sync_by_album(
     total: Option<u64>,
     result: &mut SyncResult,
     song_ids: &mut HashSet<String>,
-    progress: &(dyn Fn(SyncProgress) + Sync),
+    watch: &Watch,
 ) -> Result<(), SyncError> {
+    let Watch { progress, cancel } = *watch;
     for batch in albums.chunks(ALBUM_BATCH) {
+        check(cancel)?;
         let failures = AtomicUsize::new(0);
         let fetched: Vec<SubsonicAlbumFull> = batch
             .par_iter()
@@ -1217,7 +1311,15 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let first = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        let first = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(first.albums_failed, 1, "the failing album must be counted");
         assert_eq!(first.albums_synced, 3);
         assert!(!first.is_complete());
@@ -1231,7 +1333,15 @@ mod tests {
         // still has no watermark to skip past.
         state.failing.lock().unwrap().clear();
         state.album_calls.lock().unwrap().clear();
-        let second = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        let second = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
 
         assert!(
             state
@@ -1267,7 +1377,15 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let result = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        let result = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(result.albums_failed, 0);
 
         let calls = state.album_calls.lock().unwrap().clone();
@@ -1314,7 +1432,15 @@ mod tests {
         });
         let server = StubServer::start(state);
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
 
         let rows: Vec<(Option<String>, Option<String>)> = db
             .conn
@@ -1352,7 +1478,15 @@ mod tests {
         });
         let server = StubServer::start(state);
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
 
         let rows: Vec<(i64, String)> = db
             .conn
@@ -1451,6 +1585,51 @@ mod tests {
         assert!(walks() > first);
     }
 
+    /// Signing out stops a sync of that server where it is and records
+    /// nothing as synced; a sync of another server carries on.
+    #[test]
+    fn a_cancelled_sync_stops_and_records_nothing() {
+        use crate::helpers::{Walk, sync_remote};
+        let (db, _dir) = test_db();
+        let state = Arc::new(StubState {
+            albums: Mutex::new(stub_albums(3)),
+            lists_songs: true,
+            ..Default::default()
+        });
+        let server = StubServer::start(state.clone());
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        let tracks = || -> i64 {
+            db.conn
+                .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
+                .unwrap()
+        };
+        let pages = || state.song_pages.lock().unwrap().len();
+
+        let signed_out = format!("{}/", server.url());
+        let cancelled = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {
+            cancel(&signed_out)
+        });
+        assert!(matches!(cancelled, Err(SyncError::Cancelled)));
+        assert_eq!(pages(), 0, "no page asked for after the cancel");
+        assert_eq!(tracks(), 0);
+        assert_eq!(get_last_sync(&db, &server.url()).unwrap(), None);
+
+        let later = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {});
+        assert!(
+            matches!(later, Err(SyncError::Cancelled)),
+            "a sync started after leaving the server stops too"
+        );
+        assert_eq!(pages(), 0);
+
+        resume(&server.url());
+        let other = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {
+            cancel("http://elsewhere.invalid")
+        })
+        .unwrap();
+        assert!(other.library.is_complete());
+        assert_eq!(tracks(), 3);
+    }
+
     /// An album missing from the listing is removed only once the server says
     /// it is gone.
     #[test]
@@ -1462,10 +1641,26 @@ mod tests {
         });
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
 
         state.unlisted.lock().unwrap().insert("a0001".into());
-        let shifted = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        let shifted = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(shifted.tracks_removed, 0, "still there, only unlisted");
 
         state
@@ -1473,7 +1668,15 @@ mod tests {
             .lock()
             .unwrap()
             .retain(|(id, _, _)| id != "a0001");
-        let deleted = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        let deleted = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(deleted.tracks_removed, 1);
     }
 
@@ -1491,9 +1694,14 @@ mod tests {
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
         let seen = Mutex::new(Vec::new());
-        let result = sync_library(&db, &client, &server.url(), "u", &|p| {
-            seen.lock().unwrap().push(p)
-        })
+        let result = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|p| seen.lock().unwrap().push(p),
+            &AtomicBool::new(false),
+        )
         .unwrap();
 
         assert!(state.album_calls.lock().unwrap().is_empty(), "no getAlbum");
@@ -1543,7 +1751,15 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let result = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        let result = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
 
         assert_eq!(state.song_pages.lock().unwrap().clone(), vec![0]);
         assert_eq!(state.album_calls.lock().unwrap().len(), 3);
@@ -1565,7 +1781,15 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let result = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
+        let result = sync_library(
+            &db,
+            &client,
+            &server.url(),
+            "u",
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
 
         assert_eq!(result.pages_failed, 1);
         assert!(!result.is_complete());

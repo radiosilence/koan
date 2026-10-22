@@ -32,12 +32,14 @@ pub enum SignInError {
 }
 
 /// Forget the server: its credentials, the shares and proof this device held
-/// for being signed in to it, and offline mode, which is from that server. The
-/// link and the network advert follow. The synced library is left alone:
+/// for being signed in to it, and offline mode, which is from that server. A
+/// sync from it stops where it is. The link and the network advert follow. The synced library is left alone:
 /// those tracks are still real, they just cannot be fetched until someone
 /// signs in again.
 pub fn sign_out() -> Result<(), crate::config::ConfigError> {
-    retire_push(&Config::load()?);
+    let cfg = Config::load()?;
+    retire_push(&cfg);
+    crate::remote::sync::cancel(&cfg.remote.url);
     crate::remote::devices::forget_shares();
     Config::persist(|cfg| {
         cfg.remote.enabled = false;

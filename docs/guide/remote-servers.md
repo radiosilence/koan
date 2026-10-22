@@ -31,6 +31,8 @@ Every sync walks the whole library, which is what lets it notice a track the ser
 koan remote sync          # sync now
 ```
 
+Signing out stops a sync from that server where it is, including one waiting for another to finish. What it wrote stays, and nothing is recorded as synced, so the next sync from that server walks the library again.
+
 ## How merging works
 
 When you have both local files and a remote server, each file and each server entry is a source of its own, and a track holds at most one of each. A file and an entry are the same track when they match on one key, tried in order:

@@ -38,6 +38,10 @@ pub enum Walk {
 /// read before the walk, so a change landing mid-walk leaves it newer than
 /// what is recorded, and the next sync walks again. Favourites and playlists
 /// are a request or two each, and are reconciled every time.
+///
+/// Signing out of the server, or in to another, stops it with
+/// `SyncError::Cancelled`, whether it is running or still waiting for the
+/// one before it: see `remote::sync::cancel`.
 pub fn sync_remote(
     db: &Database,
     client: &SubsonicClient,
@@ -47,12 +51,21 @@ pub fn sync_remote(
     progress: &(dyn Fn(crate::remote::sync::SyncProgress) + Sync),
 ) -> Result<Synced, crate::remote::sync::SyncError> {
     use crate::remote::sync;
+    let running = sync::Running::enter(url);
+    let cancelled = || {
+        if running.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            Err(sync::SyncError::Cancelled)
+        } else {
+            Ok(())
+        }
+    };
     // One at a time. An automatic sync still reconciling favourites when a
     // sync was asked for wrote under it, and each fought the other for the
     // write lock. The second waits for the first, and then has little left
     // to do.
     static SYNCING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     let _one_at_a_time = SYNCING.lock();
+    cancelled()?;
 
     let walked = sync::library_version(db, url);
     let modified = client.library_modified(walked);
@@ -70,11 +83,12 @@ pub fn sync_remote(
         sync::update_last_sync(db, url, username, now)?;
         sync::SyncResult::default()
     } else {
-        let library = sync::sync_library(db, client, url, username, progress).inspect_err(|e| {
-            if let sync::SyncError::Subsonic(e) = e {
-                crate::remote::refusal::observe_error(client.auth(), e);
-            }
-        })?;
+        let library = sync::sync_library(db, client, url, username, progress, &running.cancel)
+            .inspect_err(|e| {
+                if let sync::SyncError::Subsonic(e) = e {
+                    crate::remote::refusal::observe_error(client.auth(), e);
+                }
+            })?;
         if library.is_complete()
             && let Some(version) = version
         {
@@ -82,11 +96,18 @@ pub fn sync_remote(
         }
         library
     };
+    cancelled()?;
+    let favourites = reconcile_favourites(db, client);
+    cancelled()?;
+    let playlists = crate::playlists::reconcile_playlists(db, client, url, username);
+    cancelled()?;
+    let history = crate::remote::history::reconcile(db, client, url, username);
+    cancelled()?;
     Ok(Synced {
         library,
-        favourites: reconcile_favourites(db, client),
-        playlists: crate::playlists::reconcile_playlists(db, client, url, username),
-        history: crate::remote::history::reconcile(db, client, url, username),
+        favourites,
+        playlists,
+        history,
         dsp: crate::remote::dsp_sync::reconcile(db, client, url),
     })
 }

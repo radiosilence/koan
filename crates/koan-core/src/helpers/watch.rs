@@ -340,6 +340,9 @@ pub fn spawn_auto_sync(
                             s.playlists.pulled,
                             s.playlists.pushed,
                         ),
+                        Err(crate::remote::sync::SyncError::Cancelled) => {
+                            log::info!("auto sync cancelled")
+                        }
                         Err(e) => log::warn!("auto sync failed: {e}"),
                     }
                     on_state(false);
