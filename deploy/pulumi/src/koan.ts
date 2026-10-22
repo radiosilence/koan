@@ -75,7 +75,8 @@ export function createKoan(
           initContainers: [
             {
               name: "library",
-              image: conf.demo.library,
+              // The schema refuses a demo without one.
+              image: conf.demo.library!,
               command: ["cp", "-R", "/music/.", "/library/"],
               securityContext: {
                 allowPrivilegeEscalation: false,

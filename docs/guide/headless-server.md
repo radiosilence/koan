@@ -350,12 +350,12 @@ export const routes = koan.routes;
 | `nodeSelector` | Needed with a `hostPath`, which is one node's disk |
 | `push` | `enabled` (default `true`): whether the server wakes the iOS app through kōan's push relay when it is suspended. Set `enabled: false` to keep the server off the relay |
 | `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
-| `demo` | `enabled` (default `false`) makes a public demo, as demo.koan.rocks is; `library` is the image holding its music. See below |
+| `demo` | `enabled` (default `false`) makes a public demo, as demo.koan.rocks is; `library`, required with it, is an image holding the music at `/music`. See below |
 | `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
 
 With persistent state, each update first runs `koan check-db` in a Job against a snapshot of the live database. If the new version's migration fails there, the update stops and the old pod keeps serving. kubelet creates a missing `hostPath` as root, and koan runs as uid 1000, so an init container hands the state directory to that uid before the server starts; `initPermissions.enabled: false` turns it off. The root filesystem is read-only, and the artwork and lyrics caches live in an `emptyDir`, rebuilt after a restart.
 
-`demo: { enabled: true }` runs the server with [`server.demo`](../reference/configuration.md#server): everyone signs in as `demo`, password `demo`, and nobody can change that account's password or keys. The library is copied at start from an image built from `deploy/demo` (the releases and their licences are in its `CREDITS.md`), so the demo needs no volume, and `library` and `state` must be left unset. State lives on an `emptyDir` that the container wipes and re-indexes at the top of every hour, so whatever visitors made, playlists and accounts included, lasts until then and devices signed in then sign in again.
+`demo: { enabled: true }` runs the server with [`server.demo`](../reference/configuration.md#server): everyone signs in as `demo`, password `demo`, and nobody can change that account's password or keys. The library is copied at start out of `demo.library`, an image holding it at `/music` with a `cp` (a `busybox` base will do), so the demo needs no volume, and `library` and `state` must be left unset. State lives on an `emptyDir` that the container wipes and re-indexes at the top of every hour, so whatever visitors made, playlists and accounts included, lasts until then and devices signed in then sign in again.
 
 Unknown options are rejected rather than ignored, so a stack carrying options a newer package removed fails at `pulumi preview`.
 

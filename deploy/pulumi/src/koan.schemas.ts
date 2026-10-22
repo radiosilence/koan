@@ -62,8 +62,8 @@ export const KoanConfSchema = z.strictObject({
   demo: z
     .strictObject({
       enabled: z.boolean().default(false),
-      /** An image holding the library at /music, with `cp`. */
-      library: z.string().default(VERSIONS.demoLibrary),
+      /** Required with `enabled`: an image holding the library at /music, with `cp`. */
+      library: z.string().optional(),
     })
     .prefault({}),
   /**
@@ -147,6 +147,9 @@ export const KoanConfSchema = z.strictObject({
     .prefault({}),
 }).superRefine((c, ctx) => {
   if (c.demo.enabled) {
+    if (!c.demo.library) {
+      ctx.addIssue({ code: "custom", message: "demo.library is required: the image holding the demo's music" });
+    }
     if (c.library.hostPath || c.library.existingClaim || c.state.hostPath || c.state.existingClaim) {
       ctx.addIssue({
         code: "custom",
