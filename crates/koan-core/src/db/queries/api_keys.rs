@@ -337,30 +337,52 @@ pub struct DeviceKey {
 /// Record that the API key `raw_key` signed in `device`, which proves itself
 /// with `public_key`. Whether it was kept.
 ///
-/// A key row is bound to the first device it records, and a device id to the
-/// one standing key row of its account that claimed it. Otherwise a thief
-/// holding one device's key could link as another device's id and have its
-/// own public key published in that device's place. A device signing in again
-/// is given a new key in place of its old one (`replace_api_key`), so the
-/// rightful claim is never refused; a new keypair on the same key replaces
-/// the old public key.
+/// A key row is bound to the first device it records, so a thief holding one
+/// device's key cannot link as another device's id and have its own public
+/// key published in that device's place. A key not yet bound to a device is
+/// one just made by signing in, and it takes the device over: the account's
+/// other keys for that device are revoked, since signing in again by any
+/// route (password, invite, pairing) leaves the device holding only the new
+/// one. A new keypair on the same key replaces the old public key.
 pub fn set_device_key(
     conn: &Connection,
     raw_key: &str,
     device: &str,
     public_key: &str,
 ) -> rusqlite::Result<bool> {
-    let changed = conn.execute(
-        "UPDATE api_keys SET device = ?1, device_key = ?2
-          WHERE key_hash = ?3
-            AND (device IS NULL OR device = ?1)
-            AND NOT EXISTS (SELECT 1 FROM api_keys other
-                             WHERE other.user_id = api_keys.user_id
-                               AND other.device = ?1
-                               AND other.id != api_keys.id)",
-        params![device, public_key, auth::sha256_hex(raw_key)],
+    let tx = conn.unchecked_transaction()?;
+    let Some((id, user_id, bound)) = tx
+        .query_row(
+            "SELECT id, user_id, device FROM api_keys WHERE key_hash = ?1",
+            [auth::sha256_hex(raw_key)],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()?
+    else {
+        return Ok(false);
+    };
+    if bound.as_deref().is_some_and(|b| b != device) {
+        return Ok(false);
+    }
+    let retired = tx.execute(
+        "DELETE FROM api_keys WHERE user_id = ?1 AND device = ?2 AND id != ?3",
+        params![user_id, device, id],
     )?;
-    Ok(changed > 0)
+    tx.execute(
+        "UPDATE api_keys SET device = ?1, device_key = ?2 WHERE id = ?3",
+        params![device, public_key, id],
+    )?;
+    tx.commit()?;
+    if retired > 0 {
+        auth::account_changed(user_id);
+    }
+    Ok(true)
 }
 
 /// The public keys `username`'s devices prove themselves with, and those of
@@ -440,8 +462,8 @@ mod device_key_tests {
         assert_eq!(keys.len(), 1, "the Mac's key went with its API key");
     }
 
-    /// The phone's key, stolen, cannot take the Mac's place: a device id
-    /// belongs to the key row that claimed it, and a key row to its device.
+    /// The phone's key, stolen, cannot take the Mac's place: a key row
+    /// belongs to the device it first recorded.
     #[test]
     fn a_key_cannot_claim_another_devices_id() {
         let conn = db();
@@ -483,5 +505,32 @@ mod device_key_tests {
                 owner: Some("jo".into()),
             }]
         );
+    }
+
+    /// Signed out and in again by a route that mints a key beside the old
+    /// one: the new key takes the device, and the old key goes.
+    #[test]
+    fn a_new_key_takes_its_device_from_the_old_one() {
+        let conn = db();
+        let jo = user(&conn, "jo");
+        let kim = user(&conn, "kim");
+        let (_, old) = create_api_key(&conn, jo, "phone").unwrap();
+        let (_, theirs) = create_api_key(&conn, kim, "phone").unwrap();
+        assert!(set_device_key(&conn, &old, "dev-phone", "PHONE1").unwrap());
+        assert!(set_device_key(&conn, &theirs, "dev-phone", "KIM").unwrap());
+
+        let (_, new) = create_api_key(&conn, jo, "iPhone").unwrap();
+        assert!(set_device_key(&conn, &new, "dev-phone", "PHONE2").unwrap());
+        assert!(
+            id_of(&conn, &old).unwrap().is_none(),
+            "the old key is retired"
+        );
+        assert!(
+            id_of(&conn, &theirs).unwrap().is_some(),
+            "another account's is not"
+        );
+        let keys = device_keys(&conn, "jo").unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "PHONE2");
     }
 }

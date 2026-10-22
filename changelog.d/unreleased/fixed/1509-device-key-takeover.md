@@ -1,0 +1,1 @@
+- **Signing in again keeps the device's key.** A device signed in again by invite or pairing now moves its public key to the new API key and retires the old one, instead of leaving the key behind on every link.
