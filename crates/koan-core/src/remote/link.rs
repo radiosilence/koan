@@ -1446,17 +1446,20 @@ fn recently_missed(id: &str) -> bool {
 /// then favourites and playlists.
 pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
     let cfg = Config::load().unwrap_or_default();
-    if let Some(client) = subsonic_client(&cfg)
-        && let Err(e) = crate::helpers::sync_remote(
-            db,
-            &client,
-            walk,
-            &cfg.remote.url,
-            &cfg.remote.username,
-            &|_| {},
-        )
-    {
-        log::warn!("link: sync failed: {e}");
+    let Some(client) = subsonic_client(&cfg) else {
+        return;
+    };
+    match crate::helpers::sync_remote(
+        db,
+        &client,
+        walk,
+        &cfg.remote.url,
+        &cfg.remote.username,
+        &|_| {},
+    ) {
+        Ok(_) => {}
+        Err(crate::remote::sync::SyncError::Cancelled) => log::info!("link: sync cancelled"),
+        Err(e) => log::warn!("link: sync failed: {e}"),
     }
 }
 

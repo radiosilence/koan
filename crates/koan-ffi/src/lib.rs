@@ -4787,9 +4787,18 @@ impl KoanEngine {
                 &|p| meter.set(p),
             );
             meter.clear();
-            let synced = synced.map_err(|e| KoanError::Database {
-                message: e.to_string(),
-            })?;
+            let synced = match synced {
+                Ok(synced) => synced,
+                // Signed out, or in elsewhere, mid-sync: nothing failed.
+                Err(koan_core::remote::sync::SyncError::Cancelled) => {
+                    koan_core::helpers::Synced::default()
+                }
+                Err(e) => {
+                    return Err(KoanError::Database {
+                        message: e.to_string(),
+                    });
+                }
+            };
 
             self.bump_library();
             Ok(SyncSummary {
