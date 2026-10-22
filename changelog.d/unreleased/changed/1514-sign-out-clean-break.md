@@ -1,0 +1,1 @@
+- **Signing out is a clean break.** Signing out of a server, or in as another account, removes its tracks, the account's favourites, history and playlists, the queue and the downloads from the device; signing in again pulls them back. Local files, playlists read from files, EQ profiles and settings stay. The option to keep the server's tracks is gone.
