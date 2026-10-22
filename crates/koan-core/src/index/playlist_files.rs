@@ -3,7 +3,7 @@
 //!
 //! Each file becomes a playlist with `source_path` set to it, owned by the
 //! implicit user (the first admin on a server) and private, as Navidrome
-//! imports them. The file is authoritative: a scan that finds it changed
+//! imports them, or public with `library.public_playlists`. The file is authoritative: a scan that finds it changed
 //! rewrites the playlist (its rules, or its tracks), one that finds it gone
 //! deletes the playlist, and the playlist's contents take no edits. A file
 //! that does not parse is skipped with a log line, and a playlist already
@@ -48,7 +48,20 @@ pub fn import(db: &Database, files: &[PathBuf], settled: &[PathBuf]) -> usize {
     if let Err(e) = forget_missing(db, settled) {
         log::warn!("could not check for removed playlist files: {e}");
     }
+    if let Err(e) = set_visibility(db, crate::config::Config::cached().library.public_playlists) {
+        log::warn!("could not set file playlists' visibility: {e}");
+    }
     changed
+}
+
+/// Make every file's playlist public or private. The setting decides for all
+/// of them, so turning it on or off applies to those read before as well.
+fn set_visibility(db: &Database, public: bool) -> Result<(), DbError> {
+    db.conn.execute(
+        "UPDATE playlists SET public = ?1 WHERE source_path IS NOT NULL AND public != ?1",
+        params![public],
+    )?;
+    Ok(())
 }
 
 fn import_one(db: &Database, path: &Path) -> Result<bool, String> {
@@ -467,6 +480,45 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         import(&db, &[], std::slice::from_ref(&music));
         assert!(sourced(&db).is_empty(), "gone with its file");
+    }
+
+    #[test]
+    fn the_setting_decides_whether_every_files_playlist_is_public() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = test_db(tmp.path());
+        let music = tmp.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        let file = music.join("Loved.nsp");
+        std::fs::write(&file, r#"{"all":[{"is":{"loved":true}}]}"#).unwrap();
+        import(
+            &db,
+            std::slice::from_ref(&file),
+            std::slice::from_ref(&music),
+        );
+        let own = queries::create_playlist(&db.conn, LOCAL_USER, "Mine", None).unwrap();
+        let public = |db: &Database| -> Vec<(String, bool)> {
+            db.conn
+                .prepare("SELECT name, public FROM playlists ORDER BY name")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            public(&db),
+            [("Loved".into(), false), ("Mine".into(), false)]
+        );
+
+        set_visibility(&db, true).unwrap();
+        assert_eq!(
+            public(&db),
+            [("Loved".into(), true), ("Mine".into(), false)],
+            "a playlist made in koan keeps its own visibility"
+        );
+        set_visibility(&db, false).unwrap();
+        assert_eq!(public(&db)[0], ("Loved".into(), false));
+        let _ = own;
     }
 
     #[test]

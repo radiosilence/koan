@@ -178,6 +178,11 @@ impl Default for PushConfig {
 #[serde(default)]
 pub struct LibraryConfig {
     pub folders: Vec<PathBuf>,
+    /// Make the playlists read from `.m3u` and `.nsp` files in the library
+    /// public, so every account on the server sees them. Off, they are the
+    /// first admin's alone, as Navidrome imports them.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub public_playlists: bool,
 }
 
 /// The folder koan used to index when none was chosen, `~/Music`. Kept so a
