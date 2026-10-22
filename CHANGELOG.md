@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.67.2
+
+### Added
+
+- **Push and the relay, explained.** A guide page with a diagram explains why kōan's servers push through the relay at `push.koan.rocks`, what it sees and keeps, and how to turn it off. Every server example shows the `push` setting, the privacy policy covers the relay, and the protocol page describes the claim a play notification carries and the relay's text the phone shows.
+- **Public file playlists.** `library.public_playlists` makes the playlists read from `.m3u` and `.nsp` files in the library visible to every account, read-only, as Navidrome's `DefaultPlaylistPublicVisibility` does. Off by default.
+- **A demo server.** [demo.koan.rocks](https://demo.koan.rocks) runs kōan with a small, freely licensed library: sign in as `demo`, password `demo`, from a browser or any of the apps. It resets on the hour.
+
+### Changed
+
+- **The site and guides describe 0.67.** The homepage covers release types, the Link a device code, invite codes that lapse, waking an Apple TV and UPnP on iPhone; the devices guide lists the iPhone among the apps that play to UPnP amplifiers, and Organize's `%date%` is documented as the original release date the library shows.
+
+### Removed
+
+- **The Pulumi chart's `demo` and `name` options.** How a demo server is deployed is the deployment's own business; `server.demo` is unchanged. A stack setting either option is refused.
+
+### Internal
+
+- **TestFlight notes wait on Linux.** Setting a build's What to Test waits for App Store Connect to process the upload; that wait now runs in its own job on a Linux runner instead of holding the macOS one that built the app.
+- **Workflows are linted.** CI runs actionlint, with shellcheck, over `.github/workflows`, and `just check` runs it locally.
+
 ## 0.67.1
 
 ### Added
