@@ -150,6 +150,8 @@ pub struct McpConfig {
 /// suspended. Apple accepts them only under the key of the team that ships
 /// the app, so every server sends them through kōan's push relay, which holds
 /// that key and sees no more than it needs (`docs/reference/protocol/push-relay.md`).
+/// The relay is not configurable: the app registers with kōan's, the only
+/// one holding the key, and a server must push where its apps registered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PushConfig {
@@ -157,16 +159,11 @@ pub struct PushConfig {
     /// they are linked, does not offer `koanPush`, and the apps signed in to
     /// it do not ask for notifications.
     pub enabled: bool,
-    /// The relay.
-    pub relay: String,
 }
 
 impl Default for PushConfig {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            relay: "https://push.koan.rocks".into(),
-        }
+        Self { enabled: true }
     }
 }
 

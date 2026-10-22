@@ -3117,8 +3117,9 @@ dependencies = [
 
 [[package]]
 name = "koan-relay-client"
-version = "0.1.1"
-source = "git+https://github.com/radiosilence/koan-push-relay?rev=e77960f5a25fc6b39f32b4c5fc7d43e544703095#e77960f5a25fc6b39f32b4c5fc7d43e544703095"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ade43a797b978d15ce40812ef06f3f3506db69f6f4d461b67204ad460150caf0"
 dependencies = [
  "base64 0.23.1",
  "hex",

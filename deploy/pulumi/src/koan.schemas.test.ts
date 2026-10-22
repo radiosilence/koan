@@ -31,7 +31,7 @@ describe("KoanConfSchema", () => {
 
   it("pushes through kōan's relay by default, and can be turned off", () => {
     const c = KoanConfSchema.parse(base);
-    expect(c.push).toEqual({ enabled: true, relay: "https://push.koan.rocks" });
+    expect(c.push).toEqual({ enabled: true });
     expect(KoanConfSchema.parse({ ...base, push: { enabled: false } }).push.enabled).toBe(false);
     expect(() => KoanConfSchema.parse({ ...base, push: { existingSecret: "koan-apns" } })).toThrow();
   });

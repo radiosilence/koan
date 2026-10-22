@@ -23,7 +23,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
     }
 
     private static var token: String?
-    private static var waiting: [String] = []
+    private static var waiting: [(claim: String, from: String?)] = []
     /// Pushes holding the app awake from before the engine was up: a push
     /// after iOS ended the app launches it, and arrives first.
     private static var holdsWaiting = 0
@@ -95,9 +95,11 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let claim = response.notification.request.content.userInfo["koan-e2e"] as? String
+        let info = response.notification.request.content.userInfo
+        let claim = info["koan-e2e"] as? String
+        let from = info["koan-from"] as? String
         Task { @MainActor in
-            if let claim { Self.run(claim) }
+            if let claim { Self.run(claim, from: from) }
         }
         completionHandler()
     }
@@ -126,12 +128,12 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         #endif
     }
 
-    private static func run(_ claim: String) {
+    private static func run(_ claim: String, from: String?) {
         guard let engine else {
-            waiting.append(claim)
+            waiting.append((claim, from))
             return
         }
-        engine.claimNotification(claim: claim)
+        engine.claimNotification(claim: claim, from: from)
     }
 
     private static func flush() {
@@ -147,8 +149,8 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         }
         let claims = waiting
         waiting = []
-        for claim in claims {
-            run(claim)
+        for (claim, from) in claims {
+            run(claim, from: from)
         }
     }
 }

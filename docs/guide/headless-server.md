@@ -347,7 +347,7 @@ export const routes = koan.routes;
 | `state` | `existingClaim` or `hostPath`, mounted at `/config`. Unset, it is an `emptyDir` and the index and accounts go with the pod |
 | `image` | `repository`, `tag` (defaults to the package's version), `pullPolicy` |
 | `nodeSelector` | Needed with a `hostPath`, which is one node's disk |
-| `push` | `enabled` (default `true`) and `relay`: whether the server wakes the iOS app through kōan's push relay when it is suspended. Set `enabled: false` to keep the server off the relay |
+| `push` | `enabled` (default `true`): whether the server wakes the iOS app through kōan's push relay when it is suspended. Set `enabled: false` to keep the server off the relay |
 | `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
 | `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
 

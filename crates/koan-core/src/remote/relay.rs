@@ -144,45 +144,11 @@ pub fn handle_for(server: &str, token: &str, sandbox: bool) -> Option<String> {
     let slot = slot_of(&entry.slot)?;
     let token_bytes = hex::decode(token).ok()?;
     let client = Client::new(RELAY).ok()?;
-    let attester = ATTESTER.lock().clone();
-    let registered = match attester {
-        Some(attester) => {
-            let key = attested_key(&client, &attester, &mut store.key, sandbox);
-            match key {
-                Some(key) => {
-                    let challenge = client.challenge().ok()?;
-                    let data = client_data(&challenge, &token_bytes, &slot, sandbox);
-                    let assertion = attester.assert(hex::decode(&key.key_id).ok()?, sha256(&data));
-                    match assertion {
-                        Some(assertion) => client.register_attested(
-                            &token_bytes,
-                            &slot,
-                            sandbox,
-                            &Assertion {
-                                key: &key.sealed,
-                                challenge: &challenge,
-                                assertion: &assertion,
-                            },
-                        ),
-                        None if sandbox => client.register(&token_bytes, &slot, true),
-                        None => return None,
-                    }
-                }
-                None if sandbox => client.register(&token_bytes, &slot, true),
-                None => {
-                    log::warn!(
-                        "push relay: App Attest is unavailable, so this device cannot register"
-                    );
-                    return None;
-                }
-            }
-        }
-        None if sandbox => client.register(&token_bytes, &slot, true),
-        None => return None,
-    };
-    // A key attested on the way is kept whatever the registration's fate.
+    let registered = register(&client, &mut store.key, &token_bytes, &slot, sandbox);
+    // The slot, and a key attested on the way, are kept whatever the
+    // registration's fate: Apple rations attestations.
     save(&store);
-    let registered = match registered {
+    let registered = match registered? {
         Ok(r) => r,
         Err(e) => {
             log::info!("push relay: registering: {e}");
@@ -197,6 +163,54 @@ pub fn handle_for(server: &str, token: &str, sandbox: bool) -> Option<String> {
     entry.expires = registered.expires;
     save(&store);
     Some(registered.handle)
+}
+
+/// Register `token` under `slot`: attested where the app can attest, and
+/// unattested on the sandbox gateway where it cannot. `None` when it cannot
+/// be asked at all.
+fn register(
+    client: &Client,
+    held: &mut Option<Key>,
+    token: &[u8],
+    slot: &Slot,
+    sandbox: bool,
+) -> Option<Result<koan_relay_client::Registered, koan_relay_client::Error>> {
+    let attested = (|| {
+        let attester = ATTESTER.lock().clone()?;
+        let key = attested_key(client, &attester, held, sandbox)?;
+        let challenge = client.challenge().ok()?;
+        let data = client_data(&challenge, token, slot, sandbox);
+        let assertion = attester.assert(hex::decode(&key.key_id).ok()?, sha256(&data))?;
+        Some(client.register_attested(
+            token,
+            slot,
+            sandbox,
+            &Assertion {
+                key: &key.sealed,
+                challenge: &challenge,
+                assertion: &assertion,
+            },
+        ))
+    })();
+    match attested {
+        Some(registered) => Some(registered),
+        None if sandbox => Some(client.register(token, slot, true)),
+        None => {
+            log::warn!("push relay: App Attest is unavailable, so this device cannot register");
+            None
+        }
+    }
+}
+
+/// The server whose slot is `slot` (hex): which server a notification came
+/// through, by what the relay stamped on it.
+pub fn server_of_slot(slot: &str) -> Option<String> {
+    let _working = WORKING.lock();
+    load()
+        .servers
+        .into_iter()
+        .find(|(_, r)| r.slot.eq_ignore_ascii_case(slot))
+        .map(|(server, _)| server)
 }
 
 /// The key the relay verified, attesting a new one when there is none for

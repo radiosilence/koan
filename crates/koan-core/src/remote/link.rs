@@ -734,49 +734,73 @@ pub fn library_fingerprint(cfg: &Config) -> Option<String> {
 /// to a server.
 static PUSH_TOKEN: Mutex<Option<(String, bool)>> = Mutex::new(None);
 
-/// The relay's handle for this device, and the server it is for.
-static HANDLE: Mutex<Option<(String, String)>> = Mutex::new(None);
+/// The relay's handle for this device, by server, and when it was last
+/// checked against the store, which renews it at half its life.
+static HANDLES: LazyLock<Mutex<HashMap<String, (String, Instant)>>> =
+    LazyLock::new(Default::default);
+const RECHECK_HANDLE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The relay's handle for the Live Activity in `ACTIVITY`: the server, the
-/// activity's token, and the handle, `None` once registering it failed.
-static ACTIVITY_HANDLE: Mutex<Option<(String, String, Option<String>)>> = Mutex::new(None);
+/// activity's token, and the handle.
+static ACTIVITY_HANDLE: Mutex<Option<(String, String, String)>> = Mutex::new(None);
 
-/// Whether a registration with the relay is under way, and when the last one
-/// failed: a link asks again only after a while, not on every frame.
-static REGISTERING: Mutex<(bool, Option<Instant>)> = Mutex::new((false, None));
-const RETRY_REGISTERING: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// Registrations with the relay under way, and when each last failed, by
+/// what they register: a link asks again only after a while, not on every
+/// frame, and one failing holds up no other.
+static REGISTERING: LazyLock<Mutex<HashMap<String, (bool, Option<Instant>)>>> =
+    LazyLock::new(Default::default);
+const RETRY_REGISTERING: Duration = Duration::from_secs(5 * 60);
 
-/// Claims of tapped notifications waiting for a link.
-static CLAIMS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Claims of tapped notifications waiting for a link: the claim, the server
+/// it is for (`None` when the notification named none this device knows),
+/// and when it was tapped.
+static CLAIMS: Mutex<Vec<(String, Option<String>, Instant)>> = Mutex::new(Vec::new());
+/// The server keeps a claim this long (`clients::claims` on the server).
+const CLAIM_LIFE: Duration = Duration::from_secs(10 * 60);
 
-/// Run what a tapped notification was for: `id` is the claim it carried.
-pub fn claim(id: String) {
-    CLAIMS.lock().push(id);
+/// Run what a tapped notification was for: `id` is the claim it carried,
+/// `from` the slot the relay stamped on it (`koan-from`), which names the
+/// server it came through.
+pub fn claim(id: String, from: Option<String>) {
+    let server = from.and_then(|slot| crate::remote::relay::server_of_slot(&slot));
+    CLAIMS.lock().push((id, server, Instant::now()));
     nudge();
     if let Some(up) = LINK.lock().as_ref() {
         up.waker.wake();
     }
 }
 
-/// Register with the relay off the link's thread, then wake the link to
-/// send what came back.
-fn register_in_background(work: impl FnOnce() + Send + 'static, waker: Arc<Waker>) {
+/// Forget every handle the relay gave this device: they were revoked.
+pub fn forget_handles() {
+    HANDLES.lock().clear();
+    *ACTIVITY_HANDLE.lock() = None;
+    REGISTERING.lock().clear();
+}
+
+/// Run `work`, a registration with the relay, off the link's thread, then
+/// wake the link to send what came back. `key` names what it registers; a
+/// `false` from `work` is a failure, and that registration is not tried
+/// again for a while.
+fn register_in_background(
+    key: String,
+    work: impl FnOnce() -> bool + Send + 'static,
+    waker: Arc<Waker>,
+) {
     {
         let mut registering = REGISTERING.lock();
-        if registering.0
-            || registering
-                .1
-                .is_some_and(|at| at.elapsed() < RETRY_REGISTERING)
-        {
+        let entry = registering.entry(key.clone()).or_default();
+        if entry.0 || entry.1.is_some_and(|at| at.elapsed() < RETRY_REGISTERING) {
             return;
         }
-        registering.0 = true;
+        entry.0 = true;
     }
     let _ = std::thread::Builder::new()
         .name("koan-push-relay".into())
         .spawn(move || {
-            work();
-            REGISTERING.lock().0 = false;
+            let worked = work();
+            REGISTERING
+                .lock()
+                .insert(key, (false, (!worked).then(Instant::now)));
             waker.wake();
         });
 }
@@ -807,8 +831,8 @@ pub fn parse_command(json: &str) -> Result<LinkCommand, String> {
 pub fn set_push_token(token: String, sandbox: bool) {
     let changed = PUSH_TOKEN.lock().replace((token.clone(), sandbox)) != Some((token, sandbox));
     if changed {
-        *HANDLE.lock() = None;
-        REGISTERING.lock().1 = None;
+        HANDLES.lock().clear();
+        REGISTERING.lock().clear();
     }
     nudge();
     if let Some(up) = LINK.lock().as_ref() {
@@ -1151,42 +1175,49 @@ impl LinkSession<'_> {
         let Some((token, sandbox)) = PUSH_TOKEN.lock().clone() else {
             return;
         };
-        match HANDLE.lock().clone() {
-            Some((at, handle)) if at == server => {
-                if self.sent_push.as_ref() != Some(&handle) {
-                    out.push(LinkReport::Push {
-                        handle: handle.clone(),
-                    });
-                    self.sent_push = Some(handle);
-                }
-            }
-            _ => {
-                let server = server.clone();
-                register_in_background(
-                    move || match crate::remote::relay::handle_for(&server, &token, sandbox) {
-                        Some(handle) => *HANDLE.lock() = Some((server, handle)),
-                        None => REGISTERING.lock().1 = Some(Instant::now()),
-                    },
-                    self.waker.clone(),
-                );
-                return;
-            }
+        let held = HANDLES.lock().get(&server).cloned();
+        if held
+            .as_ref()
+            .is_none_or(|(_, checked)| checked.elapsed() > RECHECK_HANDLE)
+        {
+            let server = server.clone();
+            register_in_background(
+                format!("device {server}"),
+                move || match crate::remote::relay::handle_for(&server, &token, sandbox) {
+                    Some(handle) => {
+                        HANDLES.lock().insert(server, (handle, Instant::now()));
+                        true
+                    }
+                    None => false,
+                },
+                self.waker.clone(),
+            );
+        }
+        // A handle due a recheck is still sent while it runs: it opens for
+        // weeks past it.
+        let Some((handle, _)) = held else { return };
+        if self.sent_push.as_ref() != Some(&handle) {
+            out.push(LinkReport::Push {
+                handle: handle.clone(),
+            });
+            self.sent_push = Some(handle);
         }
         let wanted = ACTIVITY.lock().clone();
         let shown = match wanted {
             None => return,
             Some(None) => None,
             Some(Some((token, device, _))) => match ACTIVITY_HANDLE.lock().clone() {
-                Some((at, held, handle)) if at == server && held == token => {
-                    let Some(handle) = handle else { return };
-                    Some((handle, device))
-                }
+                Some((at, held, handle)) if at == server && held == token => Some((handle, device)),
                 _ => {
                     let server = server.clone();
                     register_in_background(
-                        move || {
-                            let handle = crate::remote::relay::activity_handle(&server, &token);
-                            *ACTIVITY_HANDLE.lock() = Some((server, token, handle));
+                        format!("activity {server}"),
+                        move || match crate::remote::relay::activity_handle(&server, &token) {
+                            Some(handle) => {
+                                *ACTIVITY_HANDLE.lock() = Some((server, token, handle));
+                                true
+                            }
+                            None => false,
                         },
                         self.waker.clone(),
                     );
@@ -1209,8 +1240,23 @@ impl wire::Session for LinkSession<'_> {
     fn outgoing(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         self.relay(&mut out);
-        for id in CLAIMS.lock().drain(..) {
-            out.push(LinkReport::Claim { id });
+        {
+            // A claim goes to the server whose notification carried it, and
+            // waits for a link to that server for as long as it is kept there.
+            let mut claims = CLAIMS.lock();
+            claims.retain(|(id, server, at)| {
+                if at.elapsed() > CLAIM_LIFE {
+                    return false;
+                }
+                if server
+                    .as_ref()
+                    .is_some_and(|s| Some(s) != self.library.as_ref())
+                {
+                    return true;
+                }
+                out.push(LinkReport::Claim { id: id.clone() });
+                false
+            });
         }
         if let Some(up) = LINK.lock().as_mut() {
             out.append(&mut up.outbox);

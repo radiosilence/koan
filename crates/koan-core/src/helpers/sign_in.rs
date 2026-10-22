@@ -37,6 +37,17 @@ pub enum SignInError {
 /// those tracks are still real, they just cannot be fetched until someone
 /// signs in again.
 pub fn sign_out() -> Result<(), crate::config::ConfigError> {
+    // Retire the push relay's handles first, so the server holds none that
+    // still reach this device. The device registers afresh for any server
+    // it signs in to.
+    if let Some(server) = crate::remote::link::library_fingerprint(&Config::load()?) {
+        let _ = std::thread::Builder::new()
+            .name("koan-push-revoke".into())
+            .spawn(move || {
+                crate::remote::relay::revoke(&server);
+                crate::remote::link::forget_handles();
+            });
+    }
     crate::remote::devices::forget_shares();
     Config::persist(|cfg| {
         cfg.remote.enabled = false;

@@ -503,8 +503,7 @@ stay reachable once iOS has suspended the app.
 
 ```toml
 [push]
-enabled = true                       # false: no push, and phones are asked for no notifications
-relay = "https://push.koan.rocks"    # kōan's push relay (default)
+enabled = true    # false: no push, and phones are asked for no notifications
 ```
 
 A linked app is reached over its WebSocket. iOS suspends a backgrounded app
@@ -521,6 +520,8 @@ so the server sends them through kōan's push relay, which holds that key. The
 server holds handles the app gave it, never a device token, and the relay
 decides what a phone shows: its own text, never the server's. What the relay
 sees and keeps, and why, is in the [push relay protocol](protocol/push-relay.md).
+The relay is not configurable: the app registers with kōan's, the only one
+holding that key, and the server must push where the app registered.
 
 With `enabled = false` the server does not use the relay at all: it does not
 list the `koanPush` extension, apps signed in to it ask for no notifications

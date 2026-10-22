@@ -449,6 +449,19 @@ impl Registry {
         }
     }
 
+    /// Send `envelope` down `device`'s link as it stands, ack id and all, as
+    /// its outbox is when it links: a command kept for it while it was away.
+    pub(crate) fn send_kept(&self, username: &str, device: &str, envelope: Envelope) {
+        if let Some(e) = self
+            .entries
+            .lock()
+            .iter()
+            .find(|e| e.info.username == username && e.device == device)
+        {
+            let _ = e.tx.send(envelope);
+        }
+    }
+
     /// Send `cmd` to `device` if it is linked now, and nowhere else.
     pub(crate) fn send_live(&self, username: &str, device: &str, cmd: LinkCommand) {
         if let Some(e) = self

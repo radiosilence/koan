@@ -167,7 +167,6 @@ export function createKoan(
                   // strangers reach.
                   { name: "KOAN_SERVER__URL", value: `https://${conf.hostname}` },
                   { name: "KOAN_PUSH__ENABLED", value: String(conf.push.enabled) },
-                  { name: "KOAN_PUSH__RELAY", value: conf.push.relay },
                 ],
                 ports: [{ name: "api", containerPort: conf.api.port }],
                 readinessProbe: { tcpSocket: { port: "api" }, periodSeconds: 10 },

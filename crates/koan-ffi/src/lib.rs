@@ -831,10 +831,12 @@ impl KoanEngine {
     }
 
     /// A notification the person tapped: `claim` is what it carried under
-    /// `koan-e2e`. The link sends it, and the server runs the command it kept
-    /// for it here, as if sent over the link; links now if it is not up.
-    pub fn claim_notification(&self, claim: String) {
-        koan_core::remote::link::claim(claim);
+    /// `koan-e2e`, and `from` the slot the relay stamped on it (`koan-from`),
+    /// which names the server. The link to that server sends it, and the
+    /// server sends down the command it kept for it; links now if it is not
+    /// up.
+    pub fn claim_notification(&self, claim: String, from: Option<String>) {
+        koan_core::remote::link::claim(claim, from);
     }
 
     /// Let the app attest this install for the push relay: App Attest, which

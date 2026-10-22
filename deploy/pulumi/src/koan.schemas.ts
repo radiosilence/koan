@@ -76,7 +76,6 @@ export const KoanConfSchema = z.strictObject({
   push: z
     .strictObject({
       enabled: z.boolean().default(true),
-      relay: z.string().url().default("https://push.koan.rocks"),
     })
     .prefault({}),
   /**

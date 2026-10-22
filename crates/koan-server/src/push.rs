@@ -167,13 +167,14 @@ pub fn pusher() -> Option<&'static Pusher> {
             log::info!("push: off");
             return None;
         }
-        match Client::new(&cfg.push.relay) {
+        let relay = koan_core::remote::relay::RELAY;
+        match Client::new(relay) {
             Ok(client) => {
-                log::info!("push: through {}", cfg.push.relay);
+                log::info!("push: through {relay}");
                 Some(Pusher { client })
             }
             Err(e) => {
-                log::warn!("push: the relay {} cannot be used: {e}", cfg.push.relay);
+                log::warn!("push: the relay {relay} cannot be used: {e}");
                 None
             }
         }

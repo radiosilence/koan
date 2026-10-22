@@ -31,7 +31,7 @@ final class AppAttest: PushAttester, @unchecked Sendable {
     }
 
     /// The value a completion handler gives, waited for.
-    private func wait<T>(_ start: (@escaping (T?, Error?) -> Void) -> Void) -> T? {
+    private func wait<T: Sendable>(_ start: (@escaping @Sendable (T?, Error?) -> Void) -> Void) -> T? {
         let semaphore = DispatchSemaphore(value: 0)
         nonisolated(unsafe) var result: T?
         start { value, error in

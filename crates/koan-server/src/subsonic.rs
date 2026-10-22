@@ -6162,24 +6162,14 @@ async fn link_session(
                                 })
                                 .await;
                             }
-                            // A notification tapped: run what it was for, here.
+                            // A notification tapped: what it was for goes down
+                            // this link, in order with what follows, and with
+                            // the ack id it was asked with.
                             Ok(LinkReport::Claim { id }) => {
-                                let (username, device) = (username.clone(), device.clone());
-                                tokio::task::spawn_blocking(move || {
-                                    match crate::clients::claims::take(&device, &username, &id) {
-                                        Some(envelope) => {
-                                            if let Err(e) = registry.send_with(
-                                                Some(&username),
-                                                Some(&device),
-                                                envelope.command,
-                                                None,
-                                            ) {
-                                                log::info!("link: claim for {device}: {e}");
-                                            }
-                                        }
-                                        None => log::info!("link: {device} claimed nothing, or too late"),
-                                    }
-                                });
+                                match crate::clients::claims::take(&device, &username, &id) {
+                                    Some(envelope) => registry.send_kept(&username, &device, envelope),
+                                    None => log::info!("link: {device} claimed nothing, or too late"),
+                                }
                             }
                             Ok(LinkReport::Command {
                                 to,
