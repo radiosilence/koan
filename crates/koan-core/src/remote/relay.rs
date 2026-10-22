@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use koan_relay_client::{Assertion, Client, Slot, client_data};
+use koan_relay_client::{Assertion, Client, Error, Registered, Slot, client_data};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -79,6 +79,11 @@ struct Store {
     /// By server fingerprint (`link::library_fingerprint`).
     servers: HashMap<String, Registration>,
     key: Option<Key>,
+    /// Revokers whose revocation the relay has not yet confirmed. Nothing
+    /// registers until they are settled: a handle minted before a revocation
+    /// lands is retired by it.
+    #[serde(default)]
+    revoking: Vec<String>,
 }
 
 fn path() -> PathBuf {
@@ -92,13 +97,13 @@ fn load() -> Store {
         .unwrap_or_default()
 }
 
+/// Written as the configuration is: it holds revokers.
 fn save(store: &Store) {
     let Ok(json) = serde_json::to_vec_pretty(store) else {
         return;
     };
-    let tmp = path().with_extension("json.tmp");
-    if std::fs::write(&tmp, json).is_ok() {
-        let _ = std::fs::rename(&tmp, path());
+    if let Err(e) = crate::config::write_private(&path(), &json) {
+        log::warn!("push relay: saving registrations: {e}");
     }
 }
 
@@ -128,6 +133,10 @@ fn slot_of(hex_slot: &str) -> Option<Slot> {
 pub fn handle_for(server: &str, token: &str, sandbox: bool) -> Option<String> {
     let _working = WORKING.lock();
     let mut store = load();
+    if !settle_revocations(&mut store) {
+        save(&store);
+        return None;
+    }
     let entry = store.servers.entry(server.to_string()).or_default();
     if entry.slot.is_empty() {
         let mut slot = [0u8; 16];
@@ -174,7 +183,7 @@ fn register(
     token: &[u8],
     slot: &Slot,
     sandbox: bool,
-) -> Option<Result<koan_relay_client::Registered, koan_relay_client::Error>> {
+) -> Option<Result<Registered, Error>> {
     let attested = (|| {
         let attester = ATTESTER.lock().clone()?;
         let key = attested_key(client, &attester, held, sandbox)?;
@@ -192,6 +201,12 @@ fn register(
             },
         ))
     })();
+    // The relay no longer takes this key (its sealing key rotated, or the key
+    // was refused): attest a new one next time.
+    if let Some(Err(Error::Bad(why))) = &attested {
+        log::info!("push relay: the attested key was refused: {why}");
+        *held = None;
+    }
     match attested {
         Some(registered) => Some(registered),
         None if sandbox => Some(client.register(token, slot, true)),
@@ -204,8 +219,8 @@ fn register(
 
 /// The server whose slot is `slot` (hex): which server a notification came
 /// through, by what the relay stamped on it.
+/// Read without waiting for a registration: the file is replaced whole.
 pub fn server_of_slot(slot: &str) -> Option<String> {
-    let _working = WORKING.lock();
     load()
         .servers
         .into_iter()
@@ -229,7 +244,19 @@ fn attested_key(
     }
     let challenge = client.challenge().ok()?;
     let (key_id, attestation) = attester.attest(sha256(challenge.as_bytes()))?;
-    match client.attest(&key_id, &attestation, &challenge) {
+    // Apple attests a key once, so an attestation lost on the way to the
+    // relay costs a key: try it again while the challenge is good.
+    let mut verified = client.attest(&key_id, &attestation, &challenge);
+    for wait in [2, 10, 30] {
+        match &verified {
+            Err(Error::Transport(_) | Error::Unavailable(_) | Error::Limited(_)) => {
+                std::thread::sleep(std::time::Duration::from_secs(wait));
+                verified = client.attest(&key_id, &attestation, &challenge);
+            }
+            _ => break,
+        }
+    }
+    match verified {
         Ok(attested) => {
             let key = Key {
                 key_id: hex::encode(key_id),
@@ -268,19 +295,18 @@ pub fn activity_handle(server: &str, token: &str) -> Option<String> {
 }
 
 /// Retire every handle this device has been given for `server`, and forget
-/// it: what signing out of that server does. Its other servers' handles are
-/// retired with it, so they register again on their next link.
+/// it: what signing out of that server, or into another account, does. Its
+/// other servers' handles are retired with it, so they register again on
+/// their next link. A revocation the relay does not confirm now is kept and
+/// sent again before the next registration.
 pub fn revoke(server: &str) {
     let _working = WORKING.lock();
     let mut store = load();
     let Some(entry) = store.servers.remove(server) else {
         return;
     };
-    if !entry.revoker.is_empty()
-        && let Ok(client) = Client::new(RELAY)
-        && let Err(e) = client.revoke(&entry.revoker)
-    {
-        log::info!("push relay: revoking: {e}");
+    if !entry.revoker.is_empty() {
+        store.revoking.push(entry.revoker);
     }
     // One revocation retires every handle the device holds.
     for other in store.servers.values_mut() {
@@ -288,4 +314,27 @@ pub fn revoke(server: &str) {
         other.revoker.clear();
     }
     save(&store);
+    settle_revocations(&mut store);
+    save(&store);
+}
+
+/// Send the revocations the relay has not confirmed. Whether none is left.
+fn settle_revocations(store: &mut Store) -> bool {
+    if store.revoking.is_empty() {
+        return true;
+    }
+    let Ok(client) = Client::new(RELAY) else {
+        return false;
+    };
+    // `Gone`: an earlier attempt landed and retired this revoker with the rest.
+    store
+        .revoking
+        .retain(|revoker| match client.revoke(revoker) {
+            Ok(()) | Err(Error::Gone) => false,
+            Err(e) => {
+                log::info!("push relay: revoking: {e}");
+                true
+            }
+        });
+    store.revoking.is_empty()
 }

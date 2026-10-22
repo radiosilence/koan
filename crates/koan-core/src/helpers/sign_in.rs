@@ -37,17 +37,7 @@ pub enum SignInError {
 /// those tracks are still real, they just cannot be fetched until someone
 /// signs in again.
 pub fn sign_out() -> Result<(), crate::config::ConfigError> {
-    // Retire the push relay's handles first, so the server holds none that
-    // still reach this device. The device registers afresh for any server
-    // it signs in to.
-    if let Some(server) = crate::remote::link::library_fingerprint(&Config::load()?) {
-        let _ = std::thread::Builder::new()
-            .name("koan-push-revoke".into())
-            .spawn(move || {
-                crate::remote::relay::revoke(&server);
-                crate::remote::link::forget_handles();
-            });
-    }
+    retire_push(&Config::load()?);
     crate::remote::devices::forget_shares();
     Config::persist(|cfg| {
         cfg.remote.enabled = false;
@@ -60,6 +50,21 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
     crate::remote::link::relink();
     crate::remote::nearby::readvertise();
     Ok(())
+}
+
+/// Retire the push relay's handles for the server `cfg` is signed in to, so
+/// it holds none that still reach this device once the account is gone. The
+/// device registers afresh for whichever server it is signed in to next.
+fn retire_push(cfg: &Config) {
+    let Some(server) = crate::remote::link::library_fingerprint(cfg) else {
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name("koan-push-revoke".into())
+        .spawn(move || {
+            crate::remote::relay::revoke(&server);
+            crate::remote::link::forget_handles();
+        });
 }
 
 /// Sign in to a Subsonic server with a password and remember it.
@@ -183,7 +188,13 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
 /// Store a credential already checked against the server, replacing whichever
 /// kind was there.
 fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
-    let switching = Config::load().is_ok_and(|c| !same_account(&c.remote, url, username));
+    let before = Config::load();
+    let switching = before
+        .as_ref()
+        .is_ok_and(|c| !same_account(&c.remote, url, username));
+    if switching && let Ok(before) = &before {
+        retire_push(before);
+    }
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
         // Another server's own address; this one's comes with its profile.

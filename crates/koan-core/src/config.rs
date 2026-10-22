@@ -1817,6 +1817,25 @@ fn write_document(
     Ok(())
 }
 
+/// Write `contents` to `path` as the configuration files are written: whole,
+/// readable by this user alone, and on tvOS kept through a purge of Caches.
+pub(crate) fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let target = link_target(path);
+    let temp = unique_beside(&target);
+    let written =
+        write_new(&temp, &target, contents, true).and_then(|()| fs::rename(&temp, &target));
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written?;
+    #[cfg(target_os = "tvos")]
+    kept::written(path, contents);
+    Ok(())
+}
+
 /// Where a write to `path` lands: a symlink, as dotfiles keep, is followed
 /// rather than replaced, even when what it points at does not exist yet.
 fn link_target(path: &Path) -> PathBuf {
@@ -2072,7 +2091,9 @@ mod kept {
         kCFPreferencesCurrentApplication,
     };
 
-    const FILES: [&str; 2] = ["config.toml", "config.local.toml"];
+    /// The push relay's registrations are kept too: without the revoker, a
+    /// television could not retire the handles its servers hold.
+    const FILES: [&str; 3] = ["config.toml", "config.local.toml", "push-relay.json"];
 
     /// Once per process: a file that is missing comes back from the
     /// preferences, and one that is present is copied into them, which is how

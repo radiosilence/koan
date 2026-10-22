@@ -755,7 +755,8 @@ const RETRY_REGISTERING: Duration = Duration::from_secs(5 * 60);
 /// Claims of tapped notifications waiting for a link: the claim, the server
 /// it is for (`None` when the notification named none this device knows),
 /// and when it was tapped.
-static CLAIMS: Mutex<Vec<(String, Option<String>, Instant)>> = Mutex::new(Vec::new());
+static CLAIMS: Mutex<Vec<Claim>> = Mutex::new(Vec::new());
+type Claim = (String, Option<String>, Instant);
 /// The server keeps a claim this long (`clients::claims` on the server).
 const CLAIM_LIFE: Duration = Duration::from_secs(10 * 60);
 
@@ -774,16 +775,17 @@ pub fn claim(id: String, from: Option<String>) {
 /// The claims for a link to `server`. A claim goes to the server whose
 /// notification carried it, and waits for a link to that server for as long
 /// as the server keeps it.
-fn take_claims(server: Option<&str>) -> Vec<String> {
+fn take_claims(server: Option<&str>) -> Vec<Claim> {
     let mut taken = Vec::new();
-    CLAIMS.lock().retain(|(id, for_server, at)| {
+    CLAIMS.lock().retain(|claim| {
+        let (_, for_server, at) = claim;
         if at.elapsed() > CLAIM_LIFE {
             return false;
         }
         if for_server.as_deref().is_some_and(|s| Some(s) != server) {
             return true;
         }
-        taken.push(id.clone());
+        taken.push(claim.clone());
         false
     });
     taken
@@ -1148,8 +1150,11 @@ fn serve(
         outbox: Vec::new(),
     });
     crate::remote::devices::set_linked(true);
+    let pushes = profile::current().is_some_and(|p| p.offers(profile::PUSH));
     let mut session = LinkSession {
         local,
+        pushes,
+        claimed: Vec::new(),
         sent: None,
         sent_push: None,
         sent_activity: None,
@@ -1159,11 +1164,21 @@ fn serve(
         account,
         library,
     };
-    wire::drive(socket, fd, &waker, &mut session)
+    let served = wire::drive(socket, fd, &waker, &mut session);
+    // Claims sent down a link that then failed may not have arrived: they go
+    // up the next one. One the server already ran claims nothing there.
+    if served.is_err() {
+        CLAIMS.lock().append(&mut session.claimed);
+    }
+    served
 }
 
 struct LinkSession<'a> {
     local: &'a Local,
+    /// The server offers `koanPush`, as probed before the link opened.
+    pushes: bool,
+    /// Claims sent on this link.
+    claimed: Vec<Claim>,
     sent: Option<(LinkState, Instant)>,
     sent_push: Option<String>,
     sent_activity: Option<Option<(String, String)>>,
@@ -1186,9 +1201,7 @@ impl LinkSession<'_> {
     /// sent once there are some. A server that does not push is given
     /// nothing.
     fn relay(&mut self, out: &mut Vec<LinkReport>) {
-        let pushes = crate::remote::profile::current()
-            .is_some_and(|p| p.offers(crate::remote::profile::PUSH));
-        let (Some(server), true) = (self.library.clone(), pushes) else {
+        let (Some(server), true) = (self.library.clone(), self.pushes) else {
             return;
         };
         let Some((token, sandbox)) = PUSH_TOKEN.lock().clone() else {
@@ -1259,8 +1272,11 @@ impl wire::Session for LinkSession<'_> {
     fn outgoing(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         self.relay(&mut out);
-        for id in take_claims(self.library.as_deref()) {
-            out.push(LinkReport::Claim { id });
+        for claim in take_claims(self.library.as_deref()) {
+            out.push(LinkReport::Claim {
+                id: claim.0.clone(),
+            });
+            self.claimed.push(claim);
         }
         if let Some(up) = LINK.lock().as_mut() {
             out.append(&mut up.outbox);
@@ -1527,9 +1543,10 @@ mod tests {
             ),
             ("any".to_string(), None, Instant::now()),
         ]);
-        assert_eq!(take_claims(Some("server-a")), ["a", "any"]);
-        assert_eq!(take_claims(Some("server-a")), Vec::<String>::new());
-        assert_eq!(take_claims(Some("server-b")), ["b"]);
+        let ids = |claims: Vec<super::Claim>| claims.into_iter().map(|c| c.0).collect::<Vec<_>>();
+        assert_eq!(ids(take_claims(Some("server-a"))), ["a", "any"]);
+        assert!(take_claims(Some("server-a")).is_empty());
+        assert_eq!(ids(take_claims(Some("server-b"))), ["b"]);
     }
 
     #[test]
