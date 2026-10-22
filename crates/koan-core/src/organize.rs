@@ -272,7 +272,8 @@ impl TrackMetadata {
         if let Some(d) = meta.disc {
             fields.insert("discnumber".into(), d.to_string());
         }
-        if let Some(ref date) = meta.date {
+        // As the library dates the album: the original release first.
+        if let Some(date) = meta.original_date.as_ref().or(meta.date.as_ref()) {
             fields.insert("date".into(), s(date));
         }
         if let Some(ref label) = meta.label {

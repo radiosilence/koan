@@ -1,0 +1,1 @@
+- **Organize's `%date%` is the date the library shows.** With albums dated by their original release, `%date%` is the original release date where one is tagged, for files in the library and files it does not know alike, so a preview and the move it authorises agree.

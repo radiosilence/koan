@@ -1678,16 +1678,23 @@ pub struct SubsonicAlbum {
     /// MusicBrainz release group types, primary first: `["album", "live"]`.
     #[serde(default)]
     pub release_types: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "item_date")]
     pub original_release_date: Option<ItemDate>,
 }
 
 /// OpenSubsonic's `ItemDate`: a date with as much of it as is known.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ItemDate {
-    pub year: Option<i32>,
-    pub month: Option<u32>,
-    pub day: Option<u32>,
+    pub year: Option<i64>,
+    pub month: Option<i64>,
+    pub day: Option<i64>,
+}
+
+/// An `ItemDate` the server may have sent in some other shape, as absent
+/// rather than failing the album it came with.
+fn item_date<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<ItemDate>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 impl ItemDate {
@@ -1733,7 +1740,7 @@ pub struct SubsonicAlbumFull {
     /// MusicBrainz release group types, primary first: `["album", "live"]`.
     #[serde(default)]
     pub release_types: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "item_date")]
     pub original_release_date: Option<ItemDate>,
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
@@ -2400,6 +2407,13 @@ mod tests {
         );
         assert_eq!(date(r#"{"year": 1979}"#).as_deref(), Some("1979"));
         assert_eq!(date(r#"{"year": 0, "month": 0, "day": 0}"#), None);
+
+        // Any other shape is no date, not a failed album.
+        let album: SubsonicAlbum = serde_json::from_str(
+            r#"{"id": "1", "name": "A", "originalReleaseDate": "1979-06-15"}"#,
+        )
+        .unwrap();
+        assert!(album.original_release_date.is_none());
     }
 
     #[test]
