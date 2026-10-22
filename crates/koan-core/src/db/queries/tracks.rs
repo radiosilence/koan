@@ -494,7 +494,8 @@ pub fn adopt_moved_files(
 }
 
 /// What playing an artist plays: every track on the records they are the album
-/// artist of, ordered chronologically (album date, disc, track#). The records
+/// artist of, by section as their page groups them and then chronologically
+/// (album date, disc, track#). The records
 /// they only feature on are left out — see `AlbumQuery::features_of`. An
 /// artist with no records of their own has the tracks credited to them
 /// instead, so playing them always plays something.
@@ -517,7 +518,8 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
             OR ((t.artist_id = ?1
                  OR t.id IN (SELECT track_id FROM track_credits WHERE artist_id = ?1))
                 AND NOT EXISTS (SELECT 1 FROM album_artist_links WHERE artist_id = ?1))
-         ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
+         ORDER BY koan_release_section(al.release_types), al.date, al.title COLLATE LIBRARY,
+                  t.disc, t.track_number",
     )?;
     let rows = stmt
         .query_map(params![artist_id], row_to_track_row)?

@@ -587,7 +587,6 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
     };
     let date = pick(|m| m.date.clone());
     let label = pick(|m| m.label.clone());
-    let release_types = pick(|m| m.release_types.clone());
     let codec = pick(|m| m.codec.clone());
     let added_at = [local.as_ref(), remote.as_ref()]
         .into_iter()
@@ -625,7 +624,6 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
                 None,
                 codec.as_deref(),
                 label.as_deref(),
-                release_types.as_deref(),
                 pick(|m| m.album_mbid.clone()).as_deref(),
                 added_at,
             )?,
@@ -743,9 +741,9 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
         before.album_id.filter(|a| Some(*a) != after.album_id),
         before.artist_id.filter(|a| Some(*a) != after.artist_id),
     )?;
-    derive_disc_total(conn, album_id)?;
+    derive_album_from_sources(conn, album_id)?;
     if let Some(left) = before.album_id.filter(|a| *a != album_id) {
-        derive_disc_total(conn, left)?;
+        derive_album_from_sources(conn, left)?;
     }
     Ok(None)
 }
@@ -922,19 +920,37 @@ pub(crate) const DISC_TOTAL: &str = "(SELECT CASE WHEN COUNT(*) > 0 THEN
        LEFT JOIN remote_entries r ON r.track_id = t.id
       WHERE t.album_id = albums.id)";
 
-/// Derive an album's disc total again after its tracks changed.
-pub(crate) fn derive_disc_total(conn: &Connection, album: i64) -> rusqlite::Result<()> {
-    let found = conn
+/// An album's release types as a correlated subquery on `albums`: what most
+/// of its tracks say, each by its file where the file names them and its
+/// server entry otherwise. One stray file tagged otherwise does not move the
+/// record; NULL when none names a type.
+pub(crate) const RELEASE_TYPES: &str = "(SELECT COALESCE(f.release_types, r.release_types) AS v
+       FROM tracks t
+       LEFT JOIN local_files f ON f.track_id = t.id
+       LEFT JOIN remote_entries r ON r.track_id = t.id
+      WHERE t.album_id = albums.id AND v IS NOT NULL
+      GROUP BY v ORDER BY COUNT(*) DESC, v LIMIT 1)";
+
+/// Derive what an album takes from all its tracks' sources again after its
+/// tracks changed: its disc total and its release types.
+pub(crate) fn derive_album_from_sources(conn: &Connection, album: i64) -> rusqlite::Result<()> {
+    type Found = (Option<i32>, Option<i32>, Option<String>, Option<String>);
+    let found: Option<Found> = conn
         .prepare_cached(&format!(
-            "SELECT total_discs, {DISC_TOTAL} FROM albums WHERE id = ?1"
+            "SELECT total_discs, {DISC_TOTAL}, release_types, {RELEASE_TYPES}
+               FROM albums WHERE id = ?1"
         ))?
         .query_row(params![album], |r| {
-            Ok((r.get::<_, Option<i32>>(0)?, r.get::<_, Option<i32>>(1)?))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })
         .optional()?;
-    if let Some((_, derived)) = found.filter(|(stored, derived)| stored != derived) {
-        conn.prepare_cached("UPDATE albums SET total_discs = ?1 WHERE id = ?2")?
-            .execute(params![derived, album])?;
+    if let Some((_, discs, _, types)) =
+        found.filter(|(discs, d_discs, types, d_types)| discs != d_discs || types != d_types)
+    {
+        conn.prepare_cached(
+            "UPDATE albums SET total_discs = ?1, release_types = ?2 WHERE id = ?3",
+        )?
+        .execute(params![discs, types, album])?;
     }
     Ok(())
 }
@@ -1175,7 +1191,7 @@ fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError
     super::tracks::prune_if_empty(conn, album, artist)?;
     if let Some(album) = album {
         derive_album_credits(conn, album)?;
-        derive_disc_total(conn, album)?;
+        derive_album_from_sources(conn, album)?;
     }
     for artist in credited {
         super::tracks::prune_if_empty(conn, None, Some(artist))?;
@@ -1263,7 +1279,7 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
     }
     if let Some(album) = album {
         recount_album_credits(conn, album)?;
-        derive_disc_total(conn, album)?;
+        derive_album_from_sources(conn, album)?;
     }
     for artist in credited {
         super::tracks::prune_if_empty(conn, None, Some(artist))?;

@@ -732,7 +732,7 @@ final class AlbumTile: NSCollectionViewItem {
         codec.string = album.codec?.uppercased()
         badge.isHidden = album.codec == nil
         release.string = album.releaseBadge
-        view.setAccessibilityLabel([album.title, album.artistCredit.text, album.year.map(String.init)].compactMap { $0 }.joined(separator: ", "))
+        view.setAccessibilityLabel([album.title, album.releaseBadge, album.artistCredit.text, album.year.map(String.init)].compactMap { $0 }.joined(separator: ", "))
         view.setAccessibilityRole(.group)
         // What the SwiftUI tile's buttons offered VoiceOver.
         view.setAccessibilityCustomActions([

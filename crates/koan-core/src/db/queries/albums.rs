@@ -42,7 +42,6 @@ pub fn get_or_create_album(
     total_tracks: Option<i32>,
     codec: Option<&str>,
     label: Option<&str>,
-    release_types: Option<&str>,
     release: Option<&str>,
     // `added_at`: remote sync passes the server's `created`, a local scan the
     // earliest mtime among the album's files. Both ISO 8601 UTC, so the two
@@ -58,11 +57,10 @@ pub fn get_or_create_album(
         Option<String>,
         Option<String>,
         Option<String>,
-        Option<String>,
     );
     let candidates: Vec<Stored> = conn
         .prepare_cached(
-            "SELECT id, mbid, codec, date, label, added_at, release_types FROM albums
+            "SELECT id, mbid, codec, date, label, added_at FROM albums
              WHERE title_key = ?1 AND artist_id = ?2 ORDER BY id",
         )?
         .query_map(params![key, artist_id], |row| {
@@ -73,7 +71,6 @@ pub fn get_or_create_album(
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
-                row.get(6)?,
             ))
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -86,7 +83,7 @@ pub fn get_or_create_album(
         None => unclaimed().or(candidates.first()),
     };
 
-    if let Some((id, s_mbid, s_codec, s_date, s_label, s_added_at, s_types)) = existing {
+    if let Some((id, s_mbid, s_codec, s_date, s_label, s_added_at)) = existing {
         // Update mutable fields so rescans pick up format upgrades (e.g. MP3→FLAC)
         // or corrected dates. Every track of the album passes through here, so
         // the row is only written when one of them brings something new.
@@ -103,7 +100,6 @@ pub fn get_or_create_album(
             label.or(s_label.as_deref()),
             s_mbid.as_deref().or(release),
             earliest,
-            release_types.or(s_types.as_deref()),
         );
         let stored = (
             s_codec.as_deref(),
@@ -111,16 +107,14 @@ pub fn get_or_create_album(
             s_label.as_deref(),
             s_mbid.as_deref(),
             s_added_at.as_deref(),
-            s_types.as_deref(),
         );
         if merged != stored {
             conn.prepare_cached(
-                "UPDATE albums SET codec = ?1, date = ?2, label = ?3, mbid = ?4, added_at = ?5,
-                                  release_types = ?6
-                 WHERE id = ?7",
+                "UPDATE albums SET codec = ?1, date = ?2, label = ?3, mbid = ?4, added_at = ?5
+                 WHERE id = ?6",
             )?
             .execute(params![
-                merged.0, merged.1, merged.2, merged.3, merged.4, merged.5, id
+                merged.0, merged.1, merged.2, merged.3, merged.4, id
             ])?;
         }
         return Ok(*id);
@@ -128,8 +122,8 @@ pub fn get_or_create_album(
 
     conn.prepare_cached(
         "INSERT INTO albums (title, title_key, artist_id, date, total_discs, total_tracks, codec,
-                             label, mbid, added_at, release_types)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                             label, mbid, added_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )?
     .execute(params![
         title,
@@ -141,8 +135,7 @@ pub fn get_or_create_album(
         codec,
         label,
         release,
-        added_at,
-        release_types
+        added_at
     ])?;
     Ok(conn.last_insert_rowid())
 }
@@ -171,8 +164,6 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
                  mbid = COALESCE(mbid, (SELECT mbid FROM albums WHERE id = ?2)),
                  date = COALESCE(date, (SELECT date FROM albums WHERE id = ?2)),
                  label = COALESCE(label, (SELECT label FROM albums WHERE id = ?2)),
-                 release_types = COALESCE(release_types,
-                                          (SELECT release_types FROM albums WHERE id = ?2)),
                  codec = COALESCE(codec, (SELECT codec FROM albums WHERE id = ?2)),
                  sort_name = COALESCE(sort_name, (SELECT sort_name FROM albums WHERE id = ?2)),
                  total_tracks = COALESCE(total_tracks, (SELECT total_tracks FROM albums WHERE id = ?2)),
@@ -198,7 +189,7 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         }
         // The tracks it gave up count towards the album they joined.
         super::sources::recount_album_credits(conn, keep)?;
-        super::sources::derive_disc_total(conn, keep)?;
+        super::sources::derive_album_from_sources(conn, keep)?;
         for artist in credited {
             super::tracks::prune_if_empty(conn, None, Some(artist))?;
         }
@@ -430,6 +421,11 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         AlbumOrder::LastPlayed if q.played.is_none() => AlbumOrder::RecentlyAdded,
         order => order,
     };
+    // An artist's records come grouped as their page draws them, so a pick
+    // across the grid and the page's order agree.
+    if q.artist_id.is_some() && !matches!(order, AlbumOrder::Random(_)) {
+        sql.push_str("koan_release_section(al.release_types), ");
+    }
     match (order, q.search, q.ids) {
         (AlbumOrder::Random(seed), ..) => {
             params.push(Box::new(seed));
@@ -752,9 +748,9 @@ pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
 /// Record what the server knows about an album beyond what a track carries.
 ///
 /// `get_or_create_album` is reached through a track and only ever sees what a
-/// file's tags say. Track totals, the record label, its types and the
-/// MusicBrainz id are properties of the release, and the server hands them
-/// over in the same response the sync already paged through.
+/// file's tags say. Track totals, the record label and the MusicBrainz id are
+/// properties of the release, and the server hands all three over in the same
+/// response the sync already paged through.
 ///
 /// Fills blanks rather than overwriting, so a locally-scanned album keeps what
 /// its tags said.
@@ -765,24 +761,15 @@ pub fn enrich_remote_album(
     sort_name: Option<&str>,
     total_tracks: Option<i32>,
     label: Option<&str>,
-    release_types: Option<&str>,
 ) -> Result<(), DbError> {
     conn.execute(
         "UPDATE albums SET
-             mbid          = COALESCE(mbid, ?2),
-             sort_name     = COALESCE(sort_name, ?3),
-             total_tracks  = COALESCE(total_tracks, ?4),
-             label         = COALESCE(label, ?5),
-             release_types = COALESCE(release_types, ?6)
+             mbid         = COALESCE(mbid, ?2),
+             sort_name    = COALESCE(sort_name, ?3),
+             total_tracks = COALESCE(total_tracks, ?4),
+             label        = COALESCE(label, ?5)
          WHERE remote_id = ?1",
-        params![
-            remote_id,
-            mbid,
-            sort_name,
-            total_tracks,
-            label,
-            release_types
-        ],
+        params![remote_id, mbid, sort_name, total_tracks, label],
     )?;
     Ok(())
 }
@@ -1136,7 +1123,6 @@ mod tests {
             Some("Warp"),
             None,
             None,
-            None,
         )
         .unwrap();
         let a2 = get_or_create_album(
@@ -1148,7 +1134,6 @@ mod tests {
             None,
             Some("FLAC"),
             Some("Warp"),
-            None,
             None,
             None,
         )
@@ -1170,7 +1155,6 @@ mod tests {
             None,
             None,
             Some("MP3"),
-            None,
             None,
             None,
             None,
@@ -1196,7 +1180,6 @@ mod tests {
             None,
             None,
             Some("FLAC"),
-            None,
             None,
             None,
             None,
@@ -1237,7 +1220,6 @@ mod tests {
             Some("Warp"),
             None,
             None,
-            None,
         )
         .unwrap();
 
@@ -1251,7 +1233,6 @@ mod tests {
             None,
             None, // no codec
             None, // no label
-            None,
             None,
             None,
         )

@@ -192,6 +192,7 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     register_library_collation(conn)?;
     register_shuffle_function(conn)?;
     register_fold_function(conn)?;
+    register_release_section_function(conn)?;
     Ok(())
 }
 
@@ -207,6 +208,20 @@ pub(crate) fn register_fold_function(conn: &Connection) -> rusqlite::Result<()> 
             Ok(ctx
                 .get::<Option<String>>(0)?
                 .map(|s| super::queries::sources::fold(&s)))
+        },
+    )
+}
+
+/// `koan_release_section(release_types)` — the artist page section an album's
+/// types put it in (`helpers::ReleaseSection`), as its place in page order.
+pub(crate) fn register_release_section_function(conn: &Connection) -> rusqlite::Result<()> {
+    conn.create_scalar_function(
+        "koan_release_section",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let types = ctx.get::<Option<String>>(0)?;
+            Ok(crate::helpers::ReleaseSection::of(types.as_deref()) as i64)
         },
     )
 }

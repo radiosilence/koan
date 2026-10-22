@@ -22,7 +22,9 @@ pub fn release_types<'a>(values: impl IntoIterator<Item = &'a str>) -> Option<St
     (!types.is_empty()).then(|| types.join(";"))
 }
 
-/// The heading a record sits under on its artist's page, in page order.
+/// The heading a record sits under on its artist's page, in page order. An
+/// artist's albums are listed in this order (`koan_release_section`), so a
+/// client draws a heading wherever the section changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReleaseSection {
     /// Albums, and every record whose type nobody tagged: an untagged library
@@ -42,11 +44,12 @@ impl ReleaseSection {
             Self::Live
         } else if has("compilation") {
             Self::Compilations
-        } else if types.iter().any(|t| secondary_label(t).is_some()) {
-            Self::Other
         } else if has("ep") || has("single") {
             Self::EpsAndSingles
-        } else if has("broadcast") || has("other") {
+        } else if has("broadcast")
+            || has("other")
+            || types.iter().any(|t| secondary_label(t).is_some())
+        {
             Self::Other
         } else {
             Self::Albums
@@ -98,7 +101,8 @@ fn secondary_label(name: &str) -> Option<&'static str> {
         "soundtrack" => "Soundtrack",
         "remix" => "Remix",
         "dj-mix" => "DJ Mix",
-        "mixtape/street" | "mixtape" | "street" => "Mixtape",
+        // `mixtape/street`, split on its slash as an ID3 list would be.
+        "mixtape" | "street" => "Mixtape",
         "demo" => "Demo",
         "spokenword" => "Spoken Word",
         "interview" => "Interview",
@@ -167,6 +171,14 @@ mod tests {
             ReleaseSection::EpsAndSingles
         );
         assert_eq!(ReleaseSection::of(Some("ep;live")), ReleaseSection::Live);
+        assert_eq!(
+            ReleaseSection::of(Some("ep;remix")),
+            ReleaseSection::EpsAndSingles
+        );
+        assert_eq!(
+            ReleaseSection::of(Some("single;demo")),
+            ReleaseSection::EpsAndSingles
+        );
         assert_eq!(
             ReleaseSection::of(Some("album;compilation")),
             ReleaseSection::Compilations

@@ -111,8 +111,13 @@ fun ArtistPage(artistId: Long) {
                         Header(artistId, artist, count(held.albums.size.toLong(), "album"), info, looking, Modifier.padding(horizontal = 4.dp))
                     }
                     // A discography of albums alone, or one nobody tagged, needs no headings.
-                    val grouped = held.albums.groupBy { it.releaseSection }
-                    val sections = ReleaseSection.entries.mapNotNull { s -> grouped[s]?.let { s to it } }
+                    // The core lists them section by section, so a section is a run of them.
+                    val sections = held.albums.fold(mutableListOf<Pair<ReleaseSection, MutableList<Album>>>()) { runs, album ->
+                        runs.also {
+                            if (it.lastOrNull()?.first == album.releaseSection) it.last().second += album
+                            else it += album.releaseSection to mutableListOf(album)
+                        }
+                    }
                     sections.forEachIndexed { i, (section, albums) ->
                         if (sections.size > 1) {
                             item(key = "section-$section", span = { GridItemSpan(maxLineSpan) }) {

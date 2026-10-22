@@ -275,12 +275,16 @@ struct ArtistDetailView: View {
     private var features: [Album] { record?.features ?? [] }
     private var info: ArtistInfo? { record?.info }
 
-    /// The artist's own records under their release types' headings, in the
-    /// core's section order.
-    private var sections: [(section: ReleaseSection, albums: [Album])] {
-        let grouped = Dictionary(grouping: albums, by: \.releaseSection)
-        return [ReleaseSection.albums, .epsAndSingles, .live, .compilations, .other]
-            .compactMap { section in grouped[section].map { (section, $0) } }
+    /// The artist's own records under their release types' headings. The
+    /// core lists them section by section, so a section is a run of them.
+    private static func sections(of albums: [Album]) -> [(section: ReleaseSection, albums: [Album])] {
+        albums.reduce(into: []) { runs, album in
+            if runs.last?.section == album.releaseSection {
+                runs[runs.count - 1].albums.append(album)
+            } else {
+                runs.append((album.releaseSection, [album]))
+            }
+        }
     }
 
     private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
@@ -312,6 +316,7 @@ struct ArtistDetailView: View {
                     header
                 }
 
+                let sections = Self.sections(of: albums)
                 ForEach(sections, id: \.section) { section, albums in
                     // A discography of albums alone, or one nobody tagged,
                     // needs no heading.

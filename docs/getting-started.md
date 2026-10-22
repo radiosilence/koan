@@ -51,7 +51,7 @@ An artist's page holds the records they are the album artist of, and below them,
 
 Features on has its own smaller Play and Queue for those records, so everything they appear on is their records queued and then the features. Records picked with Select can come from both sections. An artist with no records of their own has only Features on, and the page's Play plays the tracks credited to them.
 
-The artist's own records are grouped by release type under Albums, EPs & Singles, Live, Compilations and Other releases, and each record's tile names its type in the top left corner (EP, Single, Live, Remix EP). The type is the MusicBrainz release group type: the `RELEASETYPE` tag Picard writes (`MusicBrainz Album Type` in MP3 and MP4 files), or the `releaseTypes` an OpenSubsonic server sends. A record with no type is listed as an album, so a library tagged without it reads as one list with no headings, and plain albums carry no label.
+The artist's own records are grouped by release type under Albums, EPs & Singles, Live, Compilations and Other releases, and each record's tile names its type in the top left corner (EP, Single, Live, Remix EP). The type is the MusicBrainz release group type: the `RELEASETYPE` tag Picard writes (`MusicBrainz Album Type` in MP3 and MP4 files), or the `releaseTypes` an OpenSubsonic server sends. The page's Play plays the sections in that order. A record's type is the one most of its tracks are tagged with. A record with no type is listed as an album, so a library tagged without it reads as one list with no headings, and plain albums carry no label.
 
 ### Collaborations
 

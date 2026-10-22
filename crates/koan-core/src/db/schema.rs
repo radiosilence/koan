@@ -11,6 +11,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     super::connection::register_library_collation(conn)?;
     super::connection::register_shuffle_function(conn)?;
     super::connection::register_fold_function(conn)?;
+    super::connection::register_release_section_function(conn)?;
     let found: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if found > SCHEMA_VERSION {
         return Err(rusqlite::Error::SqliteFailure(
