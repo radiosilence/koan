@@ -588,7 +588,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: apple
           cache-on-failure: true
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      # setup-just finds no release for just on these runners; Homebrew's
+      # bottle does not ask the GitHub API at all.
+      - run: brew install just
       - if: env.FULL == 'true'
         run: cargo clippy --all-targets -- -D warnings
       # Builds koan-ffi and regenerates the Swift bindings from it. The bindings
@@ -960,7 +962,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: apple-release
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      # setup-just finds no release for just on these runners; Homebrew's
+      # bottle does not ask the GitHub API at all.
+      - run: brew install just
       - name: Developer ID
         uses: ./.github/actions/developer-id
         with:
