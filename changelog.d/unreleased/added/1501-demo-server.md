@@ -1,0 +1,1 @@
+- **A demo server.** [demo.koan.rocks](https://demo.koan.rocks) runs kōan with a small, freely licensed library: sign in as `demo`, password `demo`, from a browser or any of the apps. It resets on the hour.
