@@ -56,13 +56,17 @@ export const KoanConfSchema = z.strictObject({
     .prefault({}),
   /**
    * A public demo server: one shared `demo` account (koan's `server.demo`),
-   * the library copied out of an image, and state on an emptyDir that is
+   * the library mounted from an image, and state on an emptyDir that is
    * wiped and rebuilt at the top of every hour.
    */
   demo: z
     .strictObject({
       enabled: z.boolean().default(false),
-      /** Required with `enabled`: an image holding the library at /music, with `cp`. */
+      /**
+       * Required with `enabled`: an image holding the library under /music,
+       * mounted as an image volume (Kubernetes 1.35 or later, or the
+       * `ImageVolume` feature gate).
+       */
       library: z.string().optional(),
     })
     .prefault({}),

@@ -11,8 +11,7 @@ const STATE_MOUNT_PATH = "/config";
 /**
  * A demo's container: wipe the state, index the library, and serve until the
  * clock reaches the hour, then again. A loop in the container rather than a
- * CronJob restarting the pod, which would need RBAC to do it and a fresh copy
- * of the library each time. `$@` is the image's usual arguments. Each step
+ * CronJob restarting the pod, which would need RBAC to do it. `$@` is the image's usual arguments. Each step
  * runs in the background, so a TERM is handled at once rather than after it.
  */
 const DEMO_RUN = `
@@ -71,26 +70,6 @@ export function createKoan(
     },
     // kubelet creates a missing hostPath as root, and koan cannot
     // write what root owns. Only the state directory is mounted here.
-    // A demo's library is copied out of its image into the pod.
-    ...(conf.demo.enabled
-      ? {
-          initContainers: [
-            {
-              name: "library",
-              // The schema refuses a demo without one.
-              image: conf.demo.library!,
-              command: ["cp", "-R", "/music/.", "/library/"],
-              securityContext: {
-                allowPrivilegeEscalation: false,
-                readOnlyRootFilesystem: true,
-                capabilities: { drop: ["ALL"] },
-              },
-              resources: { requests: { cpu: "50m", memory: "16Mi" }, limits: { memory: "64Mi" } },
-              volumeMounts: [{ name: "music", mountPath: "/library" }],
-            },
-          ],
-        }
-      : {}),
     ...(conf.initPermissions.enabled && conf.state.hostPath
       ? {
           initContainers: [
@@ -231,7 +210,8 @@ export function createKoan(
                   capabilities: { drop: ["ALL"] },
                 },
                 volumeMounts: [
-                  { name: "music", mountPath: "/music", readOnly: true },
+                  // The image holds the library under /music.
+                  { name: "music", mountPath: "/music", readOnly: true, ...(conf.demo.enabled && { subPath: "music" }) },
                   { name: "state", mountPath: STATE_MOUNT_PATH },
                   // Caches (artwork, lyrics) go under $HOME; they are
                   // rebuilt on demand, so they need not outlive the pod.
@@ -243,8 +223,10 @@ export function createKoan(
             volumes: [
               {
                 name: "music",
+                // A demo's library is its image, mounted as it is: nothing
+                // copied, and the node keeps the layers.
                 ...(conf.demo.enabled
-                  ? { emptyDir: {} }
+                  ? { image: { reference: conf.demo.library!, pullPolicy: "IfNotPresent" } }
                   : conf.library.existingClaim
                     ? { persistentVolumeClaim: { claimName: conf.library.existingClaim } }
                     // The schema's refine guarantees one of the two is set.
