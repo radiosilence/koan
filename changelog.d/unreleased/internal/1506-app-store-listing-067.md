@@ -1,0 +1,1 @@
+- **The App Store listing describes 0.67.** App Review signs in to demo.koan.rocks, the notes explain the background audio mode with a recording, and the description covers EQ, Play on and release types.
