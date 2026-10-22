@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { KoanConfSchema } from "./koan.schemas.ts";
+import { VERSIONS } from "./versions.ts";
 
 const base = { hostname: "koan.example.com", library: { hostPath: "/mnt/kontent/music" } };
 
@@ -41,5 +44,22 @@ describe("KoanConfSchema", () => {
       KoanConfSchema.parse({ ...base, resources: { requests: { cpu: "lots", memory: "256Mi" } } }),
     ).toThrow();
     expect(() => KoanConfSchema.parse({ ...base, extra: true })).toThrow();
+  });
+
+  it("takes a demo without a library or state, and refuses one with either", () => {
+    const c = KoanConfSchema.parse({ hostname: "demo.example.com", demo: { enabled: true } });
+    expect(c.demo.library).toBe(VERSIONS.demoLibrary);
+    expect(() => KoanConfSchema.parse({ ...base, demo: { enabled: true } })).toThrow();
+    expect(() =>
+      KoanConfSchema.parse({ hostname: "demo.example.com", demo: { enabled: true }, state: { hostPath: "/var/lib/koan" } }),
+    ).toThrow();
+  });
+});
+
+describe("VERSIONS.demoLibrary", () => {
+  it("is tagged by the content of deploy/demo, as the Demo library workflow tags what it builds", () => {
+    const read = (name: string) => readFileSync(new URL(`../../demo/${name}`, import.meta.url));
+    const tag = createHash("sha256").update(read("Dockerfile")).update(read("library.tsv")).digest("hex").slice(0, 12);
+    expect(VERSIONS.demoLibrary).toBe(`ghcr.io/radiosilence/koan-demo-library:${tag}`);
   });
 });

@@ -9,4 +9,6 @@ export const APP_VERSION = "0.66.7";
 export const VERSIONS = {
   koan: `ghcr.io/radiosilence/koan:v${APP_VERSION}`,
   alpine: "alpine:3.21",
+  /** Built from `deploy/demo` by the Demo library workflow, tagged by its content. */
+  demoLibrary: "ghcr.io/radiosilence/koan-demo-library:TAG",
 } as const;

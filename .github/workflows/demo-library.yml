@@ -1,0 +1,54 @@
+name: Demo library
+
+# The music the demo server (demo.koan.rocks) plays, as an image the chart's demo mode copies into its pod. Tagged by
+# the content of deploy/demo, which `VERSIONS.demoLibrary` pins and the Pulumi package's tests check, so the image a
+# pin names is built from exactly these files. Built only when they change; a tag already pushed is not rebuilt.
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/demo/**"
+      - ".github/workflows/demo-library.yml"
+  pull_request:
+    paths:
+      - "deploy/demo/**"
+      - ".github/workflows/demo-library.yml"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/radiosilence/koan-demo-library
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: tag
+        run: echo "tag=$(cat deploy/demo/Dockerfile deploy/demo/library.tsv | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: exists
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:${{ steps.tag.outputs.tag }}" >/dev/null 2>&1; then
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
+      # Pull requests build without pushing, so a broken URL or checksum fails there.
+      - if: steps.exists.outputs.built != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/demo
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+          tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          labels: org.opencontainers.image.source=https://github.com/radiosilence/koan
