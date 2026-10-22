@@ -109,6 +109,12 @@ can see the screen, or a recording of it, can join with the code, so the code
 carries a token of its own that lapses after ten minutes, as a device pairing
 does. The link sent by email keeps the week-long token.
 
+Every account, whatever its role, can sign in another of its own devices the
+same way: the web UI's Account page and the apps' Settings → Account open with a
+QR code of the account's own invite, minted afresh each time they are shown, so
+a phone can be signed in by pointing its camera at the screen. Only an admin can
+invite other accounts or reset a password.
+
 Creating an account generates its password, and the email carries it once, for
 the web UI and other Subsonic apps. Inviting an existing account sends only the
 link. To give an account a new password, invite it with a reset (generated,

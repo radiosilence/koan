@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -43,9 +44,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.AccountRole
 import cc.blit.koan.ffi.Invite
@@ -62,6 +67,7 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import kotlin.math.floor
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** The extensions a koan server lists for an account's own keys to it. */
@@ -91,6 +97,23 @@ fun AccountPane(model: SettingsModel) {
     } else {
         null
     }
+    // The account's own invite, as a QR code to sign another device in. Its
+    // token lapses in ten minutes, so it is made afresh on every resume and
+    // before it lapses. While the server refuses or cannot be reached nothing
+    // is drawn and it is asked again a minute later: a server older than
+    // self-invites refuses an account that is not an admin.
+    val username = state.settings?.remoteUsername
+    val linking = account != null && username != null && connection.offers(INVITE)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val link by produceState<Invite?>(null, account, linking, lifecycle) {
+        if (!linking) return@produceState
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                value = runCatching { app.mirror.engine().inviteServerAccount(username!!, false) }.getOrNull()
+                delay(if (value == null) 60_000L else 9 * 60_000L)
+            }
+        }
+    }
     val keysState = keys?.state?.collectAsStateWithLifecycle()?.value
     val passwordsState = passwords?.state?.collectAsStateWithLifecycle()?.value
     var changing by remember { mutableStateOf(false) }
@@ -100,6 +123,11 @@ fun AccountPane(model: SettingsModel) {
     val s = state.settings ?: return SettingsPage(Pane.Account.title, state) {}
 
     SettingsPage(Pane.Account.title, state) {
+        link?.let { invite ->
+            header("Link a device")
+            item { InviteCode(invite.qrLink, side = 240.dp, caption = "Scan with your phone's camera to sign it in as ${s.remoteUsername}.") }
+            footer("kōan opens on the other device and loads the library, or offers the download first.")
+        }
         if (connection.offers(PASSWORDS)) {
             header("Password")
             item { ValueRow("User", s.remoteUsername) }
@@ -472,7 +500,11 @@ private fun InviteDialog(invite: Invite, dismiss: () -> Unit) {
  * scanners expect that contrast; each module a whole number of pixels, so the edges stay crisp.
  */
 @Composable
-private fun InviteCode(link: String) {
+private fun InviteCode(
+    link: String,
+    side: Dp = 192.dp,
+    caption: String = "Scan with a phone's camera to open it there.",
+) {
     val code = remember(link) {
         qrCode(link)?.let { code ->
             val width = code.width.toInt()
@@ -488,7 +520,7 @@ private fun InviteCode(link: String) {
         verticalArrangement = Arrangement.spacedBy(KoanSpace.s),
     ) {
         Canvas(
-            Modifier.size(192.dp)
+            Modifier.size(side)
                 .background(Color.White)
                 .padding(KoanSpace.m)
                 .semantics { contentDescription = "QR code" },
@@ -503,6 +535,6 @@ private fun InviteCode(link: String) {
                 filterQuality = FilterQuality.None,
             )
         }
-        KoanText("Scan with a phone's camera to open it there.", role = KoanType.Meta, tone = KoanTone.Muted)
+        KoanText(caption, role = KoanType.Meta, tone = KoanTone.Muted)
     }
 }
