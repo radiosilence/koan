@@ -1,0 +1,1 @@
+- **Playlist edits refuse tracks that have left the library.** Adding to, creating or replacing a playlist from the apps or GraphQL with a track the library no longer holds now fails with a message saying how many are missing, and writes nothing, instead of reporting success with a shorter playlist.

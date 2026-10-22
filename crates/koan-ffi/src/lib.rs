@@ -2038,11 +2038,14 @@ impl KoanEngine {
     ) -> Result<Playlist, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, &name, None)
-                .map_err(db_err)?;
-            if !track_ids.is_empty() {
-                queries::add_tracks(&db.conn, id, &track_ids).map_err(db_err)?;
-            }
+            let id = queries::atomically(&db.conn, || {
+                let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, &name, None)?;
+                if !track_ids.is_empty() {
+                    queries::add_tracks(&db.conn, id, &track_ids)?;
+                }
+                Ok(id)
+            })
+            .map_err(playlist_write_err)?;
             self.bump_library();
             koan_core::playlists::push_to_remote(id);
             queries::get_playlist(&db.conn, id)
@@ -2110,7 +2113,8 @@ impl KoanEngine {
             let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
                 .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
-            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)
+                .map_err(playlist_write_err)?;
             self.playlist_history.record(before);
             self.follow_playlist(&db, playlist_id, locked);
             self.bump_library();
@@ -2139,7 +2143,8 @@ impl KoanEngine {
             let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
                 .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
-            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)
+                .map_err(playlist_write_err)?;
             if !added.is_empty() {
                 let mut order: Vec<i64> = queries::playlist_entries(&db.conn, playlist_id)
                     .map_err(db_err)?
@@ -6634,6 +6639,17 @@ fn fillable(db: &Database, playlist_id: i64) -> Result<(), KoanError> {
 fn db_err(e: impl std::fmt::Display) -> KoanError {
     KoanError::Database {
         message: e.to_string(),
+    }
+}
+
+/// Tracks gone from the library since the caller listed them are something the
+/// person can be told about, not a database failure.
+fn playlist_write_err(e: koan_core::db::connection::DbError) -> KoanError {
+    match e {
+        koan_core::db::connection::DbError::MissingTracks(_) => KoanError::NotFound {
+            message: e.to_string(),
+        },
+        e => db_err(e),
     }
 }
 

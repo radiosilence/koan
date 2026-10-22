@@ -328,6 +328,17 @@ pub(super) fn internal_error(context: &str, e: impl std::fmt::Display) -> async_
     async_graphql::Error::new("internal error")
 }
 
+/// A playlist write refused because tracks have left the library says so; any
+/// other database failure stays an internal error.
+pub(super) fn playlist_write_error(e: koan_core::db::connection::DbError) -> async_graphql::Error {
+    match e {
+        koan_core::db::connection::DbError::MissingTracks(_) => {
+            async_graphql::Error::new(e.to_string())
+        }
+        e => internal_error("db", e),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Schema builder
 // ---------------------------------------------------------------------------

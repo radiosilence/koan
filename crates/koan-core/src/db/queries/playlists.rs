@@ -444,7 +444,11 @@ pub fn playlist_tracks(conn: &Connection, id: i64) -> Result<Vec<TrackRow>, DbEr
     Ok(rows)
 }
 
-/// Append tracks to the end. Returns how many landed.
+/// Append tracks to the end. Returns the new entries' ids.
+///
+/// A track id that names no track refuses the whole write with
+/// [`DbError::MissingTracks`]: a playlist shorter than the person asked for,
+/// reported as a success, is worse than an error they can see.
 ///
 /// A track already in the playlist is added again rather than skipped: putting
 /// a song in twice is a thing people do on purpose, and silently refusing it is
@@ -461,11 +465,17 @@ pub fn add_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<Vec<i
         )?;
         let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
         let mut added = Vec::new();
-        for track_id in track_ids {
+        let mut missing = Vec::new();
+        for &track_id in track_ids {
             if insert.execute(params![id, next, track_id])? > 0 {
                 next += 1;
                 added.push(conn.last_insert_rowid());
+            } else {
+                missing.push(track_id);
             }
+        }
+        if !missing.is_empty() {
+            return Err(DbError::MissingTracks(missing));
         }
         touch(conn, id)?;
         Ok(added)
@@ -546,7 +556,7 @@ fn renumber(conn: &Connection, id: i64) -> Result<(), DbError> {
 /// [`remove_entries`].
 ///
 /// Positions are rewritten from zero, so nothing depends on what was there
-/// before.
+/// before. Refuses, as [`add_tracks`] does, when a track id names no track.
 pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<(), DbError> {
     super::atomically(conn, || {
         conn.execute(
@@ -555,10 +565,16 @@ pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Res
         )?;
         let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
         let mut next = 0i64;
-        for track_id in track_ids {
+        let mut missing = Vec::new();
+        for &track_id in track_ids {
             if insert.execute(params![id, next, track_id])? > 0 {
                 next += 1;
+            } else {
+                missing.push(track_id);
             }
+        }
+        if !missing.is_empty() {
+            return Err(DbError::MissingTracks(missing));
         }
         touch(conn, id)
     })
@@ -964,12 +980,23 @@ mod tests {
     }
 
     #[test]
-    fn tracks_that_no_longer_exist_are_left_out_rather_than_failing() {
+    fn a_track_that_no_longer_exists_refuses_the_write() {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
+        let b = track(&conn, "Two", "Album");
         let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        add_tracks(&conn, id, &[a]).unwrap();
 
-        assert_eq!(add_tracks(&conn, id, &[a, 9999]).unwrap().len(), 1);
+        assert!(matches!(
+            add_tracks(&conn, id, &[b, 9999]),
+            Err(DbError::MissingTracks(ids)) if ids == [9999]
+        ));
+        assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![a]);
+
+        assert!(matches!(
+            set_playlist_tracks(&conn, id, &[b, 9998]),
+            Err(DbError::MissingTracks(ids)) if ids == [9998]
+        ));
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![a]);
     }
 

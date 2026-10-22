@@ -33,6 +33,10 @@ pub enum DbError {
         schema = super::schema::SCHEMA_VERSION
     )]
     Outdated(i64),
+    /// A playlist write named tracks the library does not hold, so nothing
+    /// was written. The ids are the ones missing.
+    #[error("{} of these tracks are no longer in the library", .0.len())]
+    MissingTracks(Vec<i64>),
 }
 
 /// Wrapper around a SQLite connection with koan's schema applied.
