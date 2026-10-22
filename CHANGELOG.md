@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.67.4
+
+### Changed
+
+- **The demo server resets daily.** demo.koan.rocks resets at midnight UTC rather than every hour, which signed every device on it out, App Review's included.
+
+### Fixed
+
+- **Playlist edits refuse tracks that have left the library.** Adding to, creating or replacing a playlist from the apps or GraphQL with a track the library no longer holds now fails with a message saying how many are missing, and writes nothing, instead of reporting success with a shorter playlist.
+- **The Apple TV app builds again.** The server banner used the bar material, which tvOS lacks, so 0.67.3's tvOS build failed; on the TV it uses the regular material.
+- **The server banner on iPhone covers nothing, and its Sign In opens Server.** It lay over the first rows of the page, which in Settings were Server and Account, and Sign In stopped at the Settings tab.
+- **The phone's own speaker can be chosen from Output.** On iPhone the Output sheet has a row that opens the system's route picker, so a phone on a Bluetooth speaker or AirPlay can be sent back to its speaker without finding the AirPlay button in Now Playing.
+
 ## 0.67.3
 
 ### Security
