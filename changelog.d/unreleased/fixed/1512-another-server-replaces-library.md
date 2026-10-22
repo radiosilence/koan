@@ -1,0 +1,1 @@
+- **Changing servers replaces the library.** Signing in to a different server removes the last server's tracks, playlists and downloads and clears the queue, so the new server's library is shown alone and its sync is not held up by the old one's. Local files stay, and signing in to the same server at another address keeps the library.

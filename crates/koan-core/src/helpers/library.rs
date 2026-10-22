@@ -190,6 +190,36 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
     Ok(removed)
 }
 
+/// How many times a sign-in has replaced the library with another server's.
+static REPLACED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Read before and after a sign-in: a change means the library was replaced,
+/// and the queue and transfers from the last server should go as they do at
+/// sign-out.
+pub fn libraries_replaced() -> u64 {
+    REPLACED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Forget the server signed in to before another, so the library is as a new
+/// install signed in to the next would have it: what `forget_remote` forgets,
+/// the server's playlists, what was recorded about syncing it, and every
+/// download, since the cache holds that server's files and no others. Local
+/// files and their tracks stay. Returns the number of tracks removed.
+pub fn forget_server(
+    db: &Database,
+    cfg: &crate::config::Config,
+) -> Result<u64, crate::db::connection::DbError> {
+    let removed = forget_remote(db)?;
+    db.conn.execute_batch(
+        "DELETE FROM playlists WHERE remote_id IS NOT NULL;
+         DELETE FROM remote_servers;",
+    )?;
+    super::clear_download_cache(db, cfg);
+    REPLACED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    log::info!("forgot the last server's library: {removed} track(s)");
+    Ok(removed)
+}
+
 /// Drop what waited for the account signed in to, and how far its history and
 /// EQ profiles were read. The plays, forgettings and hearts name its ids and
 /// its account, so they mean nothing to another: a clear meant for one

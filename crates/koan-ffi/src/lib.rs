@@ -4233,10 +4233,11 @@ impl KoanEngine {
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            koan_core::helpers::set_remote_credentials(&url, &username, &password).map_err(|e| {
-                KoanError::BadArgument {
-                    message: e.to_string(),
-                }
+            self.signing_in(|| {
+                koan_core::helpers::set_remote_credentials(&url, &username, &password)
+            })
+            .map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
             })
         })
         .await
@@ -4250,11 +4251,10 @@ impl KoanEngine {
         api_key: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            koan_core::helpers::set_remote_api_key(&url, &username, &api_key).map_err(|e| {
-                KoanError::BadArgument {
+            self.signing_in(|| koan_core::helpers::set_remote_api_key(&url, &username, &api_key))
+                .map_err(|e| KoanError::BadArgument {
                     message: e.to_string(),
-                }
-            })
+                })
         })
         .await
     }
@@ -4271,9 +4271,10 @@ impl KoanEngine {
                 password: invite.password,
                 qr_token: None,
             };
-            koan_core::helpers::join_with_invite(&invite).map_err(|e| KoanError::BadArgument {
-                message: e.to_string(),
-            })
+            self.signing_in(|| koan_core::helpers::join_with_invite(&invite))
+                .map_err(|e| KoanError::BadArgument {
+                    message: e.to_string(),
+                })
         })
         .await
     }
@@ -4321,7 +4322,7 @@ impl KoanEngine {
                     message: "no pairing is waiting".into(),
                 })?;
             let id = pending.id.clone();
-            let outcome = pending.wait();
+            let outcome = self.signing_in(|| pending.wait());
             let mut cancel = self.pairing_cancel.lock();
             if cancel.as_ref().is_some_and(|(held, _)| *held == id) {
                 *cancel = None;
@@ -6248,6 +6249,19 @@ impl KoanEngine {
         self.tx.send(cmd).map_err(|e| KoanError::Player {
             message: e.to_string(),
         })
+    }
+
+    /// Run a sign-in. One that replaced the library with another server's
+    /// (`helpers::forget_server`) lets go of the queue and transfers from the
+    /// last server, as signing out does.
+    fn signing_in<E>(&self, sign_in: impl FnOnce() -> Result<(), E>) -> Result<(), E> {
+        let replaced = koan_core::helpers::libraries_replaced();
+        sign_in()?;
+        if koan_core::helpers::libraries_replaced() != replaced {
+            let _ = self.send_local(PlayerCommand::SignedOut);
+            self.bump_library();
+        }
+        Ok(())
     }
 
     /// Wait until the player has applied and published every command sent to
