@@ -42,14 +42,4 @@ describe("KoanConfSchema", () => {
     ).toThrow();
     expect(() => KoanConfSchema.parse({ ...base, extra: true })).toThrow();
   });
-
-  it("takes a demo with its library image and no library or state", () => {
-    const demo = { enabled: true, library: "ghcr.io/example/music:1" };
-    expect(KoanConfSchema.parse({ hostname: "demo.example.com", demo }).demo.library).toBe(demo.library);
-    expect(() => KoanConfSchema.parse({ hostname: "demo.example.com", demo: { enabled: true } })).toThrow();
-    expect(() => KoanConfSchema.parse({ ...base, demo })).toThrow();
-    expect(() =>
-      KoanConfSchema.parse({ hostname: "demo.example.com", demo, state: { hostPath: "/var/lib/koan" } }),
-    ).toThrow();
-  });
 });

@@ -468,7 +468,7 @@ The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). 
 
 `sharing.public_url`, which this replaces, is still read while `server.url` is unset, with a warning in the log. It will be removed in a later release.
 
-`demo = true` (`KOAN_SERVER__DEMO`) makes the server a public demo, as `demo.koan.rocks` is. It makes a `user` account named `demo` with the password `demo` when there is none, fills both in on the web UI's sign-in page, and refuses the requests one visitor could use to take the shared account from the others: changing its password, revoking its API keys and app passwords, connecting a scrobbling account, and managing accounts. Wiping the state on a schedule is left to whatever runs the server; the [deployment chart](../guide/headless-server.md#kubernetes) has a demo mode that does.
+`demo = true` (`KOAN_SERVER__DEMO`) makes the server a public demo, as `demo.koan.rocks` is. It makes a `user` account named `demo` with the password `demo` when there is none, fills both in on the web UI's sign-in page, and refuses the requests one visitor could use to take the shared account from the others: changing its password, revoking its API keys and app passwords, connecting a scrobbling account, and managing accounts. Wiping the state on a schedule is left to whatever runs the server.
 
 ---
 

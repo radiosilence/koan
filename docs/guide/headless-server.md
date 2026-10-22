@@ -342,20 +342,16 @@ export const routes = koan.routes;
 
 | Option | |
 |--------|-|
-| `name` | The instance, default `koan`: the Deployment's name and the Pulumi resources', so two servers can share a namespace. Changing it replaces them |
 | `hostname` | Required. Becomes `allowed_hosts` and `server.url` (`https://<hostname>`), so TLS is expected in front |
-| `library` | Required, unless `demo` is on: `existingClaim` or `hostPath`. Mounted read-only at `/music` |
+| `library` | Required: `existingClaim` or `hostPath`. Mounted read-only at `/music` |
 | `state` | `existingClaim` or `hostPath`, mounted at `/config`. Unset, it is an `emptyDir` and the index and accounts go with the pod |
 | `image` | `repository`, `tag` (defaults to the package's version), `pullPolicy` |
 | `nodeSelector` | Needed with a `hostPath`, which is one node's disk |
 | `push` | `enabled` (default `true`): whether the server wakes the iOS app through kōan's push relay when it is suspended. Set `enabled: false` to keep the server off the relay |
 | `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
-| `demo` | `enabled` (default `false`) makes a public demo, as demo.koan.rocks is; `library`, required with it, is an image holding the music under `/music`. See below |
 | `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
 
 With persistent state, each update first runs `koan check-db` in a Job against a snapshot of the live database. If the new version's migration fails there, the update stops and the old pod keeps serving. kubelet creates a missing `hostPath` as root, and koan runs as uid 1000, so an init container hands the state directory to that uid before the server starts; `initPermissions.enabled: false` turns it off. The root filesystem is read-only, and the artwork and lyrics caches live in an `emptyDir`, rebuilt after a restart.
-
-`demo: { enabled: true }` runs the server with [`server.demo`](../reference/configuration.md#server): everyone signs in as `demo`, password `demo`, and nobody can change that account's password or keys. The library is `demo.library`, an image holding it under `/music`, mounted as an image volume (Kubernetes 1.35 or later), so the demo needs no other volume and copies nothing, and `library` and `state` must be left unset. State lives on an `emptyDir` that the container wipes and re-indexes at the top of every hour, so whatever visitors made, playlists and accounts included, lasts until then and devices signed in then sign in again.
 
 Unknown options are rejected rather than ignored, so a stack carrying options a newer package removed fails at `pulumi preview`.
 
