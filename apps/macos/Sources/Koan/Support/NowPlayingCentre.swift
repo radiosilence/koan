@@ -263,13 +263,15 @@ final class NowPlayingCentre {
             // is dropped.
             guard requested() else { return }
             requestedArtwork = nil
-            // A fetch that failed is tried again at the next refresh, not on a
-            // timer; a record with no art is marked by the cache and not asked
-            // for again.
-            guard let image else { return }
+            guard let image else {
+                // A record found to have no art drops what is held. A fetch
+                // that failed is tried again at the next refresh, not on a timer.
+                if art.isAbsent(source) { refresh() }
+                return
+            }
             // Held straight away, since the cache can drop the bitmap before
             // `refresh` reads it. A cover replaced meanwhile is fetched again.
-            if art.revision(of: source) == revision {
+            if art.revision(of: source) == revision, held?.revision != revision {
                 held = (source, revision, Self.artwork(for: image))
             }
             refresh()
