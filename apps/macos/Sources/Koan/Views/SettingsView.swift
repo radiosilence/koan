@@ -1310,7 +1310,15 @@ private struct PairDevice: View {
             Section {
                 HStack {
                     TextField("Code", text: $code, prompt: Text("XXXX-XXXX"))
-                        .verbatimEntry()
+                        .verbatimEntry(.code)
+                        .onChange(of: code) { old, typed in
+                            // The dash deleted on its own would come straight
+                            // back, so it takes the symbol before it.
+                            let dashDeleted = typed.count == old.count - 1 && old.contains("-") && !typed.contains("-")
+                            let edited = dashDeleted ? String(old.prefix(3) + old.dropFirst(5)) : typed
+                            let shown = formatPairCode(typed: edited)
+                            if shown != typed { code = shown }
+                        }
                         .onSubmit(approve)
                         .koanField(code, prompt: "XXXX-XXXX")
                     Button("Approve", action: approve)

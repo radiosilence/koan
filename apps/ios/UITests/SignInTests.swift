@@ -32,8 +32,11 @@ final class SignInTests: XCTestCase {
         XCTAssert(app.buttons[any: "Sign Out"].waitForExistence(timeout: 30), "not signed in")
 
         // Signing in starts a sync; the albums are what the reviewer needs.
-        tab(app, "Library")
-        app.buttons[any: "Albums"].firstMatch.tap()
+        // An iPad has no Library tab: its pages are rows of the sidebar.
+        let library = (bar ?? nil)?.buttons[any: "Library"] ?? app.buttons[any: "Library"]
+        if library.waitForExistence(timeout: 3) { library.tap() }
+        let albums = app.buttons[any: "Albums"].firstMatch
+        (albums.waitForExistence(timeout: 5) ? albums : app.staticTexts[any: "Albums"]).tap()
         XCTAssert(app.images.firstMatch.waitForExistence(timeout: 180), "no albums after sync")
     }
 
@@ -55,8 +58,15 @@ final class SignInTests: XCTestCase {
         }()
         self.bar = bar
         let button = (bar?.buttons ?? app.buttons)[any: name]
-        XCTAssert(button.waitForExistence(timeout: 10), "no \(name) tab")
-        button.tap()
+        if button.waitForExistence(timeout: 10) {
+            button.tap()
+            return
+        }
+        // An iPad's sidebar: rows whose label is their text. Its tab bar is
+        // still in the tree, hidden, so finding one decides nothing.
+        let row = app.staticTexts[any: name]
+        XCTAssert(row.waitForExistence(timeout: 5), "no \(name) tab")
+        row.tap()
     }
 
     private func field(_ query: XCUIElementQuery, _ placeholder: String) -> XCUIElement {

@@ -65,7 +65,7 @@ extension View {
         self
         #else
         autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .textInputAutocapitalization(contentType == .code ? .characters : .never)
             .keyboardType(contentType.keyboard)
         #endif
     }
@@ -76,11 +76,13 @@ enum VerbatimContent {
     case plain
     case url
     case digits
+    /// A code typed in capitals, such as a pairing code.
+    case code
 
     #if !os(macOS)
     var keyboard: UIKeyboardType {
         switch self {
-        case .plain: .asciiCapable
+        case .plain, .code: .asciiCapable
         case .url: .URL
         case .digits: .numberPad
         }

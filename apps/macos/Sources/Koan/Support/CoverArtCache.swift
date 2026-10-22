@@ -557,6 +557,11 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     private var epoch = 0
     private var evictions: [String: Int] = [:]
 
+    /// Changes whenever the record's artwork may have: an eviction or a purge.
+    func revision(of source: AlbumArtwork.Source) -> Int {
+        locked { generation(of: Self.key(source)) }
+    }
+
     /// Call with the lock held.
     private func generation(of record: String) -> Int {
         epoch + evictions[record, default: 0]

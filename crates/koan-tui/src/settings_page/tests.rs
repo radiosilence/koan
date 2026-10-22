@@ -291,3 +291,21 @@ fn dump_settings() {
         }
     }
 }
+
+#[test]
+fn a_pairing_code_is_formatted_as_it_is_typed() {
+    let mut p = page();
+    p.editing = Some(Field::PairCode);
+    for c in "7temexh6".chars() {
+        p.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(p.field(Field::PairCode), "7TEM-EXH6");
+    for _ in 0..4 {
+        p.handle_key(key(KeyCode::Backspace));
+    }
+    assert_eq!(
+        p.field(Field::PairCode),
+        "7TEM",
+        "the dash goes with the last symbol after it"
+    );
+}
