@@ -608,9 +608,8 @@ private struct LocalNetworkBlocked: View {
 }
 
 /// The button that opens Control, and names the device controlled when it is
-/// not this one. Labelled, that name is an accent badge: everything the
-/// transport shows is then the other device's, and pressing play here plays
-/// there, which a tinted icon at the end of the bar was too quiet to say.
+/// not this one. Labelled, that name is an accent badge, since everything the
+/// host shows is then the other device's and its transport plays there.
 struct ControlButton: View {
     @Environment(PlayerModel.self) private var player
     /// Held by the host. On iOS the sheet hangs off a view that outlives the
@@ -624,6 +623,9 @@ struct ControlButton: View {
     /// The smallest square the button takes clicks in, for a host that sets
     /// it in a cell of its own.
     var target: CGFloat?
+    /// The widest the name draws, for a host that holds the button at its
+    /// natural size and so cannot truncate it.
+    var nameWidth: CGFloat?
 
     var body: some View {
         Button {
@@ -633,15 +635,16 @@ struct ControlButton: View {
                 KoanIcon(player.controlledOutOfReach ? Icon.warning : Action.control.glyph)
                     .font(iconSize.map { .system(size: $0) })
                     .foregroundStyle(iconStyle)
-                if labelled, let name = controlled {
+                if let name = label {
                     Text(name)
                         .lineLimit(1)
+                        .frame(maxWidth: nameWidth)
                         .foregroundStyle(
                             player.controlledOutOfReach
                                 ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.ink, system: .primary))
                 }
             }
-            .modifier(ControlledBadge(on: labelled && controlled != nil))
+            .modifier(ControlledBadge(on: label != nil, outOfReach: player.controlledOutOfReach))
             .frame(minWidth: target, minHeight: target)
             .contentShape(Rectangle())
         }
@@ -657,6 +660,8 @@ struct ControlButton: View {
         player.isControllingAnother ? player.controlled?.name ?? "another device" : nil
     }
 
+    private var label: String? { labelled ? controlled : nil }
+
     private var iconStyle: AnyShapeStyle {
         if player.controlledOutOfReach { return KoanTheme.style(.bad, system: .orange) }
         return player.isControllingAnother ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary)
@@ -669,13 +674,23 @@ struct ControlButton: View {
 }
 
 /// The badge's shape and colour in the host's font: a badge sets a
-/// monospaced one for figures, and this holds a name.
+/// monospaced one for figures, and this holds a name. In the warning colour
+/// while the device is out of reach, as the icon and name inside it are.
 private struct ControlledBadge: ViewModifier {
     let on: Bool
+    let outOfReach: Bool
     @Environment(\.font) private var font
 
     func body(content: Content) -> some View {
-        if on { content.font(font).koanBadge(accent: true) } else { content }
+        if on {
+            if outOfReach {
+                content.font(font).koanBadge(accent: true).tint(KoanTheme.isOn ? Color.koanBad : .orange)
+            } else {
+                content.font(font).koanBadge(accent: true)
+            }
+        } else {
+            content
+        }
     }
 }
 

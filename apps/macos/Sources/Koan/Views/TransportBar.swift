@@ -81,8 +81,7 @@ struct TransportBar: View {
     private var sideWidth: CGFloat { max(0, (available - Self.zoneGap * 2 - centreWidth) / 2) }
 
     /// Below this the device picker is its icon alone. The word is the first
-    /// thing worth giving up, except for the name of a device being
-    /// controlled, which says whose music the whole bar is showing.
+    /// thing worth giving up.
     private var compact: Bool { sideWidth < 190 }
 
     /// And below this the format badge goes too. It is the last thing dropped
@@ -230,7 +229,14 @@ struct TransportBar: View {
                 .font(.role(.fine, system: .caption))
 
             if player.hasOtherDevices || player.isControllingAnother {
-                ControlButton(open: $showingControl, labelled: !compact || player.isControllingAnother, iconSize: 17)
+                // The name of a device being controlled stays, shortened: it
+                // says whose music the whole bar is showing.
+                ControlButton(
+                    open: $showingControl,
+                    labelled: !compact || player.isControllingAnother,
+                    iconSize: 17,
+                    nameWidth: compact ? 90 : 200
+                )
                     .font(.role(.fine, system: .caption))
             }
             if player.canChooseOutput {
