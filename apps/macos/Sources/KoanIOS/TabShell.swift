@@ -26,8 +26,8 @@ struct TabShell: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
-    #if os(tvOS)
     @Environment(AppState.self) private var app
+    #if os(tvOS)
     /// Taken as signed in until the engine says otherwise, so a signed-in TV
     /// never flashes the sign-in page on launch.
     @State private var signedIn = true
