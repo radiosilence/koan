@@ -713,7 +713,7 @@ jobs:
         working-directory: apps/android
         env:
           BUNDLE: ${{ github.event_name != 'pull_request' && ':app:bundleRelease' || '' }}
-        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease $BUNDLE -Pabis=arm64-v8a -PversionCode="$(date -u +%s)"
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease ${BUNDLE:+"$BUNDLE"} -Pabis=arm64-v8a -PversionCode="$(date -u +%s)"
       - name: Name the APK
         env:
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -733,13 +733,23 @@ jobs:
           path: apps/android/app/build/outputs/bundle/release/app-release.aab
           retention-days: 1
 
+  # Always runs: the workflows are checked wherever the change is, and the
+  # image bundles shellcheck for the `run:` scripts.
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
   # The one status the ruleset requires. Skipped jobs are domains the change
   # does not touch and pass; anything failed or cancelled fails it.
   checks:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, fmt, changelog, css, js, linux, msrv, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, msrv, audit, pulumi-package, linux-build, container, apple, android]
     if: always()
     steps:
       - env:
@@ -748,7 +758,7 @@ jobs:
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           bad=$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
           if [ -n "$bad" ]; then
-            echo "::error::not passed: $(echo $bad)"
+            echo "::error::not passed: $(echo "$bad" | tr '\n' ' ')"
             exit 1
           fi
 
@@ -1100,7 +1110,7 @@ jobs:
       - env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          spec="$(node -p 'const p = require("./package.json"); `${p.name}@${p.version}`')"
+          spec="$(node -p 'const p = require("./package.json"); p.name + "@" + p.version')"
           if out=$(npm view "$spec" version 2>&1); then
             echo "$spec is already published"
             exit 0

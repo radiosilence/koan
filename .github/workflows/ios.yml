@@ -125,7 +125,10 @@ jobs:
             -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           rm "$RUNNER_TEMP/certificate.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          keychains=("$keychain")
+          while IFS= read -r existing; do keychains+=("$existing"); done \
+            < <(security list-keychains -d user | tr -d '"' | sed 's/^ *//')
+          security list-keychains -d user -s "${keychains[@]}"
           security find-identity -v -p codesigning "$keychain" | grep -q "Apple Development" \
             || { echo "::error::no Apple Development identity in IOS_CERTIFICATE_P12"; exit 1; }
       - run: just "$TARGET-testflight" "$KOAN_BUILD"

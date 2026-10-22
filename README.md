@@ -191,7 +191,7 @@ The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through 
 ## Dev
 
 ```bash
-just check       # test + clippy
+just check       # test + clippy + actionlint
 just fmt         # cargo fmt
 just cli         # cargo run -p koan-cli -- <args>
 just macos-run   # build and launch the macOS app
