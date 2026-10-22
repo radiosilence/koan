@@ -102,10 +102,17 @@ def main():
     print(f"What to Test set for {version} ({build_number}): {len(text)} characters")
 
     if public:
-        group = call("GET", f"/v1/apps/{app['id']}/betaGroups?filter[name]={PUBLIC_GROUP}")["data"][0]
+        group = call("GET", f"/v1/betaGroups?filter[app]={app['id']}&filter[name]={PUBLIC_GROUP}")["data"][0]
         call("POST", f"/v1/betaGroups/{group['id']}/relationships/builds", {"data": [{"type": "builds", "id": build["id"]}]})
         if not call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission").get("data"):
-            create("betaAppReviewSubmissions", {}, {"build": rel("builds", build["id"])})
+            try:
+                create("betaAppReviewSubmissions", {}, {"build": rel("builds", build["id"])})
+            except SystemExit as e:
+                # A version's builds go through beta review one at a time; the
+                # one in review is what testers get once it is approved.
+                if "ANOTHER_BUILD_IN_REVIEW" not in str(e):
+                    raise
+                print(f"another {version} build is in beta review; {build_number} waits for it")
         print(f"{build_number} added to {PUBLIC_GROUP} and submitted for beta review")
 
 
