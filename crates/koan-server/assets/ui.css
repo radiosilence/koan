@@ -7,6 +7,7 @@
     monospace;
     --color-white: #fff;
     --spacing: 0.25rem;
+    --container-4xl: 56rem;
     --font-weight-extralight: 200;
     --font-weight-light: 300;
     --font-weight-bold: 700;
@@ -398,6 +399,9 @@
   }
   .w-full {
     width: 100%;
+  }
+  .max-w-4xl {
+    max-width: var(--container-4xl);
   }
   .max-w-\[12em\] {
     max-width: 12em;
