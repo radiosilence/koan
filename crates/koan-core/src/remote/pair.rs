@@ -337,7 +337,7 @@ mod tests {
             ("7TEM-", "7TEM"),
             ("ilou", "110"),
             ("7temexh6zz", "7TEM-EXH6"),
-            ("7tém!exh6", "7TEM-EXH6"),
+            ("7te!m€exh6", "7TEM-EXH6"),
         ] {
             assert_eq!(format_code(typed), shown, "{typed:?}");
         }
