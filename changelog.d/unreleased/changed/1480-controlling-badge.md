@@ -1,0 +1,1 @@
+- **The Mac names the device it is controlling.** While another device is controlled, its name sits in an accent badge on the transport bar, even when the bar is narrow, so it is clear that play acts there.
