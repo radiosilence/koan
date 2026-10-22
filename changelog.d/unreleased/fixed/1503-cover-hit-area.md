@@ -1,0 +1,1 @@
+- **Tall covers stay in their tile.** A non-square cover no longer takes hovers and clicks meant for the record above or below it on the artist page and in the iOS grids.
