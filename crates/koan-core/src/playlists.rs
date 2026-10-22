@@ -905,6 +905,7 @@ mod tests {
             genre: None,
             label: None,
             release_types: None,
+            original_date: None,
             duration_ms: Some(185_000),
             codec: Some("FLAC".into()),
             sample_rate: None,

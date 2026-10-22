@@ -7247,6 +7247,7 @@ mod tests {
             date: Some("2020".into()),
             label: None,
             release_types: None,
+            original_date: None,
             size_bytes: None,
             mtime: None,
             source: "local".into(),

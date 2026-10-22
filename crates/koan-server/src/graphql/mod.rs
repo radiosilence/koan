@@ -645,6 +645,7 @@ mod tests {
                         album_added_at: None,
                         label: None,
                         release_types: None,
+                        original_date: None,
                         credits: Default::default(),
                     };
                     queries::upsert_track(&db.conn, &meta).unwrap();
@@ -688,6 +689,7 @@ mod tests {
             album_added_at: None,
             label: None,
             release_types: None,
+            original_date: None,
             credits: Default::default(),
         };
         queries::upsert_track(&db.conn, &meta).unwrap()

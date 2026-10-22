@@ -1,0 +1,1 @@
+- **Albums are dated by their original release.** Where a file is tagged with `ORIGINALDATE` or a server sends `originalReleaseDate`, a reissue sits at the year the record came out, in tiles, sorts and artist pages. The next scan and sync read every file and album again to fill it in.
