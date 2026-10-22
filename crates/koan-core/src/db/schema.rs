@@ -1116,9 +1116,10 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         conn.execute("DELETE FROM scan_cache", [])?;
     }
 
-    // Release types were read from neither tags nor servers. Files are read
-    // again on the next scan, and the next sync walks every album.
-    if found < 27 {
+    // Release types (27) and original release dates (29) were read from
+    // neither tags nor servers. Files are read again on the next scan, and
+    // the next sync walks every album.
+    if found < 29 {
         conn.execute_batch(
             "DELETE FROM scan_cache;
              UPDATE remote_servers SET library_version = NULL;",
@@ -1130,15 +1131,6 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     // kept.
     if found < 28 {
         conn.execute("DROP TABLE IF EXISTS link_push", [])?;
-    }
-
-    // Original release dates were read from neither tags nor servers, as
-    // release types were not before 27.
-    if found < 29 {
-        conn.execute_batch(
-            "DELETE FROM scan_cache;
-             UPDATE remote_servers SET library_version = NULL;",
-        )?;
     }
 
     Ok(())

@@ -1680,6 +1680,18 @@ mod tests {
         reissue.original_date = Some("1979-06-15".into());
         upsert_track(&db.conn, &reissue).unwrap();
         assert_eq!(date().as_deref(), Some("1979-06-15"));
+
+        let mut bonus = reissue.clone();
+        bonus.title = "Insight (demo)".into();
+        bonus.track_number = Some(11);
+        bonus.path = Some("/music/Unknown Pleasures/11.flac".into());
+        bonus.original_date = None;
+        upsert_track(&db.conn, &bonus).unwrap();
+        assert_eq!(
+            date().as_deref(),
+            Some("1979-06-15"),
+            "a bonus track tagged only with the edition's date does not re-date the album"
+        );
     }
 
     #[test]

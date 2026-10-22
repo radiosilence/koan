@@ -645,14 +645,12 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
             StandardTag::ReleaseYear(y) | StandardTag::RecordingYear(y) if date.is_none() => {
                 date = Some(y.to_string())
             }
-            StandardTag::OriginalReleaseDate(v) | StandardTag::OriginalRecordingDate(v) => {
-                set_text(&mut original_date, v)
+            StandardTag::OriginalReleaseDate(v) => set_text(&mut original_date, v),
+            StandardTag::OriginalReleaseYear(y) if original_date.is_none() => {
+                original_date = Some(y.to_string())
             }
-            StandardTag::OriginalReleaseYear(y) | StandardTag::OriginalRecordingYear(y)
-                if date.is_none() =>
-            {
-                date = Some(y.to_string())
-            }
+            StandardTag::OriginalRecordingDate(v) if date.is_none() => set_text(&mut date, v),
+            StandardTag::OriginalRecordingYear(y) if date.is_none() => date = Some(y.to_string()),
             StandardTag::TrackNumber(n) => track_number = Some(*n as i32),
             StandardTag::DiscNumber(n) => disc = Some(*n as i32),
             StandardTag::DiscTotal(n) => disc_total = Some(*n as i32),
@@ -825,32 +823,26 @@ mod tests {
 
     #[test]
     fn test_probe_original_date_fallback() {
-        // When no release/recording date is present, the original date is used.
+        // The original release date is kept as its own field, not as the date.
         let rev = make_revision(&[
             StandardTag::TrackTitle("My Song".to_string().into()),
             StandardTag::OriginalReleaseDate("1991".to_string().into()),
         ]);
         let meta = metadata_from_probe_result(&rev, "fallback");
-        assert_eq!(
-            meta.date,
-            Some("1991".to_string()),
-            "original release date should be used when the release date is missing"
-        );
+        assert_eq!(meta.original_date.as_deref(), Some("1991"));
+        assert_eq!(meta.date, None);
     }
 
     #[test]
     fn test_probe_original_date_not_used_when_date_present() {
-        // The release date takes precedence over the original release date.
+        // The release date stays the date; the original is kept beside it.
         let rev = make_revision(&[
             StandardTag::ReleaseDate("2005".to_string().into()),
             StandardTag::OriginalReleaseDate("1991".to_string().into()),
         ]);
         let meta = metadata_from_probe_result(&rev, "fallback");
-        assert_eq!(
-            meta.date,
-            Some("2005".to_string()),
-            "release date should take precedence over original release date"
-        );
+        assert_eq!(meta.date.as_deref(), Some("2005"));
+        assert_eq!(meta.original_date.as_deref(), Some("1991"));
     }
 
     #[test]
