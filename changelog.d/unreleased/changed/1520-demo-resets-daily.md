@@ -1,0 +1,1 @@
+- **The demo server resets daily.** demo.koan.rocks resets at midnight UTC rather than every hour, which signed every device on it out, App Review's included.
