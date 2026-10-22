@@ -899,6 +899,7 @@ jobs:
     uses: ./.github/workflows/ios.yml
     with:
       platform: ${{ needs.check-version.outputs.should_release == 'true' && 'both' || 'ios' }}
+      public: ${{ needs.check-version.outputs.should_release == 'true' }}
     secrets: inherit
 
   # The bundle the Android job built, to Google Play's internal testing track,

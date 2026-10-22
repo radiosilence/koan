@@ -4,10 +4,14 @@
 # ///
 """Set a TestFlight build's "What to Test" from the changelog.
 
-`whats_new.py BUILD [PLATFORM]` waits for build BUILD of the workspace version,
-on PLATFORM (`IOS`, the default, or `TV_OS`), to finish
+`whats_new.py BUILD [PLATFORM] [--public]` waits for build BUILD of the
+workspace version, on PLATFORM (`IOS`, the default, or `TV_OS`), to finish
 processing, then writes that version's CHANGELOG.md section, as plain text, to
 the build's en-GB localization: what testers see when they install it.
+
+`--public`, which a release passes, also adds the build to the public
+TestFlight group and submits it for beta review, so the public link offers it
+once Apple approves. Builds from other pushes stay with internal testers.
 
 Needs the same APPLE_API_* environment as push.py.
 """
@@ -23,6 +27,8 @@ from push import call, create, localization, rel, patch, workspace_version  # no
 
 BUNDLE_ID = "cc.blit.koan"
 LOCALE = "en-GB"
+# The external group behind the public TestFlight link.
+PUBLIC_GROUP = "Beta"
 # App Store Connect caps the field at 4000 characters.
 LIMIT = 4000
 # Processing usually takes a few minutes; past this the build has a problem
@@ -55,8 +61,10 @@ def notes(version):
 
 
 def main():
-    build_number = sys.argv[1]
-    platform = sys.argv[2] if len(sys.argv) > 2 else "IOS"
+    public = "--public" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--public"]
+    build_number = args[0]
+    platform = args[1] if len(args) > 1 else "IOS"
     version = workspace_version()
     text = notes(version)
     if not text:
@@ -92,6 +100,13 @@ def main():
     else:
         create("betaBuildLocalizations", {"locale": LOCALE, "whatsNew": text}, {"build": rel("builds", build["id"])})
     print(f"What to Test set for {version} ({build_number}): {len(text)} characters")
+
+    if public:
+        group = call("GET", f"/v1/apps/{app['id']}/betaGroups?filter[name]={PUBLIC_GROUP}")["data"][0]
+        call("POST", f"/v1/betaGroups/{group['id']}/relationships/builds", {"data": [{"type": "builds", "id": build["id"]}]})
+        if not call("GET", f"/v1/builds/{build['id']}/betaAppReviewSubmission").get("data"):
+            create("betaAppReviewSubmissions", {}, {"build": rel("builds", build["id"])})
+        print(f"{build_number} added to {PUBLIC_GROUP} and submitted for beta review")
 
 
 if __name__ == "__main__":
