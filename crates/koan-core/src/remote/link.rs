@@ -747,8 +747,9 @@ static ACTIVITY_HANDLE: Mutex<Option<(String, String, String)>> = Mutex::new(Non
 /// Registrations with the relay under way, and when each last failed, by
 /// what they register: a link asks again only after a while, not on every
 /// frame, and one failing holds up no other.
-static REGISTERING: LazyLock<Mutex<HashMap<String, (bool, Option<Instant>)>>> =
-    LazyLock::new(Default::default);
+static REGISTERING: LazyLock<Mutex<HashMap<String, Attempt>>> = LazyLock::new(Default::default);
+/// Whether it is under way, and when it last failed.
+type Attempt = (bool, Option<Instant>);
 const RETRY_REGISTERING: Duration = Duration::from_secs(5 * 60);
 
 /// Claims of tapped notifications waiting for a link: the claim, the server
@@ -768,6 +769,24 @@ pub fn claim(id: String, from: Option<String>) {
     if let Some(up) = LINK.lock().as_ref() {
         up.waker.wake();
     }
+}
+
+/// The claims for a link to `server`. A claim goes to the server whose
+/// notification carried it, and waits for a link to that server for as long
+/// as the server keeps it.
+fn take_claims(server: Option<&str>) -> Vec<String> {
+    let mut taken = Vec::new();
+    CLAIMS.lock().retain(|(id, for_server, at)| {
+        if at.elapsed() > CLAIM_LIFE {
+            return false;
+        }
+        if for_server.as_deref().is_some_and(|s| Some(s) != server) {
+            return true;
+        }
+        taken.push(id.clone());
+        false
+    });
+    taken
 }
 
 /// Forget every handle the relay gave this device: they were revoked.
@@ -1240,23 +1259,8 @@ impl wire::Session for LinkSession<'_> {
     fn outgoing(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         self.relay(&mut out);
-        {
-            // A claim goes to the server whose notification carried it, and
-            // waits for a link to that server for as long as it is kept there.
-            let mut claims = CLAIMS.lock();
-            claims.retain(|(id, server, at)| {
-                if at.elapsed() > CLAIM_LIFE {
-                    return false;
-                }
-                if server
-                    .as_ref()
-                    .is_some_and(|s| Some(s) != self.library.as_ref())
-                {
-                    return true;
-                }
-                out.push(LinkReport::Claim { id: id.clone() });
-                false
-            });
+        for id in take_claims(self.library.as_deref()) {
+            out.push(LinkReport::Claim { id });
         }
         if let Some(up) = LINK.lock().as_mut() {
             out.append(&mut up.outbox);
@@ -1506,6 +1510,27 @@ fn percent_encode(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_claim_waits_for_its_own_server() {
+        use super::{CLAIMS, take_claims};
+        use std::time::Instant;
+        CLAIMS.lock().extend([
+            (
+                "a".to_string(),
+                Some("server-a".to_string()),
+                Instant::now(),
+            ),
+            (
+                "b".to_string(),
+                Some("server-b".to_string()),
+                Instant::now(),
+            ),
+            ("any".to_string(), None, Instant::now()),
+        ]);
+        assert_eq!(take_claims(Some("server-a")), ["a", "any"]);
+        assert_eq!(take_claims(Some("server-a")), Vec::<String>::new());
+        assert_eq!(take_claims(Some("server-b")), ["b"]);
+    }
 
     #[test]
     fn levels_cross_the_link_compactly() {
