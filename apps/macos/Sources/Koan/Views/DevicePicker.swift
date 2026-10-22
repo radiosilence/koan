@@ -623,9 +623,6 @@ struct ControlButton: View {
     /// The smallest square the button takes clicks in, for a host that sets
     /// it in a cell of its own.
     var target: CGFloat?
-    /// The widest the name draws, for a host that holds the button at its
-    /// natural size and so cannot truncate it.
-    var nameWidth: CGFloat?
 
     var body: some View {
         Button {
@@ -638,7 +635,6 @@ struct ControlButton: View {
                 if let name = label {
                     Text(name)
                         .lineLimit(1)
-                        .frame(maxWidth: nameWidth)
                         .foregroundStyle(
                             player.controlledOutOfReach
                                 ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.ink, system: .primary))
@@ -684,7 +680,7 @@ private struct ControlledBadge: ViewModifier {
     func body(content: Content) -> some View {
         if on {
             if outOfReach {
-                content.font(font).koanBadge(accent: true).tint(KoanTheme.isOn ? Color.koanBad : .orange)
+                content.font(font).koanBadge(accent: true).tint(KoanTheme.style(.bad, system: .orange))
             } else {
                 content.font(font).koanBadge(accent: true)
             }

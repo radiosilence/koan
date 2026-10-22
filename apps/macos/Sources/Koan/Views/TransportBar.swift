@@ -229,14 +229,7 @@ struct TransportBar: View {
                 .font(.role(.fine, system: .caption))
 
             if player.hasOtherDevices || player.isControllingAnother {
-                // The name of a device being controlled stays, shortened: it
-                // says whose music the whole bar is showing.
-                ControlButton(
-                    open: $showingControl,
-                    labelled: !compact || player.isControllingAnother,
-                    iconSize: 17,
-                    nameWidth: compact ? 90 : 200
-                )
+                ControlButton(open: $showingControl, labelled: !compact, iconSize: 17)
                     .font(.role(.fine, system: .caption))
             }
             if player.canChooseOutput {
