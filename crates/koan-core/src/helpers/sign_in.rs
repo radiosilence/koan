@@ -189,6 +189,12 @@ pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<
 
 /// Store a credential already checked against the server, replacing whichever
 /// kind was there.
+///
+/// Signing in to another server than the one kept replaces the library: the
+/// last server's syncs are stopped and its tracks, playlists and downloads
+/// forgotten (`forget_server`) before the new server is kept, so the device
+/// starts from the new server's library alone. The same server, at any
+/// address it is known by, keeps what is there.
 fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
     let before = Config::load();
     let switching = before
@@ -197,12 +203,36 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
     if switching && let Ok(before) = &before {
         retire_push(before);
     }
+    // The address the server gives for itself, which tells one server reached
+    // at two addresses from two servers.
+    let server_url =
+        SubsonicClient::from_auth(SubsonicAuth::with(url, username, credential.clone()))
+            .profile()
+            .ok()
+            .and_then(|p| p.url)
+            .map(|u| u.trim().trim_end_matches('/').to_owned())
+            .unwrap_or_default();
+    let leaving = before
+        .as_ref()
+        .ok()
+        .filter(|c| !c.remote.url.is_empty() && !same_server(&c.remote, url, &server_url));
+    if let Some(old) = leaving {
+        crate::remote::sync::cancel(&old.remote.url);
+    }
+    // Held until the new server is kept: no sync of the last one writes
+    // under the forgetting, and none of the new one starts before it.
+    let _syncs = leaving.map(|_| crate::helpers::hold_syncs());
+    if let Some(old) = leaving {
+        let forgotten = crate::db::pool::shared()
+            .get()
+            .and_then(|db| crate::helpers::forget_server(&db, old));
+        if let Err(e) = forgotten {
+            log::warn!("sign in: could not forget the last server's library: {e}");
+        }
+    }
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
-        // Another server's own address; this one's comes with its profile.
-        if cfg.remote.url.trim_end_matches('/') != url {
-            cfg.remote.server_url = String::new();
-        }
+        cfg.remote.server_url = server_url;
         cfg.remote.url = url.to_string();
         cfg.remote.username = username.to_string();
         (cfg.remote.password, cfg.remote.api_key) = match &credential {
@@ -233,6 +263,18 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
     // This device's announcement names the server it is signed in to.
     crate::remote::nearby::readvertise();
     Ok(())
+}
+
+/// Whether the server at `url`, giving `server_url` for itself (empty where
+/// it gives none), is the one kept: any address one is known by, its own or
+/// the one signed in to, is the other's. These are the addresses
+/// `link::library_fingerprint` identifies a library by.
+fn same_server(kept: &crate::config::RemoteConfig, url: &str, server_url: &str) -> bool {
+    let normal = |u: &str| u.trim().trim_end_matches('/').to_ascii_lowercase();
+    let known = [normal(&kept.url), normal(&kept.server_url)];
+    [normal(url), normal(server_url)]
+        .iter()
+        .any(|u| !u.is_empty() && known.contains(u))
 }
 
 /// Whether signing in as `username` at `url` is the account already kept,
@@ -576,6 +618,34 @@ mod refusal_tests {
         assert!(!same_account(&kept, "https://other.example.com", "mate"));
         assert!(same_account(&kept, "https://music.example.com", "Mate"));
         assert!(!same_account(&kept, "https://music.example.com", "owner"));
+    }
+
+    /// One server is one library at whichever address it is reached: the one
+    /// signed in to, or the one it gives for itself.
+    #[test]
+    fn a_server_is_known_by_any_of_its_addresses() {
+        let kept = crate::config::RemoteConfig {
+            url: "http://192.168.1.5:4533".into(),
+            server_url: "https://music.example.com".into(),
+            ..Default::default()
+        };
+        assert!(same_server(&kept, "http://192.168.1.5:4533/", ""));
+        assert!(same_server(
+            &kept,
+            "https://Music.example.com",
+            "https://music.example.com"
+        ));
+        assert!(same_server(
+            &kept,
+            "https://tunnel.example.net",
+            "https://music.example.com/"
+        ));
+        assert!(!same_server(&kept, "https://other.example.com", ""));
+        assert!(!same_server(
+            &kept,
+            "https://other.example.com",
+            "https://other.example.com"
+        ));
     }
 
     /// Waiting plays, forgettings and hearts name one server's ids: none of

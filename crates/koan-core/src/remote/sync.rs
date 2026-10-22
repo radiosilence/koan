@@ -1625,6 +1625,100 @@ mod tests {
         assert_eq!(tracks(), 3);
     }
 
+    /// Signing in to another server leaves its library alone: the last
+    /// server's tracks, playlists, downloads and sync record go, local files
+    /// stay, and nothing in the cache is adopted for the new server's tracks.
+    #[test]
+    fn another_server_replaces_the_library() {
+        use crate::helpers::{Walk, adopt_cached_files, forget_server, sync_remote};
+        let (db, dir) = test_db();
+        let mut cfg = crate::config::Config::default();
+        cfg.remote.cache_dir = Some(dir.path().join("cache"));
+        let cache = cfg.cache_dir();
+        let titles = || -> Vec<String> {
+            db.conn
+                .prepare("SELECT title FROM tracks ORDER BY title")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+
+        let mut local = queries::sample_meta("Local Song", "Local Artist", "Local Album");
+        local.path = Some("/music/Local Song.flac".into());
+        queries::upsert_track(&db.conn, &local).unwrap();
+
+        let first = StubServer::start(Arc::new(StubState {
+            albums: Mutex::new(stub_albums(2)),
+            lists_songs: true,
+            library_modified: Mutex::new(Some(1_000)),
+            ..Default::default()
+        }));
+        let client = SubsonicClient::new(&first.url(), "u", "p");
+        sync_remote(&db, &client, Walk::Always, &first.url(), "u", &|_| {}).unwrap();
+        let downloaded: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM tracks WHERE remote_id = 'sa0000'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let file = cache.join("Stub Artist/Album 0000/01. Song a0000.flac");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"fLaC").unwrap();
+        queries::set_cached_path(&db.conn, downloaded, &file.to_string_lossy()).unwrap();
+        std::fs::write(cache.join("unrecorded.flac"), b"fLaC").unwrap();
+        queries::add_favourite(&db.conn, queries::LOCAL_USER, downloaded).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO playlists (name, remote_id) VALUES ('Mix', 'pl-1')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(titles().len(), 3);
+
+        forget_server(&db, &cfg).unwrap();
+        assert_eq!(titles(), vec!["Local Song"], "local files stay");
+        assert_eq!(
+            std::fs::read_dir(&cache).unwrap().count(),
+            0,
+            "no download of the last server's is left"
+        );
+        let playlists: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM playlists", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(playlists, 0);
+        assert!(
+            queries::load_favourites(&db.conn, queries::LOCAL_USER)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library_version(&db, &first.url()),
+            None,
+            "coming back walks the library afresh"
+        );
+
+        let second = StubServer::start(Arc::new(StubState {
+            albums: Mutex::new(vec![(
+                "b0000".into(),
+                "Other Album".into(),
+                "2024-01-15T10:30:00Z".into(),
+            )]),
+            lists_songs: true,
+            ..Default::default()
+        }));
+        let client = SubsonicClient::new(&second.url(), "u", "p");
+        let synced =
+            sync_remote(&db, &client, Walk::IfChanged, &second.url(), "u", &|_| {}).unwrap();
+        assert!(synced.library.is_complete());
+        assert_eq!(titles(), vec!["Local Song", "Song b0000"]);
+        assert_eq!(adopt_cached_files(&db, &cache).unwrap(), 0);
+    }
+
     /// An album missing from the listing is removed only once the server says
     /// it is gone.
     #[test]

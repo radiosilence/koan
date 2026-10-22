@@ -26,6 +26,18 @@ pub enum Walk {
     IfChanged,
 }
 
+/// Held by a sync for as long as it runs. One at a time: an automatic sync
+/// still reconciling favourites when a sync was asked for wrote under it, and
+/// each fought the other for the write lock. The second waits for the first,
+/// and then has little left to do.
+static SYNCING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Wait for the sync running, if any, to finish, and keep any other from
+/// starting until the guard is dropped.
+pub(crate) fn hold_syncs() -> parking_lot::MutexGuard<'static, ()> {
+    SYNCING.lock()
+}
+
 /// Pull the library, then reconcile favourites and playlists.
 ///
 /// One function because there are four callers — the app, the CLI, the GraphQL
@@ -59,11 +71,6 @@ pub fn sync_remote(
             Ok(())
         }
     };
-    // One at a time. An automatic sync still reconciling favourites when a
-    // sync was asked for wrote under it, and each fought the other for the
-    // write lock. The second waits for the first, and then has little left
-    // to do.
-    static SYNCING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     let _one_at_a_time = SYNCING.lock();
     cancelled()?;
 
