@@ -1,0 +1,1 @@
+- **The server banner on iPhone covers nothing, and its Sign In opens Server.** It lay over the first rows of the page, which in Settings were Server and Account, and Sign In stopped at the Settings tab.
