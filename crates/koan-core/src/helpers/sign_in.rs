@@ -59,10 +59,7 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
 /// forget that server's library. Forgotten only once the change is kept, so
 /// a write that fails leaves the server and its library as they were; the
 /// syncs are held off throughout, so none writes under the forgetting.
-fn leave(
-    old: &Config,
-    change: impl FnOnce(&mut Config),
-) -> Result<(), crate::config::ConfigError> {
+fn leave(old: &Config, change: impl FnOnce(&mut Config)) -> Result<(), crate::config::ConfigError> {
     if !old.remote.url.is_empty() {
         crate::remote::sync::cancel(&old.remote.url);
     }
