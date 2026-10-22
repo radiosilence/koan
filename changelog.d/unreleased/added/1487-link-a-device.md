@@ -1,0 +1,1 @@
+- **Link a device.** Every account's page, on the web and in the apps' Settings → Account, opens with a QR code of its own invite, so a phone signs in by scanning the screen. Any account may now ask `koanInvite` for its own invite; inviting others stays an admin's.
