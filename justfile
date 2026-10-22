@@ -1700,10 +1700,12 @@ ios-store-shots src out captions="captions":
 
 # Push the App Store listing (apps/ios/store/listing.toml) through the App
 # Store Connect API: text, review details, the newest processed build, and
-# screenshots when given as `iphone=DIR ipad=DIR`. Never submits for review.
-# Needs the same APPLE_API_* environment as ios-testflight.
-ios-store *screenshots:
-    uv run apps/ios/store/push.py {{screenshots}}
+# screenshots when given as `iphone=DIR ipad=DIR` (or `--platform tvos tv=DIR`).
+# `--attachment FILE` gives App Review a recording; `--submit` submits, as the
+# `store.yml` workflow does. Needs the same APPLE_API_* environment as
+# ios-testflight.
+ios-store *args:
+    uv run apps/ios/store/push.py {{args}}
 
 # The Android SDK: ANDROID_HOME when it names one, else where Android Studio
 # or Homebrew's android-commandlinetools put it. A shell can export an
