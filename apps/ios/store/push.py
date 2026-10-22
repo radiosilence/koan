@@ -4,11 +4,13 @@
 # ///
 """Push the App Store listing in listing.toml through the App Store Connect API.
 
-    push.py [--platform ios|tvos] [--version X.Y.Z] [--attachment FILE] [--submit] [iphone=DIR ipad=DIR tv=DIR]
+    push.py [--platform ios|tvos] [--version X.Y.Z] [--attachment FILE] [--screenshots] [--submit] [iphone=DIR ipad=DIR tv=DIR]
 
 Updates the app information, the platform's version in preparation (created if
 there is none), its text, the App Review details, and, when screenshot
-directories are given, replaces the screenshots. Attaches the newest processed
+directories are given, replaces the screenshots. `--screenshots` gives the
+platform's committed ones in screenshots/, which are taken against the demo
+server and framed with frame.py. Attaches the newest processed
 build of the version, the workspace's unless given.
 
 `--attachment` replaces the App Review attachments with FILE, such as the
@@ -42,6 +44,7 @@ BUNDLE_ID = "cc.blit.koan"
 # and Apple TV.
 DISPLAY_TYPES = {"iphone": "APP_IPHONE_67", "ipad": "APP_IPAD_PRO_3GEN_129", "tv": "APP_APPLE_TV"}
 PLATFORMS = {"ios": "IOS", "tvos": "TV_OS"}
+SCREENSHOT_KINDS = {"ios": ["iphone", "ipad"], "tvos": ["tv"]}
 # Submissions that can be cancelled to edit the version again.
 WAITING = {"WAITING_FOR_REVIEW", "READY_FOR_REVIEW"}
 EDITABLE = {"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED"}
@@ -215,11 +218,15 @@ def main():
     parser.add_argument("--platform", choices=PLATFORMS, default="ios")
     parser.add_argument("--version", default=workspace_version())
     parser.add_argument("--attachment")
+    parser.add_argument("--screenshots", dest="committed", action="store_true")
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("screenshots", nargs="*", help="KIND=DIR, KIND one of " + ", ".join(DISPLAY_TYPES))
     args = parser.parse_args()
     platform = PLATFORMS[args.platform]
     screenshots = dict(arg.split("=", 1) for arg in args.screenshots)
+    if args.committed:
+        shots = Path(__file__).with_name("screenshots")
+        screenshots = {kind: shots / kind for kind in SCREENSHOT_KINDS[args.platform]} | screenshots
 
     listing = tomllib.loads(Path(__file__).with_name("listing.toml").read_text())
     if args.platform == "tvos":

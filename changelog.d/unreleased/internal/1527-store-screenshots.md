@@ -1,0 +1,1 @@
+- **The App Store screenshots are in the repository.** They sit beside the listing text in `apps/ios/store/screenshots/`, and `push.py --screenshots` uploads them, so a submission can be rebuilt from the repository alone.
