@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.67.3
+
+### Security
+
+- **tokio 1.54.1.** 1.54.0 was yanked for RUSTSEC-2026-0384, a race in `tokio::time::Interval` that can corrupt memory on the multi-threaded runtime.
+
+### Changed
+
+- **Pairing codes format as they are typed.** The code box under Settings → Devices and on the server's `/pair` page turns what is typed or pasted into `XXXX-XXXX` in capitals, the way the device shows it.
+- **Signing out is a clean break.** Signing out of a server, or in as another account, removes its tracks, the account's favourites, history and playlists, the queue and the downloads from the device; signing in again pulls them back. Local files, playlists read from files, EQ profiles and settings stay. The option to keep the server's tracks is gone.
+
+### Fixed
+
+- **Tall covers stay in their tile.** A non-square cover no longer takes hovers and clicks meant for the record above or below it on the artist page and in the iOS grids.
+- **Now Playing keeps the artwork when paused from the lock screen.** On iPhone, pausing with the app in the background published the track again without its sleeve, because iOS had emptied the bitmap cache; the artwork already published is now reused.
+- **Signing in again keeps the device's key.** A device signed in again by invite or pairing now moves its public key to the new API key and retires the old one, instead of leaving the key behind on every link.
+- **Signing out stops a sync.** A sync from the server in progress, or waiting to start, stops when the device signs out of it, rather than paging the old server and writing its rows.
+- **A banner when the server is out of reach.** The iPhone, iPad and Apple TV apps say across the top of every page when the device is signed out of its server, its sign-in was refused, or its link is down, since other devices see it as unreachable and nothing on it said why.
+- **Changing servers replaces the library.** Signing in to a different server removes the last server's tracks, playlists and downloads and clears the queue, so the new server's library is shown alone and its sync is not held up by the old one's. Local files stay, and signing in to the same server at another address keeps the library.
+
+### Internal
+
+- **App Store releases from a workflow.** `store.yml` pushes the listing in `apps/ios/store/listing.toml`, iOS and tvOS alike, attaches the version's build and submits it to App Review, cancelling a submission still waiting; `just ios-store` does the same from a Mac and uploads screenshots and the App Review attachment. App Review signs in to demo.koan.rocks, and the tvOS app has review notes of its own.
+
 ## 0.67.2
 
 ### Added
