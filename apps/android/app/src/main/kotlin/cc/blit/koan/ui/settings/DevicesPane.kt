@@ -19,13 +19,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.ffi.ConnectedInfo
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.Settings
+import cc.blit.koan.ffi.formatPairCode
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -57,7 +62,7 @@ fun DevicesPane(model: SettingsModel) {
         if (s.remoteSignedIn && c?.pairing == true) {
             header("Pair a device")
             item {
-                InlineField(code, { code = it }, "XXXX-XXXX", "Approve", capitals = true) {
+                InlineField(code, { code = formatPairCode(it).replace("-", "") }, "XXXX-XXXX", "Approve", capitals = true, visualTransformation = PairCodeDash) {
                     if (code.isNotBlank()) account.offerPairing(code)
                     code = ""
                 }
@@ -257,6 +262,7 @@ internal fun InlineField(
     action: String,
     uri: Boolean = false,
     capitals: Boolean = false,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
     onAction: () -> Unit,
 ) {
     ButtonRow {
@@ -272,7 +278,23 @@ internal fun InlineField(
                 imeAction = ImeAction.Done,
             ),
             keyboardActions = KeyboardActions(onDone = { onAction() }),
+            visualTransformation = visualTransformation,
         )
         KoanButton(action, onAction, kind = KoanButtonKind.Bordered, enabled = value.isNotBlank())
     }
+}
+
+/**
+ * Shows a pairing code as `XXXX-XXXX` while the field holds the bare symbols
+ * `formatPairCode` left, so the dash never sits under the caret.
+ */
+private val PairCodeDash = VisualTransformation { text ->
+    TransformedText(
+        AnnotatedString(if (text.length > 4) text.text.substring(0, 4) + "-" + text.text.substring(4) else text.text),
+        object : OffsetMapping {
+            override fun originalToTransformed(offset: Int) = if (offset > 4) offset + 1 else offset
+
+            override fun transformedToOriginal(offset: Int) = if (offset > 4) offset - 1 else offset
+        },
+    )
 }

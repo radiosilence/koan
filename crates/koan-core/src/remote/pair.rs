@@ -28,6 +28,11 @@ use crate::remote::client::SubsonicError;
 
 pub const PAIR_PAGE: &str = "https://koan.rocks/pair/";
 
+/// Crockford's base32: no I, L, O or U, so a code read off a screen cannot be
+/// mistyped as another.
+pub const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+pub const CODE_LEN: usize = 8;
+
 /// The server pings a waiting device every half minute. Three missed mean
 /// the connection is gone.
 const SILENCE: Duration = Duration::from_secs(90);
@@ -219,6 +224,26 @@ fn pair_url(server: &str, device: &str) -> Result<Url, PairError> {
     Ok(url)
 }
 
+/// A code as it is being typed or pasted, as the device shows it: capitals,
+/// the letters Crockford reads as digits turned into them, anything outside the
+/// alphabet dropped, and the dash after the fourth symbol once there is a fifth.
+pub fn format_code(typed: &str) -> String {
+    let mut code: String = typed
+        .chars()
+        .map(|c| match c.to_ascii_uppercase() {
+            'I' | 'L' => '1',
+            'O' => '0',
+            c => c,
+        })
+        .filter(|c| c.is_ascii() && CODE_ALPHABET.contains(&(*c as u8)))
+        .take(CODE_LEN)
+        .collect();
+    if code.len() > CODE_LEN / 2 {
+        code.insert(CODE_LEN / 2, '-');
+    }
+    code
+}
+
 /// The link that approves pairing `id` on `server`.
 pub fn link(server: &str, id: &str) -> String {
     let fragment = form_urlencoded::Serializer::new(String::new())
@@ -299,6 +324,24 @@ fn refused(e: SubsonicError) -> PairError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_code_is_formatted_as_it_is_typed() {
+        for (typed, shown) in [
+            ("", ""),
+            ("7tem", "7TEM"),
+            ("7temx", "7TEM-X"),
+            ("7temexh6", "7TEM-EXH6"),
+            ("7TEM-EXH6", "7TEM-EXH6"),
+            (" 7tem exh6 ", "7TEM-EXH6"),
+            ("7TEM-", "7TEM"),
+            ("ilou", "110"),
+            ("7temexh6zz", "7TEM-EXH6"),
+            ("7te!m€exh6", "7TEM-EXH6"),
+        ] {
+            assert_eq!(format_code(typed), shown, "{typed:?}");
+        }
+    }
 
     #[test]
     fn a_message_from_a_newer_server_is_passed_over() {

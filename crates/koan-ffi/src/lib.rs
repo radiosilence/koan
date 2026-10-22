@@ -421,6 +421,14 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
     config::parse_size_bytes(&text)
 }
 
+/// A pairing code as it is being typed, as the device shows it: `XXXX-XXXX`
+/// in capitals. Applied to the field on every change, so typing and pasting
+/// read the same on every platform.
+#[uniffi::export]
+pub fn format_pair_code(typed: String) -> String {
+    koan_core::remote::pair::format_code(&typed)
+}
+
 /// The heading over a section of an artist's records.
 #[uniffi::export]
 pub fn release_section_title(section: ReleaseSection) -> String {

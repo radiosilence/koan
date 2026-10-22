@@ -589,6 +589,9 @@ impl SettingsPage {
                 KeyCode::Char(c) if !ctrl => text.push(c),
                 _ => {}
             }
+            if field == Field::PairCode {
+                *text = koan_core::remote::pair::format_code(text);
+            }
             return Some(None);
         }
         if self.focus == Focus::Sections {
