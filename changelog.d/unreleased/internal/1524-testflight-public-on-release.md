@@ -1,0 +1,1 @@
+- **Releases go to the public TestFlight beta.** A release's iOS and tvOS builds join the public TestFlight group and are submitted for beta review; builds from other pushes to main stay with internal testers.
