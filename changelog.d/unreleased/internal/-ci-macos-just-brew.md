@@ -1,0 +1,1 @@
+- **The macOS CI jobs install just with Homebrew.** `setup-just` found no release for just on the macOS release runner, which stopped 0.67.4 publishing.
