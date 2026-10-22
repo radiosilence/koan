@@ -24,6 +24,7 @@ hmac = "0.13"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 ipnet = "2"
 koan-core = { workspace = true }
+koan-relay-client = { workspace = true }
 log = "0.4"
 lru = "0.19"
 rayon = "1"

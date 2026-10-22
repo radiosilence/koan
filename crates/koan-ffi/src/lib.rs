@@ -101,6 +101,39 @@ pub trait ProgressReporter: Send + Sync {
     fn advanced(&self, done: u64, detail: String);
 }
 
+/// App Attest, as the app does it for the push relay: `DCAppAttestService`.
+/// Called from a background thread; each call blocks until the system has
+/// answered.
+#[uniffi::export(with_foreign)]
+pub trait PushAttester: Send + Sync {
+    /// Generate a key and attest it over `client_data_hash`; `None` where App
+    /// Attest is unsupported or refuses.
+    fn attest(&self, client_data_hash: Vec<u8>) -> Option<AttestedKey>;
+    /// An assertion by the key `key_id` over `client_data_hash`.
+    fn assert(&self, key_id: Vec<u8>, client_data_hash: Vec<u8>) -> Option<Vec<u8>>;
+}
+
+/// A key App Attest made and Apple attested.
+#[derive(uniffi::Record)]
+pub struct AttestedKey {
+    pub key_id: Vec<u8>,
+    pub attestation: Vec<u8>,
+}
+
+struct AttesterBridge(Arc<dyn PushAttester>);
+
+impl koan_core::remote::relay::Attester for AttesterBridge {
+    fn attest(&self, client_data_hash: Vec<u8>) -> Option<(Vec<u8>, Vec<u8>)> {
+        self.0
+            .attest(client_data_hash)
+            .map(|k| (k.key_id, k.attestation))
+    }
+
+    fn assert(&self, key_id: Vec<u8>, client_data_hash: Vec<u8>) -> Option<Vec<u8>> {
+        self.0.assert(key_id, client_data_hash)
+    }
+}
+
 /// The iOS and tvOS audio session, which the app owns: activated by the
 /// engine the moment before it plays, released by the player once output has
 /// stopped for a while. Called on the player thread; `activate` must not
@@ -790,82 +823,24 @@ impl KoanEngine {
             .map_err(|message| KoanError::Remote { message })
     }
 
-    /// Where Apple's push service reaches this app, as the OS issued it. The
-    /// link sends it to the server, which can then wake the app once iOS has
-    /// suspended it. `sandbox` for a development build.
+    /// Where Apple's push service reaches this app, as the OS issued it. It
+    /// goes to kōan's push relay alone; servers get the relay's handles.
+    /// `sandbox` for a development build.
     pub fn set_push_token(&self, token: String, sandbox: bool) {
         koan_core::remote::link::set_push_token(token, sandbox);
     }
 
-    /// Run a command a push notification carried (the JSON under `koan`): what
-    /// the server would have sent over the link had iOS not suspended the app.
-    /// Also links now, so anything else waiting follows.
-    ///
-    /// Tracks the library lacks are synced for on the pool first. The lane
-    /// every transport call waits on only resolves what is already here.
-    pub async fn run_pushed_command(self: Arc<Self>, command: String) -> Result<(), KoanError> {
-        koan_core::remote::link::nudge();
-        let envelope = match koan_core::remote::acks::Envelope::parse(&command) {
-            Ok(envelope) => envelope,
-            Err(e) => {
-                log::warn!("push: not a command ({e}): {command}");
-                koan_core::remote::acks::refuse_unread(&command, |ack, outcome| {
-                    koan_core::remote::link::report(koan_core::remote::link::LinkReport::Ack {
-                        ack,
-                        outcome,
-                    });
-                });
-                return Ok(());
-            }
-        };
-        // Under the id it was sent with: a copy that also came down the link
-        // is acted on once, and the answer goes up the link when there is one.
-        let Some((cmd, pending)) = koan_core::remote::acks::take(envelope, |ack, outcome| {
-            koan_core::remote::link::report(koan_core::remote::link::LinkReport::Ack {
-                ack,
-                outcome,
-            });
-        }) else {
-            return Ok(());
-        };
-        let ids = cmd.track_ids().to_vec();
-        if !ids.is_empty() {
-            let engine = self.clone();
-            offload::offload(move || {
-                let db = engine.db()?;
-                if koan_core::remote::link::resolve_tracks(&db, &ids, true).1 {
-                    engine.library_changed();
-                }
-                Ok::<_, KoanError>(())
-            })
-            .await?;
-        }
-        // A sync touches no player state, so it has no place in the lane's order.
-        if matches!(
-            cmd,
-            koan_core::remote::link::LinkCommand::Sync { .. }
-                | koan_core::remote::link::LinkCommand::HistoryChanged
-                | koan_core::remote::link::LinkCommand::DspProfilesChanged
-        ) {
-            return offload::offload(move || {
-                self.handle_link(
-                    cmd,
-                    koan_core::remote::link::CommandSource::Account,
-                    pending,
-                );
-                Ok(())
-            })
-            .await;
-        }
-        offload::sequenced(move || {
-            self.handle_link(
-                cmd,
-                koan_core::remote::link::CommandSource::Account,
-                pending,
-            );
-            Ok(())
-        })
-        .await
+    /// A notification the person tapped: `claim` is what it carried under
+    /// `koan-e2e`. The link sends it, and the server runs the command it kept
+    /// for it here, as if sent over the link; links now if it is not up.
+    pub fn claim_notification(&self, claim: String) {
+        koan_core::remote::link::claim(claim);
+    }
+
+    /// Let the app attest this install for the push relay: App Attest, which
+    /// only it can reach. See `koan_core::remote::relay`.
+    pub fn set_push_attester(&self, attester: Arc<dyn PushAttester>) {
+        koan_core::remote::relay::set_attester(Arc::new(AttesterBridge(attester)));
     }
 
     pub async fn pause(self: Arc<Self>) -> Result<(), KoanError> {

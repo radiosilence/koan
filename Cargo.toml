@@ -11,6 +11,9 @@ repository = "https://github.com/radiosilence/koan"
 license = "MIT"
 
 [workspace.dependencies]
+# kōan's push relay's client. From git, pinned, until the version carrying
+# App Attest is on crates.io; published crates cannot depend on git.
+koan-relay-client = { git = "https://github.com/radiosilence/koan-push-relay", rev = "e77960f5a25fc6b39f32b4c5fc7d43e544703095" }
 # Internal crates. Keep the version in step with [workspace.package] above —
 # a stale pin here publishes members that resolve against the wrong sibling.
 koan-core = { path = "crates/koan-core", version = "0.66.6" }

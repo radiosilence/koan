@@ -54,12 +54,12 @@ pub const APP_PASSWORDS: &str = "koanAppPasswords";
 /// the address it is reached at (`server.url`), which MCP's sign-in
 /// needs.
 pub const MCP: &str = "koanMcp";
-/// The server can push to the iOS app through Apple: wake it once suspended,
-/// ask it to play, update its Live Activities. Listed only where `[push]`
-/// holds a key, which only the app's developer can make. The app asks to show
-/// notifications where it is listed; its tokens go to every server, which
-/// lists a suspended phone by them.
-pub const APNS: &str = "koanApns";
+/// The server pushes to the iOS app through kōan's push relay: wakes it once
+/// suspended, asks it to play, updates its Live Activities. Listed only where
+/// `[push]` is enabled. Where it is, the app asks to show notifications,
+/// registers with the relay and gives the server the relay's handles; where
+/// it is not, the app asks for nothing and gives the server nothing.
+pub const PUSH: &str = "koanPush";
 
 /// The server keeps an Apple TV's Companion pairing for the account and hands
 /// it to the account's devices: `LinkReport::TvPairing` up, `tvPairing` on
