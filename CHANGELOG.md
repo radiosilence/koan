@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.67.1
+
+### Added
+
+- **Demo server mode.** `server.demo` makes a public demo: a shared `demo` account filled in on the sign-in page, whose password, keys and scrobbling no visitor can change. The Pulumi chart's `demo` option runs it with its music from an image and its state wiped every hour, and `name` lets it sit beside another server in one namespace.
+
 ## 0.67.0
 
 ### Added
