@@ -1,0 +1,1 @@
+- **The site links the TestFlight beta from the top.** koan.rocks offers the iPhone and Apple TV beta beside Download for Mac, and in the iOS and Apple TV sections.
