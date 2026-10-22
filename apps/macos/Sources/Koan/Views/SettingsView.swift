@@ -226,6 +226,17 @@ struct SettingsView: View {
                         .washedRow()
                 }
                 .koanList()
+                #if os(iOS)
+                .navigationDestination(isPresented: Binding(
+                    get: { app.ui.showingServerSettings },
+                    set: { app.ui.showingServerSettings = $0 }
+                )) {
+                    RemoteSettings(model: model)
+                        .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                        .navigationTitle(KoanTheme.label("Server"))
+                        .koanPushedPage()
+                }
+                #endif
                 #if os(tvOS)
                 .onMoveCommand { direction in
                     if konami.press(direction) { app.appearance.toggleRainbow() }
