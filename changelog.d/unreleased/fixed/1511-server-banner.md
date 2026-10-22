@@ -1,0 +1,1 @@
+- **A banner when the server is out of reach.** The iPhone, iPad and Apple TV apps say across the top of every page when the device is signed out of its server, its sign-in was refused, or its link is down, since other devices see it as unreachable and nothing on it said why.
