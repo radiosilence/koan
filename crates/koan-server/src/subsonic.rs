@@ -5185,19 +5185,18 @@ fn keypair() -> Result<&'static crate::auth::Keypair, SubsonicError> {
     crate::auth::signing_keys().map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
+/// An invite's node. `ttl` is the link's lifetime: a week for an admin's
+/// invite, which is sent by email, and the QR code's for an account's own,
+/// which is shown on a screen.
 fn invite_node(
     conn: &rusqlite::Connection,
     user_id: i64,
     username: &str,
     password: Option<&str>,
+    ttl: u64,
 ) -> Result<XmlNode, SubsonicError> {
-    let token = koan_core::invite::mint_token(
-        conn,
-        &keypair()?.0,
-        user_id,
-        koan_core::invite::TOKEN_TTL_SECS,
-    )
-    .map_err(account_error)?;
+    let token =
+        koan_core::invite::mint_token(conn, &keypair()?.0, user_id, ttl).map_err(account_error)?;
     let qr_token = koan_core::invite::mint_token(
         conn,
         &keypair()?.0,
@@ -5247,6 +5246,7 @@ async fn koan_create_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
                 made.id,
                 username.trim(),
                 Some(&made.password),
+                koan_core::invite::TOKEN_TTL_SECS,
             )?))
         })
     })
@@ -5275,11 +5275,17 @@ async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
             } else {
                 None
             };
+            let ttl = if caller.role == Role::Admin {
+                koan_core::invite::TOKEN_TTL_SECS
+            } else {
+                koan_core::invite::QR_TOKEN_TTL_SECS
+            };
             Ok(b.child(invite_node(
                 &db.conn,
                 user.id,
                 username,
                 password.as_deref(),
+                ttl,
             )?))
         })
     })

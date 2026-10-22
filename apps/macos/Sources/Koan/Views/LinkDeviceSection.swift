@@ -4,16 +4,17 @@ import SwiftUI
 /// A QR code that signs another device in as this account: the account's own
 /// invite, which every account may have. Its token lapses in ten minutes, so a
 /// fresh one is fetched each time the section appears and again before it
-/// lapses. Drawn nothing where the server refuses, as one older than this
-/// change does for an account that is not an admin.
+/// lapses. While the server refuses or cannot be reached the section is not
+/// drawn, and asks again a minute later: a server older than self-invites
+/// refuses an account that is not an admin.
 struct LinkDeviceSection: View {
     let username: String
     @Environment(LibraryModel.self) private var library
     @State private var invite: Invite?
-    @State private var refused = false
+    @State private var failed = false
 
     var body: some View {
-        if !refused { section }
+        if !failed { section }
     }
 
     private var section: some View {
@@ -25,7 +26,7 @@ struct LinkDeviceSection: View {
                 )
                 .frame(maxWidth: .infinity)
                 #if !os(tvOS)
-                ShareLink(item: invite.link) {
+                ShareLink(item: invite.qrLink) {
                     KoanLabel("Share Link…", icon: Icon.export)
                 }
                 .koanButton(.bordered)
@@ -42,13 +43,10 @@ struct LinkDeviceSection: View {
         }
         .task(id: username) {
             while !Task.isCancelled {
-                guard let made = try? await library.engine.inviteServerAccount(username: username, reset: false)
-                else {
-                    refused = true
-                    return
-                }
+                let made = try? await library.engine.inviteServerAccount(username: username, reset: false)
                 invite = made
-                try? await Task.sleep(for: .seconds(9 * 60))
+                failed = made == nil
+                try? await Task.sleep(for: .seconds(made == nil ? 60 : 9 * 60))
             }
         }
     }

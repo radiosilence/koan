@@ -47,7 +47,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.AccountRole
 import cc.blit.koan.ffi.Invite
@@ -95,17 +98,20 @@ fun AccountPane(model: SettingsModel) {
         null
     }
     // The account's own invite, as a QR code to sign another device in. Its
-    // token lapses in ten minutes, so it is made afresh before then. A server
-    // that refuses, as an older one does an account that is not an admin,
-    // draws nothing.
+    // token lapses in ten minutes, so it is made afresh on every resume and
+    // before it lapses. While the server refuses or cannot be reached nothing
+    // is drawn and it is asked again a minute later: a server older than
+    // self-invites refuses an account that is not an admin.
     val username = state.settings?.remoteUsername
     val linking = account != null && username != null && connection.offers(INVITE)
-    val link by produceState<Invite?>(null, account, linking) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val link by produceState<Invite?>(null, account, linking, lifecycle) {
         if (!linking) return@produceState
-        while (true) {
-            value = runCatching { app.mirror.engine().inviteServerAccount(username!!, false) }.getOrNull()
-                ?: return@produceState
-            delay(9 * 60_000L)
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                value = runCatching { app.mirror.engine().inviteServerAccount(username!!, false) }.getOrNull()
+                delay(if (value == null) 60_000L else 9 * 60_000L)
+            }
         }
     }
     val keysState = keys?.state?.collectAsStateWithLifecycle()?.value
