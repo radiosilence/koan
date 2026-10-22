@@ -5639,8 +5639,14 @@ async fn koan_sign_in(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
                 ));
             }
             let name = koan_core::invite::device_name(params.get("name").unwrap_or_default());
-            let (_, api_key) = queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            // On a demo every visitor is the one account, and devices share
+            // names ("iPhone"): replacing would sign the last visitor out.
+            let made = if crate::demo::enabled() {
+                queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
+            } else {
+                queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
+            };
+            let (_, api_key) = made.map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b.child(
                 XmlNode::new("join")
                     .attr("username", &caller.username)

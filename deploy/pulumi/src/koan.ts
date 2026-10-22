@@ -12,15 +12,17 @@ const STATE_MOUNT_PATH = "/config";
  * A demo's container: wipe the state, index the library, and serve until the
  * clock reaches the hour, then again. A loop in the container rather than a
  * CronJob restarting the pod, which would need RBAC to do it and a fresh copy
- * of the library each time. `$@` is the image's usual arguments.
+ * of the library each time. `$@` is the image's usual arguments. Each step
+ * runs in the background, so a TERM is handled at once rather than after it.
  */
 const DEMO_RUN = `
-trap 'kill -TERM "$pid" 2>/dev/null; wait "$pid"; exit 0' TERM INT
+pid=
+trap '[ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null; wait; exit 0' TERM INT
 while :; do
   find ${STATE_MOUNT_PATH} -mindepth 1 -delete
-  koan scan /music >/dev/null
-  timeout "$(( 3600 - $(date +%s) % 3600 ))" koan --headless --bind 0.0.0.0 "$@" &
-  pid=$!
+  koan scan /music >/dev/null & pid=$!
+  wait "$pid"
+  timeout "$(( 3600 - $(date +%s) % 3600 ))" koan --headless --bind 0.0.0.0 "$@" & pid=$!
   wait "$pid"
   sleep 1
 done
@@ -185,9 +187,9 @@ export function createKoan(
         replicas: 1,
         // Host paths and one index: two pods would share neither safely.
         strategy: { type: "Recreate" },
-        selector: { matchLabels: selectorLabels() },
+        selector: { matchLabels: selectorLabels(instance) },
         template: {
-          metadata: { labels: selectorLabels() },
+          metadata: { labels: selectorLabels(instance) },
           spec: {
             ...podBase,
             containers: [
@@ -217,7 +219,11 @@ export function createKoan(
                 ],
                 ports: [{ name: "api", containerPort: conf.api.port }],
                 readinessProbe: { tcpSocket: { port: "api" }, periodSeconds: 10 },
-                livenessProbe: { tcpSocket: { port: "api" }, initialDelaySeconds: 30, periodSeconds: 30 },
+                // Not for a demo: the port is closed while it wipes and
+                // rescans on the hour, which is no fault to restart for.
+                ...(!conf.demo.enabled && {
+                  livenessProbe: { tcpSocket: { port: "api" }, initialDelaySeconds: 30, periodSeconds: 30 },
+                }),
                 resources: { limits: conf.resources.limits, requests: conf.resources.requests },
                 securityContext: {
                   allowPrivilegeEscalation: false,
@@ -259,7 +265,7 @@ export function createKoan(
     apiServiceName,
     {
       metadata: { name: apiServiceName, namespace, labels: labels(instance) },
-      spec: { selector: selectorLabels(), ports: [{ port: 80, targetPort: "api" }] },
+      spec: { selector: selectorLabels(instance), ports: [{ port: 80, targetPort: "api" }] },
     },
     options,
   );
@@ -270,7 +276,7 @@ export function createKoan(
       {
         metadata: { name: instance, namespace, labels: labels(instance) },
         spec: {
-          podSelector: { matchLabels: selectorLabels() },
+          podSelector: { matchLabels: selectorLabels(instance) },
           policyTypes: ["Ingress", "Egress"],
           ingress: [
             // GraphQL and Subsonic, through whatever fronts the Service.
