@@ -182,7 +182,9 @@
             assistant</a></li>
         <li><strong>Inviting someone is one link.</strong> Open it, or scan its QR code, on a phone or Mac with kōan and it signs that device
           in with a key of its own and syncs the library, nothing to type. Each device's key can be revoked on its own,
-          and changing the password kills every link already sent. <a
+          and changing the password kills every link already sent. The QR code works for ten minutes, so a screenshot of
+          it is no use to anyone later. Signing in another of your own phones works the same way: every account's page
+          opens with a <strong>Link a device</strong> code to scan. <a
             href="/docs/authentication/#invites">Invites</a></li>
         <li><strong>One Rust core, linked right in.</strong> The SwiftUI apps on macOS and iOS call the audio engine
           in-process. No Electron, and no daemon or port sitting between the interface and the sound. <a
@@ -406,7 +408,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         <li><strong>Shuffle and repeat</strong>, of the whole queue or one track. Repeats are gapless and each pass
           counts in history. Shuffle plays the queue in a random order without moving it, and turning it off carries on
           in queue order.</li>
-        <li><strong>Network amplifiers and streamers</strong>: the Mac and Android apps and the terminal UI play to UPnP/DLNA
+        <li><strong>Network amplifiers and streamers</strong>: the Mac, iPhone and Android apps and the terminal UI play to UPnP/DLNA
           renderers, like a WiiM or an Arcam amp. The queue stays in kōan and the renderer gets sent the original file,
           so it's bit-perfect up to its DAC, and gapless where the renderer can do it. Give an amp its own EQ or
           convolution profile and kōan processes the queue itself and sends one continuous FLAC stream instead, gapless
@@ -436,6 +438,10 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
           fetched ahead of the cursor as far as the limit allows, played ones get evicted first, and tracks you
           downloaded to keep go last. You choose how far ahead it fetches, from nothing to the whole queue, and a limit
           of zero keeps only what plays next. See <a href="/docs/cache-management/">Cache management</a>.</li>
+        <li><strong>Artist pages that read like a discography.</strong> Records are grouped under Albums, EPs &amp;
+          Singles, Live, Compilations and Other releases, from the MusicBrainz release type in the tags or the one an
+          OpenSubsonic server sends, and a reissue is dated by its original release, so it sits where the record came
+          out rather than at the year it was pressed again.</li>
         <li><strong>Search</strong> across the whole library, with SQLite full-text search.</li>
         <li><strong>Queue</strong> grouped by album, with drag reordering, multi-select, 100 levels of undo and Finder
           drag and drop. It survives restarts.</li>
@@ -489,7 +495,8 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         played recently, set a sleep timer and reorganise files on disk. The Output menu sends the music to this Mac's
         audio devices or to UPnP amps on the network, each with its own EQ or convolution preset, and marks the speaker
         button whenever what you're hearing is processed. Once you've got another kōan device, Control drives that one
-        instead, and Output then lists its outputs. First-run setup covers library folders and remote sign-in, and
+        instead, the transport names it in a badge so you know where play and pause go, and Output then lists its
+        outputs. First-run setup covers library folders and remote sign-in, and
         Settings covers the server side too: accounts and passwords, API keys for other apps, ListenBrainz, and the
         address to give an assistant. Turn on <strong>Keep running in the menu bar</strong> and closing the window
         leaves it running, so your phone can still reach it.</p>
@@ -540,6 +547,10 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         Signing in doesn't involve typing a password with a remote: open kōan on a phone that's signed in, the TV finds
         your server, and you scan its code. No kōan on the phone? The code opens your server's own page instead.
         <a href="/docs/apple-tv/">How signing in works</a>.</p>
+      <p>Once it's set up with the code the TV shows, a phone or Mac on the same network turns the TV on and opens kōan
+        there when you play to it, over the protocol Apple's Remote app uses. Your server keeps that pairing for the
+        account, so every device you sign in can do it. <a href="/docs/apple-tv/#playing-to-it-while-it-sleeps">Playing
+          to it while it sleeps</a>.</p>
     </section>
 
     <div class="carousel my-8" role="region" aria-roledescription="carousel" aria-label="Screenshots of the Apple TV app">

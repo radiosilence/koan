@@ -23,7 +23,7 @@ Available fields:
 | `%artist%` | Aphex Twin |
 | `%album artist%` | Aphex Twin |
 | `%album%` | Windowlicker EP |
-| `%date%` | 1999 |
+| `%date%` | 1999 (the original release date where one is tagged, as the library dates albums) |
 | `%tracknumber%` | 01 (zero-padded) |
 | `%discnumber%` | 1 |
 | `%codec%` | FLAC |

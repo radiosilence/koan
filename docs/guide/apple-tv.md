@@ -90,7 +90,7 @@ kōan asks whether to wake it from there. Or choose **Set Up Waking…** from th
 TV's menu in Play on (a long press on iOS, a right click on the Mac). The TV
 shows a four-digit code; type it on the phone or Mac. The TV waits about half
 a minute for it, and **Try Again** asks for a fresh one. Your server keeps
-the pairing for your account, which needs a server from this version on.
+the pairing for your account, which needs kōan 0.66.4 or later on the server.
 
 From then on, choosing the TV in Control while it is asleep turns it on and
 opens kōan, which signs in to your server, and the music follows. The picker
