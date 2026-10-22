@@ -495,7 +495,7 @@ mod tests {
             std::slice::from_ref(&file),
             std::slice::from_ref(&music),
         );
-        let own = queries::create_playlist(&db.conn, LOCAL_USER, "Mine", None).unwrap();
+        queries::create_playlist(&db.conn, LOCAL_USER, "Mine", None).unwrap();
         let public = |db: &Database| -> Vec<(String, bool)> {
             db.conn
                 .prepare("SELECT name, public FROM playlists ORDER BY name")
@@ -518,7 +518,6 @@ mod tests {
         );
         set_visibility(&db, false).unwrap();
         assert_eq!(public(&db)[0], ("Loved".into(), false));
-        let _ = own;
     }
 
     #[test]
