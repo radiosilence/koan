@@ -1311,6 +1311,10 @@ private struct PairDevice: View {
                 HStack {
                     TextField("Code", text: $code, prompt: Text("XXXX-XXXX"))
                         .verbatimEntry()
+                        .onChange(of: code) { _, typed in
+                            let shown = formatPairCode(typed: typed)
+                            if shown != typed { code = shown }
+                        }
                         .onSubmit(approve)
                         .koanField(code, prompt: "XXXX-XXXX")
                     Button("Approve", action: approve)

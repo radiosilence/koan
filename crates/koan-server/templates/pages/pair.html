@@ -3,10 +3,12 @@
 {% block body %}
 {%- match view %}
 {%- when View::Code { error } %}
+{#- Datastar formats the code as it is typed, the same as the apps' `format_code`. #}
+<script type="module" src="{{ crate::ui::ASSETS.datastar_js }}"></script>
 <h2>Sign in a device</h2>
 <p>Type the code the device shows.</p>
 <form class="grid gap-3.5" method="get" action="/pair">
-<label class="{{ crate::ui::pages::SIGNIN_LABEL }}">Code<input class="text-input" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="20" required autofocus></label>
+<label class="{{ crate::ui::pages::SIGNIN_LABEL }}">Code<input class="text-input" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="9" required autofocus data-on:input="el.value = el.value.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/[^0-9A-HJKMNP-TV-Z]/g, '').slice(0, 8).replace(/^.{4}(?=.)/, (m) => m + '-')"></label>
 {% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
 <button class="primary">Continue</button></form>
 {%- when View::NoAccounts %}

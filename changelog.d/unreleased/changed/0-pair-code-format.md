@@ -1,0 +1,1 @@
+- **Pairing codes format as they are typed.** The code box under Settings → Devices and on the server's `/pair` page turns what is typed or pasted into `XXXX-XXXX` in capitals, the way the device shows it.

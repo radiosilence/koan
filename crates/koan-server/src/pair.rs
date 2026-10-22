@@ -17,7 +17,7 @@ use axum::extract::RawQuery;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use koan_core::remote::pair::PairMessage;
+use koan_core::remote::pair::{CODE_ALPHABET, CODE_LEN, PairMessage};
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
@@ -32,10 +32,6 @@ const MAX_PENDING: usize = 256;
 /// sets up a device or two at a time, and a few addresses must not be able to
 /// fill `MAX_PENDING`.
 const MAX_PENDING_PER_ADDRESS: usize = 3;
-/// Crockford's base32: no I, L, O or U, so a code read off a screen cannot be
-/// mistyped as another.
-const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const CODE_LEN: usize = 8;
 /// What keeps a waiting socket open through proxies that drop idle ones, and
 /// what a live device answers.
 const KEEPALIVE: Duration = Duration::from_secs(30);
