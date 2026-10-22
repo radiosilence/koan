@@ -111,6 +111,10 @@ struct AlbumArtwork: View {
             // straight from placeholder to art reads as a stutter of pops.
             .animation(.easeOut(duration: 0.2), value: ready == nil)
             .clipShape(RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius)))
+            // Clipping hides the overflow of a filled non-square cover but
+            // leaves it hit-testable, so a tall one would take clicks and
+            // hovers meant for the tile above or below.
+            .contentShape(RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius)))
             // An edge for a dark sleeve on a dark ground. The placeholder is
             // already a flat field of its own, and edged it reads as a frame.
             .overlay {
