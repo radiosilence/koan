@@ -2783,6 +2783,9 @@ pub struct ConnectionInfo {
     /// The server refused the stored credential (a revoked API key, a changed
     /// password) when it was last used, and has not accepted it since.
     pub sign_in_refused: bool,
+    /// Whether this device can use its server, for the banner the apps show
+    /// on every page while it cannot.
+    pub standing: ServerStanding,
     /// The servers devices on this network are signed in to, announced over
     /// Bonjour: what a device not signed in yet offers to sign in to.
     pub nearby_servers: Vec<NearbyServer>,
@@ -2793,6 +2796,26 @@ pub struct ConnectionInfo {
     pub connections: Vec<ConnectedInfo>,
     /// Devices disconnected from Settings, held off until allowed back.
     pub held: Vec<HeldInfo>,
+}
+
+/// See `koan_core::helpers::ServerStanding`.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerStanding {
+    Fine,
+    SignedOut,
+    Refused,
+    Unreachable,
+}
+
+impl From<helpers::ServerStanding> for ServerStanding {
+    fn from(s: helpers::ServerStanding) -> Self {
+        match s {
+            helpers::ServerStanding::Fine => Self::Fine,
+            helpers::ServerStanding::SignedOut => Self::SignedOut,
+            helpers::ServerStanding::Refused => Self::Refused,
+            helpers::ServerStanding::Unreachable => Self::Unreachable,
+        }
+    }
 }
 
 /// A device disconnected from Settings and held off.

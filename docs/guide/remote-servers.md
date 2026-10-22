@@ -20,6 +20,13 @@ per 10,000 tracks. A server that does
 not answer an empty `search3` query is walked an album at a time instead, which
 for a library that size takes minutes.
 
+A device that cannot use its server says so across the top of every page in
+the iPhone, iPad and Apple TV apps: signed out of it, its sign-in refused (a
+revoked key or a changed password), or, signed in to a kōan server, its link
+down for more than a few seconds. Until then the server reports the device as
+unreachable and refuses commands sent to it. Offline mode turned on by hand
+shows no banner.
+
 ## Staying in sync
 
 Every sync walks the whole library, which is what lets it notice a track the server deleted or gave a new id. The apps sync on their own, and only when the server's library has changed:
