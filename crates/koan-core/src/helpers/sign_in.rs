@@ -51,6 +51,8 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
     crate::remote::offline::set_manual(false);
     crate::remote::link::relink();
     crate::remote::nearby::readvertise();
+    // The apps' banner reads the credentials, which no link event announces.
+    crate::remote::devices::touch();
     Ok(())
 }
 
@@ -408,6 +410,36 @@ pub fn sign_in_refused(cfg: &Config) -> bool {
     subsonic_auth(cfg).is_some_and(|auth| crate::remote::refusal::refused(&auth))
 }
 
+/// Where this device stands with its server, for the banner every app shows
+/// while it cannot use it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerStanding {
+    /// Signed in and reachable, never signed in to a server, or offline
+    /// because the person asked to be.
+    Fine,
+    /// A server is remembered but no credential for it is held.
+    SignedOut,
+    /// The server refused the credential held for it.
+    Refused,
+    /// Signed in, but the link to the server has been down for
+    /// `offline::GRACE` with the app awake.
+    Unreachable,
+}
+
+pub fn server_standing(cfg: &Config) -> ServerStanding {
+    if crate::remote::offline::manual() || cfg.remote.url.is_empty() {
+        ServerStanding::Fine
+    } else if remote_credential(cfg).is_none() {
+        ServerStanding::SignedOut
+    } else if sign_in_refused(cfg) {
+        ServerStanding::Refused
+    } else if crate::remote::offline::link_lost() {
+        ServerStanding::Unreachable
+    } else {
+        ServerStanding::Fine
+    }
+}
+
 #[cfg(test)]
 mod client_cache_tests {
     use super::*;
@@ -747,5 +779,23 @@ mod refusal_tests {
         assert_eq!(remote_problem(&cfg), None, "a new credential starts clean");
         sync();
         assert_eq!(remote_problem(&Config::load().unwrap()), None);
+    }
+}
+
+#[cfg(test)]
+mod standing_tests {
+    use super::*;
+
+    #[test]
+    fn a_remembered_server_without_a_credential_is_signed_out() {
+        let mut cfg = Config::default();
+        assert_eq!(
+            server_standing(&cfg),
+            ServerStanding::Fine,
+            "never signed in"
+        );
+        cfg.remote.url = "https://standing.invalid".into();
+        cfg.remote.username = "koan".into();
+        assert_eq!(server_standing(&cfg), ServerStanding::SignedOut);
     }
 }

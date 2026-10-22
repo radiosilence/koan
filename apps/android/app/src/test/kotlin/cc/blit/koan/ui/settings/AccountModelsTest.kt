@@ -9,6 +9,7 @@ import cc.blit.koan.ffi.NewApiKey
 import cc.blit.koan.ffi.NewAppPassword
 import cc.blit.koan.ffi.ServerAccount
 import cc.blit.koan.ffi.ServerExtension
+import cc.blit.koan.ffi.ServerStanding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -160,6 +161,7 @@ class AccountModelsTest {
         devices = true, linked = true, listeningPort = null, localNetworkBlocked = false, thisDevice = "phone",
         sharing = false, sharedWith = emptyList(), shareError = null, shareAccounts = emptyList(),
         offline = offline, offlineManual = false, pairing = true, scrobbling = false, signInRefused = false,
+        standing = ServerStanding.FINE,
         nearbyServers = emptyList(), commandNotice = null,
         connections = emptyList(), held = emptyList(),
     )

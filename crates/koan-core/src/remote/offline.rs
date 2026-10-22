@@ -85,7 +85,13 @@ pub fn active() -> bool {
 /// Whether this device has lost its server: iOS and tvOS only, for now, with the app
 /// awake and a server that keeps a link.
 pub fn cut_off() -> bool {
-    if !cfg!(any(target_os = "ios", target_os = "tvos")) || !crate::quiet::awake() {
+    cfg!(any(target_os = "ios", target_os = "tvos")) && link_lost()
+}
+
+/// Whether the link to a server that keeps one has been down for `GRACE`
+/// with the app awake, on any platform.
+pub fn link_lost() -> bool {
+    if !crate::quiet::awake() {
         return false;
     }
     let remote = &crate::config::Config::cached().remote;
