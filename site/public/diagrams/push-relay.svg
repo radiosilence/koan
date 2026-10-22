@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 400" width="860" height="400" role="img" aria-labelledby="title desc">
+  <title id="title">kōan's push relay</title>
+  <desc id="desc">The app registers its device token with the relay, proving itself with App Attest, and gets back a handle and a revoker. It gives the handle to its kōan server over the link. The server asks the relay to push to the handle; the relay signs the push with kōan's key and sends Apple its own text; Apple delivers a wake or a notification to the phone.</desc>
+  <style>
+    :root { --surface: #2a2a2a; --rule: #4d4d4d; --ink: #cccccc; --strong: #ffffff; --muted: #919191; --brand: #7dd3a7; }
+    @media (prefers-color-scheme: light) {
+      :root { --surface: #f2f2f2; --rule: #c4c4c4; --ink: #333333; --strong: #111111; --muted: #666666; --brand: #1f7a50; }
+    }
+    text { font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; fill: var(--ink); }
+    .box { fill: var(--surface); stroke: var(--rule); stroke-width: 1.5; }
+    .relay { stroke: var(--brand); stroke-width: 2; }
+    .name { font-size: 15px; fill: var(--strong); }
+    .relay-name { fill: var(--brand); }
+    .note { font-size: 12px; fill: var(--muted); }
+    .label { font-size: 12px; }
+    .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#head); }
+    .head { fill: var(--muted); }
+  </style>
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0 0 L10 5 L0 10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="20" y="30" width="200" height="90" rx="8"/>
+  <text class="name" x="120" y="64" text-anchor="middle">your kōan server</text>
+  <text class="note" x="120" y="86" text-anchor="middle">holds handles,</text>
+  <text class="note" x="120" y="102" text-anchor="middle">never tokens</text>
+
+  <rect class="box relay" x="330" y="30" width="200" height="90" rx="8"/>
+  <text class="name relay-name" x="430" y="64" text-anchor="middle">push.koan.rocks</text>
+  <text class="note" x="430" y="86" text-anchor="middle">holds Apple's key,</text>
+  <text class="note" x="430" y="102" text-anchor="middle">writes what shows</text>
+
+  <rect class="box" x="640" y="30" width="200" height="90" rx="8"/>
+  <text class="name" x="740" y="64" text-anchor="middle">Apple (APNs)</text>
+  <text class="note" x="740" y="86" text-anchor="middle">delivers to</text>
+  <text class="note" x="740" y="102" text-anchor="middle">the device</text>
+
+  <rect class="box" x="330" y="290" width="200" height="90" rx="8"/>
+  <text class="name" x="430" y="324" text-anchor="middle">kōan on iPhone</text>
+  <text class="note" x="430" y="346" text-anchor="middle">keeps its token</text>
+  <text class="note" x="430" y="362" text-anchor="middle">and its revoker</text>
+
+  <!-- server → relay -->
+  <path class="arrow" d="M222 66 H326"/>
+  <text class="label" x="274" y="56" text-anchor="middle">push</text>
+  <text class="label" x="274" y="84" text-anchor="middle">handle, kind</text>
+
+  <!-- relay → Apple -->
+  <path class="arrow" d="M532 66 H636"/>
+  <text class="label" x="584" y="56" text-anchor="middle">signed</text>
+  <text class="label" x="584" y="84" text-anchor="middle">its own text</text>
+
+  <!-- Apple → phone -->
+  <path class="arrow" d="M740 122 L534 318"/>
+  <text class="label" x="664" y="226">wake, or</text>
+  <text class="label" x="664" y="242">notification</text>
+
+  <!-- phone → relay: registration -->
+  <path class="arrow" d="M410 288 V124"/>
+  <text class="label" x="400" y="200" text-anchor="end">token +</text>
+  <text class="label" x="400" y="216" text-anchor="end">App Attest</text>
+
+  <!-- relay → phone: handle and revoker -->
+  <path class="arrow" d="M450 124 V288"/>
+  <text class="label" x="460" y="200">handle +</text>
+  <text class="label" x="460" y="216">revoker</text>
+
+  <!-- phone → server: the handle, over the link -->
+  <path class="arrow" d="M328 320 L122 124"/>
+  <text class="label" x="196" y="236" text-anchor="end">handle,</text>
+  <text class="label" x="196" y="252" text-anchor="end">over the link</text>
+</svg>

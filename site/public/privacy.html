@@ -30,13 +30,17 @@
     <section class="mx-auto max-w-2xl px-5 pt-8 pb-12">
       <h1 class="mb-8 text-4xl font-extralight">Privacy</h1>
 
-      <p>kōan collects no personal data. There is no account with kōan itself, no analytics, no advertising, no crash reporting and no tracking. Nothing about you or your listening is sent to the developer.</p>
+      <p>kōan collects no personal data. There is no account with kōan itself, no analytics, no advertising, no crash reporting and no tracking. Nothing about you or your listening is sent to the developer. The one service the developer runs that the app talks to is the push relay, described below, and it learns nothing about your music.</p>
 
       <h2>What stays on your device</h2>
       <p>Your library index, play history, favourites, playlists, settings and cached music are stored on your device. On iPhone and iPad they are inside the app, and deleting the app deletes them; on a Mac they are in <code>~/.config/koan</code>, which removing the app leaves in place.</p>
 
       <h2>Your music server</h2>
       <p>If you connect kōan to a Subsonic, Navidrome or kōan server, it signs in with the address, username and password you enter, and exchanges your library, playlists, favourites and playback with that server only. The server is yours or your host's; its privacy is a matter between you and whoever runs it. kōan stores the credentials on your device so it can sign in again.</p>
+
+      <h2>Push notifications</h2>
+      <p>On iPhone, iPad and Apple TV, when you sign in to a server that offers it, kōan registers its push token with kōan's push relay at <code>push.koan.rocks</code>, run by the developer. The relay lets your server wake the app, or show a notification asking you to tap to play, after iOS has suspended it. Your server is given a sealed handle, never the token itself. To prove the request comes from kōan on a real device, the app also sends an <a href="https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity">App Attest</a> assertion, which Apple issues and which identifies no person.</p>
+      <p>The relay sees the push token, the kind of push and the IP address of whoever is calling it. It does not see what you listen to, your account or which server you use. It keeps no request log. It keeps a one-way hash of a token only when the app signs out or is removed from the device, for up to a year, so that an old handle for that device stops working, and it keeps rate-limit counters, keyed by hashed tokens and by IP address, in memory only until each limit refills. Apple delivers the push and sees the token, as it does for every app. A server whose owner turns push off never uses the relay, and the app then asks for no notification permission. <a href="/docs/push/">Push and the relay</a> describes all of this in detail.</p>
 
       <h2>Public music databases</h2>
       <p>To show lyrics and artist biographies and photos, kōan looks up the artist, album or track you are viewing in these public services. The request contains the names or MusicBrainz identifiers of that music and nothing that identifies you, though each service will see your IP address, as any website does.</p>

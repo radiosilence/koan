@@ -13,6 +13,7 @@ pages=(
   "Start|docs/guide/migrating-from-navidrome.md"
   "Server|docs/guide/headless-server.md"
   "Server|docs/guide/authentication.md"
+  "Server|docs/guide/push.md"
   "Server|docs/guide/remote-servers.md"
   "Library|docs/guide/file-organization.md"
   "Library|docs/guide/smart-playlists.md"
