@@ -143,8 +143,13 @@ impl PasswordVerifier {
 
     /// Whether `username` has spent its failures for the minute, as far as a
     /// sign-in from `from` is concerned: never from a network it recently
-    /// signed in from.
+    /// signed in from, and never for a demo's account, whose password is
+    /// public and which strangers would otherwise lock for everyone. The
+    /// per-address limits still apply.
     pub(crate) fn spent(&self, username: &str, from: IpAddr) -> bool {
+        if crate::demo::enabled() && username == crate::demo::USERNAME {
+            return false;
+        }
         self.failures.exhausted(&username.to_owned())
             && !self
                 .known

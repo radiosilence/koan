@@ -11,6 +11,15 @@ const ResourceQuantities = z.strictObject({
 
 export const KoanConfSchema = z.strictObject({
   /**
+   * The instance: the Deployment's and NetworkPolicy's names, the
+   * `app.kubernetes.io/instance` label, and the Pulumi resource names, so two
+   * servers can share a namespace. Changing it replaces the resources.
+   */
+  name: z
+    .string()
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, "must be a DNS label")
+    .default("koan"),
+  /**
    * Fed to KOAN_GRAPHQL__ALLOWED_HOSTS and KOAN_SERVER__URL: koan
    * refuses a Host it was not told about, and share links are built on it.
    */
@@ -35,14 +44,26 @@ export const KoanConfSchema = z.strictObject({
       name: z.string().default(""),
     })
     .prefault({}),
-  /** The music library, always mounted read-only. Set exactly one field. */
+  /**
+   * The music library, always mounted read-only. Set exactly one field,
+   * unless this is a demo, whose library comes from `demo.library`.
+   */
   library: z
     .strictObject({
       hostPath: AbsolutePath.optional(),
       existingClaim: z.string().optional(),
     })
-    .refine((v) => Boolean(v.existingClaim || v.hostPath), {
-      message: "library.hostPath or library.existingClaim is required",
+    .prefault({}),
+  /**
+   * A public demo server: one shared `demo` account (koan's `server.demo`),
+   * the library copied out of an image, and state on an emptyDir that is
+   * wiped and rebuilt at the top of every hour.
+   */
+  demo: z
+    .strictObject({
+      enabled: z.boolean().default(false),
+      /** Required with `enabled`: an image holding the library at /music, with `cp`. */
+      library: z.string().optional(),
     })
     .prefault({}),
   /**
@@ -124,4 +145,18 @@ export const KoanConfSchema = z.strictObject({
       ]),
     })
     .prefault({}),
+}).superRefine((c, ctx) => {
+  if (c.demo.enabled) {
+    if (!c.demo.library) {
+      ctx.addIssue({ code: "custom", message: "demo.library is required: the image holding the demo's music" });
+    }
+    if (c.library.hostPath || c.library.existingClaim || c.state.hostPath || c.state.existingClaim) {
+      ctx.addIssue({
+        code: "custom",
+        message: "a demo brings its own library and keeps no state: leave library and state unset",
+      });
+    }
+  } else if (!c.library.hostPath && !c.library.existingClaim) {
+    ctx.addIssue({ code: "custom", message: "library.hostPath or library.existingClaim is required" });
+  }
 });

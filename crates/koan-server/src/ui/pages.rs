@@ -163,6 +163,8 @@ struct Login<'a> {
     title: &'a str,
     next: &'a str,
     error: Option<&'a str>,
+    /// On a demo server, the shared account, filled in.
+    demo: Option<(&'a str, &'a str)>,
 }
 
 pub(super) fn login(next: &str, error: Option<&str>) -> Html {
@@ -170,6 +172,7 @@ pub(super) fn login(next: &str, error: Option<&str>) -> Html {
         title: "Sign in",
         next,
         error,
+        demo: crate::demo::enabled().then_some((crate::demo::USERNAME, crate::demo::PASSWORD)),
     }
     .html()
 }

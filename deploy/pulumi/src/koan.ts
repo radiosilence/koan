@@ -8,15 +8,35 @@ import { APP_VERSION } from "./versions.ts";
 const NAME = "koan";
 const STATE_MOUNT_PATH = "/config";
 
-const labels = () => ({
-  ...selectorLabels(),
+/**
+ * A demo's container: wipe the state, index the library, and serve until the
+ * clock reaches the hour, then again. A loop in the container rather than a
+ * CronJob restarting the pod, which would need RBAC to do it and a fresh copy
+ * of the library each time. `$@` is the image's usual arguments. Each step
+ * runs in the background, so a TERM is handled at once rather than after it.
+ */
+const DEMO_RUN = `
+pid=
+trap '[ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null; wait; exit 0' TERM INT
+while :; do
+  find ${STATE_MOUNT_PATH} -mindepth 1 -delete
+  koan scan /music >/dev/null & pid=$!
+  wait "$pid"
+  timeout "$(( 3600 - $(date +%s) % 3600 ))" koan --headless --bind 0.0.0.0 "$@" & pid=$!
+  wait "$pid"
+  sleep 1
+done
+`;
+
+const labels = (instance: string) => ({
+  ...selectorLabels(instance),
   "app.kubernetes.io/version": APP_VERSION,
   "app.kubernetes.io/managed-by": "pulumi",
 });
 
-const selectorLabels = () => ({
+const selectorLabels = (instance: string) => ({
   "app.kubernetes.io/name": NAME,
-  "app.kubernetes.io/instance": NAME,
+  "app.kubernetes.io/instance": instance,
 });
 
 /**
@@ -34,7 +54,8 @@ export function createKoan(
   const conf = KoanConfSchema.parse(confArgs);
   const options = { provider };
   const image = `${conf.image.repository}:${conf.image.tag || `v${APP_VERSION}`}`;
-  const apiServiceName = conf.service.name || NAME;
+  const instance = conf.name;
+  const apiServiceName = conf.service.name || instance;
 
   // What every pod here shares: the node, the user, and the state directory
   // made writable by that user.
@@ -50,6 +71,26 @@ export function createKoan(
     },
     // kubelet creates a missing hostPath as root, and koan cannot
     // write what root owns. Only the state directory is mounted here.
+    // A demo's library is copied out of its image into the pod.
+    ...(conf.demo.enabled
+      ? {
+          initContainers: [
+            {
+              name: "library",
+              // The schema refuses a demo without one.
+              image: conf.demo.library!,
+              command: ["cp", "-R", "/music/.", "/library/"],
+              securityContext: {
+                allowPrivilegeEscalation: false,
+                readOnlyRootFilesystem: true,
+                capabilities: { drop: ["ALL"] },
+              },
+              resources: { requests: { cpu: "50m", memory: "16Mi" }, limits: { memory: "64Mi" } },
+              volumeMounts: [{ name: "music", mountPath: "/library" }],
+            },
+          ],
+        }
+      : {}),
     ...(conf.initPermissions.enabled && conf.state.hostPath
       ? {
           initContainers: [
@@ -88,14 +129,14 @@ export function createKoan(
   // Not the server's selector labels: the Service would route to this pod.
   const checkLabels = {
     "app.kubernetes.io/name": `${NAME}-check-db`,
-    "app.kubernetes.io/instance": NAME,
+    "app.kubernetes.io/instance": instance,
     "app.kubernetes.io/version": APP_VERSION,
     "app.kubernetes.io/managed-by": "pulumi",
   };
   const check =
     conf.state.existingClaim || conf.state.hostPath
       ? new k8s.batch.v1.Job(
-          `${NAME}-check-db`,
+          `${instance}-check-db`,
           {
             metadata: {
               namespace,
@@ -139,16 +180,16 @@ export function createKoan(
       : undefined;
 
   const deployment = new k8s.apps.v1.Deployment(
-    NAME,
+    instance,
     {
-      metadata: { name: NAME, namespace, labels: labels() },
+      metadata: { name: instance, namespace, labels: labels(instance) },
       spec: {
         replicas: 1,
         // Host paths and one index: two pods would share neither safely.
         strategy: { type: "Recreate" },
-        selector: { matchLabels: selectorLabels() },
+        selector: { matchLabels: selectorLabels(instance) },
         template: {
-          metadata: { labels: selectorLabels() },
+          metadata: { labels: selectorLabels(instance) },
           spec: {
             ...podBase,
             containers: [
@@ -156,8 +197,16 @@ export function createKoan(
                 name: NAME,
                 image,
                 imagePullPolicy: conf.image.pullPolicy,
+                ...(conf.demo.enabled && { command: ["sh", "-c", DEMO_RUN, "koan-demo"] }),
                 args: ["--port", String(conf.api.port)],
                 env: [
+                  ...(conf.demo.enabled
+                    ? [
+                        { name: "KOAN_SERVER__DEMO", value: "true" },
+                        // Kept in config.toml elsewhere, which the wipe takes.
+                        { name: "KOAN_SUBSONIC__ENABLED", value: "true" },
+                      ]
+                    : []),
                   { name: "KOAN_LIBRARY__FOLDERS", value: '["/music"]' },
                   // koan refuses a Host it was not told about.
                   { name: "KOAN_GRAPHQL__ALLOWED_HOSTS", value: `["${conf.hostname}"]` },
@@ -170,7 +219,11 @@ export function createKoan(
                 ],
                 ports: [{ name: "api", containerPort: conf.api.port }],
                 readinessProbe: { tcpSocket: { port: "api" }, periodSeconds: 10 },
-                livenessProbe: { tcpSocket: { port: "api" }, initialDelaySeconds: 30, periodSeconds: 30 },
+                // Not for a demo: the port is closed while it wipes and
+                // rescans on the hour, which is no fault to restart for.
+                ...(!conf.demo.enabled && {
+                  livenessProbe: { tcpSocket: { port: "api" }, initialDelaySeconds: 30, periodSeconds: 30 },
+                }),
                 resources: { limits: conf.resources.limits, requests: conf.resources.requests },
                 securityContext: {
                   allowPrivilegeEscalation: false,
@@ -190,10 +243,12 @@ export function createKoan(
             volumes: [
               {
                 name: "music",
-                ...(conf.library.existingClaim
-                  ? { persistentVolumeClaim: { claimName: conf.library.existingClaim } }
-                  // The schema's refine guarantees one of the two is set.
-                  : { hostPath: { path: conf.library.hostPath!, type: "Directory" } }),
+                ...(conf.demo.enabled
+                  ? { emptyDir: {} }
+                  : conf.library.existingClaim
+                    ? { persistentVolumeClaim: { claimName: conf.library.existingClaim } }
+                    // The schema's refine guarantees one of the two is set.
+                    : { hostPath: { path: conf.library.hostPath!, type: "Directory" } }),
               },
               stateVolume,
               { name: "home", emptyDir: {} },
@@ -209,19 +264,19 @@ export function createKoan(
   const apiService = new k8s.core.v1.Service(
     apiServiceName,
     {
-      metadata: { name: apiServiceName, namespace, labels: labels() },
-      spec: { selector: selectorLabels(), ports: [{ port: 80, targetPort: "api" }] },
+      metadata: { name: apiServiceName, namespace, labels: labels(instance) },
+      spec: { selector: selectorLabels(instance), ports: [{ port: 80, targetPort: "api" }] },
     },
     options,
   );
 
   if (conf.networkPolicy.enabled) {
     new k8s.networking.v1.NetworkPolicy(
-      "koan-netpol",
+      `${instance}-netpol`,
       {
-        metadata: { name: NAME, namespace, labels: labels() },
+        metadata: { name: instance, namespace, labels: labels(instance) },
         spec: {
-          podSelector: { matchLabels: selectorLabels() },
+          podSelector: { matchLabels: selectorLabels(instance) },
           policyTypes: ["Ingress", "Egress"],
           ingress: [
             // GraphQL and Subsonic, through whatever fronts the Service.

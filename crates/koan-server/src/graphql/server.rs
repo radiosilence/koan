@@ -284,6 +284,14 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
     );
     let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
 
+    // A demo is one shared account; without sign-in everyone would be admin.
+    if cfg.server.demo {
+        if !auth_enabled {
+            return Err("server.demo needs graphql.auth_enabled".into());
+        }
+        let db = pool.get().map_err(|e| format!("demo: {e}"))?;
+        crate::demo::start(&db.conn).map_err(|e| format!("demo: {e}"))?;
+    }
     if auth_enabled {
         log::info!(
             "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",
@@ -359,6 +367,11 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
         )
         // A template that fails to render panics; this makes it a 500.
         .layer(tower_http::catch_panic::CatchPanicLayer::new());
+        let ui_routes = if cfg.server.demo {
+            ui_routes.layer(axum::middleware::from_fn(crate::demo::guard))
+        } else {
+            ui_routes
+        };
 
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
@@ -399,7 +412,15 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
         // remote TUI bridge builds its stream URL off the GraphQL base. Built
         // once and cloned for the dedicated listener, since each build reads
         // the config from disk.
-        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers, users);
+        // The demo guard goes on Subsonic itself, so a dedicated Subsonic
+        // port has it too, and on the web UI above.
+        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers, users).map(|sub| {
+            if cfg.server.demo {
+                sub.layer(axum::middleware::from_fn(crate::demo::guard))
+            } else {
+                sub
+            }
+        });
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
