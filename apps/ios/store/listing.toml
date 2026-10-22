@@ -18,7 +18,7 @@ support_url = "https://github.com/radiosilence/koan/issues"
 marketing_url = "https://koan.rocks"
 
 # 100, comma-separated, no spaces needed after commas.
-keywords = "music player,library,gapless,flac,lossless,self-hosted,server,stream,offline,albums,queue,hifi"
+keywords = "music player,library,gapless,flac,lossless,self-hosted,server,offline,albums,queue,hifi,eq,dlna"
 
 # 170. Can be changed without a new version.
 promotional_text = """
@@ -32,8 +32,9 @@ kōan plays the music library you already have, from a Subsonic-compatible serve
 It is built for large collections, which browse and search as quickly as small ones.
 
 YOUR LIBRARY, PROPERLY
-Albums, artists and tracks as your tags describe them, with full-size artwork. Search covers the whole library at once, \
-and sorting and filtering happen as you type.
+Albums, artists and tracks as your tags describe them, with full-size artwork. Artist pages group records into \
+albums, EPs and singles, live recordings and compilations, and a reissue sits at the year it first came out. Search \
+covers the whole library at once, and sorting and filtering happen as you type.
 
 A QUEUE THAT BEHAVES
 Albums stay grouped in the queue. Add, reorder and remove as you like; what is playing is never interrupted by an edit. \
@@ -42,6 +43,14 @@ Playback is gapless, so live albums and continuous mixes play as recorded.
 SOUND
 kōan decodes FLAC, ALAC, WAV, AIFF, MP3, AAC, Opus and Vorbis with its own engine, the same one as the kōan Mac app. \
 ReplayGain is applied from your tags, by track or by album.
+
+EQ FOR YOUR HEADPHONES
+Parametric EQ and convolution, set for each output and imported from the files headphone measurement sites publish. \
+An output with no EQ plays the file untouched.
+
+PLAY ON YOUR OTHER DEVICES
+Signed in to a kōan server, the phone controls kōan on your Mac, Apple TV or another phone, and moves what is playing \
+between them, with a Live Activity on the lock screen. It also plays through UPnP and DLNA amplifiers on your network.
 
 OFFLINE AND ON THE MOVE
 Tracks are cached on the phone as you play them, within a limit you set, so what you listen to often plays without a \
@@ -73,32 +82,33 @@ Navidrome or a kōan server. It is the iOS version of the open-source kōan Mac 
 (https://github.com/radiosilence/koan). It provides no music itself, has no in-app purchases and no user-generated \
 content, and works the same in every region. It operates in no regulated industry.
 
-To review it with a library, sign in to Navidrome's public demonstration server, which holds only Creative Commons \
-music:
+To review it with a library, sign in to kōan's public demonstration server, which holds only Creative Commons and \
+public-domain music and resets every hour:
 
 1. Open the Settings tab (at the bottom on iPhone, in the bar across the top on iPad) and choose Server.
-2. Server: https://demo.navidrome.org
+2. Server: https://demo.koan.rocks
    Username: demo
    Password: demo
-3. Tap Sign In. The library syncs in under a minute.
+3. Tap Sign In. The library syncs in a few seconds.
 4. Browse from the Library tab; tap an album to play it. The queue is on the Queue tab.
+
+Background audio: kōan is a music player, and the audio background mode keeps music playing when the app is in the \
+background or the screen is locked. A recording on a physical device, playing from the demo server and then going to \
+the Home Screen and the lock screen while the music continues: BACKGROUND_AUDIO_RECORDING_URL
 
 Accounts: kōan has no registration and no account of its own. The user signs in with an account their server issued. \
 An administrator signed in to a kōan server sees that server's accounts in Settings, with Add, Invite and Delete; the \
-Navidrome demo does not show this section.
+demo account is not an administrator and does not show this section.
 
-Third-party material: kōan plays only what the user has on their own server. The Navidrome demonstration server is \
-operated by the Navidrome project and holds only Creative Commons-licensed music.
+Third-party material: kōan plays only what the user has on their own server. The demonstration server is operated by \
+the developer and holds only music whose licence permits redistribution.
 
 External services: the user's own music server (library, streams, artwork, favourites, playlists); MusicBrainz, \
-Wikidata, Wikipedia and Wikimedia Commons (artist biographies and photos); \
-LRCLIB (lyrics); Apple Push Notification service (kōan servers only); Bonjour on the local network (finding other kōan \
-devices). No analytics, advertising, payments or AI services.
+Wikidata, Wikipedia and Wikimedia Commons (artist biographies and photos); LRCLIB (lyrics); Apple Push Notification \
+service, through kōan's push relay (kōan servers only); the local network (Bonjour to find other kōan devices, SSDP \
+to find UPnP amplifiers). No analytics, advertising, payments or AI services.
 
-The app declares the audio background mode so that music continues playing when the app is in the background or the \
-screen is locked.
-
-After signing in, the app asks to send notifications. They are used only with a kōan server (the Navidrome demo sends \
-none): when the user asks their own server to play music on this phone, for instance through an assistant, the server \
-wakes the app to start it, or shows a notification to tap if iOS will not start it in the background.\
+After signing in to a kōan server, the app asks to send notifications. They are used only when the user asks their \
+own server to play music on this phone, for instance through an assistant: the server wakes the app to start it, or \
+shows a notification to tap if iOS will not start it in the background.\
 """
