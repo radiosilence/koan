@@ -608,7 +608,9 @@ private struct LocalNetworkBlocked: View {
 }
 
 /// The button that opens Control, and names the device controlled when it is
-/// not this one.
+/// not this one. Labelled, that name is an accent badge: everything the
+/// transport shows is then the other device's, and pressing play here plays
+/// there, which a tinted icon at the end of the bar was too quiet to say.
 struct ControlButton: View {
     @Environment(PlayerModel.self) private var player
     /// Held by the host. On iOS the sheet hangs off a view that outlives the
@@ -639,6 +641,7 @@ struct ControlButton: View {
                                 ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.ink, system: .primary))
                 }
             }
+            .modifier(ControlledBadge(on: labelled && controlled != nil))
             .frame(minWidth: target, minHeight: target)
             .contentShape(Rectangle())
         }
@@ -662,6 +665,14 @@ struct ControlButton: View {
     private var help: String {
         if let note = player.controlledReachNote { return note }
         return controlled.map { "Controlling \($0)" } ?? "Control another kōan"
+    }
+}
+
+private struct ControlledBadge: ViewModifier {
+    let on: Bool
+
+    func body(content: Content) -> some View {
+        if on { content.koanBadge(accent: true) } else { content }
     }
 }
 
