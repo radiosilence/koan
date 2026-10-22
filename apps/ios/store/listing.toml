@@ -87,12 +87,13 @@ content, and works the same in every region. It operates in no regulated industr
 To review it with a library, sign in to kōan's public demonstration server, which holds only Creative Commons and \
 public-domain music and resets every hour:
 
-1. Open the Settings tab (at the bottom on iPhone, in the bar across the top on iPad) and choose Server.
+1. Open Settings (a tab at the bottom on iPhone, a row in the sidebar on iPad) and choose Server.
 2. Server: https://demo.koan.rocks
    Username: demo
    Password: demo
 3. Tap Sign In. The library syncs in a few seconds.
-4. Browse from the Library tab; tap an album to play it. The queue is on the Queue tab.
+4. Browse from Library (on iPad, Albums and Artists in the sidebar); tap an album to play it. The queue is
+   under Queue.
 
 Background audio: kōan is a music player, and the audio background mode keeps music playing when the app is in the \
 background or the screen is locked. A recording on a physical device, playing from the demo server and then going to \
