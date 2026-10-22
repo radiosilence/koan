@@ -285,12 +285,12 @@ internal fun InlineField(
 }
 
 /**
- * Shows a pairing code as `XXXX-XXXX` while the field holds the bare symbols,
- * so the dash never sits under the caret.
+ * Shows a pairing code as `XXXX-XXXX` while the field holds the bare symbols
+ * `formatPairCode` left, so the dash never sits under the caret.
  */
 private val PairCodeDash = VisualTransformation { text ->
     TransformedText(
-        AnnotatedString(formatPairCode(text.text)),
+        AnnotatedString(if (text.length > 4) text.text.substring(0, 4) + "-" + text.text.substring(4) else text.text),
         object : OffsetMapping {
             override fun originalToTransformed(offset: Int) = if (offset > 4) offset + 1 else offset
 
