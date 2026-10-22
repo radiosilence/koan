@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.67.0
+
+### Added
+
+- **Link a device.** Every account's page, on the web and in the apps' Settings → Account, opens with a QR code of its own invite, so a phone signs in by scanning the screen. Any account may now ask `koanInvite` for its own invite; inviting others stays an admin's.
+
+### Changed
+
+- **Push through kōan's relay.** Every server, self-hosted or not, now wakes iPhones, asks them to play and updates their Live Activities through kōan's push relay at `push.koan.rocks`, instead of only servers holding the developer's APNs key. The app registers with the relay, attesting with App Attest, and gives servers the relay's handles, never its device token; the relay decides what a phone shows. `[push]` is now `enabled` alone (on by default; `enabled = false` keeps a server off the relay, and its apps ask for no notifications), the `koanApns` extension is `koanPush`, and the APNs key settings and `/push/cover` are gone. Device tokens the server kept are dropped.
+- **Albums are dated by their original release.** Where a file is tagged with `ORIGINALDATE` or a server sends `originalReleaseDate`, a reissue sits at the year the record came out, in tiles, sorts and artist pages. The next scan and sync read every file and album again to fill it in.
+- **Organize's `%date%` is the date the library shows.** With albums dated by their original release, `%date%` is the original release date where one is tagged, for files in the library and files it does not know alike, so a preview and the move it authorises agree.
+
 ## 0.66.7
 
 ### Added
