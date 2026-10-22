@@ -45,6 +45,12 @@ final class NowPlayingCentre {
     /// without this nothing would ever publish it: the guard below sees an
     /// unchanged track, an unchanged state and no seek, and returns.
     private var publishedArtwork: AlbumArtwork.Source?
+    /// The artwork published for that sleeve, reused on every republish of it.
+    ///
+    /// The bitmap cache is an `NSCache`, which iOS empties when the app goes to
+    /// the background. A pause from the lock screen republishes, and rebuilding
+    /// the artwork from the cache then would publish the track without it.
+    private var publishedImage: MPMediaItemArtwork?
     /// The modes last shown on the shuffle and repeat commands.
     private var publishedShuffle: Bool?
     private var publishedRepeat: RepeatMode?
@@ -157,7 +163,9 @@ final class NowPlayingCentre {
         // couldn't have extrapolated — a seek, in other words — or the artwork
         // finally arriving.
         let source = player.currentArtwork
-        let artwork = source.flatMap { art.cached($0, size: .tile) }
+        let artwork = publishedArtwork != nil && publishedArtwork == source
+            ? publishedImage
+            : source.flatMap { art.cached($0, size: .tile) }.map(Self.artwork(for:))
         let item = [entry.queueItemId, entry.title, entry.artistCredit.text, entry.album, entry.albumArtistCredit.text]
         // A transport that plays but a playhead that holds still — waiting for
         // a download, or run dry at a track's end — is rate 0 to the system.
@@ -188,8 +196,8 @@ final class NowPlayingCentre {
         if now.durationMs > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = Double(now.durationMs) / 1000
         }
-        if let image = artwork {
-            info[MPMediaItemPropertyArtwork] = Self.artwork(for: image)
+        if let artwork {
+            info[MPMediaItemPropertyArtwork] = artwork
         }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -205,6 +213,7 @@ final class NowPlayingCentre {
         publishedPosition = positionMs
         publishedAt = .now
         publishedArtwork = artwork == nil ? nil : source
+        publishedImage = artwork
 
         if artwork == nil, let source {
             fetchArtwork(source)
