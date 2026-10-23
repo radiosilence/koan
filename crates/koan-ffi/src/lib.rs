@@ -541,8 +541,8 @@ impl VizStream {
                         continue;
                     }
                 }
-                let (position, playing) = devices::target_playhead().unwrap_or((0, false));
-                return Some(levels::remote().sample(position, playing).into());
+                let playing = devices::target_playhead().is_some_and(|(_, playing)| playing);
+                return Some(levels::remote().sample(playing).into());
             }
             let viz = self.viz.upgrade()?;
             viz.touch();

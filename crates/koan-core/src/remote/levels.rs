@@ -8,12 +8,17 @@
 //! nobody watches, and the analyser parks as it does with no local reader.
 //!
 //! Frames are keyed by the playhead position they were heard at, never by wall
-//! time. The controller draws slightly behind its estimate of the remote
-//! playhead and interpolates between the two frames either side of it, so a
-//! late or dropped frame is covered by the delay ([`Interp`]). When there is
-//! nothing to draw from — paused, a stalled link, the buffer run dry — the bars
-//! ease to rest. Nothing is extrapolated: what is drawn is the device's own
-//! analysis, smoothed.
+//! time, and they are their own clock: the controller follows the remote
+//! playhead from the frames as they arrive, draws slightly behind it and
+//! interpolates between the two frames either side, so a late or dropped frame
+//! is covered by the delay ([`Interp`]). The device's state reports are not
+//! that clock. They are sent only when the playhead strays three seconds from
+//! where a report would put it, so one taken while the output was still
+//! starting (a rate switch's lead-in, a session coming up) runs ahead of the
+//! music for the whole track, and bars drawn by it would wait for frames that
+//! never come. When there is nothing to draw from — paused, a stalled link,
+//! the buffer run dry — the bars ease to rest. Nothing is extrapolated beyond
+//! the frames: what is drawn is the device's own analysis, smoothed.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -233,6 +238,11 @@ pub struct Interp {
     /// The sender's frame interval as seen, in milliseconds: what the delay is
     /// measured in. Starts at a 60 Hz analyser's.
     spacing_ms: f32,
+    /// The remote playhead as the frames give it: where it stood at an
+    /// instant here. Set back by a frame that arrives behind it, and moved on
+    /// a little by one ahead of it, so it settles with the latest arrivals and
+    /// the delay is left to cover jitter.
+    clock: Option<(Instant, u64)>,
     shown: VizLevels,
     sampled: Option<Instant>,
 }
@@ -242,6 +252,7 @@ impl Default for Interp {
         Self {
             frames: VecDeque::new(),
             spacing_ms: 1000.0 / 60.0,
+            clock: None,
             shown: VizLevels::default(),
             sampled: None,
         }
@@ -249,15 +260,16 @@ impl Default for Interp {
 }
 
 impl Interp {
-    /// A frame heard at `at_ms`. Clears what came before on a seek or a new
-    /// track, any move back included; replaces the newest when the playhead
-    /// has not moved, as it does while a paused analyser lets its bars fall.
-    pub fn push(&mut self, at_ms: u64, levels: VizLevels) {
+    /// A frame heard at `at_ms`, arriving `now`. Clears what came before on a
+    /// seek or a new track, any move back included; replaces the newest when
+    /// the playhead has not moved, as it does while a paused analyser lets its
+    /// bars fall.
+    pub fn push(&mut self, at_ms: u64, levels: VizLevels, now: Instant) {
         if let Some(&(newest, _)) = self.frames.back() {
             // Back by more than a frame's jitter is a seek or another track,
             // however short the way; forward by more than a second, a seek.
             if at_ms + BACK_MS < newest || at_ms > newest + JUMP_MS {
-                self.frames.clear();
+                self.clear();
             } else if at_ms <= newest {
                 if let Some(back) = self.frames.back_mut() {
                     *back = (newest, levels);
@@ -274,11 +286,23 @@ impl Interp {
         while self.frames.len() > MAX_FRAMES {
             self.frames.pop_front();
         }
+        self.clock = Some(match self.playhead(now) {
+            Some(expected) if at_ms > expected => (now, expected + (at_ms - expected) / 8),
+            _ => (now, at_ms),
+        });
     }
 
-    /// Forget every frame: the playhead has moved somewhere they do not cover.
+    /// Forget every frame, and the clock they kept: the playhead has moved
+    /// somewhere they do not cover.
     pub fn clear(&mut self) {
         self.frames.clear();
+        self.clock = None;
+    }
+
+    /// Where the remote playhead is `now`, by the frames.
+    fn playhead(&self, now: Instant) -> Option<u64> {
+        let (at, ms) = self.clock?;
+        Some(ms + now.saturating_duration_since(at).as_millis() as u64)
     }
 
     /// How far behind the playhead frames are drawn.
@@ -286,16 +310,16 @@ impl Interp {
         (self.spacing_ms * DELAY_FRAMES).round() as u64
     }
 
-    /// The levels to draw with the remote playhead at `playhead_ms`, and
-    /// playing or not. `now` paces the settling only; which frames are drawn
-    /// is decided by position alone.
-    pub fn sample(&mut self, playhead_ms: u64, playing: bool, now: Instant) -> VizLevels {
+    /// The levels to draw `now`, with the remote device playing or not.
+    pub fn sample(&mut self, playing: bool, now: Instant) -> VizLevels {
         let elapsed = self
             .sampled
             .map_or(Duration::ZERO, |at| now.saturating_duration_since(at));
         self.sampled = Some(now);
-        let at = playhead_ms.saturating_sub(self.delay_ms());
-        match self.between(at).filter(|_| playing) {
+        let at = self
+            .playhead(now)
+            .map(|p| p.saturating_sub(self.delay_ms()));
+        match at.and_then(|at| self.between(at)).filter(|_| playing) {
             Some(levels) => self.shown = levels,
             None => {
                 let keep = 0.5f32.powf(elapsed.as_secs_f32() / EASE_HALF_LIFE.as_secs_f32());
@@ -304,13 +328,14 @@ impl Interp {
                     mid: self.shown.mid * keep,
                     high: self.shown.high * keep,
                 };
-                // Run dry, or left far behind: nothing here will be drawn.
+                // Run dry: nothing here will be drawn.
                 let stale = self
                     .frames
                     .back()
-                    .is_some_and(|&(newest, _)| at > newest + JUMP_MS || at + JUMP_MS < newest);
+                    .zip(at)
+                    .is_some_and(|(&(newest, _), at)| at > newest + JUMP_MS);
                 if stale || !playing {
-                    self.frames.clear();
+                    self.clear();
                 }
             }
         }
@@ -486,17 +511,16 @@ impl Remote {
         if inner.drawing.as_deref() != Some(from) || !inner.views.iter().any(|v| v.target == from) {
             return;
         }
-        inner.interp.push(frame.at_ms(), frame.levels());
+        inner
+            .interp
+            .push(frame.at_ms(), frame.levels(), Instant::now());
         inner.heard = Some(Instant::now());
         self.tick.notify_all();
     }
 
-    /// What to draw now, given where the target's playhead is.
-    pub fn sample(&self, playhead_ms: u64, playing: bool) -> VizLevels {
-        self.inner
-            .lock()
-            .interp
-            .sample(playhead_ms, playing, Instant::now())
+    /// What to draw now, with the target playing or not.
+    pub fn sample(&self, playing: bool) -> VizLevels {
+        self.inner.lock().interp.sample(playing, Instant::now())
     }
 
     /// Draw at `fps`: the display's rate.
@@ -664,8 +688,8 @@ mod tests {
 
     #[test]
     fn a_short_skip_back_clears_the_buffer() {
-        let mut i = interp(400, 10);
-        i.push(150, lv(0.9));
+        let (mut i, last) = interp(400, 10);
+        i.push(150, lv(0.9), last + ms(20));
         assert_eq!(i.frames.len(), 1);
     }
 
@@ -677,13 +701,19 @@ mod tests {
         }
     }
 
-    /// Frames every 20 ms from `from`, the level rising one hundredth a frame.
-    fn interp(from: u64, frames: u64) -> Interp {
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    /// Frames every 20 ms from `from`, the level rising one hundredth a frame,
+    /// each arriving as it is heard. Returns when the last one arrived.
+    fn interp(from: u64, frames: u64) -> (Interp, Instant) {
+        let start = Instant::now();
         let mut i = Interp::default();
         for n in 0..frames {
-            i.push(from + n * 20, lv(n as f32 / 100.0));
+            i.push(from + n * 20, lv(n as f32 / 100.0), start + ms(n * 20));
         }
-        i
+        (i, start + ms((frames - 1) * 20))
     }
 
     #[test]
@@ -704,40 +734,78 @@ mod tests {
 
     #[test]
     fn levels_between_frames_are_interpolated_behind_the_playhead() {
-        let mut i = interp(10_000, 10);
+        let (mut i, last) = interp(10_000, 10);
         let delay = i.delay_ms();
         assert!((34..=40).contains(&delay), "about two frames: {delay}");
-        // Halfway between the frames at 10_040 and 10_060.
-        let got = i.sample(10_050 + delay, true, Instant::now());
-        assert!((got.low - 0.025).abs() < 1e-4, "{got:?}");
-        assert!((got.high - 0.025 / 4.0).abs() < 1e-4);
+        // The playhead stands at the last frame, 10_180; drawn `delay` behind.
+        let got = i.sample(true, last);
+        let want = (180 - delay) as f32 / 20.0 / 100.0;
+        assert!((got.low - want).abs() < 1e-4, "{got:?}, wanted {want}");
+        assert!((got.high - want / 4.0).abs() < 1e-4);
     }
 
     #[test]
     fn a_dropped_frame_is_bridged_by_the_delay() {
+        let start = Instant::now();
         let mut i = Interp::default();
         for n in [0u64, 1, 2, 4, 5] {
-            i.push(n * 20, lv(n as f32 / 10.0));
+            i.push(n * 20, lv(n as f32 / 10.0), start + ms(n * 20));
         }
         // The frame at 60 never came; 70 lies between 40 and 80.
-        let got = i.sample(70 + i.delay_ms(), true, Instant::now());
+        let got = i.sample(true, start + ms(70 + i.delay_ms()));
         assert!((got.low - 0.35).abs() < 1e-3, "{got:?}");
+    }
+
+    /// The bug this clock fixes: a device whose state report put its playhead
+    /// ahead of the music — taken during a rate switch's lead-in, and not
+    /// corrected while it stayed within three seconds — had its bars drawn
+    /// past every frame it sent, so they never moved. Drawn by the frames'
+    /// own clock, they move however the frames are keyed and however late,
+    /// within the delay, each arrives.
+    #[test]
+    fn the_frames_are_the_clock_through_jitter() {
+        let start = Instant::now();
+        let mut i = Interp::default();
+        let late = [0u64, 12, 3, 15, 0, 8, 14, 1, 9, 0, 11, 4];
+        let level = VizLevels {
+            low: 0.5,
+            mid: 0.5,
+            high: 0.5,
+        };
+        // Frames heard every 20 ms and arriving up to 15 ms late, drawn every
+        // 5 ms; keyed by a playhead a minute in, nothing like the time here.
+        let mut events: Vec<(u64, Option<u64>)> = (0..late.len() as u64)
+            .map(|n| (n * 20 + late[n as usize], Some(n)))
+            .chain((0..late.len() as u64 * 4).map(|tick| (tick * 5, None)))
+            .collect();
+        events.sort();
+        let mut drawn = 0;
+        for (t, push) in events {
+            let now = start + ms(t);
+            match push {
+                Some(n) => i.push(61_000 + n * 20, level, now),
+                None => {
+                    let got = i.sample(true, now);
+                    if t >= 60 {
+                        assert!((got.low - 0.5).abs() < 1e-6, "at {t} ms: {got:?}");
+                        drawn += 1;
+                    }
+                }
+            }
+        }
+        assert!(drawn > 30);
     }
 
     #[test]
     fn a_dry_buffer_eases_to_rest_without_inventing_motion() {
-        let mut i = interp(0, 5);
-        let start = Instant::now();
-        let last = i.sample(80 + i.delay_ms(), true, start);
-        assert!(last.low > 0.0);
-        // The playhead runs on past the last frame.
-        let mut prev = last.low;
+        let (mut i, last) = interp(0, 5);
+        // Drawn at the last frame, then on past it.
+        let delay = i.delay_ms();
+        let first = i.sample(true, last + ms(delay));
+        assert!(first.low > 0.0);
+        let mut prev = first.low;
         for n in 1..=60u64 {
-            let got = i.sample(
-                80 + i.delay_ms() + n * 20,
-                true,
-                start + Duration::from_millis(n * 20),
-            );
+            let got = i.sample(true, last + ms(delay + n * 20));
             assert!(got.low <= prev, "only ever falls");
             prev = got.low;
         }
@@ -747,27 +815,27 @@ mod tests {
 
     #[test]
     fn a_paused_device_eases_to_rest() {
-        let mut i = interp(0, 10);
-        let start = Instant::now();
-        i.sample(100 + i.delay_ms(), true, start);
-        let got = i.sample(100 + i.delay_ms(), false, start + Duration::from_secs(1));
+        let (mut i, last) = interp(0, 10);
+        i.sample(true, last);
+        let got = i.sample(false, last + Duration::from_secs(1));
         assert!(got.low < REST);
     }
 
     #[test]
     fn a_seek_clears_the_buffer() {
-        let mut i = interp(30_000, 10);
-        i.push(5_000, lv(0.9));
+        let (mut i, last) = interp(30_000, 10);
+        i.push(5_000, lv(0.9), last + ms(20));
         assert_eq!(i.frames.len(), 1, "only the frame after the seek");
-        i.push(5_020, lv(0.7));
-        let got = i.sample(5_010 + i.delay_ms(), true, Instant::now());
-        assert!((got.low - 0.8).abs() < 1e-4);
+        i.push(5_020, lv(0.7), last + ms(40));
+        // Drawn at 5_010, halfway between the two.
+        let got = i.sample(true, last + ms(30 + i.delay_ms()));
+        assert!((got.low - 0.8).abs() < 1e-4, "{got:?}");
     }
 
     #[test]
     fn a_frame_where_the_playhead_stood_replaces_the_last() {
-        let mut i = interp(0, 3);
-        i.push(40, lv(0.0));
+        let (mut i, last) = interp(0, 3);
+        i.push(40, lv(0.0), last + ms(20));
         assert_eq!(i.frames.len(), 3);
         assert_eq!(i.frames.back().unwrap().1, lv(0.0));
     }
