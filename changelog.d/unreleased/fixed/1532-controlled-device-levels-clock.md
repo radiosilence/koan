@@ -1,0 +1,1 @@
+- **Playing bars for a controlled Apple TV.** The bars on a controller now follow the clock the controlled device's level frames carry, not its state reports. A report taken while the output was still starting, during a rate switch's lead-in for example, could run ahead of the music for a whole track, and the bars stayed still.
