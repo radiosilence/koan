@@ -23,12 +23,18 @@ struct SidebarSearch: View {
     var body: some View {
         let items = suggestions
 
-        VStack(spacing: 0) {
-            field(items)
-            if focused || pointing, !search.queryIsToken, !items.isEmpty {
-                panel(items).padding(.horizontal, KoanTheme.Space.s)
+        // An overlay, so the panel takes no part in the sidebar's size. Laid
+        // out under the field, its height became the column's minimum, and a
+        // minimum taller than the window sent AppKit round its constraint
+        // passes until it threw.
+        field(items)
+            .overlay(alignment: .bottom) {
+                if focused || pointing, !search.queryIsToken, !items.isEmpty {
+                    panel(items)
+                        .padding(.horizontal, KoanTheme.Space.s)
+                        .alignmentGuide(.bottom) { $0[.top] }
+                }
             }
-        }
     }
 
     private func field(_ items: [Suggestion]) -> some View {
