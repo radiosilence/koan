@@ -1,0 +1,1 @@
+- **Searching no longer crashes the Mac app in the kōan theme.** The suggestions panel counted towards the sidebar's minimum height, and with enough results that minimum outgrew the window and AppKit gave up laying it out.

@@ -62,7 +62,27 @@ struct SidebarSearch: View {
         .onChange(of: ui.searchFocusToken) { _, _ in focused = true }
     }
 
+    /// Whole when it fits under the field, scrolling when it does not. Its
+    /// height is part of the sidebar's minimum, and AppKit throws when a
+    /// split view column's minimum is taller than the window.
     private func panel(_ items: [Suggestion]) -> some View {
+        ViewThatFits(in: .vertical) {
+            rows(items)
+            ScrollViewReader { proxy in
+                ScrollView { rows(items) }
+                    .onChange(of: lit) { _, index in
+                        if let index { proxy.scrollTo(index) }
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .koanPopover()
+        .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+        .onHover { pointing = $0 }
+        .onDisappear { pointing = false }
+    }
+
+    private func rows(_ items: [Suggestion]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.token) { index, item in
                 if index == 0 || items[index - 1].kind != item.kind {
@@ -74,6 +94,7 @@ struct SidebarSearch: View {
                         .padding(.bottom, KoanTheme.Space.xs)
                 }
                 SuggestionLine(item: item, lit: lit == index)
+                    .id(index)
                     .onHover { if $0 { lit = index } }
                     .onTapGesture { pick(item) }
                     .accessibilityElement(children: .combine)
@@ -82,11 +103,6 @@ struct SidebarSearch: View {
             }
         }
         .padding(.bottom, KoanTheme.Space.xs)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .koanPopover()
-        .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
-        .onHover { pointing = $0 }
-        .onDisappear { pointing = false }
     }
 
     private func pick(_ item: Suggestion) {
