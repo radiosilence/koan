@@ -634,15 +634,16 @@ impl std::fmt::Display for SendError {
 }
 
 /// Send `cmd` to the device being controlled, as the link carries it, or to
-/// this device's player when none is. A device out of reach is an error, and
-/// stays the one controlled: nothing meant for it plays here instead.
+/// this device's player when none is. A device asleep is woken to take it. One
+/// out of reach is an error, and stays the one controlled: nothing meant for
+/// it plays here instead.
 pub fn send(cmd: PlayerCommand, tx: &Sender<PlayerCommand>) -> Result<(), SendError> {
     let here_now = |cmd| tx.send(cmd).map_err(|_| SendError::Stopped);
     let Some(to) = devices::target() else {
         return here_now(cmd);
     };
     match to_link(cmd).map_err(SendError::Unplayable)? {
-        Routed::There(link) => devices::send(&to, link).map_err(SendError::Missed),
+        Routed::There(link) => devices::send_woken(&to, link).map_err(SendError::Missed),
         Routed::Here(local) => here_now(local),
         Routed::Dropped => Ok(()),
     }

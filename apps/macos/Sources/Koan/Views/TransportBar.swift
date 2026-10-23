@@ -491,11 +491,17 @@ private struct PlayPauseButton: View {
         // Bigger than the pair either side of it: it is the one you reach
         // for without looking.
         Button(action: player.togglePlayPause) {
-            KoanIcon(player.isPlaying ? Icon.pause : Icon.play)
-                .font(.system(size: KoanTheme.metric(13, system: 25)))
-                .contentTransition(.symbolEffect(.replace))
-                .frame(width: KoanTheme.metric(16, system: 30))
-                .contentShape(Rectangle())
+            Group {
+                if player.isWaitingForTrack {
+                    ProgressView().controlSize(.small)
+                } else {
+                    KoanIcon(player.isPlaying ? Icon.pause : Icon.play)
+                        .font(.system(size: KoanTheme.metric(13, system: 25)))
+                        .contentTransition(.symbolEffect(.replace))
+                }
+            }
+            .frame(width: KoanTheme.metric(16, system: 30))
+            .contentShape(Rectangle())
         }
         .koanButton(.iconOutlined)
         .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")

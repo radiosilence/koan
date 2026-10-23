@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.art.ArtSize
+import cc.blit.koan.ffi.DeviceReach
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.Cover
@@ -122,7 +123,7 @@ fun MiniPlayer() {
             // most likely to be wanted as a remote.
             if (devices.target != null || devices.devices.isNotEmpty()) PlayOnButton(labelled = false)
             KoanButton(app.player::togglePlayPause, kind = KoanButtonKind.Icon, enabled = entry != null) {
-                if (now?.waiting == true || resolving != null) {
+                if (now?.waiting == true || resolving != null || devices.targetReach is DeviceReach.Waking) {
                     CircularProgressIndicator(Modifier.size(18.dp), color = KoanTheme.color(KoanTone.Ink), strokeWidth = 2.dp)
                 } else {
                     KoanIcon(if (playing) KoanIcons.pause else KoanIcons.play, if (playing) "Pause" else "Play", size = 18.sp)

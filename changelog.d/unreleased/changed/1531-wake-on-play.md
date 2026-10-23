@@ -1,0 +1,1 @@
+- **Asking an asleep device to play wakes it.** A command for the device being controlled while it sleeps wakes it first and is sent once it answers, with a spinner on the play button meanwhile; opening kōan with it selected wakes nothing.
