@@ -58,6 +58,7 @@ import androidx.navigation3.ui.NavDisplay
 import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.engine.Playhead
+import cc.blit.koan.ffi.DeviceReach
 import cc.blit.koan.ffi.NowPlaying
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
@@ -352,6 +353,7 @@ private fun Transport(now: NowPlaying?) {
     val shuffle = now?.shuffle == true
     val repeat = now?.repeatMode ?: RepeatMode.OFF
     val resolving by player.resolving.collectAsStateWithLifecycle()
+    val devices by app.mirror.devices.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         GlyphButton(
             KoanIcons.shuffle,
@@ -364,7 +366,7 @@ private fun Transport(now: NowPlaying?) {
         GlyphButton(KoanIcons.previous, "Previous", player::previous, size = 24.sp, enabled = enabled)
         KoanButton(player::togglePlayPause, kind = KoanButtonKind.IconOutlined, enabled = enabled) {
             Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                if (now?.waiting == true || resolving != null) {
+                if (now?.waiting == true || resolving != null || devices.targetReach is DeviceReach.Waking) {
                     CircularProgressIndicator(Modifier.size(24.dp), color = KoanTheme.color(KoanTone.Ink), strokeWidth = 2.dp)
                 } else {
                     KoanIcon(if (playing) KoanIcons.pause else KoanIcons.play, if (playing) "Pause" else "Play", size = 28.sp)

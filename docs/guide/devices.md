@@ -203,7 +203,15 @@ on its own.
 ### Waking a device
 
 Choosing an asleep device wakes it, trying each of these until it answers.
-The row says which it is on, and says so if none worked.
+The row says which it is on, and says so if none worked. So does asking
+something of the device you are controlling once it has gone to sleep: press
+play, start an album or skip, and it is woken first, with the play button
+showing a spinner until it answers. What you asked is held meanwhile and sent
+the moment it is reached, so an Apple TV that was off starts playing once it
+has booted. Opening kōan with an asleep device still selected does not wake
+it; only something you ask of it does. A phone or iPad asked to play gets the
+notification to tap straight away, since iOS does not let an app it woke in the
+background start audio.
 
 1. **An Apple TV set up to be woken** is turned on and kōan opened on it,
    from a device on its network. See

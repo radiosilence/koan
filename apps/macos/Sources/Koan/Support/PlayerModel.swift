@@ -118,9 +118,11 @@ final class PlayerModel {
     var sleepFading: Bool { mirror.playback.sleepFading }
     /// Asked to play a track that has not arrived yet, which with nothing on
     /// screen to say so reads as a tap that did nothing. A wait paused by hand
-    /// reads as paused, since it will open paused.
+    /// reads as paused, since it will open paused. Or waiting for the device
+    /// being controlled to wake and take what was asked of it.
     var isWaitingForTrack: Bool {
-        resolving != nil || (mirror.playback.waiting && mirror.playback.state == .stopped)
+        if case .waking = mirror.targetReach { return true }
+        return resolving != nil || (mirror.playback.waiting && mirror.playback.state == .stopped)
     }
     var currentTrackId: Int64? { mirror.playback.entry?.trackId }
     var currentItemId: String? { mirror.playback.queueItemId }

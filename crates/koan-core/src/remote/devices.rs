@@ -1379,6 +1379,12 @@ pub fn wake_to_send(id: &str) -> bool {
     if !start_wake(id, false) {
         return false;
     }
+    await_wake(id)
+}
+
+/// Wait for the wake `wake_to_send` started of `id` to end, and whether `id`
+/// is reachable then.
+fn await_wake(id: &str) -> bool {
     let waking = || {
         with(|s| {
             s.attempt.as_ref().is_some_and(|(_, d)| d == id)
@@ -1416,6 +1422,59 @@ const WAKE_TO_SEND: Duration = Duration::from_secs(
         + PUSH_WAIT.as_secs()
         + 5,
 );
+
+/// Commands the person gave a device while it was being woken to take them,
+/// by device, in the order given.
+static HELD: Mutex<Option<HashMap<String, Vec<LinkCommand>>>> = Mutex::new(None);
+
+/// `send`, for a command the person gave the device being controlled. One
+/// out of reach is woken first, as moving music to it does, and the command
+/// held until the wake ends, then sent by whatever way is left; commands
+/// given meanwhile wait behind it, in order. Only a command wakes it: being
+/// controlled when the app opens does not. A phone or iPad goes straight to
+/// the server, whose notification to tap is how music reaches one iOS has
+/// suspended. Returns at once; the device's row shows the wake.
+pub fn send_woken(id: &str, cmd: LinkCommand) -> Result<(), String> {
+    let platform = list().into_iter().find(|d| d.id == id).map(|d| d.platform);
+    {
+        let mut guard = HELD.lock();
+        let held = guard.get_or_insert_default();
+        if let Some(waiting) = held.get_mut(id) {
+            waiting.push(cmd);
+            return Ok(());
+        }
+        // Reachable, a phone, or nothing can wake it: sent now, so a
+        // command that goes nowhere says why at once.
+        if reachable(id) || platform.as_deref() == Some("ios") || !start_wake(id, false) {
+            drop(guard);
+            return send(id, cmd);
+        }
+        held.insert(id.to_string(), vec![cmd]);
+    }
+    let id = id.to_string();
+    let _ = std::thread::Builder::new()
+        .name("koan-wake-send".into())
+        .spawn(move || {
+            await_wake(&id);
+            let waiting = HELD
+                .lock()
+                .get_or_insert_default()
+                .remove(&id)
+                .unwrap_or_default();
+            // Another device chosen meanwhile is the person's later word.
+            if target().as_deref() != Some(id.as_str()) {
+                log::info!("devices: {id} is no longer controlled; its commands are dropped");
+                return;
+            }
+            for cmd in waiting {
+                if let Err(e) = send(&id, cmd) {
+                    notify(&id, acks::AckOutcome::Failed { error: e }, true);
+                    return;
+                }
+            }
+        });
+    Ok(())
+}
 
 /// `wake`, with the notification to tap as its last stage when `notify`.
 /// Whether a wake of `id` is under way now, started or joined.
@@ -3312,6 +3371,25 @@ pub(crate) mod tests {
         assert!(same(here(), "phone"));
 
         set_target(None);
+        with(|s| *s = Store::default());
+    }
+
+    /// A command for a device nothing can wake is not held for a wake that
+    /// will never come: it is sent at once, and says why it went nowhere.
+    #[test]
+    fn a_command_for_a_device_nothing_wakes_is_not_held() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let asleep = LinkDevice {
+            linked: false,
+            wakeable: Some(false),
+            ..device("tv", false)
+        };
+        set_account(vec![asleep], None);
+        assert!(send_woken("tv", LinkCommand::Resume).is_err());
+        assert!(HELD.lock().as_ref().is_none_or(|h| !h.contains_key("tv")));
+        assert!(with(|s| s.attempt.is_none()));
         with(|s| *s = Store::default());
     }
 
