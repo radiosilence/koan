@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.67.6
+
+### Changed
+
+- **Asking an asleep device to play wakes it.** A command for the device being controlled while it sleeps wakes it first and is sent once it answers, with a spinner on the play button meanwhile; opening kōan with it selected wakes nothing.
+
+### Fixed
+
+- **Playing bars for a controlled Apple TV.** The bars on a controller now follow the clock the controlled device's level frames carry, not its state reports. A report taken while the output was still starting, during a rate switch's lead-in for example, could run ahead of the music for a whole track, and the bars stayed still.
+- **Searching no longer crashes the Mac app in the kōan theme.** The suggestions panel counted towards the sidebar's minimum height, and with enough results that minimum outgrew the window and AppKit gave up laying it out.
+
 ## 0.67.5
 
 ### Security
