@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.67.5
+
+### Security
+
+- Updated `ctutils` to 0.4.5
+
+### Changed
+
+- **The site links the TestFlight beta from the top.** koan.rocks offers the iPhone and Apple TV beta beside Download for Mac, and in the iOS and Apple TV sections.
+
+### Fixed
+
+- **Releases reach the public TestFlight group.** The release step that adds builds to it asked App Store Connect for the group in a way it refuses, and stopped when a build of the same version was already in beta review.
+
+### Internal
+
+- **The macOS CI jobs install just through mise.** `setup-just` found no release for just on the macOS release runner, which stopped 0.67.4 publishing; mise installs the version `mise.toml` pins, as the Linux jobs that need other tools already do.
+- **Releases go to the public TestFlight beta.** A release's iOS and tvOS builds join the public TestFlight group and are submitted for beta review; builds from other pushes to main stay with internal testers.
+- **The App Store screenshots are in the repository.** They sit beside the listing text in `apps/ios/store/screenshots/`, and `push.py --screenshots` uploads them, so a submission can be rebuilt from the repository alone.
+
 ## 0.67.4
 
 ### Changed
