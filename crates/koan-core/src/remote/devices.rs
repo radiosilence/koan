@@ -1451,10 +1451,11 @@ pub fn send_woken(id: &str, cmd: LinkCommand) -> Result<(), String> {
         }
         held.insert(id.to_string(), vec![cmd]);
     }
-    let id = id.to_string();
-    let _ = std::thread::Builder::new()
+    let owned = id.to_string();
+    let spawned = std::thread::Builder::new()
         .name("koan-wake-send".into())
         .spawn(move || {
+            let id = owned;
             await_wake(&id);
             let waiting = HELD
                 .lock()
@@ -1473,6 +1474,17 @@ pub fn send_woken(id: &str, cmd: LinkCommand) -> Result<(), String> {
                 }
             }
         });
+    if spawned.is_err() {
+        // Nothing would ever send what is held: send it now instead.
+        let waiting = HELD
+            .lock()
+            .get_or_insert_default()
+            .remove(id)
+            .unwrap_or_default();
+        for cmd in waiting {
+            send(id, cmd)?;
+        }
+    }
     Ok(())
 }
 
