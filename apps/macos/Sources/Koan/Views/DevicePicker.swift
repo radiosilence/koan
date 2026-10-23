@@ -571,7 +571,7 @@ private struct DeviceChoiceRow: View {
                 PresetMenu(presets: presets) {
                     KoanIcon(Icon.filters)
                         .font(.role(.fine, system: .caption))
-                        .foregroundStyle(presets.flat ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary))
+                        .foregroundStyle(presets.flat ? KoanTheme.style(.muted, system: .tertiary) : AnyShapeStyle(.tint))
                 }
                 #if os(macOS)
                 .menuStyle(.borderlessButton)

@@ -175,8 +175,11 @@ struct NowPlayingPage: View {
             if !player.isControllingAnother {
                 if let route = app.dsp.route,
                    let presets = Presets(dsp: app.dsp, device: route) {
+                    // A glyph, in the accent while it is not flat: a name
+                    // ran the row off the screen. The menu names the choices.
                     PresetMenu(presets: presets, title: route) {
-                        KoanLabel(presets.summary, icon: Icon.filters)
+                        KoanIcon(Icon.filters)
+                            .foregroundStyle(presets.flat ? AnyShapeStyle(.foreground) : KoanTheme.style(.accent, system: AnyShapeStyle(.tint)))
                     }
                 }
             }

@@ -12,6 +12,7 @@ import SwiftUI
 /// glass floating on glass reads as neither.
 struct TransportBar: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(AppState.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// One per direction, so the arrow that was pressed is the only one that
@@ -236,6 +237,35 @@ struct TransportBar: View {
                 OutputButton(open: $showingDevices, labelled: !compact, iconSize: 17)
                     .font(.role(.fine, system: .caption))
             }
+            // This Mac's own output's preset; another device's is chosen in
+            // Output.
+            if !player.isControllingAnother, let device = app.dsp.overview?.device,
+               let presets = Presets(dsp: app.dsp, device: device) {
+                PresetMenu(presets: presets, title: device) {
+                    HStack(spacing: 5) {
+                        KoanIcon(Icon.filters)
+                            .font(.system(size: 15))
+                            .foregroundStyle(presets.flat ? KoanTheme.style(.ink, system: .primary) : AnyShapeStyle(.tint))
+                        if !compact {
+                            Text(presets.summary)
+                                .lineLimit(1)
+                                .foregroundStyle(KoanTheme.style(.ink, system: .primary))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .koanMenuButton(.icon)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .font(.role(.fine, system: .caption))
+                .help("Preset: \(presets.summary)")
+            }
+        }
+        // The preset follows the device playing and the profiles: either
+        // moving changes what the menu names.
+        .task(id: "\(app.dsp.stamp)|\(player.outputName ?? "")|\(player.currentFormat?.dsp?.profile ?? "")") {
+            app.dsp.reload()
         }
         // Natural size, always. What does not fit is dropped above rather than
         // compressed — a badge and a menu squeezed to a few points wide say

@@ -254,70 +254,51 @@ struct NowPlayingSheet: View {
         .buttonStyle(.plain)
     }
 
-    /// Which device plays, through what, and with which preset: one pill
-    /// each, named in full. Spread evenly at their own widths where they fit;
-    /// where they do not, the short ones keep their width and the long one is
-    /// shortened. Every sheet and menu they open names its choices in full.
+    /// Which device plays, through what, and with which preset: one glyph
+    /// each, in the accent while it is not this phone's own way of playing,
+    /// spread evenly. Every sheet and menu they open names its choices in
+    /// full.
     private var choices: some View {
-        ViewThatFits(in: .horizontal) {
-            choiceRow(natural: true)
-            choiceRow(natural: false)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func choiceRow(natural: Bool) -> some View {
         let device = player.isControllingAnother
             ? player.controlled?.name ?? "Another device"
             : "This \(UIDevice.current.model)"
-        let outputName = player.outputName ?? "Output"
         // Of the device in view, which is the controlled one's while another is.
         let playsToRenderer = if case .renderer = player.outputs?.current { true } else { false }
-        return HStack(spacing: natural ? 0 : 8) {
-            if natural { Spacer(minLength: 0) }
+        return HStack(spacing: 0) {
+            Spacer(minLength: 0)
             if player.hasOtherDevices || player.isControllingAnother {
                 Button { showingControl = true } label: {
-                    // This phone in control is the usual case, and its glyph
-                    // says enough; the room goes to the preset's name.
                     Pill(
                         icon: player.controlledOutOfReach ? Icon.warning : Action.control.glyph,
-                        text: player.isControllingAnother ? device : nil,
                         tinted: player.isControllingAnother,
                         bad: player.controlledOutOfReach
                     )
                 }
                 .accessibilityLabel(player.controlledReachNote ?? (player.isControllingAnother ? "Controlling \(device)" : device))
                 .accessibilityHint(player.isControllingAnother ? "" : "Control another kōan")
-                .pillWidth(natural, name: player.isControllingAnother ? device : "")
-                if natural { Spacer(minLength: 8) }
+                Spacer(minLength: 8)
             }
             if player.canChooseOutput {
                 Button { showingDevices = true } label: {
-                    Pill(icon: Icon.speaker, text: outputName, tinted: playsToRenderer)
+                    Pill(icon: Icon.speaker, tinted: playsToRenderer)
                 }
                 .accessibilityLabel("Output: \(player.outputName ?? "default")")
-                .pillWidth(natural, name: outputName)
             }
             // This phone's own output's preset; another device's is chosen in
             // Output.
             if !player.isControllingAnother, let output,
                let presets = Presets(dsp: app.dsp, device: output.device) {
-                if natural { Spacer(minLength: 8) }
-                let preset = presets.summary
+                Spacer(minLength: 8)
                 PresetMenu(presets: presets, title: output.name) {
-                    Pill(
-                        icon: Icon.filters,
-                        text: preset,
-                        tinted: player.currentFormat?.dsp != nil
-                    )
+                    Pill(icon: Icon.filters, tinted: !presets.flat)
                 }
                 // The pill is the outline; the menu's button draws none.
                 .koanMenuButton(.card)
-                .accessibilityLabel("Preset: \(preset)")
-                .pillWidth(natural, name: preset)
+                .accessibilityLabel("Preset: \(presets.summary)")
             }
-            if natural { Spacer(minLength: 0) }
+            Spacer(minLength: 0)
         }
+        .buttonStyle(.plain)
     }
 
     /// What the music is coming out of, as profiles name it: a renderer the
@@ -331,45 +312,24 @@ struct NowPlayingSheet: View {
     }
 }
 
-/// A device choice under the transport: an icon and a name, tinted while it
-/// is not this phone's own way of playing.
+/// A device choice under the transport: an icon, tinted while it is not
+/// this phone's own way of playing.
 private struct Pill: View {
     let icon: String
-    let text: String?
     let tinted: Bool
     /// What it names cannot be reached.
     var bad = false
 
     var body: some View {
-        HStack(spacing: 5) {
-            KoanIcon(icon)
-                .foregroundStyle(iconStyle)
-            if let text {
-                Text(text)
-                    .lineLimit(1)
-                    .foregroundStyle(bad ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.ink, system: .primary))
-            }
-        }
-        .font(.role(.meta, system: .subheadline))
-        .koanChip()
+        KoanIcon(icon)
+            .foregroundStyle(iconStyle)
+            .font(.role(.meta, system: .subheadline))
+            .koanChip()
     }
 
     private var iconStyle: AnyShapeStyle {
         if bad { return KoanTheme.style(.bad, system: .orange) }
         return KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary))
-    }
-}
-
-private extension View {
-    /// At its own width, or, where the row is short, sized shortest name
-    /// first: a stack shares out what is left evenly among views that can all
-    /// shrink, which would cut a short name for the sake of a long one.
-    @ViewBuilder func pillWidth(_ natural: Bool, name: String) -> some View {
-        if natural {
-            fixedSize()
-        } else {
-            layoutPriority(-Double(name.count))
-        }
     }
 }
 

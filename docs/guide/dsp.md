@@ -528,10 +528,11 @@ first where it is used. Files, AutoEQ and measurements come in from its foot;
 several files at once become a group.
 
 The preset menu is the quick way to switch: Flat, each preset, and **Edit…**,
-which opens the EQ page for that device. It reads the preset's name, Flat, or
-Unsaved for EQ no preset holds. On the Mac it is the slider button beside each
-output in the Play on menu, under the speaker in the transport bar, for that
-output whether or not it is the one playing. While what is heard is processed,
+which opens the EQ page for that device. Its button is the slider glyph, in
+the accent whenever the output is set to anything but Flat; the menu names the
+preset. On the Mac the transport bar also names it beside the glyph, for the
+output playing, and the slider button beside each output under the speaker
+sets that output whether or not it is the one playing. While what is heard is processed,
 the speaker carries a dot and the format badge names the processing. Each EQ's
 page shows exactly what it
 holds — every response's rate, channels, length, where it peaks and whether it
@@ -539,8 +540,9 @@ mixes or delays channels, any bands, the headroom, and where it was imported
 from. Changes apply straight away, where playback is.
 
 On iOS, the route is the device: AirPods, wired headphones and the speaker are
-each their own output. Now Playing shows the route's preset beside the AirPlay
-button. Tapping it picks another preset for that output, which applies at once.
+each their own output. Now Playing shows the route's preset as the slider
+glyph, beside Play on and Output, which are glyphs too. Tapping it picks
+another preset for that output, which applies at once.
 It changes when the output does. On Apple TV the same menu has no Edit….
 
 ```bash
