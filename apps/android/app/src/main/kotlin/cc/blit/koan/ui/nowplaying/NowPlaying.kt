@@ -79,7 +79,6 @@ import cc.blit.koan.ui.settings.OutputButton
 import cc.blit.koan.ui.settings.PresetButton
 import cc.blit.koan.ui.settings.canChooseOutput
 import cc.blit.koan.ui.settings.dspModel
-import cc.blit.koan.ui.settings.outputLabel
 import cc.blit.koan.ui.settings.presetSummary
 import cc.blit.koan.ui.settings.PlayOnButton
 import cc.blit.koan.ui.theme.KoanBadge
@@ -401,9 +400,10 @@ internal fun nextRepeat(mode: RepeatMode) = when (mode) {
 /**
  * The lyrics, the format and the sleep timer: what is switched on for
  * listening, and what the output is fed. Under them, as iOS's row of pills,
- * where the music plays, what through, and this phone's EQ preset: each its
- * icon and name as one button, centred, a long name cut short rather than
- * pushed into its neighbour. Each shows only where it is a choice: Play on
+ * where the music plays, what through, and this phone's EQ preset: each a
+ * glyph, centred, in the accent while it is not this phone's own way of
+ * playing or not flat. Their sheets and menus name the choices in full, and
+ * a name here took the row's room. Each shows only where it is a choice: Play on
  * with another device to play on, Output with an output to pick, and the
  * preset while this phone plays and has presets. Another device's presets are
  * chosen in Output, by its outputs.
@@ -422,7 +422,6 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
     LaunchedEffect(controlling) { if (!controlling) mirror.engine().searchRenderers() }
     val playOn = controlling || devices.devices.isNotEmpty()
     val output = canChooseOutput(outputs, controlling)
-    val named = outputLabel(outputs) != null
     val o = eq.overview?.takeIf { !controlling && it.device != null && (it.profiles.isNotEmpty() || it.preset != null) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -451,18 +450,17 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
                 horizontalArrangement = Arrangement.spacedBy(KoanSpace.l, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Only a named button shares the room, so a bare glyph never
-                // takes a share a name could use.
-                if (playOn) PlayOnButton(if (controlling) Modifier.weight(1f, fill = false) else Modifier)
-                if (output) OutputButton(if (named) Modifier.weight(1f, fill = false) else Modifier)
+                if (playOn) PlayOnButton(labelled = false)
+                if (output) OutputButton(labelled = false)
                 o?.let {
+                    val summary = presetSummary(it)
                     PresetButton(
-                        presetSummary(it),
+                        summary,
                         it.profiles.filter { p -> p.preset }.map { p -> p.name },
                         it.preset,
-                        tinted = now?.format?.dsp != null,
+                        tinted = summary != "Flat",
                         choose = dsp::applyPreset,
-                        modifier = Modifier.weight(1f, fill = false),
+                        glyph = true,
                     )
                 }
             }
