@@ -54,7 +54,7 @@ askama = "0.16"
 # Strips the types from scripts/*.ts (build.rs). 0.110 is the newest release
 # within the workspace's rust-version.
 [build-dependencies]
-oxc = { version = "=0.110.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
+oxc = { version = "=0.155.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
 
 [dev-dependencies]
 tempfile = "3"
