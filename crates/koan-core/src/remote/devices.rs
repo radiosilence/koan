@@ -793,8 +793,8 @@ fn interfaces() -> Vec<Interface> {
         let mut cur = head;
         while let Some(ifa) = cur.as_ref() {
             cur = ifa.ifa_next;
-            let running = (libc::IFF_UP | libc::IFF_RUNNING) as u32;
-            if ifa.ifa_flags & running != running
+            // Up is enough: iOS leaves mobile data's link without RUNNING.
+            if ifa.ifa_flags & libc::IFF_UP as u32 == 0
                 || ifa.ifa_addr.is_null()
                 || i32::from((*ifa.ifa_addr).sa_family) != libc::AF_INET
             {
@@ -825,9 +825,10 @@ fn interfaces() -> Vec<Interface> {
 }
 
 /// Whether `tv` is out of this device's reach, sending from `source` as the
-/// routing table chose: through a local network that does not hold it, or
-/// mobile data. A tunnel is a VPN, which may route to the TV's network, and
-/// is tried; nothing routing there at all is away.
+/// routing table chose: none of this device's local networks holds it, and
+/// the route is not a tunnel, which is a VPN that may lead to the TV's
+/// network. Mobile data and its translated addresses, which no interface
+/// may own, hold nothing; nothing routing there at all is away.
 fn routed_away(
     interfaces: &[Interface],
     source: Option<std::net::IpAddr>,
@@ -836,43 +837,63 @@ fn routed_away(
     let Some(std::net::IpAddr::V4(source)) = source else {
         return true;
     };
-    let Some(through) = interfaces.iter().find(|i| i.addr == source) else {
-        return false;
-    };
-    if through.point_to_point {
-        return through.name.starts_with("pdp_ip");
+    let tunnel = interfaces
+        .iter()
+        .any(|i| i.addr == source && i.point_to_point && !i.name.starts_with("pdp_ip"));
+    let holds = |i: &Interface| u32::from(i.addr) & i.mask == u32::from(tv) & i.mask;
+    !tunnel && !interfaces.iter().any(|i| !i.point_to_point && holds(i))
+}
+
+/// Where a paired Apple TV is, as this device can tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TvAt {
+    /// Announced on this network.
+    Found(std::net::SocketAddr),
+    /// Not announced, but where it last answered is reachable from here:
+    /// Bonjour misses TVs at times.
+    Last(std::net::SocketAddr),
+    /// Not announced, and where it last answered is reached from away.
+    Away,
+    /// Never found, here or anywhere.
+    Unknown,
+}
+
+/// Find the Apple TV `id`, paired as `tv_id`, among `tvs` announced here,
+/// else by where it last answered. A TV found has that address refreshed, so
+/// a home network renumbered is followed. Only an IPv4 address can say it is
+/// away.
+fn locate_tv(
+    id: &str,
+    tv_id: &str,
+    tvs: &[crate::remote::companion::Tv],
+    interfaces: &[Interface],
+) -> TvAt {
+    if let Some(tv) = tvs.iter().find(|t| t.id.as_deref() == Some(tv_id)) {
+        remember_tv_addr(id, tv.addr);
+        return TvAt::Found(tv.addr);
     }
-    u32::from(source) & through.mask != u32::from(tv) & through.mask
-}
-
-/// Whether the routing table takes this device to `tv` from away.
-fn route_away(interfaces: &[Interface], tv: std::net::Ipv4Addr) -> bool {
-    routed_away(
-        interfaces,
-        crate::upnp::serve::local_ip_towards(tv.into()),
-        tv,
-    )
-}
-
-/// Whether a paired Apple TV is away from this device's network: not
-/// announced on it, and last answered at an address `away` says is out of
-/// reach. Bonjour missing a TV at home leaves its address reachable, and a
-/// home network renumbered still announces it: either is tried, as is one
-/// never answered or answered over IPv6.
-fn tv_is_away(
-    announced: bool,
-    last: Option<std::net::IpAddr>,
-    away: impl FnOnce(std::net::Ipv4Addr) -> bool,
-) -> bool {
-    match last {
-        Some(std::net::IpAddr::V4(v4)) => !announced && away(v4),
-        _ => false,
+    match with(|s| s.tv_addrs.get(id).copied()) {
+        None => TvAt::Unknown,
+        Some(last) => match last.ip() {
+            std::net::IpAddr::V4(v4)
+                if routed_away(
+                    interfaces,
+                    crate::upnp::serve::local_ip_towards(v4.into()),
+                    v4,
+                ) =>
+            {
+                TvAt::Away
+            }
+            _ => TvAt::Last(last),
+        },
     }
 }
 
 /// A check is running, and another was asked for meanwhile.
 static TV_CHECKING: AtomicBool = AtomicBool::new(false);
 static TV_AGAIN: AtomicBool = AtomicBool::new(false);
+/// Bumped by every wake that looked for a TV.
+static TV_WOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Look for the account's paired Apple TVs on this network, in the
 /// background, and mark those away from it, which are then not tried and
@@ -905,9 +926,13 @@ fn check_tvs() {
 }
 
 fn check_tvs_now() {
+    let started = TV_WOKEN.load(Ordering::SeqCst);
+    // Only an asleep TV is woken, and a wake looks for itself: one reachable
+    // now needs no browse.
     let paired: Vec<(String, String)> = with(|s| {
         s.account
             .iter()
+            .filter(|(d, _)| !d.linked && !s.nearby.iter().any(|n| n.hello.id == d.id))
             .filter_map(|(d, _)| Some((d.id.clone(), d.tv_pairing.as_ref()?.tv_id.clone())))
             .collect()
     });
@@ -916,18 +941,14 @@ fn check_tvs_now() {
         let tvs = crate::remote::companion::browse(TV_FIND);
         let interfaces = interfaces();
         for (id, tv_id) in paired {
-            let found = tvs.iter().find(|t| t.id.as_deref() == Some(tv_id.as_str()));
-            if let Some(tv) = found {
-                remember_tv_addr(&id, tv.addr);
-            }
-            let last = with(|s| s.tv_addrs.get(&id).map(|a| a.ip()));
-            if tv_is_away(found.is_some(), last, |tv| route_away(&interfaces, tv)) {
+            if locate_tv(&id, &tv_id, &tvs, &interfaces) == TvAt::Away {
                 away.insert(id);
             }
         }
     }
     let moved = with(|s| {
-        let moved = s.tv_away != away;
+        // A wake that looked meanwhile knows better.
+        let moved = TV_WOKEN.load(Ordering::SeqCst) == started && s.tv_away != away;
         if moved {
             log::info!("devices: Apple TVs away from this network: {away:?}");
             s.tv_away = away;
@@ -966,25 +987,19 @@ fn wake_tv(
     pairing: &crate::remote::companion::Credential,
 ) -> Result<(), String> {
     use crate::remote::companion;
-    let found = companion::browse(TV_FIND)
-        .into_iter()
-        .find(|t| t.id.as_deref() == Some(pairing.tv_id.as_str()))
-        .map(|t| t.addr);
-    let addr = match found {
-        Some(addr) => addr,
-        None => {
-            let last = with(|s| s.tv_addrs.get(id).copied())
-                .ok_or_else(|| format!("{name} isn't on this network."))?;
-            // Dialled from away, it would only time out.
-            let away = tv_is_away(false, Some(last.ip()), |tv| route_away(&interfaces(), tv));
-            set_tv_away(id, away);
-            if away {
-                return Err(TV_AWAY.into());
-            }
-            last
-        }
+    let at = locate_tv(
+        id,
+        &pairing.tv_id,
+        &companion::browse(TV_FIND),
+        &interfaces(),
+    );
+    set_tv_away(id, at == TvAt::Away);
+    let addr = match at {
+        TvAt::Found(addr) | TvAt::Last(addr) => addr,
+        // Dialled from away, it would only time out.
+        TvAt::Away => return Err(TV_AWAY.into()),
+        TvAt::Unknown => return Err(format!("{name} isn't on this network.")),
     };
-    set_tv_away(id, false);
     companion::wake(addr, pairing, &own_name()).map_err(|e| e.to_string())?;
     remember_tv_addr(id, addr);
     Ok(())
@@ -992,6 +1007,7 @@ fn wake_tv(
 
 /// Mark the Apple TV `id` away from this network, or not, as a wake found.
 fn set_tv_away(id: &str, away: bool) {
+    TV_WOKEN.fetch_add(1, Ordering::SeqCst);
     let moved = with(|s| {
         if away {
             s.tv_away.insert(id.to_string())
@@ -1824,8 +1840,10 @@ fn start_wake(id: &str, notify: bool) -> bool {
                     true
                 },
             );
+            // The TV's own reason, unless the server's wake came after it.
+            let pushed = plan.iter().any(|(stage, _)| *stage == Waking::Push);
             let ended = match (ended, tv_failed) {
-                (Ended::Failed(_), Some(why)) => Ended::Failed(why),
+                (Ended::Failed(_), Some(why)) if !pushed => Ended::Failed(why),
                 (ended, _) => ended,
             };
             match &ended {
@@ -3076,41 +3094,67 @@ pub(crate) mod tests {
             mask,
             point_to_point,
         };
-        let ifs = [
-            interface("en0", "192.168.1.7", 0xffff_ff00, false),
-            interface("pdp_ip0", "10.120.4.9", u32::MAX, true),
-            interface("utun3", "100.101.102.103", u32::MAX, true),
-        ];
+        let wifi = interface("en0", "192.168.1.7", 0xffff_ff00, false);
+        let cellular = interface("pdp_ip0", "10.120.4.9", u32::MAX, true);
+        let vpn = interface("utun3", "100.101.102.103", u32::MAX, true);
         let tv = v4("192.168.1.20");
-        let away = |source: Option<&str>, tv| routed_away(&ifs, source.map(|a| v4(a).into()), tv);
-        assert!(!away(Some("192.168.1.7"), tv), "on its network");
+        let away = |ifs: &[Interface], source: Option<&str>, tv| {
+            routed_away(ifs, source.map(|a| v4(a).into()), tv)
+        };
+        let all = [wifi.clone(), cellular.clone(), vpn.clone()];
+        assert!(!away(&all, Some("192.168.1.7"), tv), "on its network");
         assert!(
-            away(Some("192.168.1.7"), v4("10.0.0.20")),
+            away(&all, Some("192.168.1.7"), v4("10.0.0.20")),
             "another network"
         );
-        assert!(away(Some("10.120.4.9"), tv), "mobile data");
-        assert!(!away(Some("100.101.102.103"), tv), "a VPN may reach it");
-        assert!(away(None, tv), "nothing routes there");
         assert!(
-            !away(Some("172.16.0.1"), tv),
-            "an interface not read says nothing"
+            !away(&all, Some("100.101.102.103"), tv),
+            "a VPN may reach it"
+        );
+        assert!(away(&all, None, tv), "nothing routes there");
+        let roaming = [cellular.clone(), vpn.clone()];
+        assert!(away(&roaming, Some("10.120.4.9"), tv), "mobile data");
+        assert!(
+            away(&roaming, Some("192.0.0.2"), tv),
+            "mobile data's translated address, owned by no interface"
+        );
+        assert!(away(&[], Some("10.120.4.9"), tv), "mobile data not listed");
+        assert!(
+            !away(&[wifi.clone()], Some("172.16.0.1"), tv),
+            "a source not listed, with a network holding the TV"
         );
 
-        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
-        assert!(tv_is_away(false, Some(ip("10.0.0.20")), |_| true));
-        assert!(
-            !tv_is_away(true, Some(ip("10.0.0.20")), |_| true),
-            "announced here, renumbered"
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let at = |s: &str| s.parse::<std::net::SocketAddr>().unwrap();
+        let announced = crate::remote::companion::Tv {
+            name: "Living Room".into(),
+            host: "Living-Room.local.".into(),
+            addr: at("192.168.5.20:49153"),
+            id: Some("PAIRED".into()),
+        };
+        assert_eq!(
+            locate_tv("tv", "PAIRED", &[], &[wifi.clone()]),
+            TvAt::Unknown
         );
-        assert!(
-            !tv_is_away(false, Some(ip("192.168.1.20")), |_| false),
-            "missed by Bonjour at home"
+        assert_eq!(
+            locate_tv("tv", "PAIRED", &[announced.clone()], &[]),
+            TvAt::Found(announced.addr),
+            "announced, wherever its address"
         );
-        assert!(!tv_is_away(false, None, |_| true), "never answered: tried");
-        assert!(
-            !tv_is_away(false, Some(ip("fe80::1")), |_| true),
+        assert_eq!(
+            with(|s| s.tv_addrs.get("tv").copied()),
+            Some(announced.addr),
+            "a renumbered network is followed"
+        );
+        with(|s| s.tv_addrs.insert("tv".into(), at("[fe80::1]:49153")));
+        assert_eq!(
+            locate_tv("tv", "PAIRED", &[], &[]),
+            TvAt::Last(at("[fe80::1]:49153")),
             "IPv6 says nothing"
         );
+        with(|s| *s = Store::default());
     }
 
     #[test]
