@@ -21,6 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
@@ -194,8 +195,8 @@ struct Store {
     /// Where each Apple TV's Companion service last answered, by id: tried
     /// when browsing does not find it.
     tv_addrs: HashMap<String, std::net::SocketAddr>,
-    /// Paired Apple TVs away from this device's network, as `check_tvs` or
-    /// a wake last found: not switched on from here.
+    /// Paired Apple TVs away from this device's network, as `check_tvs` last
+    /// found: not switched on from here.
     tv_away: HashSet<String>,
 }
 
@@ -825,63 +826,79 @@ fn may_be_on(networks: &[(u32, u32)], known: impl IntoIterator<Item = std::net::
 /// Whether a paired Apple TV is away from this device's network: not
 /// announced on it, and last answered at an address on none of its networks.
 /// Bonjour missing a TV at home leaves its address on this network, and a
-/// home network renumbered still announces it: either is tried.
+/// home network renumbered still announces it: either is tried. With no
+/// network read, between one network and the next, nothing is away.
 fn tv_is_away(announced: bool, last: Option<std::net::IpAddr>, networks: &[(u32, u32)]) -> bool {
-    !announced && last.is_some_and(|ip| !may_be_on(networks, [ip]))
+    !announced && !networks.is_empty() && last.is_some_and(|ip| !may_be_on(networks, [ip]))
 }
+
+/// A check is running, and another was asked for meanwhile.
+static TV_CHECKING: AtomicBool = AtomicBool::new(false);
+static TV_AGAIN: AtomicBool = AtomicBool::new(false);
 
 /// Look for the account's paired Apple TVs on this network, in the
 /// background, and mark those away from it, which are then not tried and
-/// say why. Run when the network may have changed.
-/// TVs reachable now are left out: away matters only to one asleep. Not run
-/// while the app is quiet, which runs it again when it lifts.
-static TV_CHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
+/// say why. Run when the network may have changed. One check at a time: one
+/// asked for while another runs follows it. Not run while the app is quiet,
+/// which runs it again when it lifts.
 fn check_tvs() {
     if !COMPANION || !crate::quiet::awake() {
         return;
     }
+    TV_AGAIN.store(true, Ordering::SeqCst);
+    if TV_CHECKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("koan-tv-check".into())
+        .spawn(|| {
+            loop {
+                TV_AGAIN.store(false, Ordering::SeqCst);
+                check_tvs_now();
+                TV_CHECKING.store(false, Ordering::SeqCst);
+                if !TV_AGAIN.load(Ordering::SeqCst) || TV_CHECKING.swap(true, Ordering::SeqCst) {
+                    break;
+                }
+            }
+        });
+    if spawned.is_err() {
+        TV_CHECKING.store(false, Ordering::SeqCst);
+    }
+}
+
+fn check_tvs_now() {
     let paired: Vec<(String, String)> = with(|s| {
         s.account
             .iter()
-            .filter(|(d, _)| !d.linked && !s.nearby.iter().any(|n| n.hello.id == d.id))
             .filter_map(|(d, _)| Some((d.id.clone(), d.tv_pairing.as_ref()?.tv_id.clone())))
             .collect()
     });
-    if paired.is_empty() {
-        return;
+    let mut away = HashSet::new();
+    if !paired.is_empty() {
+        let tvs = crate::remote::companion::browse(TV_FIND);
+        let networks = local_networks();
+        for (id, tv_id) in paired {
+            let found = tvs.iter().find(|t| t.id.as_deref() == Some(tv_id.as_str()));
+            if let Some(tv) = found {
+                remember_tv_addr(&id, tv.addr);
+            }
+            let last = with(|s| s.tv_addrs.get(&id).map(|a| a.ip()));
+            if tv_is_away(found.is_some(), last, &networks) {
+                away.insert(id);
+            }
+        }
     }
-    // Only the latest check, of the network as it is now, is kept.
-    let generation = TV_CHECK.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-    let _ = std::thread::Builder::new()
-        .name("koan-tv-check".into())
-        .spawn(move || {
-            let tvs = crate::remote::companion::browse(TV_FIND);
-            let networks = local_networks();
-            let mut away = HashSet::new();
-            for (id, tv_id) in paired {
-                let found = tvs.iter().find(|t| t.id.as_deref() == Some(tv_id.as_str()));
-                if let Some(tv) = found {
-                    remember_tv_addr(&id, tv.addr);
-                }
-                let last = with(|s| s.tv_addrs.get(&id).map(|a| a.ip()));
-                if tv_is_away(found.is_some(), last, &networks) {
-                    away.insert(id);
-                }
-            }
-            let moved = with(|s| {
-                let latest = TV_CHECK.load(std::sync::atomic::Ordering::SeqCst) == generation;
-                let moved = latest && s.tv_away != away;
-                if moved {
-                    log::info!("devices: Apple TVs away from this network: {away:?}");
-                    s.tv_away = away;
-                }
-                moved
-            });
-            if moved {
-                touch();
-            }
-        });
+    let moved = with(|s| {
+        let moved = s.tv_away != away;
+        if moved {
+            log::info!("devices: Apple TVs away from this network: {away:?}");
+            s.tv_away = away;
+        }
+        moved
+    });
+    if moved {
+        touch();
+    }
 }
 
 /// The Companion pairing of the account's Apple TV `id`, as the server keeps
@@ -917,7 +934,7 @@ fn wake_tv(
         .map(|t| t.addr);
     let addr = found
         .or_else(|| with(|s| s.tv_addrs.get(id).copied()))
-        .ok_or_else(|| format!("{name} isn't on this network. {TV_AWAY}"))?;
+        .ok_or_else(|| format!("{name} isn't on this network."))?;
     companion::wake(addr, pairing, &own_name()).map_err(|e| e.to_string())?;
     remember_tv_addr(id, addr);
     Ok(())
@@ -957,7 +974,6 @@ const PAIRING_KEPT: Duration = Duration::from_secs(8);
 /// name, else the only one here.
 pub fn begin_tv_pairing(id: &str) -> Result<String, String> {
     use crate::remote::companion;
-    use std::sync::atomic::Ordering;
     if !COMPANION {
         return Err("Waking an Apple TV is set up from an iPhone, iPad or Mac.".into());
     }
@@ -1005,7 +1021,6 @@ pub fn begin_tv_pairing(id: &str) -> Result<String, String> {
 /// wait for the server to keep it for the account: done only once the
 /// account's list carries it back.
 pub fn finish_tv_pairing(pin: &str) -> Result<(), String> {
-    use std::sync::atomic::Ordering;
     let pending = PAIRING
         .lock()
         .take()
@@ -3016,6 +3031,10 @@ pub(crate) mod tests {
             "missed by Bonjour at home"
         );
         assert!(!tv_is_away(false, None, &home), "never answered: tried");
+        assert!(
+            !tv_is_away(false, Some(ip("10.0.0.20")), &[]),
+            "no network read: tried"
+        );
     }
 
     #[test]
