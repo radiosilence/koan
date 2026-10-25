@@ -824,27 +824,18 @@ fn interfaces() -> Vec<Interface> {
     Vec::new()
 }
 
-/// The address this device would send to `to` from, as the routing table
-/// says; nothing is sent. `None` when nothing routes there.
-fn source_for(to: std::net::Ipv4Addr) -> Option<std::net::Ipv4Addr> {
-    let socket = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    socket.connect((to, 9)).ok()?;
-    match socket.local_addr().ok()?.ip() {
-        std::net::IpAddr::V4(v4) if !v4.is_unspecified() => Some(v4),
-        _ => None,
-    }
-}
-
 /// Whether `tv` is out of this device's reach, sending from `source` as the
 /// routing table chose: through a local network that does not hold it, or
 /// mobile data. A tunnel is a VPN, which may route to the TV's network, and
 /// is tried; nothing routing there at all is away.
 fn routed_away(
     interfaces: &[Interface],
-    source: Option<std::net::Ipv4Addr>,
+    source: Option<std::net::IpAddr>,
     tv: std::net::Ipv4Addr,
 ) -> bool {
-    let Some(source) = source else { return true };
+    let Some(std::net::IpAddr::V4(source)) = source else {
+        return true;
+    };
     let Some(through) = interfaces.iter().find(|i| i.addr == source) else {
         return false;
     };
@@ -922,7 +913,8 @@ fn check_tvs_now() {
             }
             let last = with(|s| s.tv_addrs.get(&id).map(|a| a.ip()));
             if tv_is_away(found.is_some(), last, |tv| {
-                routed_away(&interfaces, source_for(tv), tv)
+                let source = crate::upnp::serve::local_ip_towards(tv.into());
+                routed_away(&interfaces, source, tv)
             }) {
                 away.insert(id);
             }
@@ -3054,7 +3046,7 @@ pub(crate) mod tests {
             interface("utun3", "100.101.102.103", u32::MAX, true),
         ];
         let tv = v4("192.168.1.20");
-        let away = |source: Option<&str>, tv| routed_away(&ifs, source.map(v4), tv);
+        let away = |source: Option<&str>, tv| routed_away(&ifs, source.map(|a| v4(a).into()), tv);
         assert!(!away(Some("192.168.1.7"), tv), "on its network");
         assert!(
             away(Some("192.168.1.7"), v4("10.0.0.20")),
