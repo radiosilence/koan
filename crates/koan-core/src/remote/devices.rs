@@ -194,6 +194,9 @@ struct Store {
     /// Where each Apple TV's Companion service last answered, by id: tried
     /// when browsing does not find it.
     tv_addrs: HashMap<String, std::net::SocketAddr>,
+    /// Paired Apple TVs away from this device's network, as `check_tvs` or
+    /// a wake last found: not switched on from here.
+    tv_away: HashSet<String>,
 }
 
 /// A command that was queued for a device asleep, or did not reach one: what
@@ -480,6 +483,7 @@ pub fn start(local: Local) {
         return;
     }
     restore();
+    check_tvs();
     link::spawn(local.clone());
     crate::remote::nearby::start(local);
 }
@@ -548,6 +552,15 @@ pub fn name_of(id: &str) -> Option<String> {
 pub fn set_account(devices: Vec<LinkDevice>, library: Option<String>) {
     let now = Instant::now();
     let unix = chrono::Utc::now().timestamp();
+    let paired = |list: &mut dyn Iterator<Item = &LinkDevice>| {
+        list.filter(|d| d.tv_pairing.is_some())
+            .map(|d| d.id.clone())
+            .collect::<HashSet<_>>()
+    };
+    let newly_paired = with(|s| {
+        let before = paired(&mut s.account.iter().map(|(d, _)| d));
+        !paired(&mut devices.iter()).is_subset(&before)
+    });
     changed(|s| {
         // Reachable up to this message, if the list saying so came down this
         // same link: the hysteresis runs from here, not from whenever it was
@@ -599,6 +612,10 @@ pub fn set_account(devices: Vec<LinkDevice>, library: Option<String>) {
         s.fresh = s.linked;
         s.save();
     });
+    // A TV paired since is looked for at once, not at the next network change.
+    if newly_paired {
+        check_tvs();
+    }
 }
 
 /// The accounts this device is shared with, as the server last said, and
@@ -806,19 +823,51 @@ fn may_be_on(networks: &[(u32, u32)], known: impl IntoIterator<Item = std::net::
     !said
 }
 
-/// Whether the Apple TV `id` may be on this device's network, by where its
-/// Companion service last answered and where koan on it was met.
-/// Met by name rather than address, it may be anywhere, and is tried.
-fn tv_may_be_here(s: &Store, networks: &[(u32, u32)], id: &str) -> bool {
-    let mut met = Vec::new();
-    for n in s.seen.iter().filter(|n| n.id == id) {
-        match crate::remote::companion::host_of(&n.addr).parse() {
-            Ok(ip) => met.push(ip),
-            Err(_) => return true,
-        }
+/// Whether a paired Apple TV is away from this device's network: not
+/// announced on it, and last answered at an address on none of its networks.
+/// Bonjour missing a TV at home leaves its address on this network, and a
+/// home network renumbered still announces it: either is tried.
+fn tv_is_away(announced: bool, last: Option<std::net::IpAddr>, networks: &[(u32, u32)]) -> bool {
+    !announced && last.is_some_and(|ip| !may_be_on(networks, [ip]))
+}
+
+/// Look for the account's paired Apple TVs on this network, in the
+/// background, and mark those away from it, which are then not tried and
+/// say why. Run when the network may have changed.
+fn check_tvs() {
+    if !COMPANION {
+        return;
     }
-    let answered = s.tv_addrs.get(id).map(|a| a.ip());
-    may_be_on(networks, answered.into_iter().chain(met))
+    let paired: Vec<(String, String)> = with(|s| {
+        s.account
+            .iter()
+            .filter_map(|(d, _)| Some((d.id.clone(), d.tv_pairing.as_ref()?.tv_id.clone())))
+            .collect()
+    });
+    if paired.is_empty() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("koan-tv-check".into())
+        .spawn(move || {
+            let tvs = crate::remote::companion::browse(TV_FIND);
+            let networks = local_networks();
+            let mut away = HashSet::new();
+            for (id, tv_id) in paired {
+                let found = tvs.iter().find(|t| t.id.as_deref() == Some(tv_id.as_str()));
+                if let Some(tv) = found {
+                    remember_tv_addr(&id, tv.addr);
+                }
+                let last = with(|s| s.tv_addrs.get(&id).map(|a| a.ip()));
+                if tv_is_away(found.is_some(), last, &networks) {
+                    away.insert(id);
+                }
+            }
+            if with(|s| s.tv_away != away) {
+                log::info!("devices: Apple TVs away from this network: {away:?}");
+                changed(|s| s.tv_away = away);
+            }
+        });
 }
 
 /// The Companion pairing of the account's Apple TV `id`, as the server keeps
@@ -852,9 +901,10 @@ fn wake_tv(
         .into_iter()
         .find(|t| t.id.as_deref() == Some(pairing.tv_id.as_str()))
         .map(|t| t.addr);
-    let addr = found
-        .or_else(|| with(|s| s.tv_addrs.get(id).copied()))
-        .ok_or_else(|| format!("{name} isn't on this network."))?;
+    let Some(addr) = found.or_else(|| with(|s| s.tv_addrs.get(id).copied())) else {
+        changed(|s| s.tv_away.insert(id.to_string()));
+        return Err(format!("{name} isn't on this network. {TV_AWAY}"));
+    };
     companion::wake(addr, pairing, &own_name()).map_err(|e| e.to_string())?;
     remember_tv_addr(id, addr);
     Ok(())
@@ -1126,11 +1176,6 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
     let pairable = COMPANION
         && crate::remote::profile::current()
             .is_some_and(|p| p.offers(crate::remote::profile::TV_PAIRING));
-    let networks = if COMPANION {
-        local_networks()
-    } else {
-        Vec::new()
-    };
     with(|s| {
         // A list kept from before the server was recorded is taken as this
         // one's: the next link replaces it.
@@ -1169,9 +1214,7 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                     // A paired Apple TV away from this network cannot be
                     // switched on from here.
                     wakeable: d.wakeable.unwrap_or(true)
-                        || (COMPANION
-                            && d.tv_pairing.is_some()
-                            && tv_may_be_here(s, &networks, &d.id)),
+                        || (COMPANION && d.tv_pairing.is_some() && !s.tv_away.contains(&d.id)),
                     tv_paired: d.tv_pairing.is_some(),
                     tv_pairable: pairable && d.platform == "tvos" && d.owner.is_none(),
                     last_seen: live(&d.id),
@@ -1318,7 +1361,7 @@ fn next_change(now: i64) -> Option<i64> {
 pub fn choosable(id: &str) -> Result<(), String> {
     match list().into_iter().find(|d| d.id == id) {
         Some(d) if !d.awake && !d.wakeable && d.problem.is_none() => Err(if d.away_from_tv() {
-            format!("{} is off. {TV_AWAY}", d.name)
+            format!("{} is out of reach. {TV_AWAY}", d.name)
         } else if d.asleep {
             format!("{} is asleep and cannot be woken from here.", d.name)
         } else {
@@ -1602,11 +1645,9 @@ fn start_wake(id: &str, notify: bool) -> bool {
     let now = chrono::Utc::now().timestamp();
     // Companion reaches a TV only over its own network: away from it, the
     // TV is not tried, and its row says why.
-    let tv = (COMPANION
-        && device.platform == "tvos"
-        && with(|s| tv_may_be_here(s, &local_networks(), &id)))
-    .then(|| tv_pairing_of(&id))
-    .flatten();
+    let tv = (COMPANION && device.platform == "tvos" && !with(|s| s.tv_away.contains(&id)))
+        .then(|| tv_pairing_of(&id))
+        .flatten();
     // The server's word on pushing to it: `wakeable` also counts a pairing.
     // A stranger on the network has nothing to answer a push with.
     let pushable = with(|s| {
@@ -1759,6 +1800,7 @@ pub fn set_target(id: Option<String>) {
 /// What makes the other devices appear the moment the app opens rather than
 /// when a dead socket finally times out.
 pub fn resume() {
+    check_tvs();
     link::nudge();
     crate::remote::wire::probe_all();
     crate::remote::nearby::refresh();
@@ -2008,7 +2050,7 @@ fn reach(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
 /// about the device.
 fn out_of_reach(id: &str) -> String {
     match list().into_iter().find(|d| d.id == id) {
-        Some(d) if d.away_from_tv() => format!("{} is off. {TV_AWAY}", d.name),
+        Some(d) if d.away_from_tv() => format!("{} is out of reach. {TV_AWAY}", d.name),
         Some(d) => format!("{} is out of reach.", d.name),
         None => "That device is out of reach.".to_owned(),
     }
@@ -2949,6 +2991,16 @@ pub(crate) mod tests {
         );
         assert!(may_be_on(&home, []), "nowhere known: tried");
         assert!(may_be_on(&home, [ip("fe80::1")]), "IPv6 says nothing");
+        assert!(tv_is_away(false, Some(ip("10.0.0.20")), &home));
+        assert!(
+            !tv_is_away(true, Some(ip("10.0.0.20")), &home),
+            "announced here, renumbered"
+        );
+        assert!(
+            !tv_is_away(false, Some(ip("192.168.1.20")), &home),
+            "missed by Bonjour at home"
+        );
+        assert!(!tv_is_away(false, None, &home), "never answered: tried");
     }
 
     #[test]
@@ -3000,6 +3052,14 @@ pub(crate) mod tests {
         let listed = list().into_iter().find(|d| d.id == "tv").unwrap();
         assert!(listed.tv_paired);
         assert_eq!(listed.wakeable, COMPANION, "no push, but a pairing");
+        with(|s| s.tv_away.insert("tv".into()));
+        let listed = list().into_iter().find(|d| d.id == "tv").unwrap();
+        assert!(!listed.wakeable, "away from its network");
+        if COMPANION {
+            assert_eq!(listed.reach(), Reach::OutOfReach(Some(TV_AWAY.into())));
+            assert!(choosable("tv").unwrap_err().contains(TV_AWAY));
+        }
+        with(|s| s.tv_away.clear());
         with(|s| s.used.clear());
         assert_eq!(
             list().iter().any(|d| d.id == "tv"),
