@@ -64,7 +64,7 @@ fn report(path: &Path, ts: &str, errors: &[OxcDiagnostic]) -> Result<(), String>
         return Ok(());
     }
     let lines = errors.iter().map(|e| {
-        let at = e.labels.first().map_or(0, |l| l.offset());
+        let at = e.labels.first().map_or(0, |l| l.offset() as usize);
         let before = &ts[..at.min(ts.len())];
         let line = before.matches('\n').count() + 1;
         let column = before.len() - before.rfind('\n').map_or(0, |i| i + 1) + 1;
