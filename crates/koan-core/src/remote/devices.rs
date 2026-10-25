@@ -118,8 +118,15 @@ impl Device {
         }
         Reach::OutOfReach(match &self.waking {
             Some(Waking::Failed(why)) => Some(why.clone()),
+            _ if self.away_from_tv() => Some(TV_AWAY.into()),
             _ => None,
         })
+    }
+
+    /// A paired Apple TV that this device could switch on, were it on the
+    /// TV's network.
+    fn away_from_tv(&self) -> bool {
+        COMPANION && self.tv_paired && !self.wakeable
     }
 }
 
@@ -736,7 +743,7 @@ const COMPANION: bool = cfg!(any(target_os = "macos", target_os = "ios"));
 /// Companion protocol reaches it only over its own network.
 const TV_AWAY: &str = "Only a device on its network can switch it on.";
 
-/// This device's IPv4 networks, as address and mask, loopback left out.
+/// This device's IPv4 networks, as address and mask: those a TV can be on.
 #[cfg(unix)]
 fn local_networks() -> Vec<(u32, u32)> {
     let mut out = Vec::new();
@@ -750,9 +757,14 @@ fn local_networks() -> Vec<(u32, u32)> {
         let mut cur = head;
         while let Some(ifa) = cur.as_ref() {
             cur = ifa.ifa_next;
-            let up = ifa.ifa_flags & libc::IFF_UP as u32 != 0;
-            let loopback = ifa.ifa_flags & libc::IFF_LOOPBACK as u32 != 0;
-            if !up || loopback || ifa.ifa_addr.is_null() || ifa.ifa_netmask.is_null() {
+            // A VPN or mobile data link is point to point: no TV is on it.
+            let running = (libc::IFF_UP | libc::IFF_RUNNING) as u32;
+            let skipped = (libc::IFF_LOOPBACK | libc::IFF_POINTOPOINT) as u32;
+            if ifa.ifa_flags & running != running
+                || ifa.ifa_flags & skipped != 0
+                || ifa.ifa_addr.is_null()
+                || ifa.ifa_netmask.is_null()
+            {
                 continue;
             }
             if i32::from((*ifa.ifa_addr).sa_family) != libc::AF_INET {
@@ -762,7 +774,9 @@ fn local_networks() -> Vec<(u32, u32)> {
             let mask = (*ifa.ifa_netmask.cast::<libc::sockaddr_in>())
                 .sin_addr
                 .s_addr;
-            out.push((u32::from_be(addr), u32::from_be(mask)));
+            if mask != 0 {
+                out.push((u32::from_be(addr), u32::from_be(mask)));
+            }
         }
         libc::freeifaddrs(head);
     }
@@ -1109,6 +1123,11 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
     let pairable = COMPANION
         && crate::remote::profile::current()
             .is_some_and(|p| p.offers(crate::remote::profile::TV_PAIRING));
+    let networks = if COMPANION {
+        local_networks()
+    } else {
+        Vec::new()
+    };
     with(|s| {
         // A list kept from before the server was recorded is taken as this
         // one's: the next link replaces it.
@@ -1295,7 +1314,9 @@ fn next_change(now: i64) -> Option<i64> {
 /// nothing can wake it, where a command would go nowhere.
 pub fn choosable(id: &str) -> Result<(), String> {
     match list().into_iter().find(|d| d.id == id) {
-        Some(d) if !d.awake && !d.wakeable && d.problem.is_none() => Err(if d.asleep {
+        Some(d) if !d.awake && !d.wakeable && d.problem.is_none() => Err(if d.away_from_tv() {
+            format!("{} is off. {TV_AWAY}", d.name)
+        } else if d.asleep {
             format!("{} is asleep and cannot be woken from here.", d.name)
         } else {
             format!("{} is reconnecting.", d.name)
@@ -1576,9 +1597,13 @@ fn start_wake(id: &str, notify: bool) -> bool {
         return false;
     };
     let now = chrono::Utc::now().timestamp();
-    let tv = (COMPANION && device.platform == "tvos")
-        .then(|| tv_pairing_of(&id))
-        .flatten();
+    // Companion reaches a TV only over its own network: away from it, the
+    // TV is not tried, and its row says why.
+    let tv = (COMPANION
+        && device.platform == "tvos"
+        && with(|s| tv_may_be_here(s, &local_networks(), &id)))
+    .then(|| tv_pairing_of(&id))
+    .flatten();
     // The server's word on pushing to it: `wakeable` also counts a pairing.
     // A stranger on the network has nothing to answer a push with.
     let pushable = with(|s| {
@@ -1979,11 +2004,11 @@ fn reach(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
 /// `id`: a transport error, or a server that relays nothing, says nothing
 /// about the device.
 fn out_of_reach(id: &str) -> String {
-    let name = list()
-        .into_iter()
-        .find(|d| d.id == id)
-        .map_or_else(|| "That device".to_owned(), |d| d.name);
-    format!("{name} is out of reach.")
+    match list().into_iter().find(|d| d.id == id) {
+        Some(d) if d.away_from_tv() => format!("{} is off. {TV_AWAY}", d.name),
+        Some(d) => format!("{} is out of reach.", d.name),
+        None => "That device is out of reach.".to_owned(),
+    }
 }
 
 /// The ways a command can reach a device, and which of them bring an answer.
@@ -2897,6 +2922,30 @@ pub(crate) mod tests {
             "a stranger is only ever tried on the network"
         );
         assert!(wake_plan(false, false, false).is_empty());
+    }
+
+    #[test]
+    fn an_apple_tv_away_from_this_network_is_not_switched_on() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        let home = [(
+            u32::from(std::net::Ipv4Addr::new(192, 168, 1, 7)),
+            0xffff_ff00,
+        )];
+        assert!(may_be_on(&home, [ip("192.168.1.20")]));
+        assert!(
+            !may_be_on(&home, [ip("10.0.0.20")]),
+            "away from its network"
+        );
+        assert!(
+            !may_be_on(&[], [ip("192.168.1.20")]),
+            "on no network at all"
+        );
+        assert!(
+            may_be_on(&home, [ip("10.0.0.20"), ip("192.168.1.30")]),
+            "any address it was known at will do"
+        );
+        assert!(may_be_on(&home, []), "nowhere known: tried");
+        assert!(may_be_on(&home, [ip("fe80::1")]), "IPv6 says nothing");
     }
 
     #[test]
