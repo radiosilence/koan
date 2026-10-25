@@ -808,13 +808,16 @@ fn may_be_on(networks: &[(u32, u32)], known: impl IntoIterator<Item = std::net::
 
 /// Whether the Apple TV `id` may be on this device's network, by where its
 /// Companion service last answered and where koan on it was met.
+/// Met by name rather than address, it may be anywhere, and is tried.
 fn tv_may_be_here(s: &Store, networks: &[(u32, u32)], id: &str) -> bool {
+    let mut met = Vec::new();
+    for n in s.seen.iter().filter(|n| n.id == id) {
+        match crate::remote::companion::host_of(&n.addr).parse() {
+            Ok(ip) => met.push(ip),
+            Err(_) => return true,
+        }
+    }
     let answered = s.tv_addrs.get(id).map(|a| a.ip());
-    let met = s
-        .seen
-        .iter()
-        .filter(|n| n.id == id)
-        .filter_map(|n| crate::remote::companion::host_of(&n.addr).parse().ok());
     may_be_on(networks, answered.into_iter().chain(met))
 }
 
