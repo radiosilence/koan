@@ -732,6 +732,78 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
 /// browses for them with the system's Bonjour. A television wakes no other.
 const COMPANION: bool = cfg!(any(target_os = "macos", target_os = "ios"));
 
+/// Why a paired Apple TV that is off cannot be switched on from here: the
+/// Companion protocol reaches it only over its own network.
+const TV_AWAY: &str = "Only a device on its network can switch it on.";
+
+/// This device's IPv4 networks, as address and mask, loopback left out.
+#[cfg(unix)]
+fn local_networks() -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: on success `head` is a list getifaddrs allocated, read here and
+    // freed below; each entry's address and mask are checked before use.
+    unsafe {
+        if libc::getifaddrs(&mut head) != 0 {
+            return out;
+        }
+        let mut cur = head;
+        while let Some(ifa) = cur.as_ref() {
+            cur = ifa.ifa_next;
+            let up = ifa.ifa_flags & libc::IFF_UP as u32 != 0;
+            let loopback = ifa.ifa_flags & libc::IFF_LOOPBACK as u32 != 0;
+            if !up || loopback || ifa.ifa_addr.is_null() || ifa.ifa_netmask.is_null() {
+                continue;
+            }
+            if i32::from((*ifa.ifa_addr).sa_family) != libc::AF_INET {
+                continue;
+            }
+            let addr = (*ifa.ifa_addr.cast::<libc::sockaddr_in>()).sin_addr.s_addr;
+            let mask = (*ifa.ifa_netmask.cast::<libc::sockaddr_in>())
+                .sin_addr
+                .s_addr;
+            out.push((u32::from_be(addr), u32::from_be(mask)));
+        }
+        libc::freeifaddrs(head);
+    }
+    out
+}
+
+#[cfg(not(unix))]
+fn local_networks() -> Vec<(u32, u32)> {
+    Vec::new()
+}
+
+/// Whether a device last known at `known` may be on one of `networks`: one
+/// of those addresses is, or none of them can say. An IPv6 address, or no
+/// address at all, says nothing.
+fn may_be_on(networks: &[(u32, u32)], known: impl IntoIterator<Item = std::net::IpAddr>) -> bool {
+    let mut said = false;
+    for ip in known {
+        let std::net::IpAddr::V4(v4) = ip else {
+            continue;
+        };
+        let ip = u32::from(v4);
+        if networks.iter().any(|(net, mask)| net & mask == ip & mask) {
+            return true;
+        }
+        said = true;
+    }
+    !said
+}
+
+/// Whether the Apple TV `id` may be on this device's network, by where its
+/// Companion service last answered and where koan on it was met.
+fn tv_may_be_here(s: &Store, networks: &[(u32, u32)], id: &str) -> bool {
+    let answered = s.tv_addrs.get(id).map(|a| a.ip());
+    let met = s
+        .seen
+        .iter()
+        .filter(|n| n.id == id)
+        .filter_map(|n| crate::remote::companion::host_of(&n.addr).parse().ok());
+    may_be_on(networks, answered.into_iter().chain(met))
+}
+
 /// The Companion pairing of the account's Apple TV `id`, as the server keeps
 /// it.
 fn tv_pairing_of(id: &str) -> Option<crate::remote::companion::Credential> {
@@ -1072,7 +1144,12 @@ fn list_from(now: i64, ours: Option<String>) -> Vec<Device> {
                     asleep: !awake && !fresh(&d.id),
                     // As the server says: a push token, and a push key to
                     // send with. One that says nothing lists only those.
-                    wakeable: d.wakeable.unwrap_or(true) || (COMPANION && d.tv_pairing.is_some()),
+                    // A paired Apple TV away from this network cannot be
+                    // switched on from here.
+                    wakeable: d.wakeable.unwrap_or(true)
+                        || (COMPANION
+                            && d.tv_pairing.is_some()
+                            && tv_may_be_here(s, &networks, &d.id)),
                     tv_paired: d.tv_pairing.is_some(),
                     tv_pairable: pairable && d.platform == "tvos" && d.owner.is_none(),
                     last_seen: live(&d.id),
