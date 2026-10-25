@@ -195,13 +195,13 @@ internal fun noRenderers(searching: Boolean) = when {
 
 /**
  * Output: a button for Now Playing that opens the output picker, as iOS's
- * output pill does. Named only where the music goes somewhere particular: a
- * renderer, an output of the controlled device chosen by name, or a route of
- * this phone's other than its speaker. On the default it is the glyph alone.
- * In the accent while the music goes to a renderer.
+ * output pill does. Labelled, it is named only where the music goes somewhere
+ * particular: a renderer, an output of the controlled device chosen by name,
+ * or a route of this phone's other than its speaker. On the default it is the
+ * glyph alone. In the accent while the music goes to a renderer.
  */
 @Composable
-fun OutputButton(modifier: Modifier = Modifier) {
+fun OutputButton(modifier: Modifier = Modifier, labelled: Boolean = true) {
     val mirror = koanApp().mirror
     val outputs by mirror.outputs.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
@@ -210,10 +210,10 @@ fun OutputButton(modifier: Modifier = Modifier) {
     KoanButton(
         { open = true },
         modifier.semantics { contentDescription = "Output: ${label ?: defaultOutput(outputs)}" },
-        kind = KoanButtonKind.Text,
+        kind = if (labelled) KoanButtonKind.Text else KoanButtonKind.Icon,
     ) {
         KoanIcon(KoanIcons.speaker, contentDescription = null, color = KoanTheme.color(if (toRenderer) KoanTone.Accent else KoanTone.Ink))
-        label?.let { KoanText(it, Modifier.weight(1f, fill = false), role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
+        label?.takeIf { labelled }?.let { KoanText(it, Modifier.weight(1f, fill = false), role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
     }
     if (open) OutputSheet(onDismiss = { open = false })
 }
@@ -456,7 +456,7 @@ internal const val LOCAL_NETWORK_BLOCKED = "Allow nearby devices in Settings to 
 /** An output's preset menu, where the device in view has presets or the output is set from one. */
 private fun presetsFor(o: OutputInfo, outputs: OutputsInfo, picker: OutputPicker): (@Composable () -> Unit)? {
     val summary = presetSummary(o, outputs) ?: return null
-    return { PresetButton(summary, outputs.profiles, o.preset, tinted = false, choose = { picker.setPreset(o.id, it) }, glyph = true) }
+    return { PresetButton(summary, outputs.profiles, o.preset, tinted = summary != "Flat", choose = { picker.setPreset(o.id, it) }, glyph = true) }
 }
 
 /**
