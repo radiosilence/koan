@@ -106,8 +106,10 @@ permission it already uses to find kōan apps. Away from home, a TV is woken
 only by your server's push, where the server has push on. Without that, kōan
 does not try to turn it on: the TV is listed as out of reach, with "Only a
 device on its network can switch it on", and nothing sent to it is held
-waiting. kōan judges where it is by the addresses the TV last answered at,
-so a device that has never met the TV on its network tries it anyway.
+waiting. kōan looks for the TV on the network when it opens and whenever the network
+changes, and counts it away only when the TV is not there and the address it
+last answered at is on none of this device's networks. A device that has
+never switched the TV on tries it anyway, and learns from that.
 
 ## Sample rates
 
