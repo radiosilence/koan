@@ -214,7 +214,8 @@ notification to tap straight away, since iOS does not let an app it woke in the
 background start audio.
 
 1. **An Apple TV set up to be woken** is turned on and kōan opened on it,
-   from a device on its network; away from it, this step is skipped. See
+   from a device on its network; away from it, this step says so within a
+   couple of seconds and the next is tried. See
    [Playing to it while it sleeps](apple-tv.md#playing-to-it-while-it-sleeps).
 2. **The local network**, if the device was seen there within the last minute:
    it may not be suspended yet.

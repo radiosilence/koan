@@ -1,1 +1,1 @@
-- **An Apple TV away from your network is not woken in vain.** Off its network, kōan no longer tries to switch the TV on; it lists the TV as out of reach with the reason and says so at once when asked to play there.
+- **An Apple TV away from your network says so.** Off its network and without a push, the TV is listed as out of reach with the reason; asking for it looks again and, if it is still away, says so in a couple of seconds instead of waiting on an address that cannot answer.
