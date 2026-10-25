@@ -552,16 +552,7 @@ pub fn name_of(id: &str) -> Option<String> {
 pub fn set_account(devices: Vec<LinkDevice>, library: Option<String>) {
     let now = Instant::now();
     let unix = chrono::Utc::now().timestamp();
-    let paired = |list: &mut dyn Iterator<Item = &LinkDevice>| {
-        list.filter(|d| d.tv_pairing.is_some())
-            .map(|d| d.id.clone())
-            .collect::<HashSet<_>>()
-    };
-    let newly_paired = with(|s| {
-        let before = paired(&mut s.account.iter().map(|(d, _)| d));
-        !paired(&mut devices.iter()).is_subset(&before)
-    });
-    changed(|s| {
+    let newly_paired = changed(|s| {
         // Reachable up to this message, if the list saying so came down this
         // same link: the hysteresis runs from here, not from whenever it was
         // last reported. A list held across a gap in the link proves nothing.
@@ -607,10 +598,18 @@ pub fn set_account(devices: Vec<LinkDevice>, library: Option<String>) {
             s.departed.retain(|g| g.id != d.id);
             s.departed.push(d);
         }
+        let newly_paired = devices.iter().any(|d| {
+            d.tv_pairing.is_some()
+                && !s
+                    .account
+                    .iter()
+                    .any(|(old, _)| old.id == d.id && old.tv_pairing.is_some())
+        });
         s.account = devices.into_iter().map(|d| (d, now)).collect();
         s.account_library = library;
         s.fresh = s.linked;
         s.save();
+        newly_paired
     });
     // A TV paired since is looked for at once, not at the next network change.
     if newly_paired {
@@ -834,19 +833,26 @@ fn tv_is_away(announced: bool, last: Option<std::net::IpAddr>, networks: &[(u32,
 /// Look for the account's paired Apple TVs on this network, in the
 /// background, and mark those away from it, which are then not tried and
 /// say why. Run when the network may have changed.
+/// TVs reachable now are left out: away matters only to one asleep. Not run
+/// while the app is quiet, which runs it again when it lifts.
+static TV_CHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn check_tvs() {
-    if !COMPANION {
+    if !COMPANION || !crate::quiet::awake() {
         return;
     }
     let paired: Vec<(String, String)> = with(|s| {
         s.account
             .iter()
+            .filter(|(d, _)| !d.linked && !s.nearby.iter().any(|n| n.hello.id == d.id))
             .filter_map(|(d, _)| Some((d.id.clone(), d.tv_pairing.as_ref()?.tv_id.clone())))
             .collect()
     });
     if paired.is_empty() {
         return;
     }
+    // Only the latest check, of the network as it is now, is kept.
+    let generation = TV_CHECK.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let _ = std::thread::Builder::new()
         .name("koan-tv-check".into())
         .spawn(move || {
@@ -863,9 +869,17 @@ fn check_tvs() {
                     away.insert(id);
                 }
             }
-            if with(|s| s.tv_away != away) {
-                log::info!("devices: Apple TVs away from this network: {away:?}");
-                changed(|s| s.tv_away = away);
+            let moved = with(|s| {
+                let latest = TV_CHECK.load(std::sync::atomic::Ordering::SeqCst) == generation;
+                let moved = latest && s.tv_away != away;
+                if moved {
+                    log::info!("devices: Apple TVs away from this network: {away:?}");
+                    s.tv_away = away;
+                }
+                moved
+            });
+            if moved {
+                touch();
             }
         });
 }
@@ -901,10 +915,9 @@ fn wake_tv(
         .into_iter()
         .find(|t| t.id.as_deref() == Some(pairing.tv_id.as_str()))
         .map(|t| t.addr);
-    let Some(addr) = found.or_else(|| with(|s| s.tv_addrs.get(id).copied())) else {
-        changed(|s| s.tv_away.insert(id.to_string()));
-        return Err(format!("{name} isn't on this network. {TV_AWAY}"));
-    };
+    let addr = found
+        .or_else(|| with(|s| s.tv_addrs.get(id).copied()))
+        .ok_or_else(|| format!("{name} isn't on this network. {TV_AWAY}"))?;
     companion::wake(addr, pairing, &own_name()).map_err(|e| e.to_string())?;
     remember_tv_addr(id, addr);
     Ok(())
@@ -1360,13 +1373,15 @@ fn next_change(now: i64) -> Option<i64> {
 /// nothing can wake it, where a command would go nowhere.
 pub fn choosable(id: &str) -> Result<(), String> {
     match list().into_iter().find(|d| d.id == id) {
-        Some(d) if !d.awake && !d.wakeable && d.problem.is_none() => Err(if d.away_from_tv() {
-            format!("{} is out of reach. {TV_AWAY}", d.name)
-        } else if d.asleep {
-            format!("{} is asleep and cannot be woken from here.", d.name)
-        } else {
-            format!("{} is reconnecting.", d.name)
-        }),
+        Some(d) if !d.awake && !d.wakeable && d.problem.is_none() => {
+            Err(if d.asleep && d.away_from_tv() {
+                format!("{} is out of reach. {TV_AWAY}", d.name)
+            } else if d.asleep {
+                format!("{} is asleep and cannot be woken from here.", d.name)
+            } else {
+                format!("{} is reconnecting.", d.name)
+            })
+        }
         _ => Ok(()),
     }
 }
@@ -2050,7 +2065,7 @@ fn reach(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
 /// about the device.
 fn out_of_reach(id: &str) -> String {
     match list().into_iter().find(|d| d.id == id) {
-        Some(d) if d.away_from_tv() => format!("{} is out of reach. {TV_AWAY}", d.name),
+        Some(d) if !d.awake && d.away_from_tv() => format!("{} is out of reach. {TV_AWAY}", d.name),
         Some(d) => format!("{} is out of reach.", d.name),
         None => "That device is out of reach.".to_owned(),
     }
