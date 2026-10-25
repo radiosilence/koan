@@ -3120,7 +3120,7 @@ pub(crate) mod tests {
         );
         assert!(away(&[], Some("10.120.4.9"), tv), "mobile data not listed");
         assert!(
-            !away(&[wifi.clone()], Some("172.16.0.1"), tv),
+            !away(std::slice::from_ref(&wifi), Some("172.16.0.1"), tv),
             "a source not listed, with a network holding the TV"
         );
 
@@ -3135,11 +3135,11 @@ pub(crate) mod tests {
             id: Some("PAIRED".into()),
         };
         assert_eq!(
-            locate_tv("tv", "PAIRED", &[], &[wifi.clone()]),
+            locate_tv("tv", "PAIRED", &[], std::slice::from_ref(&wifi)),
             TvAt::Unknown
         );
         assert_eq!(
-            locate_tv("tv", "PAIRED", &[announced.clone()], &[]),
+            locate_tv("tv", "PAIRED", std::slice::from_ref(&announced), &[]),
             TvAt::Found(announced.addr),
             "announced, wherever its address"
         );
