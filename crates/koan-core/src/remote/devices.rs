@@ -760,9 +760,28 @@ const COMPANION: bool = cfg!(any(target_os = "macos", target_os = "ios"));
 /// Companion protocol reaches it only over its own network.
 const TV_AWAY: &str = "Only a device on its network can switch it on.";
 
-/// This device's IPv4 networks, as address and mask: those a TV can be on.
-#[cfg(unix)]
-fn local_networks() -> Vec<(u32, u32)> {
+/// One of this device's IPv4 interfaces.
+#[derive(Debug, Clone)]
+struct Interface {
+    name: String,
+    addr: std::net::Ipv4Addr,
+    mask: u32,
+    point_to_point: bool,
+}
+
+/// This device's IPv4 interfaces that are up.
+#[cfg(target_vendor = "apple")]
+fn interfaces() -> Vec<Interface> {
+    /// A Darwin socket address may be shorter than `sockaddr_in`, as masks
+    /// often are: the bytes past its `sa_len` are zero.
+    unsafe fn ipv4(sa: *const libc::sockaddr) -> u32 {
+        let mut full: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        let len = usize::from(unsafe { (*sa).sa_len }).min(std::mem::size_of_val(&full));
+        unsafe {
+            std::ptr::copy_nonoverlapping(sa.cast::<u8>(), (&raw mut full).cast::<u8>(), len)
+        };
+        u32::from_be(full.sin_addr.s_addr)
+    }
     let mut out = Vec::new();
     let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
     // SAFETY: on success `head` is a list getifaddrs allocated, read here and
@@ -774,62 +793,81 @@ fn local_networks() -> Vec<(u32, u32)> {
         let mut cur = head;
         while let Some(ifa) = cur.as_ref() {
             cur = ifa.ifa_next;
-            // A VPN or mobile data link is point to point: no TV is on it.
             let running = (libc::IFF_UP | libc::IFF_RUNNING) as u32;
-            let skipped = (libc::IFF_LOOPBACK | libc::IFF_POINTOPOINT) as u32;
             if ifa.ifa_flags & running != running
-                || ifa.ifa_flags & skipped != 0
                 || ifa.ifa_addr.is_null()
-                || ifa.ifa_netmask.is_null()
+                || i32::from((*ifa.ifa_addr).sa_family) != libc::AF_INET
             {
                 continue;
             }
-            if i32::from((*ifa.ifa_addr).sa_family) != libc::AF_INET {
-                continue;
-            }
-            let addr = (*ifa.ifa_addr.cast::<libc::sockaddr_in>()).sin_addr.s_addr;
-            let mask = (*ifa.ifa_netmask.cast::<libc::sockaddr_in>())
-                .sin_addr
-                .s_addr;
-            if mask != 0 {
-                out.push((u32::from_be(addr), u32::from_be(mask)));
-            }
+            let mask = if ifa.ifa_netmask.is_null() {
+                u32::MAX
+            } else {
+                ipv4(ifa.ifa_netmask)
+            };
+            out.push(Interface {
+                name: std::ffi::CStr::from_ptr(ifa.ifa_name)
+                    .to_string_lossy()
+                    .into_owned(),
+                addr: ipv4(ifa.ifa_addr).into(),
+                mask,
+                point_to_point: ifa.ifa_flags & libc::IFF_POINTOPOINT as u32 != 0,
+            });
         }
         libc::freeifaddrs(head);
     }
     out
 }
 
-#[cfg(not(unix))]
-fn local_networks() -> Vec<(u32, u32)> {
+#[cfg(not(target_vendor = "apple"))]
+fn interfaces() -> Vec<Interface> {
     Vec::new()
 }
 
-/// Whether a device last known at `known` may be on one of `networks`: one
-/// of those addresses is, or none of them can say. An IPv6 address, or no
-/// address at all, says nothing.
-fn may_be_on(networks: &[(u32, u32)], known: impl IntoIterator<Item = std::net::IpAddr>) -> bool {
-    let mut said = false;
-    for ip in known {
-        let std::net::IpAddr::V4(v4) = ip else {
-            continue;
-        };
-        let ip = u32::from(v4);
-        if networks.iter().any(|(net, mask)| net & mask == ip & mask) {
-            return true;
-        }
-        said = true;
+/// The address this device would send to `to` from, as the routing table
+/// says; nothing is sent. `None` when nothing routes there.
+fn source_for(to: std::net::Ipv4Addr) -> Option<std::net::Ipv4Addr> {
+    let socket = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((to, 9)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(v4) if !v4.is_unspecified() => Some(v4),
+        _ => None,
     }
-    !said
+}
+
+/// Whether `tv` is out of this device's reach, sending from `source` as the
+/// routing table chose: through a local network that does not hold it, or
+/// mobile data. A tunnel is a VPN, which may route to the TV's network, and
+/// is tried; nothing routing there at all is away.
+fn routed_away(
+    interfaces: &[Interface],
+    source: Option<std::net::Ipv4Addr>,
+    tv: std::net::Ipv4Addr,
+) -> bool {
+    let Some(source) = source else { return true };
+    let Some(through) = interfaces.iter().find(|i| i.addr == source) else {
+        return false;
+    };
+    if through.point_to_point {
+        return through.name.starts_with("pdp_ip");
+    }
+    u32::from(source) & through.mask != u32::from(tv) & through.mask
 }
 
 /// Whether a paired Apple TV is away from this device's network: not
-/// announced on it, and last answered at an address on none of its networks.
-/// Bonjour missing a TV at home leaves its address on this network, and a
-/// home network renumbered still announces it: either is tried. With no
-/// network read, between one network and the next, nothing is away.
-fn tv_is_away(announced: bool, last: Option<std::net::IpAddr>, networks: &[(u32, u32)]) -> bool {
-    !announced && !networks.is_empty() && last.is_some_and(|ip| !may_be_on(networks, [ip]))
+/// announced on it, and last answered at an address `away` says is out of
+/// reach. Bonjour missing a TV at home leaves its address reachable, and a
+/// home network renumbered still announces it: either is tried, as is one
+/// never answered or answered over IPv6.
+fn tv_is_away(
+    announced: bool,
+    last: Option<std::net::IpAddr>,
+    away: impl FnOnce(std::net::Ipv4Addr) -> bool,
+) -> bool {
+    match last {
+        Some(std::net::IpAddr::V4(v4)) => !announced && away(v4),
+        _ => false,
+    }
 }
 
 /// A check is running, and another was asked for meanwhile.
@@ -876,14 +914,16 @@ fn check_tvs_now() {
     let mut away = HashSet::new();
     if !paired.is_empty() {
         let tvs = crate::remote::companion::browse(TV_FIND);
-        let networks = local_networks();
+        let interfaces = interfaces();
         for (id, tv_id) in paired {
             let found = tvs.iter().find(|t| t.id.as_deref() == Some(tv_id.as_str()));
             if let Some(tv) = found {
                 remember_tv_addr(&id, tv.addr);
             }
             let last = with(|s| s.tv_addrs.get(&id).map(|a| a.ip()));
-            if tv_is_away(found.is_some(), last, &networks) {
+            if tv_is_away(found.is_some(), last, |tv| {
+                routed_away(&interfaces, source_for(tv), tv)
+            }) {
                 away.insert(id);
             }
         }
@@ -3001,39 +3041,47 @@ pub(crate) mod tests {
 
     #[test]
     fn an_apple_tv_away_from_this_network_is_not_switched_on() {
+        let v4 = |s: &str| s.parse::<std::net::Ipv4Addr>().unwrap();
+        let interface = |name: &str, addr: &str, mask: u32, point_to_point| Interface {
+            name: name.into(),
+            addr: v4(addr),
+            mask,
+            point_to_point,
+        };
+        let ifs = [
+            interface("en0", "192.168.1.7", 0xffff_ff00, false),
+            interface("pdp_ip0", "10.120.4.9", u32::MAX, true),
+            interface("utun3", "100.101.102.103", u32::MAX, true),
+        ];
+        let tv = v4("192.168.1.20");
+        let away = |source: Option<&str>, tv| routed_away(&ifs, source.map(v4), tv);
+        assert!(!away(Some("192.168.1.7"), tv), "on its network");
+        assert!(
+            away(Some("192.168.1.7"), v4("10.0.0.20")),
+            "another network"
+        );
+        assert!(away(Some("10.120.4.9"), tv), "mobile data");
+        assert!(!away(Some("100.101.102.103"), tv), "a VPN may reach it");
+        assert!(away(None, tv), "nothing routes there");
+        assert!(
+            !away(Some("172.16.0.1"), tv),
+            "an interface not read says nothing"
+        );
+
         let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
-        let home = [(
-            u32::from(std::net::Ipv4Addr::new(192, 168, 1, 7)),
-            0xffff_ff00,
-        )];
-        assert!(may_be_on(&home, [ip("192.168.1.20")]));
+        assert!(tv_is_away(false, Some(ip("10.0.0.20")), |_| true));
         assert!(
-            !may_be_on(&home, [ip("10.0.0.20")]),
-            "away from its network"
-        );
-        assert!(
-            !may_be_on(&[], [ip("192.168.1.20")]),
-            "on no network at all"
-        );
-        assert!(
-            may_be_on(&home, [ip("10.0.0.20"), ip("192.168.1.30")]),
-            "any address it was known at will do"
-        );
-        assert!(may_be_on(&home, []), "nowhere known: tried");
-        assert!(may_be_on(&home, [ip("fe80::1")]), "IPv6 says nothing");
-        assert!(tv_is_away(false, Some(ip("10.0.0.20")), &home));
-        assert!(
-            !tv_is_away(true, Some(ip("10.0.0.20")), &home),
+            !tv_is_away(true, Some(ip("10.0.0.20")), |_| true),
             "announced here, renumbered"
         );
         assert!(
-            !tv_is_away(false, Some(ip("192.168.1.20")), &home),
+            !tv_is_away(false, Some(ip("192.168.1.20")), |_| false),
             "missed by Bonjour at home"
         );
-        assert!(!tv_is_away(false, None, &home), "never answered: tried");
+        assert!(!tv_is_away(false, None, |_| true), "never answered: tried");
         assert!(
-            !tv_is_away(false, Some(ip("10.0.0.20")), &[]),
-            "no network read: tried"
+            !tv_is_away(false, Some(ip("fe80::1")), |_| true),
+            "IPv6 says nothing"
         );
     }
 
