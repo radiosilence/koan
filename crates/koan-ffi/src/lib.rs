@@ -337,6 +337,42 @@ impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
 /// Without this every `log::warn!` in koan-core is discarded when the engine is
 /// hosted by a GUI, so a favourite that failed to reach the server, or a track
 /// that would not decode, leaves nothing behind to look at.
+/// Lift the soft limit on open descriptors to the hard one.
+///
+/// An app opened from Finder gets 256 descriptors, and the engine's steady
+/// state is most of them: the pooled database connections, the link, nearby
+/// sessions, SSDP and the wake pipes. A grid scrolled against a remote library
+/// opens a socket per cover it fetches, and at 256 every new socket and pipe
+/// fails: covers, the link and nearby connections all at once. The hard
+/// limit is the system's to set; the soft one is ours to raise.
+fn raise_open_file_limit() {
+    #[cfg(unix)]
+    {
+        // macOS refuses a soft limit above OPEN_MAX even when the hard limit
+        // is unlimited.
+        const OPEN_MAX: libc::rlim_t = 10240;
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `limit` is a valid rlimit for both calls to read and write.
+        unsafe {
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
+                return;
+            }
+            let wanted = limit.rlim_max.min(OPEN_MAX);
+            if limit.rlim_cur >= wanted {
+                return;
+            }
+            let from = limit.rlim_cur;
+            limit.rlim_cur = wanted;
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) == 0 {
+                log::info!("open file limit raised from {from} to {wanted}");
+            }
+        }
+    }
+}
+
 fn init_logging() {
     use std::sync::Mutex;
 
@@ -1471,8 +1507,7 @@ impl KoanEngine {
         size: Option<u32>,
     ) -> Result<Option<CoverArt>, KoanError> {
         offload::offload(move || {
-            let db = self.db()?;
-            let row = queries::get_track_row(&db.conn, track_id).map_err(db_err)?;
+            let row = queries::get_track_row(&self.db()?.conn, track_id).map_err(db_err)?;
             self.cover_art_of(row, size)
         })
         .await
@@ -1489,8 +1524,7 @@ impl KoanEngine {
         size: Option<u32>,
     ) -> Result<Option<CoverArt>, KoanError> {
         offload::offload(move || {
-            let db = self.db()?;
-            let row = queries::cover_track_for_album(&db.conn, album_id).map_err(db_err)?;
+            let row = queries::cover_track_for_album(&self.db()?.conn, album_id).map_err(db_err)?;
             self.cover_art_of(row, size)
         })
         .await
@@ -5483,6 +5517,9 @@ impl KoanEngine {
             .ok();
     }
 
+    /// Takes the row rather than a connection: on a remote library this is
+    /// an HTTP round trip, and a grid asks for dozens at once, so a pooled
+    /// connection held across it would be one more descriptor per tile.
     fn cover_art_of(
         &self,
         row: Option<queries::TrackRow>,
@@ -5905,6 +5942,7 @@ impl KoanEngine {
     fn build(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
         let t0 = std::time::Instant::now();
         init_logging();
+        raise_open_file_limit();
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
         let db = Database::open_default().map_err(|e| KoanError::Database {
