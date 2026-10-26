@@ -1,0 +1,1 @@
+- **Covers load on large remote libraries again.** Scrolling the album grid fast could use up the app's 256 open files, leaving tiles blank and the link to the server reconnecting every few seconds. The engine now raises the limit when it opens, and a cover fetch no longer holds a database connection while it waits on the network.
