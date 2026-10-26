@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.67.7
+
+### Security
+
+- **The log no longer records server credentials.** A failed link to the server logged the address it dialled, API key or password token included; it now names the server alone.
+
+### Changed
+
+- **Preset, output and Play on are glyphs on phones and the TV.** The preset's name ran the Apple TV's Now Playing row off the screen and crowded the phone's; each is now a glyph in the accent when it is not the default (a preset other than Flat, a renderer, another device controlled), with the names in the menus they open. The Mac's transport bar gains a named preset menu for the output playing, which had none on System Default.
+- **Rust 1.97 or newer is needed to build koan.** The web UI's scripts are compiled with oxc 0.155, which requires it.
+
+### Fixed
+
+- **An Apple TV away from your network says so.** Off its network and without a push, the TV is listed as out of reach with the reason; asking for it looks again and, if it is still away, says so in a couple of seconds instead of waiting on an address that cannot answer.
+- **Covers load on large remote libraries again.** Scrolling the album grid fast could use up the app's 256 open files, leaving tiles blank and the link to the server reconnecting every few seconds. The engine now raises the limit when it opens, and a cover fetch no longer holds a database connection while it waits on the network.
+
 ## 0.67.6
 
 ### Changed
