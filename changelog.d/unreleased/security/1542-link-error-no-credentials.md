@@ -1,0 +1,1 @@
+- **The log no longer records server credentials.** A failed link to the server logged the address it dialled, API key or password token included; it now names the server alone.
