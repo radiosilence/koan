@@ -1092,7 +1092,10 @@ type Socket = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
 
 fn connect(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<(Socket, RawFd), String> {
     let url = link_url(auth, identity)?;
-    let (socket, _) = tungstenite::connect(url).map_err(|e| e.to_string())?;
+    // tungstenite names the URL it could not reach, and this one carries the
+    // credentials in its query: the error is logged, so it names the server.
+    let (socket, _) = tungstenite::connect(url.as_str())
+        .map_err(|e| e.to_string().replace(&url, &auth.base_url))?;
     let fd = wire::prepare(socket.get_ref())?;
     Ok((socket, fd))
 }
@@ -1803,6 +1806,25 @@ mod tests {
                 .unwrap()
                 .starts_with("ws://h:4000/")
         );
+    }
+
+    #[test]
+    fn a_failed_link_names_the_server_and_not_the_credentials() {
+        let identity = LinkIdentity {
+            name: "Mac".into(),
+            platform: "macos".into(),
+            device_id: "abc".into(),
+            files: "",
+        };
+        // Nothing listens on port 1, so the dial fails at once.
+        let auth = SubsonicAuth::new("http://127.0.0.1:1", "j", "pw");
+        let query = link_url(&auth, &identity).unwrap();
+        let query = query.split_once('?').unwrap().1;
+        let Err(e) = connect(&auth, &identity) else {
+            panic!("connected to a closed port");
+        };
+        assert!(e.contains("http://127.0.0.1:1"), "{e}");
+        assert!(!e.contains(query), "{e}");
     }
 
     #[test]
