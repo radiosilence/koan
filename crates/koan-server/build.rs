@@ -41,7 +41,7 @@ fn main() {
 fn strip(path: &Path, ts: &str) -> Result<String, String> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, ts, SourceType::ts().with_module(true)).parse();
-    report(path, ts, &parsed.errors)?;
+    report(path, ts, &parsed.diagnostics)?;
     let mut program = parsed.program;
     let scoping = SemanticBuilder::new()
         .build(&program)
@@ -49,7 +49,7 @@ fn strip(path: &Path, ts: &str) -> Result<String, String> {
         .into_scoping();
     let transformed = Transformer::new(&allocator, path, &TransformOptions::default())
         .build_with_scoping(scoping, &mut program);
-    report(path, ts, &transformed.errors)?;
+    report(path, ts, &transformed.diagnostics)?;
     let options = CodegenOptions {
         indent_char: IndentChar::Space,
         indent_width: 2,
@@ -64,11 +64,7 @@ fn report(path: &Path, ts: &str, errors: &[OxcDiagnostic]) -> Result<(), String>
         return Ok(());
     }
     let lines = errors.iter().map(|e| {
-        let at = e
-            .labels
-            .as_ref()
-            .and_then(|l| l.first())
-            .map_or(0, |l| l.offset());
+        let at = e.labels.first().map_or(0, |l| l.offset() as usize);
         let before = &ts[..at.min(ts.len())];
         let line = before.matches('\n').count() + 1;
         let column = before.len() - before.rfind('\n').map_or(0, |i| i + 1) + 1;
