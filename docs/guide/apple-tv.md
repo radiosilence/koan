@@ -103,7 +103,18 @@ the next wake fail with a note to set it up again.
 
 The phone or Mac has to be on the TV's network, and asks for the Local Network
 permission it already uses to find kōan apps. Away from home, a TV is woken
-only by your server's push, where the server has push on.
+only by your server's push, where the server has push on. Without that, the
+TV is listed as out of reach, with "Only a device on its network can switch it
+on". Choosing it or playing to it still tries: kōan looks for the TV again,
+which takes a couple of seconds, and switches it on if it is reachable after
+all, or says why not, rather than waiting on an address that cannot answer.
+
+kōan looks for the TV whenever it opens and the network changes, and counts it
+away when the TV is not found there and the address it last answered at is
+reached over mobile data or through a network that does not hold it. Over a
+VPN it is tried, since the VPN may lead home. A TV whose address this device
+has never learnt is tried as before, and so is one from another network that
+happens to use the same addresses as home.
 
 ## Sample rates
 
