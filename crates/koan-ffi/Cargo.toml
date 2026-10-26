@@ -22,6 +22,8 @@ toml = "1.1"
 koan-core = { path = "../koan-core" }
 crossbeam-channel = "0.5"
 getrandom = "0.4"
+# The open file limit, raised when the engine opens.
+libc = "0.2"
 log = "0.4"
 nucleo = "0.5"
 parking_lot = "0.12"
