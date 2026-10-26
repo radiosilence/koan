@@ -1818,13 +1818,12 @@ mod tests {
         };
         // Nothing listens on port 1, so the dial fails at once.
         let auth = SubsonicAuth::new("http://127.0.0.1:1", "j", "pw");
-        let query = link_url(&auth, &identity).unwrap();
-        let query = query.split_once('?').unwrap().1;
         let Err(e) = connect(&auth, &identity) else {
             panic!("connected to a closed port");
         };
         assert!(e.contains("http://127.0.0.1:1"), "{e}");
-        assert!(!e.contains(query), "{e}");
+        assert!(!e.contains("koanLink"), "{e}");
+        assert!(!e.contains("u=j"), "{e}");
     }
 
     #[test]
