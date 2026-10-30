@@ -189,8 +189,6 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var environment = EnvironmentValues()
         private var items: [Row.Item] = []
         private var ids: [ID] = []
-        /// The rows the drag in progress leaves out.
-        private var left: Set<ID> = []
         private var index: [ID: Int] = [:]
         private var shownKey: AnyHashable?
         private var selectAllToken: Int?
@@ -517,20 +515,26 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         // MARK: Drag
 
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-            guard let parent, let table, row < ids.count else { return nil }
-            // Read once per drag, as the table decides it: the selection when
-            // the drag starts on a selected row, else that row alone.
-            if !table.dragging {
-                let rows = table.selectedRowIndexes.contains(row) ? table.selectedRowIndexes : IndexSet(integer: row)
-                left = parent.covered(Set(rows.compactMap { $0 < ids.count ? ids[$0] : nil }))
-                table.dragging = true
-            }
-            guard !left.contains(ids[row]) else { return nil }
-            let transfer = parent.drag(items[row])?.placed(row)
-            guard transfer != nil || parent.move != nil else { return nil }
+            guard let parent, let table, row < ids.count, !table.dragging else { return nil }
+            // The whole drag goes in the item for the first row the table
+            // asks about, and the rest are left out: an item per row is a
+            // pasteboard round trip per row for every target the drag
+            // crosses. The selection when the drag starts on a selected row,
+            // else that row alone.
+            table.dragging = true
+            let picked = table.selectedRowIndexes.contains(row) ? table.selectedRowIndexes : IndexSet(integer: row)
+            let rows = picked.filter { $0 < ids.count }
+            let left = parent.covered(Set(rows.map { ids[$0] }))
+            let dragged = rows.filter { !left.contains(ids[$0]) }
+            let transfers = dragged.compactMap { parent.drag(items[$0]) }
+                .enumerated().map { $1.placed($0) }
+            guard !transfers.isEmpty || parent.move != nil else { return nil }
+            let transfer = transfers.count == 1 ? transfers.first : transfers.isEmpty ? nil : PlayableTransfer(bundling: transfers)
             let item = transfer.flatMap(pasteboardItem) ?? NSPasteboardItem()
-            // Which row, for a drop back into this list to read as a move.
-            if parent.move != nil { item.setString(String(row), forType: .koanRow) }
+            // Which rows, for a drop back into this list to read as a move.
+            if parent.move != nil {
+                item.setString(dragged.map(String.init).joined(separator: ","), forType: .koanRow)
+            }
             return item
         }
 
@@ -558,7 +562,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             guard let parent else { return false }
             let items = info.draggingPasteboard.pasteboardItems ?? []
             if (info.draggingSource as AnyObject?) === tableView, let move = parent.move {
-                let rows = items.compactMap { $0.string(forType: .koanRow).flatMap(Int.init) }
+                let rows = items.flatMap { ($0.string(forType: .koanRow) ?? "").split(separator: ",").compactMap { Int($0) } }
                 let moving = rows.sorted().compactMap { $0 < ids.count ? ids[$0] : nil }
                 if !moving.isEmpty {
                     move(moving, row)
@@ -569,6 +573,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             let type = NSPasteboard.PasteboardType(UTType.koanPlayable.identifier)
             let transfers = items.compactMap { $0.data(forType: type) }
                 .compactMap { try? JSONDecoder().decode(PlayableTransfer.self, from: $0) }
+                .inDragOrder
             return !transfers.isEmpty && accept(transfers, row)
         }
     }

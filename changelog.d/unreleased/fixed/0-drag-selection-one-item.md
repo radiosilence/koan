@@ -1,0 +1,1 @@
+- **Dragging a large selection no longer freezes the Mac.** A drag out of a list now carries its rows as one pasteboard item rather than one per row, so dragging every track in a large library to the queue is as quick as queueing it from the menu.
