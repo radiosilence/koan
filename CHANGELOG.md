@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.67.8
+
+### Fixed
+
+- **Dragging a large selection no longer freezes the Mac.** A drag out of a list now carries its rows as one pasteboard item rather than one per row, so dragging every track in a large library to the queue is as quick as queueing it from the menu.
+- **The seek bar keeps up with the playhead.** Resizing the window mid-track no longer leaves the bar behind the elapsed time until the next pause or track.
+
 ## 0.67.7
 
 ### Security
