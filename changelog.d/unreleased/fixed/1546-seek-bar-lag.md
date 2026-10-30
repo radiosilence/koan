@@ -1,0 +1,1 @@
+- **The seek bar keeps up with the playhead.** Resizing the window mid-track no longer leaves the bar behind the elapsed time until the next pause or track.
