@@ -21,10 +21,9 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         case track, album, artist, playlist
         /// A file or folder dropped from outside koan; `name` is its path.
         case file
-        /// Several rows of one list dragged together, in `items`. One
-        /// pasteboard item rather than one per row: each item crosses the
-        /// pasteboard server, and every target the drag passes reads them all
-        /// back, so select all on a large library froze the machine.
+        /// Several playables dragged together, in `items`. One pasteboard
+        /// item rather than one each: every item crosses the pasteboard
+        /// server, and every target the drag passes reads them all back.
         case selection
     }
 
@@ -76,7 +75,7 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
     init(bundling items: [PlayableTransfer]) {
         kind = .selection
         id = 0
-        name = items.map(\.name).joined(separator: "\n")
+        name = "\(items.count) items"
         origin = items.first?.origin
         fromQueue = items.first?.fromQueue
         self.items = items
@@ -84,9 +83,10 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
     var key: Playable.Key { Playable.Key(kind: kind, id: id) }
 
-    /// The transfers for a drag of several playables, each knowing its place.
+    /// The transfers for a drag of several playables, each knowing its place,
+    /// bundled when there is more than one.
     static func dragging(_ playables: [Playable]) -> [PlayableTransfer] {
-        playables.enumerated().map { PlayableTransfer($1).placed($0) }
+        playables.enumerated().map { PlayableTransfer($1).placed($0) }.bundled
     }
 
     func placed(_ place: Int) -> PlayableTransfer {
@@ -145,6 +145,11 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 }
 
 extension [PlayableTransfer] {
+    /// As one `.selection` when there are several.
+    var bundled: [PlayableTransfer] {
+        count > 1 ? [PlayableTransfer(bundling: self)] : self
+    }
+
     /// Back in the order they were dragged in, selections opened. Items
     /// without a place keep theirs, after the placed ones.
     var inDragOrder: [PlayableTransfer] {

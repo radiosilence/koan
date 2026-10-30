@@ -189,6 +189,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var environment = EnvironmentValues()
         private var items: [Row.Item] = []
         private var ids: [ID] = []
+        /// Whether the drag in progress has its item.
+        private var bundled = false
         private var index: [ID: Int] = [:]
         private var shownKey: AnyHashable?
         private var selectAllToken: Int?
@@ -515,13 +517,14 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         // MARK: Drag
 
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-            guard let parent, let table, row < ids.count, !table.dragging else { return nil }
+            guard let parent, let table, row < ids.count, !bundled else { return nil }
             // The whole drag goes in the item for the first row the table
             // asks about, and the rest are left out: an item per row is a
             // pasteboard round trip per row for every target the drag
             // crosses. The selection when the drag starts on a selected row,
             // else that row alone.
             table.dragging = true
+            bundled = true
             let picked = table.selectedRowIndexes.contains(row) ? table.selectedRowIndexes : IndexSet(integer: row)
             let rows = picked.filter { $0 < ids.count }
             let left = parent.covered(Set(rows.map { ids[$0] }))
@@ -529,13 +532,19 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             let transfers = dragged.compactMap { parent.drag(items[$0]) }
                 .enumerated().map { $1.placed($0) }
             guard !transfers.isEmpty || parent.move != nil else { return nil }
-            let transfer = transfers.count == 1 ? transfers.first : transfers.isEmpty ? nil : PlayableTransfer(bundling: transfers)
-            let item = transfer.flatMap(pasteboardItem) ?? NSPasteboardItem()
+            let item = transfers.bundled.first.flatMap(pasteboardItem) ?? NSPasteboardItem()
             // Which rows, for a drop back into this list to read as a move.
             if parent.move != nil {
                 item.setString(dragged.map(String.init).joined(separator: ","), forType: .koanRow)
             }
             return item
+        }
+
+        func tableView(
+            _ tableView: NSTableView, draggingSession session: NSDraggingSession,
+            endedAt screenPoint: NSPoint, operation: NSDragOperation
+        ) {
+            bundled = false
         }
 
         // MARK: Drop
