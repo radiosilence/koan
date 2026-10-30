@@ -231,6 +231,7 @@ struct SidebarView: View {
     /// A drop landed on a playlist: either another playlist being put in its
     /// place, or things to add to it.
     private func accept(_ dropped: [PlayableTransfer], on playlist: Playlist) {
+        let dropped = dropped.inDragOrder
         let moving = dropped.filter { $0.kind == .playlist }.map(\.id)
         if !moving.isEmpty {
             playlists.reorder(moving: moving, onto: playlist.id)

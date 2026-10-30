@@ -21,6 +21,10 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         case track, album, artist, playlist
         /// A file or folder dropped from outside koan; `name` is its path.
         case file
+        /// Several playables dragged together, in `items`. One pasteboard
+        /// item rather than one each: every item crosses the pasteboard
+        /// server, and every target the drag passes reads them all back.
+        case selection
     }
 
     let kind: Kind
@@ -39,6 +43,8 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
     /// whatever order they finished loading, so the order they were dragged in
     /// travels with them — see `inDragOrder`.
     var place: Int?
+    /// What a `.selection` holds, in drag order.
+    var items: [PlayableTransfer]?
 
     struct Origin: Codable, Hashable {
         let playlistId: Int64
@@ -64,11 +70,23 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         self.fromQueue = fromQueue
     }
 
+    /// One transfer carrying `items`. Rows of one list share where they came
+    /// from, so the bundle carries that too, for the drops that refuse them.
+    init(bundling items: [PlayableTransfer]) {
+        kind = .selection
+        id = 0
+        name = "\(items.count) items"
+        origin = items.first?.origin
+        fromQueue = items.first?.fromQueue
+        self.items = items
+    }
+
     var key: Playable.Key { Playable.Key(kind: kind, id: id) }
 
-    /// The transfers for a drag of several playables, each knowing its place.
+    /// The transfers for a drag of several playables, each knowing its place,
+    /// bundled when there is more than one.
     static func dragging(_ playables: [Playable]) -> [PlayableTransfer] {
-        playables.enumerated().map { PlayableTransfer($1).placed($0) }
+        playables.enumerated().map { PlayableTransfer($1).placed($0) }.bundled
     }
 
     func placed(_ place: Int) -> PlayableTransfer {
@@ -81,6 +99,7 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         origin = nil
         fromQueue = nil
         place = nil
+        items = nil
         switch playable {
         case .track(let track):
             kind = .track
@@ -115,17 +134,28 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
             return (try? await engine.playlistTracks(playlistId: id))?.map(\.track.id) ?? []
         case .file:
             return (try? await engine.importFiles(paths: [name]))?.trackIds ?? []
+        case .selection:
+            var ids: [Int64] = []
+            for item in items ?? [] {
+                ids += await item.trackIds(using: engine)
+            }
+            return ids
         }
     }
 }
 
 extension [PlayableTransfer] {
-    /// Back in the order they were dragged in. Items without a place keep
-    /// theirs, after the placed ones.
+    /// As one `.selection` when there are several.
+    var bundled: [PlayableTransfer] {
+        count > 1 ? [PlayableTransfer(bundling: self)] : self
+    }
+
+    /// Back in the order they were dragged in, selections opened. Items
+    /// without a place keep theirs, after the placed ones.
     var inDragOrder: [PlayableTransfer] {
         enumerated()
             .sorted { ($0.element.place ?? .max, $0.offset) < ($1.element.place ?? .max, $1.offset) }
-            .map(\.element)
+            .flatMap { $0.element.items ?? [$0.element] }
     }
 }
 

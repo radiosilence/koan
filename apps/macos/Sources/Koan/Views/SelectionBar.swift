@@ -320,7 +320,7 @@ extension LibraryModel {
         case .track: isFavourite(track: key.id)
         case .album: isFavourite(album: key.id)
         case .artist: isFavourite(artist: key.id)
-        case .playlist, .file: false
+        case .playlist, .file, .selection: false
         }
     }
 
@@ -329,7 +329,7 @@ extension LibraryModel {
         case .track: toggleFavourite(track: key.id)
         case .album: toggleFavourite(album: key.id)
         case .artist: toggleFavourite(artist: key.id)
-        case .playlist, .file: break
+        case .playlist, .file, .selection: break
         }
     }
 }

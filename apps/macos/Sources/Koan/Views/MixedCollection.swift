@@ -117,6 +117,8 @@ struct MixedCollection: NSViewRepresentable {
         private weak var scroll: NSScrollView?
         private var shown: (artists: [Int64], albums: [Int64], tracks: [Int64]) = ([], [], [])
         private var shownKey: AnyHashable?
+        /// Whether the drag in progress has its item.
+        private var bundled = false
         private var selectAllToken: Int?
         private var applying = false
         private var watching: (any NSObjectProtocol)?
@@ -375,11 +377,25 @@ struct MixedCollection: NSViewRepresentable {
                 && indexPaths.allSatisfy { $0.section < sections.count && sections[$0.section] == .tracks }
         }
 
+        /// One item for the whole drag, as `KoanTable`'s, written for the
+        /// first track the collection asks about.
         func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> (any NSPasteboardWriting)? {
-            guard let parent, sections[indexPath.section] == .tracks, indexPath.item < parent.tracks.count,
-                  let track = parent.tracks[indexPath.item].track
-            else { return nil }
-            return pasteboardItem(PlayableTransfer(.track(track)).placed(indexPath.item))
+            guard let parent, !bundled, sections[indexPath.section] == .tracks else { return nil }
+            bundled = true
+            let selected = collectionView.selectionIndexPaths
+            let paths = selected.contains(indexPath) ? selected.sorted() : [indexPath]
+            let transfers = paths
+                .filter { $0.section == indexPath.section && $0.item < parent.tracks.count }
+                .compactMap { parent.tracks[$0.item].track }
+                .enumerated().map { PlayableTransfer(.track($1)).placed($0) }
+            return transfers.bundled.first.flatMap(pasteboardItem)
+        }
+
+        func collectionView(
+            _ collectionView: NSCollectionView, draggingSession session: NSDraggingSession,
+            endedAt screenPoint: NSPoint, dragOperation operation: NSDragOperation
+        ) {
+            bundled = false
         }
 
         // MARK: Layout
