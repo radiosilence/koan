@@ -59,6 +59,9 @@ struct SeekProgress: PlatformViewRepresentable {
             didSet { if rainbow != oldValue { paint() } }
         }
         private var remaining = 0.0
+        /// When `fraction` and `remaining` were true. A re-placing later in the
+        /// track, on a resize, starts from where the head has got to since.
+        private var anchored = Date.now
 
         init(thickness: CGFloat) {
             self.thickness = thickness
@@ -78,8 +81,8 @@ struct SeekProgress: PlatformViewRepresentable {
         }
 
         override func layoutLayers() {
-            // The fraction is from the last anchor; re-placing on an unrelated
-            // pass would pull the running animation back to it.
+            // A pass that changed nothing would restart a running animation
+            // for no reason.
             guard bounds.size != laidOut else { return }
             laidOut = bounds.size
             place()
@@ -92,6 +95,7 @@ struct SeekProgress: PlatformViewRepresentable {
         func apply(fraction: Double, remaining: TimeInterval) {
             self.fraction = fraction.clamped()
             self.remaining = remaining
+            anchored = .now
             place()
         }
 
@@ -109,6 +113,10 @@ struct SeekProgress: PlatformViewRepresentable {
             played.removeAllAnimations()
             head.removeAllAnimations()
 
+            let elapsed = remaining > 0 ? min(remaining, Date.now.timeIntervalSince(anchored)) : 0
+            let left = remaining - elapsed
+            let fraction = remaining > 0 ? self.fraction + (1 - self.fraction) * elapsed / remaining : self.fraction
+
             let width = bounds.width
             let diameter = thickness * 2
             let travel = max(0, width - diameter)
@@ -122,33 +130,33 @@ struct SeekProgress: PlatformViewRepresentable {
             head.position = CGPoint(x: travel * fraction + diameter / 2, y: middle)
             CATransaction.commit()
 
-            guard remaining > 0, width > 0 else { return }
+            guard left > 0, width > 0 else { return }
             played.add(
-                grow(to: CGRect(x: 0, y: 0, width: width, height: thickness), from: played.bounds),
+                grow(to: CGRect(x: 0, y: 0, width: width, height: thickness), from: played.bounds, over: left),
                 forKey: "seek")
             head.add(
-                slide(to: CGPoint(x: travel + diameter / 2, y: middle), from: head.position),
+                slide(to: CGPoint(x: travel + diameter / 2, y: middle), from: head.position, over: left),
                 forKey: "seek")
         }
 
-        private func grow(to end: CGRect, from start: CGRect) -> CABasicAnimation {
+        private func grow(to end: CGRect, from start: CGRect, over duration: TimeInterval) -> CABasicAnimation {
             let animation = CABasicAnimation(keyPath: "bounds")
             animation.fromValue = start
             animation.toValue = end
-            return settled(animation)
+            return settled(animation, over: duration)
         }
 
-        private func slide(to end: CGPoint, from start: CGPoint) -> CABasicAnimation {
+        private func slide(to end: CGPoint, from start: CGPoint, over duration: TimeInterval) -> CABasicAnimation {
             let animation = CABasicAnimation(keyPath: "position")
             animation.fromValue = start
             animation.toValue = end
-            return settled(animation)
+            return settled(animation, over: duration)
         }
 
         /// Linear, and left in place when it finishes: a track that runs to its
         /// end leaves the bar full until the next one says otherwise.
-        private func settled(_ animation: CABasicAnimation) -> CABasicAnimation {
-            animation.duration = remaining
+        private func settled(_ animation: CABasicAnimation, over duration: TimeInterval) -> CABasicAnimation {
+            animation.duration = duration
             animation.timingFunction = CAMediaTimingFunction(name: .linear)
             animation.fillMode = .forwards
             animation.isRemovedOnCompletion = false
