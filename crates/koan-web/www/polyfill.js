@@ -3,7 +3,9 @@
 // numbers across, so these never see real text; ASCII is enough.
 globalThis.TextDecoder ??= class {
   decode(bytes) {
-    return bytes ? String.fromCharCode(...bytes) : "";
+    let text = "";
+    for (const b of bytes ?? []) text += String.fromCharCode(b);
+    return text;
   }
 };
 globalThis.TextEncoder ??= class {

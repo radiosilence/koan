@@ -94,8 +94,8 @@ impl Loader {
             info,
             source: Some(source),
             producer: Some(producer),
-            consumer: Box::new(consumer),
-            scratch: vec![0.0; SCRATCH_SAMPLES].into_boxed_slice(),
+            consumer: Box::into_raw(Box::new(consumer)),
+            scratch: Box::into_raw(vec![0.0; SCRATCH_SAMPLES].into_boxed_slice()),
             stop: Arc::new(AtomicBool::new(false)),
             timeline: PlaybackTimeline::new(),
         })
@@ -108,9 +108,11 @@ pub struct Session {
     info: StreamInfo,
     source: Option<Shared>,
     producer: Option<rtrb::Producer<f32>>,
-    /// Boxed so its address, which the worklet is lent, never moves.
-    consumer: Box<rtrb::Consumer<f32>>,
-    scratch: Box<[f32]>,
+    /// The ring's consumer and the buffer `render` fills, lent to the worklet
+    /// as raw pointers and owned here: freed in `drop`, never through a
+    /// reference the worklet's writes would alias.
+    consumer: *mut rtrb::Consumer<f32>,
+    scratch: *mut [f32],
     stop: Arc<AtomicBool>,
     timeline: Arc<PlaybackTimeline>,
 }
@@ -145,18 +147,18 @@ impl Session {
     /// The ring's consumer, for [`render`]. Valid until the session is freed.
     #[wasm_bindgen(getter)]
     pub fn consumer(&self) -> usize {
-        &*self.consumer as *const rtrb::Consumer<f32> as usize
+        self.consumer as usize
     }
 
     /// Where [`render`] writes, for the worklet to read from.
     #[wasm_bindgen(getter)]
     pub fn scratch(&self) -> usize {
-        self.scratch.as_ptr() as usize
+        self.scratch as *mut f32 as usize
     }
 
     #[wasm_bindgen(getter)]
     pub fn scratch_len(&self) -> usize {
-        self.scratch.len()
+        SCRATCH_SAMPLES
     }
 
     /// The stop flag's byte: the page sets it with `Atomics.store`, since the
@@ -189,6 +191,18 @@ impl Session {
             &Processing::default(),
         );
         Ok(())
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // SAFETY: both came from `Box::into_raw` and are freed only here; the
+        // page frees a session only after its audio context has closed, so
+        // the worklet no longer reads them.
+        unsafe {
+            drop(Box::from_raw(self.consumer));
+            drop(Box::from_raw(self.scratch));
+        }
     }
 }
 

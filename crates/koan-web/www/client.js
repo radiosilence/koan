@@ -7,7 +7,8 @@
 const worker = new Worker(new URL("worker.js", import.meta.url), { type: "module" });
 const $ = (id) => document.getElementById(id);
 
-// idle → loading → loaded → starting → playing → closing → freeing → idle
+// idle → loading → loaded → starting → playing → closing → freeing → idle,
+// or broken, from which only a reload recovers.
 let state = "idle";
 let prepared = null;
 let ctx = null;
@@ -29,15 +30,25 @@ function describe(f) {
 
 // Silence at once; the decoder sees the stop flag the next time it wakes,
 // which can be a few seconds while the ring is full.
-async function end(text) {
+// At a natural end the ring has drained into the output, which still holds
+// its own latency's worth: closing at once would clip it.
+async function end(text, { drain = false } = {}) {
   if (!["loaded", "starting", "playing"].includes(state)) return;
   set("closing", text);
   Atomics.store(new Uint8Array(prepared.memory.buffer), prepared.stop, 1);
   if (ctx) {
+    if (drain) {
+      const held = Math.max(ctx.baseLatency + (ctx.outputLatency || 0), 0.2);
+      await new Promise((r) => setTimeout(r, held * 1000));
+    }
     await ctx.close().catch(() => {});
     ctx = null;
   }
   free();
+}
+
+function broken(text) {
+  set("broken", `${text} Reload the page to try again.`);
 }
 
 function free() {
@@ -75,7 +86,7 @@ worker.onmessage = ({ data }) => {
       break;
     case "done":
       decoding = false;
-      if (state === "playing") end("Finished.");
+      if (state === "playing") end("Finished.", { drain: true });
       else free();
       break;
     case "freed":
@@ -85,6 +96,8 @@ worker.onmessage = ({ data }) => {
     case "error":
       if (data.during === "prepare") {
         set("idle", `Could not load: ${data.message}`);
+      } else if (data.during === "free") {
+        broken(`Could not release the track: ${data.message}`);
       } else {
         if (data.during === "run") decoding = false;
         if (state === "closing") free();
@@ -94,7 +107,7 @@ worker.onmessage = ({ data }) => {
   }
 };
 
-worker.onerror = (e) => set(state, `The worker failed: ${e.message}`);
+worker.onerror = (e) => broken(`The worker failed: ${e.message}.`);
 
 $("load").addEventListener("submit", (e) => {
   e.preventDefault();

@@ -302,8 +302,19 @@ fn web_client(state: &UiState) -> axum::Router<UiState> {
     );
     axum::Router::new()
         .nest_service("/client", tower_http::services::ServeDir::new(dir))
+        .layer(from_fn(client_slash))
         .layer(axum::middleware::map_response(isolate))
         .layer(from_fn_with_state(state.clone(), gate))
+}
+
+/// The page's scripts are relative to it, so it is only served at the
+/// directory's own path: the nested service sees `/client` as `/` and would
+/// otherwise answer it with the page.
+async fn client_slash(req: Request, next: Next) -> Response {
+    if req.uri().path() == "/client" {
+        return see_other("/client/");
+    }
+    next.run(req).await
 }
 
 /// The web client's engine runs in workers over shared memory, which a

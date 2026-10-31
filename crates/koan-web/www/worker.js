@@ -27,14 +27,15 @@ async function load(track) {
   const length = Number(res.headers.get("Content-Length"));
   if (!length) throw new Error("the server sent no Content-Length");
   const loader = new Loader(length);
+  const reader = res.body.getReader();
   try {
-    const reader = res.body.getReader();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       loader.push(value);
     }
   } catch (e) {
+    reader.cancel().catch(() => {});
     loader.free();
     throw e;
   }
