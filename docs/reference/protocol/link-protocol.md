@@ -29,7 +29,7 @@ A field marked `?` may be absent, and senders leave most of them out when they h
 
 | `type` | Fields | Effect |
 |--------|--------|--------|
-| `play` | `trackIds`, `startAt?`, `positionMs?`, `paused?`, `handoff?`, `mode?` | Replace the queue with these tracks and play from `startAt`, `positionMs` into it, or load paused. `mode` `inOrder` or `shuffled` resets the play mode, as a play button does; `keep`, or absent, keeps it. `handoff` marks music handed over from another device: a receiver controlling another device takes control back |
+| `play` | `trackIds`, `startAt?`, `positionMs?`, `paused?`, `handoff?`, `mode?` | Replace the queue with these tracks and play from `startAt`, `positionMs` into it, or load paused. `mode` `inOrder` or `shuffled` turns shuffle and repeat off, as a play button does, and `shuffled` queues the tracks in a random order and plays from the first; `keep`, or absent, keeps the order and the modes. Devices on earlier releases take `shuffled` as turning shuffle on instead. `handoff` marks music handed over from another device: a receiver controlling another device takes control back |
 | `enqueue` | `trackIds`, `play?` | Append; with `play`, start the first of them |
 | `playNext` | `trackIds` | Insert after the current track |
 | `insert` | `trackIds`, `after` | Insert after the queue entry `after` |

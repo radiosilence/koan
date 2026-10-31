@@ -2897,7 +2897,8 @@ pub enum TrackSet {
 #[derive(uniffi::Enum, Debug, Clone)]
 pub enum Placement {
     /// Replace the queue and play from `start_at` (the first track by
-    /// default), in order or shuffled, with repeat off.
+    /// default), or `shuffled` into a random order from its top, with shuffle
+    /// play and repeat off.
     Replace {
         start_at: Option<u32>,
         shuffled: bool,

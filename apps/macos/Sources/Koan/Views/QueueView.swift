@@ -511,6 +511,7 @@ struct QueueView: View {
 
             #if !os(tvOS)
             QueueDiceButton()
+                .tint(secondaryTint)
             #endif
 
             KoanIconToggle(icon: Icon.album, label: "Group by album", isOn: $grouped)

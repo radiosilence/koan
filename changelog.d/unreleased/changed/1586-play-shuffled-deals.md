@@ -1,0 +1,1 @@
+- **Play shuffled deals the queue.** Shuffle beside Play queues the tracks in a random order and plays from the top, with shuffle play off, rather than turning shuffle play on; the queue shows the order they will play in, and its dice can deal the rest again.

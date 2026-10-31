@@ -2505,6 +2505,16 @@ impl Player {
                     self.clear_playlist();
                     return;
                 }
+                let mut items = items;
+                let start = if mode == QueueMode::Shuffled {
+                    crate::helpers::shuffle(&mut items);
+                    items
+                        .iter()
+                        .position(state::PlaylistItem::playable)
+                        .unwrap_or(0)
+                } else {
+                    start
+                };
                 let start_id = items.get(start).unwrap_or(&items[0]).id;
                 // Stopped before the swap, as `clear_playlist` does, and the
                 // swap one change: see `SharedPlayerState::replace_playlist`.
@@ -2520,13 +2530,6 @@ impl Player {
                     self.shared_state.set_shuffled(mode.shuffle);
                 }
                 let (old_items, cursor) = self.shared_state.replace_playlist(items);
-                let start_id = match mode {
-                    QueueMode::Shuffled => self
-                        .shared_state
-                        .advance_cursor_loadable()
-                        .unwrap_or(start_id),
-                    _ => start_id,
-                };
                 self.push_undo(UndoEntry::Replaced {
                     items: old_items,
                     cursor,
@@ -4535,26 +4538,22 @@ mod tests {
     }
 
     #[test]
-    fn shuffling_from_a_play_button_turns_shuffle_on_and_repeat_off() {
-        let mut player = Player::new();
-        player.process_command(PlayerCommand::SetRepeat(Repeat::One));
+    fn shuffling_from_a_play_button_deals_the_queue_and_plays_it_from_the_top() {
+        let mut player = shuffled_and_repeating();
         let ids = replace(&mut player, 12, QueueMode::Shuffled);
-        assert_eq!(
-            player.shared_state.play_mode(),
-            PlayMode {
-                shuffle: true,
-                repeat: Repeat::Off
-            }
-        );
-        assert_eq!(playlist_ids(&player), ids, "the queue in the order given");
+        assert_eq!(player.shared_state.play_mode(), PlayMode::default());
+        assert!(!player.shared_state.is_shuffled());
 
-        let mut heard = vec![player.shared_state.cursor().unwrap()];
-        while let Some(id) = player.shared_state.advance_cursor_loadable() {
-            heard.push(id);
-        }
-        assert_ne!(heard, ids, "started and played in a shuffled order");
-        heard.sort_by_key(|id| ids.iter().position(|i| i == id));
-        assert_eq!(heard, ids);
+        let dealt = playlist_ids(&player);
+        assert_ne!(dealt, ids, "dealt in a random order");
+        let mut sorted = dealt.clone();
+        sorted.sort_by_key(|id| ids.iter().position(|i| i == id));
+        assert_eq!(sorted, ids, "each track once");
+        assert_eq!(player.shared_state.cursor(), Some(dealt[0]));
+        assert!(
+            player.shared_state.upcoming_shufflable(),
+            "the dice has the rest to shuffle"
+        );
     }
 
     #[test]

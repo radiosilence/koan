@@ -6,8 +6,11 @@ never rearranges it. To rearrange the queue or a playlist, use the dice
 (below).
 
 Playing something from its play button — a record, an artist, a playlist, a
-selection, or a track in a list — starts it as asked: Play turns shuffle and
-repeat off, and Shuffle, beside Play on a record's, an artist's or a playlist's page and in its menu, turns shuffle on and repeat off and starts from a track at random. Adding to the queue,
+selection, or a track in a list — turns shuffle and repeat off and starts it
+as asked: Play queues it in order, and Shuffle, beside Play on a record's, an
+artist's or a playlist's page and in its menu, queues its tracks in a random
+order, as the dice would, and plays from the top. The queue shows the order
+they will play in, and the dice deals the rest again. Adding to the queue,
 Play Next and Add to Queue leave both as they are. This holds on every device
 and through the GraphQL API and MCP (`playOnClient`, `playPlaylist`).
 

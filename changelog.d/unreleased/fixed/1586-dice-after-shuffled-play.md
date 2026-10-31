@@ -1,0 +1,1 @@
+- **The queue's dice after a shuffled play.** It often had nothing to shuffle once shuffle play was turned off, and on the Mac it was drawn in the accent colour rather than the header's ink.

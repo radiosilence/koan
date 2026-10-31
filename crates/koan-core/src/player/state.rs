@@ -136,10 +136,12 @@ impl PlayMode {
     }
 }
 
-/// What replacing the queue does to the play mode. Something played from
-/// its play button — a record, an artist, a playlist, a selection — starts
-/// as asked, in order or shuffled, with repeat off, whatever the modes were.
-/// A queue restored, synced or handed over keeps them.
+/// What replacing the queue does to its order and the play mode. Something
+/// played from its play button — a record, an artist, a playlist, a
+/// selection — starts with shuffle play and repeat off, whatever the modes
+/// were: in order, or shuffled, which deals the tracks into the queue in a
+/// random order and plays from the top, as the dice does. A queue restored,
+/// synced or handed over keeps its order and the modes.
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
@@ -159,15 +161,10 @@ impl QueueMode {
 
     /// The mode a queue started this way plays in, or `None` to keep it.
     pub fn play_mode(self) -> Option<PlayMode> {
-        let shuffle = match self {
-            QueueMode::Keep => return None,
-            QueueMode::InOrder => false,
-            QueueMode::Shuffled => true,
-        };
-        Some(PlayMode {
-            shuffle,
-            repeat: Repeat::Off,
-        })
+        match self {
+            QueueMode::Keep => None,
+            QueueMode::InOrder | QueueMode::Shuffled => Some(PlayMode::default()),
+        }
     }
 }
 
@@ -214,7 +211,7 @@ impl PlaylistItem {
         }
     }
 
-    fn playable(&self) -> bool {
+    pub(crate) fn playable(&self) -> bool {
         !matches!(self.state, ItemState::Failed(_))
     }
 }

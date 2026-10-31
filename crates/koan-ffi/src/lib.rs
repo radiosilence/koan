@@ -1075,8 +1075,9 @@ impl KoanEngine {
     }
 
     /// Replace the queue, starting at `start_at` (default: the first track),
-    /// and play it in order, or `shuffled`, with repeat off: a play from a
-    /// play button starts as asked whatever the modes were.
+    /// and play it in order, or `shuffled` into a random order from its top,
+    /// with shuffle play and repeat off: a play from a play button starts as
+    /// asked whatever the modes were.
     ///
     /// The index is part of the command rather than a follow-up `play` because
     /// two commands means the first track audibly starts before the jump lands:
@@ -2215,9 +2216,9 @@ impl KoanEngine {
     /// built here leaves out entries whose track the library has lost. A
     /// position means something different on each side of either.
     ///
-    /// The queue is the playlist's order either way; `shuffled` turns shuffle
-    /// on, and otherwise off, with repeat off, as any play from a play button
-    /// does.
+    /// The queue is the playlist's order, or with `shuffled` a random one,
+    /// played from its top; shuffle play and repeat go off, as any play from
+    /// a play button does.
     pub async fn play_playlist(
         self: Arc<Self>,
         playlist_id: i64,
