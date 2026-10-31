@@ -504,15 +504,20 @@ pub fn local() -> Option<&'static Local> {
 /// and the app shows it as out of reach until it is back or another is.
 pub fn set_linked(linked: bool) {
     crate::remote::offline::link_changed(linked);
-    changed(|s| {
-        if linked != s.linked {
+    let flipped = changed(|s| {
+        let flipped = linked != s.linked;
+        if flipped {
             s.linked_at = linked.then(|| chrono::Utc::now().timestamp());
         }
         s.linked = linked;
         if !linked {
             s.fresh = false;
         }
+        flipped
     });
+    if flipped {
+        crate::signal::link_changed().bump();
+    }
 }
 
 /// When the link that is up came up, in Unix seconds.

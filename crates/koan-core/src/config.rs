@@ -1628,6 +1628,8 @@ impl Config {
         let mut cache = CONFIG_CACHE.write();
         CONFIG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *cache = None;
+        drop(cache);
+        crate::signal::config_changed().bump();
     }
 
     /// Load from a specific TOML file (no env var overlay).

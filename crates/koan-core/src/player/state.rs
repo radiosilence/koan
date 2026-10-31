@@ -1017,6 +1017,17 @@ impl SharedPlayerState {
         }
     }
 
+    /// Follow a playhead kept by another koan: at `position_ms` now, and
+    /// counting on from here while `moving`. What a remote control mirrors,
+    /// since the server says where the playhead is only when that stops being
+    /// one second per second.
+    pub fn mirror_playhead(&self, position_ms: u64, moving: bool) {
+        self.set_renderer_clock(Some(RendererClock {
+            position_ms,
+            running: moving.then(std::time::Instant::now),
+        }));
+    }
+
     pub(crate) fn renderer_clock(&self) -> Option<RendererClock> {
         *self.renderer_clock.lock()
     }

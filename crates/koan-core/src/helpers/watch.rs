@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
-use crate::db::connection::Database;
 use crate::index::scanner::ScanResult;
 
 use super::*;
@@ -54,6 +53,15 @@ pub enum WatchScan<'a> {
     Finished(&'a ScanResult),
 }
 
+/// What wakes the library watch.
+enum Heard {
+    Fs(notify::Result<notify::Event>),
+    /// The config was written, and the folder list with it may have changed.
+    Settings,
+    /// A filesystem was mounted or unmounted somewhere on the machine.
+    Mounts,
+}
+
 /// Index files that appear in the library folders while koan is running.
 ///
 /// One incremental scan shortly after startup — the walk is a fraction of a
@@ -72,9 +80,13 @@ pub enum WatchScan<'a> {
 /// halfway through a move is corrected by the scan the rest of the move's
 /// events bring, since a directory scan removes what is no longer under it.
 ///
-/// The folder list is re-read and each folder's identity checked every half
-/// minute, so a folder added in settings is watched without a restart, and a
-/// volume unmounted and mounted again is watched afresh and rescanned.
+/// The folder list is read again whenever koan writes its config, so a folder
+/// added in settings is watched without a restart, and each folder's identity
+/// is checked whenever a filesystem is mounted or unmounted, so a volume
+/// unplugged and plugged back in is watched afresh and rescanned. A folder on
+/// a network share is rescanned every quarter of an hour as well, since a
+/// file another machine writes there raises no event on this one; a local
+/// folder is never scanned on a timer.
 ///
 /// `on_scan` is told when each scan starts, how far it has got and how it
 /// ended, so a UI can show it.
@@ -88,18 +100,15 @@ pub fn spawn_library_watch(
     use notify::{RecursiveMode, Watcher};
 
     use crate::index::scanner::{self, ScanOptions};
-    use crate::index::watch::{WatchedRoot, scan_target};
+    use crate::index::watch::{WatchedRoot, on_mount_change, scan_target};
 
     // Copying an album in is a burst of events. Wait for it to stop before
     // scanning, rather than scanning per file.
     const SETTLE: Duration = Duration::from_secs(5);
-    // How often the folder list and each folder's identity are checked.
-    const CHECK: Duration = Duration::from_secs(30);
     // Past this many directories one walk of the library is cheaper than many.
     const MAX_DIRS: usize = 200;
-    // A full scan now and then, for the events a platform drops without
-    // asking for a rescan. Unchanged files are skipped on mtime and size, so an
-    // idle one is a second's work.
+    // How often a folder on a network share is scanned whole. Unchanged files
+    // are skipped on mtime and size, so an idle one is a second's work.
     const RESCAN: Duration = Duration::from_secs(15 * 60);
 
     std::thread::Builder::new()
@@ -128,18 +137,17 @@ pub fn spawn_library_watch(
                     None
                 }
             };
+            // One connection, opened once and kept between scans.
+            let pool = crate::db::pool::Pool::new(db_path.clone());
             let scan = |reason: &'static str, folders: &[PathBuf], dirs: Option<&[PathBuf]>| {
                 if folders.is_empty() {
                     return;
                 }
-                let Ok(db) = Database::open_existing(&db_path) else {
+                // Refused once a newer koan sharing the database has upgraded
+                // it: what this build would write is no longer its shape.
+                let Ok(db) = pool.get() else {
                     return;
                 };
-                // A newer koan sharing the database has upgraded it: what
-                // this build would write is no longer its shape.
-                if crate::db::pool::understood(&db.conn).is_err() {
-                    return;
-                }
                 on_scan(WatchScan::Started(reason));
                 let on_read = |done, total| on_scan(WatchScan::Read { done, total });
                 let opts = ScanOptions {
@@ -171,8 +179,15 @@ pub fn spawn_library_watch(
             let folders = || Config::cached().library.folders.clone();
 
             let (tx, rx) = std::sync::mpsc::channel();
+            crate::signal::forward(crate::signal::config_changed(), tx.clone(), || {
+                Heard::Settings
+            });
+            {
+                let tx = tx.clone();
+                on_mount_change(move || tx.send(Heard::Mounts).is_ok());
+            }
             let Ok(mut watcher) = notify::recommended_watcher(move |event| {
-                let _ = tx.send(event);
+                let _ = tx.send(Heard::Fs(event));
             }) else {
                 log::warn!("could not watch the library folders");
                 return;
@@ -209,7 +224,6 @@ pub fn spawn_library_watch(
                 }
                 fresh
             };
-
             // After the first frame and the first track, not competing with them.
             std::thread::sleep(Duration::from_secs(3));
             rewatch(&mut roots);
@@ -217,41 +231,59 @@ pub fn spawn_library_watch(
 
             let mut dirs = BTreeSet::new();
             let mut everything = false;
+            let mut recheck = false;
             let mut settle_at: Option<Instant> = None;
-            let mut check_at = Instant::now() + CHECK;
             let mut rescan_at = Instant::now() + RESCAN;
             loop {
                 // Changes heard meanwhile wait in the channel; a rescan that
                 // fell due runs as soon as this returns.
                 crate::quiet::wait_until_awake();
-                let now = Instant::now();
-                let wake = settle_at
-                    .map_or(check_at, |at| at.min(check_at))
-                    .min(rescan_at);
-                match rx.recv_timeout(wake.saturating_duration_since(now)) {
-                    Ok(Ok(event)) if event.need_rescan() => {
+                // With no folder on a share there is nothing to scan on a
+                // timer, and the first share added waits its full interval.
+                let any_shared = roots.iter().any(|r| !r.local);
+                if !any_shared {
+                    rescan_at = Instant::now() + RESCAN;
+                }
+                let rescan_due = any_shared.then_some(rescan_at);
+                let heard = match settle_at.into_iter().chain(rescan_due).min() {
+                    Some(wake) => rx.recv_timeout(wake.saturating_duration_since(Instant::now())),
+                    None => rx
+                        .recv()
+                        .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected),
+                };
+                match heard {
+                    Ok(Heard::Settings | Heard::Mounts) => recheck = true,
+                    Ok(Heard::Fs(Ok(event))) if event.need_rescan() => {
                         everything = true;
                         settle_at = Some(Instant::now() + SETTLE);
                     }
-                    Ok(Ok(event)) => {
-                        let mut heard = false;
-                        for dir in event
-                            .paths
-                            .iter()
-                            .filter_map(|p| scan_target(&event.kind, p, &roots))
-                        {
-                            dirs.insert(dir);
-                            heard = true;
+                    Ok(Heard::Fs(Ok(event))) => {
+                        let mut changed = false;
+                        for path in &event.paths {
+                            // The folder itself coming or going: unmounted, or
+                            // renamed away. Its identity says which.
+                            if roots.iter().any(|r| *path == r.path || *path == r.real) {
+                                recheck = true;
+                            } else if let Some(dir) = scan_target(&event.kind, path, &roots) {
+                                dirs.insert(dir);
+                                changed = true;
+                            }
                         }
-                        if heard {
+                        if changed {
                             settle_at = Some(Instant::now() + SETTLE);
                         }
                     }
-                    Ok(Err(e)) => log::debug!("library watch: {e}"),
+                    Ok(Heard::Fs(Err(e))) => log::debug!("library watch: {e}"),
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
 
+                if std::mem::take(&mut recheck) {
+                    let fresh = rewatch(&mut roots);
+                    if !fresh.is_empty() {
+                        scan("new folder", &fresh, None);
+                    }
+                }
                 let now = Instant::now();
                 if settle_at.is_some_and(|at| now >= at) {
                     let changed =
@@ -266,19 +298,44 @@ pub fn spawn_library_watch(
                     settle_at = None;
                 }
                 if now >= rescan_at {
-                    scan("periodic", &folders(), None);
-                    rescan_at = Instant::now() + RESCAN;
-                }
-                if now >= check_at {
-                    let fresh = rewatch(&mut roots);
-                    if !fresh.is_empty() {
-                        scan("new folder", &fresh, None);
+                    let shared: Vec<PathBuf> = roots
+                        .iter()
+                        .filter(|r| !r.local)
+                        .map(|r| r.path.clone())
+                        .collect();
+                    if !shared.is_empty() {
+                        scan("periodic", &shared, None);
                     }
-                    check_at = Instant::now() + CHECK;
+                    rescan_at = Instant::now() + RESCAN;
                 }
             }
         })
         .ok()
+}
+
+/// What auto-sync acts on. Anything else written to the config wakes it and is
+/// ignored.
+#[derive(PartialEq)]
+struct AutoSync {
+    on: bool,
+    interval_mins: u64,
+    server: (String, String),
+}
+
+impl AutoSync {
+    fn of(cfg: &Config) -> Self {
+        Self {
+            on: cfg.remote.enabled && cfg.remote.auto_sync,
+            interval_mins: cfg.remote.auto_sync_interval_mins,
+            server: (cfg.remote.url.clone(), cfg.remote.username.clone()),
+        }
+    }
+}
+
+/// What wakes auto-sync between runs.
+enum Woke {
+    Settings,
+    Link,
 }
 
 /// Keep the library in step with the server, without being asked.
@@ -287,9 +344,13 @@ pub fn spawn_library_watch(
 /// server that cannot say when it changes. A koan server can: it sends every
 /// linked app a sync when its library or a playlist moves, and queues one for
 /// an app that was away, so a timer would only ask a question already
-/// answered. Each run walks the library only if the server says it moved —
-/// see `Walk::IfChanged` — which is what makes it cheap enough to run
-/// unattended.
+/// answered, and none is set while the link is up. Each run walks the library only if the server
+/// says it moved — see `Walk::IfChanged` — which is what makes it cheap enough
+/// to run unattended.
+///
+/// Between runs this sleeps until the interval is up or koan writes a change
+/// to the remote settings — auto-sync turned on, another server signed in to —
+/// which runs it again at once.
 ///
 /// The startup run is delayed a few seconds so it is not competing with the
 /// first frame and the first track for the disk.
@@ -301,23 +362,30 @@ pub fn spawn_auto_sync(
     on_state: impl Fn(bool) + Send + 'static,
     on_progress: impl Fn(crate::remote::sync::SyncProgress) + Send + Sync + 'static,
 ) -> Option<std::thread::JoinHandle<()>> {
+    use std::time::{Duration, Instant};
+
     std::thread::Builder::new()
         .name("koan-auto-sync".into())
         .spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            // Before the first run, so a change while it runs is heard after.
+            let (tx, rx) = std::sync::mpsc::channel();
+            crate::signal::forward(crate::signal::config_changed(), tx.clone(), || {
+                Woke::Settings
+            });
+            crate::signal::forward(crate::signal::link_changed(), tx, || Woke::Link);
+            let mut sync = true;
+            let pool = crate::db::pool::Pool::new(db_path);
+            std::thread::sleep(Duration::from_secs(5));
             loop {
                 // Due while the app was in the background: runs when it is not.
                 crate::quiet::wait_until_awake();
-                let cfg = Config::load().unwrap_or_default();
-                if !cfg.remote.enabled || !cfg.remote.auto_sync {
-                    // Re-read rather than exit: the setting can be turned on
-                    // while the app is running.
-                    std::thread::sleep(std::time::Duration::from_secs(60));
-                    continue;
-                }
+                let cfg = Config::cached();
+                let settings = AutoSync::of(&cfg);
 
-                if let Some(client) = subsonic_client(&cfg)
-                    && let Ok(db) = Database::open_existing(&db_path)
+                if std::mem::take(&mut sync)
+                    && settings.on
+                    && let Some(client) = subsonic_client(&cfg)
+                    && let Ok(db) = pool.get()
                 {
                     on_state(true);
                     match sync_remote(
@@ -348,19 +416,30 @@ pub fn spawn_auto_sync(
                     on_state(false);
                 }
 
-                // Once at startup and no more, or on the interval. A koan
-                // server's own syncs make the interval redundant; it is still
-                // slept, since the server signed in to can change.
-                let mins = cfg.remote.auto_sync_interval_mins;
-                if mins == 0 {
-                    return;
-                }
-                loop {
-                    std::thread::sleep(std::time::Duration::from_secs(mins * 60));
-                    if !crate::remote::profile::current().is_some_and(|p| p.links()) {
-                        break;
+                // The interval, while no link is up to say when the library
+                // changed. A link coming up or going down plans it again.
+                let linked = crate::remote::devices::linked();
+                let due = (settings.on && settings.interval_mins > 0 && !linked)
+                    .then(|| Instant::now() + Duration::from_secs(settings.interval_mins * 60));
+                sync = loop {
+                    let heard = match due {
+                        Some(due) => rx.recv_timeout(due.saturating_duration_since(Instant::now())),
+                        None => rx
+                            .recv()
+                            .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected),
+                    };
+                    match heard {
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break true,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                        Ok(Woke::Settings) if AutoSync::of(&Config::cached()) != settings => {
+                            break true;
+                        }
+                        Ok(Woke::Link) if crate::remote::devices::linked() != linked => {
+                            break false;
+                        }
+                        Ok(_) => {}
                     }
-                }
+                };
             }
         })
         .ok()

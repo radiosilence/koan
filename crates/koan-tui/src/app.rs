@@ -807,6 +807,9 @@ impl App {
             };
             self.say(line);
         }
+        if let Some(line) = super::tasks::take_said() {
+            self.say(line);
+        }
         if super::tasks::take_library_changed() {
             self.reload_library_pages();
         }

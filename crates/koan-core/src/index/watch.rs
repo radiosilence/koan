@@ -24,6 +24,10 @@ pub struct WatchedRoot {
     /// Device and inode of the folder, so a volume unmounted and mounted again
     /// at the same path reads as a different folder.
     pub identity: Option<(u64, u64)>,
+    /// Whether the folder is on a filesystem whose every change passes through
+    /// this machine's kernel. A network share is not: another machine writing
+    /// to it raises no event here. See [`is_local`].
+    pub local: bool,
 }
 
 impl WatchedRoot {
@@ -34,8 +38,165 @@ impl WatchedRoot {
             path: path.to_path_buf(),
             real: path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
             identity: Some(identity),
+            local: is_local(path),
         })
     }
+}
+
+/// Whether every change to the filesystem holding `path` is made through this
+/// machine's kernel, and so heard by FSEvents or inotify. A network share
+/// (NFS, SMB, AFP, 9P, Ceph) is not, and neither is a FUSE mount, which may
+/// be one: a file another machine adds to it is found only by looking.
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
+pub fn is_local(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return true;
+    };
+    // SAFETY: `c` is a NUL-terminated path; `fs` is written by statfs.
+    let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut fs) } != 0 {
+        return true;
+    }
+    fs.f_flags & libc::MNT_LOCAL as u32 != 0
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn is_local(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    const REMOTE: [u32; 10] = [
+        0x6969,     // NFS
+        0x517B,     // SMB
+        0xFF534D42, // CIFS
+        0xFE534D42, // SMB2
+        0x65735546, // FUSE
+        0x00C36400, // Ceph
+        0x01021997, // 9P
+        0x5346414F, // AFS
+        0x564C,     // NCP
+        0x73757245, // Coda
+    ];
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return true;
+    };
+    // SAFETY: `c` is a NUL-terminated path; `fs` is written by statfs.
+    let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut fs) } != 0 {
+        return true;
+    }
+    // Compared as the kernel's 32 bits: `f_type` is signed on some targets,
+    // where widening would sign-extend the magic numbers with the top bit set.
+    !REMOTE.contains(&(fs.f_type as u32))
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "linux",
+    target_os = "android"
+)))]
+pub fn is_local(_path: &Path) -> bool {
+    true
+}
+
+/// Call `changed` whenever a filesystem is mounted or unmounted anywhere on
+/// the machine, from a thread that sleeps in the kernel between times, until
+/// it returns `false`. Nothing is called on a platform that cannot say.
+///
+/// A library folder on a volume unplugged and plugged back in is a different
+/// directory at the same path, which the watch on the old one never hears of.
+pub fn on_mount_change(changed: impl Fn() -> bool + Send + 'static) {
+    let spawned = std::thread::Builder::new()
+        .name("koan-mounts".into())
+        .spawn(move || {
+            if let Err(e) = wait_for_mounts(changed) {
+                log::debug!("mount changes: {e}");
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("could not follow mounts: {e}");
+    }
+}
+
+/// `EVFILT_FS` is raised on every mount, unmount and volume state change.
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
+fn wait_for_mounts(changed: impl Fn() -> bool) -> std::io::Result<()> {
+    // SAFETY: kqueue takes no arguments; its descriptor is owned from here.
+    let kq = unsafe { libc::kqueue() };
+    if kq < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: as above.
+    let kq = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(kq) };
+    let kq = std::os::fd::AsRawFd::as_raw_fd(&kq);
+    // SAFETY: a zeroed kevent is a valid value of the C struct.
+    let mut add: libc::kevent = unsafe { std::mem::zeroed() };
+    add.filter = libc::EVFILT_FS;
+    add.flags = libc::EV_ADD | libc::EV_CLEAR;
+    // SAFETY: one live change and no event buffer.
+    if unsafe { libc::kevent(kq, &add, 1, std::ptr::null_mut(), 0, std::ptr::null()) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    loop {
+        // SAFETY: as above.
+        let mut out: libc::kevent = unsafe { std::mem::zeroed() };
+        // SAFETY: no changes, one live event slot, no timeout.
+        let n = unsafe { libc::kevent(kq, std::ptr::null(), 0, &mut out, 1, std::ptr::null()) };
+        if n < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        if n > 0 && !changed() {
+            return Ok(());
+        }
+    }
+}
+
+/// `/proc/self/mountinfo` polls as exceptional whenever the mount table
+/// changes, and is read through again to clear it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn wait_for_mounts(changed: impl Fn() -> bool) -> std::io::Result<()> {
+    use std::io::{Read, Seek};
+    use std::os::fd::AsRawFd;
+    let mut table = std::fs::File::open("/proc/self/mountinfo")?;
+    let mut buf = Vec::new();
+    table.read_to_end(&mut buf)?;
+    loop {
+        let mut fd = libc::pollfd {
+            fd: table.as_raw_fd(),
+            events: libc::POLLPRI | libc::POLLERR,
+            revents: 0,
+        };
+        // SAFETY: one live pollfd, no timeout.
+        if unsafe { libc::poll(&mut fd, 1, -1) } < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        table.rewind()?;
+        buf.clear();
+        table.read_to_end(&mut buf)?;
+        if !changed() {
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "linux",
+    target_os = "android"
+)))]
+fn wait_for_mounts(_changed: impl Fn() -> bool) -> std::io::Result<()> {
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -141,6 +302,13 @@ pub(crate) fn is_ignored(name: &std::ffi::OsStr) -> bool {
 mod tests {
     use super::*;
     use notify::event::{AccessKind, DataChange, MetadataKind, RenameMode};
+
+    #[test]
+    fn a_temporary_directory_is_local() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(is_local(dir.path()));
+        assert!(WatchedRoot::resolve(dir.path()).unwrap().local);
+    }
 
     fn root(dir: &Path) -> Vec<WatchedRoot> {
         vec![WatchedRoot::resolve(dir).unwrap()]
