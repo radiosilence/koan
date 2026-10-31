@@ -11,6 +11,25 @@ import Foundation
 enum ShareInbox {
     static let group = "group.cc.blit.koan"
 
+    /// Delete what iOS copied into the app's Inbox for Open-in imports that
+    /// never finished: the app quit with one waiting to be confirmed. Only
+    /// copies made well before this launch, so the file whose opening
+    /// launched the app is still there to import.
+    static func sweepOpened() {
+        let files = FileManager.default
+        guard let documents = files.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let opened = try? files.contentsOfDirectory(
+                  at: documents.appending(path: "Inbox", directoryHint: .isDirectory),
+                  includingPropertiesForKeys: [.creationDateKey]
+              )
+        else { return }
+        let before = Date.now.addingTimeInterval(-10 * 60)
+        for file in opened {
+            let made = (try? file.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+            if made < before { try? files.removeItem(at: file) }
+        }
+    }
+
     static func collect(into dsp: DspModel) {
         let files = FileManager.default
         guard

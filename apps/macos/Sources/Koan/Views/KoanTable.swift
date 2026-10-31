@@ -273,6 +273,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 // A listing read a page at a time grows at its end: the rows
                 // already made stay, and only the page is added.
                 let appended = before > 0 && ids.count > before && ids.starts(with: self.ids)
+                let shown = self.items
                 self.items = parent.items
                 self.ids = ids
                 reloading = true
@@ -284,7 +285,16 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                     table.reloadData()
                 }
                 reloading = false
-                if appended, parent.contextKey != shownKey { reshowVisible() }
+                // The rows already there are not redrawn by the insert, and a
+                // page can change them too: a queue's last record growing
+                // moves its heading.
+                if appended {
+                    if parent.contextKey == shownKey, let changed = parent.changed {
+                        reshowVisible { $0 < before && changed(shown[$0], parent.items[$0]) }
+                    } else {
+                        reshowVisible { $0 < before }
+                    }
+                }
                 shownKey = parent.contextKey
             } else if parent.contextKey != shownKey {
                 self.items = parent.items

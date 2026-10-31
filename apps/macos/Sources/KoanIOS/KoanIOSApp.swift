@@ -187,6 +187,7 @@ struct KoanIOSApp: App {
                             built.dsp.follow(route: name)
                         }
                     }
+                    ShareInbox.sweepOpened()
                     ShareInbox.collect(into: built.dsp)
                 } catch {
                     startupError = String(describing: error)
