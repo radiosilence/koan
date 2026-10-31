@@ -303,9 +303,15 @@ impl Session {
         (token, url, art)
     }
 
-    /// Stop serving every token but these.
+    /// Stop serving every token but these, ending their connections.
     pub fn retain(&self, tokens: &[&str]) {
         self.listener.retain(tokens);
+    }
+
+    /// Stop serving every token but these, leaving connections open on
+    /// them to finish.
+    pub fn revoke(&self, tokens: &[&str]) {
+        self.listener.revoke(tokens);
     }
 
     /// The token in a URL this session handed out.

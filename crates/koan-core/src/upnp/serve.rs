@@ -51,7 +51,7 @@ const MAX_CONNECTIONS: usize = 32;
 /// is no write timeout and no TCP user timeout: a paused renderer stops
 /// reading for as long as it likes, and the processed stream relies on that
 /// backpressure. A connection blocked writing to a renderer that has gone is
-/// ended with its session instead (`Shared::end_unserved`).
+/// ended with its session instead (`Listener::retain`).
 fn notice_departure(stream: &std::net::TcpStream) {
     let socket = socket2::SockRef::from(stream);
     let keepalive = socket2::TcpKeepalive::new()
@@ -77,15 +77,35 @@ struct Shared {
 }
 
 impl Shared {
-    /// Shut every connection whose token is no longer served.
-    fn end_unserved(&self) {
-        let served: std::collections::HashSet<String> =
-            self.tracks.lock().keys().cloned().collect();
+    /// Stop serving every token but those in `keep`; the ones dropped.
+    fn drop_tokens(&self, keep: &[&str]) -> Vec<String> {
+        let mut dropped = Vec::new();
+        self.tracks.lock().retain(|token, _| {
+            let kept = keep.contains(&token.as_str());
+            if !kept {
+                dropped.push(token.clone());
+            }
+            kept
+        });
+        dropped
+    }
+
+    /// Shut the connections serving these tokens.
+    fn end(&self, tokens: &[String]) {
         for (token, _, stream) in self.open.lock().iter() {
-            if !served.contains(token) {
+            if tokens.contains(token) {
                 let _ = stream.shutdown(std::net::Shutdown::Both);
             }
         }
+    }
+
+    /// List a connection under the token it serves, for as long as it does.
+    fn serving(&self, stream: &TcpStream, token: &str) -> Serving<'_> {
+        let id = self.next_open.fetch_add(1, Ordering::Relaxed);
+        if let Ok(clone) = stream.try_clone() {
+            self.open.lock().push((token.to_owned(), id, clone));
+        }
+        Serving { shared: self, id }
     }
 }
 
@@ -166,17 +186,29 @@ impl Listener {
     }
 
     pub fn remove(&self, token: &str) {
-        self.shared.tracks.lock().remove(token);
-        self.shared.end_unserved();
+        if self.shared.tracks.lock().remove(token).is_some() {
+            self.shared.end(&[token.to_owned()]);
+        }
     }
 
     /// Drop every token but those in `keep`, ending their connections.
+    /// Keeping none ends every connection, those of revoked tokens too.
     pub fn retain(&self, keep: &[&str]) {
-        self.shared
-            .tracks
-            .lock()
-            .retain(|token, _| keep.contains(&token.as_str()));
-        self.shared.end_unserved();
+        let dropped = self.shared.drop_tokens(keep);
+        if keep.is_empty() {
+            for (_, _, stream) in self.shared.open.lock().iter() {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        } else {
+            self.shared.end(&dropped);
+        }
+    }
+
+    /// Drop every token but those in `keep`, leaving their connections to
+    /// finish: a renderer moving on to the next track may still be reading
+    /// the end of the last.
+    pub fn revoke(&self, keep: &[&str]) {
+        self.shared.drop_tokens(keep);
     }
 }
 
@@ -279,11 +311,7 @@ fn handle(shared: &Shared, mut stream: TcpStream) -> std::io::Result<()> {
             let token = rest.split('.').next().unwrap_or_default();
             // Listed before the token is looked up, so a token dropped in
             // between is either missing here or ends this connection.
-            let id = shared.next_open.fetch_add(1, Ordering::Relaxed);
-            if let Ok(clone) = stream.try_clone() {
-                shared.open.lock().push((token.to_owned(), id, clone));
-            }
-            let _serving = Serving { shared, id };
+            let _serving = shared.serving(&stream, token);
             let served = shared.tracks.lock().get(token).cloned();
             match served {
                 Some(Served::File { path, mime }) => serve_file(&mut stream, &req, &path, &mime),
@@ -292,6 +320,9 @@ fn handle(shared: &Shared, mut stream: TcpStream) -> std::io::Result<()> {
             }
         }
         ("GET" | "HEAD", "art") => {
+            // Original covers run to megabytes: a renderer that stops reading
+            // one holds its connection as a track's would.
+            let _serving = shared.serving(&stream, rest);
             let served = shared.tracks.lock().get(rest).cloned();
             let art = served.and_then(|s| crate::index::folder_art::cover_art(s.art()));
             match art {
@@ -453,9 +484,50 @@ mod tests {
             1,
             "still writing"
         );
+        // Revoked, the connection finishes; another track's token dropping
+        // leaves it; stopping altogether ends it.
+        let other = listener.add(Served::File {
+            path: dir.path().join("big.flac"),
+            mime: "audio/flac".into(),
+        });
+        listener.revoke(&[other.as_str()]);
         listener.retain(&[]);
+        let _ = token;
         wait_for(0);
         assert!(listener.shared.open.lock().is_empty());
+    }
+
+    #[test]
+    fn a_revoked_token_refuses_new_requests_and_leaves_open_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.flac");
+        std::fs::write(&path, vec![0u8; 64 << 20]).unwrap();
+        let listener = Listener::start(Box::new(|_, _| {})).unwrap();
+        let token = listener.add(Served::File {
+            path: path.clone(),
+            mime: "audio/flac".into(),
+        });
+        let keep = listener.add(Served::File {
+            path,
+            mime: "audio/flac".into(),
+        });
+        let mut stalled = TcpStream::connect(("127.0.0.1", listener.port())).unwrap();
+        write!(stalled, "GET /t/{token}.flac HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while listener.shared.open.lock().is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        listener.revoke(&[keep.as_str()]);
+        listener.retain(&[keep.as_str()]);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(listener.shared.connections.load(Ordering::Acquire), 1);
+        let (head, _) = split(&get(
+            listener.port(),
+            &format!("GET /t/{token}.flac HTTP/1.1\r\nHost: x\r\n\r\n"),
+        ));
+        assert!(head.starts_with("HTTP/1.1 404"), "{head}");
+        listener.retain(&[]);
     }
 
     #[test]

@@ -1422,7 +1422,8 @@ impl Player {
         // A hand-over starts the track at its top. The reading that showed it
         // may not: Kodi names the new track with the old one's position.
         play.settle();
-        link.session.retain(&play.tokens());
+        // The renderer may still be reading the end of the track it left.
+        link.session.revoke(&play.tokens());
         if let Some(info) = info {
             session.track = TrackInfo {
                 id,
