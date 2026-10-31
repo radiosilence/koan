@@ -15,7 +15,6 @@ use parking_lot::Mutex;
 use serde_json::Value;
 
 use super::{Failure, Listen, Sent};
-use crate::auth::now_unix;
 use crate::config::Config;
 use crate::db::queries::scrobbling::{self as queries, LASTFM};
 
@@ -51,7 +50,7 @@ pub fn use_api(base: &str) {
 
 /// The earliest `played_at` Last.fm takes from `service`, for one it limits.
 pub(super) fn oldest_taken(service: &str) -> Option<i64> {
-    (service == LASTFM).then(|| now_unix() as i64 - WINDOW_SECS)
+    (service == LASTFM).then(|| crate::clock::unix_secs() - WINDOW_SECS)
 }
 
 /// The server's Last.fm API key and shared secret.
@@ -75,7 +74,8 @@ fn credentials() -> Option<Credentials> {
     if let Some((api_key, secret)) = CREDENTIALS_OVERRIDE.lock().clone() {
         return Some(Credentials { api_key, secret });
     }
-    let cfg = Config::load().unwrap_or_default().lastfm;
+    let cfg = Config::cached();
+    let cfg = &cfg.lastfm;
     cfg.is_set().then(|| Credentials {
         api_key: cfg.api_key.trim().to_owned(),
         secret: cfg.secret.trim().to_owned(),

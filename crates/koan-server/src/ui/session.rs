@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use koan_core::db::queries::auth as auth_queries;
 
-use super::{UiState, encode, html, pages, see_other};
+use super::{Logged, UiState, encode, html, pages, see_other};
 use crate::auth::routes::{ClientIp, authenticate, proxied_access, refresh_token_from, rotate};
 
 /// An authenticating reverse proxy in front of the web UI, whose header names
@@ -412,7 +412,7 @@ pub(super) async fn signout(
         let pool = s.pool.clone();
         let _ = tokio::task::spawn_blocking(move || {
             let db = super::open(&pool)?;
-            auth_queries::revoke_refresh_token(&db.conn, &token).ok()
+            auth_queries::revoke_refresh_token(&db.conn, &token).logged()
         })
         .await;
     }

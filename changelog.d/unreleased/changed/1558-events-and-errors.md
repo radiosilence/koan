@@ -1,0 +1,1 @@
+- **Background work waits for events.** The remote TUI follows server subscriptions, the web UI clock stops when paused, and the library watch and auto-sync sleep until something changes; failures that were swallowed are logged.

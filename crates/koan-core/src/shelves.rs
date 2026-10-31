@@ -29,11 +29,7 @@ pub const PREVIEW_ALBUMS: u32 = 8;
 pub const PREVIEW_TRACKS: u32 = 10;
 
 /// The clock the shelves read, in unix seconds.
-pub fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
+pub use crate::clock::unix_secs as now;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shelf<'a> {

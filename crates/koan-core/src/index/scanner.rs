@@ -2360,10 +2360,17 @@ mod tests {
         let r1 = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r1.added, 1);
 
-        // Modify the file (rewrite with different duration → different size + mtime).
-        // Sleep briefly to ensure mtime changes (some FS have 1s resolution).
-        std::thread::sleep(std::time::Duration::from_millis(1100));
+        // A rewrite with a different duration: another size, and an mtime set
+        // past the first, which a filesystem with 1 s resolution could
+        // otherwise give back unchanged.
+        let first = std::fs::metadata(&wav_path).unwrap().modified().unwrap();
         test_utils::generate_wav(&wav_path, 44100, 1, 2.0, 16);
+        std::fs::File::options()
+            .write(true)
+            .open(&wav_path)
+            .unwrap()
+            .set_modified(first + std::time::Duration::from_secs(60))
+            .unwrap();
 
         // Second scan: should detect the modification.
         let r2 = scan_folder(&db, &music_dir, ScanOptions::default(), None);

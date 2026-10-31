@@ -810,6 +810,9 @@ impl App {
             };
             self.say(line);
         }
+        if let Some(line) = super::tasks::take_said() {
+            self.say(line);
+        }
         if super::tasks::take_library_changed() {
             self.reload_library_pages();
         }
@@ -2370,10 +2373,7 @@ impl App {
         let next = match self.state.sleep() {
             None => Some(SleepTimer::After { minutes: 15 }),
             Some(Sleep::At { unix_ms }) => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+                let now = koan_core::clock::unix_ms() as u64;
                 // The choice it was set from: what is left, rounded up.
                 match unix_ms.saturating_sub(now).div_ceil(60_000) {
                     0..=15 => Some(SleepTimer::After { minutes: 30 }),

@@ -7,8 +7,6 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::auth::now_unix;
-
 pub const LISTENBRAINZ: &str = "listenbrainz";
 pub const LASTFM: &str = "lastfm";
 
@@ -95,7 +93,13 @@ pub fn connect(
         conn.execute(
             "INSERT INTO scrobble_services (user_id, service, token, account_name, connected_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![user, service, token, account_name, now_unix() as i64],
+            params![
+                user,
+                service,
+                token,
+                account_name,
+                crate::clock::unix_secs()
+            ],
         )?;
         conn.execute(
             "INSERT INTO scrobble_outbox (user_id, service, history_id)
@@ -220,7 +224,7 @@ pub fn now_playing(conn: &Connection, track_id: i64) -> rusqlite::Result<Option<
               WHERE t.id = ?1"
         ),
         [track_id],
-        |r| listen_from(r, now_unix() as i64, 0),
+        |r| listen_from(r, crate::clock::unix_secs(), 0),
     )
     .optional()
 }
