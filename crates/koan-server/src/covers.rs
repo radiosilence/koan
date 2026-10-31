@@ -8,7 +8,9 @@
 //! on disk under the config directory, keyed by the source file's path, size
 //! and mtime so a re-tag or a replaced image is a new key. An album with no
 //! art is remembered too, so a grid of them does not reopen every file on
-//! every visit.
+//! every visit. The directory is held to `BUDGET`: every so many writes the
+//! covers read least recently are removed, and so are the stale keys a re-tag
+//! leaves and temporary files an interrupted write left behind.
 //!
 //! Nothing is held in memory: the kernel's page cache keeps hot files for
 //! free and gives the memory back under pressure, where a cache of our own
@@ -55,13 +57,31 @@ static DECODE: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
         .expect("cover threads")
 });
 
+/// What the cover directory may hold before the least recently read go.
+const BUDGET: u64 = 1024 * 1024 * 1024;
+/// Writes between looks at the directory's size.
+const SWEEP_EVERY: u64 = 256;
+/// A hit moves a cover's mtime, which is its place in line for eviction, no
+/// more than once in this long.
+const TOUCH_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+/// A temporary file older than this was left by a write that never finished.
+const TMP_LEFT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 pub struct Covers {
     dir: PathBuf,
+    budget: u64,
+    writes: std::sync::atomic::AtomicU64,
+    sweeping: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Covers {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            budget: BUDGET,
+            writes: Default::default(),
+            sweeping: Default::default(),
+        }
     }
 
     /// Covers kept under koan's config directory.
@@ -107,9 +127,21 @@ impl Covers {
         art.map(Bytes::from)
     }
 
-    /// `Some(None)` is a remembered miss.
+    /// `Some(None)` is a remembered miss. A hit is marked as read, so the
+    /// covers in use are the last evicted.
     fn read_disk(&self, key: &str) -> Option<Option<Bytes>> {
-        let bytes = std::fs::read(self.dir.join(key)).ok()?;
+        use std::io::Read as _;
+        let mut file = std::fs::File::open(self.dir.join(key)).ok()?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).ok()?;
+        let now = std::time::SystemTime::now();
+        if file
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| now.duration_since(t).unwrap_or_default() > TOUCH_AFTER)
+        {
+            let _ = file.set_modified(now);
+        }
         Some((!bytes.is_empty()).then(|| Bytes::from(bytes)))
     }
 
@@ -118,9 +150,16 @@ impl Covers {
     /// a temporary file of their own, so the one renamed into place last is
     /// whole rather than another's half-written file.
     fn write_disk(&self, key: &str, art: Option<&[u8]>) {
-        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        use std::sync::atomic::Ordering;
         let _ = std::fs::create_dir_all(&self.dir);
-        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let n = self.writes.fetch_add(1, Ordering::Relaxed);
+        if n.is_multiple_of(SWEEP_EVERY) && !self.sweeping.swap(true, Ordering::AcqRel) {
+            let (dir, budget, sweeping) = (self.dir.clone(), self.budget, self.sweeping.clone());
+            std::thread::spawn(move || {
+                sweep(&dir, budget);
+                sweeping.store(false, Ordering::Release);
+            });
+        }
         let tmp = self
             .dir
             .join(format!("{key}.{}-{n}.tmp", std::process::id()));
@@ -128,6 +167,42 @@ impl Covers {
             && std::fs::rename(&tmp, self.dir.join(key)).is_err()
         {
             let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
+/// Hold `dir` to `budget` bytes, removing the covers read least recently
+/// until it is a tenth under, and every temporary file older than `TMP_LEFT`.
+fn sweep(dir: &Path, budget: u64) {
+    let now = std::time::SystemTime::now();
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut kept: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    for entry in read.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        let modified = meta.modified().unwrap_or(now);
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "tmp") {
+            if now.duration_since(modified).unwrap_or_default() > TMP_LEFT {
+                let _ = std::fs::remove_file(&path);
+            }
+            continue;
+        }
+        kept.push((modified, meta.len(), path));
+    }
+    let mut total: u64 = kept.iter().map(|(_, len, _)| len).sum();
+    if total <= budget {
+        return;
+    }
+    kept.sort_by_key(|(modified, _, _)| *modified);
+    let target = budget - budget / 10;
+    for (_, len, path) in kept {
+        if total <= target {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
         }
     }
 }
@@ -320,6 +395,46 @@ mod tests {
         }
         let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(left.len(), 1, "no temporary files left behind");
+    }
+
+    #[test]
+    fn the_directory_is_held_to_its_budget_oldest_read_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let day = std::time::Duration::from_secs(24 * 60 * 60);
+        let now = std::time::SystemTime::now();
+        let put = |name: &str, len: usize, age: u32| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, vec![0u8; len]).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(now - day * age)
+                .unwrap();
+        };
+        for i in 0..10u32 {
+            put(&format!("c{i}-400.jpg"), 1000, 10 - i);
+        }
+        put("c0-400.jpg.1-2.tmp", 10, 2);
+        put("c9-400.jpg.1-3.tmp", 10, 0);
+        sweep(dir.path(), 5600);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "c5-400.jpg",
+                "c6-400.jpg",
+                "c7-400.jpg",
+                "c8-400.jpg",
+                "c9-400.jpg",
+                "c9-400.jpg.1-3.tmp"
+            ],
+            "the five read longest ago go, and the abandoned temporary file"
+        );
     }
 
     #[test]

@@ -81,16 +81,6 @@ final class DownloadBarLayer: CALayer {
 
 extension DownloadBarLayer: RecordGauge {}
 
-extension EngineMirror {
-    /// The tracks still to settle in the download store, by record.
-    var arrivingByAlbum: [Int64: [Int64]] {
-        Dictionary(
-            grouping: transfers.filter { !$0.state.isSettled && $0.albumId != nil },
-            by: { $0.albumId! }
-        ).mapValues { $0.map(\.trackId) }
-    }
-}
-
 #if !canImport(AppKit)
 /// The bar on an iOS tile, for a record whose listing says how much is here.
 struct DownloadedBar: UIViewRepresentable {

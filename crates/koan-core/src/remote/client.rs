@@ -98,6 +98,9 @@ pub enum SubsonicError {
     Download(#[from] DownloadError),
     #[error("entropy source unavailable: {0}")]
     Entropy(#[from] getrandom::Error),
+    /// Every cover slot stayed taken for as long as a fetch waits for one.
+    #[error("too many cover fetches in flight")]
+    Busy,
 }
 
 /// Without the URL: every request is signed with the account's credentials in
@@ -259,6 +262,44 @@ impl Connections {
     }
 }
 
+/// How many `getCoverArt` requests run at once, across every server. A flick
+/// through a remote album grid asks for every tile it passes; past this the
+/// rest wait their turn rather than each opening a socket.
+const COVER_FETCHES: usize = 8;
+
+/// How long a cover fetch waits for a slot before giving up. A fast scroll
+/// queues fetches for tiles already gone, and a caller cancelling does not
+/// stop a blocking one; giving up frees the thread, and the tiles still on
+/// screen ask again, since a failed fetch is not remembered as no art.
+const COVER_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// A slot among [`COVER_FETCHES`], given back when dropped.
+struct CoverSlots;
+
+static COVERS_IN_FLIGHT: parking_lot::Mutex<usize> = parking_lot::Mutex::new(0);
+static COVER_FREED: parking_lot::Condvar = parking_lot::Condvar::new();
+
+impl CoverSlots {
+    fn take() -> Result<Self, SubsonicError> {
+        let deadline = std::time::Instant::now() + COVER_WAIT;
+        let mut busy = COVERS_IN_FLIGHT.lock();
+        while *busy >= COVER_FETCHES {
+            if COVER_FREED.wait_until(&mut busy, deadline).timed_out() && *busy >= COVER_FETCHES {
+                return Err(SubsonicError::Busy);
+            }
+        }
+        *busy += 1;
+        Ok(Self)
+    }
+}
+
+impl Drop for CoverSlots {
+    fn drop(&mut self) {
+        *COVERS_IN_FLIGHT.lock() -= 1;
+        COVER_FREED.notify_one();
+    }
+}
+
 impl SubsonicClient {
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
         Self::from_auth(SubsonicAuth::new(base_url, username, password))
@@ -394,6 +435,7 @@ impl SubsonicClient {
             params.insert("size".into(), px.to_string());
         }
 
+        let _slot = CoverSlots::take()?;
         let resp = self.http().get(&url).query(&params).send()?;
         Self::reject_error_body(&resp)?;
         let headers = resp.headers().clone();
@@ -2051,6 +2093,37 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn cover_fetches_are_bounded() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        std::thread::scope(|s| {
+            for _ in 0..COVER_FETCHES * 3 {
+                s.spawn(|| {
+                    let _slot = CoverSlots::take().unwrap();
+                    let n = now.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(n, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    now.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        assert!(most.load(Ordering::SeqCst) <= COVER_FETCHES);
+        assert_eq!(*COVERS_IN_FLIGHT.lock(), 0, "every slot given back");
+    }
+
+    #[test]
+    fn a_cover_fetch_gives_up_when_no_slot_frees() {
+        let held: Vec<_> = (0..COVER_FETCHES)
+            .map(|_| CoverSlots::take().unwrap())
+            .collect();
+        let started = std::time::Instant::now();
+        assert!(matches!(CoverSlots::take(), Err(SubsonicError::Busy)));
+        assert!(started.elapsed() >= COVER_WAIT);
+        drop(held);
+        assert!(CoverSlots::take().is_ok(), "free again once given back");
+    }
 
     #[test]
     fn a_network_change_tries_a_server_that_was_not_answering_now() {

@@ -14,7 +14,7 @@ An app that is discoverable listens on `devices.port` (default 5626, "koan" on a
 
 The Apple apps register and browse with `dns_sd`; the Android app with `NsdManager`. The terminal UI has no discovery and dials only addresses. An app announces itself only while it listens, which needs `devices.nearby` and `devices.discoverable` on, and on iOS the app to be findable (see `quiet.rs`).
 
-Each app dials every device it finds, and every address in `devices.addresses`, which is how a tailnet without Bonjour is reached. A bare host is dialled on port 5626. A device is known by its `id`; an announcement with no `id` is known by its service name, and a typed address by itself. Failed dials back off from 2 to 60 seconds.
+Each app dials every device it finds, and every address in `devices.addresses`, which is how a tailnet without Bonjour is reached. A bare host is dialled on port 5626. A device is known by its `id`; an announcement with no `id` is known by its service name, and a typed address by itself. Failed dials back off from 2 to 60 seconds. A device reached on an earlier run is dialled at its last address before Bonjour announces it. Once Bonjour has announced any device in this run, a remembered device that it has not announced and that has not answered with a `hello` stops being dialled when its backoff reaches 60 seconds, and an announcement starts it again. Where nothing has been announced, as on a network that filters mDNS, remembered devices are dialled every 60 seconds for as long as they are remembered.
 
 ## Transport
 
@@ -74,6 +74,8 @@ The **playback set** (`LinkCommand::allowed_playback`): `play`, `enqueue`, `play
 The **stranger's set** (`LinkCommand::allowed_nearby`) is the playback set without `setOutput`, `refreshOutputs`, `setRendererVolume` and `setPreset`: where the sound goes reaches into the room and the config. Under Playback only, the listener also leaves `outputs` out of its state.
 
 Neither set includes anything that touches the library, the files on disk, or the account's favourites, playlists or history, and none of the server's news (`devices`, `deviceKeys`, `shares`, `shared`, `forgotten`, `historyChanged`, `dspProfilesChanged`, `levels`, `acked`) is taken from the network. A command the peer's class does not allow, sent with an `ack`, is answered `{"result":"refused","reason":"not allowed from this network"}`.
+
+A listener takes commands that name tracks from a connection at no more than a burst of 16, then 4 a second; each costs a library lookup and may start a sync. One over the rate is dropped, and answered as failed ("too many commands at once") when sent with an `ack`. The rest of the playback set is not limited.
 
 A device's `id` is its own claim. When the `id` in a listener's `hello` belongs to one of the account's devices, or one shared with it (as the server's `devices` list names them), the dialler sends it commands and acts on its reports only once it has proved it is that device under that account; a device nobody lists is taken at its word as a stranger. Addresses in `devices.refused` are hung up on at once, and Disconnect in Settings holds a device off by address, and by id once it has proven itself.
 

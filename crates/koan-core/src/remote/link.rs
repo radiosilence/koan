@@ -599,11 +599,32 @@ impl LinkState {
     /// A playhead moving at one second per second is not news; a seek, a
     /// pause, another track or an edited queue is.
     pub fn differs(&self, sent: &LinkState, elapsed: Duration) -> bool {
-        let strip = |s: &LinkState| LinkState {
-            position_ms: 0,
-            ..s.clone()
-        };
-        if strip(self) != strip(sent) {
+        let LinkState {
+            playing,
+            title,
+            artist,
+            album,
+            position_ms: _,
+            duration_ms,
+            queue,
+            outputs,
+            shuffle,
+            repeat,
+            sleep,
+            sleep_fading,
+        } = self;
+        if *playing != sent.playing
+            || *title != sent.title
+            || *artist != sent.artist
+            || *album != sent.album
+            || *duration_ms != sent.duration_ms
+            || *outputs != sent.outputs
+            || *shuffle != sent.shuffle
+            || *repeat != sent.repeat
+            || *sleep != sent.sleep
+            || *sleep_fading != sent.sleep_fading
+            || *queue != sent.queue
+        {
             return true;
         }
         let expected = if sent.playing {
@@ -612,6 +633,41 @@ impl LinkState {
             sent.position_ms
         };
         self.position_ms.abs_diff(expected) > 3000
+    }
+}
+
+/// The state a session last sent, and when the engine was last read for it.
+#[derive(Default)]
+pub(crate) struct SentState {
+    sent: Option<(LinkState, Instant)>,
+    /// The engine's change generation and the moment of the last read.
+    read: Option<(u64, Instant)>,
+}
+
+impl SentState {
+    /// The state to send, if it says something the last one did not. A
+    /// session wakes far more often than the engine changes (levels arrive
+    /// at the analyser's rate), so `read` runs only once the engine has moved,
+    /// or once a second for a playhead drifting, which no signal announces.
+    pub(crate) fn next(&mut self, read: impl FnOnce() -> LinkState) -> Option<LinkState> {
+        let generation = crate::signal::engine_changed().generation();
+        let unmoved = self
+            .read
+            .is_some_and(|(seen, at)| seen == generation && at.elapsed() < Duration::from_secs(1));
+        if self.sent.is_some() && unmoved {
+            return None;
+        }
+        self.read = Some((generation, Instant::now()));
+        let now = read();
+        if self
+            .sent
+            .as_ref()
+            .is_some_and(|(s, at)| !now.differs(s, at.elapsed()))
+        {
+            return None;
+        }
+        self.sent = Some((now.clone(), Instant::now()));
+        Some(now)
     }
 }
 
@@ -1158,7 +1214,7 @@ fn serve(
         local,
         pushes,
         claimed: Vec::new(),
-        sent: None,
+        sent: Default::default(),
         sent_push: None,
         sent_activity: None,
         waker: watcher,
@@ -1182,7 +1238,7 @@ struct LinkSession<'a> {
     pushes: bool,
     /// Claims sent on this link.
     claimed: Vec<Claim>,
-    sent: Option<(LinkState, Instant)>,
+    sent: SentState,
     sent_push: Option<String>,
     sent_activity: Option<Option<(String, String)>>,
     waker: Arc<Waker>,
@@ -1284,14 +1340,8 @@ impl wire::Session for LinkSession<'_> {
         if let Some(up) = LINK.lock().as_mut() {
             out.append(&mut up.outbox);
         }
-        let now = (self.local.state)();
-        if self
-            .sent
-            .as_ref()
-            .is_none_or(|(s, at)| now.differs(s, at.elapsed()))
-        {
-            out.push(LinkReport::State(now.clone()));
-            self.sent = Some((now, Instant::now()));
+        if let Some(now) = self.sent.next(|| (self.local.state)()) {
+            out.push(LinkReport::State(now));
         }
         if let Some(f) = self.levels.as_mut().and_then(|w| w.take()) {
             out.push(LinkReport::Levels { f });
@@ -1397,21 +1447,34 @@ pub fn resolve_each(
     remote_ids: &[String],
     may_sync: bool,
 ) -> (Vec<Option<i64>>, bool) {
+    // One statement for the lot, in the order given: a command can name
+    // every track in a library.
     let lookup = |db: &crate::db::connection::Database| {
-        let mut stmt = db
+        let mut found = vec![None; remote_ids.len()];
+        let read = db
             .conn
             .prepare_cached(
-                "SELECT id FROM tracks WHERE uid = ?1
-                 UNION ALL SELECT id FROM tracks WHERE remote_id = ?1 LIMIT 1",
+                "SELECT j.key,
+                        COALESCE((SELECT id FROM tracks WHERE uid = j.value),
+                                 (SELECT id FROM tracks WHERE remote_id = j.value LIMIT 1))
+                 FROM json_each(?1) j",
             )
-            .ok();
-        remote_ids
-            .iter()
-            .map(|rid| {
-                stmt.as_mut()
-                    .and_then(|s| s.query_row([rid], |r| r.get::<_, i64>(0)).ok())
-            })
-            .collect::<Vec<_>>()
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map([crate::db::queries::json_list(remote_ids)], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+                })?;
+                for row in rows {
+                    let (n, id) = row?;
+                    if let Some(slot) = usize::try_from(n).ok().and_then(|n| found.get_mut(n)) {
+                        *slot = id;
+                    }
+                }
+                Ok(())
+            });
+        if let Err(e) = read {
+            log::warn!("link: could not look the tracks up: {e}");
+        }
+        found
     };
     let found = lookup(db);
     let missing: Vec<&String> = remote_ids
@@ -1507,18 +1570,60 @@ fn file_device_id(path: &Path) -> String {
         Err(e) => log::error!("link: reading {}: {e}", path.display()),
     }
     let id = uuid::Uuid::now_v7().to_string();
-    let written = match path.parent() {
-        Some(dir) => std::fs::create_dir_all(dir),
-        None => Ok(()),
-    }
-    .and_then(|()| std::fs::write(path, &id));
-    if let Err(e) = written {
+    let kept = |e: std::io::Error| {
         log::error!(
             "link: keeping the device id in {}: {e}; this device will appear as a new one next launch",
             path.display()
         );
+    };
+    // Written whole beside the file, then linked into place only if no other
+    // process got there first: the one that loses adopts the winner's id.
+    let temp = path.with_extension(format!("{id}.tmp"));
+    let written = match path.parent() {
+        Some(dir) => std::fs::create_dir_all(dir),
+        None => Ok(()),
     }
-    id
+    .and_then(|()| std::fs::write(&temp, &id));
+    if let Err(e) = written {
+        kept(e);
+        return id;
+    }
+    let read = || {
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+    };
+    let theirs = match std::fs::hard_link(&temp, path) {
+        Ok(()) => Some(id.clone()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read(),
+        Err(_) => None,
+    };
+    if let Some(theirs) = theirs {
+        let _ = std::fs::remove_file(&temp);
+        return theirs;
+    }
+    // No hard links here, or an empty file an interrupted write left. Two
+    // processes replacing it take turns, and the second finds the first's id.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path.with_extension("lock"));
+    // SAFETY: flock on a descriptor this function owns; released when the
+    // file closes at the end of the scope.
+    let _held = lock
+        .as_ref()
+        .ok()
+        .map(|f| unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(f), libc::LOCK_EX) });
+    let present = read();
+    if present.is_none()
+        && let Err(e) = std::fs::rename(&temp, path)
+    {
+        kept(e);
+    }
+    let _ = std::fs::remove_file(&temp);
+    present.unwrap_or(id)
 }
 
 fn hostname() -> Option<String> {
@@ -1780,6 +1885,29 @@ mod tests {
         assert_eq!(serde_json::from_str::<LinkReport>(&json).unwrap(), report);
     }
 
+    /// Levels wake a watched session dozens of times a second; the engine's
+    /// state is read again only when it has moved.
+    #[test]
+    fn the_state_is_read_once_per_engine_change() {
+        let reads = std::cell::Cell::new(0);
+        let read = || {
+            reads.set(reads.get() + 1);
+            LinkState::default()
+        };
+        let mut sent = SentState::default();
+        assert!(sent.next(read).is_some(), "the first is always sent");
+        for _ in 0..1000 {
+            assert!(sent.next(read).is_none());
+        }
+        // Other tests bump the process-wide signal too, but not a thousand
+        // times in a few microseconds.
+        assert!(reads.get() < 50, "{} reads", reads.get());
+        let before = reads.get();
+        crate::signal::engine_changed().bump();
+        assert!(sent.next(read).is_none(), "nothing in it moved");
+        assert_eq!(reads.get(), before + 1);
+    }
+
     #[test]
     fn a_playhead_moving_on_time_is_not_news() {
         let sent = LinkState {
@@ -1880,6 +2008,67 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let first = device_id(dir.path());
         assert_eq!(device_id(dir.path()), first);
+    }
+
+    /// Ids resolve in the order given, a uid or a server id, repeats kept.
+    #[test]
+    fn ids_resolve_in_one_read_and_in_order() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let db = crate::db::connection::Database { conn };
+        let mut ids = Vec::new();
+        for (n, title) in ["One", "Two"].iter().enumerate() {
+            let mut meta = crate::db::queries::sample_meta(title, "Artist", "Album");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("srv-{n}"));
+            ids.push(crate::db::queries::upsert_track(&db.conn, &meta).unwrap());
+        }
+        let uid: String = db
+            .conn
+            .query_row("SELECT uid FROM tracks WHERE id = ?1", [ids[0]], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let asked = [uid.clone(), "srv-1".into(), "nothing".into(), uid];
+        let (found, synced) = resolve_each(&db, &asked, false);
+        assert!(!synced);
+        assert_eq!(found, vec![Some(ids[0]), Some(ids[1]), None, Some(ids[0])]);
+    }
+
+    /// Two processes starting at once settle on one id, not one each.
+    #[test]
+    fn racing_writers_agree_on_the_device_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("device-id");
+        let ids: Vec<String> = std::thread::scope(|s| {
+            let racers: Vec<_> = (0..8).map(|_| s.spawn(|| file_device_id(&path))).collect();
+            racers.into_iter().map(|r| r.join().unwrap()).collect()
+        });
+        assert!(ids.iter().all(|id| *id == ids[0]), "{ids:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), ids[0]);
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "no temp left"
+        );
+    }
+
+    /// An empty file an older build left is replaced once, however many
+    /// processes find it at the same moment.
+    #[test]
+    fn racing_writers_agree_over_an_empty_device_id() {
+        for _ in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("device-id");
+            std::fs::write(&path, "").unwrap();
+            let ids: Vec<String> = std::thread::scope(|s| {
+                let racers: Vec<_> = (0..8).map(|_| s.spawn(|| file_device_id(&path))).collect();
+                racers.into_iter().map(|r| r.join().unwrap()).collect()
+            });
+            assert!(ids.iter().all(|id| *id == ids[0]), "{ids:?}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), ids[0]);
+        }
     }
 }
 

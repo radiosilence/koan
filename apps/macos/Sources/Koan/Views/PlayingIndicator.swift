@@ -66,7 +66,7 @@ private struct PlayingBars: PlatformViewRepresentable {
 /// Three capsules, moved by their bounds. Nothing else about them ever
 /// changes, and a bounds change with actions disabled is the cheapest thing a
 /// layer can be asked to do.
-final class PlayingBarsView: LayerView, LevelsListener {
+final class PlayingBarsView: LevelsView {
     /// The shape a still indicator holds — staggered, so it reads as bars
     /// rather than as a broken one. Nothing moving needs an analyser.
     private static let resting = [0.75, 0.35, 0.6]
@@ -79,8 +79,6 @@ final class PlayingBarsView: LayerView, LevelsListener {
         Double(resting.count) * barWidth + Double(resting.count - 1) * spacing
 
     private let bars = resting.map { _ in CALayer() }
-    /// Who is feeding this, so being torn down can say so.
-    weak var source: PlayingLevels?
 
     var tint: PlatformColor = .label {
         didSet {
@@ -119,7 +117,7 @@ final class PlayingBarsView: LayerView, LevelsListener {
     /// A frame. Clamped because a bar is a drawn rectangle: a level outside
     /// 0...1 would become a capsule with a negative height rather than a wrong
     /// one.
-    func apply(_ bands: [Double]) {
+    override func apply(_ bands: [Double]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for (index, (bar, band)) in zip(bars, bands).enumerated() {

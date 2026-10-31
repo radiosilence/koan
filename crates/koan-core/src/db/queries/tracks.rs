@@ -85,10 +85,8 @@ fn upsert_track_with(
     meta: &TrackMeta,
     seen: Option<&HashSet<String>>,
 ) -> Result<(i64, bool), DbError> {
-    // Use a savepoint so this works both standalone and inside an existing
-    // transaction (e.g. the chunk transactions in scan_folder).
-    conn.execute_batch("SAVEPOINT upsert_track")?;
-    let result = (|| {
+    // Standalone or inside a caller's transaction, such as a scan chunk's.
+    super::atomically(conn, || {
         let mut recorded = None;
         if meta.path.is_some() {
             recorded = Some(sources::record(conn, sources::Kind::Local, meta, None)?);
@@ -98,12 +96,7 @@ fn upsert_track_with(
             recorded = Some((track, recorded.is_some_and(|(_, i)| i) || inserted));
         }
         recorded.ok_or(DbError::NoSource)
-    })();
-    match &result {
-        Ok(_) => conn.execute_batch("RELEASE upsert_track")?,
-        Err(_) => conn.execute_batch("ROLLBACK TO upsert_track; RELEASE upsert_track")?,
-    }
-    result
+    })
 }
 
 /// Clear the disc numbers stored as 0, which matching reads as none. Run
@@ -127,12 +120,11 @@ pub fn remove_vanished_remote(
     live_tracks: Option<&HashSet<String>>,
     live_albums: Option<&HashSet<String>>,
 ) -> Result<usize, DbError> {
-    conn.execute_batch(
-        "SAVEPOINT remove_vanished;
-         CREATE TEMP TABLE IF NOT EXISTS live_ids (kind TEXT, id TEXT, PRIMARY KEY (kind, id));
-         DELETE FROM temp.live_ids;",
-    )?;
-    let removed = (|| {
+    let removed = super::atomically(conn, || {
+        conn.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS live_ids (kind TEXT, id TEXT, PRIMARY KEY (kind, id));
+             DELETE FROM temp.live_ids;",
+        )?;
         let mut insert =
             conn.prepare("INSERT OR IGNORE INTO temp.live_ids (kind, id) VALUES (?1, ?2)")?;
         for (kind, ids) in [("track", live_tracks), ("album", live_albums)] {
@@ -174,29 +166,21 @@ pub fn remove_vanished_remote(
             }
         }
         Ok::<_, DbError>((gone.len(), downloads))
-    })();
-    match removed {
-        Ok((n, downloads)) => {
-            conn.execute_batch("RELEASE remove_vanished")?;
-            // A downloaded copy goes with its track; nothing would ever play
-            // or clean it up otherwise.
-            let mut freed = 0;
-            for path in downloads {
-                let size = std::fs::metadata(&path).map_or(0, |m| m.len());
-                if std::fs::remove_file(&path).is_ok() {
-                    freed += size;
-                }
-            }
-            if freed > 0 {
-                crate::helpers::cache_shrank(freed);
-            }
-            Ok(n)
-        }
-        Err(e) => {
-            conn.execute_batch("ROLLBACK TO remove_vanished; RELEASE remove_vanished")?;
-            Err(e)
+    })?;
+    let (n, downloads) = removed;
+    // A downloaded copy goes with its track; nothing would ever play or clean
+    // it up otherwise.
+    let mut freed = 0;
+    for path in downloads {
+        let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+        if std::fs::remove_file(&path).is_ok() {
+            freed += size;
         }
     }
+    if freed > 0 {
+        crate::helpers::cache_shrank(freed);
+    }
+    Ok(n)
 }
 
 /// Fold together the rows one file got by being spelled two ways.
@@ -477,6 +461,7 @@ pub fn adopt_moved_files(
         .prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?
         .query_map(params![lower, upper], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    let arrived = super::json_list(arrived);
     let mut adopted = 0;
     // A file the walk found has not moved.
     for path in paths
@@ -484,7 +469,7 @@ pub fn adopt_moved_files(
         .filter(|path| !walked.is_some_and(|w| w.contains(path)))
     {
         if crate::index::known_missing(Path::new(&path))
-            && sources::adopt_moved(conn, &path, arrived)?
+            && sources::adopt_moved(conn, &path, &arrived)?
         {
             adopted += 1;
         }
@@ -798,6 +783,50 @@ pub fn track_id_by_path(conn: &Connection, path: &str) -> Result<Option<i64>, Db
     }
 }
 
+/// [`track_id_by_path`] for many paths in one query: each path found, with
+/// its track.
+pub fn track_ids_by_paths(
+    conn: &Connection,
+    paths: &[String],
+) -> Result<std::collections::HashMap<String, i64>, DbError> {
+    if paths.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows = conn
+        .prepare_cached(
+            "WITH p(v) AS (SELECT value FROM json_each(?1))
+             SELECT p.v, t.id FROM p JOIN tracks t ON t.path = p.v
+             UNION ALL SELECT p.v, t.id FROM p JOIN tracks t ON t.cached_path = p.v
+             UNION ALL SELECT p.v, t.id FROM p JOIN tracks t ON t.remote_url = p.v",
+        )?
+        .query_map(params![super::json_list(paths)], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<(String, i64)>>>()?;
+    let mut found = std::collections::HashMap::with_capacity(rows.len());
+    for (path, id) in rows {
+        found.entry(path).or_insert(id);
+    }
+    Ok(found)
+}
+
+/// The server id of each of these tracks that has one.
+pub fn remote_ids_for_tracks(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, String>, DbError> {
+    let rows = conn
+        .prepare_cached(
+            "SELECT id, remote_id FROM tracks
+              WHERE id IN (SELECT value FROM json_each(?1)) AND remote_id IS NOT NULL",
+        )?
+        .query_map(params![super::json_list(ids)], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 /// Clear all cached_path values (used when purging the download cache).
 pub fn clear_cached_paths(conn: &Connection) -> Result<(), DbError> {
     // Only the rows that hold a download: an unqualified UPDATE rewrites every
@@ -904,6 +933,30 @@ pub fn cached_files_lru(conn: &Connection) -> Result<Vec<CachedFile>, DbError> {
          ORDER BY t.cache_pinned != 0,
                   NULLIF(MAX(COALESCE(ph_max.last_play, 0), COALESCE(t.cache_download_date, 0)), 0),
                   t.album_id, t.disc, t.track_number",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(CachedFile {
+            track_id: row.get(0)?,
+            path: row.get(1)?,
+            size: row.get(2)?,
+            pinned: row.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The files `cached_files_lru` lists, in no order: for a caller that counts
+/// them, which then need not rank them against the whole play history.
+pub fn cached_files(conn: &Connection) -> Result<Vec<CachedFile>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT t.id, t.cached_path, COALESCE(t.cache_size_bytes, 0), t.cache_pinned != 0
+         FROM tracks t
+         WHERE t.cached_path IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM tracks s
+                             JOIN favourites f
+                             JOIN tracks ft ON ft.id = f.track_id
+                                           AND (ft.id = s.id OR ft.album_id = s.album_id)
+                           WHERE s.cached_path = t.cached_path)",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(CachedFile {
@@ -1033,25 +1086,62 @@ pub fn queue_item_extras(
 /// One page of every track, in id order.
 ///
 /// What a client walking the whole library pages through. Ordered by the
-/// primary key, so the page is a range scan rather than a sort, and a track
-/// added mid-walk lands after the offset rather than shifting every page past
-/// it.
+/// primary key, so a track added mid-walk lands after the offset rather than
+/// shifting every page past it. A page that follows one already served
+/// continues from the last id that page held, so a walk reads each row once
+/// rather than stepping over every row before its offset again; any other
+/// offset finds its first id on the primary key alone, before any join.
 pub fn tracks_page(conn: &Connection, limit: u32, offset: u32) -> Result<Vec<TrackRow>, DbError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+    /// Where recent walks stopped: the database, the offset the next page
+    /// starts at, the last id served, and when. A walk idle for `WALK_FOR`
+    /// is over, and a sync since may have moved the rows under its offset.
+    type Walk = (String, u32, i64, std::time::Instant);
+    static WALKS: parking_lot::Mutex<Vec<Walk>> = parking_lot::Mutex::new(Vec::new());
+    const WALKS_KEPT: usize = 32;
+    const WALK_FOR: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    const COLUMNS: &str = "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
-         LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY t.id
-         LIMIT ?1 OFFSET ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![limit, offset], row_to_track_row)?
-        .collect::<Result<Vec<_>, _>>()?;
+         LEFT JOIN artists aa ON al.artist_id = aa.id";
+    // An in-memory database has no name to tell it from another.
+    let db = conn.path().filter(|p| !p.is_empty()).map(str::to_owned);
+    let after = match &db {
+        _ if offset == 0 => Some(i64::MIN),
+        Some(db) => WALKS
+            .lock()
+            .iter()
+            .find(|(d, o, _, at)| d == db && *o == offset && at.elapsed() < WALK_FOR)
+            .map(|w| w.2),
+        None => None,
+    };
+    let rows = match after {
+        Some(after) => conn
+            .prepare_cached(&format!("{COLUMNS} WHERE t.id > ?2 ORDER BY t.id LIMIT ?1"))?
+            .query_map(params![limit, after], row_to_track_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+        None => conn
+            .prepare_cached(&format!(
+                "{COLUMNS} WHERE t.id >= (SELECT id FROM tracks ORDER BY id LIMIT 1 OFFSET ?2)
+                 ORDER BY t.id LIMIT ?1"
+            ))?
+            .query_map(params![limit, offset], row_to_track_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    if let (Some(db), Some(last)) = (db, rows.last()) {
+        let next = offset.saturating_add(rows.len() as u32);
+        let mut walks = WALKS.lock();
+        walks.retain(|(d, o, _, at)| {
+            at.elapsed() < WALK_FOR && !(*d == db && (*o == offset || *o == next))
+        });
+        if walks.len() >= WALKS_KEPT {
+            walks.remove(0);
+        }
+        walks.push((db, next, last.id, std::time::Instant::now()));
+    }
     Ok(rows)
 }
 
@@ -1286,6 +1376,66 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    /// A walk reads every track once, in id order, and one removed mid-walk
+    /// moves none of the rest out of reach; an offset no walk reached is read
+    /// as an offset.
+    #[test]
+    fn a_page_walk_reads_each_track_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("walk.db")).unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let ids: Vec<i64> = (0..10)
+            .map(|i| {
+                let mut meta = sample_meta(&format!("Track {i}"), "Burial", "Untrue");
+                meta.path = Some(format!("/music/{i}.flac"));
+                upsert_track(&conn, &meta).unwrap()
+            })
+            .collect();
+        assert_eq!(
+            tracks_page(&conn, 3, 4)
+                .unwrap()
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            ids[4..7]
+        );
+        let mut seen = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = tracks_page(&conn, 3, offset).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len() as u32;
+            seen.extend(page.iter().map(|t| t.id));
+            if seen.len() == 3 {
+                conn.execute("DELETE FROM tracks WHERE id = ?1", [ids[0]])
+                    .unwrap();
+            }
+        }
+        assert_eq!(seen, ids);
+    }
+
+    #[test]
+    fn paths_resolve_in_one_query_as_one_by_one() {
+        let db = test_db();
+        let a = upsert_track(&db.conn, &sample_meta("A", "X", "Y")).unwrap();
+        let b = upsert_track(&db.conn, &sample_meta("B", "X", "Y")).unwrap();
+        let paths: Vec<String> = ["/music/Y/A.flac", "/music/Y/B.flac", "/nowhere.flac"]
+            .map(String::from)
+            .into();
+        let found = track_ids_by_paths(&db.conn, &paths).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found["/music/Y/A.flac"], a);
+        assert_eq!(found["/music/Y/B.flac"], b);
+        for path in &paths {
+            assert_eq!(
+                found.get(path).copied(),
+                track_id_by_path(&db.conn, path).unwrap()
+            );
+        }
     }
 
     #[test]
@@ -1907,6 +2057,15 @@ mod tests {
         .unwrap();
         crate::db::queries::cache_lyrics(&db.conn, remote_id, "lrclib", true, "[00:01.00] la")
             .unwrap();
+        // The survivor remembers LRCLIB having nothing under its old title.
+        crate::db::queries::cache_lyrics(
+            &db.conn,
+            local_id,
+            crate::db::queries::lyrics::MISS,
+            false,
+            "",
+        )
+        .unwrap();
 
         let mut fixed = bad.clone();
         fixed.title = "Sunshine Recorder".into();
@@ -3401,6 +3560,32 @@ mod tests {
         with_pinned.extend(&upcoming);
         let fits = crate::helpers::playback_window(&db, 45_000_000, &with_pinned).unwrap();
         assert_eq!(fits, 4);
+    }
+
+    /// Estimated a chunk at a time, the window still lands on the track that
+    /// crosses the limit, however deep in the queue that is.
+    #[test]
+    fn the_window_is_found_past_the_first_chunk() {
+        crate::config::isolate_config_for_tests();
+        let db = test_db();
+        let mut upcoming = Vec::new();
+        for n in 1..=600 {
+            let mut meta = sample_meta(&format!("Q{n}"), "Artist", "Long");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("long-{n}"));
+            meta.track_number = Some(n);
+            // 10MB each, reckoned at 1000kbps.
+            meta.size_bytes = None;
+            meta.bitrate = Some(1000);
+            meta.duration_ms = Some(80_000);
+            upcoming.push(upsert_track(&db.conn, &meta).unwrap());
+        }
+        // Room for 299 and a half: the 300th crosses.
+        let fits = crate::helpers::playback_window(&db, 2_995_000_000, &upcoming).unwrap();
+        assert_eq!(fits, 299);
+        let fits = crate::helpers::playback_window(&db, u64::MAX, &upcoming).unwrap();
+        assert_eq!(fits, 600);
     }
 
     #[test]

@@ -145,7 +145,7 @@ impl Database {
 
 /// Long enough to outlast a scan chunk: a writer that gives up mid-scan
 /// silently loses favourites, queue state and play counts.
-const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+pub(super) const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Run `write` without waiting for the write lock, which fails it with
 /// `SQLITE_BUSY` while a scan or sync holds the lock.
@@ -158,7 +158,11 @@ pub fn without_waiting<T, E: From<rusqlite::Error>>(
 ) -> Result<T, E> {
     conn.busy_timeout(std::time::Duration::ZERO)?;
     let result = write(conn);
-    conn.busy_timeout(BUSY_TIMEOUT)?;
+    // The write's own outcome is what the caller needs; the pool sets the
+    // timeout again on return should this fail.
+    if let Err(e) = conn.busy_timeout(BUSY_TIMEOUT) {
+        log::warn!("restoring the busy timeout: {e}");
+    }
     result
 }
 

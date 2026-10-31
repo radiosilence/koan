@@ -11,7 +11,7 @@
 //! because the same track may appear twice and both copies have to keep their
 //! place.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -602,37 +602,68 @@ pub(crate) fn replace_entries(
     track_ids: &[i64],
 ) -> Result<bool, DbError> {
     super::atomically(conn, || {
-        let existing = entry_snapshot(conn, id)?;
+        let existing = positioned_entries(conn, id)?;
         if existing.iter().map(|e| e.1).eq(track_ids.iter().copied()) {
             return Ok(false);
         }
-        let mut spare: std::collections::HashMap<i64, std::collections::VecDeque<i64>> =
-            std::collections::HashMap::new();
-        for &(entry, track) in &existing {
+        let mut spare: HashMap<i64, VecDeque<i64>> = HashMap::new();
+        for &(entry, track, _) in &existing {
             spare.entry(track).or_default().push_back(entry);
         }
         let merged: Vec<(Option<i64>, i64)> = track_ids
             .iter()
             .map(|&t| (spare.get_mut(&t).and_then(|q| q.pop_front()), t))
             .collect();
-        let mut delete = conn.prepare_cached("DELETE FROM playlist_tracks WHERE id = ?1")?;
-        for entry in spare.into_values().flatten() {
-            delete.execute(params![entry])?;
-        }
-        let mut update =
-            conn.prepare_cached("UPDATE playlist_tracks SET position = ?2 WHERE id = ?1")?;
-        let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
-        for (position, (entry, track)) in merged.iter().enumerate() {
-            let position = -(position as i64) - 1;
-            match entry {
-                Some(entry) => update.execute(params![entry, position])?,
-                None => insert.execute(params![id, position, track])?,
-            };
-        }
-        conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
+        write_order(conn, id, &existing, spare.into_values().flatten(), &merged)?;
         touch(conn, id)?;
         Ok(true)
     })
+}
+
+/// A playlist's entries in order: id, track and stored position.
+fn positioned_entries(conn: &Connection, id: i64) -> Result<Vec<(i64, i64, i64)>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, track_id, position FROM playlist_tracks WHERE playlist_id = ?1
+         ORDER BY position",
+    )?;
+    let rows = stmt.query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Delete `gone`, then lay `merged` out at positions 0.., each an existing
+/// entry or a track to insert. Only entries whose position changes are
+/// written: one track added to a long playlist moves nothing ahead of it.
+/// Every entry the playlist keeps must be in `merged`, so the positions an
+/// unmoved entry holds are its own.
+fn write_order(
+    conn: &Connection,
+    id: i64,
+    existing: &[(i64, i64, i64)],
+    gone: impl IntoIterator<Item = i64>,
+    merged: &[(Option<i64>, i64)],
+) -> Result<(), DbError> {
+    let mut delete = conn.prepare_cached("DELETE FROM playlist_tracks WHERE id = ?1")?;
+    for entry in gone {
+        delete.execute(params![entry])?;
+    }
+    let was: HashMap<i64, i64> = existing.iter().map(|&(e, _, p)| (e, p)).collect();
+    let mut update =
+        conn.prepare_cached("UPDATE playlist_tracks SET position = ?2 WHERE id = ?1")?;
+    let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
+    for (position, (entry, track)) in merged.iter().enumerate() {
+        let position = position as i64;
+        match entry {
+            Some(entry) if was.get(entry) == Some(&position) => {}
+            Some(entry) => {
+                update.execute(params![entry, -position - 1])?;
+            }
+            None => {
+                insert.execute(params![id, -position - 1, track])?;
+            }
+        }
+    }
+    conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
+    Ok(())
 }
 
 /// A playlist's entries, in order: each one's id and its track. What an undo
@@ -695,49 +726,45 @@ fn merge_server_tracks_inner(
     id: i64,
     server_track_ids: &[i64],
 ) -> Result<(), DbError> {
-    let existing: Vec<(i64, i64, bool)> = {
+    let existing: Vec<(i64, i64, i64, bool)> = {
         let mut stmt = conn.prepare(
-            "SELECT pt.id, pt.track_id, t.remote_id IS NULL FROM playlist_tracks pt
+            "SELECT pt.id, pt.track_id, pt.position, t.remote_id IS NULL FROM playlist_tracks pt
              JOIN tracks t ON t.id = pt.track_id
              WHERE pt.playlist_id = ?1 ORDER BY pt.position",
         )?;
-        stmt.query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<Result<Vec<_>, _>>()?
+        stmt.query_map(params![id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
     };
 
-    let mut merged: Vec<(Option<i64>, i64)> = server_track_ids.iter().map(|&t| (None, t)).collect();
-    for (index, &(entry, track, local_only)) in existing.iter().enumerate() {
-        if local_only {
-            merged.insert(index.min(merged.len()), (Some(entry), track));
+    // Each local-only entry at its old index, the server's tracks filling the
+    // places between in order; past the end of those, at the end.
+    let mut merged: Vec<(Option<i64>, i64)> = Vec::with_capacity(server_track_ids.len());
+    let mut server = server_track_ids.iter();
+    for (index, &(entry, track, _, local_only)) in existing.iter().enumerate() {
+        if !local_only {
+            continue;
         }
-    }
-    let mut spare: Vec<(i64, i64)> = existing
-        .iter()
-        .filter(|(_, _, local_only)| !local_only)
-        .map(|&(entry, track, _)| (entry, track))
-        .collect();
-    for (entry, track) in merged.iter_mut().filter(|(e, _)| e.is_none()) {
-        if let Some(i) = spare.iter().position(|&(_, t)| t == *track) {
-            *entry = Some(spare.remove(i).0);
+        while merged.len() < index {
+            let Some(&t) = server.next() else { break };
+            merged.push((None, t));
         }
+        merged.push((Some(entry), track));
     }
-    let mut delete = conn.prepare_cached("DELETE FROM playlist_tracks WHERE id = ?1")?;
-    for (entry, _) in spare {
-        delete.execute(params![entry])?;
-    }
+    merged.extend(server.map(|&t| (None, t)));
 
-    let mut update =
-        conn.prepare_cached("UPDATE playlist_tracks SET position = ?2 WHERE id = ?1")?;
-    let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
-    for (position, (entry, track)) in merged.iter().enumerate() {
-        let position = -(position as i64) - 1;
-        match entry {
-            Some(entry) => update.execute(params![entry, position])?,
-            None => insert.execute(params![id, position, track])?,
-        };
+    let mut spare: HashMap<i64, VecDeque<i64>> = HashMap::new();
+    for &(entry, track, _, local_only) in &existing {
+        if !local_only {
+            spare.entry(track).or_default().push_back(entry);
+        }
     }
-    conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
-    renumber(conn, id)
+    for (entry, track) in merged.iter_mut().filter(|(e, _)| e.is_none()) {
+        *entry = spare.get_mut(track).and_then(|q| q.pop_front());
+    }
+    let existing: Vec<(i64, i64, i64)> = existing.iter().map(|&(e, t, p, _)| (e, t, p)).collect();
+    write_order(conn, id, &existing, spare.into_values().flatten(), &merged)
 }
 
 /// Up to four covers for the playlist's tile, one per album.
@@ -859,6 +886,60 @@ mod tests {
         drop(tx);
 
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), [a]);
+    }
+
+    fn remote_track(conn: &Connection, title: &str) -> i64 {
+        let mut meta = sample_meta(title, "Artist", "Server");
+        meta.path = None;
+        meta.source = "remote".into();
+        meta.remote_id = Some(format!("song-{title}"));
+        meta.album_remote_id = Some("album-server".into());
+        upsert_track(conn, &meta).unwrap()
+    }
+
+    #[test]
+    fn a_merge_keeps_local_entries_in_place_and_entry_ids() {
+        let conn = test_conn();
+        let (r1, r2, r3) = (
+            remote_track(&conn, "R1"),
+            remote_track(&conn, "R2"),
+            remote_track(&conn, "R3"),
+        );
+        let (l1, l2) = (track(&conn, "L1", "X"), track(&conn, "L2", "X"));
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        add_tracks(&conn, id, &[r1, l1, r2, l2]).unwrap();
+        let before = playlist_entry_ids(&conn, id).unwrap();
+
+        // The server reordered, dropped r1 and gained r3.
+        merge_server_tracks(&conn, id, &[r2, r3]).unwrap();
+        assert_eq!(playlist_track_ids(&conn, id).unwrap(), [r2, l1, r3, l2]);
+        let after = playlist_entry_ids(&conn, id).unwrap();
+        assert_eq!(after[0], before[2], "r2 keeps its entry");
+        assert_eq!(after[1], before[1], "l1 keeps its entry");
+        assert_eq!(after[3], before[3], "l2 keeps its entry");
+
+        // A list shorter than the local entries' old places puts them last.
+        merge_server_tracks(&conn, id, &[]).unwrap();
+        assert_eq!(playlist_track_ids(&conn, id).unwrap(), [l1, l2]);
+    }
+
+    #[test]
+    fn replacing_with_one_more_track_writes_only_that_entry() {
+        let conn = test_conn();
+        let tracks: Vec<i64> = (0..50)
+            .map(|n| track(&conn, &format!("T{n}"), "X"))
+            .collect();
+        let id = create_playlist(&conn, LOCAL_USER, "Smart", None).unwrap();
+        add_tracks(&conn, id, &tracks[..49]).unwrap();
+        let before = conn.total_changes();
+        assert!(replace_entries(&conn, id, &tracks).unwrap());
+        // The insert, its flip from a negative position, and the touch.
+        assert!(
+            conn.total_changes() - before <= 3,
+            "{} rows written",
+            conn.total_changes() - before
+        );
+        assert_eq!(playlist_track_ids(&conn, id).unwrap(), tracks);
     }
 
     #[test]

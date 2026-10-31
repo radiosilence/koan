@@ -1077,7 +1077,8 @@ fn serve(
         local,
         stop,
         greeted: false,
-        sent: None,
+        sent: Default::default(),
+        budget: Budget::default(),
         waker: waker.clone(),
         levels: None,
         answers: Default::default(),
@@ -1097,7 +1098,9 @@ struct Serving<'a> {
     local: &'a Local,
     stop: &'a Arc<Stop>,
     greeted: bool,
-    sent: Option<(LinkState, Instant)>,
+    sent: crate::remote::link::SentState,
+    /// Spent by each command that names tracks.
+    budget: Budget,
     waker: Arc<Waker>,
     /// Set while the device at the other end has bars on screen for this
     /// one. Dropped with the connection, which stops the frames.
@@ -1178,7 +1181,7 @@ impl Serving<'_> {
                     self.reports = Some(proof::Session::reports(me, &id, &listen_nonce, &nonce));
                     // Sent again, signed: a state slipped in ahead of the
                     // handshake would otherwise stand until the next change.
-                    self.sent = None;
+                    self.sent = Default::default();
                 }
                 self.pending
                     .extend(frame(&ProofFrame::Proof { verified, sig }));
@@ -1238,10 +1241,53 @@ impl Serving<'_> {
                     pending.finish(AckOutcome::Done);
                 }
             }
-            Admitted::Command(cmd, source, pending) => {
+            Admitted::Command(mut cmd, source, pending) => {
+                if !cmd.track_ids_mut().is_empty() && !self.budget.take() {
+                    log::warn!("nearby: commands naming tracks arriving too fast; refused");
+                    if let Some(pending) = pending {
+                        pending.finish(AckOutcome::Failed {
+                            error: "too many commands at once".into(),
+                        });
+                    }
+                    return;
+                }
                 (self.local.on_command)(cmd, source, pending)
             }
             Admitted::Neither => {}
+        }
+    }
+}
+
+/// How fast a peer may send commands that name tracks, each of which costs a
+/// lookup and may start a sync: a burst, then a few a second. The rest of the
+/// playback set is cheap, and a seek bar dragged sends many.
+struct Budget {
+    tokens: f64,
+    at: Instant,
+}
+
+impl Budget {
+    const BURST: f64 = 16.0;
+    const PER_SECOND: f64 = 4.0;
+
+    fn take(&mut self) -> bool {
+        let now = Instant::now();
+        let earned = now.duration_since(self.at).as_secs_f64() * Self::PER_SECOND;
+        self.tokens = (self.tokens + earned).min(Self::BURST);
+        self.at = now;
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Self {
+            tokens: Self::BURST,
+            at: Instant::now(),
         }
     }
 }
@@ -1274,14 +1320,11 @@ impl wire::Session for Serving<'_> {
             self.greeted = true;
         }
         out.append(&mut self.answers.lock());
-        let now = for_the_network((self.local.state)(), full_control());
-        if self
+        if let Some(now) = self
             .sent
-            .as_ref()
-            .is_none_or(|(s, at)| now.differs(s, at.elapsed()))
+            .next(|| for_the_network((self.local.state)(), full_control()))
         {
-            out.push(LinkReport::State(now.clone()));
-            self.sent = Some((now, Instant::now()));
+            out.push(LinkReport::State(now));
         }
         if let Some(f) = self.levels.as_mut().and_then(|w| w.take()) {
             out.push(LinkReport::Levels { f });
@@ -1462,6 +1505,7 @@ fn spawn_dialer(r: &mut Running, key: String, addr: String) {
 /// device.
 fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<AtomicBool>) {
     let mut wait = RETRY_MIN;
+    let mut reached = false;
     while !stop.stopped() {
         let addr = at.lock().clone();
         let mut served = false;
@@ -1505,6 +1549,9 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     pending: Vec::new(),
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
+                // It answered with a hello: it is on this network, even if it
+                // was hung up on as a duplicate of a connection it made here.
+                reached |= session.id.is_some();
                 served = session
                     .id
                     .take()
@@ -1520,8 +1567,7 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     .is_some()
                     && started.elapsed() >= SERVED_LONG_ENOUGH;
                 if session.this_device {
-                    FOUND.lock().retain(|(k, _)| *k != key);
-                    devices::touch();
+                    retire(&key, &stop);
                     return;
                 }
                 if let Err(e) = result {
@@ -1536,6 +1582,11 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                 note(&key, Some(explain(&e)));
             }
         }
+        if wait >= RETRY_MAX && !reached && unannounced(&key) {
+            log::debug!("nearby: {addr}: not here; dialled again when announced");
+            retire(&key, &stop);
+            return;
+        }
         let mut fds = [libc::pollfd {
             fd: stop.waker_fd(),
             events: libc::POLLIN,
@@ -1546,6 +1597,40 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
         stop.drain();
         wait = next_wait(wait, served, redial.swap(false, Ordering::Relaxed));
     }
+}
+
+/// A device dialled only because an earlier run reached it, which Bonjour has
+/// not announced, on a network where Bonjour has announced another device this
+/// run. A network that filters mDNS announces nothing, and there, as where
+/// there is no Bonjour at all, a remembered device is dialled for as long as it
+/// is remembered.
+fn unannounced(key: &str) -> bool {
+    cfg!(any(target_vendor = "apple", target_os = "android"))
+        && HEARD_BONJOUR.load(Ordering::Relaxed)
+        && key.starts_with("id:")
+        && FOUND
+            .lock()
+            .iter()
+            .find(|(k, _)| k == key)
+            .is_some_and(|(_, f)| f.bonjour.is_none())
+}
+
+/// Bonjour has announced a device other than this one since the process
+/// started: it works on this network.
+static HEARD_BONJOUR: AtomicBool = AtomicBool::new(false);
+
+/// The dialer `stop` belongs to has finished: take it and its listing down,
+/// unless another has replaced it under `key` since.
+fn retire(key: &str, stop: &Arc<Stop>) {
+    if let Some(r) = RUNNING.lock().as_mut()
+        && r.dialers
+            .get(key)
+            .is_some_and(|d| Arc::ptr_eq(&d.stop, stop))
+    {
+        r.dialers.remove(key);
+        FOUND.lock().retain(|(k, _)| k != key);
+    }
+    devices::touch();
 }
 
 /// How long to wait before dialling again.
@@ -1905,11 +1990,18 @@ fn announced(
         return;
     }
     set_blocked(false);
+    HEARD_BONJOUR.store(true, Ordering::Relaxed);
     let key = match &id {
         Some(id) => format!("id:{id}"),
         None => format!("bonjour:{name}"),
     };
     let addr = format!("{}:{port}", host.trim_end_matches('.'));
+    // Held throughout, so nearby turned off while this resolved cannot be
+    // followed by a dialer started here.
+    let mut running = RUNNING.lock();
+    let Some(r) = running.as_mut().filter(|r| !r.off) else {
+        return;
+    };
     {
         let mut found = FOUND.lock();
         let problem = found
@@ -1930,8 +2022,6 @@ fn announced(
         ));
     }
     devices::touch();
-    let mut running = RUNNING.lock();
-    let Some(r) = running.as_mut() else { return };
     match r.dialers.get(&key) {
         // Already dialled, from a previous run's address or an earlier
         // announcement: dial where it is now, and now rather than when the
@@ -2370,6 +2460,37 @@ pub(crate) mod bonjour {
         err: i32,
     }
 
+    /// A browse's `Browsed`, on the heap and reached only through one raw
+    /// pointer: the callbacks write through it while the browse reads between
+    /// them, and a reference held across the two would alias the callbacks'.
+    struct Context(*mut Browsed);
+
+    impl Context {
+        fn new() -> Self {
+            Self(Box::into_raw(Box::default()))
+        }
+
+        fn ptr(&self) -> *mut c_void {
+            self.0.cast()
+        }
+
+        /// Between callbacks: every one runs inside `DNSServiceProcessResult`
+        /// on the browsing thread, so none is running while this is held.
+        fn get(&mut self) -> &mut Browsed {
+            // SAFETY: from `Box::into_raw`, freed only on drop; see above for
+            // why nothing else reaches it meanwhile.
+            unsafe { &mut *self.0 }
+        }
+    }
+
+    impl Drop for Context {
+        fn drop(&mut self) {
+            // SAFETY: from `Box::into_raw`, freed once. Its browse is
+            // deallocated before this drops, so no callback follows.
+            drop(unsafe { Box::from_raw(self.0) });
+        }
+    }
+
     extern "C" fn on_browse(
         _: Ref,
         flags: u32,
@@ -2387,6 +2508,9 @@ pub(crate) mod bonjour {
             let browsed = &mut *(context as *mut Browsed);
             if err != 0 {
                 browsed.err = err;
+                return;
+            }
+            if name.is_null() || regtype.is_null() || domain.is_null() {
                 return;
             }
             browsed.seen.push(Seen {
@@ -2466,7 +2590,7 @@ pub(crate) mod bonjour {
         use std::sync::atomic::Ordering;
         RESTART_ASKED.store(false, Ordering::Relaxed);
         let regtype = CString::new(super::SERVICE).map_err(|e| e.to_string())?;
-        let mut browsed = Browsed::default();
+        let mut browsed = Context::new();
         let mut interfaces: std::collections::HashMap<String, usize> = Default::default();
         // What was announced before this browse began: anything not announced
         // again shortly is gone, withdrawn while this app was not looking.
@@ -2487,7 +2611,7 @@ pub(crate) mod bonjour {
                 regtype.as_ptr(),
                 std::ptr::null(),
                 on_browse,
-                (&mut browsed as *mut Browsed).cast(),
+                browsed.ptr(),
             )
         };
         if err != 0 {
@@ -2539,12 +2663,12 @@ pub(crate) mod bonjour {
             if unsafe { DNSServiceProcessResult(sd) } != 0 {
                 return finish(sd, Err("the responder went away".into()));
             }
-            let err = std::mem::take(&mut browsed.err);
+            let err = std::mem::take(&mut browsed.get().err);
             if err != 0 {
                 super::set_blocked(err == POLICY_DENIED);
                 return finish(sd, Err(format!("browse error {err}")));
             }
-            for s in browsed.seen.drain(..) {
+            for s in std::mem::take(&mut browsed.get().seen) {
                 let name = s.name.to_string_lossy().into_owned();
                 // Announced once per interface it is reached on: gone only
                 // when gone from all of them, found on the first.
@@ -2598,19 +2722,24 @@ pub(crate) mod bonjour {
         txt: *const u8,
         context: *mut c_void,
     ) {
-        if err != 0 {
+        if err != 0 || host.is_null() {
             return;
         }
         // SAFETY: the context is `resolve_raw`'s `out`, alive for the call
         // that runs this; the host and TXT record are the responder's, valid
-        // here.
+        // here, the record for `txt_len` bytes when there is one.
         unsafe {
             let out = &mut *(context as *mut Option<(u32, String, u16, Vec<u8>)>);
+            let txt = if txt.is_null() || txt_len == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(txt, txt_len as usize).to_vec()
+            };
             *out = Some((
                 interface,
                 CStr::from_ptr(host).to_string_lossy().into_owned(),
                 u16::from_be(port),
-                std::slice::from_raw_parts(txt, txt_len as usize).to_vec(),
+                txt,
             ));
         }
     }
@@ -2686,7 +2815,7 @@ pub(crate) mod bonjour {
         let Ok(regtype) = CString::new(regtype) else {
             return Vec::new();
         };
-        let mut browsed = Browsed::default();
+        let mut browsed = Context::new();
         let mut sd: Ref = std::ptr::null_mut();
         // SAFETY: `browsed` outlives the reference, which is deallocated
         // before this returns.
@@ -2698,7 +2827,7 @@ pub(crate) mod bonjour {
                 regtype.as_ptr(),
                 std::ptr::null(),
                 on_browse,
-                (&mut browsed as *mut Browsed).cast(),
+                browsed.ptr(),
             )
         };
         if err != 0 {
@@ -2725,16 +2854,16 @@ pub(crate) mod bonjour {
             if unsafe { DNSServiceProcessResult(sd) } != 0 {
                 break;
             }
-            if browsed.err != 0 {
-                log::info!("bonjour: browsing {regtype:?} failed ({})", browsed.err);
+            let err = browsed.get().err;
+            if err != 0 {
+                log::info!("bonjour: browsing {regtype:?} failed ({err})");
                 break;
             }
         }
         // SAFETY: the reference DNSServiceBrowse returned, freed once.
         unsafe { DNSServiceRefDeallocate(sd) };
         let mut names = std::collections::HashSet::new();
-        browsed
-            .seen
+        std::mem::take(&mut browsed.get().seen)
             .into_iter()
             .filter(|s| s.add && names.insert(s.name.clone()))
             .filter_map(|s| {
@@ -3046,7 +3175,8 @@ mod tests {
             local: &r.local,
             stop: &r.stop,
             greeted: false,
-            sent: None,
+            sent: Default::default(),
+            budget: Budget::default(),
             waker: Waker::new().unwrap(),
             levels: None,
             answers: Default::default(),
@@ -3203,7 +3333,7 @@ mod tests {
         // An older dialler's nonce carries no mark.
         auth_with(&mut s, "phone", "b2xkZXI=".into());
         assert!(answer(&mut s).0);
-        s.sent = None;
+        s.sent = Default::default();
         let out = wire::Session::outgoing(&mut s);
         assert!(!out.is_empty());
         assert!(

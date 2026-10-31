@@ -305,13 +305,21 @@ impl Loader<RowOf> for DbLoader {
 
     async fn load(&self, keys: &[RowOf]) -> Result<HashMap<RowOf, Self::Value>, Self::Error> {
         self.batch(keys, |db, keys| {
+            // One query per kind asked for, however many uids.
             let mut out = HashMap::new();
-            for key in keys {
-                if let Some(id) = queries::id_for_uid(&db.conn, key.0, &key.1)
-                    .map_err(|e| internal_error("db", e))?
-                {
-                    out.insert(key, id);
+            for kind in [
+                UidKind::Artist,
+                UidKind::Album,
+                UidKind::Track,
+                UidKind::Playlist,
+            ] {
+                if !keys.iter().any(|k| k.0 == kind) {
+                    continue;
                 }
+                let uids = keys.iter().filter(|k| k.0 == kind).map(|k| k.1.as_str());
+                let found = queries::ids_for_uids(&db.conn, kind, uids)
+                    .map_err(|e| internal_error("db", e))?;
+                out.extend(found.into_iter().map(|(uid, id)| (RowOf(kind, uid), id)));
             }
             Ok(out)
         })

@@ -303,9 +303,15 @@ impl Session {
         (token, url, art)
     }
 
-    /// Stop serving every token but these.
+    /// Stop serving every token but these, ending their connections.
     pub fn retain(&self, tokens: &[&str]) {
         self.listener.retain(tokens);
+    }
+
+    /// Stop serving every token but these, leaving connections open on
+    /// them to finish.
+    pub fn revoke(&self, tokens: &[&str]) {
+        self.listener.revoke(tokens);
     }
 
     /// The token in a URL this session handed out.
@@ -499,7 +505,11 @@ impl Shared {
             .and_then(|r| r.error_for_status())
             .map_err(|e| e.to_string())?;
         let renewed = subscription(&sub.service, &response)?;
-        self.trust.sids.lock().push(renewed.sid.clone());
+        // A renewal usually keeps its SID; one that does not ends the old.
+        let mut sids = self.trust.sids.lock();
+        sids.retain(|s| *s != sub.sid);
+        sids.push(renewed.sid.clone());
+        drop(sids);
         Ok(renewed)
     }
 

@@ -1125,6 +1125,11 @@ fn follow_moved(db: &Database, moved: &[(PathBuf, PathBuf)]) {
 /// Execute a single file move: write the database rows first, then move the file.
 /// A constraint violation therefore aborts before anything on disk changes, and a
 /// failed rename rolls the rows back.
+///
+/// A file bound for another filesystem is copied beside its destination before
+/// the write transaction opens, so the lock is held for a rename rather than
+/// for the copy of a whole file across devices; the source goes once the rows
+/// commit.
 fn execute_single_move(
     db: &Database,
     file_move: &FileMove,
@@ -1144,20 +1149,30 @@ fn execute_single_move(
     let size = source_meta.len();
     let mtime = mtime_secs(&source_meta);
 
-    let tx = crate::db::queries::write_transaction(&db.conn)?;
-    log_move(
-        &tx,
-        batch_id,
-        file_move.track_id,
-        &file_move.from,
-        to,
-        Some(size),
-        mtime,
-    )?;
-    rewrite_path_references(&tx, &file_move.from, to)?;
-
-    // Dropping `tx` on the way out of this `?` rolls the rows back.
-    move_file(&file_move.from, to)?;
+    let staged = stage_across_devices(&file_move.from, to)?;
+    // The copy goes however this returns, a panic included; once renamed
+    // into place there is nothing left at its name to remove.
+    let _staged_copy = staged.as_deref().map(RemoveOnDrop);
+    let rows = (|| {
+        let tx = crate::db::queries::write_transaction(&db.conn)?;
+        log_move(
+            &tx,
+            batch_id,
+            file_move.track_id,
+            &file_move.from,
+            to,
+            Some(size),
+            mtime,
+        )?;
+        rewrite_path_references(&tx, &file_move.from, to)?;
+        // Dropping `tx` on the way out of this `?` rolls the rows back.
+        match &staged {
+            Some(temp) => place_staged(temp, to)?,
+            None => move_file(&file_move.from, to)?,
+        }
+        Ok::<_, OrganizeError>(tx)
+    })();
+    let tx = rows?;
 
     let mut moved_ancillary: Vec<(&PathBuf, PathBuf)> = Vec::new();
     let mut failure = None;
@@ -1207,8 +1222,25 @@ fn execute_single_move(
         for (anc_from, anc_to) in moved_ancillary {
             let _ = move_file(&anc_to, anc_from);
         }
-        let _ = move_file(to, &file_move.from);
+        match staged {
+            // The source was never touched; only the copy goes.
+            Some(_) => {
+                let _ = std::fs::remove_file(to);
+            }
+            None => {
+                let _ = move_file(to, &file_move.from);
+            }
+        }
         return Err(e);
+    }
+
+    if staged.is_some()
+        && let Err(e) = std::fs::remove_file(&file_move.from)
+    {
+        log::warn!(
+            "moved {} across devices but could not remove the original: {e}",
+            file_move.from.display()
+        );
     }
 
     if let Some(source_dir) = file_move.from.parent() {
@@ -1504,16 +1536,73 @@ fn transfer(from: &Path, to: &Path) -> Result<(), OrganizeError> {
 /// Copy to a temporary file, flush it to disk, verify its length, and only then
 /// drop the original. A crash at any point leaves the source intact.
 fn copy_across_devices(from: &Path, to: &Path) -> Result<(), OrganizeError> {
+    let temp = temp_sibling(to);
+    copy_verified(from, &temp)?;
+    if let Err(e) = std::fs::rename(&temp, to) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.into());
+    }
+    std::fs::remove_file(from)?;
+    Ok(())
+}
+
+/// When `from` lives on another filesystem than `to`'s directory, a verified
+/// copy of it under a temporary name beside `to`, which [`place_staged`] then
+/// renames into place. `None` when a rename will do.
+fn stage_across_devices(from: &Path, to: &Path) -> Result<Option<PathBuf>, OrganizeError> {
+    let (Some(source), Some(dest)) = (device_id(from), to.parent().and_then(device_id)) else {
+        return Ok(None);
+    };
+    if source == dest {
+        return Ok(None);
+    }
+    let temp = temp_sibling(to);
+    copy_verified(from, &temp)?;
+    Ok(Some(temp))
+}
+
+/// Removes a file when dropped.
+struct RemoveOnDrop<'a>(&'a Path);
+
+impl Drop for RemoveOnDrop<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0);
+    }
+}
+
+/// Rename a staged copy to its destination, refusing one already there as
+/// [`move_file`] does. The copy stays where it is on failure, for the caller.
+fn place_staged(temp: &Path, to: &Path) -> Result<(), OrganizeError> {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)
+    {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+            return Err(OrganizeError::DestinationExists(to.to_path_buf()));
+        }
+        Err(e) => return Err(e.into()),
+    }
+    if let Err(e) = std::fs::rename(temp, to) {
+        let _ = std::fs::remove_file(to);
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+/// Copy `from` to the new file `temp`, flushed to disk and its length checked.
+/// Nothing is left at `temp` on failure.
+fn copy_verified(from: &Path, temp: &Path) -> Result<(), OrganizeError> {
     let source_meta = std::fs::metadata(from)?;
     let expected = source_meta.len();
-    let temp = temp_sibling(to);
 
     let copied = {
         let mut reader = std::fs::File::open(from)?;
         let mut writer = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&temp)?;
+            .open(temp)?;
         let copied = std::io::copy(&mut reader, &mut writer)?;
         // std::io::copy returning Ok only means the bytes reached the page cache.
         writer.sync_all()?;
@@ -1523,21 +1612,15 @@ fn copy_across_devices(from: &Path, to: &Path) -> Result<(), OrganizeError> {
         copied
     };
 
-    let written = std::fs::metadata(&temp).map(|m| m.len()).unwrap_or(0);
+    let written = std::fs::metadata(temp).map(|m| m.len()).unwrap_or(0);
     if copied != expected || written != expected {
-        let _ = std::fs::remove_file(&temp);
+        let _ = std::fs::remove_file(temp);
         return Err(OrganizeError::ShortCopy {
             path: from.to_path_buf(),
             expected,
             copied: copied.min(written),
         });
     }
-
-    if let Err(e) = std::fs::rename(&temp, to) {
-        let _ = std::fs::remove_file(&temp);
-        return Err(e.into());
-    }
-    std::fs::remove_file(from)?;
     Ok(())
 }
 
@@ -2335,6 +2418,42 @@ mod tests {
         assert!(matches!(err, OrganizeError::DestinationExists(_)));
         assert_eq!(std::fs::read(&to).unwrap(), b"keep me".to_vec());
         assert_eq!(std::fs::read(&from).unwrap(), b"source".to_vec());
+    }
+
+    /// A staged copy is refused an occupied destination like any move, and
+    /// left for the caller to remove.
+    #[test]
+    fn a_staged_copy_refuses_an_occupied_destination() {
+        let tmp = TempDir::new().unwrap();
+        let from = tmp.path().join("a.flac");
+        let to = tmp.path().join("b.flac");
+        std::fs::write(&from, b"source").unwrap();
+        std::fs::write(&to, b"keep me").unwrap();
+        let temp = temp_sibling(&to);
+        copy_verified(&from, &temp).unwrap();
+
+        let err = place_staged(&temp, &to).unwrap_err();
+        assert!(matches!(err, OrganizeError::DestinationExists(_)));
+        assert_eq!(std::fs::read(&to).unwrap(), b"keep me".to_vec());
+        assert_eq!(std::fs::read(&temp).unwrap(), b"source".to_vec());
+
+        std::fs::remove_file(&to).unwrap();
+        place_staged(&temp, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"source".to_vec());
+        assert!(!temp.exists());
+        assert!(from.exists(), "the source goes only once the rows commit");
+    }
+
+    #[test]
+    fn a_move_on_one_filesystem_is_not_staged() {
+        let tmp = TempDir::new().unwrap();
+        let from = tmp.path().join("a.flac");
+        std::fs::write(&from, b"source").unwrap();
+        assert!(
+            stage_across_devices(&from, &tmp.path().join("b.flac"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]

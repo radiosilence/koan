@@ -13,13 +13,18 @@ pub struct CachedLyrics {
     pub fetched_at: i64,
 }
 
-/// Retrieve cached lyrics for a track.
+/// The source a track LRCLIB had nothing for is stored under, so asking again
+/// waits for [`crate::lyrics`]'s recheck rather than happening on every play.
+pub const MISS: &str = "none";
+
+/// Retrieve cached lyrics for a track. A remembered miss is not lyrics.
 pub fn get_cached_lyrics(
     conn: &Connection,
     track_id: i64,
 ) -> Result<Option<CachedLyrics>, DbError> {
     let result = conn.query_row(
-        "SELECT content, synced, source, fetched_at FROM lyrics_cache WHERE track_id = ?1",
+        "SELECT content, synced, source, fetched_at FROM lyrics_cache
+          WHERE track_id = ?1 AND source != 'none'",
         params![track_id],
         |row| {
             Ok(CachedLyrics {
@@ -36,6 +41,18 @@ pub fn get_cached_lyrics(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
     }
+}
+
+/// When LRCLIB was last found to have nothing for the track, if it was.
+pub fn lyrics_missed_at(conn: &Connection, track_id: i64) -> Result<Option<i64>, DbError> {
+    use rusqlite::OptionalExtension;
+    Ok(conn
+        .query_row(
+            "SELECT fetched_at FROM lyrics_cache WHERE track_id = ?1 AND source = ?2",
+            params![track_id, MISS],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 /// Restart a cached copy's clock, leaving the copy as it is.

@@ -312,8 +312,12 @@ pub fn download_client() -> reqwest::Result<reqwest::blocking::Client> {
 }
 
 /// HTTP client for small JSON API calls, where a total request deadline is correct.
+///
+/// Idle connections are capped per host: a burst of cover fetches would
+/// otherwise leave one parked socket per request until the idle timeout.
 pub fn api_client() -> reqwest::Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
+        .pool_max_idle_per_host(16)
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(API_TIMEOUT)
         .user_agent(USER_AGENT)

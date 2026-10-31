@@ -23,7 +23,8 @@ pub(super) enum Planned {
     Delay(Vec<usize>),
     /// `rows[o]`: the `(input, gain)` pairs output channel `o` is made of.
     Mix(Vec<Vec<(usize, f64)>>),
-    /// Each channel's curve, where it has one.
+    /// Each channel's curve, where it has one, its points in order of
+    /// frequency (`sorted`).
     Graphic(Vec<Option<GraphicEq>>),
 }
 
@@ -60,11 +61,19 @@ pub(super) fn plan(filters: &[DspFilter], rate: u32, channels: usize) -> Vec<Pla
                 }
             }
             DspFilter::Mix(m) => out.push(Planned::Mix(mix_rows(m, channels))),
-            DspFilter::Graphic(g) => out.push(Planned::Graphic(
-                (0..channels)
-                    .map(|ch| applies(&g.channels, ch).then(|| g.clone()))
-                    .collect(),
-            )),
+            DspFilter::Graphic(g) => {
+                // Sorted once here: the gain bound reads the curve at every
+                // frequency it checks, a bin at a time with an impulse.
+                let g = GraphicEq {
+                    points: sorted(g),
+                    ..g.clone()
+                };
+                out.push(Planned::Graphic(
+                    (0..channels)
+                        .map(|ch| applies(&g.channels, ch).then(|| g.clone()))
+                        .collect(),
+                ))
+            }
         }
     }
     out
@@ -239,7 +248,7 @@ pub(super) fn gain_matrix(plan: &[Planned], channels: usize, w: f64, rate: u32) 
                 let hz = w * rate as f64 / TAU;
                 for (c, curve) in curves.iter().enumerate() {
                     if let Some(g) = curve {
-                        scale(&mut m, c, 10f64.powf(curve_db(&sorted(g), hz) / 20.0));
+                        scale(&mut m, c, 10f64.powf(curve_db(&g.points, hz) / 20.0));
                     }
                 }
             }
@@ -265,6 +274,10 @@ fn sorted(g: &GraphicEq) -> Vec<(f64, f64)> {
 /// The curve's gain at `hz`: interpolated against log frequency, held past
 /// either end.
 fn curve_db(points: &[(f64, f64)], hz: f64) -> f64 {
+    debug_assert!(
+        points.windows(2).all(|w| w[0].0 <= w[1].0),
+        "unsorted curve"
+    );
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return 0.0;
     };

@@ -681,9 +681,8 @@ struct RainbowPulse: PlatformViewRepresentable {
     }
 }
 
-final class RainbowPulseView: LayerView, LevelsListener {
+final class RainbowPulseView: LevelsView {
     private let disco = CAGradientLayer()
-    weak var source: PlayingLevels?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -706,7 +705,7 @@ final class RainbowPulseView: LayerView, LevelsListener {
 
     /// A frame from the analyser: the low band, mostly, so it breathes with
     /// the beat. Gently: from a tint to a little more than one.
-    func apply(_ bands: [Double]) {
+    override func apply(_ bands: [Double]) {
         let level = bands.isEmpty ? 0 : (bands[0] * 0.6 + bands.dropFirst().reduce(0, +) * 0.2)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
