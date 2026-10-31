@@ -101,8 +101,9 @@ pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::
 pub struct UiState {
     pool: Arc<Pool>,
     covers: Arc<Covers>,
-    /// The codecs and genres the filters offer, with when they were read.
-    options: Arc<std::sync::Mutex<Option<(std::time::Instant, pages::Options)>>>,
+    /// The codecs and genres the filters offer, with the `library_stamp` they
+    /// were read at.
+    options: Arc<std::sync::Mutex<Option<(u64, pages::Options)>>>,
     auth: AuthRouteState,
     auth_enabled: bool,
     /// `graphql.setup_wizard`: whether `/setup` may make the first admin.

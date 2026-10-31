@@ -63,6 +63,7 @@ impl BrowseFilter {
             year_to: self.year_to,
             genre: trimmed(self.genre.as_deref()),
             on_device: self.downloaded || crate::remote::offline::active(),
+            ..Default::default()
         }
     }
 }

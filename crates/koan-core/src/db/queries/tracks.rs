@@ -731,30 +731,6 @@ pub fn random_tracks_where(
     Ok(rows)
 }
 
-/// Get all tracks with pagination.
-pub fn all_tracks_paged(
-    conn: &Connection,
-    limit: u32,
-    offset: u32,
-) -> Result<Vec<TrackRow>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
-                t.disc, t.track_number, t.title, t.duration_ms, t.path,
-                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
-         FROM tracks t
-         LEFT JOIN artists a ON t.artist_id = a.id
-         LEFT JOIN albums al ON t.album_id = al.id
-         LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number
-         LIMIT ?1 OFFSET ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![limit, offset], row_to_track_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
-}
-
 /// Fetch many tracks in one query, in the order the ids were given, rather
 /// than one round trip per track.
 pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, DbError> {

@@ -74,7 +74,7 @@ pub type Corpus = Arc<Vec<(i64, String)>>;
 /// Unordered, and only the matched columns: the matcher ranks what it finds,
 /// so sorting on the LIBRARY collation — a Rust callback per comparison, the
 /// most expensive part of reading the whole library — bought nothing.
-pub fn fuzzy_corpus(conn: &Connection, kind: CorpusKind) -> Result<Vec<(i64, String)>, DbError> {
+fn read_corpus(conn: &Connection, kind: CorpusKind) -> Result<Vec<(i64, String)>, DbError> {
     let mut stmt = conn.prepare_cached(match kind {
         CorpusKind::Track => {
             "SELECT t.id, COALESCE(a.name, '') || ' — ' || COALESCE(al.title, '') || ' — ' || t.title
@@ -95,6 +95,92 @@ pub fn fuzzy_corpus(conn: &Connection, kind: CorpusKind) -> Result<Vec<(i64, Str
     })?;
     let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// The corpus for `kind`, read again only when the library has moved.
+///
+/// A search field asks on every keystroke, and the library is the same
+/// between them. One cache for the process, keyed on the database file and its
+/// [`library_stamp`](super::library_stamp): every front end, every pooled
+/// connection and every kind of search read the same corpus. An in-memory
+/// database has no name to key on and is read each time.
+pub fn corpus(conn: &Connection, kind: CorpusKind) -> Result<Corpus, DbError> {
+    let Some(stamp) = corpus_stamp(conn)? else {
+        return Ok(Arc::new(read_corpus(conn, kind)?));
+    };
+    if let Some(slot) = CORPORA.lock().get(&kind)
+        && slot.stamp == stamp
+    {
+        return Ok(Arc::clone(&slot.corpus));
+    }
+    // Read without the lock held: a slow read for one kind is no reason to
+    // hold up a cached answer for another.
+    let corpus: Corpus = Arc::new(read_corpus(conn, kind)?);
+    CORPORA.lock().insert(
+        kind,
+        Slot {
+            stamp,
+            corpus: Arc::clone(&corpus),
+            last: None,
+        },
+    );
+    Ok(corpus)
+}
+
+/// Which database, and the library in it. `None` for an in-memory database.
+fn corpus_stamp(conn: &Connection) -> Result<Option<u64>, DbError> {
+    use std::hash::{Hash, Hasher};
+    let Some(path) = conn.path().filter(|p| !p.is_empty()) else {
+        return Ok(None);
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (path, super::library_stamp(conn)?).hash(&mut hasher);
+    Ok(Some(hasher.finish()))
+}
+
+/// A kind's corpus as of a stamp, and the last fuzzy fallback read from it: a
+/// search page lists and counts each kind, and both fall back alike.
+struct Slot {
+    stamp: u64,
+    corpus: Corpus,
+    last: Option<(String, Vec<i64>)>,
+}
+
+static CORPORA: std::sync::LazyLock<parking_lot::Mutex<HashMap<CorpusKind, Slot>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The entries of `corpus` that match `query`, best first, as indices into it
+/// with their scores. The one ranking every fuzzy search uses.
+///
+/// Case-insensitive: a phone keyboard capitalises the first letter. Each word
+/// is matched on its own, literally: nucleo's operators (`!`, `^`, `$`, `'`)
+/// are characters someone typed, not syntax. Ties go to the shorter text, the
+/// closer of two equal matches, then to the lower id.
+pub fn fuzzy_rank(corpus: &[(i64, String)], query: &str) -> Vec<(u32, usize)> {
+    use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+    use nucleo::{Config, Matcher, Utf32Str};
+
+    let pattern = Pattern::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
+    // The matcher alone, on the caller's thread: `Nucleo` would build a
+    // thread pool per search to do the same.
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let mut buf = Vec::new();
+    let mut scored: Vec<(u32, usize)> = corpus
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (_, text))| {
+            pattern
+                .score(Utf32Str::new(text, &mut buf), &mut matcher)
+                .map(|score| (score, i))
+        })
+        .collect();
+    scored.sort_by_key(|&(score, i)| (std::cmp::Reverse(score), corpus[i].1.len(), corpus[i].0));
+    scored
 }
 
 /// How closely `column` matches a search, as SQL: 0 when it is the query, 1
@@ -125,152 +211,40 @@ const FUZZY_FLOOR: f64 = 0.6;
 /// bound on what the listing joins and orders.
 const FUZZY_LIMIT: usize = 200;
 
-/// The rows of `kind` closest to `query` by fuzzy match, best first, at most
-/// [`FUZZY_LIMIT`], those scoring under [`FUZZY_FLOOR`] of the best left out.
+/// The rows of `kind` closest to `query` by [`fuzzy_rank`], best first, at
+/// most [`FUZZY_LIMIT`], those scoring under [`FUZZY_FLOOR`] of the best left
+/// out.
 ///
 /// What a search falls back on when nothing holds the query as typed, so a
-/// typo still finds what was meant. The query is matched literally: nucleo's
-/// operators (`!`, `^`, `$`, `'`) are characters someone typed, not syntax.
-///
-/// The corpus is kept until the database changes, and the last answer for
-/// each kind with it: a search page lists and counts each kind, and both
-/// fall back alike.
+/// typo still finds what was meant.
 pub fn fuzzy_ids(conn: &Connection, kind: CorpusKind, query: &str) -> Result<Vec<i64>, DbError> {
-    use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
-    use nucleo::{Config, Matcher, Utf32Str};
-
-    let stamp = Stamp::of(conn)?;
-    let corpus = {
-        let slots = FALLBACK.lock();
-        match slots.get(&kind) {
-            Some(slot) if slot.stamp == stamp => {
-                if let Some((q, ids)) = &slot.last
-                    && q == query
-                {
-                    return Ok(ids.clone());
-                }
-                Some(Arc::clone(&slot.corpus))
-            }
-            _ => None,
-        }
-    };
-    let corpus = match corpus {
-        Some(corpus) => corpus,
-        None => Arc::new(fuzzy_corpus(conn, kind)?),
-    };
-
-    // Case-insensitive: a phone keyboard capitalises the first letter.
-    let pattern = Pattern::new(
-        query,
-        CaseMatching::Ignore,
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-    );
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let mut buf = Vec::new();
-    let mut scored: Vec<(u32, usize, i64)> = corpus
-        .iter()
-        .filter_map(|(id, text)| {
-            pattern
-                .score(Utf32Str::new(text, &mut buf), &mut matcher)
-                .map(|score| (score, text.len(), *id))
-        })
-        .collect();
-    // Ties to the shorter text: the closer of two equal matches.
-    scored.sort_by_key(|&(score, len, id)| (std::cmp::Reverse(score), len, id));
+    let corpus = corpus(conn, kind)?;
+    if let Some(slot) = CORPORA.lock().get(&kind)
+        && Arc::ptr_eq(&slot.corpus, &corpus)
+        && let Some((q, ids)) = &slot.last
+        && q == query
+    {
+        return Ok(ids.clone());
+    }
+    let scored = fuzzy_rank(&corpus, query);
     let ids: Vec<i64> = match scored.first() {
-        Some(&(best, ..)) => {
+        Some(&(best, _)) => {
             let floor = (best as f64 * FUZZY_FLOOR) as u32;
             scored
                 .into_iter()
-                .take_while(|&(score, ..)| score >= floor)
+                .take_while(|&(score, _)| score >= floor)
                 .take(FUZZY_LIMIT)
-                .map(|(.., id)| id)
+                .map(|(_, i)| corpus[i].0)
                 .collect()
         }
         None => Vec::new(),
     };
-    FALLBACK.lock().insert(
-        kind,
-        Fallback {
-            stamp,
-            corpus,
-            last: Some((query.to_owned(), ids.clone())),
-        },
-    );
+    if let Some(slot) = CORPORA.lock().get_mut(&kind)
+        && Arc::ptr_eq(&slot.corpus, &corpus)
+    {
+        slot.last = Some((query.to_owned(), ids.clone()));
+    }
     Ok(ids)
-}
-
-/// A kind's corpus as of a [`Stamp`], and the last fuzzy answer read from it.
-struct Fallback {
-    stamp: Stamp,
-    corpus: Corpus,
-    last: Option<(String, Vec<i64>)>,
-}
-
-static FALLBACK: std::sync::LazyLock<parking_lot::Mutex<HashMap<CorpusKind, Fallback>>> =
-    std::sync::LazyLock::new(Default::default);
-
-/// Which connection, and the database as it saw it. Two stamps are equal only
-/// when nothing has been written in between: `data_version` moves when
-/// another connection commits, `total_changes` when this one writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Stamp {
-    connection: i64,
-    data_version: i64,
-    changes: u64,
-}
-
-impl Stamp {
-    fn of(conn: &Connection) -> Result<Self, DbError> {
-        // A random id in a temporary table, which lives and dies with the
-        // connection: an address could be reused by the next one opened.
-        conn.execute_batch(
-            "CREATE TEMP TABLE IF NOT EXISTS koan_connection (id INTEGER NOT NULL);
-             INSERT INTO koan_connection
-                SELECT random() WHERE NOT EXISTS (SELECT 1 FROM koan_connection);",
-        )?;
-        let connection = conn.query_row("SELECT id FROM koan_connection", [], |r| r.get(0))?;
-        let data_version = conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
-        Ok(Self {
-            connection,
-            data_version,
-            changes: conn.total_changes(),
-        })
-    }
-}
-
-/// A corpus per kind, read again only when the library has moved.
-///
-/// A search field asks on every keystroke, and the library is the same between
-/// them.
-#[derive(Default)]
-pub struct CorpusCache {
-    slots: parking_lot::Mutex<HashMap<CorpusKind, (u64, Corpus)>>,
-}
-
-impl CorpusCache {
-    /// The corpus for `kind` as of `version`, a number the caller changes
-    /// whenever library rows may have.
-    pub fn get(
-        &self,
-        conn: &Connection,
-        kind: CorpusKind,
-        version: u64,
-    ) -> Result<Corpus, DbError> {
-        if let Some((at, corpus)) = self.slots.lock().get(&kind)
-            && *at == version
-        {
-            return Ok(Arc::clone(corpus));
-        }
-        // Read without the lock held: a slow read for one kind is no reason to
-        // hold up a cached answer for another.
-        let corpus: Corpus = Arc::new(fuzzy_corpus(conn, kind)?);
-        self.slots
-            .lock()
-            .insert(kind, (version, Arc::clone(&corpus)));
-        Ok(corpus)
-    }
 }
 
 #[cfg(test)]
@@ -313,5 +287,40 @@ mod tests {
         // Search by album.
         let results = search_tracks(&db.conn, "Drukqs").unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn fuzzy_rank_ignores_case() {
+        let corpus = vec![
+            (1, "Aphex Twin — Selected Ambient Works".to_owned()),
+            (2, "Squarepusher — Feed Me Weird Things".to_owned()),
+        ];
+        let ranked = fuzzy_rank(&corpus, "SqrPshr");
+        assert_eq!(ranked.first().map(|&(_, i)| corpus[i].0), Some(2));
+    }
+
+    #[test]
+    fn fuzzy_rank_reads_operators_as_characters() {
+        let corpus = vec![(1, "!!! — Myth Takes".to_owned()), (2, "Mythos".to_owned())];
+        let ranked = fuzzy_rank(&corpus, "!!!");
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(corpus[ranked[0].1].0, 1);
+    }
+
+    /// A corpus read from a database file is kept, and read again once a row
+    /// is added.
+    #[test]
+    fn a_file_corpus_follows_the_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        upsert_track(&db.conn, &sample_meta("One", "Ayla", "Moss")).unwrap();
+        let first = corpus(&db.conn, CorpusKind::Album).unwrap();
+        assert!(Arc::ptr_eq(
+            &first,
+            &corpus(&db.conn, CorpusKind::Album).unwrap()
+        ));
+        upsert_track(&db.conn, &sample_meta("Two", "Bryn", "Tide")).unwrap();
+        let second = corpus(&db.conn, CorpusKind::Album).unwrap();
+        assert_eq!(second.len(), 2);
     }
 }

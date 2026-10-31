@@ -103,6 +103,19 @@ pub fn json_list<T: serde::Serialize>(items: &[T]) -> String {
     serde_json::to_string(items).unwrap_or_else(|_| "[]".into())
 }
 
+/// An ORDER BY list, read backwards when `descending`.
+///
+/// Every term flipped at once, whatever its own direction, by numbering the
+/// rows in the order and ordering by that number from the top. A window
+/// function may stand in an ORDER BY, and sees the GROUP BY's aggregates.
+pub(crate) fn reversed(order_by: &str, descending: bool) -> String {
+    if descending {
+        format!("row_number() OVER (ORDER BY {order_by}) DESC")
+    } else {
+        order_by.to_owned()
+    }
+}
+
 /// The half-open range of paths under a folder, for `path >= .0 AND path < .1`.
 ///
 /// A prefix match on an indexed column, rather than `LIKE 'folder/%'` — which
