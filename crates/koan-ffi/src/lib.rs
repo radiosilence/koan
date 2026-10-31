@@ -5962,8 +5962,9 @@ impl KoanEngine {
                 let sent = engine
                     .tx
                     .send_timeout(PlayerCommand::SignedOut, std::time::Duration::from_secs(1));
-                if sent.is_err() {
-                    log::warn!("the player did not take the sign-out; the queue stays");
+                // Cleared before the library under it is forgotten.
+                if sent.is_err() || !engine.applied(std::time::Duration::from_secs(1)) {
+                    log::warn!("the player did not take the sign-out in time");
                 }
             }
         })));

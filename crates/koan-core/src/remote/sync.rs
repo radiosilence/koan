@@ -27,7 +27,7 @@ pub enum SyncError {
 /// A server and an account on it, as syncs are told apart: by address
 /// without a trailing slash, and by username without ASCII case, as servers
 /// and `helpers::same_account` compare them.
-type Account = (String, String);
+pub(crate) type Account = (String, String);
 
 fn account(url: &str, username: &str) -> Account {
     (
@@ -94,6 +94,16 @@ pub fn cancel(url: &str, username: &str) {
 pub fn resume(url: &str, username: &str) {
     let of = account(url, username);
     LEFT.lock().retain(|left| *left != of);
+}
+
+/// The accounts left, as they are now: to put back with [`restore_left`]
+/// when the sign-in or sign-out that changed them is not kept after all.
+pub(crate) fn left_now() -> Vec<Account> {
+    LEFT.lock().clone()
+}
+
+pub(crate) fn restore_left(left: Vec<Account>) {
+    *LEFT.lock() = left;
 }
 
 /// What a walk reports its progress to, and reads to know it should stop.

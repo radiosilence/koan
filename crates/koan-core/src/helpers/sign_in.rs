@@ -75,12 +75,14 @@ pub fn on_leaving_server(hook: Option<OnLeave>) {
 /// a write that fails leaves the server and its library as they were; the
 /// syncs are held off throughout, so none writes under the forgetting.
 /// `joining` is the account signed in to instead, whose syncs may run again
-/// from before the write: the write is what wakes the automatic one.
+/// from before the write: the write is what wakes the automatic one. Which
+/// accounts are left goes back as it was if the write fails.
 fn leave(
     old: &Config,
     joining: Option<(&str, &str)>,
     change: impl FnOnce(&mut Config),
 ) -> Result<(), crate::config::ConfigError> {
+    let left = crate::remote::sync::left_now();
     if !old.remote.url.is_empty() {
         crate::remote::sync::cancel(&old.remote.url, &old.remote.username);
     }
@@ -88,7 +90,7 @@ fn leave(
         crate::remote::sync::resume(url, username);
     }
     let _syncs = crate::helpers::hold_syncs();
-    Config::persist(change)?;
+    Config::persist(change).inspect_err(|_| crate::remote::sync::restore_left(left))?;
     let hook = ON_LEAVE.read().clone();
     if let Some(hook) = hook {
         hook();
@@ -262,9 +264,10 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
     };
     if same_account(&before.remote, url, username) {
         // Signed out of earlier: its syncs may run again, from before the
-        // write that wakes the automatic one.
+        // write that wakes the automatic one, unless the write fails.
+        let left = crate::remote::sync::left_now();
         crate::remote::sync::resume(url, username);
-        Config::persist(keep)?;
+        Config::persist(keep).inspect_err(|_| crate::remote::sync::restore_left(left))?;
     } else {
         retire_push(&before);
         leave(&before, Some((url, username)), keep)?;
@@ -744,6 +747,7 @@ mod refusal_tests {
 
         use std::os::unix::fs::PermissionsExt;
         Config::persist(signed_in).unwrap();
+        crate::remote::sync::resume("https://music.example.com", "mate");
         heard.lock().unwrap().clear();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
         let failed = sign_out();
@@ -752,6 +756,12 @@ mod refusal_tests {
         assert!(
             heard.lock().unwrap().is_empty(),
             "not heard when nothing was left"
+        );
+        assert!(
+            !crate::remote::sync::Running::enter("https://music.example.com", "mate")
+                .cancel
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "still signed in, so still syncing"
         );
     }
 
