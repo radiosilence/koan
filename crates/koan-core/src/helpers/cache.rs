@@ -105,7 +105,7 @@ pub fn playback_window(
     upcoming: &[i64],
 ) -> Result<usize, crate::db::connection::DbError> {
     let total = queries::total_cache_size(&db.conn)?;
-    let files: Vec<_> = queries::cached_files_lru(&db.conn)?
+    let files: Vec<_> = queries::cached_files(&db.conn)?
         .into_iter()
         .filter(|f| !f.pinned)
         .collect();
@@ -116,26 +116,34 @@ pub fn playback_window(
         .iter()
         .map(|f| (f.track_id, f.path.as_str()))
         .collect();
-    let estimates = queries::download_estimates(&db.conn, upcoming)?;
 
     let mut used = (total - evictable.values().sum::<i64>()).max(0) as u64;
     let mut counted = std::collections::HashSet::new();
     let mut counted_files = std::collections::HashSet::new();
-    for (n, id) in upcoming.iter().enumerate() {
-        if counted.insert(*id) {
-            let cost = match file_of.get(id) {
-                Some(path) if !counted_files.insert(*path) => None,
-                Some(path) => evictable.get(path),
-                None => estimates.get(id),
-            };
-            used += cost.copied().unwrap_or(0).max(0) as u64;
-        }
-        if n >= 2 && used > limit {
-            return Ok(n);
+    // Estimated a chunk at a time: a long queue usually crosses the limit
+    // within its first few tracks, and the rest need not be read at all.
+    for (c, chunk) in upcoming.chunks(ESTIMATE_CHUNK).enumerate() {
+        let estimates = queries::download_estimates(&db.conn, chunk)?;
+        for (k, id) in chunk.iter().enumerate() {
+            let n = c * ESTIMATE_CHUNK + k;
+            if counted.insert(*id) {
+                let cost = match file_of.get(id) {
+                    Some(path) if !counted_files.insert(*path) => None,
+                    Some(path) => evictable.get(path),
+                    None => estimates.get(id),
+                };
+                used += cost.copied().unwrap_or(0).max(0) as u64;
+            }
+            if n >= 2 && used > limit {
+                return Ok(n);
+            }
         }
     }
     Ok(upcoming.len())
 }
+
+/// How many upcoming tracks `playback_window` estimates per query.
+const ESTIMATE_CHUNK: usize = 256;
 
 /// Remove empty directories under `dir`, leaving `dir` itself.
 fn remove_empty_dirs(dir: &Path) {

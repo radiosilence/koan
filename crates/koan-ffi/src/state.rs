@@ -183,7 +183,8 @@ impl StateSlice {
 
 /// The latest of every slice, and when each last moved.
 struct Slots {
-    latest: [Option<StateSlice>; SLOTS],
+    /// Shared, so neither comparing nor copying one out holds the lock.
+    latest: [Option<Arc<StateSlice>>; SLOTS],
     seq: [u64; SLOTS],
     clock: u64,
 }
@@ -201,6 +202,9 @@ impl Default for Slots {
 /// What the engine publishes and clients read.
 pub struct EngineState {
     slots: parking_lot::Mutex<Slots>,
+    /// Held by a publisher of a slice from reading the last one to storing
+    /// its own, so two never interleave and readers wait on neither.
+    sending: [parking_lot::Mutex<()>; SLOTS],
     /// Woken on every publish. Carries the clock so a receiver that was busy
     /// still sees it moved.
     tick: tokio::sync::watch::Sender<u64>,
@@ -210,6 +214,7 @@ impl EngineState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             slots: parking_lot::Mutex::new(Slots::default()),
+            sending: [const { parking_lot::Mutex::new(()) }; SLOTS],
             tick: tokio::sync::watch::channel(0).0,
         })
     }
@@ -235,11 +240,14 @@ impl EngineState {
     }
 
     fn send(&self, slice: StateSlice, always: bool) {
-        let mut slots = self.slots.lock();
         let i = slice.slot() as usize;
-        if !always && slots.latest[i].as_ref() == Some(&slice) {
+        let _sending = self.sending[i].lock();
+        let last = self.slots.lock().latest[i].clone();
+        if !always && last.as_deref() == Some(&slice) {
             return;
         }
+        let slice = Arc::new(slice);
+        let mut slots = self.slots.lock();
         slots.clock += 1;
         let clock = slots.clock;
         slots.seq[i] = clock;
@@ -260,7 +268,8 @@ impl EngineState {
                 }
             }
         }
-        batch
+        drop(slots);
+        batch.into_iter().map(|s| (*s).clone()).collect()
     }
 }
 
