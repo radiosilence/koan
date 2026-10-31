@@ -124,9 +124,11 @@ struct KoanIOSApp: App {
                     var interruptedPlaying = false
                     // The phone's own audio events are about the phone. While
                     // another device is controlled this phone plays nothing, and
-                    // a pause or resume sent from here would land on that device.
+                    // a pause or resume sent from here would land on that device;
+                    // while a renderer plays, the phone's output is not what is
+                    // heard, and a call or unplugged headphones change nothing.
                     session.onInterrupted = { [weak built] in
-                        guard built?.player.isControllingAnother == false else { return }
+                        guard built?.player.playsHere == true else { return }
                         // iOS can send several "began" for one interruption.
                         // The later ones find playback already paused (by the
                         // first), so they must not overwrite what the first saw,
@@ -136,16 +138,17 @@ struct KoanIOSApp: App {
                         built?.player.pause()
                     }
                     session.onRouteLost = { [weak built] in
-                        guard built?.player.isControllingAnother == false else { return }
+                        guard built?.player.playsHere == true else { return }
                         built?.player.pause()
                     }
                     session.note = { [weak built] message in built?.player.engine.logNote(message: message) }
                     session.onInterruptionEnded = { [weak built] shouldResume in
-                        guard let engine = built?.player.engine else { return }
+                        guard let built else { return }
+                        let engine = built.player.engine
                         let resume = shouldResume && interruptedPlaying
-                            && built?.player.isControllingAnother == false
                         engine.logNote(message: "interruption over: resume=\(resume) (system says \(shouldResume), was playing \(interruptedPlaying))")
                         interruptedPlaying = false
+                        guard built.player.playsHere else { return }
                         Task {
                             try? await engine.restartOutput()
                             if resume { try? await engine.resume() }

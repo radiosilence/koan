@@ -74,7 +74,7 @@ struct TrackBrowser: View {
         let key: [AnyHashable] = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            AnyHashable(mirror.queueStamp),
         ]
         let library = library
         let nav = nav

@@ -83,15 +83,43 @@ struct QueueView: View {
     /// Album headings are rows in their own right, not decoration attached to
     /// the first track. That is what lets an album be selected and dragged as a
     /// unit — and stops selecting a track from lighting up the heading above it.
-    private var rows: [Row] {
-        grouped ? Row.build(from: listed) : listed.map(Row.track)
+    ///
+    /// Kept until what is listed moves: the body runs again for a pause, the
+    /// tint or the stage, and regrouping a long queue for those is work that
+    /// changes nothing.
+    @State private var layout = Layout()
+
+    private final class Layout {
+        private var key: (stamp: UInt64, grouped: Bool)?
+        private(set) var rows: [Row] = []
+        private(set) var numbering = Numbering()
+
+        func update(_ listed: [QueueItem], stamp: UInt64, grouped: Bool) {
+            if let key, key == (stamp, grouped) { return }
+            key = (stamp, grouped)
+            rows = grouped ? Row.build(from: listed) : listed.map(Row.track)
+            numbering = grouped ? QueueView.numbering(listed) : Numbering()
+        }
     }
 
-    /// The records whose tracks in the queue run past disc 1: their rows
-    /// number by disc and track in the grouped queue, where a heading names
-    /// the record. Per album rather than per group, so a record queued twice
-    /// numbers both copies alike. Read from the tracks, since an album's disc
-    /// total is often missing.
+    private var rows: [Row] {
+        layout.update(listed, stamp: listedStamp, grouped: grouped)
+        return layout.rows
+    }
+
+    /// Moves with `listed`.
+    private var listedStamp: UInt64 {
+        #if os(macOS)
+        mirror.queueStamp
+        #else
+        mirror.queueVersion
+        #endif
+    }
+
+    /// The records that number by disc (`numbersByDisc`) from their tracks in
+    /// the queue: their rows number by disc and track in the grouped queue,
+    /// where a heading names the record. Per album rather than per group, so a
+    /// record queued twice numbers both copies alike.
     static func numbering(_ items: [QueueItem]) -> Numbering {
         // A disc past 9 is past 1, so the widest disc is always on a record
         // that numbers by disc.
@@ -100,9 +128,9 @@ struct QueueView: View {
         var widestDisc: Int64 = 1
         for item in items {
             if let number = item.trackNumber { widestNumber = max(widestNumber, number) }
-            if let disc = item.disc, disc > 1, let album = item.albumId {
+            if let album = item.albumId, numbersByDisc([item.disc]) {
                 discs.insert(album)
-                widestDisc = max(widestDisc, disc)
+                widestDisc = max(widestDisc, item.disc ?? 1)
             }
         }
         let number = Numbering.zeros(String(widestNumber).count)
@@ -127,9 +155,8 @@ struct QueueView: View {
     }
 
     var body: some View {
-        // Once per pass. Built again for the header's count and again for the
-        // rows, a large queue would be grouped twice per evaluation.
         let rows = self.rows
+        let numbering = layout.numbering
 
         VStack(spacing: 0) {
             header(rows)
@@ -146,9 +173,9 @@ struct QueueView: View {
                 #endif
             } else {
                 #if os(macOS)
-                table(rows)
+                table(rows, numbering: numbering)
                 #else
-                list(rows)
+                list(rows, numbering: numbering)
                 #endif
             }
         }
@@ -162,8 +189,7 @@ struct QueueView: View {
 
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
-    private func table(_ rows: [Row]) -> some View {
-        let numbering = grouped ? Self.numbering(listed) : Numbering()
+    private func table(_ rows: [Row], numbering: Numbering) -> some View {
         let lines = rows.map { line($0, numbering: numbering) }
         let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
@@ -264,8 +290,7 @@ struct QueueView: View {
     }
     #endif
 
-    private func list(_ rows: [Row]) -> some View {
-                let numbering = grouped ? Self.numbering(listed) : Numbering()
+    private func list(_ rows: [Row], numbering: Numbering) -> some View {
                 return ScrollViewReader { scroll in
                     List(selection: $selection) {
                         ForEach(rows) { row in
@@ -499,8 +524,7 @@ struct QueueView: View {
                 // No playable: a queue album is a run of queue items, not a
                 // library album, so its actions are its own.
                 .rowBehaviour()
-        // A record that is only this track: one row, with its own sleeve and
-        // artist, rather than a heading and a row repeating it.
+        // No heading above it: one row, with its own sleeve and artist.
         case .single(let item):
             LiveQueueRow(sent: item, showArtist: true, artwork: true)
             .rowBehaviour()
@@ -771,7 +795,9 @@ extension QueueView {
     enum Row: Identifiable {
         case album(id: String, group: QueueGroup)
         case track(QueueItem)
-        /// A track that is its whole record, folded into one row.
+        /// A track with no heading above it, on no record or its whole
+        /// record: one row with its own sleeve and artist, as a playlist's
+        /// rows that stand alone are.
         case single(QueueItem)
 
         var id: String {
@@ -803,10 +829,10 @@ extension QueueView {
             while index < queue.count {
                 let first = queue[index]
                 switch first.run {
-                case .alone, .continues:
+                case .continues:
                     rows.append(.track(first))
                     index += 1
-                case .single:
+                case .alone, .single:
                     rows.append(.single(first))
                     index += 1
                 case .opens:

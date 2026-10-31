@@ -5,16 +5,26 @@ import SwiftUI
 /// invite, which every account may have. Its token lapses in ten minutes, so a
 /// fresh one is fetched each time the section appears and again before it
 /// lapses. While the server refuses or cannot be reached the section is not
-/// drawn, and asks again a minute later: a server older than self-invites
-/// refuses an account that is not an admin.
+/// drawn, and asks again when the link to the server comes or goes, or the
+/// page is opened again: a server older than self-invites refuses an account
+/// that is not an admin.
 struct LinkDeviceSection: View {
     let username: String
     @Environment(LibraryModel.self) private var library
+    @Environment(EngineMirror.self) private var mirror
     @State private var invite: Invite?
-    @State private var failed = false
+    /// The ask that failed: the section stays away until the ask changes.
+    @State private var failed: Ask?
+
+    private struct Ask: Equatable {
+        let username: String
+        let linked: Bool
+    }
+
+    private var ask: Ask { Ask(username: username, linked: mirror.connection?.linked == true) }
 
     var body: some View {
-        if !failed { section }
+        if failed != ask { section }
     }
 
     private var section: some View {
@@ -41,12 +51,18 @@ struct LinkDeviceSection: View {
             Text("kōan opens on the other device and loads the library, or offers the download first.")
                 .koanText(.fine, .muted)
         }
-        .task(id: username) {
+        .task(id: ask) {
+            let asked = ask
             while !Task.isCancelled {
-                let made = try? await library.engine.inviteServerAccount(username: username, reset: false)
+                guard let made = try? await library.engine.inviteServerAccount(username: username, reset: false)
+                else {
+                    invite = nil
+                    failed = asked
+                    return
+                }
                 invite = made
-                failed = made == nil
-                try? await Task.sleep(for: .seconds(made == nil ? 60 : 9 * 60))
+                // Fetched again before the token lapses at ten minutes.
+                try? await Task.sleep(for: .seconds(9 * 60))
             }
         }
     }

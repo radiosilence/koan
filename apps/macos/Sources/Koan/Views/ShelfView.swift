@@ -105,7 +105,7 @@ struct ShelfView: View {
         let key: [AnyHashable] = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            AnyHashable(mirror.queueStamp),
             AnyHashable(mirror.arrivingByAlbum),
         ]
         let library = library

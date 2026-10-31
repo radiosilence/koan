@@ -12,6 +12,8 @@ struct PairingRequest: Equatable {
     /// The pairing's id or code, as the server knows it.
     let pair: String
     let device: String
+    /// The id the device links with, once it is signed in.
+    let deviceId: String?
     /// The address the request came from, and whether it is on a private
     /// network, as the server classifies it.
     let from: String
@@ -52,7 +54,7 @@ extension AppState {
         do {
             let info = try await engine.pairingInfo(pair: pair)
             ui.pendingPairing = PairingRequest(
-                pair: pair, device: info.device, from: info.from, local: info.local,
+                pair: pair, device: info.device, deviceId: info.deviceId, from: info.from, local: info.local,
                 username: current.remoteUsername, host: host
             )
         } catch {
@@ -68,7 +70,7 @@ extension AppState {
                 if approve {
                     let device = try await engine.approvePairing(pair: request.pair)
                     player.lastNotice = "\(device) is signed in as \(request.username)."
-                    ui.signedInHere = SignedInHere(name: device, at: .now)
+                    if let id = request.deviceId { ui.signedInHere = SignedInHere(id: id, at: .now) }
                 } else {
                     try await engine.declinePairing(pair: request.pair)
                 }

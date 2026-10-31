@@ -91,7 +91,7 @@ struct SearchResultsView: View {
         let key: [AnyHashable] = [
             AnyHashable(picked), AnyHashable(pick.isActive), AnyHashable(tint),
             AnyHashable(library.favouriteAlbumIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            AnyHashable(mirror.queueStamp),
         ]
         let library = library
         let nav = nav

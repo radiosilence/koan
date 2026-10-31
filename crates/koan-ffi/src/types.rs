@@ -2378,6 +2378,10 @@ pub struct ScrobblingConnection {
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct PairingInfo {
     pub device: String,
+    /// The id the device links with, which its entry among the account's
+    /// devices carries once it is signed in. `None` from a server that does
+    /// not keep it.
+    pub device_id: Option<String>,
     /// The address the request came from, as the server sees it.
     pub from: String,
     /// The address is on a private network (RFC 1918, link-local, unique

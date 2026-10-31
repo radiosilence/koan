@@ -269,8 +269,17 @@ struct TabShell: View {
         .onChange(of: mirror.connection?.commandNotice?.seq) { _, _ in
             player.show(mirror.connection?.commandNotice)
         }
+        // Held as a background task: iOS suspends an app soon after it
+        // leaves, and a save cut off there is the session lost.
         .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
-            Task { await player.saveOnLeaving() }
+            let held = HeldTask()
+            held.id = UIApplication.shared.beginBackgroundTask(withName: "koan save") {
+                MainActor.assumeIsolated { held.end() }
+            }
+            Task {
+                await player.saveOnLeaving()
+                held.end()
+            }
         }
         // One alert for both, as the Mac has one toast slot: a failure
         // outranks a notice, and only a failure is titled as one.
@@ -520,12 +529,7 @@ struct TabShell: View {
 
     /// Play it where you stand, as the Mac's sidebar does.
     private func play(_ playlist: Playlist, shuffled: Bool = false) {
-        let engine = playlists.engine
-        Task {
-            _ = try? await engine.playPlaylist(
-                playlistId: playlist.id, startEntry: nil, shuffled: shuffled
-            )
-        }
+        player.play(playlist: playlist.id, shuffled: shuffled)
     }
 
     #if os(tvOS)
@@ -873,3 +877,16 @@ private struct PadSidebar: View {
 }
 
 #endif
+
+/// A background task begun to finish something, ended once: when it is done,
+/// or when iOS says its time is up.
+@MainActor
+private final class HeldTask {
+    var id = UIBackgroundTaskIdentifier.invalid
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
+    }
+}

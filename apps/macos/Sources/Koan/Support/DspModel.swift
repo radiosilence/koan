@@ -289,16 +289,6 @@ final class DspModel {
         overview?.profiles.first { $0.devices.contains(device) }?.name
     }
 
-    /// The tuning `device` plays on top of its correction, if any.
-    func tuning(for device: String) -> String? {
-        overview?.tunings[device]
-    }
-
-    /// Play `tuning` on top of `device`'s correction, or none.
-    func setTuning(_ tuning: String?, for device: String) {
-        act { try await $0.dspSetTuning(device: device, tuning: tuning) }
-    }
-
     /// Make `device`'s tuning these EQs, in the order they play.
     func setTunings(_ entries: [DspTuningEntry], for device: String) {
         act { try await $0.dspSetTunings(device: device, tuning: entries) }
