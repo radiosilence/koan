@@ -1,1 +1,0 @@
-- **Failures are logged instead of hidden.** A device id or device list that cannot be saved, a web UI page whose database read fails, and a command from another device that cannot read the library now say so, rather than acting as if nothing was there. Downloads are filed under the album artist, so a compilation stays in one folder; downloads already in the cache are kept.
