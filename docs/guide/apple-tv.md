@@ -72,6 +72,16 @@ Search takes the on-screen keyboard and finds artists, albums and tracks.
 
 ![Search, with matching artists and records](../../site/public/screens/tv-search.webp)
 
+## Top Shelf
+
+With kōan in the top row of the Home Screen, the shelf above it shows the
+records played in the last 30 days and your favourite records, at most a
+dozen of each. Choosing one opens its page in kōan; the remote's Play button
+plays it from the first track. The shelf is what kōan last saw of your
+library, kept for when kōan is not running, so a record played on another
+device appears once kōan on the TV has opened since. Until then, or when there
+is nothing to show, the shelf has the kōan banner.
+
 ## Siri
 
 Hold the remote's Siri button and say "Play a record in kōan": Siri asks which
