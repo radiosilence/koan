@@ -50,17 +50,18 @@ pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
     // Read at every track start: only the tags are wanted. The type is read
     // from the file, since downloads are cached under extensions that do not
     // name their format.
+    let tag_error = |e: &dyn std::fmt::Display| ReplayGainError::Tag(e.to_string());
     let tagged_file = lofty::probe::Probe::open(path)
-        .and_then(|p| p.guess_file_type())
-        .and_then(|p| {
-            p.options(
-                lofty::config::ParseOptions::new()
-                    .read_cover_art(false)
-                    .read_properties(false),
-            )
-            .read()
-        })
-        .map_err(|e| ReplayGainError::Tag(e.to_string()))?;
+        .map_err(|e| tag_error(&e))?
+        .guess_file_type()
+        .map_err(|e| tag_error(&e))?
+        .options(
+            lofty::config::ParseOptions::new()
+                .read_cover_art(false)
+                .read_properties(false),
+        )
+        .read()
+        .map_err(|e| tag_error(&e))?;
 
     let tag = tagged_file
         .primary_tag()
