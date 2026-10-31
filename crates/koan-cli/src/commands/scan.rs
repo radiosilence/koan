@@ -8,7 +8,7 @@ use super::open_db;
 
 pub fn cmd_scan(path: Option<&Path>, force: bool, force_remove: bool) {
     let db = open_db();
-    let cfg = config::Config::load().unwrap_or_default();
+    let cfg = config::Config::cached();
 
     let folders: Vec<std::path::PathBuf> = if let Some(p) = path {
         vec![p.to_path_buf()]

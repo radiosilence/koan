@@ -694,7 +694,7 @@ pub fn cmd_auth_reset(tty: Tty, yes: bool) {
 }
 
 pub fn cmd_auth_logout(server_url: &str) {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let token_is_for_this_server =
         cfg.auth.server == server_url && !cfg.auth.refresh_token.is_empty();
 
@@ -753,7 +753,7 @@ pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
     let Some(server) = server
         .map(str::to_owned)
         .filter(|s| !s.trim().is_empty())
-        .or_else(|| Config::load().ok()?.server_url())
+        .or_else(|| Config::cached().server_url())
     else {
         eprintln!(
             "{} Pass --server, or set server.url, to the address clients reach this server at.",

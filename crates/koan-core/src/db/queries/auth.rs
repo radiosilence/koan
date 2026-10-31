@@ -325,7 +325,7 @@ pub fn get_valid_refresh_token(
     conn: &Connection,
     token_id: &str,
 ) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
-    let now = auth::now_unix() as i64;
+    let now = crate::clock::unix_secs();
     let mut stmt = conn.prepare_cached(&format!(
         "SELECT {TOKEN_COLUMNS} FROM refresh_tokens
          WHERE id = ?1 AND revoked = 0 AND expires_at > ?2"
@@ -345,7 +345,7 @@ pub fn consume_refresh_token(
     conn: &Connection,
     token_id: &str,
 ) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
-    let now = auth::now_unix() as i64;
+    let now = crate::clock::unix_secs();
     let mut stmt = conn.prepare(&format!(
         "UPDATE refresh_tokens SET revoked = 1, used_at = ?2
          WHERE id = ?1 AND revoked = 0 AND expires_at > ?2
@@ -389,7 +389,7 @@ pub fn revoke_replayed_grant(
     token_id: &str,
     grace_secs: i64,
 ) -> Result<usize, rusqlite::Error> {
-    let cutoff = auth::now_unix() as i64 - grace_secs;
+    let cutoff = crate::clock::unix_secs() - grace_secs;
     conn.execute(
         "UPDATE refresh_tokens SET revoked = 1
          WHERE revoked = 0 AND grant_id = (
@@ -411,7 +411,7 @@ pub fn revoke_grant(conn: &Connection, grant_id: &str) -> Result<usize, rusqlite
 /// OAuth grant stays until it would have expired, so `revoke_replayed_grant`
 /// can still recognise it.
 pub fn cleanup_expired_tokens(conn: &Connection) -> Result<usize, rusqlite::Error> {
-    let now = auth::now_unix() as i64;
+    let now = crate::clock::unix_secs();
     let count = conn.execute(
         "DELETE FROM refresh_tokens
          WHERE expires_at <= ?1 OR (revoked = 1 AND (grant_id IS NULL OR used_at IS NULL))",
@@ -485,7 +485,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
 
-        let future_ts = auth::now_unix() as i64 + 86400;
+        let future_ts = crate::clock::unix_secs() + 86400;
         store_refresh_token(&db.conn, "tok-123", uid, future_ts).unwrap();
 
         // Valid lookup.
@@ -521,7 +521,7 @@ mod tests {
     fn a_spent_grant_token_coming_back_revokes_the_grant() {
         let (db, _tmp) = test_db();
         let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
-        let future = auth::now_unix() as i64 + 86400;
+        let future = crate::clock::unix_secs() + 86400;
         let grant = OAuthGrant {
             id: "g1".into(),
             client_name: "Claude".into(),
@@ -552,7 +552,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
 
-        let future = auth::now_unix() as i64 + 86400;
+        let future = crate::clock::unix_secs() + 86400;
         store_refresh_token(&db.conn, "active", uid, future).unwrap();
         store_refresh_token(&db.conn, "expired", uid, 0).unwrap();
         store_refresh_token(&db.conn, "revoked", uid, future).unwrap();

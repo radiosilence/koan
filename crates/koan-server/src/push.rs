@@ -166,7 +166,7 @@ fn activity_art(track: &str) -> Option<String> {
 /// turned off, and pushes are simply not sent.
 pub fn pusher() -> Option<&'static Pusher> {
     static PUSHER: std::sync::LazyLock<Option<Pusher>> = std::sync::LazyLock::new(|| {
-        let cfg = koan_core::config::Config::load().unwrap_or_default();
+        let cfg = koan_core::config::Config::cached();
         if !cfg.push.enabled {
             log::info!("push: off");
             return None;

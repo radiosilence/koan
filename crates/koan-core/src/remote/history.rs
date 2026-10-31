@@ -59,7 +59,7 @@ impl HistorySync {
 /// names a track this library lacks, the library is synced, which reads the
 /// history again once the track is here.
 pub fn sync(db: &Database) -> HistorySync {
-    let cfg = crate::config::Config::load().unwrap_or_default();
+    let cfg = crate::config::Config::cached();
     let Some(client) = crate::helpers::subsonic_client(&cfg) else {
         return HistorySync::default();
     };
@@ -114,7 +114,7 @@ pub fn scrobble(db: &Database, remote_id: &str, at_ms: i64) {
         log::warn!("history: could not queue a scrobble: {e}");
         return;
     }
-    let cfg = crate::config::Config::load().unwrap_or_default();
+    let cfg = crate::config::Config::cached();
     let Some(client) = crate::helpers::subsonic_client(&cfg) else {
         return;
     };
@@ -144,7 +144,7 @@ pub fn forget(db: &Database, ids: &[i64]) -> Result<usize, DbError> {
 /// account. Returns how many went here.
 pub fn clear(db: &Database) -> Result<usize, DbError> {
     if signed_in() {
-        queries::queue_clear(&db.conn, now_ms())?;
+        queries::queue_clear(&db.conn, crate::clock::unix_ms())?;
     }
     let removed = queries::clear_play_history(&db.conn, queries::LOCAL_USER)?;
     flush_in_background();
@@ -152,7 +152,7 @@ pub fn clear(db: &Database) -> Result<usize, DbError> {
 }
 
 fn signed_in() -> bool {
-    let cfg = crate::config::Config::load().unwrap_or_default();
+    let cfg = crate::config::Config::cached();
     crate::helpers::subsonic_auth(&cfg).is_some()
 }
 
@@ -163,7 +163,7 @@ fn flush_in_background() {
             let Ok(db) = crate::db::pool::shared().get() else {
                 return;
             };
-            let cfg = crate::config::Config::load().unwrap_or_default();
+            let cfg = crate::config::Config::cached();
             if let Some(client) = crate::helpers::subsonic_client(&cfg) {
                 let _one = ONE_AT_A_TIME.lock();
                 flush(&db, &client, None);
@@ -366,12 +366,6 @@ fn pull(
 
 fn db_failed(e: DbError) -> SubsonicError {
     SubsonicError::Io(std::io::Error::other(e.to_string()))
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
 }
 
 #[cfg(test)]

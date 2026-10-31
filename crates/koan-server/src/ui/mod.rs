@@ -101,8 +101,9 @@ pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::
 pub struct UiState {
     pool: Arc<Pool>,
     covers: Arc<Covers>,
-    /// The codecs and genres the filters offer, with when they were read.
-    options: Arc<std::sync::Mutex<Option<(std::time::Instant, pages::Options)>>>,
+    /// The codecs and genres the filters offer, with the `library_stamp` they
+    /// were read at.
+    options: Arc<std::sync::Mutex<Option<(u64, pages::Options)>>>,
     auth: AuthRouteState,
     auth_enabled: bool,
     /// `graphql.setup_wizard`: whether `/setup` may make the first admin.
@@ -456,12 +457,29 @@ fn open(pool: &Pool) -> Option<Handle<'_>> {
         .ok()
 }
 
+/// A failed read as the page's empty or not-found state, logged where it
+/// happened so that a broken database is not mistaken for a missing row.
+pub(crate) trait Logged<T> {
+    fn logged(self) -> Option<T>;
+}
+
+impl<T, E: std::fmt::Display> Logged<T> for Result<T, E> {
+    #[track_caller]
+    fn logged(self) -> Option<T> {
+        let at = std::panic::Location::caller();
+        self.inspect_err(|e| {
+            log::error!("web UI: a read failed at {}:{}: {e}", at.file(), at.line())
+        })
+        .ok()
+    }
+}
+
 /// A track's audio, from a local file; Range requests are honoured, so the
 /// browser can seek a stream.
 async fn stream(State(s): State<UiState>, Path(id): Path<i64>, headers: HeaderMap) -> Response {
     let path = blocking(move || {
         let db = open(&s.pool)?;
-        let t = queries::tracks_by_ids(&db.conn, &[id]).ok()?.pop()?;
+        let t = queries::tracks_by_ids(&db.conn, &[id]).logged()?.pop()?;
         crate::subsonic::track_file_path(&t).map(PathBuf::from)
     })
     .await;
@@ -499,7 +517,7 @@ async fn cover(
 ) -> Response {
     let size = crate::covers::snap(q.size);
     let found = blocking(move || {
-        let tracks = queries::tracks_for_album(&open(&s.pool)?.conn, id).ok()?;
+        let tracks = queries::tracks_for_album(&open(&s.pool)?.conn, id).logged()?;
         (!tracks.is_empty()).then(|| s.covers.cover(&tracks, size))
     })
     .await;

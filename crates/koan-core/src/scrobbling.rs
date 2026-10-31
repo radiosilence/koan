@@ -670,7 +670,7 @@ mod tests {
             .query_row("SELECT id FROM tracks", [], |r| r.get(0))
             .unwrap();
         queries::connect(&db.conn, 1, LASTFM, "session", "fmuser", 0).unwrap();
-        let now = crate::auth::now_unix() as i64;
+        let now = crate::clock::unix_secs();
         let mut plays: Vec<(i64, i64)> = (0..120).map(|i| (track, now - 100 - i)).collect();
         // A month old: Last.fm would ignore it.
         plays.push((track, now - 30 * 24 * 3600));

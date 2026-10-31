@@ -9,37 +9,10 @@ use koan_core::db::queries::UidKind;
 use koan_core::db::queries::batch::{TrackFilter, TrackOrder};
 use koan_core::player::state::SharedPlayerState;
 
-use super::helpers::{MAX_PAGE, album_year, page_offset, page_size, paginate, paginate_window};
+use super::helpers::{MAX_PAGE, page_offset, page_size, paginate_window};
 use super::jobs::JobRegistry;
 use super::types::*;
 use super::{blocking, with_db};
-
-/// What `fuzzySearch` matches against, kept between requests.
-///
-/// The server's library is written by scans, syncs and other processes, none
-/// of which it can count, so a corpus is kept for as long as the library's
-/// fingerprint holds and five minutes at most: a row added or removed is seen
-/// at once, one edited in place within five minutes.
-#[derive(Default)]
-pub(super) struct Fuzzy(queries::CorpusCache);
-
-impl Fuzzy {
-    const MAX_AGE_SECS: u64 = 300;
-
-    fn corpus(
-        &self,
-        conn: &rusqlite::Connection,
-        kind: queries::CorpusKind,
-    ) -> Result<queries::Corpus, koan_core::db::connection::DbError> {
-        let window = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / Self::MAX_AGE_SECS;
-        let version = queries::library_fingerprint(conn)? ^ window;
-        self.0.get(conn, kind, version)
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Query root
@@ -64,66 +37,41 @@ impl QueryRoot {
     ) -> async_graphql::Result<Conn<GqlArtist>> {
         let ids = super::opt_row_ids(ctx, UidKind::Artist, ids.as_deref()).await?;
         let user = super::user_id(ctx);
+        let offset = page_offset(after.as_deref());
+        let limit = page_size(first);
+        let order = match sort_by {
+            ArtistSortField::Name => queries::ArtistOrder::Name,
+            ArtistSortField::AlbumCount => queries::ArtistOrder::FewestAlbums,
+            ArtistSortField::TrackCount => queries::ArtistOrder::FewestTracks,
+        };
         let rows = with_db(ctx, move |db| {
-            // Only the named artists are read, when they are named.
-            let mut artists = queries::list_artists(
+            queries::list_artists(
                 &db.conn,
                 &queries::ArtistQuery {
                     ids: ids.as_deref(),
                     search: search.as_deref(),
+                    favourites_of: favourites_only.then_some(user),
+                    filter: queries::AlbumFilter {
+                        genre_contains: genre.as_deref(),
+                        ..Default::default()
+                    },
+                    order,
+                    descending: sort_dir == SortDirection::Desc,
+                    // One row past the page says whether another follows.
+                    limit: Some(limit as u32 + 1),
+                    offset: offset as u32,
                     ..Default::default()
                 },
             )
-            .map_err(|e| super::internal_error("db", e))?;
-
-            if let Some(ref g) = genre {
-                let g_lower = g.to_lowercase();
-                let artist_ids: Vec<i64> = artists.iter().map(|a| a.id).collect();
-                let genre_map = queries::genres_by_artist_ids(&db.conn, &artist_ids)
-                    .map_err(|e| super::internal_error("db", e))?;
-                artists.retain(|a| {
-                    genre_map
-                        .get(&a.id)
-                        .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
-                });
-            }
-
-            if favourites_only {
-                let fav_ids = queries::favourite_artist_ids_batch(&db.conn, user)
-                    .map_err(|e| super::internal_error("db", e))?;
-                artists.retain(|a| fav_ids.contains(&a.id));
-            }
-
-            match sort_by {
-                ArtistSortField::Name => artists.sort_by(|a, b| a.name.cmp(&b.name)),
-                ArtistSortField::AlbumCount | ArtistSortField::TrackCount => {
-                    let ids: Vec<i64> = artists.iter().map(|a| a.id).collect();
-                    let stats = queries::batch::artist_stats(&db.conn, &ids)
-                        .map_err(|e| super::internal_error("db", e))?;
-                    let key = |id: i64| {
-                        let s = stats.get(&id).copied().unwrap_or_default();
-                        if sort_by == ArtistSortField::AlbumCount {
-                            s.album_count
-                        } else {
-                            s.track_count
-                        }
-                    };
-                    artists.sort_by(|a, b| key(a.id).cmp(&key(b.id)).then(a.name.cmp(&b.name)));
-                }
-            }
-            if sort_dir == SortDirection::Desc {
-                artists.reverse();
-            }
-
-            Ok(artists)
+            .map_err(|e| super::internal_error("db", e))
         })
         .await?;
 
-        paginate(
+        Ok(paginate_window(
             rows.into_iter().map(|row| GqlArtist { row }).collect(),
-            after,
-            first,
-        )
+            offset,
+            limit,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -149,131 +97,53 @@ impl QueryRoot {
         let ids = super::opt_row_ids(ctx, UidKind::Album, ids.as_deref()).await?;
         let artist_id = super::opt_row_id(ctx, UidKind::Artist, artist_id.as_ref()).await?;
         let artist_ids = super::opt_row_ids(ctx, UidKind::Artist, artist_ids.as_deref()).await?;
+        let artist_ids = match (artist_ids, artist_id) {
+            (Some(list), _) => Some(list),
+            (None, Some(one)) => Some(vec![one]),
+            (None, None) => None,
+        };
         let user = super::user_id(ctx);
+        let offset = page_offset(after.as_deref());
+        let limit = page_size(first);
+        let order = match sort_by {
+            AlbumSortField::Title => queries::AlbumOrder::Title,
+            AlbumSortField::Date => queries::AlbumOrder::Date,
+            AlbumSortField::ArtistThenDate => queries::AlbumOrder::ArtistThenDate,
+            AlbumSortField::TrackCount => queries::AlbumOrder::FewestTracks,
+        };
         let rows = with_db(ctx, move |db| {
-            let mut albums = if ids.is_some() && artist_ids.is_none() {
-                // Only the named albums are read, when they are named.
-                queries::list_albums(
-                    &db.conn,
-                    &queries::AlbumQuery {
-                        ids: ids.as_deref(),
-                        artist_id,
-                        search: search.as_deref(),
+            queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    ids: ids.as_deref(),
+                    artist_ids: artist_ids.as_deref(),
+                    search: search.as_deref(),
+                    favourites_of: favourites_only.then_some(user),
+                    filter: queries::AlbumFilter {
+                        codec: codec.as_deref(),
+                        year_from: year_start,
+                        year_to: year_end,
+                        genre_contains: genre.as_deref(),
+                        title: title.as_deref(),
+                        label: label.as_deref(),
                         ..Default::default()
                     },
-                )
-                .map_err(|e| super::internal_error("db", e))?
-            } else if let Some(aid) = artist_id {
-                queries::albums_for_artist(&db.conn, aid)
-                    .map_err(|e| super::internal_error("db", e))?
-            } else if let Some(ref aids) = artist_ids {
-                queries::batch::albums_for_artists(&db.conn, aids)
-                    .map_err(|e| super::internal_error("db", e))?
-                    .into_values()
-                    .flatten()
-                    .collect()
-            } else if let Some(ref query) = search {
-                // Narrowed in SQL rather than over every album in the library —
-                // the same core helper the native client's filter runs through.
-                queries::find_albums(&db.conn, query).map_err(|e| super::internal_error("db", e))?
-            } else {
-                queries::all_albums(&db.conn).map_err(|e| super::internal_error("db", e))?
-            };
-
-            if let Some(ref id_list) = ids {
-                albums.retain(|a| id_list.contains(&a.id));
-            }
-
-            if let Some(ref query) = search {
-                let q = query.to_lowercase();
-                albums.retain(|a| {
-                    a.title.to_lowercase().contains(&q) || a.artist_name.to_lowercase().contains(&q)
-                });
-            }
-
-            if let Some(ref t) = title {
-                let t_lower = t.to_lowercase();
-                albums.retain(|a| a.title.to_lowercase().contains(&t_lower));
-            }
-
-            if let Some(ys) = year_start {
-                albums.retain(|a| album_year(a).map(|y| y >= ys).unwrap_or(false));
-            }
-
-            if let Some(ye) = year_end {
-                albums.retain(|a| album_year(a).map(|y| y <= ye).unwrap_or(false));
-            }
-
-            if let Some(ref c) = codec {
-                let c_lower = c.to_lowercase();
-                albums.retain(|a| {
-                    a.codec
-                        .as_ref()
-                        .map(|ac| ac.to_lowercase().contains(&c_lower))
-                        .unwrap_or(false)
-                });
-            }
-
-            if let Some(ref l) = label {
-                let l_lower = l.to_lowercase();
-                albums.retain(|a| {
-                    a.label
-                        .as_ref()
-                        .map(|al| al.to_lowercase().contains(&l_lower))
-                        .unwrap_or(false)
-                });
-            }
-
-            if let Some(ref g) = genre {
-                let g_lower = g.to_lowercase();
-                let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
-                let genre_map = queries::genres_by_album_ids(&db.conn, &album_ids)
-                    .map_err(|e| super::internal_error("db", e))?;
-                albums.retain(|a| {
-                    genre_map
-                        .get(&a.id)
-                        .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
-                });
-            }
-
-            if favourites_only {
-                let fav_ids = queries::favourite_album_ids_batch(&db.conn, user)
-                    .map_err(|e| super::internal_error("db", e))?;
-                albums.retain(|a| fav_ids.contains(&a.id));
-            }
-
-            match sort_by {
-                AlbumSortField::Title => albums.sort_by(|a, b| a.title.cmp(&b.title)),
-                AlbumSortField::Date => {
-                    albums.sort_by(|a, b| a.date.cmp(&b.date).then(a.title.cmp(&b.title)))
-                }
-                AlbumSortField::ArtistThenDate => albums.sort_by(|a, b| {
-                    a.artist_name
-                        .cmp(&b.artist_name)
-                        .then(a.date.cmp(&b.date))
-                        .then(a.title.cmp(&b.title))
-                }),
-                AlbumSortField::TrackCount => {
-                    let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
-                    let stats = queries::batch::album_stats(&db.conn, &album_ids)
-                        .map_err(|e| super::internal_error("db", e))?;
-                    let key = |id: i64| stats.get(&id).map(|s| s.track_count).unwrap_or(0);
-                    albums.sort_by(|a, b| key(a.id).cmp(&key(b.id)).then(a.title.cmp(&b.title)));
-                }
-            }
-            if sort_dir == SortDirection::Desc {
-                albums.reverse();
-            }
-
-            Ok(albums)
+                    order,
+                    descending: sort_dir == SortDirection::Desc,
+                    limit: Some(limit as u32 + 1),
+                    offset: offset as u32,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| super::internal_error("db", e))
         })
         .await?;
 
-        paginate(
+        Ok(paginate_window(
             rows.into_iter().map(|row| GqlAlbum { row }).collect(),
-            after,
-            first,
-        )
+            offset,
+            limit,
+        ))
     }
 
     /// Tracks matching the given filters.
@@ -516,10 +386,8 @@ impl QueryRoot {
         super::require_role(ctx, koan_core::auth::Role::User)?;
         let owner = super::share_owner(ctx);
         with_db(ctx, move |db| {
-            let cfg = Config::load().unwrap_or_default();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64);
+            let cfg = Config::cached();
+            let now = koan_core::clock::unix_secs();
             let list = queries::shares::list_shares(&db.conn, owner)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(list
@@ -624,48 +492,25 @@ impl QueryRoot {
         #[graphql(default = 50)] limit: i32,
     ) -> async_graphql::Result<Vec<GqlFuzzyMatch>> {
         let limit = limit.clamp(0, MAX_PAGE as i32) as usize;
-        let fuzzy = ctx.data::<Arc<Fuzzy>>()?.clone();
         // Read, then hand the connection back before matching: the match
         // runs over the whole library and needs no database.
-        let items = with_db(ctx, move |db| {
+        let corpus = with_db(ctx, move |db| {
             let kind = match kind {
                 FuzzySearchKind::Track => queries::CorpusKind::Track,
                 FuzzySearchKind::Album => queries::CorpusKind::Album,
                 FuzzySearchKind::Artist => queries::CorpusKind::Artist,
             };
-            fuzzy
-                .corpus(&db.conn, kind)
-                .map_err(|e| super::internal_error("db", e))
+            queries::corpus(&db.conn, kind).map_err(|e| super::internal_error("db", e))
         })
         .await?;
         super::blocking(move || {
-            use nucleo::pattern::{CaseMatching, Normalization, Pattern};
-            use nucleo::{Config, Matcher, Utf32Str};
-
-            // The matcher alone, on this thread: `Nucleo` would build a
-            // thread pool per request to do the same.
-            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
-            let mut matcher = Matcher::new(Config::DEFAULT);
-            let mut buf = Vec::new();
-            let mut scored: Vec<(u32, usize)> = items
-                .iter()
-                .enumerate()
-                .filter_map(|(i, (_, text))| {
-                    pattern
-                        .score(Utf32Str::new(text, &mut buf), &mut matcher)
-                        .map(|score| (score, i))
-                })
-                .collect();
-            // Best first; ties to the shorter text, then corpus order, as
-            // nucleo ranks them.
-            scored.sort_by_key(|&(score, i)| (std::cmp::Reverse(score), items[i].1.len(), i));
-            Ok(scored
+            Ok(queries::fuzzy_rank(&corpus, &query)
                 .into_iter()
                 .take(limit)
                 .enumerate()
                 .map(|(rank, (_, i))| GqlFuzzyMatch {
-                    id: items[i].0,
-                    name: items[i].1.clone(),
+                    id: corpus[i].0,
+                    name: corpus[i].1.clone(),
                     rank: rank as i32,
                     kind,
                 })
@@ -816,7 +661,7 @@ impl QueryRoot {
     /// Current configuration.
     async fn config(&self) -> async_graphql::Result<GqlConfig> {
         blocking(move || {
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             Ok(GqlConfig {
                 library_folders: cfg
                     .library

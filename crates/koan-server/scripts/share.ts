@@ -1,7 +1,7 @@
 // The share page: the shared tracks as one queue on koan's gapless player,
 // cued to the track the share starts on.
 import type { Track } from "koan/player";
-import { Player } from "koan/player";
+import { Player, clock, dragged, fill, fmt } from "koan/player";
 
 const $ = (id: string) => document.getElementById(id);
 const rows = [...document.querySelectorAll<HTMLElement>("#tracks li[data-src]")];
@@ -25,27 +25,15 @@ const tracks = rows.map((li) => ({
   cover: `${li.dataset.src}/cover`,
 }));
 
-const fmt = (s: number) => {
-  s = Math.max(0, Math.floor(s || 0));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
-
-// Set while the range is dragged; focus stays on a clicked range, so it is
-// no guide to whether the clock may move it.
-let dragging = false;
-// How far the slider's accent runs; see styles/controls.css.
-const fill = () => seek.style.setProperty("--fill", `${Number(seek.max) > 0 ? (Number(seek.value) / Number(seek.max)) * 100 : 0}%`);
-seek.addEventListener("input", fill);
-for (const type of ["pointerdown", "touchstart"]) seek.addEventListener(type, () => { dragging = true; }, { passive: true });
-for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "blur"]) {
-  seek.addEventListener(type, () => { dragging = false; }, { passive: true });
-}
+const dragging = dragged("#seek");
+seek.addEventListener("input", () => fill(seek));
 const show = () => {
   const p = player.position;
   pos.textContent = fmt(p);
-  if (!dragging) seek.value = String(p);
-  fill();
+  if (dragging() !== seek) seek.value = String(p);
+  fill(seek);
 };
+const ticking = clock(show);
 
 const player = new Player<Track>({
   onChange({ cur, playing, track }) {
@@ -54,6 +42,7 @@ const player = new Player<Track>({
     len.textContent = fmt(track ? track.dur : 0);
     seek.max = String(track ? track.dur : 0);
     show();
+    ticking(playing);
   },
 });
 player.set(tracks, start >= 0 ? start : -1);
@@ -68,6 +57,3 @@ rows.forEach((li, i) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); player.playAt(i); }
   });
 });
-setInterval(() => {
-  if (player.cur >= 0) show();
-}, 250);

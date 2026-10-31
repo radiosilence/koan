@@ -1,7 +1,7 @@
 // The web UI's own script: navigation that swaps only the page content so the
 // player keeps playing, the transport and queue, and keeping the session alive.
 import type { Track } from "koan/player";
-import { Player } from "koan/player";
+import { Player, clock, dragged, fill, fmt } from "koan/player";
 type UiTrack = Track & {
   id: number;
   albumId: number;
@@ -22,10 +22,6 @@ document.documentElement.classList.add("js");
 // The server groups history by day, and only the browser knows whose day.
 document.cookie = `koan_tz=${-new Date().getTimezoneOffset()}; path=/; max-age=31536000; samesite=lax`;
 const all = <E extends Element = HTMLElement>(sel: string, root: ParentNode = document) => [...root.querySelectorAll<E>(sel)];
-const fmt = (s: number) => {
-  s = Math.max(0, Math.floor(s || 0));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
 
 // --- Session ---------------------------------------------------------------
 // The access cookie lasts minutes. Renewing spends the refresh cookie, which
@@ -37,6 +33,15 @@ const fmt = (s: number) => {
 const rawFetch = window.fetch.bind(window);
 let renewing: Promise<boolean> | null = null;
 let renewedAt = Date.now();
+// Renewed this long after the last renewal, whatever the page is doing, so a
+// queue left playing still has a session to stream with.
+const RENEW_EVERY = 10 * 60 * 1000;
+let renewal = setTimeout(() => renew(), RENEW_EVERY);
+function renewed() {
+  renewedAt = Date.now();
+  clearTimeout(renewal);
+  renewal = setTimeout(() => renew(), RENEW_EVERY);
+}
 const post = (path: string) =>
   rawFetch(path, { method: "POST", credentials: "same-origin" }).then((r) => r.ok);
 const [first, then] = "proxied" in document.body.dataset
@@ -45,7 +50,7 @@ const [first, then] = "proxied" in document.body.dataset
 function renew() {
   renewing ??= post(first)
     .then((ok) => ok || post(then))
-    .then((ok) => { if (ok) renewedAt = Date.now(); return ok; })
+    .then((ok) => { if (ok) renewed(); return ok; })
     .catch(() => false)
     .finally(() => { renewing = null; });
   return renewing;
@@ -76,8 +81,6 @@ window.fetch = async (input, init) => {
   location.reload();
   return r;
 };
-const RENEW_EVERY = 10 * 60 * 1000;
-setInterval(() => { if (Date.now() - renewedAt > RENEW_EVERY) renew(); }, 60 * 1000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && Date.now() - renewedAt > RENEW_EVERY) renew();
 });
@@ -115,6 +118,11 @@ const save = (from?: number) => {
     localStorage.setItem(PLACE, JSON.stringify({ cur: cur - storedStart, pos: from ?? player.position } satisfies Place));
   } catch {}
 };
+// Every change the player reports saves (a pause and a seek among them), and
+// so does leaving: the clock that saves while playing stops in a hidden tab,
+// so hiding it and closing it save where the music had got to.
+document.addEventListener("visibilitychange", () => { if (document.hidden) save(); });
+window.addEventListener("pagehide", () => save());
 // The queue's tracks as last drawn; see renderQueue.
 let queueKey = "";
 const player = new Player({ onChange: render, renew });
@@ -164,6 +172,7 @@ function render({ queue, cur, playing, track }: Player<UiTrack>) {
   for (const li of all("li[data-id]", main)) li.classList.toggle("playing", !!track && Number(li.dataset.id) === track.id);
   renderQueue(queue, cur);
   tick();
+  ticking(playing);
   save();
 }
 
@@ -235,18 +244,7 @@ function renderQueue(queue: UiTrack[], cur: number) {
   });
 }
 
-// The range being dragged, which the clock must not move under the finger.
-// Focus is no guide: a clicked range keeps it long after the drag ends.
-let dragging: EventTarget | null = null;
-// How far a slider's accent runs; see styles/controls.css.
-const fill = (el: HTMLInputElement) => el.style.setProperty("--fill", `${Number(el.max) > 0 ? (Number(el.value) / Number(el.max)) * 100 : 0}%`);
-const isSeek = (t: EventTarget | null) => t instanceof Element && t.matches("input[data-ctl=seek]");
-for (const type of ["pointerdown", "touchstart"]) {
-  document.addEventListener(type, (e) => { if (isSeek(e.target)) dragging = e.target; }, { passive: true });
-}
-for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "focusout"]) {
-  document.addEventListener(type, () => { dragging = null; }, { passive: true });
-}
+const dragging = dragged("input[data-ctl=seek]");
 
 let lastSave = 0;
 function tick() {
@@ -254,13 +252,13 @@ function tick() {
   const p = track ? player.position : 0;
   for (const el of all("[data-np=pos]")) el.textContent = fmt(p);
   for (const el of all<HTMLInputElement>("input[data-ctl=seek]")) {
-    if (el !== dragging) el.value = String(p);
+    if (el !== dragging()) el.value = String(p);
     fill(el);
   }
   for (const el of all<HTMLProgressElement>("progress[data-np=progress]")) el.value = p;
   if (track && Date.now() - lastSave > 5000) { lastSave = Date.now(); save(p); }
 }
-setInterval(tick, 250);
+const ticking = clock(tick);
 
 const shuffle = (a: UiTrack[]) => {
   for (let i = a.length - 1; i > 0; i--) {

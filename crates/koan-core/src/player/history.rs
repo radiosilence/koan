@@ -228,7 +228,7 @@ impl Writer {
                         log::warn!("failed to record play of track {track_id}: {e}");
                     }
                 }
-                self.started = Some((track_id, now_ms()));
+                self.started = Some((track_id, crate::clock::unix_ms() as u64));
                 self.report(PlaybackReport {
                     track_id,
                     state: PlaybackReportState::Playing,
@@ -313,12 +313,6 @@ impl Coalescer {
     }
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
-}
-
 /// Whether a listen counts as a play, by Last.fm's rule: half the track or
 /// four minutes, whichever comes first, and never a track under thirty
 /// seconds. With no known duration only the four minutes can be judged.
@@ -338,7 +332,7 @@ fn remote_track(db: &Database, track_id: i64) -> Option<(String, Option<u64>)> {
 }
 
 fn remote_client() -> Option<std::sync::Arc<crate::remote::client::SubsonicClient>> {
-    let cfg = crate::config::Config::load().unwrap_or_default();
+    let cfg = crate::config::Config::cached();
     crate::helpers::subsonic_client(&cfg)
 }
 

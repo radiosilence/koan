@@ -27,6 +27,7 @@ use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
 use koan_core::helpers::{ListCredits, RowCredits, credit_text, record_credit};
 
 use crate::html::{Html, Render};
+use crate::ui::Logged;
 
 /// The page's own scripts and stylesheet, from this server and nowhere else,
 /// and the import map naming the player; `connect-src` is for the player
@@ -187,12 +188,6 @@ pub fn router(
         })
 }
 
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
 /// A live share and its tracks in shared order, or `None` for anything a
 /// visitor should not be able to tell apart from a share that never existed.
 fn live<'a>(pool: &'a Pool, id: &str) -> Option<(Handle<'a>, ShareRow, Vec<TrackRow>)> {
@@ -200,16 +195,22 @@ fn live<'a>(pool: &'a Pool, id: &str) -> Option<(Handle<'a>, ShareRow, Vec<Track
     if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let db = pool.get().ok()?;
-    let share = queries::shares::get_share(&db.conn, id).ok()??;
-    if !share.is_live(now()) {
+    let db = pool.get().logged()?;
+    let share = queries::shares::get_share(&db.conn, id).logged()??;
+    if !share.is_live(koan_core::clock::unix_secs()) {
         return None;
     }
-    let rows = queries::tracks_by_ids(&db.conn, &share.track_ids).ok()?;
+    let rows: std::collections::HashMap<i64, TrackRow> =
+        queries::tracks_by_ids(&db.conn, &share.track_ids)
+            .logged()?
+            .into_iter()
+            .map(|t| (t.id, t))
+            .collect();
+    // In shared order; a track shared twice is listed twice.
     let tracks = share
         .track_ids
         .iter()
-        .filter_map(|id| rows.iter().find(|t| t.id == *id).cloned())
+        .filter_map(|id| rows.get(id).cloned())
         .collect();
     Some((db, share, tracks))
 }
@@ -220,13 +221,13 @@ fn live_track(pool: &Pool, id: &str, n: usize) -> Option<TrackRow> {
     if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let db = pool.get().ok()?;
-    let share = queries::shares::get_share(&db.conn, id).ok()??;
-    if !share.is_live(now()) {
+    let db = pool.get().logged()?;
+    let share = queries::shares::get_share(&db.conn, id).logged()??;
+    if !share.is_live(koan_core::clock::unix_secs()) {
         return None;
     }
     let track = *share.track_ids.get(n.checked_sub(1)?)?;
-    queries::tracks_by_ids(&db.conn, &[track]).ok()?.pop()
+    queries::tracks_by_ids(&db.conn, &[track]).logged()?.pop()
 }
 
 /// The app icon, as the browser tab and home-screen icons of the web UI and
@@ -581,7 +582,7 @@ fn render(
 async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     let found = blocking(move || {
         let (db, share, tracks) = live(&s.pool, &id)?;
-        let _ = queries::shares::record_visit(&db.conn, &id, now());
+        let _ = queries::shares::record_visit(&db.conn, &id, koan_core::clock::unix_secs());
         let subject = subject(&db, &share, &tracks);
         let credits = ListCredits::read_rows(&db.conn, &tracks);
         Some(render(

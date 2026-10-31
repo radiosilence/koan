@@ -74,7 +74,7 @@ pub fn cached(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Arti
 /// A network failure is not remembered as a miss — it says nothing about the
 /// artist — so a stale answer is served instead, if there is one.
 pub fn fetch(conn: &Connection, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
-    let now = now();
+    let now = crate::clock::unix_secs();
     let held = cached(conn, artist_id)?;
     if let Some(held) = &held
         && !held.is_stale(now)
@@ -292,13 +292,6 @@ fn throttle() {
     *last = Some(Instant::now());
 }
 
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,7 +310,7 @@ mod tests {
         let id = get_or_create_artist(&conn, "Glass Candy", None).unwrap();
         let info = ArtistInfo {
             bio: Some("An American electronic music duo.".into()),
-            fetched_at: now(),
+            fetched_at: crate::clock::unix_secs(),
             ..Default::default()
         };
         store(&conn, id, &info).unwrap();
@@ -373,7 +366,7 @@ mod tests {
             &conn,
             id,
             &ArtistInfo {
-                fetched_at: now(),
+                fetched_at: crate::clock::unix_secs(),
                 ..Default::default()
             },
         )
