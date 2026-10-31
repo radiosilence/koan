@@ -24,6 +24,24 @@ just fmt
 just hooks
 ```
 
+### The web client
+
+`crates/koan-web` is the first step towards koan-core running in the browser as
+a koan device (#1454): the decoder in a worker, heard through an AudioWorklet.
+The two share one wasm memory, which needs std rebuilt with atomics, so it
+builds on nightly
+(`rustup toolchain install nightly-2026-10-24 --component rust-src`, the one
+`just web-client` names):
+
+```bash
+just web-client
+KOAN_WEB_CLIENT_DIR=target/koan-web koan --headless
+```
+
+Sign in to the web UI, then open `/client/` and load a track by its id. The
+page plays one mono or stereo file at its own rate; a rate the browser's audio
+context refuses is reported rather than resampled.
+
 ### Measuring the macOS app
 
 The app emits signposts on the Points of Interest timeline, so a recording lines

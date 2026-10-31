@@ -231,8 +231,10 @@ pub(crate) fn router(
     // Making the first admin hashes a password, so it shares sign-in's window.
     let setup = get(setup::form)
         .merge(post(setup::create).layer(from_fn_with_state(state.auth.clone(), login_rate_limit)));
+    let client = web_client(&state);
     axum::Router::new()
         .merge(gated)
+        .merge(client)
         .merge(consent)
         .merge(pairing)
         .route(
@@ -284,6 +286,69 @@ pub(crate) fn router(
             get(|| ui_asset(Path("apple-touch-icon.png".into()), RawQuery(None))),
         )
         .with_state(state)
+}
+
+/// The experimental web client (`crates/koan-web`, built by `just
+/// web-client`), served from the directory `KOAN_WEB_CLIENT_DIR` names and
+/// absent without it. It needs nightly to build, so the server cannot embed
+/// it. Behind the session gate, so the stream it fetches is same-origin.
+fn web_client(state: &UiState) -> axum::Router<UiState> {
+    let Some(dir) = std::env::var_os("KOAN_WEB_CLIENT_DIR") else {
+        return axum::Router::new();
+    };
+    log::info!(
+        "serving the web client at /client/ from {}",
+        PathBuf::from(&dir).display()
+    );
+    axum::Router::new()
+        .nest_service("/client", tower_http::services::ServeDir::new(dir))
+        .layer(from_fn(client_slash))
+        .layer(axum::middleware::map_response(isolate))
+        .layer(from_fn_with_state(state.clone(), gate))
+}
+
+/// The page's scripts are relative to it, so it is only served at the
+/// directory's own path: the nested service sees `/client` as `/` and would
+/// otherwise answer it with the page.
+async fn client_slash(req: Request, next: Next) -> Response {
+    if req.uri().path() == "/client" {
+        return match req.uri().query() {
+            Some(q) => see_other(&format!("/client/?{q}")),
+            None => see_other("/client/"),
+        };
+    }
+    next.run(req).await
+}
+
+/// The web client's engine runs in workers over shared memory, which a
+/// browser allows only a cross-origin isolated page. Every response carries
+/// the headers, the worker's script included: Chrome refuses a worker whose
+/// own response lacks COEP.
+const CLIENT_CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; \
+    worker-src 'self'; connect-src 'self'; style-src 'self'; base-uri 'none'; \
+    form-action 'none'; frame-ancestors 'none'";
+
+async fn isolate(mut res: Response) -> Response {
+    let h = res.headers_mut();
+    h.insert(
+        "cross-origin-opener-policy",
+        HeaderValue::from_static("same-origin"),
+    );
+    h.insert(
+        "cross-origin-embedder-policy",
+        HeaderValue::from_static("require-corp"),
+    );
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CLIENT_CSP),
+    );
+    // Revalidated, not stored blind: a rebuild replaces the files in place.
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    res
 }
 
 /// Which stylesheet the markup was written for. A tab open across an upgrade

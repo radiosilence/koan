@@ -21,7 +21,10 @@ use crate::audio::dsp::{Chain, Setup};
 use crate::audio::opus::OpusBridge;
 use crate::audio::viz::VizBuffer;
 use crate::config::ReplayGainMode;
-use crate::player::state::{QueueItemId, RendererClock};
+use crate::queue_id::QueueItemId;
+
+/// Ring buffer size in samples. ~1s at 192kHz stereo.
+pub const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
 #[derive(Debug, Error)]
 pub enum DecodeError {
@@ -145,6 +148,20 @@ pub struct Playhead {
     pub boundary: usize,
     pub id: QueueItemId,
     pub position_ms: u64,
+}
+
+/// A renderer's playhead: `position_ms`, plus the time since `running` if it
+/// is playing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RendererClock {
+    pub position_ms: u64,
+    pub running: Option<std::time::Instant>,
+}
+
+impl RendererClock {
+    pub fn now_ms(&self) -> u64 {
+        self.position_ms + self.running.map_or(0, |at| at.elapsed().as_millis() as u64)
+    }
 }
 
 /// Shared timeline that the decode thread writes and the UI reads.
@@ -603,13 +620,13 @@ where
     let thread = thread::Builder::new()
         .name("koan-decode".into())
         .spawn(move || {
-            decode_queue_loop(
+            run_decode(
                 first,
                 producer,
                 &stop_clone,
                 seek_ms,
                 &next_track,
-                &timeline.writer(),
+                &timeline,
                 viz_buffer.as_deref(),
                 &processing,
             );
@@ -626,6 +643,41 @@ where
         stop,
         thread: Some(thread),
     })
+}
+
+/// Decode a session on the calling thread, returning once it has ended and
+/// its audio has drained or `stop` is set. What `start_decode` runs on its
+/// own thread; a browser's worker, which cannot spawn one, calls it directly.
+///
+/// `stop` is read between packets and on each wake from a full ring or the
+/// final drain, which sleep for up to the ring's playing time. Nothing
+/// unparks a caller of this, so a stop it is told of lands within that.
+///
+/// Answers how many sources could not be opened or decoded and were skipped.
+#[allow(clippy::too_many_arguments)]
+pub fn run_decode<N>(
+    first: SourceEntry,
+    producer: rtrb::Producer<f32>,
+    stop: &AtomicBool,
+    seek_ms: u64,
+    next_track: &N,
+    timeline: &PlaybackTimeline,
+    viz_buffer: Option<&VizBuffer>,
+    processing: &Processing,
+) -> u32
+where
+    N: Fn() -> Option<SourceEntry>,
+{
+    decode_queue_loop(
+        first,
+        producer,
+        stop,
+        seek_ms,
+        next_track,
+        &timeline.writer(),
+        viz_buffer,
+        processing,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -657,7 +709,8 @@ fn decode_queue_loop<N>(
     timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
     processing: &Processing,
-) where
+) -> u32
+where
     N: Fn() -> Option<SourceEntry>,
 {
     // The delay line is indexed against the engine's played counter, which the
@@ -670,6 +723,7 @@ fn decode_queue_loop<N>(
     let mut seek_ms = initial_seek_ms;
     let mut format: Option<PcmFormat> = None;
     let mut failures: u32 = 0;
+    let mut skipped: u32 = 0;
     let mut chain: Option<Chain> = None;
 
     while let Some(entry) = pending.take() {
@@ -712,6 +766,7 @@ fn decode_queue_loop<N>(
                     break;
                 }
                 failures += 1;
+                skipped += 1;
                 log::error!("skipping {}: {}", path.display(), e);
                 if failures >= MAX_CONSECUTIVE_FAILURES {
                     log::error!(
@@ -744,6 +799,7 @@ fn decode_queue_loop<N>(
     }
 
     wait_for_drain(&producer, stop, format);
+    skipped
 }
 
 /// Write `samples` into the ring, blocking while it is full. False once the

@@ -1,0 +1,22 @@
+[package]
+name = "koan-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "koan-core in the browser: the decode pipeline in a Web Worker, heard through an AudioWorklet."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# Everything is for the browser; on any other target the crate is empty.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1.7"
+console_log = "1.0.0"
+koan-core = { path = "../koan-core", default-features = false }
+log = "0.4"
+rtrb = "0.4"
+symphonia = { version = "0.6", default-features = false }
+wasm-bindgen = "0.2.130"

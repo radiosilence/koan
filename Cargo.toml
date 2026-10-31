@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
+members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "crates/koan-web", "tools/uniffi-bindgen"]
 
 [workspace.package]
 version = "0.69.1"

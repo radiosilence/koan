@@ -11,3 +11,5 @@ xcodegen = "2.46.0"
 # The Android app: Gradle's JDK, and the Rust core cross-compiled against the NDK.
 java = "temurin-21.0.13+9.0.LTS"
 "cargo:cargo-ndk" = "4.1.2"
+# The web client's JS glue; in step with the wasm-bindgen crate in Cargo.lock.
+"cargo:wasm-bindgen-cli" = "0.2.130"

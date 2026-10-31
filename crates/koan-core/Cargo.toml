@@ -9,16 +9,37 @@ description = "Core library for koan — bit-perfect music player. Audio engine,
 keywords = ["audio", "music", "player"]
 categories = ["multimedia::audio"]
 
+[features]
+default = ["native"]
+# What a browser lacks: SQLite, sockets, blocking HTTP, TLS, the filesystem
+# watcher, the sign-in crypto. Without it koan-core is the decode pipeline
+# (`audio::buffer`, DSP, ReplayGain) and configuration, which build for
+# `wasm32-unknown-unknown`.
+native = [
+    "dep:argon2",
+    "dep:koan-relay-client",
+    "dep:jsonwebtoken",
+    "dep:pem",
+    "dep:ring",
+    "dep:reqwest",
+    "dep:rusqlite",
+    "dep:notify",
+    "dep:tungstenite",
+    "dep:rustls",
+    "dep:rustls-platform-verifier",
+    "dep:socket2",
+]
+
 [dependencies]
 # Acoustic analysis
 # Auth
-argon2 = "0.6"
+argon2 = { version = "0.6", optional = true }
 base64 = "0.23"
-koan-relay-client = { workspace = true }
+koan-relay-client = { workspace = true, optional = true }
 hex = "0.4"
-jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
-pem = "4"
-ring = "0.17"
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"], optional = true }
+pem = { version = "4", optional = true }
+ring = { version = "0.17", optional = true }
 subtle = "2"
 crossbeam-channel = "0.5"
 chrono = "0.4"
@@ -44,12 +65,12 @@ parking_lot = "0.13"
 # ready. No runtime, no reactor — koan-core stays threads and channels.
 tokio = { version = "1", default-features = false, features = ["sync"] }
 rayon = "1"
-reqwest = { workspace = true }
+reqwest = { workspace = true, optional = true }
 realfft = "3"
 ebur128 = "0.1"
 rtrb = "0.4"
 # Database
-rusqlite = { workspace = true, features = ["collation", "functions"] }
+rusqlite = { workspace = true, features = ["collation", "functions"], optional = true }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -73,12 +94,12 @@ walkdir = { workspace = true }
 # Watches the library folders so files added while koan is open are indexed
 # without being asked. Default features so each platform gets its own backend
 # (FSEvents on macOS, inotify on Linux).
-notify = "8"
-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+notify = { version = "8", optional = true }
+tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"], optional = true }
 # The GraphQL subscription socket verifies certificates as reqwest does, against
 # the platform's roots, so a server behind a private CA answers both.
-rustls = { version = "0.23", default-features = false }
-rustls-platform-verifier = "0.7"
+rustls = { version = "0.23", default-features = false, optional = true }
+rustls-platform-verifier = { version = "0.7", optional = true }
 biquad = "0.6"
 fft-convolver = "0.4"
 rubato = "5"
@@ -88,7 +109,7 @@ yaml-rust2 = { version = "0.13.0", default-features = false }
 quick-xml = "0.42.0"
 # SSDP announcements arrive on port 1900, which other processes hold too:
 # sharing it takes SO_REUSEADDR/SO_REUSEPORT before the bind.
-socket2 = { version = "0.6.5", features = ["all"] }
+socket2 = { version = "0.6.5", features = ["all"], optional = true }
 # Renderers declare the charset of what they send; decoded as reqwest's
 # `text()` would.
 encoding_rs = "0.8.44"
@@ -112,6 +133,11 @@ security-framework = "3"
 # The configuration, mirrored into the app's preferences: see `config::kept`
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
+
+# A browser's clock and randomness: `QueueItemId` is a UUIDv7.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+uuid = { version = "1", features = ["js"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 cpal = "0.18"

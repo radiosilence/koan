@@ -1148,6 +1148,7 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
 fn persist(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<(), String> {
     Config::persist(mutate).map_err(|e| e.to_string())?;
     crate::signal::engine_changed().bump();
+    #[cfg(feature = "native")]
     crate::remote::dsp_sync::changed();
     Ok(())
 }

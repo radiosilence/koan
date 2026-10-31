@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kōan web client</title>
+    <link rel="stylesheet" href="client.css" />
+    <script type="module" src="client.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>kōan web client</h1>
+      <p>koan-core decoding in a worker, heard through an audio worklet. Experimental.</p>
+      <form id="load">
+        <label>Track id <input name="track" inputmode="numeric" required /></label>
+        <button>Load</button>
+      </form>
+      <p>
+        <button id="play" disabled>Play</button>
+        <button id="stop" disabled>Stop</button>
+      </p>
+      <p id="status" role="status"></p>
+    </main>
+  </body>
+</html>

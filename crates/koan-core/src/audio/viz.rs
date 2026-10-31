@@ -21,7 +21,7 @@ pub const WAVEFORM_SAMPLES: usize = 2048;
 /// which is up to a full ring ahead of what the DAC is playing. To show what is
 /// being *heard*, the buffer must reach back one whole ring plus the longest
 /// window the analyzer asks for.
-const DELAY_LINE_SIZE: usize = crate::player::RING_BUFFER_SIZE + HELD_BEHIND_HEAD;
+const DELAY_LINE_SIZE: usize = crate::audio::buffer::RING_BUFFER_SIZE + HELD_BEHIND_HEAD;
 
 /// Interleaved samples the delay line is sure to hold behind the play head,
 /// with the decoder a whole ring ahead of it.
@@ -522,7 +522,7 @@ mod tests {
         let buf = VizBuffer::new();
         // The decoder a whole ring ahead of what is heard.
         push_ramp(&buf, DELAY_LINE_SIZE);
-        let played = (DELAY_LINE_SIZE - crate::player::RING_BUFFER_SIZE) as u64;
+        let played = (DELAY_LINE_SIZE - crate::audio::buffer::RING_BUFFER_SIZE) as u64;
         let mut out = RawVizSnapshot::default();
         // More played since the last read than the line holds behind the head.
         buf.played_between(0, played, &mut out);
