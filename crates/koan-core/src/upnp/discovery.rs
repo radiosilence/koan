@@ -62,6 +62,41 @@ const NOT_A_RENDERER: Duration = Duration::from_secs(30 * 60);
 /// its udn: a list drawn before it expired can still connect to it.
 const FORGET_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
+impl Store {
+    /// Whether an announcement from `udn` at `location` should be described:
+    /// not while a wait set for it there runs. A lapsed wait is kept a while,
+    /// so the next failure there waits twice as long.
+    fn wants_description(&mut self, udn: &str, location: &Url, now: Instant) -> bool {
+        self.unwanted.retain(|_, u| match u.next_wait {
+            Some(_) => now < u.until + LAST_RETRY * 2,
+            None => now < u.until,
+        });
+        !self
+            .unwanted
+            .get(udn)
+            .is_some_and(|u| u.location == *location && now < u.until)
+    }
+
+    /// A description at `location` could not be read: wait before the next
+    /// try, twice as long as the last wait there, up to `LAST_RETRY`.
+    fn describe_failed(&mut self, udn: &str, location: &Url, now: Instant) {
+        let wait = self
+            .unwanted
+            .get(udn)
+            .filter(|u| u.location == *location)
+            .and_then(|u| u.next_wait)
+            .unwrap_or(FIRST_RETRY);
+        self.unwanted.insert(
+            udn.to_owned(),
+            Unwanted {
+                location: location.clone(),
+                until: now + wait,
+                next_wait: Some((wait * 2).min(LAST_RETRY)),
+            },
+        );
+    }
+}
+
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static SEARCH: OnceLock<Option<UdpSocket>> = OnceLock::new();
 /// When `search` last ran.
@@ -489,12 +524,7 @@ fn heard(msg: Message) {
                     known.expires = Instant::now() + max_age;
                     return false;
                 }
-                let now = Instant::now();
-                s.unwanted.retain(|_, u| u.until > now);
-                if s.unwanted
-                    .get(&msg.udn)
-                    .is_some_and(|u| u.location == location)
-                {
+                if !s.wants_description(&msg.udn, &location, Instant::now()) {
                     return false;
                 }
                 s.describing.insert(msg.udn.clone())
@@ -513,22 +543,7 @@ fn describe(udn: String, location: Url, max_age: Duration) {
             let udn = udn.clone();
             move || {
                 // Doubling waits for one that failed at the same location.
-                let failed = |s: &mut Store| {
-                    let wait = s
-                        .unwanted
-                        .get(&udn)
-                        .filter(|u| u.location == location)
-                        .and_then(|u| u.next_wait)
-                        .unwrap_or(FIRST_RETRY);
-                    s.unwanted.insert(
-                        udn.clone(),
-                        Unwanted {
-                            location: location.clone(),
-                            until: Instant::now() + wait,
-                            next_wait: Some((wait * 2).min(LAST_RETRY)),
-                        },
-                    );
-                };
+                let failed = |s: &mut Store| s.describe_failed(&udn, &location, Instant::now());
                 let not_a_renderer = |s: &mut Store| {
                     s.unwanted.insert(
                         udn.clone(),
@@ -592,6 +607,26 @@ pub fn fetch(location: &Url) -> Result<Option<Renderer>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_description_that_keeps_failing_waits_longer_each_time() {
+        let mut store = Store::default();
+        let at: Url = "http://192.0.2.1:49152/desc.xml".parse().unwrap();
+        let mut now = Instant::now();
+        let mut waits = Vec::new();
+        for _ in 0..6 {
+            assert!(store.wants_description("uuid:x", &at, now));
+            store.describe_failed("uuid:x", &at, now);
+            let until = store.unwanted["uuid:x"].until;
+            waits.push((until - now).as_secs());
+            assert!(!store.wants_description("uuid:x", &at, now));
+            now = until;
+        }
+        assert_eq!(waits, [5, 10, 20, 40, 60, 60]);
+        // Somewhere else, it is asked at once.
+        let moved: Url = "http://192.0.2.2:49152/desc.xml".parse().unwrap();
+        assert!(store.wants_description("uuid:x", &moved, now));
+    }
 
     struct Counting {
         holds: Mutex<Vec<bool>>,

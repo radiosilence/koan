@@ -274,6 +274,10 @@ fn sorted(g: &GraphicEq) -> Vec<(f64, f64)> {
 /// The curve's gain at `hz`: interpolated against log frequency, held past
 /// either end.
 fn curve_db(points: &[(f64, f64)], hz: f64) -> f64 {
+    debug_assert!(
+        points.windows(2).all(|w| w[0].0 <= w[1].0),
+        "unsorted curve"
+    );
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return 0.0;
     };
