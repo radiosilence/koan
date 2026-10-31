@@ -1,10 +1,7 @@
 use std::collections::HashMap;
-use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
-
-use uuid::Uuid;
 
 pub use crate::audio::buffer::RendererClock;
 pub use crate::queue_id::QueueItemId;
