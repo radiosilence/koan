@@ -214,6 +214,21 @@ fn live<'a>(pool: &'a Pool, id: &str) -> Option<(Handle<'a>, ShareRow, Vec<Track
     Some((db, share, tracks))
 }
 
+/// Track `n` (from 1) of a live share, reading that track alone: what each
+/// stream and cover request needs, where `live` reads the whole share.
+fn live_track(pool: &Pool, id: &str, n: usize) -> Option<TrackRow> {
+    if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let db = pool.get().ok()?;
+    let share = queries::shares::get_share(&db.conn, id).ok()??;
+    if !share.is_live(now()) {
+        return None;
+    }
+    let track = *share.track_ids.get(n.checked_sub(1)?)?;
+    queries::tracks_by_ids(&db.conn, &[track]).ok()?.pop()
+}
+
 /// The app icon, as the browser tab and home-screen icons of the web UI and
 /// the share pages, and the typeface both set their text in. The same files
 /// koan.rocks uses.
@@ -606,9 +621,8 @@ async fn track(
     headers: HeaderMap,
 ) -> Response {
     let path = blocking(move || {
-        let (_, _, tracks) = live(&s.pool, &id)?;
-        let t = tracks.get(n.checked_sub(1)?)?;
-        crate::subsonic::track_file_path(t).map(PathBuf::from)
+        let t = live_track(&s.pool, &id, n)?;
+        crate::subsonic::track_file_path(&t).map(PathBuf::from)
     })
     .await;
     let Some(path) = path else {
@@ -732,15 +746,32 @@ fn archive(
     (file_name(&folder), files)
 }
 
-/// Feeds a response body from the thread writing the zip.
-struct BodyWriter(tokio::sync::mpsc::Sender<std::io::Result<axum::body::Bytes>>);
+/// Zips being written at once. Each holds a blocking thread for as long as
+/// its visitor takes to download it; past this, a download is refused rather
+/// than let share links starve the server of threads.
+static ZIPS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+/// How long one chunk of a zip may wait for its visitor to take it.
+const ZIP_STALL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Feeds a response body from the thread writing the zip. A visitor that
+/// stops reading fails the write after `ZIP_STALL`, which frees the thread.
+struct BodyWriter {
+    tx: tokio::sync::mpsc::Sender<std::io::Result<axum::body::Bytes>>,
+    runtime: tokio::runtime::Handle,
+}
 
 impl std::io::Write for BodyWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .blocking_send(Ok(axum::body::Bytes::copy_from_slice(buf)))
-            .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?;
-        Ok(buf.len())
+        let chunk = Ok(axum::body::Bytes::copy_from_slice(buf));
+        match self
+            .runtime
+            .block_on(tokio::time::timeout(ZIP_STALL, self.tx.send(chunk)))
+        {
+            Ok(Ok(())) => Ok(buf.len()),
+            Ok(Err(_)) => Err(std::io::ErrorKind::BrokenPipe.into()),
+            Err(_) => Err(std::io::ErrorKind::TimedOut.into()),
+        }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -749,9 +780,17 @@ impl std::io::Write for BodyWriter {
 }
 
 /// Every shared track with a file, as one zip written while it is sent. Audio
-/// is compressed already, so entries are stored. A file that fails partway
+/// is compressed already, so entries are stored. A zip that fails partway
 /// aborts the response rather than ending it as a zip that looks whole.
 async fn download(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
+    let Ok(permit) = ZIPS.try_acquire() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "60")],
+            "Too many downloads at once; try again in a minute.",
+        )
+            .into_response();
+    };
     let found = blocking(move || {
         let (db, share, tracks) = live(&s.pool, &id)?;
         let subject = subject(&db, &share, &tracks);
@@ -765,11 +804,16 @@ async fn download(State(s): State<ShareState>, Path(id): Path<String>) -> Respon
     };
     let disposition = attachment(&format!("{folder}.zip"));
     let (tx, rx) = tokio::sync::mpsc::channel(4);
-    let fail = tx.clone();
+    // Set once the zip is whole. The body ends in an error otherwise, even
+    // where the writer could not get its own error through.
+    let whole = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let finished = whole.clone();
+    let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         let write = || -> std::io::Result<()> {
             use std::io::Write as _;
-            let out = std::io::BufWriter::with_capacity(256 * 1024, BodyWriter(tx));
+            let out = std::io::BufWriter::with_capacity(256 * 1024, BodyWriter { tx, runtime });
             let mut zip = zip::ZipWriter::new_stream(out);
             for (name, path) in files {
                 let mut file = std::fs::File::open(&path)?;
@@ -781,21 +825,30 @@ async fn download(State(s): State<ShareState>, Path(id): Path<String>) -> Respon
                     .map_err(std::io::Error::other)?;
                 std::io::copy(&mut file, &mut zip)?;
             }
-            zip.finish()
-                .map_err(std::io::Error::other)?
-                .into_inner()
-                .flush()
+            let mut out = zip.finish().map_err(std::io::Error::other)?.into_inner();
+            out.flush()?;
+            // Before `out`, and the sender in it, is dropped: the body's end
+            // reads this.
+            finished.store(true, std::sync::atomic::Ordering::Release);
+            Ok(())
         };
         if let Err(e) = write() {
-            let _ = fail.blocking_send(Err(e));
+            log::info!("share: a download of {folder} ended unfinished: {e}");
         }
     });
+    use futures_util::StreamExt as _;
+    let unfinished = futures_util::stream::once(async move {
+        (!whole.load(std::sync::atomic::Ordering::Acquire))
+            .then(|| Err(std::io::Error::other("the zip was not finished")))
+    })
+    .filter_map(std::future::ready);
+    let body = tokio_stream::wrappers::ReceiverStream::new(rx).chain(unfinished);
     let mut resp = (
         [
             (header::CONTENT_TYPE, "application/zip"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        axum::body::Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
+        axum::body::Body::from_stream(body),
     )
         .into_response();
     if let Ok(v) = HeaderValue::from_str(&disposition) {
@@ -820,10 +873,9 @@ async fn track_cover(
     Path((id, n)): Path<(String, usize)>,
 ) -> Response {
     let art = blocking(move || {
-        let (_, _, tracks) = live(&s.pool, &id)?;
-        let t = tracks.get(n.checked_sub(1)?)?;
+        let t = live_track(&s.pool, &id, n)?;
         s.covers
-            .cover(std::slice::from_ref(t), crate::covers::SIZES[0])
+            .cover(std::slice::from_ref(&t), crate::covers::SIZES[0])
     })
     .await;
     jpeg(art, false)

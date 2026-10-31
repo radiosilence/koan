@@ -149,9 +149,10 @@ export class Player<T extends Track> {
         .then((b) => ctx.decodeAudioData(b))
         .catch(() => null));
     }
-    // Hold the current neighbourhood only: decoded audio is large.
+    // Hold the playing track and the next only: decoded audio is large, about
+    // 345 MB for fifteen minutes.
     const cur = this.#cur;
-    const keep = new Set([cur - 1, cur, cur + 1, i].map((k) => this.#queue[k]?.src));
+    const keep = new Set([cur, cur + 1, i].map((k) => this.#queue[k]?.src));
     for (const k of this.#buffers.keys()) if (!keep.has(k)) this.#buffers.delete(k);
     return this.#buffers.get(t.src);
   }
@@ -300,14 +301,22 @@ export class Player<T extends Track> {
   set(tracks: T[], i = -1, from = 0) {
     this.#stop();
     this.#out.pause();
+    this.#buffers.clear();
     this.#queue = tracks.slice();
     this.#cur = i < this.#queue.length ? i : -1;
     this.#resumeAt = this.#cur >= 0 ? from : 0;
     this.#setPlaying(false);
   }
 
-  // Replace the queue and play from track i.
-  play(tracks: T[], i = 0) { this.#wake(tracks[i]); this.#queue = tracks.slice(); this.#go(i, 0); }
+  // Replace the queue and play from track i. Buffers the new queue does not
+  // start with go before the first is decoded.
+  play(tracks: T[], i = 0) {
+    this.#wake(tracks[i]);
+    const keep = new Set([tracks[i]?.src, tracks[i + 1]?.src]);
+    for (const k of this.#buffers.keys()) if (!keep.has(k)) this.#buffers.delete(k);
+    this.#queue = tracks.slice();
+    this.#go(i, 0);
+  }
 
   // Play these next, starting now, and keep the rest of the queue after them.
   playNow(tracks: T[]) { this.#wake(tracks[0]); this.#queue.splice(this.#cur + 1, 0, ...tracks); this.#go(this.#cur + 1, 0); }
@@ -341,7 +350,7 @@ export class Player<T extends Track> {
     this.#notify();
   }
 
-  clear() { this.#stop(); this.#out.pause(); this.#queue = []; this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); }
+  clear() { this.#stop(); this.#out.pause(); this.#buffers.clear(); this.#queue = []; this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); }
 
   next() { this.#wake(this.#queue[this.#cur + 1]); if (this.#cur + 1 < this.#queue.length) this.#go(this.#cur + 1, 0); }
 

@@ -5873,7 +5873,9 @@ async fn koan_link(
     };
     let name = params.get("client").unwrap_or("koan").to_owned();
     let platform = params.get("platform").unwrap_or("").to_owned();
-    // Without a device id every connection is its own device.
+    // Without a device id every connection is its own device, and nothing of
+    // it is kept once it closes.
+    let remembered = params.get("device").is_some();
     let device = params
         .get("device")
         .map(str::to_owned)
@@ -5920,6 +5922,7 @@ async fn koan_link(
                 acks,
                 wants_keys: device_key.is_some(),
                 addr,
+                remembered,
             },
             pool,
         )
@@ -5937,6 +5940,9 @@ struct LinkPeer {
     wants_keys: bool,
     /// The client's address, through a trusted proxy if there is one.
     addr: std::net::IpAddr,
+    /// It named itself with a device id. One that did not is a new device
+    /// each time, so nothing is recorded of it to outlive its link.
+    remembered: bool,
 }
 
 /// Keep every keyed link's list current as accounts change. A revoked key,
@@ -6082,6 +6088,8 @@ fn answer_once(
 }
 
 const LINK_CHECK: Duration = Duration::from_secs(15);
+/// How long one frame may take to go out before the device is taken for gone.
+const LINK_SEND: Duration = Duration::from_secs(10);
 /// Over twice the client's idle ping interval.
 const LINK_SILENCE: Duration = Duration::from_secs(100);
 
@@ -6104,8 +6112,10 @@ async fn link_session(
         acks,
         wants_keys,
         addr,
+        remembered,
     } = peer;
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = crate::clients::LinkTx::channel();
+    let behind = tx.behind();
     let registry = crate::clients::registry();
     // Registry calls read and write the outbox tables, so they run off the
     // async workers. Each is awaited in turn: a device's reports must land in
@@ -6119,7 +6129,13 @@ async fn link_session(
         );
         let pool = pool.clone();
         let registered = tokio::task::spawn_blocking(move || {
-            let id = registry.register(
+            let register = if remembered {
+                crate::clients::Registry::register
+            } else {
+                crate::clients::Registry::register_passing
+            };
+            let id = register(
+                registry,
                 &username,
                 &name,
                 &platform,
@@ -6129,7 +6145,9 @@ async fn link_session(
                 acks,
             );
             // After `register`, which records the device the address is kept on.
-            registry.seen_at(&device, &username, addr);
+            if remembered {
+                registry.seen_at(&device, &username, addr);
+            }
             if wants_keys {
                 registry.wants_keys(&id);
             }
@@ -6157,12 +6175,15 @@ async fn link_session(
     loop {
         tokio::select! {
             _ = &mut ended => {
-                let _ = socket
-                    .send(Message::Close(Some(CloseFrame {
-                        code: close_code::NORMAL,
-                        reason: "sign in again".into(),
-                    })))
-                    .await;
+                let close = socket.send(Message::Close(Some(CloseFrame {
+                    code: close_code::NORMAL,
+                    reason: "sign in again".into(),
+                })));
+                let _ = tokio::time::timeout(LINK_SEND, close).await;
+                break;
+            }
+            _ = behind.notified() => {
+                log::info!("link: {name} ({platform}) fell behind; unlinked so it syncs afresh");
                 break;
             }
             _ = check.tick() => {
@@ -6174,7 +6195,10 @@ async fn link_session(
                 // None: a newer connection from the same device replaced this one.
                 let Some(cmd) = cmd else { break };
                 let Ok(text) = serde_json::to_string(&cmd) else { continue };
-                if socket.send(Message::Text(text.into())).await.is_err() {
+                // A device that stops reading fills its socket's buffer, and
+                // the send waits; the silence check cannot run meanwhile.
+                let sent = tokio::time::timeout(LINK_SEND, socket.send(Message::Text(text.into())));
+                if !matches!(sent.await, Ok(Ok(()))) {
                     break;
                 }
             }
@@ -6192,6 +6216,7 @@ async fn link_session(
                                 })
                                 .await;
                             }
+                            Ok(LinkReport::Push { .. }) if !remembered => {}
                             Ok(LinkReport::Push { handle }) => {
                                 let (username, device) = (username.clone(), device.clone());
                                 let _ = tokio::task::spawn_blocking(move || {

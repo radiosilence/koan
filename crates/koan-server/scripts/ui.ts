@@ -10,7 +10,12 @@ type UiTrack = Track & {
   credit: Credit | null;
 };
 type Credit = [text: string, artistId: number][];
-type Saved = { queue: UiTrack[]; cur: number; pos: number };
+// The queue, written when its tracks change; `start` is where it begins in the
+// queue played, when only the rest from the playing track fitted. Older pages
+// kept `cur` and `pos` here too.
+type Saved = { queue: UiTrack[]; start?: number; cur?: number; pos?: number };
+// Where in the queue, written as the music plays.
+type Place = { cur: number; pos: number };
 
 const main = document.getElementById("content")!;
 document.documentElement.classList.add("js");
@@ -79,9 +84,36 @@ document.addEventListener("visibilitychange", () => {
 
 // --- Player ----------------------------------------------------------------
 const STORE = "koan.queue";
+const PLACE = "koan.place";
+// Most a queue too large for storage keeps: the playing track and those after.
+const KEPT = 2000;
+let storedKey: string | null = null;
+let storedStart = 0;
+function storeQueue(queue: UiTrack[], cur: number) {
+  try {
+    localStorage.setItem(STORE, JSON.stringify({ queue } satisfies Saved));
+    storedStart = 0;
+    return;
+  } catch {}
+  // Past the quota: what is still to play, so a restore does not bring back
+  // an older queue.
+  const start = Math.max(cur, 0);
+  try {
+    localStorage.setItem(STORE, JSON.stringify({ queue: queue.slice(start, start + KEPT), start } satisfies Saved));
+    storedStart = start;
+  } catch {
+    console.warn("koan: the queue is too large to keep for the next visit");
+    localStorage.removeItem(STORE);
+    localStorage.removeItem(PLACE);
+  }
+}
 const save = (from?: number) => {
   const { queue, cur } = player;
-  try { localStorage.setItem(STORE, JSON.stringify({ queue, cur, pos: from ?? player.position } satisfies Saved)); } catch {}
+  try {
+    const key = queue.map((t) => t.id).join();
+    if (key !== storedKey) { storedKey = key; storeQueue(queue, cur); }
+    localStorage.setItem(PLACE, JSON.stringify({ cur: cur - storedStart, pos: from ?? player.position } satisfies Place));
+  } catch {}
 };
 // The queue's tracks as last drawn; see renderQueue.
 let queueKey = "";
@@ -144,6 +176,12 @@ function renderQueue(queue: UiTrack[], cur: number) {
   const open = document.getElementById("track-menu");
   if (key !== queueKey && open && open.hasAttribute("data-queued") && open.matches(":popover-open")) open.hidePopover();
   queueKey = key;
+  // The same tracks in the same order: only the playing row moves.
+  if (list.dataset.drawn === key) {
+    for (const li of all("li[data-q]", list)) li.classList.toggle("playing", Number(li.dataset.q) === cur);
+    return;
+  }
+  list.dataset.drawn = key;
   list.replaceChildren();
   if (!queue.length) {
     const p = document.createElement("li");
@@ -604,6 +642,11 @@ addEventListener("popstate", () => navigate(location.pathname + location.search,
 // Pick up where the last visit left off, paused.
 try {
   const saved: Saved | null = JSON.parse(localStorage.getItem(STORE) || "null");
-  if (saved && Array.isArray(saved.queue)) player.set(saved.queue, saved.cur, saved.pos || 0);
+  const place: Place | null = JSON.parse(localStorage.getItem(PLACE) || "null");
+  if (saved && Array.isArray(saved.queue)) {
+    storedKey = saved.start ? null : saved.queue.map((t) => t.id).join();
+    const cur = place ? place.cur : saved.cur ?? -1;
+    player.set(saved.queue, Math.max(cur, -1), (place ? place.pos : saved.pos) || 0);
+  }
 } catch {}
 settle();

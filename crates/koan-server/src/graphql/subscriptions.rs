@@ -13,6 +13,24 @@ use super::types::*;
 // Subscription root
 // ---------------------------------------------------------------------------
 
+/// How often `queueUpdated` sends while only download progress moves.
+const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How far the playhead may stray from where a client counting on from the
+/// last message puts it before the stream says so again.
+const DRIFT_MS: u64 = 1000;
+
+/// Whether `position_ms` is not where a client counting from `sent_ms`,
+/// sent `since` ago, has it: a seek, a stall, a jump.
+fn off_course(sent_ms: u64, playing: bool, since: std::time::Duration, position_ms: u64) -> bool {
+    let expected = if playing {
+        sent_ms.saturating_add(since.as_millis() as u64)
+    } else {
+        sent_ms
+    };
+    position_ms.abs_diff(expected) > if playing { DRIFT_MS } else { 0 }
+}
+
 pub struct SubscriptionRoot;
 
 #[Subscription]
@@ -43,20 +61,23 @@ impl SubscriptionRoot {
             let mut last_state = 255u8; // impossible value to force first emit
             let mut last_position = u64::MAX;
             let mut last_queue_item: Option<String> = None;
+            let mut sent_at = tokio::time::Instant::now();
 
             loop {
                 let playback_state = state.playback_state() as u8;
                 let position_ms = state.position_ms();
                 let queue_item_id = state.track_info().map(|ti| ti.id.0.to_string());
+                let playing = last_state == koan_core::player::state::PlaybackState::Playing as u8;
 
                 let changed = playback_state != last_state
-                    || position_ms != last_position
+                    || off_course(last_position, playing, sent_at.elapsed(), position_ms)
                     || queue_item_id != last_queue_item;
 
                 if changed {
                     last_state = playback_state;
                     last_position = position_ms;
                     last_queue_item = queue_item_id;
+                    sent_at = tokio::time::Instant::now();
 
                     yield GqlNowPlaying::capture(&state);
                 }
@@ -96,21 +117,35 @@ impl SubscriptionRoot {
 
         async_stream::stream! {
             let (mut last_version, mut last_figures) = (u64::MAX, u64::MAX); // force first emit
+            let mut sent_at = tokio::time::Instant::now() - PROGRESS_EVERY;
 
             loop {
                 let version = state.playlist_version();
                 let figures = state.downloads().figures();
+                // An edit goes at once; progress alone at most every
+                // `PROGRESS_EVERY`, since each sends the whole queue.
+                let edited = version != last_version;
+                let progressed = figures != last_figures;
+                let held = !edited && progressed && sent_at.elapsed() < PROGRESS_EVERY;
 
-                if version != last_version || figures != last_figures {
+                if (edited || progressed) && !held {
                     (last_version, last_figures) = (version, figures);
+                    sent_at = tokio::time::Instant::now();
                     yield GqlQueueSnapshot::capture(&state);
                 }
 
                 wake.borrow_and_update();
                 moved.borrow_and_update();
-                let ended = tokio::select! {
-                    r = wake.changed() => r.is_err(),
-                    r = moved.changed() => r.is_err(),
+                let ended = if held {
+                    tokio::select! {
+                        r = wake.changed() => r.is_err(),
+                        _ = tokio::time::sleep_until(sent_at + PROGRESS_EVERY) => false,
+                    }
+                } else {
+                    tokio::select! {
+                        r = wake.changed() => r.is_err(),
+                        r = moved.changed() => r.is_err(),
+                    }
                 };
                 if ended {
                     return;
@@ -260,6 +295,20 @@ mod tests {
         let moved = stream.next().await.unwrap().data.to_string();
         assert!(moved.contains("done: 50"), "{moved}");
         assert!(moved.contains("total: 1200"), "{moved}");
+    }
+
+    /// A playhead moving on time sends nothing; a seek or a stall does, and
+    /// any move at all while paused.
+    #[test]
+    fn only_a_playhead_off_course_is_news() {
+        use super::off_course;
+        let s = std::time::Duration::from_secs;
+        assert!(!off_course(10_000, true, s(5), 15_000));
+        assert!(!off_course(10_000, true, s(5), 15_400));
+        assert!(off_course(10_000, true, s(5), 10_000), "stalled");
+        assert!(off_course(10_000, true, s(5), 60_000), "sought");
+        assert!(!off_course(10_000, false, s(5), 10_000));
+        assert!(off_course(10_000, false, s(5), 12_000));
     }
 
     /// The arguments stay in the schema, unused, so a query that names one

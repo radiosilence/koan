@@ -12,12 +12,12 @@ The Rust types are `LinkCommand` and `LinkReport` in `koan_core::remote::link`, 
 |-----------|---------|
 | `client` | The device's display name |
 | `platform` | `macos`, `ios`, `tvos`, `android`, `linux` |
-| `device` | A stable id for the device. Without one, each connection is a device of its own |
+| `device` | A stable id for the device. Without one, each connection is a device of its own, and the server keeps nothing of it once it closes: no commands wait for it, and it cannot be woken |
 | `devices=1` | Send this link the account's devices and shares ([Devices](#devices)) |
 | `acks=1` | This device answers commands sent with an id ([Acks](#acks)) |
 | `deviceKey` | Base64 of the device's 32-byte Ed25519 public key (`koanDeviceKeys`). Kept only when the link signs in with an API key, on that key's row; passing it at all asks for `deviceKeys` |
 
-A new link from the same `device` replaces the old one. The server closes a link when its account changes in a way that could narrow what it may do: its role, its password, its deletion, or a key or app password revoked. The client reconnects, as after any close, and is authenticated afresh. The server drops a link it has heard nothing from for 100 seconds, so a client pings while idle.
+A new link from the same `device` replaces the old one. The server closes a link when its account changes in a way that could narrow what it may do: its role, its password, its deletion, or a key or app password revoked. The client reconnects, as after any close, and is authenticated afresh. The server drops a link it has heard nothing from for 100 seconds, so a client pings while idle. It also drops a link that stops reading: one whose frame has not gone out within 10 seconds, or that has 1,024 messages waiting. Levels are dropped rather than queued for a link that far behind. A device that relinks syncs as after any reconnect.
 
 ## Messages
 
