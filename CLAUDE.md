@@ -10,6 +10,8 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
+Plus **koan-web** — experimental (#1454): koan-core's decoder in a Web Worker, heard through an AudioWorklet over shared wasm memory. Built for wasm32 by `just web-client` with nightly (std rebuilt with atomics); `koan serve` offers it at `/client/` when `KOAN_WEB_CLIENT_DIR` names the build. Depends on koan-core with `default-features = false`: the `native` feature holds what a browser lacks (SQLite, sockets, blocking HTTP, TLS, the folder watcher, auth crypto), and without it koan-core is the decode pipeline, DSP and configuration. CI clippies that subset for the host and wasm32, so code on the decode path must not reach native-only modules.
+
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
 Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
@@ -121,6 +123,7 @@ just macos-run      # build + launch the macOS app
 just macos-dmg      # package the app for release
 just css            # compile the web UI's Tailwind stylesheets (output is committed)
 just js             # typecheck the web UI's TypeScript (cargo strips the types itself, in koan-server's build.rs)
+just web-client     # the experimental web client into target/koan-web (nightly; serve with KOAN_WEB_CLIENT_DIR)
 just ios-typecheck  # the shared SwiftUI sources still build for iOS
 just ios-run        # build and launch on a booted simulator
 just ios-smoke FILE # play a file through the real Player on the simulator

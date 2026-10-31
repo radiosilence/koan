@@ -21,6 +21,10 @@ crates/
 ├── koan-ffi/      staticlib + cdylib. uniffi bindings exposing koan-core
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
+├── koan-web/      cdylib for wasm32. Experimental: koan-core's decoder in a
+│                  Web Worker, heard through an AudioWorklet. Depends on
+│                  koan-core without its `native` feature. Not published.
+│
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
                    Depends on koan-core, koan-tui and koan-server.
@@ -34,7 +38,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); nothing depends on `koan-ffi`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Five crates, one workspace, and the experimental `koan-web`. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); nothing depends on `koan-ffi`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
