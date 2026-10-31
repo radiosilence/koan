@@ -64,7 +64,7 @@ pub fn is_local(path: &Path) -> bool {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn is_local(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
-    const REMOTE: [i64; 10] = [
+    const REMOTE: [u32; 10] = [
         0x6969,     // NFS
         0x517B,     // SMB
         0xFF534D42, // CIFS
@@ -84,7 +84,9 @@ pub fn is_local(path: &Path) -> bool {
     if unsafe { libc::statfs(c.as_ptr(), &mut fs) } != 0 {
         return true;
     }
-    !REMOTE.contains(&(fs.f_type as i64))
+    // Compared as the kernel's 32 bits: `f_type` is signed on some targets,
+    // where widening would sign-extend the magic numbers with the top bit set.
+    !REMOTE.contains(&(fs.f_type as u32))
 }
 
 #[cfg(not(any(

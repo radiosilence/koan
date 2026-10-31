@@ -99,17 +99,19 @@ pub fn take_library_changed() -> bool {
     LIBRARY_CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
 
-static SAID: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+static SAID: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
 
-/// A line to show on the status line from a thread that has no `App`: the
-/// remote bridge, saying a command failed or the server went away.
+/// A line to show on the status line from a thread that starts before the
+/// `App` and its task channel exist: the remote bridge, saying a command
+/// failed or the server went away. The status line shows one line, so a
+/// newer one replaces one not yet shown.
 pub fn say_later(line: impl Into<String>) {
-    SAID.lock().push(line.into());
+    *SAID.lock() = Some(line.into());
 }
 
-/// The lines `say_later` was given since this was last asked.
-pub fn take_said() -> Vec<String> {
-    std::mem::take(&mut *SAID.lock())
+/// The line `say_later` was last given, if it has not been shown.
+pub fn take_said() -> Option<String> {
+    SAID.lock().take()
 }
 
 /// Whether a track has to come from the server to play here.

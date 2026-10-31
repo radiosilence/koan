@@ -807,7 +807,7 @@ impl App {
             };
             self.say(line);
         }
-        for line in super::tasks::take_said() {
+        if let Some(line) = super::tasks::take_said() {
             self.say(line);
         }
         if super::tasks::take_library_changed() {

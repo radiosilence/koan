@@ -113,13 +113,15 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 # `seekableMs` is how far in a seek can land. It equals `durationMs` for
 # anything on disk and falls short of it while a track is still downloading,
 # so a client draws its seek bar against it rather than letting someone scrub
-# into audio that has not arrived.
+# into audio that has not arrived. `moving` is whether the playhead is
+# advancing: false while paused, and while playing but waiting on a download.
 {
   nowPlaying {
     state
     positionMs
     durationMs
     seekableMs
+    moving
     shuffle
     repeat
     track { title, artist, codec, sampleRate, bitDepth }

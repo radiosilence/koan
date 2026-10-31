@@ -106,13 +106,45 @@ pub fn engine_changed() -> &'static Wake {
     WAKE.get_or_init(Wake::new)
 }
 
-/// Rung whenever the config may have changed: koan wrote it, or the library
-/// watch saw the files change under it. What a background thread that acts on
-/// a setting waits on, so it neither re-reads the files on a timer nor misses
-/// a change made while it slept.
+/// Rung whenever koan writes its config (`Config::persist`, and anything else
+/// that drops the cached copy). What a background thread that acts on a
+/// setting waits on, so it neither re-reads the files on a timer nor misses a
+/// change made while it slept. A file edited by hand does not ring it.
 pub fn config_changed() -> &'static Wake {
     static WAKE: OnceLock<Wake> = OnceLock::new();
     WAKE.get_or_init(Wake::new)
+}
+
+/// Rung when the link to the server comes up or goes down. What auto-sync
+/// waits on to know whether the server will say when its library moves.
+pub fn link_changed() -> &'static Wake {
+    static WAKE: OnceLock<Wake> = OnceLock::new();
+    WAKE.get_or_init(Wake::new)
+}
+
+/// Send `message` down `tx` each time `wake` rings, from a thread parked on it,
+/// for a waiter that has other things to hear on the same channel. The
+/// generation is taken now, so a ring before the thread starts still arrives.
+/// Ends at the first ring after the receiver is gone.
+pub fn forward<T: Send + 'static>(
+    wake: &'static Wake,
+    tx: std::sync::mpsc::Sender<T>,
+    message: impl Fn() -> T + Send + 'static,
+) {
+    let mut seen = wake.generation();
+    let spawned = std::thread::Builder::new()
+        .name("koan-signal".into())
+        .spawn(move || {
+            loop {
+                seen = wake.wait(seen);
+                if tx.send(message()).is_err() {
+                    return;
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("could not follow a signal: {e}");
+    }
 }
 
 #[cfg(test)]

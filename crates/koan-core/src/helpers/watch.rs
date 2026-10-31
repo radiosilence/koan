@@ -179,25 +179,9 @@ pub fn spawn_library_watch(
             let folders = || Config::cached().library.folders.clone();
 
             let (tx, rx) = std::sync::mpsc::channel();
-            {
-                // Taken here, so a write while the watch starts is not missed.
-                let wake = crate::signal::config_changed();
-                let mut seen = wake.generation();
-                let tx = tx.clone();
-                let forwarded = std::thread::Builder::new()
-                    .name("koan-watch-config".into())
-                    .spawn(move || {
-                        loop {
-                            seen = wake.wait(seen);
-                            if tx.send(Heard::Settings).is_err() {
-                                return;
-                            }
-                        }
-                    });
-                if let Err(e) = forwarded {
-                    log::warn!("library watch: config changes will need a restart: {e}");
-                }
-            }
+            crate::signal::forward(crate::signal::config_changed(), tx.clone(), || {
+                Heard::Settings
+            });
             {
                 let tx = tx.clone();
                 on_mount_change(move || tx.send(Heard::Mounts).is_ok());
@@ -240,14 +224,6 @@ pub fn spawn_library_watch(
                 }
                 fresh
             };
-            let shared = |roots: &[WatchedRoot]| -> Vec<PathBuf> {
-                roots
-                    .iter()
-                    .filter(|r| !r.local)
-                    .map(|r| r.path.clone())
-                    .collect()
-            };
-
             // After the first frame and the first track, not competing with them.
             std::thread::sleep(Duration::from_secs(3));
             rewatch(&mut roots);
@@ -264,10 +240,11 @@ pub fn spawn_library_watch(
                 crate::quiet::wait_until_awake();
                 // With no folder on a share there is nothing to scan on a
                 // timer, and the first share added waits its full interval.
-                if shared(&roots).is_empty() {
+                let any_shared = roots.iter().any(|r| !r.local);
+                if !any_shared {
                     rescan_at = Instant::now() + RESCAN;
                 }
-                let rescan_due = (!shared(&roots).is_empty()).then_some(rescan_at);
+                let rescan_due = any_shared.then_some(rescan_at);
                 let heard = match settle_at.into_iter().chain(rescan_due).min() {
                     Some(wake) => rx.recv_timeout(wake.saturating_duration_since(Instant::now())),
                     None => rx
@@ -321,7 +298,11 @@ pub fn spawn_library_watch(
                     settle_at = None;
                 }
                 if now >= rescan_at {
-                    let shared = shared(&roots);
+                    let shared: Vec<PathBuf> = roots
+                        .iter()
+                        .filter(|r| !r.local)
+                        .map(|r| r.path.clone())
+                        .collect();
                     if !shared.is_empty() {
                         scan("periodic", &shared, None);
                     }
@@ -351,13 +332,19 @@ impl AutoSync {
     }
 }
 
+/// What wakes auto-sync between runs.
+enum Woke {
+    Settings,
+    Link,
+}
+
 /// Keep the library in step with the server, without being asked.
 ///
 /// One sync shortly after startup, then every `auto_sync_interval_mins` for a
 /// server that cannot say when it changes. A koan server can: it sends every
 /// linked app a sync when its library or a playlist moves, and queues one for
 /// an app that was away, so a timer would only ask a question already
-/// answered, and none is set. Each run walks the library only if the server
+/// answered, and none is set while the link is up. Each run walks the library only if the server
 /// says it moved — see `Walk::IfChanged` — which is what makes it cheap enough
 /// to run unattended.
 ///
@@ -380,8 +367,13 @@ pub fn spawn_auto_sync(
     std::thread::Builder::new()
         .name("koan-auto-sync".into())
         .spawn(move || {
-            let wake = crate::signal::config_changed();
-            let mut seen = wake.generation();
+            // Before the first run, so a change while it runs is heard after.
+            let (tx, rx) = std::sync::mpsc::channel();
+            crate::signal::forward(crate::signal::config_changed(), tx.clone(), || {
+                Woke::Settings
+            });
+            crate::signal::forward(crate::signal::link_changed(), tx, || Woke::Link);
+            let mut sync = true;
             let pool = crate::db::pool::Pool::new(db_path);
             std::thread::sleep(Duration::from_secs(5));
             loop {
@@ -390,7 +382,8 @@ pub fn spawn_auto_sync(
                 let cfg = Config::cached();
                 let settings = AutoSync::of(&cfg);
 
-                if settings.on
+                if std::mem::take(&mut sync)
+                    && settings.on
                     && let Some(client) = subsonic_client(&cfg)
                     && let Ok(db) = pool.get()
                 {
@@ -423,26 +416,30 @@ pub fn spawn_auto_sync(
                     on_state(false);
                 }
 
-                // The interval, for a server that cannot say when it changed.
-                // A koan server's own syncs make it redundant.
-                let linked = crate::remote::profile::current().is_some_and(|p| p.links());
+                // The interval, while no link is up to say when the library
+                // changed. A link coming up or going down plans it again.
+                let linked = crate::remote::devices::linked();
                 let due = (settings.on && settings.interval_mins > 0 && !linked)
                     .then(|| Instant::now() + Duration::from_secs(settings.interval_mins * 60));
-                loop {
-                    let now = match due {
-                        Some(due) if Instant::now() >= due => break,
-                        Some(due) => {
-                            wake.wait_until(seen, due.saturating_duration_since(Instant::now()))
-                        }
-                        None => wake.wait(seen),
+                sync = loop {
+                    let heard = match due {
+                        Some(due) => rx.recv_timeout(due.saturating_duration_since(Instant::now())),
+                        None => rx
+                            .recv()
+                            .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected),
                     };
-                    if now != seen {
-                        seen = now;
-                        if AutoSync::of(&Config::cached()) != settings {
-                            break;
+                    match heard {
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break true,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                        Ok(Woke::Settings) if AutoSync::of(&Config::cached()) != settings => {
+                            break true;
                         }
+                        Ok(Woke::Link) if crate::remote::devices::linked() != linked => {
+                            break false;
+                        }
+                        Ok(_) => {}
                     }
-                }
+                };
             }
         })
         .ok()

@@ -65,7 +65,12 @@ const RETRY: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(30)];
 
 /// Follow the server's `nowPlaying` and `queueUpdated` subscriptions, which
 /// push when something changes, and mirror each message into `state`. The
-/// playhead is mirrored as an anchor that counts on by itself while playing.
+/// playhead is mirrored as an anchor that counts on by itself while it moves.
+///
+/// A socket that worked and then closed is opened again at once and said
+/// nothing about: the server closes it on purpose whenever the access token
+/// it was opened with lapses, and the reopening refreshes the token. Only an
+/// attempt that fails to hear anything is an outage, shown and backed off.
 fn mirror_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
     let mut retry = RETRY[0];
     let mut connected = true;
@@ -75,7 +80,10 @@ fn mirror_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
             GraphQLClient::queue_subscription(),
         ];
         let mut last_track_id = None;
+        let opened = std::time::Instant::now();
+        let mut heard = false;
         let ended = client.subscribe(&queries, |query, data| {
+            heard = true;
             if !connected {
                 crate::tasks::say_later("reconnected to the server");
                 log::info!("reconnected to {}", client.server_url());
@@ -92,6 +100,12 @@ fn mirror_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
             }
         });
         if client.predates(&ended) {
+            continue;
+        }
+        // Lasted a moment at least, so a server that answers and hangs up
+        // straight away is still backed off.
+        if heard && opened.elapsed() >= RETRY[0] {
+            log::debug!("subscriptions closed, reopening: {ended}");
             continue;
         }
         if connected {
@@ -137,7 +151,7 @@ fn mirror_now_playing(
         }
     }
 
-    state.mirror_playhead(np.position_ms, playback == PlaybackState::Playing);
+    state.mirror_playhead(np.position_ms, np.moving);
 }
 
 fn mirror_queue(state: &SharedPlayerState, entries: &[QueueEntry]) {

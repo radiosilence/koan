@@ -1,7 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 
@@ -674,6 +673,7 @@ fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
 mod tests {
     use super::*;
     use crate::player::state::PlaylistItem;
+    use std::time::Duration;
 
     fn qid() -> QueueItemId {
         QueueItemId::new()

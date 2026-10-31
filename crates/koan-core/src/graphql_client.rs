@@ -25,6 +25,8 @@ pub struct GraphQLClient {
     play_modes: Arc<std::sync::atomic::AtomicBool>,
     /// The same for the sleep timer.
     sleep_timer: Arc<std::sync::atomic::AtomicBool>,
+    /// The same for `moving`.
+    moving: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A sign-in to a server with auth enabled: the refresh token `koan auth login`
@@ -57,6 +59,7 @@ impl GraphQLClient {
             session: None,
             play_modes: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             sleep_timer: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            moving: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -231,7 +234,12 @@ impl GraphQLClient {
         } else {
             ""
         };
-        format!("state positionMs durationMs queueItemId {modes}{sleep}{TRACK}")
+        let moving = if self.moving.load(Ordering::Relaxed) {
+            "moving "
+        } else {
+            ""
+        };
+        format!("state positionMs durationMs queueItemId {moving}{modes}{sleep}{TRACK}")
     }
 
     /// Whether `error` is a server refusing a `nowPlaying` field it predates.
@@ -242,6 +250,10 @@ impl GraphQLClient {
         let GraphQLError::Query(e) = error else {
             return false;
         };
+        if e.contains("moving") && self.moving.swap(false, Ordering::Relaxed) {
+            log::info!("server predates moving: {e}");
+            return true;
+        }
         if e.contains("sleep") && self.sleep_timer.swap(false, Ordering::Relaxed) {
             log::info!("server predates the sleep timer: {e}");
             return true;
@@ -486,26 +498,83 @@ const QUEUE_FIELDS: &str =
 
 type WsSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
 
+/// How long opening the subscription socket may take, connect and upgrade
+/// each: the same bound the queries have.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Certificates checked against the platform's roots, as reqwest checks them
+/// for the queries.
+fn tls() -> Result<Arc<rustls::ClientConfig>, GraphQLError> {
+    use rustls_platform_verifier::ConfigVerifierExt;
+    static CONFIG: std::sync::OnceLock<Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
+    if let Some(config) = CONFIG.get() {
+        return Ok(config.clone());
+    }
+    let config = Arc::new(
+        rustls::ClientConfig::with_platform_verifier()
+            .map_err(|e| GraphQLError::Http(format!("TLS: {e}")))?,
+    );
+    Ok(CONFIG.get_or_init(|| config).clone())
+}
+
 /// Open `url` as a `graphql-transport-ws` socket, signed in with `access`.
+/// Bounded like a query: a server that takes the connection and never
+/// answers the upgrade fails the attempt rather than holding it.
 fn handshake(url: &str, access: Option<&str>) -> Result<WsSocket, GraphQLError> {
+    use std::net::ToSocketAddrs;
     use tungstenite::client::IntoClientRequest;
+    use tungstenite::handshake::HandshakeError;
     use tungstenite::http::HeaderValue;
-    let mut request = url
-        .into_client_request()
-        .map_err(|e| GraphQLError::Http(e.to_string()))?;
+    let http = |e: &dyn std::fmt::Display| GraphQLError::Http(e.to_string());
+
+    let mut request = url.into_client_request().map_err(|e| http(&e))?;
     let headers = request.headers_mut();
     headers.insert(
         "Sec-WebSocket-Protocol",
         HeaderValue::from_static("graphql-transport-ws"),
     );
     if let Some(token) = access {
-        let bearer = HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|e| GraphQLError::Http(e.to_string()))?;
+        let bearer = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| http(&e))?;
         headers.insert("Authorization", bearer);
     }
-    match tungstenite::connect(request) {
+
+    let uri = request.uri();
+    let secure = uri.scheme_str() == Some("wss");
+    let host = uri
+        .host()
+        .ok_or_else(|| http(&"no host in the server's address"))?;
+    let port = uri.port_u16().unwrap_or(if secure { 443 } else { 80 });
+    let mut last = None;
+    let mut stream = None;
+    for addr in (host.trim_matches(['[', ']']), port)
+        .to_socket_addrs()
+        .map_err(|e| http(&e))?
+    {
+        match std::net::TcpStream::connect_timeout(&addr, HANDSHAKE_TIMEOUT) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    let stream = stream.ok_or_else(|| match last {
+        Some(e) => http(&e),
+        None => http(&format!("{host} has no address")),
+    })?;
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(HANDSHAKE_TIMEOUT)))
+        .map_err(|e| http(&e))?;
+    let connector = if secure {
+        tungstenite::Connector::Rustls(tls()?)
+    } else {
+        tungstenite::Connector::Plain
+    };
+
+    match tungstenite::client_tls_with_config(request, stream, None, Some(connector)) {
         Ok((socket, _)) => Ok(socket),
-        Err(tungstenite::Error::Http(response)) => {
+        Err(HandshakeError::Failure(tungstenite::Error::Http(response))) => {
             let status = response.status();
             let body = response
                 .body()
@@ -519,7 +588,9 @@ fn handshake(url: &str, access: Option<&str>) -> Result<WsSocket, GraphQLError> 
                 Err(GraphQLError::Http(format!("{status}: {body}")))
             }
         }
-        Err(e) => Err(GraphQLError::Http(e.to_string())),
+        // A read that timed out leaves the handshake part way.
+        Err(HandshakeError::Interrupted(_)) => Err(http(&"the server did not answer the upgrade")),
+        Err(HandshakeError::Failure(e)) => Err(http(&e)),
     }
 }
 
@@ -612,6 +683,9 @@ impl<F: FnMut(usize, &Value)> crate::remote::wire::Session for Subscriptions<'_,
 #[derive(Debug, Clone)]
 pub struct NowPlaying {
     pub state: String,
+    /// Whether the playhead is advancing by itself, which playing does not
+    /// mean while the server waits on a download.
+    pub moving: bool,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
     pub queue_item_id: Option<String>,
@@ -623,8 +697,11 @@ pub struct NowPlaying {
 impl NowPlaying {
     /// A `nowPlaying` object, as the query and the subscription both send it.
     pub fn from_json(np: &Value) -> Self {
+        let state = np["state"].as_str().unwrap_or("STOPPED").to_string();
         Self {
-            state: np["state"].as_str().unwrap_or("STOPPED").to_string(),
+            // A server that predates it held nothing back.
+            moving: np["moving"].as_bool().unwrap_or(state == "PLAYING"),
+            state,
             position_ms: np["positionMs"].as_u64().unwrap_or(0),
             duration_ms: np["durationMs"].as_u64(),
             queue_item_id: np["queueItemId"].as_str().map(String::from),
