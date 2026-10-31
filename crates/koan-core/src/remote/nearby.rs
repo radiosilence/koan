@@ -1505,7 +1505,7 @@ fn spawn_dialer(r: &mut Running, key: String, addr: String) {
 /// device.
 fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<AtomicBool>) {
     let mut wait = RETRY_MIN;
-    let mut ever_served = false;
+    let mut reached = false;
     while !stop.stopped() {
         let addr = at.lock().clone();
         let mut served = false;
@@ -1549,6 +1549,9 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     pending: Vec::new(),
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
+                // It answered with a hello: it is on this network, even if it
+                // was hung up on as a duplicate of a connection it made here.
+                reached |= session.id.is_some();
                 served = session
                     .id
                     .take()
@@ -1579,8 +1582,7 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                 note(&key, Some(explain(&e)));
             }
         }
-        ever_served |= served;
-        if wait >= RETRY_MAX && !ever_served && unannounced(&key) {
+        if wait >= RETRY_MAX && !reached && unannounced(&key) {
             log::debug!("nearby: {addr}: not here; dialled again when announced");
             retire(&key, &stop);
             return;
@@ -1598,10 +1600,13 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
 }
 
 /// A device dialled only because an earlier run reached it, which Bonjour has
-/// not announced on this network. Where there is no Bonjour, every remembered
-/// device is dialled for as long as it is remembered.
+/// not announced, on a network where Bonjour has announced another device this
+/// run. A network that filters mDNS announces nothing, and there, as where
+/// there is no Bonjour at all, a remembered device is dialled for as long as it
+/// is remembered.
 fn unannounced(key: &str) -> bool {
     cfg!(any(target_vendor = "apple", target_os = "android"))
+        && HEARD_BONJOUR.load(Ordering::Relaxed)
         && key.starts_with("id:")
         && FOUND
             .lock()
@@ -1609,6 +1614,10 @@ fn unannounced(key: &str) -> bool {
             .find(|(k, _)| k == key)
             .is_some_and(|(_, f)| f.bonjour.is_none())
 }
+
+/// Bonjour has announced a device other than this one since the process
+/// started: it works on this network.
+static HEARD_BONJOUR: AtomicBool = AtomicBool::new(false);
 
 /// The dialer `stop` belongs to has finished: take it and its listing down,
 /// unless another has replaced it under `key` since.
@@ -1981,6 +1990,7 @@ fn announced(
         return;
     }
     set_blocked(false);
+    HEARD_BONJOUR.store(true, Ordering::Relaxed);
     let key = match &id {
         Some(id) => format!("id:{id}"),
         None => format!("bonjour:{name}"),

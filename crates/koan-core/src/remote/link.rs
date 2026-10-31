@@ -1588,23 +1588,42 @@ fn file_device_id(path: &Path) -> String {
         kept(e);
         return id;
     }
-    let theirs = match std::fs::hard_link(&temp, path) {
-        Ok(()) => None,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => std::fs::read_to_string(path)
+    let read = || {
+        std::fs::read_to_string(path)
             .ok()
             .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty()),
+            .filter(|t| !t.is_empty())
+    };
+    let theirs = match std::fs::hard_link(&temp, path) {
+        Ok(()) => Some(id.clone()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read(),
         Err(_) => None,
     };
-    // No hard links here, or an empty file an interrupted write left.
-    if theirs.is_none()
-        && !std::fs::read_to_string(path).is_ok_and(|t| t.trim() == id)
+    if let Some(theirs) = theirs {
+        let _ = std::fs::remove_file(&temp);
+        return theirs;
+    }
+    // No hard links here, or an empty file an interrupted write left. Two
+    // processes replacing it take turns, and the second finds the first's id.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path.with_extension("lock"));
+    // SAFETY: flock on a descriptor this function owns; released when the
+    // file closes at the end of the scope.
+    let _held = lock
+        .as_ref()
+        .ok()
+        .map(|f| unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(f), libc::LOCK_EX) });
+    let present = read();
+    if present.is_none()
         && let Err(e) = std::fs::rename(&temp, path)
     {
         kept(e);
     }
     let _ = std::fs::remove_file(&temp);
-    theirs.unwrap_or(id)
+    present.unwrap_or(id)
 }
 
 fn hostname() -> Option<String> {
@@ -2033,6 +2052,23 @@ mod tests {
             1,
             "no temp left"
         );
+    }
+
+    /// An empty file an older build left is replaced once, however many
+    /// processes find it at the same moment.
+    #[test]
+    fn racing_writers_agree_over_an_empty_device_id() {
+        for _ in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("device-id");
+            std::fs::write(&path, "").unwrap();
+            let ids: Vec<String> = std::thread::scope(|s| {
+                let racers: Vec<_> = (0..8).map(|_| s.spawn(|| file_device_id(&path))).collect();
+                racers.into_iter().map(|r| r.join().unwrap()).collect()
+            });
+            assert!(ids.iter().all(|id| *id == ids[0]), "{ids:?}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), ids[0]);
+        }
     }
 }
 

@@ -57,8 +57,10 @@ not that.
   playing from a different server can be controlled but not sent music, since
   its track ids mean nothing here. Settings → Devices turns this off for the
   device you are on, and sets how much they may do (below).
-  A device reached before is dialled again at once at its last address; one
-  that does not answer for a couple of minutes waits until Bonjour announces it.
+  A device reached before is dialled again at once at its last address. On a
+  network where Bonjour finds other devices, one that does not answer for a
+  couple of minutes waits until Bonjour announces it; where Bonjour finds
+  nothing, it is dialled again every minute.
   A device signed in to a server names that server in its announcement,
   without the account, so a television not signed in yet can offer it on its
   sign-in page instead of asking for the address to be typed.

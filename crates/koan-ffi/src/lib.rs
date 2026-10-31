@@ -5666,7 +5666,8 @@ impl KoanEngine {
         let ids: Vec<i64> = db
             .conn
             .prepare_cached(
-                "SELECT id FROM tracks WHERE remote_id IN (SELECT value FROM json_each(?1))",
+                "SELECT MIN(id) FROM tracks WHERE remote_id IN (SELECT value FROM json_each(?1))
+                 GROUP BY remote_id",
             )
             .and_then(|mut stmt| {
                 stmt.query_map([wanted], |row| row.get(0))?
