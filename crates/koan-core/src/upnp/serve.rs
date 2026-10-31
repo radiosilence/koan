@@ -47,14 +47,11 @@ pub type EventSink = Box<dyn Fn(&str, String) + Send + Sync>;
 /// `NOTIFY` body.
 const MAX_CONNECTIONS: usize = 32;
 
-/// Have the system drop a connection whose renderer has gone, without a
-/// write timeout: a paused renderer stops reading for as long as it likes,
-/// and the processed stream relies on that backpressure. A renderer powered
-/// off without closing would otherwise hold its slot until TCP gives up on
-/// its own, a quarter of an hour or more. Keepalive covers an idle
-/// connection; where the system has it, a user timeout covers one with data
-/// unacknowledged, which a live renderer refusing more by its window does not
-/// trip, since it answers the probes.
+/// Have the system drop an idle connection whose renderer has gone. There
+/// is no write timeout and no TCP user timeout: a paused renderer stops
+/// reading for as long as it likes, and the processed stream relies on that
+/// backpressure. A connection blocked writing to a renderer that has gone is
+/// ended with its session instead (`Shared::end_unserved`).
 fn notice_departure(stream: &std::net::TcpStream) {
     let socket = socket2::SockRef::from(stream);
     let keepalive = socket2::TcpKeepalive::new()
@@ -62,10 +59,6 @@ fn notice_departure(stream: &std::net::TcpStream) {
         .with_interval(Duration::from_secs(10));
     if let Err(e) = socket.set_tcp_keepalive(&keepalive) {
         log::debug!("upnp http: keepalive: {e}");
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    if let Err(e) = socket.set_tcp_user_timeout(Some(Duration::from_secs(120))) {
-        log::debug!("upnp http: user timeout: {e}");
     }
 }
 const MAX_HEAD: u64 = 8 * 1024;
@@ -76,6 +69,36 @@ struct Shared {
     on_event: EventSink,
     stopped: AtomicBool,
     connections: AtomicUsize,
+    /// The connections serving a track, by token, so that dropping the token
+    /// ends them: a write blocked on a renderer that has gone would otherwise
+    /// hold its connection slot until TCP gives up. Never locked with `tracks`.
+    open: Mutex<Vec<(String, u64, TcpStream)>>,
+    next_open: std::sync::atomic::AtomicU64,
+}
+
+impl Shared {
+    /// Shut every connection whose token is no longer served.
+    fn end_unserved(&self) {
+        let served: std::collections::HashSet<String> =
+            self.tracks.lock().keys().cloned().collect();
+        for (token, _, stream) in self.open.lock().iter() {
+            if !served.contains(token) {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        }
+    }
+}
+
+/// A connection listed in `Shared::open` for as long as it serves.
+struct Serving<'a> {
+    shared: &'a Shared,
+    id: u64,
+}
+
+impl Drop for Serving<'_> {
+    fn drop(&mut self) {
+        self.shared.open.lock().retain(|(_, id, _)| *id != self.id);
+    }
 }
 
 pub struct Listener {
@@ -94,6 +117,8 @@ impl Listener {
             on_event,
             stopped: AtomicBool::new(false),
             connections: AtomicUsize::new(0),
+            open: Mutex::new(Vec::new()),
+            next_open: Default::default(),
         });
         let accept = shared.clone();
         thread::Builder::new()
@@ -142,14 +167,16 @@ impl Listener {
 
     pub fn remove(&self, token: &str) {
         self.shared.tracks.lock().remove(token);
+        self.shared.end_unserved();
     }
 
-    /// Drop every token but those in `keep`.
+    /// Drop every token but those in `keep`, ending their connections.
     pub fn retain(&self, keep: &[&str]) {
         self.shared
             .tracks
             .lock()
             .retain(|token, _| keep.contains(&token.as_str()));
+        self.shared.end_unserved();
     }
 }
 
@@ -250,6 +277,13 @@ fn handle(shared: &Shared, mut stream: TcpStream) -> std::io::Result<()> {
     match (req.method.as_str(), route) {
         ("GET" | "HEAD", "t") => {
             let token = rest.split('.').next().unwrap_or_default();
+            // Listed before the token is looked up, so a token dropped in
+            // between is either missing here or ends this connection.
+            let id = shared.next_open.fetch_add(1, Ordering::Relaxed);
+            if let Ok(clone) = stream.try_clone() {
+                shared.open.lock().push((token.to_owned(), id, clone));
+            }
+            let _serving = Serving { shared, id };
             let served = shared.tracks.lock().get(token).cloned();
             match served {
                 Some(Served::File { path, mime }) => serve_file(&mut stream, &req, &path, &mime),
@@ -386,6 +420,42 @@ mod tests {
             String::from_utf8_lossy(&response[..at]).into_owned(),
             response[at + 4..].to_vec(),
         )
+    }
+
+    /// A renderer that stops reading mid-file holds its connection until its
+    /// session lets the token go, and no longer.
+    #[test]
+    fn dropping_a_token_ends_a_connection_blocked_on_a_reader_that_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.flac");
+        std::fs::write(&path, vec![0u8; 64 << 20]).unwrap();
+        let listener = Listener::start(Box::new(|_, _| {})).unwrap();
+        let token = listener.add(Served::File {
+            path,
+            mime: "audio/flac".into(),
+        });
+        let mut stalled = TcpStream::connect(("127.0.0.1", listener.port())).unwrap();
+        write!(stalled, "GET /t/{token}.flac HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let wait_for = |want: usize| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while listener.shared.connections.load(Ordering::Acquire) != want {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "connections never reached {want}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait_for(1);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            listener.shared.connections.load(Ordering::Acquire),
+            1,
+            "still writing"
+        );
+        listener.retain(&[]);
+        wait_for(0);
+        assert!(listener.shared.open.lock().is_empty());
     }
 
     #[test]
