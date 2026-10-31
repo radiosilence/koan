@@ -61,9 +61,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     /// Records we looked at and found nothing for — distinct from "not looked
     /// yet", which is what keeps missing art from being retried on every
-    /// redraw. Checked ahead of `memory`, so a record turning out to be the
-    /// server's placeholder invalidates every size of it at once without having
-    /// to enumerate them.
+    /// redraw. Checked ahead of `memory`, so a record discarded invalidates
+    /// every size of it at once without having to enumerate them.
     private var absent: Set<String> = []
 
     /// Guards everything below that is not `NSCache`. Held only across
@@ -85,23 +84,6 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         /// Re-ranked by the grid as it scrolls; see `prioritise`.
         let aimed: Bool
     }
-
-    /// Which records produced each image, by content hash.
-    ///
-    /// Navidrome answers with a stock placeholder — a blue vinyl with its own
-    /// logo on it — for anything with no artwork, and it looks like real art
-    /// until you notice every artless record has the same one. There is no flag
-    /// to ask about, but the placeholder gives itself away by repeating across
-    /// unrelated albums.
-    ///
-    /// Only *album* lookups teach this, and it takes three albums to conclude
-    /// it. A track's cover is by definition the same image as its album's, so
-    /// learning from track lookups would make playing an album look like a
-    /// repeat and wipe its real artwork from the grid. Two albums sharing art is
-    /// also legitimate — a single and the record it came from — so two
-    /// sightings is too eager.
-    private var hashOwners: [String: Set<String>] = [:]
-    private var placeholderHashes: Set<String> = []
 
     private let engine: KoanEngine
     private let directory: URL?
@@ -303,27 +285,21 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         let engine = self.engine
         let file = directory?.appendingPathComponent(Self.filename(for: key))
         let keep = keeper(file, of: key, from: locked { generation(of: key) })
-        let priority: @Sendable () -> ImageWork.Priority = { [weak self] in self?.priority(of: key) ?? .ahead(.infinity) }
         let payload = await loads.join(key) {
             guard !Task.isCancelled else { return .failed }
             // Every step off both the main actor and the cooperative pool —
-            // see `ImageWork`. The hash comes back with the bytes because it
-            // is a pass over the whole payload.
+            // see `ImageWork`.
             if let file, let cached = await ImageWork.onDisk({ try? Data(contentsOf: file) }) {
-                guard let hash = await ImageWork.ifWanted(priority: priority, { Self.digest(cached) }) else {
-                    return .failed
-                }
-                return .art(cached, hash: hash)
+                return .art(cached)
             }
-            return await Self.fetch(source, engine, keep: keep, priority: priority)
+            return await Self.fetch(source, engine, keep: keep)
         }
 
         // Nothing recorded: the next tile that asks tries again.
-        guard case .art(let data, let hash) = payload else {
+        guard case .art(let data) = payload else {
             if case .none = payload { locked { _ = absent.insert(key) } }
             return nil
         }
-        guard accept(hash: hash, for: key) else { return nil }
         return data
     }
 
@@ -347,7 +323,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// that could not be reached is not: recorded as "no art", a scroll during
     /// a blip would leave permanent holes in the grid until relaunch.
     private enum Fetched: Sendable {
-        case art(Data, hash: String)
+        case art(Data)
         case none
         case failed
     }
@@ -355,8 +331,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     private nonisolated static func fetch(
         _ source: AlbumArtwork.Source,
         _ engine: KoanEngine,
-        keep: (@Sendable (Data) -> Void)?,
-        priority: @escaping @Sendable () -> ImageWork.Priority
+        keep: (@Sendable (Data) -> Void)?
     ) async -> Fetched {
         do {
             // One call either way. Asking for the record's tracks to find an id
@@ -376,35 +351,10 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             // expensive part, and one abandoned after it arrived is still the
             // sleeve the next request wants.
             keep?(data)
-            guard let hash = await ImageWork.ifWanted(priority: priority, { digest(data) }) else { return .failed }
-            return .art(data, hash: hash)
+            return .art(data)
         } catch {
             return .failed
         }
-    }
-
-    /// Whether this is real artwork, or the server's placeholder.
-    private func accept(hash: String, for key: String) -> Bool {
-        locked { acceptLocked(hash: hash, for: key) }
-    }
-
-    private func acceptLocked(hash: String, for key: String) -> Bool {
-        if placeholderHashes.contains(hash) {
-            absent.insert(key)
-            return false
-        }
-
-        // Track lookups never teach: a track's cover is its album's cover, so
-        // counting it would make every played album look like a repeat.
-        guard key.hasPrefix("album-") else { return true }
-
-        hashOwners[hash, default: []].insert(key)
-        guard hashOwners[hash]?.count ?? 0 >= 3 else { return true }
-
-        // Three unrelated albums with byte-identical art is a placeholder.
-        placeholderHashes.insert(hash)
-        absent.formUnion(hashOwners[hash] ?? [])
-        return false
     }
 
     // MARK: - Decoding
@@ -485,11 +435,10 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     // MARK: - Disk
 
-    /// Bumped when the meaning of a cache file changes. Artwork is keyed per
-    /// record and stored at one size now; the files written under the old
-    /// scheme are per *track* and smaller, so they are wrong twice over and the
-    /// directory they live in goes.
-    private static let scheme = "v2"
+    /// Bumped when the meaning of a cache file changes, and the directory of
+    /// any other scheme goes. A file is one record's own artwork at one size:
+    /// never a server's placeholder, which the engine answers as no art.
+    private static let scheme = "v3"
 
     private static func makeDirectory() -> URL? {
         guard let caches = FileManager.default.urls(
@@ -572,7 +521,6 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             guard self.generation(of: record) == generation else { return false }
             absent.insert(record)
             colours.removeValue(forKey: record)
-            for hash in hashOwners.keys { hashOwners[hash]?.remove(record) }
             return true
         }
         guard marked, let file = directory?.appendingPathComponent(Self.filename(for: record)) else { return }
@@ -617,8 +565,6 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         memory.removeAllObjects()
         locked {
             absent.removeAll()
-            hashOwners.removeAll()
-            placeholderHashes.removeAll()
             colours.removeAll()
             epoch += 1
         }

@@ -105,7 +105,9 @@ struct ShelfView: View {
         let key: [AnyHashable] = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            // What the queue says of the tracks listed here, and nothing it
+            // says of others: a patch to a row elsewhere redraws nothing.
+            AnyHashable(tracks.map { queued[$0.id].map { "\($0.status)" } }),
             AnyHashable(mirror.arrivingByAlbum),
         ]
         let library = library

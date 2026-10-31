@@ -37,13 +37,12 @@ struct TrackListView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #endif
 
-    /// A record's tracks as the discs they carry, or `nil` when they carry
-    /// fewer than two: the album's own disc total is often missing (#1300).
-    /// Each run is a disc in the order the tracks come, `disc` nil for tracks
+    /// A record's tracks as the discs they carry, or `nil` when the record
+    /// does not number by disc (`numbersByDisc`). Each run is a disc in the order the tracks come, `disc` nil for tracks
     /// that name none; `id` is the run's own, for its heading. On a run of
     /// several discs each row shows its own number rather than its place.
     private var discRuns: [DiscRun]? {
-        guard !mixedAlbums, Set(tracks.compactMap(\.disc).filter { $0 > 0 }).count > 1 else { return nil }
+        guard !mixedAlbums, numbersByDisc(tracks.map(\.disc)) else { return nil }
         var runs: [DiscRun] = []
         for (index, track) in tracks.enumerated() {
             let disc = track.disc.flatMap { $0 > 0 ? $0 : nil }
@@ -139,7 +138,9 @@ struct TrackListView: View {
         let key = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            // What the queue says of the tracks listed here, and nothing it
+            // says of others: a patch to a row elsewhere redraws nothing.
+            AnyHashable(tracks.map { queued[$0.id].map { "\($0.status)" } }),
         ]
         return SafeAreaReader { insets in
             KoanTable(

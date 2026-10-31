@@ -121,10 +121,12 @@ impl Cancel {
 }
 
 /// Ask the server at `url` to pair this device, which approvers will see
-/// called `device`.
+/// called `device`. The id it links with goes too, so the approver can tell
+/// it among the account's devices once it is signed in.
 pub fn start(url: &str, device: &str) -> Result<Pending, PairError> {
     let server = url.trim().trim_end_matches('/').to_owned();
-    let socket_url = pair_url(&server, device)?;
+    let id = crate::remote::link::this_device_id();
+    let socket_url = pair_url(&server, device, &id)?;
     let (mut socket, _) = tungstenite::connect(socket_url.as_str()).map_err(|e| match e {
         // Any answer but an upgrade is a server without pairing, except a
         // koan turning away a busy address and a proxy whose server is down.
@@ -211,7 +213,7 @@ fn tcp(socket: &Socket) -> Option<&TcpStream> {
     }
 }
 
-fn pair_url(server: &str, device: &str) -> Result<Url, PairError> {
+fn pair_url(server: &str, device: &str, device_id: &str) -> Result<Url, PairError> {
     let bad = || PairError::BadUrl(server.to_owned());
     let mut url = Url::parse(&format!("{server}/rest/koanPair")).map_err(|_| bad())?;
     let scheme = match url.scheme() {
@@ -220,7 +222,9 @@ fn pair_url(server: &str, device: &str) -> Result<Url, PairError> {
         _ => return Err(bad()),
     };
     url.set_scheme(scheme).map_err(|()| bad())?;
-    url.query_pairs_mut().append_pair("name", device);
+    url.query_pairs_mut()
+        .append_pair("name", device)
+        .append_pair("device", device_id);
     Ok(url)
 }
 
@@ -406,14 +410,14 @@ mod tests {
 
     #[test]
     fn the_socket_address_follows_the_scheme() {
-        let url = pair_url("https://music.example.com/koan", "Living room TV").unwrap();
+        let url = pair_url("https://music.example.com/koan", "Living room TV", "0192-a").unwrap();
         assert_eq!(
             url.as_str(),
-            "wss://music.example.com/koan/rest/koanPair?name=Living+room+TV"
+            "wss://music.example.com/koan/rest/koanPair?name=Living+room+TV&device=0192-a"
         );
-        let url = pair_url("http://10.0.0.2:4533", "tv").unwrap();
+        let url = pair_url("http://10.0.0.2:4533", "tv", "0192-a").unwrap();
         assert_eq!(url.scheme(), "ws");
-        assert!(pair_url("ftp://x", "tv").is_err());
+        assert!(pair_url("ftp://x", "tv", "0192-a").is_err());
     }
 
     #[test]
@@ -422,6 +426,10 @@ mod tests {
             serde_json::from_str(r#"{"device":"Den TV","from":"192.168.1.20","local":true}"#)
                 .unwrap();
         assert_eq!((info.from.as_str(), info.local), ("192.168.1.20", true));
+        assert_eq!(info.device_id, None);
+        let info: crate::remote::client::KoanPair =
+            serde_json::from_str(r#"{"device":"Den TV","deviceId":"0192-den"}"#).unwrap();
+        assert_eq!(info.device_id.as_deref(), Some("0192-den"));
     }
 
     #[test]

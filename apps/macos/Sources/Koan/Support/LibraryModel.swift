@@ -290,6 +290,13 @@ final class LibraryModel {
     private(set) var favouriteAlbumIds: Set<Int64> = []
     private(set) var favouriteArtistIds: Set<Int64> = []
 
+    /// Moves with every toggle. A re-read that began before one lands with
+    /// the database as it was, and is not applied over it.
+    private var favouriteEdits = 0
+    /// A re-read is running; another asked meanwhile is run once after it.
+    private var readingFavourites = false
+    private var favouritesStale = false
+
     func isFavourite(track id: Int64) -> Bool { favouriteTrackIds.contains(id) }
     func isFavourite(album id: Int64) -> Bool { favouriteAlbumIds.contains(id) }
     func isFavourite(artist id: Int64) -> Bool { favouriteArtistIds.contains(id) }
@@ -658,6 +665,7 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             guard let now = try? await engine.toggleFavourite(trackId: id) else { return }
+            favouriteEdits += 1
             if now { favouriteTrackIds.insert(id) } else { favouriteTrackIds.remove(id) }
             reloadFavourites()
         }
@@ -667,6 +675,7 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             guard let now = try? await engine.toggleFavouriteAlbum(albumId: id) else { return }
+            favouriteEdits += 1
             if now { favouriteAlbumIds.insert(id) } else { favouriteAlbumIds.remove(id) }
             reloadFavourites()
         }
@@ -676,16 +685,31 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             guard let now = try? await engine.toggleFavouriteArtist(artistId: id) else { return }
+            favouriteEdits += 1
             if now { favouriteArtistIds.insert(id) } else { favouriteArtistIds.remove(id) }
             reloadFavourites()
         }
     }
 
     /// Re-read every favourite id from the database. Called after a sync, which
-    /// can change them without going through a toggle.
+    /// can change them without going through a toggle. One at a time: a burst
+    /// of library changes is one read now and one after.
     func refreshFavourites() {
+        guard !readingFavourites else {
+            favouritesStale = true
+            return
+        }
+        readingFavourites = true
+        let edits = favouriteEdits
         let engine = self.engine
         Task {
+            defer {
+                readingFavourites = false
+                if favouritesStale || favouriteEdits != edits {
+                    favouritesStale = false
+                    refreshFavourites()
+                }
+            }
             // Three independent reads, so three at once.
             async let tracks = engine.favouriteTrackIds()
             async let albums = engine.favouriteAlbumIds()
@@ -693,6 +717,7 @@ final class LibraryModel {
             let trackIds = Set((try? await tracks) ?? [])
             let albumIds = Set((try? await albums) ?? [])
             let artistIds = Set((try? await artists) ?? [])
+            guard favouriteEdits == edits else { return }
             // Guarded for the same reason a listing is. Every grid cell and
             // every row reads these to draw its heart, so republishing a set
             // that has not moved redraws the whole page for nothing — and a

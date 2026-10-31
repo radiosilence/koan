@@ -91,7 +91,9 @@ struct SearchResultsView: View {
         let key: [AnyHashable] = [
             AnyHashable(picked), AnyHashable(pick.isActive), AnyHashable(tint),
             AnyHashable(library.favouriteAlbumIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            // What the queue says of the tracks listed here, and nothing it
+            // says of others: a patch to a row elsewhere redraws nothing.
+            AnyHashable(search.tracks.map { queued[$0.id].map { "\($0.status)" } }),
         ]
         let library = library
         let nav = nav
