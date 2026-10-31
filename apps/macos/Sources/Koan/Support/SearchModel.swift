@@ -137,7 +137,7 @@ final class SearchModel {
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
 
-            let shelf = try? await engine.shelfSummary(shelf: .search(query: text))
+            let shelf = try? await offMain { try await engine.shelfSummary(shelf: .search(query: text)) }
 
             guard !Task.isCancelled else { return }
             tracks = shelf?.tracks ?? []

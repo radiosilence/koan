@@ -541,9 +541,10 @@ final class AlbumTile: NSCollectionViewItem {
     struct Actions {
         var open: (Int64) -> Void = { _ in }
         var openArtist: (Int64) -> Void = { _ in }
-        /// Resolves the record's tracks and plays them. Returns once they are
-        /// playing, so the tile can show it is busy until then.
-        var play: (Int64) async -> Void = { _ in }
+        /// Plays the record, sent to the engine before it returns so it keeps
+        /// its place among other commands. The task, when one was sent, ends
+        /// once it is playing, so the tile can show it is busy until then.
+        var play: @MainActor (Int64) -> Task<Void, Never>? = { _ in nil }
         var toggleFavourite: (Int64) -> Void = { _ in }
     }
 
@@ -1022,8 +1023,9 @@ final class AlbumTile: NSCollectionViewItem {
         guard !playing else { return }
         playing = true
         update(in: context)
+        let done = context.actions.play(album.id)
         Task { [weak self] in
-            await context.actions.play(album.id)
+            await done?.value
             guard let self, self.album?.id == album.id else { return }
             self.playing = false
             self.spin(false)

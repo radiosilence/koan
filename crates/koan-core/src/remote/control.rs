@@ -248,10 +248,7 @@ pub fn apply(
             if items.is_empty() {
                 return Ok(());
             }
-            match state.cursor() {
-                Some(after) => send(PlayerCommand::InsertInPlaylist { items, after }),
-                None => send(PlayerCommand::AddToPlaylist(items)),
-            }
+            send(PlayerCommand::PlayNext(items))
         }
         LinkCommand::Insert { track_ids, after } => {
             let after = parse_qid(&after)?;
@@ -722,6 +719,9 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         PlayerCommand::AddAndPlay(items) => LinkCommand::Enqueue {
             track_ids: tracks(&items)?,
             play: true,
+        },
+        PlayerCommand::PlayNext(items) => LinkCommand::PlayNext {
+            track_ids: tracks(&items)?,
         },
         PlayerCommand::InsertInPlaylist { items, after } => LinkCommand::Insert {
             track_ids: tracks(&items)?,

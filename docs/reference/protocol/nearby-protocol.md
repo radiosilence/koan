@@ -18,7 +18,7 @@ Each app dials every device it finds, and every address in `devices.addresses`, 
 
 ## Transport
 
-A WebSocket over plain TCP, at path `/`, with no query. Each text frame holds one JSON object; binary and control frames only count as liveness. A connection silent for 45 seconds is pinged, and hung up after another 45 without an answer. The TCP connect times out after 3 seconds and the WebSocket handshake after 10.
+A WebSocket over plain TCP, at path `/`, with no query. Each text frame holds one JSON object; binary and control frames only count as liveness. A connection silent for 45 seconds is pinged, and hung up after another 45 without an answer. The TCP connect times out after 3 seconds and the WebSocket handshake after 10. A listener serves at most 32 connections at once, 4 from any one address, and hangs up on any beyond them. A dialler that has not proved itself within 10 seconds of the handshake is a stranger; at most 16 strangers stay connected, and one that proves itself later stops counting as one. The listener also closes a connection that sends a message or frame over 8 MiB; a dialler must not send one larger.
 
 The listening end reports and the dialling end commands.
 

@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -882,11 +882,20 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
                 log::info!("nearby: {addr} is refused or held off; hung up");
             }
             Ok((stream, addr)) => {
+                let Some(host) = HostSlot::take(addr.ip()) else {
+                    log::warn!("nearby: {addr} has {MAX_PER_HOST} connections already; hung up");
+                    continue;
+                };
+                let Some(slot) = Slot::take(&CONNECTIONS, MAX_CONNECTIONS) else {
+                    log::warn!("nearby: {addr} connected past {MAX_CONNECTIONS} others; hung up");
+                    continue;
+                };
                 log::info!("nearby: {addr} connected");
                 let (local, stop) = (local.clone(), stop.clone());
                 let _ = std::thread::Builder::new()
                     .name("koan-nearby-peer".into())
                     .spawn(move || {
+                        let _slots = (host, slot);
                         if let Err(e) = serve(stream, addr, &local, &stop) {
                             log::info!("nearby: {addr}: {e}");
                         }
@@ -925,6 +934,131 @@ impl Stop {
     }
 }
 
+/// The listener is open to the whole network, so what any device on it can
+/// make this one hold is bounded: a thread per connection, up to
+/// `MAX_CONNECTIONS`, at most `MAX_PER_HOST` of them from one address, and at
+/// most `MAX_STRANGERS` that stay once they have proved nothing. The rest are
+/// only ever held for a handshake and the proof that follows, each under its
+/// own deadline, so a device that can prove itself finds room unless many
+/// hosts are churning connections at once.
+const MAX_CONNECTIONS: usize = 32;
+const MAX_STRANGERS: usize = 16;
+const MAX_PER_HOST: usize = 4;
+
+/// How long a connection has to complete the WebSocket handshake.
+const HANDSHAKE: Duration = Duration::from_secs(10);
+
+/// How long a connection has to prove itself before it counts as a stranger.
+const PROVE_WINDOW: Duration = Duration::from_secs(10);
+
+/// The largest message either end of a nearby connection may send. The
+/// largest real one is a command naming every track it plays, signed: about
+/// 42 bytes a track, so this is room for some 200,000. A state carries only
+/// the part of a long queue around the current track.
+const MAX_MESSAGE: usize = 8 * 1024 * 1024;
+
+static CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+static STRANGERS: AtomicUsize = AtomicUsize::new(0);
+
+/// One of a bounded number of places, given back when dropped.
+struct Slot(&'static AtomicUsize);
+
+impl Slot {
+    fn take(of: &'static AtomicUsize, max: usize) -> Option<Self> {
+        if of.fetch_add(1, Ordering::AcqRel) >= max {
+            of.fetch_sub(1, Ordering::AcqRel);
+            None
+        } else {
+            Some(Self(of))
+        }
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+static HOSTS: Mutex<Option<HashMap<std::net::IpAddr, usize>>> = Mutex::new(None);
+
+/// One of `MAX_PER_HOST` places for an address, given back when dropped.
+struct HostSlot(std::net::IpAddr);
+
+impl HostSlot {
+    fn take(ip: std::net::IpAddr) -> Option<Self> {
+        let mut hosts = HOSTS.lock();
+        let count = hosts
+            .get_or_insert_with(HashMap::new)
+            .entry(ip)
+            .or_default();
+        if *count >= MAX_PER_HOST {
+            return None;
+        }
+        *count += 1;
+        Some(Self(ip))
+    }
+}
+
+impl Drop for HostSlot {
+    fn drop(&mut self) {
+        let mut hosts = HOSTS.lock();
+        let Some(hosts) = hosts.as_mut() else { return };
+        if let Some(count) = hosts.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                hosts.remove(&self.0);
+            }
+        }
+    }
+}
+
+/// Both ends' WebSocket limits. The write buffer holds one message beyond
+/// the usual buffer: a peer that stops reading is hung up on, not queued for.
+fn socket_config() -> tungstenite::protocol::WebSocketConfig {
+    let config = tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(MAX_MESSAGE))
+        .max_frame_size(Some(MAX_MESSAGE));
+    let cap = config.write_buffer_size + MAX_MESSAGE;
+    config.max_write_buffer_size(cap)
+}
+
+/// Complete the server side of the WebSocket handshake within `deadline`,
+/// however slowly the request arrives. Leaves the socket non-blocking.
+fn handshake(
+    stream: TcpStream,
+    deadline: Duration,
+) -> Result<tungstenite::WebSocket<TcpStream>, String> {
+    use tungstenite::HandshakeError;
+    let started = Instant::now();
+    stream.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let fd = stream.as_raw_fd();
+    let mut attempt = tungstenite::accept_with_config(stream, Some(socket_config()));
+    loop {
+        match attempt {
+            Ok(socket) => return Ok(socket),
+            Err(HandshakeError::Failure(e)) => return Err(e.to_string()),
+            Err(HandshakeError::Interrupted(mid)) => {
+                let left = deadline
+                    .checked_sub(started.elapsed())
+                    .filter(|left| !left.is_zero())
+                    .ok_or("no handshake in time")?;
+                // Only reads wait on the peer; the response is a few hundred
+                // bytes, so a write that would block is retried soon after.
+                let mut fds = [libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                }];
+                let ms = left.as_millis().min(100) as i32;
+                // SAFETY: a live array of the length given.
+                unsafe { libc::poll(fds.as_mut_ptr(), 1, ms) };
+                attempt = mid.handshake();
+            }
+        }
+    }
+}
+
 /// Serve one device that connected to this one.
 fn serve(
     stream: TcpStream,
@@ -932,18 +1066,8 @@ fn serve(
     local: &Local,
     stop: &Arc<Stop>,
 ) -> Result<(), String> {
-    // Apple's accept hands back the listener's non-blocking mode, under which
-    // a request that arrives a moment after the connection fails the handshake.
-    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|e| e.to_string())?;
-    let mut socket = tungstenite::accept(stream).map_err(|e| e.to_string())?;
+    let mut socket = handshake(stream, HANDSHAKE)?;
     let fd = socket.get_ref().as_raw_fd();
-    socket
-        .get_ref()
-        .set_nonblocking(true)
-        .map_err(|e| e.to_string())?;
     let _ = socket.get_ref().set_nodelay(true);
     let waker = Waker::new().map_err(|e| e.to_string())?;
     wire::wake_on_engine_change(&waker);
@@ -963,6 +1087,9 @@ fn serve(
         proven: None,
         reports: None,
         pending: Vec::new(),
+        since: Instant::now(),
+        stranger: None,
+        crowded: false,
     };
     wire::drive(&mut socket, fd, &waker, &mut session)
 }
@@ -995,9 +1122,33 @@ struct Serving<'a> {
     pending: Vec<String>,
     /// This connection as Settings lists it, and the flag that ends it.
     listed: Option<(Listed, Arc<AtomicBool>)>,
+    /// When the handshake finished.
+    since: Instant,
+    /// Its place among `MAX_STRANGERS`, once it has proved nothing.
+    stranger: Option<Slot>,
+    /// It proved nothing and there was no room for another stranger.
+    crowded: bool,
 }
 
 impl Serving<'_> {
+    /// Count the dialler among the strangers once it has proved nothing, by
+    /// answer or by silence, and hang up when they are full.
+    fn place(&mut self) {
+        if self.proven.is_some() || self.stranger.is_some() || self.crowded {
+            return;
+        }
+        if !self.answered && self.since.elapsed() < PROVE_WINDOW {
+            return;
+        }
+        match Slot::take(&STRANGERS, MAX_STRANGERS) {
+            Some(slot) => self.stranger = Some(slot),
+            None => {
+                log::warn!("nearby: {MAX_STRANGERS} unproven devices connected already; hung up");
+                self.crowded = true;
+            }
+        }
+    }
+
     fn proof(&mut self, frame_in: ProofFrame) {
         match frame_in {
             ProofFrame::Auth { id, nonce, sig } => {
@@ -1022,6 +1173,9 @@ impl Serving<'_> {
                 }
                 self.proven =
                     proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
+                if self.proven.is_some() {
+                    self.stranger = None;
+                }
                 let sig = proof::sign_listen(&id, me, &nonce, &listen_nonce, verified);
                 if sig.is_some() && proof::signs_reports(&listen_nonce, &nonce) {
                     self.reports = Some(proof::Session::reports(me, &id, &listen_nonce, &nonce));
@@ -1139,7 +1293,18 @@ impl Default for Budget {
 }
 
 impl wire::Session for Serving<'_> {
+    fn deadline(&self) -> Option<Instant> {
+        let placed = self.proven.is_some() || self.stranger.is_some() || self.crowded;
+        (!placed).then(|| self.since + PROVE_WINDOW)
+    }
+
     fn outgoing(&mut self) -> Vec<String> {
+        self.place();
+        if self.crowded {
+            // Round again at once, for `done` to see it.
+            self.waker.wake();
+            return Vec::new();
+        }
         let mut out = Vec::new();
         if !self.greeted {
             let cfg = Config::cached();
@@ -1216,7 +1381,8 @@ impl wire::Session for Serving<'_> {
     }
 
     fn done(&self) -> bool {
-        self.stop.stopped()
+        self.crowded
+            || self.stop.stopped()
             || self
                 .listed
                 .as_ref()
@@ -1493,8 +1659,12 @@ fn connect(addr: &str) -> Result<tungstenite::WebSocket<TcpStream>, String> {
                     .set_read_timeout(Some(Duration::from_secs(10)))
                     .map_err(|e| e.to_string())?;
                 let url = format!("ws://{host_port}/");
-                let (socket, _) =
-                    tungstenite::client(url.as_str(), stream).map_err(|e| e.to_string())?;
+                let (socket, _) = tungstenite::client::client_with_config(
+                    url.as_str(),
+                    stream,
+                    Some(socket_config()),
+                )
+                .map_err(|e| e.to_string())?;
                 socket
                     .get_ref()
                     .set_nonblocking(true)
@@ -2805,6 +2975,65 @@ mod dial_tests {
     fn a_redial_skips_the_wait() {
         assert_eq!(next_wait(RETRY_MAX, false, true), RETRY_MIN);
     }
+
+    #[test]
+    fn a_served_connection_refuses_oversized_messages() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = std::thread::spawn(move || {
+            let stream = TcpStream::connect(addr).unwrap();
+            let (mut socket, _) = tungstenite::client(format!("ws://{addr}/"), stream).unwrap();
+            socket
+                .send(tungstenite::Message::text("x".repeat(1024)))
+                .unwrap();
+            let _ = socket.send(tungstenite::Message::text("x".repeat(MAX_MESSAGE + 1)));
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = tungstenite::accept_with_config(stream, Some(socket_config())).unwrap();
+        assert_eq!(socket.read().unwrap().len(), 1024);
+        assert!(matches!(
+            socket.read(),
+            Err(tungstenite::Error::Capacity(_))
+        ));
+        // Hanging up frees the client from the rest of its write.
+        drop(socket);
+        client.join().unwrap();
+    }
+
+    #[test]
+    fn a_trickled_handshake_runs_out_of_time() {
+        use std::io::Write as _;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let trickle = {
+            let done = done.clone();
+            std::thread::spawn(move || {
+                let mut stream = TcpStream::connect(addr).unwrap();
+                while !done.load(Ordering::Relaxed) {
+                    if stream.write_all(b"G").is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            })
+        };
+        let (stream, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        assert!(handshake(stream, Duration::from_millis(300)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        done.store(true, Ordering::Relaxed);
+        trickle.join().unwrap();
+
+        // A whole request in time is a socket.
+        let client = std::thread::spawn(move || {
+            let stream = TcpStream::connect(addr).unwrap();
+            tungstenite::client(format!("ws://{addr}/"), stream).is_ok()
+        });
+        let (stream, _) = listener.accept().unwrap();
+        assert!(handshake(stream, Duration::from_secs(5)).is_ok());
+        assert!(client.join().unwrap());
+    }
 }
 
 #[cfg(test)]
@@ -2947,6 +3176,9 @@ mod tests {
             reports: None,
             pending: Vec::new(),
             listed: None,
+            since: Instant::now(),
+            stranger: None,
+            crowded: false,
         }
     }
 

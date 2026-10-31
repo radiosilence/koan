@@ -2853,3 +2853,35 @@ pub struct ServerExtension {
     pub name: String,
     pub versions: Vec<i64>,
 }
+
+/// What a command acts on, named rather than resolved: the engine reads an
+/// album's, an artist's or a playlist's tracks on the command lane, in turn
+/// with every other command, so a client never waits on that read before its
+/// command takes its place.
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum TrackSet {
+    Tracks { ids: Vec<i64> },
+    Album { id: i64 },
+    Artist { id: i64 },
+    Playlist { id: i64 },
+}
+
+/// Where in the queue tracks go. `Next` and `AppendAndPlay` are read against
+/// the queue as the player applies them, never against a client's copy.
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum Placement {
+    /// Replace the queue and play from `start_at` (the first track by
+    /// default), in order or shuffled, with repeat off.
+    Replace {
+        start_at: Option<u32>,
+        shuffled: bool,
+    },
+    /// Append; playback starts if the player was stopped.
+    Append,
+    /// Append and play the first of them.
+    AppendAndPlay,
+    /// After the playing track, or appended when nothing is playing.
+    Next,
+    /// After this queue item.
+    After { queue_item_id: String },
+}
