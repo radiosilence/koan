@@ -1,5 +1,4 @@
 use async_graphql::connection::Edge;
-use koan_core::db::connection::Database;
 use koan_core::db::queries;
 
 use super::types::Conn;
@@ -78,13 +77,4 @@ pub(super) fn extract_year(date: &str) -> Option<i32> {
 /// Get album year from its date field.
 pub(super) fn album_year(album: &queries::AlbumRow) -> Option<i32> {
     album.date.as_deref().and_then(extract_year)
-}
-
-// ---------------------------------------------------------------------------
-// Favourite sync
-// ---------------------------------------------------------------------------
-
-/// Push a favourite to the remote server.
-pub(super) fn sync_favourite_to_remote(db: &Database, track_id: i64, star: bool) {
-    koan_core::helpers::sync_favourite_to_remote(db, track_id, star);
 }

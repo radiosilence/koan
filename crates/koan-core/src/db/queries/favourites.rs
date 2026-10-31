@@ -65,6 +65,30 @@ pub fn forget_favourite_change(
     Ok(())
 }
 
+/// What the server had starred when a sync last read it, as (kind, remote id).
+pub fn server_stars(conn: &Connection) -> rusqlite::Result<HashSet<(String, String)>> {
+    let mut stmt = conn.prepare_cached("SELECT kind, remote_id FROM favourite_server_stars")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Record what the server has starred, replacing what was recorded before.
+pub fn set_server_stars<'a>(
+    conn: &Connection,
+    stars: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> rusqlite::Result<()> {
+    super::atomically(conn, || {
+        conn.execute("DELETE FROM favourite_server_stars", [])?;
+        let mut insert = conn.prepare_cached(
+            "INSERT OR IGNORE INTO favourite_server_stars (kind, remote_id) VALUES (?1, ?2)",
+        )?;
+        for (kind, remote_id) in stars {
+            insert.execute(params![kind, remote_id])?;
+        }
+        Ok(())
+    })
+}
+
 /// `user`'s favourite tracks.
 pub fn load_favourites(conn: &Connection, user: i64) -> rusqlite::Result<HashSet<i64>> {
     let user = resolve_user(conn, user)?;

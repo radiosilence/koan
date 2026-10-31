@@ -93,7 +93,7 @@ cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cac
 
 ## Favourites and playlists
 
-Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync. A favourite changed while the server cannot be reached waits on the device and is sent with the next sync, and the server's older list does not undo it in the meantime.
+Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync, unfavouriting included. A favourite made here before its item was on the server, or before signing in, is sent to it rather than dropped. A favourite changed while the server cannot be reached waits on the device and is sent with the next sync, and the server's older list does not undo it in the meantime.
 
 A playlist the server marks read-only, such as a [smart playlist](smart-playlists.md), comes down like any other and is never edited or pushed back.
 

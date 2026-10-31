@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 29;
+pub const SCHEMA_VERSION: i64 = 30;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -265,6 +265,15 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             -- was sent never clears a newer one made while it was in flight.
             seq        INTEGER NOT NULL DEFAULT 0,
             UNIQUE(kind, remote_id)
+        );
+
+        -- What the server had starred when a sync last read it. A favourite
+        -- here that the server has stopped starring was unstarred elsewhere;
+        -- one it never starred has yet to reach it.
+        CREATE TABLE IF NOT EXISTS favourite_server_stars (
+            kind       TEXT NOT NULL,
+            remote_id  TEXT NOT NULL,
+            PRIMARY KEY (kind, remote_id)
         );
 
         CREATE TABLE IF NOT EXISTS link_outbox (

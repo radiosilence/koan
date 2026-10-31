@@ -12,7 +12,6 @@ use koan_core::player::state::{PlaylistItem, QueueItemId, QueueMode, SharedPlaye
 use koan_core::auth::Role;
 use koan_core::remote::link::LinkCommand;
 
-use super::helpers::sync_favourite_to_remote;
 use super::jobs::{JobHandle, JobRegistry};
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via, with_db};
@@ -1505,40 +1504,29 @@ impl MutationRoot {
     }
 }
 
-/// Star, unstar, or toggle — the three differ only in which write they run.
+/// Star, unstar, or toggle (`star: None`), as Subsonic's `star` and the web
+/// UI's hearts do.
 async fn set_favourite(
     ctx: &Context<'_>,
     track_id: i64,
     star: Option<bool>,
 ) -> async_graphql::Result<GqlTrack> {
-    let user = super::user_id(ctx);
+    let user = super::get_auth_user(ctx);
     with_db(ctx, move |db| {
-        let track = queries::get_track_row(&db.conn, track_id)
+        koan_core::helpers::set_favourite(
+            db,
+            user.user_id,
+            koan_core::helpers::FavouriteKind::Track,
+            track_id,
+            star,
+        )
+        .map_err(|e| super::internal_error("db", e))?
+        .ok_or_else(|| async_graphql::Error::new(format!("track {track_id} not found")))?;
+        crate::subsonic::favourited(db, user.user_id, &user.username, true);
+        let row = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let now_starred = match star {
-            Some(true) => {
-                queries::add_favourite(&db.conn, user, track_id)
-                    .map_err(|e| super::internal_error("db", e))?;
-                true
-            }
-            Some(false) => {
-                queries::remove_favourite(&db.conn, user, track_id)
-                    .map_err(|e| super::internal_error("db", e))?;
-                false
-            }
-            None => queries::toggle_favourite(&db.conn, user, track_id)
-                .map_err(|e| super::internal_error("db", e))?,
-        };
-
-        // The upstream server has one account, and it is the local user's.
-        if queries::auth::is_local_user(&db.conn, user)
-            .map_err(|e| super::internal_error("db", e))?
-        {
-            sync_favourite_to_remote(db, track_id, now_starred);
-        }
-        crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
-        Ok(GqlTrack { row: track })
+            .ok_or_else(|| async_graphql::Error::new(format!("track {track_id} not found")))?;
+        Ok(GqlTrack { row })
     })
     .await
 }
