@@ -459,7 +459,7 @@ mod tests {
     fn dropping_a_token_ends_a_connection_blocked_on_a_reader_that_stopped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("big.flac");
-        std::fs::write(&path, vec![0u8; 64 << 20]).unwrap();
+        std::fs::write(&path, vec![0u8; 16 << 20]).unwrap();
         let listener = Listener::start(Box::new(|_, _| {})).unwrap();
         let token = listener.add(Served::File {
             path,
@@ -501,7 +501,7 @@ mod tests {
     fn a_revoked_token_refuses_new_requests_and_leaves_open_ones() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("big.flac");
-        std::fs::write(&path, vec![0u8; 64 << 20]).unwrap();
+        std::fs::write(&path, vec![0u8; 16 << 20]).unwrap();
         let listener = Listener::start(Box::new(|_, _| {})).unwrap();
         let token = listener.add(Served::File {
             path: path.clone(),

@@ -305,8 +305,9 @@ pub fn search() {
         return;
     };
     *SEARCHED.lock() = Some(Instant::now());
-    // Asked to look now: a renderer whose description failed is asked again.
-    with(|s| s.unwanted.retain(|_, u| u.next_wait.is_none()));
+    // Asked to look now: every device is described again, one whose
+    // description failed or that was not yet a renderer included.
+    with(|s| s.unwanted.clear());
     let network = NETWORK.lock().clone();
     let mut interface = Ipv4Addr::UNSPECIFIED;
     if let Some(network) = &network {

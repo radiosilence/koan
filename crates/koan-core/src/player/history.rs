@@ -381,13 +381,19 @@ fn reporter(report: Report) {
                     report,
                 } in jobs
                 {
-                    if let Err(e) =
+                    // One report that panics must not end every later one.
+                    let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         client.report_playback(&remote_id, report.state, report.position_ms)
-                    {
-                        log::warn!(
+                    }));
+                    match sent {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => log::warn!(
                             "failed to report playback of track {} to remote: {e}",
                             report.track_id
-                        );
+                        ),
+                        Err(_) => {
+                            log::warn!("reporting playback of track {} panicked", report.track_id)
+                        }
                     }
                 }
             })

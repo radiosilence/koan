@@ -71,8 +71,6 @@ pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
         return Ok(ReplayGainInfo::default());
     };
 
-    // lofty's get_string handles Vorbis comments, ID3v2 TXXX, and APE items
-    // via ItemKey mapping. We also do a manual fallback for common RG keys.
     let track_gain = find_rg_value(tag, TAG_TRACK_GAIN).and_then(|s| parse_gain(&s));
     let track_peak = find_rg_value(tag, TAG_TRACK_PEAK).and_then(|s| parse_peak(&s));
     let album_gain = find_rg_value(tag, TAG_ALBUM_GAIN).and_then(|s| parse_gain(&s));
