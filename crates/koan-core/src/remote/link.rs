@@ -1461,11 +1461,11 @@ pub fn resolve_each(
             )
             .and_then(|mut stmt| {
                 let rows = stmt.query_map([crate::db::queries::json_list(remote_ids)], |r| {
-                    Ok((r.get::<_, usize>(0)?, r.get::<_, Option<i64>>(1)?))
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
                 })?;
                 for row in rows {
                     let (n, id) = row?;
-                    if let Some(slot) = found.get_mut(n) {
+                    if let Some(slot) = usize::try_from(n).ok().and_then(|n| found.get_mut(n)) {
                         *slot = id;
                     }
                 }
