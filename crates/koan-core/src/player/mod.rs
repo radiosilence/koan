@@ -2456,6 +2456,8 @@ impl Player {
             PlayerCommand::ClearPlaylist => self.clear_playlist(),
             PlayerCommand::SignedOut => {
                 self.clear_playlist();
+                // The previous account's queue is not this one's to bring back.
+                self.undo_stack = UndoStack::new();
                 match &self.downloads {
                     Some(downloads) => downloads.forget(),
                     None => self.shared_state.downloads().forget_all(),
