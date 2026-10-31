@@ -41,10 +41,6 @@ struct RowPlayButton: View {
             player.playNow(trackIds: context.trackIds, startingAt: context.startAt)
             return
         }
-        let engine = library.engine
-        let playable = self.playable
-        player.playNow(resolving: playable.name) {
-            await playable.trackIds(using: engine)
-        }
+        player.playNow([playable.source], named: playable.name)
     }
 }

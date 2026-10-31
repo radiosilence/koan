@@ -1,3 +1,4 @@
+import KoanFFI
 import SwiftUI
 
 /// A click on a sleeve among results plays the record, and a queue built up
@@ -22,11 +23,7 @@ struct ReplaceQueueDialog: ViewModifier {
                 Task { await Self.play(id, player: player, library: library, nav: nav) }
             }
             Button("Add to Queue") {
-                let engine = library.engine
-                Task {
-                    let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
-                    player.enqueue(trackIds: ids)
-                }
+                player.queue([.album(id: id)], .append)
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
@@ -37,9 +34,7 @@ struct ReplaceQueueDialog: ViewModifier {
     /// Opens the record and plays it in place of the queue.
     static func play(_ id: Int64, player: PlayerModel, library: LibraryModel, nav: Navigator) async {
         nav.open(album: id)
-        let engine = library.engine
-        let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
-        player.playNow(trackIds: ids)
+        await player.queue([.album(id: id)], .replace(startAt: 0, shuffled: false)).value
     }
 }
 

@@ -49,6 +49,16 @@ enum Playable {
         let id: Int64
     }
 
+    /// What it names, for the engine to resolve on its command lane.
+    var source: TrackSet {
+        switch self {
+        case .track(let t): .tracks(ids: [t.id])
+        case .album(let a): .album(id: a.id)
+        case .artist(let id, _): .artist(id: id)
+        case .playlist(let id, _): .playlist(id: id)
+        }
+    }
+
     var key: Key {
         switch self {
         case .track(let t): Key(kind: .track, id: t.id)
@@ -108,10 +118,10 @@ struct PlayableMenu: View {
         Button { playNow(shuffled: false) } label: {
             Label("Play", koan: Icon.play)
         }
-        Button { act { player.playNext(trackIds: $0) } } label: {
+        Button { player.queue([playable.source], .next) } label: {
             Label("Play Next", koan: Icon.playNext)
         }
-        Button { act { player.enqueue(trackIds: $0) } } label: {
+        Button { player.queue([playable.source], .append) } label: {
             Label("Add to Queue", koan: Icon.queue)
         }
         if playable.hasChildren {
@@ -122,7 +132,7 @@ struct PlayableMenu: View {
 
         Divider()
 
-        AddToPlaylistMenu { body in act(body) }
+        AddToPlaylistMenu { [playable.source] }
 
         // Favouriting, sharing and organizing act on library rows. A playlist
         // has none of its own, so offering them on one would silently act on
@@ -235,17 +245,14 @@ struct PlayableMenu: View {
     }
 
     /// Replace the queue with this, in turn with every other request: see
-    /// `PlayerModel.playNow(resolving:shuffled:_:)`.
+    /// `PlayerModel.playNow(_:named:shuffled:)`.
     private func playNow(shuffled: Bool) {
-        let engine = library.engine
-        let playable = self.playable
-        player.playNow(resolving: playable.name, shuffled: shuffled) {
-            await playable.trackIds(using: engine)
-        }
+        player.playNow([playable.source], named: playable.name, shuffled: shuffled)
     }
 
-    /// Resolve off the main actor, then act. An artist can be thousands of
-    /// tracks and the resolution is a database query.
+    /// Resolve off the main actor, then act: for what is not a queue command,
+    /// such as fetching or organizing. An artist can be thousands of tracks
+    /// and the resolution is a database query.
     private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
         let engine = library.engine
         let playable = self.playable
@@ -459,11 +466,7 @@ struct PlayableHeaderButton: View {
     var body: some View {
         Button {
             guard !loading else { return }
-            let engine = library.engine
-            let playable = self.playable
-            let done = player.playNow(resolving: playable.name) {
-                await playable.trackIds(using: engine)
-            }
+            let done = player.playNow([playable.source], named: playable.name)
             if case .artist = playable {
                 Task {
                     await done.value
@@ -519,11 +522,7 @@ struct ShuffleHeaderButton: View {
 
     var body: some View {
         Button {
-            let engine = library.engine
-            let playable = self.playable
-            let done = player.playNow(resolving: playable.name, shuffled: true) {
-                await playable.trackIds(using: engine)
-            }
+            let done = player.playNow([playable.source], named: playable.name, shuffled: true)
             // As play does: an artist's page shows nothing of what started.
             if case .artist = playable {
                 Task {
@@ -559,37 +558,23 @@ struct QueueButtons: View {
     let playable: Playable?
 
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
-    @State private var working = false
 
     var body: some View {
         HStack(spacing: 10) {
-            Button { act { player.playNext(trackIds: $0) } } label: {
+            Button { act(.next) } label: {
                 Label("Play Next", koan: Icon.playNext)
             }
-            Button { act { player.enqueue(trackIds: $0) } } label: {
+            Button { act(.append) } label: {
                 Label("Queue", koan: Icon.queue)
             }
-            if working {
-                ProgressView().controlSize(.small)
-            }
         }
-        .disabled(playable == nil || working)
+        .disabled(playable == nil)
         .koanButtons(.compact)
     }
 
-    /// An artist is thousands of tracks and resolving them is a database read,
-    /// so it happens off the main actor.
-    private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
+    private func act(_ placement: Placement) {
         guard let playable else { return }
-        working = true
-        let engine = library.engine
-        Task {
-            let ids = await playable.trackIds(using: engine)
-            working = false
-            guard !ids.isEmpty else { return }
-            body(ids)
-        }
+        player.queue([playable.source], placement)
     }
 }
 
@@ -598,22 +583,20 @@ struct QueueButtons: View {
 ///
 /// Its own view rather than lines inside each menu: the same submenu belongs on
 /// a library row, a queue row and a playlist row, and the three would otherwise
-/// drift. `resolve` defers working out the tracks until something is chosen —
-/// an artist is thousands of them, and resolving them to *draw* a menu freezes
-/// the window.
+/// drift. `sources` names the tracks rather than listing them: an artist is
+/// thousands of them, and the engine reads them once something is chosen.
 ///
 /// "New Playlist…" only records the request; the dialog belongs to the window.
 /// A context menu is gone the moment you pick from it, and an alert attached to
 /// its contents goes with it.
 struct AddToPlaylistMenu: View {
-    /// Hands the chosen action the track ids, off the main actor.
-    let resolve: (@escaping @MainActor ([Int64]) -> Void) -> Void
+    let sources: @MainActor () -> [TrackSet]
 
     var body: some View {
         // A television plays playlists; they are made and filled elsewhere.
         #if !os(tvOS)
         Menu("Add to Playlist") { // theme: raw — a submenu
-            AddToPlaylistItems(resolve: resolve)
+            AddToPlaylistItems(sources: sources)
         }
         #endif
     }
@@ -622,18 +605,24 @@ struct AddToPlaylistMenu: View {
 /// What "Add to Playlist" offers, for a menu of its own: every playlist that
 /// can take tracks, and a new one.
 struct AddToPlaylistItems: View {
-    let resolve: (@escaping @MainActor ([Int64]) -> Void) -> Void
+    let sources: @MainActor () -> [TrackSet]
+    /// After the choice is sent: a selection ends its mode.
+    var then: @MainActor () -> Void = {}
 
     @Environment(PlaylistsModel.self) private var playlists
 
     var body: some View {
-        Button("New Playlist…") { resolve { playlists.naming = $0 } }
+        Button("New Playlist…") {
+            playlists.beginNaming(sources: sources())
+            then()
+        }
         let fillable = playlists.playlists.filter { !$0.readonly }
         if !fillable.isEmpty {
             Divider()
             ForEach(fillable, id: \.id) { playlist in
                 Button(playlist.name) {
-                    resolve { playlists.add(trackIds: $0, to: playlist.id) }
+                    playlists.add(sources: sources(), to: playlist.id)
+                    then()
                 }
             }
         }

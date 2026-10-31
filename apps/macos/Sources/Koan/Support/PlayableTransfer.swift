@@ -120,6 +120,18 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         }
     }
 
+    /// What it names, for the engine to resolve on its command lane. A file
+    /// has to be indexed first, and a selection is its items.
+    var source: TrackSet? {
+        switch kind {
+        case .track: .tracks(ids: [id])
+        case .album: .album(id: id)
+        case .artist: .artist(id: id)
+        case .playlist: .playlist(id: id)
+        case .file, .selection: nil
+        }
+    }
+
     /// Resolve to track IDs. Off the main actor — this is a database read, and
     /// an artist is a large one.
     func trackIds(using engine: KoanEngine) async -> [Int64] {
@@ -156,6 +168,31 @@ extension [PlayableTransfer] {
         enumerated()
             .sorted { ($0.element.place ?? .max, $0.offset) < ($1.element.place ?? .max, $1.offset) }
             .flatMap { $0.element.items ?? [$0.element] }
+    }
+
+    /// Hand `body` what the drop names, in drag order: at once when it is all
+    /// library content, so the command joins the engine's lane in turn with
+    /// the rest; after indexing when files came with it, since indexing a
+    /// folder takes seconds and must not hold every other command up.
+    @MainActor
+    func withSources(using engine: KoanEngine, _ body: @escaping @MainActor ([TrackSet]) -> Void) {
+        let items = inDragOrder
+        let named = items.compactMap(\.source)
+        if named.count == items.count {
+            if !named.isEmpty { body(named) }
+            return
+        }
+        Task {
+            var sources: [TrackSet] = []
+            for item in items {
+                if let source = item.source {
+                    sources.append(source)
+                } else {
+                    sources.append(.tracks(ids: await item.trackIds(using: engine)))
+                }
+            }
+            body(sources)
+        }
     }
 }
 

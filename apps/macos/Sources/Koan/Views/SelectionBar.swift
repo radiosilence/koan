@@ -13,8 +13,9 @@ struct SelectionBar: View {
         /// What favouriting acts on: the things themselves where they are
         /// records or artists, the tracks behind rows otherwise.
         var favourites: [Playable.Key]
-        /// The library tracks behind the pick, in the order it was made.
-        var tracks: @MainActor () async -> [Int64]
+        /// What the pick names, in the order it was made, for the engine to
+        /// resolve on its command lane.
+        var sources: [TrackSet]
         /// Play, play next and add to queue. The queue's own rows are already
         /// queued, and offer none of them.
         var queues = true
@@ -56,12 +57,12 @@ struct SelectionBar: View {
             }
             HStack(spacing: 0) {
                 if actions.queues {
-                    item("Play", short: "Play", icon: Icon.play) { player.playNow(trackIds: $0) }
-                    item("Play Next", short: "Next", icon: Icon.playNext) { player.playNext(trackIds: $0) }
-                    item("Add to Queue", short: "Queue", icon: Icon.queue) { player.enqueue(trackIds: $0) }
+                    item("Play", short: "Play", icon: Icon.play) { player.queue($0, .replace(startAt: 0, shuffled: false)) }
+                    item("Play Next", short: "Next", icon: Icon.playNext) { player.queue($0, .next) }
+                    item("Add to Queue", short: "Queue", icon: Icon.queue) { player.queue($0, .append) }
                 }
                 Menu { // theme: raw — its label is the bar's own item, with no bezel
-                    AddToPlaylistItems { body in run(body) }
+                    AddToPlaylistItems(sources: { actions.sources }, then: done)
                 } label: {
                     BarItem(title: "Add to Playlist", short: "Playlist", icon: Icon.playlist)
                 }
@@ -123,7 +124,7 @@ struct SelectionBar: View {
     }
 
     private func item(
-        _ title: String, short: String, icon: String, _ body: @escaping @MainActor ([Int64]) -> Void
+        _ title: String, short: String, icon: String, _ body: @escaping @MainActor ([TrackSet]) -> Void
     ) -> some View {
         Button { run(body) } label: {
             BarItem(title: title, short: short, icon: icon)
@@ -131,16 +132,11 @@ struct SelectionBar: View {
         .disabled(count == 0)
     }
 
-    /// Resolves the pick, which for records and artists is a read of the
-    /// database, then acts on it and ends the mode.
-    private func run(_ body: @escaping @MainActor ([Int64]) -> Void) {
-        let tracks = actions.tracks
+    /// Acts on the pick and ends the mode.
+    private func run(_ body: @escaping @MainActor ([TrackSet]) -> Void) {
+        let sources = actions.sources
         done()
-        Task {
-            let ids = await tracks()
-            guard !ids.isEmpty else { return }
-            body(ids)
-        }
+        body(sources)
     }
 }
 
@@ -301,13 +297,7 @@ private struct PickedBar: View {
             count: picked.count,
             actions: SelectionBar.Actions(
                 favourites: picked.map(\.key),
-                tracks: {
-                    var tracks: [Int64] = []
-                    for item in picked {
-                        tracks += await item.trackIds(using: engine)
-                    }
-                    return tracks
-                }
+                sources: picked.map(\.source)
             ),
             done: { selection.end() }
         )

@@ -123,14 +123,8 @@ final class PlayableSelection {
 
     /// Play or queue the pick, and put the page back.
     func commit(engine: KoanEngine, player: PlayerModel, play: Bool) {
-        let items = picked
+        let sources = picked.map(\.source)
         end()
-        Task {
-            var tracks: [Int64] = []
-            for item in items {
-                tracks += await item.trackIds(using: engine)
-            }
-            if play { player.playNow(trackIds: tracks) } else { player.enqueue(trackIds: tracks) }
-        }
+        player.queue(sources, play ? .replace(startAt: 0, shuffled: false) : .append)
     }
 }
