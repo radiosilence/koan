@@ -2274,12 +2274,12 @@ pub struct Settings {
     /// This device serves its library whenever the app is open.
     pub share_enabled: bool,
     pub share_port: u16,
-    /// Where invites send phones. Read only here, as `server_url` is:
+    /// Where invites send phones. Read only here, as `share_url` is:
     /// `set_invite_to` changes both, and Funnel with them.
     pub share_invite_to: crate::serve::InviteTo,
-    /// `server.url`: the custom address invites send phones to. Empty when
-    /// there is none.
-    pub server_url: String,
+    /// `share.url`: Funnel's address or the custom one. Empty when there is
+    /// none.
+    pub share_url: String,
 }
 
 /// A scanned folder, and what it contributed.

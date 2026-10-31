@@ -122,6 +122,16 @@ pub struct ShareConfig {
     pub port: u16,
     /// Where invites send phones.
     pub invite_to: InviteTo,
+    /// The address the shared library is reached at from outside: Funnel's,
+    /// or a tunnel's. The app's own, apart from `server.url`, which a
+    /// headless server on the same machine needs for itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The Funnel kōan published, as Funnel's port and the local port it
+    /// proxies to, so it takes down its own and none set up by hand. Kept
+    /// across quits and crashes, which can leave one behind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funnel: Option<[u16; 2]>,
 }
 
 /// Where a sharing machine's invites send phones.
@@ -147,6 +157,8 @@ impl Default for ShareConfig {
             enabled: false,
             port: 4000,
             invite_to: InviteTo::default(),
+            url: None,
+            funnel: None,
         }
     }
 }
@@ -1529,6 +1541,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "share.enabled"
         | "share.port"
         | "share.invite_to"
+        | "share.url"
+        | "share.funnel"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.

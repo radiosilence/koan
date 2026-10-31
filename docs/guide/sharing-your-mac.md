@@ -34,11 +34,11 @@ With [Tailscale](https://tailscale.com/download) running on the Mac, **Away from
 - **This network**: the Mac's address on the local network.
 - **Custom address**: a tunnel's HTTPS address (below).
 
-Funnel publishes at the Mac's own name on the tailnet; to change the address, rename the Mac in Tailscale. It uses port 443 unless something else on the Mac is already published there, then 8443 or 10000, and leaves what else Tailscale serves alone. Funnel has to be turned on for the tailnet first, in its access controls; Settings says so when it is not.
+Funnel publishes at the Mac's own name on the tailnet; to change the address, rename the Mac in Tailscale. It uses port 443 unless something else on the Mac is already published there, then 8443 or 10000, and leaves what else Tailscale serves alone. Funnel has to be turned on for the tailnet first, in its access controls; until it is, **Tailscale Funnel** is not offered. Quitting kōan takes its Funnel down, and starting to share again puts it back; a Funnel set up by hand is never touched.
 
 ### Without Tailscale
 
-A tunnel gives the Mac an HTTPS address of its own; choose **Custom address** and put it there.
+A tunnel gives the Mac an HTTPS address of its own; choose **Custom address** and put it there. Run the tunnel on the Mac itself, pointed at `http://127.0.0.1:4000`: the Mac takes the client address a tunnel passes on only from a tunnel running on it, and one elsewhere on the network would make every visitor look like a device at home.
 
 - **Cloudflare Tunnel.** Free, with HTTPS at Cloudflare's edge, but needs a domain on Cloudflare. Cloudflare's terms restrict serving large media through tunnels on the free plan; personal use is common, but it is a risk to weigh.
 - **Not recommended:** ngrok's free plan, which transfers 1 GB a month; Cloudflare quick tunnels, whose address changes on every start and signs every phone out; and forwarding a router port to the Mac, which publishes plain HTTP to the internet.
@@ -47,6 +47,6 @@ kōan does not run a relay or a tunnel of its own.
 
 ## What sharing serves
 
-The Subsonic API and kōan's own extensions, so any Subsonic app can sign in as well as kōan's. The web UI and MCP are not served from the Mac; run [the server](headless-server.md) for those.
+The Subsonic API and kōan's own extensions, so any Subsonic app can sign in as well as kōan's, and share pages. The web UI, GraphQL and MCP are not served from the Mac, so no account can drive the Mac's own player; run [the server](headless-server.md) for those.
 
-Sign-in settings under `[graphql]` in `config.toml` (`auth_enabled`, token lifetimes, `allowed_hosts`, `cookie_secure`) apply to the Mac's server as to the terminal UI's. The port and whether sharing is on are `[share]` in `config.local.toml`; see [Configuration](../reference/configuration.md#share).
+Sign-in is always on: the Mac refuses to share with `[graphql] auth_enabled = false`. `[graphql] allowed_hosts` adds names it answers to. Its sharing settings are `[share]` in `config.local.toml`, apart from a headless server's on the same Mac; see [Configuration](../reference/configuration.md#share).

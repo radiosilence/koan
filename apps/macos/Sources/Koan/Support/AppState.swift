@@ -145,7 +145,9 @@ final class AppState {
         await player.restoreSession()
         #if os(macOS)
         await residency.load(engine: engine)
-        await sharing.resume()
+        // Off the launch path: it can wait on Tailscale's CLI and the
+        // server starting, and nothing on screen waits for it.
+        Task { await sharing.resume() }
         #endif
     }
 }

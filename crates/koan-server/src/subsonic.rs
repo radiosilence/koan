@@ -4953,8 +4953,8 @@ fn share_node(
 
 /// Where share links point; sharing is refused without it rather than
 /// handing out an address that may not be reachable.
-fn share_base() -> Result<String, SubsonicError> {
-    Config::cached()
+fn share_base(state: &AppState) -> Result<String, SubsonicError> {
+    state
         .server_url()
         .ok_or_else(|| SubsonicError::internal("server.url is not set on this server"))
 }
@@ -5009,7 +5009,7 @@ async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
         let auth = params.auth();
         respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
             let user = caller.user_id;
-            let base = share_base()?;
+            let base = share_base(&state)?;
             let ids: Vec<_> = params
                 .all("id")
                 .map(|raw| resolve_entity(db, raw))
@@ -5053,7 +5053,7 @@ async fn get_shares(
 ) -> Response {
     offload_response(move || {
         respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
-            let base = share_base()?;
+            let base = share_base(&state)?;
             let mut node = XmlNode::new("shares").array_of("share");
             for share in queries::shares::list_shares(&db.conn, caller.share_owner())
                 .map_err(|e| SubsonicError::internal(e.to_string()))?

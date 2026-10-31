@@ -4046,7 +4046,7 @@ impl KoanEngine {
                 share_enabled: cfg.share.enabled,
                 share_port: cfg.share.port,
                 share_invite_to: cfg.share.invite_to.into(),
-                server_url: cfg.server.url.clone().unwrap_or_default(),
+                share_url: cfg.share.url.clone().unwrap_or_default(),
             }
         })
         .await

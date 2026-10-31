@@ -24,7 +24,8 @@ pub enum ServerUrl {
     /// Read once, at start: a server whose configuration changes only with a
     /// restart, and tests, which share one configuration.
     Fixed(Option<String>),
-    /// Read as asked: an app sharing its library changes it as it runs.
+    /// `share.url`, read as asked: an app sharing its library changes it as
+    /// it runs, and keeps it apart from a headless server's `server.url`.
     Live,
 }
 
@@ -32,7 +33,11 @@ impl ServerUrl {
     pub fn get(&self) -> Option<String> {
         match self {
             Self::Fixed(url) => url.clone(),
-            Self::Live => koan_core::config::Config::cached().server_url(),
+            Self::Live => koan_core::config::Config::cached()
+                .share
+                .url
+                .clone()
+                .filter(|u| !u.trim().is_empty()),
         }
     }
 }

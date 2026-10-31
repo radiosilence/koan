@@ -75,6 +75,8 @@ final class PlayerModel {
         ) { [engine] _ in
             engine.releaseOutput()
             engine.flushSettings()
+            // Sharing is not stopped at quit, so its Funnel would stay up.
+            engine.releaseFunnel()
         }
         // The two things that are not views and so have no body to invalidate:
         // where a seek asked to land, and where what is playing lives.
