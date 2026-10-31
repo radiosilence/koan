@@ -38,7 +38,7 @@ jobs:
       # it is, so they have to exist before the build. pandoc and the Tailwind CLI come from site/mise.toml; the css task
       # renders the docs first, and fails on a link to a page or heading that does not exist.
       - name: Set up mise
-        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           working_directory: site
 
@@ -60,7 +60,7 @@ jobs:
 
       - name: Login to GitHub Container Registry
         if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
