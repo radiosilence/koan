@@ -41,9 +41,12 @@ pub struct MediaKeyHandler {
     /// Asks the cover thread for a track's art, tagged with a generation.
     covers: Sender<(u64, PathBuf)>,
     /// The cover thread's answers: a file:// URL, or none.
-    cover_urls: Receiver<(u64, Option<String>)>,
+    cover_urls: CoverUrls,
     generation: u64,
 }
+
+/// The cover thread's answers, each tagged with the generation it was asked for.
+type CoverUrls = Receiver<(u64, Option<String>)>;
 
 /// A track's metadata as Now Playing was given it.
 struct Shown {
@@ -56,7 +59,7 @@ struct Shown {
 /// Reads covers and writes them to the one temp file Now Playing is pointed
 /// at, off the frame thread, the latest ask of a burst only. Removes the file
 /// once the handler is gone.
-fn spawn_cover_thread() -> (Sender<(u64, PathBuf)>, Receiver<(u64, Option<String>)>) {
+fn spawn_cover_thread() -> (Sender<(u64, PathBuf)>, CoverUrls) {
     let (tx, asks) = crossbeam_channel::unbounded::<(u64, PathBuf)>();
     let (done, rx) = crossbeam_channel::unbounded();
     std::thread::Builder::new()
