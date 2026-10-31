@@ -211,10 +211,10 @@ struct ShareSettings: View {
 
     private func setSharing(_ on: Bool) {
         model.edit { $0.shareEnabled = on }
-        let port = model.settings.sharePort
+        let (port, address) = (model.settings.sharePort, model.settings.serverUrl)
         Task {
             if on {
-                await app.sharing.start(port: port)
+                await app.sharing.start(port: port, publicAddress: address)
             } else {
                 await app.sharing.stop()
             }
@@ -231,7 +231,7 @@ struct ShareSettings: View {
         }
         guard value != model.settings.sharePort else { return }
         model.edit { $0.sharePort = value }
-        restartIfSharing(port: value)
+        restartIfSharing()
     }
 
     /// Read when the server starts, for the names it answers to.
@@ -245,12 +245,15 @@ struct ShareSettings: View {
             return
         }
         model.edit { $0.serverUrl = address }
-        restartIfSharing(port: model.settings.sharePort)
+        restartIfSharing()
     }
 
-    private func restartIfSharing(port: UInt16) {
+    /// With the values just typed, so the start never reads a setting still
+    /// being written.
+    private func restartIfSharing() {
         guard model.settings.shareEnabled else { return }
-        Task { await app.sharing.start(port: port) }
+        let (port, address) = (model.settings.sharePort, model.settings.serverUrl)
+        Task { await app.sharing.start(port: port, publicAddress: address) }
     }
 }
 

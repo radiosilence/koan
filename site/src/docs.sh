@@ -12,6 +12,7 @@ pages=(
   "Start|docs/getting-started.md"
   "Start|docs/guide/migrating-from-navidrome.md"
   "Server|docs/guide/headless-server.md"
+  "Server|docs/guide/sharing-your-mac.md"
   "Server|docs/guide/authentication.md"
   "Server|docs/guide/push.md"
   "Server|docs/guide/remote-servers.md"

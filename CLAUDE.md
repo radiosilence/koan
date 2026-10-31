@@ -7,7 +7,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
-- **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core only. Not published to crates.io.
+- **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
@@ -16,7 +16,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
-Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
+Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; nothing depends on koan-ffi. Native clients import koan-core through koan-ffi.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -253,6 +253,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `offload.rs` | Where blocking work goes — a growing thread pool for reads, one ordered lane for anything that ends in a `PlayerCommand` and for playlist edits, one for commands from other devices and one for settings writes, which `Batches` queues and coalesces |
 | `state.rs` | The engine's state as slices, and one cursor per client. Whole snapshots, batched at a tick, cut by rate of change |
 | `queue_slice.rs` | The queue as clients are sent it: whole on an edit, and between edits a patch of the rows whose status moved |
+| `serve.rs` | Sharing this device's library: koan-server's `ApiServer` on the engine's player, the first account, and the loopback client the account settings administer it through while it runs |
 | `types.rs` | uniffi records mirroring koan-core types (`Track`, `Album`, `NowPlaying`, `QueueItem`, …) and the conversions |
 
 Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.
@@ -281,6 +282,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Each task declares what it holds — files on disk, local rows, remote rows, downloads — and a new one is disabled only where those overlap |
 | `Support/Pairing.swift` | Approving a device that is waiting to sign in: a `koan.rocks/pair/` link arriving through `AppState.open(url:)`, or a code typed in Settings, asks the server for the device's name and then the person, as invites do |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
+| `Support/SharingModel.swift` | The Mac serving its own library: the account it is shared under, starting at launch when `share.enabled`, and why a start failed. `Views/ShareSettings.swift` is Settings → Server's mode choice and the line, there and at the foot of the sidebar, saying what the Mac is doing |
 | `Support/KoanTheme.swift` | The kōan theme: tokens, the record accent (OKLCH, cached per colour), motion, and the roles views use instead of colours, fonts, corners and materials. Each role draws the platform's look unchanged when the theme is off. Spec: `docs/design/koan-theme.md`; `just theme-leaks` finds what bypasses it |
 | `Support/KoanThemeSheet.swift` | Every component of the theme on one page, for the evidence renderer |
 | `Support/Icons.swift` | `Icon.*`, every icon the apps draw, named once by its SF Symbol, and `Image(koan:)`, `Label(_:koan:)`, `Button(_:koan:)` for the places that take only an image |

@@ -39,9 +39,10 @@ extension AppState {
         let current = await engine.settings()
         let host = URL(string: link.server)?.host() ?? link.server
         #if os(macOS)
-        // A device asking to sign in to this Mac's own server.
-        if let running = sharing.sharing,
-           [running.lanUrl, current.serverUrl].contains(where: { $0 == link.server }) {
+        // Sharing and signing in are exclusive, so a pairing link is for this
+        // Mac's own server, whichever of its addresses the device used. One
+        // that is not is answered as unknown by the server.
+        if sharing.sharing != nil {
             await offerPairing(link.id)
             return
         }

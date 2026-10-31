@@ -14,7 +14,7 @@ Download [`Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/downl
 brew install --cask radiosilence/koan/koan-app
 ```
 
-Everything is set up in Settings: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server. It needs macOS 26 or later, and shares its config and library with the terminal UI.
+Everything is set up in Settings: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server, or [shares the Mac's own library](guide/sharing-your-mac.md) with your phone. It needs macOS 26 or later, and shares its config and library with the terminal UI.
 
 ## The iOS app
 

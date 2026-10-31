@@ -74,6 +74,19 @@ pub(crate) fn own_profile() -> Option<koan_core::remote::profile::ServerProfile>
     SERVING.read().as_ref()?.profile.clone()
 }
 
+/// Signing in to a server is refused while this device serves its own
+/// library: its account settings would administer one while it played the
+/// other's.
+pub(crate) fn refuse_while_sharing() -> Result<(), KoanError> {
+    match SERVING.read().is_some() {
+        true => Err(KoanError::Refused {
+            message: "this device is sharing its library; stop sharing to sign in to a server"
+                .into(),
+        }),
+        false => Ok(()),
+    }
+}
+
 /// The address invites send phones to while sharing: `server.url` where a
 /// tunnel publishes this device, otherwise its address on the network.
 pub(crate) fn invite_base() -> Option<String> {
@@ -95,6 +108,14 @@ impl KoanEngine {
         names: Vec<String>,
     ) -> Result<Sharing, KoanError> {
         offload::offload(move || {
+            if koan_core::helpers::remote_credential(&koan_core::config::Config::cached()).is_some()
+            {
+                return Err(KoanError::Refused {
+                    message:
+                        "this device is signed in to a server; sign out to share its own library"
+                            .into(),
+                });
+            }
             // Held throughout, so a start and a stop never interleave.
             let mut server = self.server.lock();
             *SERVING.write() = None;
@@ -115,10 +136,14 @@ impl KoanEngine {
             })
             .map_err(|message| KoanError::Refused { message })?;
             let port = started.addr().port();
-            *SERVING.write() = started.host_key().map(|key| Serving {
+            let key = started
+                .host_key()
+                .expect("an embedded server has a host key")
+                .to_owned();
+            *SERVING.write() = Some(Serving {
                 port,
-                key: key.to_owned(),
-                profile: client(port, key).profile().ok(),
+                profile: client(port, &key).profile().ok(),
+                key,
             });
             *server = Some(started);
             koan_core::signal::engine_changed().bump();
@@ -142,12 +167,6 @@ impl KoanEngine {
         .await
     }
 
-    /// Where the library is served, while it is.
-    pub fn sharing(&self) -> Option<Sharing> {
-        let port = SERVING.read().as_ref()?.port;
-        Some(sharing(port))
-    }
-
     /// The account the library is shared under, its first admin: the one
     /// this device administers the server as. `None` until one is made, and
     /// sharing starts only once there is one, since nobody could sign in.
@@ -167,34 +186,20 @@ impl KoanEngine {
 
     /// Make the first account, an admin, in this library's database: the one
     /// sharing begins with, and the one this device administers it as.
+    /// Refused once any account exists, with the server's own rules for names
+    /// and passwords.
     pub async fn create_first_server_account(
         self: Arc<Self>,
         username: String,
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            let username = username.trim();
-            if username.is_empty() || password.is_empty() {
-                return Err(KoanError::BadArgument {
-                    message: "an account needs a name and a password".into(),
-                });
-            }
             let db = self.db()?;
-            if koan_core::db::queries::auth::has_users(&db.conn).map_err(crate::db_err)? {
-                return Err(KoanError::Refused {
-                    message: "this library already has accounts".into(),
-                });
-            }
-            koan_core::db::queries::auth::create_user(
-                &db.conn,
-                username,
-                &password,
-                koan_core::auth::Role::Admin,
-            )
-            .map(|_| ())
-            .map_err(|e| KoanError::BadArgument {
-                message: e.to_string(),
-            })
+            koan_core::invite::create_first_admin(&db.conn, &username, &password)
+                .map(|_| ())
+                .map_err(|e| KoanError::BadArgument {
+                    message: e.to_string(),
+                })
         })
         .await
     }

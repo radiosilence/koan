@@ -4130,6 +4130,7 @@ impl KoanEngine {
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             self.signing_in(|| {
                 koan_core::helpers::set_remote_credentials(&url, &username, &password)
             })
@@ -4148,6 +4149,7 @@ impl KoanEngine {
         api_key: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             self.signing_in(|| koan_core::helpers::set_remote_api_key(&url, &username, &api_key))
                 .map_err(|e| KoanError::BadArgument {
                     message: e.to_string(),
@@ -4161,6 +4163,7 @@ impl KoanEngine {
     /// the server before anything is written.
     pub async fn join_invite(self: Arc<Self>, invite: Invite) -> Result<(), KoanError> {
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             let invite = koan_core::invite::Invite {
                 server: invite.server,
                 username: invite.username,
@@ -4192,6 +4195,7 @@ impl KoanEngine {
     pub async fn start_pairing(self: Arc<Self>, url: String) -> Result<PairingCode, KoanError> {
         self.cancel_pairing();
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             let device =
                 koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
             let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;

@@ -31,7 +31,7 @@ final class SharingModel {
         account = try? await engine.serverAdmin()
         let settings = await engine.settings()
         if settings.shareEnabled, account != nil {
-            await start(port: settings.sharePort)
+            await start(port: settings.sharePort, publicAddress: settings.serverUrl)
         }
     }
 
@@ -47,11 +47,15 @@ final class SharingModel {
         }
     }
 
-    func start(port: UInt16) async {
+    /// `publicAddress` is the tunnel's address, if any: a name the server
+    /// answers to as well as this Mac's own.
+    func start(port: UInt16, publicAddress: String) async {
         busy = true
         defer { busy = false }
+        var names = Self.names
+        if let host = URL(string: publicAddress)?.host() { names.append(host) }
         do {
-            sharing = try await engine.startServer(port: port, names: Self.names)
+            sharing = try await engine.startServer(port: port, names: names)
             failure = nil
         } catch {
             sharing = nil

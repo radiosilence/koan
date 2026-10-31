@@ -396,6 +396,9 @@ impl ApiServer {
 
         // Plays accounts forward to ListenBrainz; it sleeps while none do.
         koan_core::scrobbling::start(pool.path().to_path_buf());
+        // Made here, off the runtime: the relay's client is a blocking one,
+        // which cannot be built inside it, and the routes ask for it there.
+        let _ = crate::push::pusher();
 
         // Ends graceful shutdown, every open session and the MCP streams.
         let stop = tokio_util::sync::CancellationToken::new();
@@ -436,15 +439,6 @@ impl ApiServer {
 
         let mut allowed_hosts = cfg.graphql.allowed_hosts.clone();
         allowed_hosts.extend(hosts);
-        // The address invites send phones to, which a tunnel may put in front.
-        if embedded
-            && let Some(host) = cfg
-                .server_url()
-                .and_then(|u| reqwest::Url::parse(&u).ok())
-                .and_then(|u| u.host_str().map(str::to_owned))
-        {
-            allowed_hosts.push(host);
-        }
         let browser_policy = Arc::new(BrowserPolicy {
             origins: cfg.graphql.cors_origins.clone(),
             hosts: allowed_hosts,
