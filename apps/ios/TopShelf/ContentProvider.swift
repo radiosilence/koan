@@ -14,8 +14,8 @@ final class ContentProvider: TVTopShelfContentProvider {
         guard let directory = TopShelfSnapshot.directory,
               let snapshot = TopShelfSnapshot.read(from: directory)
         else { return nil }
-        let sections = snapshot.sections.enumerated().compactMap { index, section -> TVTopShelfItemCollection<TVTopShelfSectionedItem>? in
-            let items = section.items.compactMap { item(for: $0, in: directory, section: index) }
+        let sections = snapshot.sections.compactMap { section -> TVTopShelfItemCollection<TVTopShelfSectionedItem>? in
+            let items = section.items.compactMap { item(for: $0, in: directory, section: section.title) }
             guard !items.isEmpty else { return nil }
             let collection = TVTopShelfItemCollection(items: items)
             collection.title = section.title
@@ -25,14 +25,15 @@ final class ContentProvider: TVTopShelfContentProvider {
     }
 
     private static func item(
-        for record: TopShelfSnapshot.Item, in directory: URL, section: Int
+        for record: TopShelfSnapshot.Item, in directory: URL, section: String
     ) -> TVTopShelfSectionedItem? {
         let image = directory.appending(path: record.image)
         guard FileManager.default.fileExists(atPath: image.path),
               let open = URL(string: "koan://album/\(record.uid)"),
               let play = URL(string: "koan://album/\(record.uid)?play")
         else { return nil }
-        // A record can be on both shelves; identifiers are per item.
+        // A record can be on both shelves; identifiers are per section, by
+        // title, so one stays put when the other section empties.
         let item = TVTopShelfSectionedItem(identifier: "\(section)-\(record.uid)")
         item.title = record.title
         item.imageShape = .square

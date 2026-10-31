@@ -436,8 +436,9 @@ struct TabShell: View {
             return
         }
         #if os(tvOS)
-        // Now Playing is a page with no stack to push on: a record opened from
-        // the Top Shelf while it is in front goes on the library's.
+        // Now Playing is a page with no stack to push on, and links nowhere:
+        // a move made while it is in front, as by a record opened from the
+        // Top Shelf, goes on the library's.
         if selection == .nowPlaying { selection = .library }
         #endif
         var routes = paths[selection] ?? []

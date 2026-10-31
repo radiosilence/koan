@@ -73,14 +73,17 @@ final class TopShelfWriter {
             return
         }
         let previous = TopShelfSnapshot.read(from: directory)
-        // A sleeve that could not be fetched this time keeps the one it had.
         var kept: [String: String] = [:]
         for item in previous?.sections.flatMap(\.items) ?? [] { kept[item.uid] = item.image }
 
         var images: [String: String] = [:]
         func item(_ record: TopShelfRecord) async -> TopShelfSnapshot.Item? {
             if images[record.uid] == nil {
-                images[record.uid] = await image(of: record, in: directory, state: state) ?? kept[record.uid]
+                let made = await image(of: record, in: directory, state: state)
+                // A record known to have no art loses its tile; one whose art
+                // could not be fetched keeps the sleeve it had.
+                let gone = state.art.isAbsent(.album(record.album.id))
+                images[record.uid] = made ?? (gone ? nil : kept[record.uid])
             }
             guard let image = images[record.uid],
                   FileManager.default.fileExists(atPath: directory.appending(path: image).path)
