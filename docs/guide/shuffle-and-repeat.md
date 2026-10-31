@@ -35,18 +35,22 @@ track that was playing.
 
 ## Shuffling the order itself
 
-The dice in the queue's header and on a playlist's page rearranges the rows
-themselves, for when you want to see the order and keep it, or deal again until
-you like it. In the queue it shuffles the tracks after the one playing, or the
-whole queue when nothing is; the playing track and those before it stay where
-they are. On a playlist it shuffles every track, and the change is saved and
-reaches your server as any edit would.
+On the Mac, iPhone, iPad and Android, a dice in the queue's header and on the
+page of a playlist you can edit rearranges the rows themselves, for when you
+want to see the order and keep it, or deal again until you like it. In the
+queue it shuffles the tracks after the current one, which stays where it is
+with everything above it; with no current track, as in a queue never started,
+it shuffles the whole queue. A queue that has played to its end still has its
+last track as the current one, so there is nothing after it to shuffle. On a
+playlist it shuffles every track, and the change is saved and reaches your
+server as any edit would.
 
 Each press is one step of undo, so undo takes back one shuffle at a time until
-the original order returns. On a Mac that is ⌘Z or the queue's undo button; on
-a phone, an Undo button appears beside the dice while the last edits were
-shuffles. The queue's dice is off while shuffle is on, since shuffle plays in
-its own order whatever the queue's, and while you control another device.
+the original order returns. On a Mac that is ⌘Z, or the undo button in the
+queue's header; on a phone, an Undo button appears beside the dice while the
+last edits were shuffles. The queue's dice is off while shuffle is on, since
+shuffle plays in its own order whatever the queue's, and while you control
+another device.
 
 ## Repeat
 

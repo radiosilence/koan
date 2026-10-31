@@ -508,8 +508,8 @@ pub struct NowPlaying {
     /// How many shuffles of the queue undo would take back before reaching
     /// any other edit.
     pub undo_shuffles: u32,
-    /// `shuffle_queue` has two rows or more to move: after the playing one,
-    /// or anywhere with nothing playing.
+    /// `shuffle_queue` has two rows or more to move: after the cursor, or
+    /// anywhere when there is none.
     pub queue_shufflable: bool,
     /// The sleep timer, while one is set.
     pub sleep: Option<SleepState>,

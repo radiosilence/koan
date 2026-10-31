@@ -1080,7 +1080,7 @@ private struct JumpToPlayingButton: View {
     }
 }
 
-/// Shuffles the rows after the playing one in place, each press one undo
+/// Shuffles the rows after the current one in place, each press one undo
 /// step; shuffle play leaves the rows alone. Its own view because what it
 /// reads, the queue and what is playing, moves on every edit.
 ///
