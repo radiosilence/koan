@@ -73,6 +73,7 @@ struct ShareSettings: View {
     @State private var confirmingFunnel = false
     @State private var resettingPassword = false
     @State private var newPassword = ""
+    @State private var newPasswordAgain = ""
 
     var body: some View {
         let sharing = app.sharing
@@ -185,9 +186,9 @@ struct ShareSettings: View {
             }
             .alert("New password for \(account)", isPresented: $resettingPassword) {
                 SecureField("New password", text: $newPassword)
+                SecureField("Again", text: $newPasswordAgain)
                 Button("Reset") {
                     let password = newPassword
-                    newPassword = ""
                     Task {
                         if let reason = await app.sharing.resetPassword(password) {
                             model.report(reason)
@@ -196,9 +197,17 @@ struct ShareSettings: View {
                         }
                     }
                 }
-                Button("Cancel", role: .cancel) { newPassword = "" }
+                .disabled(newPassword.isEmpty || newPassword != newPasswordAgain)
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Its phones and other devices are signed out and sign in again with the new one.")
+            }
+            // However the alert closes, what was typed goes.
+            .onChange(of: resettingPassword) { _, open in
+                if !open {
+                    newPassword = ""
+                    newPasswordAgain = ""
+                }
             }
             LabeledContent("Port") {
                 TextField("Port", text: Binding(
@@ -228,26 +237,10 @@ struct ShareSettings: View {
 
     // MARK: Away from home
 
-    /// What "Invite phones to" shows: the setting, with `public` told apart
-    /// by whether Funnel is what publishes it.
-    private func inviteChoice(_ sharing: SharingModel) -> String {
-        switch model.settings.shareInviteTo {
-        case "public": sharing.tailscale?.funnelUrl != nil ? "funnel" : "custom"
-        case let to: to
-        }
-    }
-
-    /// The address invites use when nothing is typed: the tailnet's, else the
-    /// network's.
-    private func derivedAddress(_ sharing: SharingModel) -> String {
-        guard let running = sharing.sharing else { return "" }
-        if let tailscale = sharing.tailscale { return "http://\(tailscale.name):\(running.port)" }
-        return running.lanUrl ?? ""
-    }
-
     @ViewBuilder
     private func awayFromHome(_ sharing: SharingModel) -> some View {
-        let choice = inviteChoice(sharing)
+        let choice = model.settings.shareInviteTo
+        let serving = sharing.sharing != nil
         Section {
             LabeledContent("Tailscale") {
                 if let tailscale = sharing.tailscale {
@@ -262,33 +255,32 @@ struct ShareSettings: View {
                 get: { choice },
                 set: { to in
                     guard to != choice else { return }
-                    if to == "funnel" {
+                    if to == .funnel {
                         confirmingFunnel = true
                     } else {
                         Task { await sharing.setInviteTo(to) }
                     }
                 }
-            ), options: inviteOptions(sharing, choice: choice))
+            ), options: inviteOptions(sharing, choice: choice, serving: serving))
             .disabled(sharing.busy)
-            switch choice {
-            case "tailnet" where sharing.tailscale != nil, "network":
-                LabeledContent("Address", value: derivedAddress(sharing, network: choice == "network"))
-            case "funnel":
-                LabeledContent("Address", value: sharing.tailscale?.funnelUrl ?? "")
-            case "custom":
-                LabeledContent("Address") {
-                    TextField("Address", text: Binding(
-                        get: { publicAddress ?? model.settings.serverUrl },
-                        set: { publicAddress = $0 }
-                    ), prompt: Text(derivedAddress(sharing)))
-                    .verbatimEntry(.url)
-                    .onSubmit(commitPublicAddress)
-                    .koanField(publicAddress ?? model.settings.serverUrl, prompt: derivedAddress(sharing))
+            if serving, let addresses = sharing.addresses {
+                if choice == .custom {
+                    LabeledContent("Address") {
+                        TextField("Address", text: Binding(
+                            get: { publicAddress ?? model.settings.serverUrl },
+                            set: { publicAddress = $0 }
+                        ), prompt: Text(addresses.fallback ?? ""))
+                        .verbatimEntry(.url)
+                        .onSubmit(commitPublicAddress)
+                        .koanField(publicAddress ?? model.settings.serverUrl, prompt: addresses.fallback ?? "")
+                    }
+                } else {
+                    LabeledContent("Address", value: addresses.current ?? "")
                 }
-            default:
-                // The tailnet chosen, and Tailscale not running: invites fall
-                // back to the network's address.
-                LabeledContent("Address", value: derivedAddress(sharing, network: true))
+                if choice == .funnel, addresses.funnel == nil {
+                    KoanLabel("Not published on the internet yet: invites use the address above.", icon: Icon.warning)
+                        .koanText(.meta, .bad)
+                }
             }
             if let funnelError = sharing.funnelError {
                 KoanLabel(funnelError, icon: Icon.warning).koanText(.meta, .bad)
@@ -305,37 +297,36 @@ struct ShareSettings: View {
             isPresented: $confirmingFunnel,
             titleVisibility: .visible
         ) {
-            Button("Publish") { Task { await sharing.setInviteTo("funnel") } }
+            Button("Publish") { Task { await sharing.setInviteTo(.funnel) } }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Tailscale Funnel publishes this Mac at https://\(sharing.tailscale?.name ?? "") with a certificate of its own, and keeps it published whenever this Mac shares. Anyone can reach it; only accounts made here can sign in.")
         }
-        // The engine wrote the address Funnel publishes at.
+        // The engine wrote where invites go; Settings reads it again rather
+        // than keeping its older copy.
         .onChange(of: sharing.revision) { model.reload() }
     }
 
-    private func derivedAddress(_ sharing: SharingModel, network: Bool) -> String {
-        network ? (sharing.sharing?.lanUrl ?? "") : derivedAddress(sharing)
-    }
-
-    private func inviteOptions(_ sharing: SharingModel, choice: String) -> [(label: String, value: String)] {
-        var options: [(label: String, value: String)] = [("This network", "network")]
-        if sharing.tailscale != nil || choice == "tailnet" {
-            options.append((sharing.tailscale != nil ? "Your tailnet" : "Your tailnet (Tailscale not running)", "tailnet"))
+    private func inviteOptions(_ sharing: SharingModel, choice: InviteTo, serving: Bool) -> [(label: String, value: InviteTo)] {
+        var options: [(label: String, value: InviteTo)] = [("This network", .network)]
+        if sharing.tailscale != nil || choice == .tailnet {
+            let missing = sharing.tailscale == nil && sharing.tailscaleChecked
+            options.append((missing ? "Your tailnet (Tailscale not running)" : "Your tailnet", .tailnet))
         }
-        if sharing.tailscale?.funnelAllowed == true || choice == "funnel" {
-            options.append(("Tailscale Funnel", "funnel"))
+        // Publishing needs a server to publish.
+        if (sharing.tailscale?.funnelAllowed == true && serving) || choice == .funnel {
+            options.append(("Tailscale Funnel", .funnel))
         }
-        options.append(("Custom address", "custom"))
+        options.append(("Custom address", .custom))
         return options
     }
 
-    private func inviteNote(_ choice: String) -> String {
+    private func inviteNote(_ choice: InviteTo) -> String {
         switch choice {
-        case "network": "Phones reach this Mac on your network only."
-        case "tailnet": "Phones with Tailscale reach this Mac from anywhere, encrypted, and nothing is on the internet."
-        case "funnel": "On the internet over HTTPS, for phones without Tailscale. Taken down when this Mac stops sharing, and put back when it starts."
-        default: "A tunnel's HTTPS address, such as Cloudflare Tunnel's. Empty, invites use the address shown."
+        case .network: "Phones reach this Mac on your network only."
+        case .tailnet: "Phones with Tailscale reach this Mac from anywhere, encrypted, and nothing is on the internet."
+        case .funnel: "On the internet over HTTPS, for phones without Tailscale. Taken down when this Mac stops sharing, and put back when it starts."
+        case .custom: "A tunnel's HTTPS address, such as Cloudflare Tunnel's. Empty, invites use the address shown."
         }
     }
 
@@ -367,18 +358,17 @@ struct ShareSettings: View {
         restartIfSharing()
     }
 
-    /// Read when the server starts, for the names it answers to.
+    /// Through the engine, which owns where invites go.
     private func commitPublicAddress() {
         guard let typed = publicAddress else { return }
         publicAddress = nil
         let address = typed.trimmingCharacters(in: .whitespaces)
         guard address != model.settings.serverUrl else { return }
-        if !address.isEmpty, !(address.hasPrefix("https://") || address.hasPrefix("http://")) {
-            model.report("A public address starts with https://.")
-            return
+        Task {
+            await app.sharing.setInviteTo(.custom, address: address)
+            // The server answers to the names it was started with.
+            restartIfSharing()
         }
-        model.edit { $0.serverUrl = address }
-        restartIfSharing()
     }
 
     /// With the values just typed, so the start never reads a setting still

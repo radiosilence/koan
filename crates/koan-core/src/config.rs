@@ -120,9 +120,6 @@ pub struct ShareConfig {
     /// Serve whenever the app is open.
     pub enabled: bool,
     pub port: u16,
-    /// Publish the server on the internet through Tailscale Funnel whenever
-    /// it serves, at the machine's tailnet name.
-    pub funnel: bool,
     /// Where invites send phones.
     pub invite_to: InviteTo,
 }
@@ -137,8 +134,11 @@ pub enum InviteTo {
     /// it from anywhere, encrypted. The local address where it does not.
     #[default]
     Tailnet,
-    /// `server.url`: Funnel's address, or a tunnel's.
-    Public,
+    /// Its address on the internet through Tailscale Funnel, which is
+    /// published whenever it serves.
+    Funnel,
+    /// `server.url`: a tunnel's address.
+    Custom,
 }
 
 impl Default for ShareConfig {
@@ -146,7 +146,6 @@ impl Default for ShareConfig {
         Self {
             enabled: false,
             port: 4000,
-            funnel: false,
             invite_to: InviteTo::default(),
         }
     }
@@ -1529,7 +1528,6 @@ pub fn layer_of(path: &str) -> Layer {
         // Whether this machine serves its library, and where.
         | "share.enabled"
         | "share.port"
-        | "share.funnel"
         | "share.invite_to"
         // Which koan server this machine signs in to.
         | "auth.server"

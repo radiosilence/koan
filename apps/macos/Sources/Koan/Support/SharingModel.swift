@@ -25,6 +25,9 @@ final class SharingModel {
     private(set) var tailscale: TailscaleStatus?
     /// Tailscale has been looked for, so `nil` means it is not here.
     private(set) var tailscaleChecked = false
+    /// Where invites go and the addresses Settings shows, as the engine
+    /// works them out; `nil` while not serving.
+    private(set) var addresses: InviteAddresses?
     /// Why the last Funnel change failed.
     private(set) var funnelError: String?
     /// Moves whenever the engine itself wrote a setting (the public address
@@ -80,15 +83,16 @@ final class SharingModel {
     func refreshTailscale() async {
         tailscale = await engine.tailscale()
         tailscaleChecked = true
+        addresses = await engine.inviteAddresses()
     }
 
-    /// Where invites send phones: `network`, `tailnet`, `funnel` (publishing
-    /// through Tailscale Funnel) or `custom`.
-    func setInviteTo(_ to: String) async {
+    /// Where invites send phones. `.funnel` publishes through Tailscale
+    /// Funnel; `.custom` takes `address`, or keeps the one set.
+    func setInviteTo(_ to: InviteTo, address: String? = nil) async {
         busy = true
         defer { busy = false }
         do {
-            try await engine.setInviteTo(to: to)
+            try await engine.setInviteTo(to: to, address: address)
             funnelError = nil
         } catch {
             funnelError = Self.reason(error)

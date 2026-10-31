@@ -2268,11 +2268,11 @@ pub struct Settings {
     /// This device serves its library whenever the app is open.
     pub share_enabled: bool,
     pub share_port: u16,
-    /// Where invites send phones: `network`, `tailnet` or `public`. Read
-    /// only here; `set_invite_to` changes it, Funnel with it.
-    pub share_invite_to: String,
-    /// `server.url`: where a tunnel publishes this device, which invites
-    /// send phones to. Empty when there is none.
+    /// Where invites send phones. Read only here, as `server_url` is:
+    /// `set_invite_to` changes both, and Funnel with them.
+    pub share_invite_to: crate::serve::InviteTo,
+    /// `server.url`: the custom address invites send phones to. Empty when
+    /// there is none.
     pub server_url: String,
 }
 

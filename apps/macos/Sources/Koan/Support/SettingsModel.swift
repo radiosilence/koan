@@ -46,6 +46,16 @@ final class SettingsModel {
     @ObservationIgnored weak var sharing: SharingModel?
     #endif
 
+    /// This Mac is serving its own library. Its account's password is then
+    /// reset from Share this Mac, as its host, rather than changed here.
+    var sharesThisMac: Bool {
+        #if os(macOS)
+        sharing?.sharing != nil
+        #else
+        false
+        #endif
+    }
+
     /// The account whose server Settings administers: the one signed in to,
     /// or, while this Mac shares its library, the account it shares it under.
     var serverAccount: String? {
@@ -332,7 +342,8 @@ final class SettingsModel {
         lastError = message
     }
 
-    /// What something done outside this model came to, shown as its own are.
+    /// What something done outside this model came to, shown where this
+    /// model's own results are.
     func done(_ message: String) {
         lastError = nil
         lastResult = message

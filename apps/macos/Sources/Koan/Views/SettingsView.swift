@@ -943,7 +943,7 @@ private struct AccountSettings: View {
                 LinkDeviceSection(username: model.serverAccount ?? "", visit: visits)
             }
             #endif
-            if mirror.offers(PasswordChange.extensionName) {
+            if mirror.offers(PasswordChange.extensionName), !model.sharesThisMac {
                 Section {
                     LabeledContent("User", value: model.serverAccount ?? "")
                     Button("Change Password…") { changingPassword = true }

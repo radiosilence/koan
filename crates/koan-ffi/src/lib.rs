@@ -4030,11 +4030,7 @@ impl KoanEngine {
                 devices_keep_running: cfg.devices.keep_running,
                 share_enabled: cfg.share.enabled,
                 share_port: cfg.share.port,
-                share_invite_to: match cfg.share.invite_to {
-                    config::InviteTo::Network => "network".into(),
-                    config::InviteTo::Tailnet => "tailnet".into(),
-                    config::InviteTo::Public => "public".into(),
-                },
+                share_invite_to: cfg.share.invite_to.into(),
                 server_url: cfg.server.url.clone().unwrap_or_default(),
             }
         })
@@ -4086,8 +4082,6 @@ impl KoanEngine {
                 cfg.devices.keep_running = s.devices_keep_running;
                 cfg.share.enabled = s.share_enabled;
                 cfg.share.port = s.share_port;
-                let url = s.server_url.trim().trim_end_matches('/');
-                cfg.server.url = (!url.is_empty()).then(|| url.to_owned());
                 cfg.devices.refused = s.devices_refused.clone();
                 cfg.devices.addresses = s
                     .devices_addresses
@@ -4532,6 +4526,11 @@ impl KoanEngine {
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
+            let db = self.db()?;
+            if serve::is_shared_admin(&db.conn, &username) {
+                return serve::reset_password(&db.conn, &username, &password);
+            }
+            drop(db);
             client_offering(profile::PASSWORDS, "change passwords here")?
                 .koan_set_user_password(&username, &password)
                 .map_err(remote_error)
