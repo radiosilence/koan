@@ -1,0 +1,1 @@
+- **The cover slot tests run one at a time.** Both use every one of the process-wide cover fetch slots, so in parallel one could starve the other and fail.
