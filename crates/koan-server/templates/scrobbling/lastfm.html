@@ -5,7 +5,7 @@
 {%- when None %}
 {%- if offered %}
 <p>You will be sent to Last.fm to approve kōan, then back here. The plays in your history from the last two weeks are sent when you connect: Last.fm takes no older ones.</p>
-<a class="primary" href="/scrobbling/lastfm/connect">Connect Last.fm</a>
+<a class="primary" href="scrobbling/lastfm/connect">Connect Last.fm</a>
 {%- else %}
 <p class="{{ crate::ui::pages::EMPTY }}">Last.fm is not set up on this server. Its admin needs to add a Last.fm API key and secret.</p>
 {%- endif %}
@@ -17,7 +17,7 @@
 {%- if s.error.is_some() %}
 <p>Disconnect, then connect again. Plays recorded meanwhile are kept and sent.</p>
 {%- endif %}
-<button class="quiet bad" data-on:click="confirm('Stop sending your plays to Last.fm?') && @post('/scrobbling/lastfm/disconnect')">Disconnect</button>
+<button class="quiet bad" data-on:click="confirm('Stop sending your plays to Last.fm?') && @post('scrobbling/lastfm/disconnect')">Disconnect</button>
 <div id="lastfm-result"></div>
 {%- endmatch %}
 </div>

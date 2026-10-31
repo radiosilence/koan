@@ -1,0 +1,1 @@
+- **Long credits keep whole names.** A credit naming more artists than fit shows the names that fit in full and ends in "…", where every name used to be cut to its first letters.

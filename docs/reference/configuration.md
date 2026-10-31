@@ -472,6 +472,8 @@ url = "https://music.example.com"
 
 The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). A server answers on several (a LAN address, `localhost`, a domain) and cannot tell which of them another device can reach, so share links, the invites it makes, MCP's OAuth and the Last.fm callback are all built on this one. `koan --headless` refuses to start without it. Signed-in apps are told it by `ping` and know the server by it rather than by the address they typed, so devices that reach one server at different addresses still recognise each other.
 
+An address with a path (`https://host.example/koan`) serves kōan under that path, behind a proxy that forwards it or strips it; see [Under a path](../guide/headless-server.md#under-a-path).
+
 `sharing.public_url`, which this replaces, is still read while `server.url` is unset, with a warning in the log. It will be removed in a later release.
 
 `demo = true` (`KOAN_SERVER__DEMO`) makes the server a public demo, as `demo.koan.rocks` is. It makes a `user` account named `demo` with the password `demo` when there is none, fills both in on the web UI's sign-in page, and refuses the requests one visitor could use to take the shared account from the others: changing its password, revoking its API keys and app passwords, connecting a scrobbling account, and managing accounts. Wiping the state on a schedule is left to whatever runs the server.
@@ -490,7 +492,7 @@ invite_to = "tailnet"
 
 The macOS app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface, and is refused when another process holds it on loopback. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, `url`. Each falls back to the tailnet name, then the local address, while it has nothing.
 
-`url` is the shared library's address from outside, Funnel's or a tunnel's, which share links and invites are built on. It is the app's own: `server.url` stays a headless server's on the same machine. `funnel` records the Funnel kōan published (`[443, 4000]`, Funnel's port and the local one), so it takes down its own and none set up by hand. Settings writes all of these through the engine. `[graphql]`, the terminal UI's and the headless server's listener, is separate, though its sign-in settings apply here too.
+`url` is the shared library's address from outside, Funnel's or a tunnel's, which share links and invites are built on. A path in it is served as `server.url`.s is ([Under a path](../guide/headless-server.md#under-a-path)). It is the app's own: `server.url` stays a headless server's on the same machine. `funnel` records the Funnel kōan published (`[443, 4000]`, Funnel's port and the local one), so it takes down its own and none set up by hand. Settings writes all of these through the engine. `[graphql]`, the terminal UI's and the headless server's listener, is separate, though its sign-in settings apply here too.
 
 ---
 

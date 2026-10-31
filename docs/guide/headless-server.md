@@ -64,6 +64,29 @@ export KOAN_GRAPHQL__PLAYGROUND=true
 export KOAN_PUSH__ENABLED=true    # false keeps the server off the push relay
 ```
 
+### Under a path
+
+kōan can share a host with other services at a path such as `https://host.example/koan`, which is how Tailscale Funnel puts several services on one name and port. Give `server.url` the path:
+
+```toml
+[server]
+url = "https://host.example/koan"
+```
+
+The server takes the path off each request before routing it, so a proxy may forward `/koan/rest/ping` as it is or strip it to `/rest/ping` (Funnel's `--set-path` strips it); both reach the same place. Redirects and cookies are given the path back, and the web UI and share pages link relative to it. Apps, the TUI and Subsonic clients are given the whole address, path included.
+
+The path may use letters, digits, `/`, `-`, `.`, `_` and `~`, and may not begin with a segment kōan routes itself (`/rest`, `/ui`, `/library`, `/share` and the like), which a stripping proxy would make ambiguous; the server refuses to start with one.
+
+The web UI then works only through that address: a browser that reaches the server directly, on its LAN address, is sent to `/koan/…`, which the server does not prefix for itself. Apps and Subsonic clients work on either.
+
+An MCP client looks for the OAuth server's metadata between the host and the path, at `https://host.example/.well-known/oauth-authorization-server/koan`, which is outside what the proxy forwards for `/koan`. Forward that path to the same path on kōan, which answers it. With Funnel, as a second mount:
+
+```bash
+tailscale funnel --bg --set-path /koan http://127.0.0.1:4000
+tailscale funnel --bg --set-path /.well-known/oauth-authorization-server/koan \
+  http://127.0.0.1:4000/.well-known/oauth-authorization-server/koan
+```
+
 ## Remote TUI
 
 Control a running headless kōan from a TUI on another machine. The server plays
@@ -183,7 +206,7 @@ Proxy sign-in is on only when both settings are set. The server refuses to start
 
 Name the proxy's own address rather than its network where you can. Anything else that connects from inside `proxy_auth_from` can name any account. Under Docker that includes the network's gateway (`172.18.0.1` on `172.18.0.0/16`), through which connections to a published port can arrive: from the host itself through `docker-proxy`, and from every client under rootless Docker or Docker Desktop. Do not publish kōan's port when it sits behind the proxy, and give the proxy a fixed address on the network (`ipv4_address` in Compose).
 
-kōan reads the header only on web UI pages and the MCP consent page (`/oauth/authorize`), which the proxy must cover. Subsonic clients, kōan's apps and MCP clients cannot pass through an interactive proxy sign-in, so the proxy must let these through without its sign-in, and no others:
+kōan reads the header only on web UI pages and the MCP consent page (`/oauth/authorize`), which the proxy must cover. Subsonic clients, kōan's apps and MCP clients cannot pass through an interactive proxy sign-in, so the proxy must let these through without its sign-in, and no others (each under the server's [path](#under-a-path), if it has one):
 
 | Path | Used by |
 |------|---------|

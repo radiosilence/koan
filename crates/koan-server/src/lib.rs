@@ -4,6 +4,7 @@
 //! Depends only on koan-core.
 
 pub mod auth;
+mod base;
 pub mod clients;
 pub mod covers;
 mod demo;

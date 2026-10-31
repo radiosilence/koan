@@ -549,8 +549,8 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     // The stylesheet's URL changes with its contents, so an upgrade never pairs
     // new markup with a cached stylesheet.
     let css = &super::ASSETS.css;
-    assert!(css.starts_with("/ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
-    let served = send(&f.app, get(css).body(Body::empty()).unwrap()).await;
+    assert!(css.starts_with("./ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
+    let served = send(&f.app, get(&css[1..]).body(Body::empty()).unwrap()).await;
     assert_eq!(served.status, StatusCode::OK);
     assert!(
         served.headers[header::CACHE_CONTROL]
@@ -636,8 +636,8 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
         authed(&f.state, "/albums").body(Body::empty()).unwrap(),
     )
     .await;
-    let src = format!("src=\"/ui/cover/{}?size=400&#38;v=", f.album_id);
-    let src_raw = format!("src=\"/ui/cover/{}?size=400&v=", f.album_id);
+    let src = format!("src=\"ui/cover/{}?size=400&#38;v=", f.album_id);
+    let src_raw = format!("src=\"ui/cover/{}?size=400&v=", f.album_id);
     assert!(
         page.body.contains(&src) || page.body.contains(&src_raw),
         "{}",
@@ -689,13 +689,13 @@ async fn artists_and_albums_are_linked_wherever_they_are_named() {
     };
     let artist = ">Rrose</a>";
     let album = format!(
-        "<a href=\"/album/{}\">Hymn &#60;to&#62; Moisture</a>",
+        "<a href=\"album/{}\">Hymn &#60;to&#62; Moisture</a>",
         f.album_id
     );
 
     let tiles = page("/albums".into()).await;
     assert!(
-        tiles.contains("href=\"/artist/") && tiles.contains(artist),
+        tiles.contains("href=\"artist/") && tiles.contains(artist),
         "{tiles}"
     );
 
@@ -777,7 +777,7 @@ async fn each_credited_artist_is_its_own_link() {
     // Two links, the "×" between them plain; never one link for the credit.
     let split = |html: &str| {
         let at = html
-            .find(">Rrose</a> × <a href=\"/artist/")
+            .find(">Rrose</a> × <a href=\"artist/")
             .unwrap_or_else(|| panic!("a split credit: {html}"));
         assert!(html[at..].contains(">Bob Ostertag</a>"), "{html}");
         assert!(!html.contains(">Rrose × Bob Ostertag</a>"), "{html}");
@@ -903,9 +903,9 @@ async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
         .next()
         .unwrap()
         .replace("&#38;", "&");
-    assert!(link.starts_with("/tracks?"), "{link}");
+    assert!(link.starts_with("tracks?"), "{link}");
 
-    let browser = send(&f.app, get(&link)).await.body;
+    let browser = send(&f.app, get(&format!("/{link}"))).await.body;
     assert!(browser.contains("12 tracks"), "the count the heading gave");
     assert_eq!(
         row_ids(&browser)[..10],
@@ -947,11 +947,11 @@ async fn favourites_are_the_callers_own_as_a_shelf() {
     }
     let r = send(&f.app, page()).await;
     assert!(
-        r.body.contains(&format!("href=\"/artist/{artist}\"")),
+        r.body.contains(&format!("href=\"artist/{artist}\"")),
         "the artist, as a pill"
     );
     assert!(
-        r.body.contains(&format!("href=\"/album/{}\"", f.album_id)),
+        r.body.contains(&format!("href=\"album/{}\"", f.album_id)),
         "the record, as a tile"
     );
     assert!(
@@ -966,7 +966,7 @@ async fn favourites_are_the_callers_own_as_a_shelf() {
         authed(&f.state, "/library").body(Body::empty()).unwrap(),
     )
     .await;
-    assert!(r.body.contains("href=\"/favourites\"") && r.body.contains("href=\"/playlists\""));
+    assert!(r.body.contains("href=\"favourites\"") && r.body.contains("href=\"playlists\""));
 }
 
 #[tokio::test]
@@ -1073,7 +1073,7 @@ async fn recently_played_is_the_callers_own_each_once() {
         1,
         "three plays, one track"
     );
-    assert!(r.body.contains(&format!("href=\"/album/{}\"", f.album_id)));
+    assert!(r.body.contains(&format!("href=\"album/{}\"", f.album_id)));
 }
 
 #[tokio::test]
@@ -1931,6 +1931,49 @@ mod oauth {
         }
         assert_eq!(register(&f, CALLBACK).await.status, StatusCode::NOT_FOUND);
     }
+
+    #[tokio::test]
+    async fn under_a_path_the_metadata_is_also_where_rfc_8414_puts_it() {
+        let f = setup_at(true, Some("https://koan.test/koan"));
+        for uri in [
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/oauth-authorization-server/koan",
+        ] {
+            let r = send(&f.app, get(uri).body(Body::empty()).unwrap()).await;
+            assert_eq!(json(&r)["issuer"], "https://koan.test/koan", "{uri}");
+            assert_eq!(
+                json(&r)["token_endpoint"],
+                "https://koan.test/koan/oauth/token"
+            );
+        }
+        let r = send(
+            &f.app,
+            get("/.well-known/oauth-protected-resource/koan/mcp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(json(&r)["resource"], "https://koan.test/koan/mcp");
+    }
+}
+
+#[tokio::test]
+async fn under_a_path_pages_resolve_their_links_from_it() {
+    let f = setup_at(true, Some("https://koan.test/koan/"));
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+    assert!(r.body.contains("<base href=\"/koan/\">"), "{}", r.body);
+    let r = send(
+        &f.app,
+        authed(&f.state, "/albums").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("<base href=\"/koan/\">"));
+    assert!(
+        r.body.contains("href=\"albums\""),
+        "links are relative to it"
+    );
+    let r = send(&setup(true).app, get("/login").body(Body::empty()).unwrap()).await;
+    assert!(r.body.contains("<base href=\"/\">"));
 }
 
 #[tokio::test]
@@ -2761,7 +2804,7 @@ async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
     assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/setup"));
     let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert!(r.body.contains("action=\"/setup\""));
+    assert!(r.body.contains("action=\"setup\""));
 
     let mismatch = send(
         &app,
@@ -3013,7 +3056,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     };
 
     // A wide screen's sidebar links the Library page for an admin only.
-    let wide_link = "href=\"/library\" data-nav=\"library\"";
+    let wide_link = "href=\"library\" data-nav=\"library\"";
     let r = send(&f.app, library(&access_token(&f.state))).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains("/library/scan"), "{}", r.body);
@@ -3028,7 +3071,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     let r = send(&f.app, library(&admin)).await;
-    assert!(r.body.contains("@post('/library/scan')"), "{}", r.body);
+    assert!(r.body.contains("@post('library/scan')"), "{}", r.body);
     assert!(r.body.contains(wide_link), "{}", r.body);
     assert!(r.body.contains(hidden_lists), "{}", r.body);
     assert!(
@@ -3058,7 +3101,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
         r.body
     );
     assert!(
-        r.body.contains("data-init=\"@get('/library/scan')\""),
+        r.body.contains("data-init=\"@get('library/scan')\""),
         "the page follows scans still to come: {}",
         r.body
     );

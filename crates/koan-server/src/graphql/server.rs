@@ -26,7 +26,10 @@ fn require_server_url() {
         Some(url) if !url.starts_with("https://") && !url.starts_with("http://") => {
             format!("server.url is {url:?}, which is not an http:// or https:// address")
         }
-        Some(_) => return,
+        Some(url) => match crate::base::problem(&url) {
+            Some(why) => format!("server.url is {url:?}: {why}"),
+            None => return,
+        },
     };
     log::error!("{why}");
     eprintln!("koan: {why}");
@@ -575,6 +578,10 @@ impl ApiServer {
                         true => crate::ServerUrl::Live,
                         false => crate::ServerUrl::Fixed(cfg.server_url()),
                     };
+                    let edge = axum::middleware::from_fn_with_state(
+                        crate::base::Base::of(&share_url),
+                        crate::base::edge,
+                    );
                     let share_routes =
                         crate::share::router(pool.clone(), share_url, covers.clone())
                             .layer(tower_http::catch_panic::CatchPanicLayer::new());
@@ -623,7 +630,10 @@ impl ApiServer {
                     if playground_enabled {
                         app = app.route(
                             "/graphql",
-                            get(graphql_playground).with_state(introspection_key.clone()),
+                            get(graphql_playground).with_state((
+                                introspection_key.clone(),
+                                crate::base::path_of(cfg.server_url().as_deref()),
+                            )),
                         );
                     }
                     // Outermost: a request whose `Host` we do not recognise is refused
@@ -659,7 +669,9 @@ impl ApiServer {
                     }
                     let gql_server = axum::serve(
                         gql_listener,
-                        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<std::net::SocketAddr>(
+                            tower::Layer::layer(&edge, app),
+                        ),
                     )
                     .with_graceful_shutdown(stop.clone().cancelled_owned());
 
@@ -671,7 +683,9 @@ impl ApiServer {
                         // throttle keys on the client's address.
                         let sub_server = axum::serve(
                             sub_listener,
-                            sub_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                            axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<std::net::SocketAddr>(
+                                tower::Layer::layer(&edge, sub_app),
+                            ),
                         )
                         .with_graceful_shutdown(stop.clone().cancelled_owned());
 
@@ -995,7 +1009,7 @@ async fn graphql_ws_handler(
 
 async fn graphql_playground(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-    axum::extract::State(key): axum::extract::State<Option<Arc<String>>>,
+    axum::extract::State((key, base)): axum::extract::State<(Option<Arc<String>>, String)>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
@@ -1011,9 +1025,11 @@ async fn graphql_playground(
         }
     }
 
-    // Use async-graphql's built-in GraphiQL (self-contained, no CDN).
+    // Use async-graphql's built-in GraphiQL (self-contained, no CDN). It
+    // resolves the endpoint against the origin, so the base path is named.
     // Inject the introspection key as a default header so all queries are authed.
-    let mut source = async_graphql::http::GraphiQLSource::build().endpoint("/graphql");
+    let endpoint = format!("{base}/graphql");
+    let mut source = async_graphql::http::GraphiQLSource::build().endpoint(&endpoint);
     if let Some(ref k) = key {
         source = source.header("X-Introspection-Key", k.as_str());
     }

@@ -206,7 +206,7 @@ pub(super) async fn login_form(
     if super::setup::open_for_setup(&s).await {
         return see_other("/setup");
     }
-    html(StatusCode::OK, pages::login(next, None))
+    html(StatusCode::OK, pages::login(&s, next, None))
 }
 
 pub(super) async fn login(
@@ -240,7 +240,7 @@ pub(super) async fn login(
                 }
                 _ => "Signing in failed. Try again.",
             };
-            html(status, pages::login(next, Some(message)))
+            html(status, pages::login(&s, next, Some(message)))
         }
     }
 }
