@@ -265,7 +265,7 @@ struct ShareSettings: View {
                 }
             ), options: inviteOptions(sharing, choice: choice, serving: serving))
             .disabled(sharing.busy)
-            if serving, let addresses = sharing.status, addresses.current != nil {
+            if serving, let addresses = sharing.status {
                 if choice == .custom {
                     LabeledContent("Address") {
                         TextField("Address", text: Binding(

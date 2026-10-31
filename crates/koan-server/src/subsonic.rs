@@ -99,10 +99,9 @@ struct AppState {
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
-    /// `server.url`: where an assistant reaches `/mcp`, and what `ping` gives
-    /// clients to know the server by. Without it, MCP's sign-in cannot work,
-    /// so none is offered.
-    server_url: Option<String>,
+    /// Stands in for `server.url` in tests, which share one configuration.
+    #[cfg(test)]
+    test_server_url: Option<String>,
     /// Whether `[push]` is enabled: the server pushes through the relay, and
     /// the app asks to show notifications only where it does.
     push: bool,
@@ -127,6 +126,17 @@ struct LibraryModified {
 }
 
 impl AppState {
+    /// `server.url`: where an assistant reaches `/mcp`, and what `ping` gives
+    /// clients to know the server by. Read as asked, since an app sharing its
+    /// library changes it as it runs.
+    fn server_url(&self) -> Option<String> {
+        #[cfg(test)]
+        if let Some(url) = &self.test_server_url {
+            return Some(url.clone());
+        }
+        Config::cached().server_url()
+    }
+
     fn open_db(&self) -> Result<Handle<'_>, SubsonicError> {
         self.pool
             .get()
@@ -2138,7 +2148,7 @@ async fn ping(
     offload_response(move || {
         respond(&state, &params, |_, mut b| {
             // The address clients know this server by: see `server.url`.
-            if let Some(url) = &state.server_url {
+            if let Some(url) = &state.server_url() {
                 b.root = b.root.attr("serverUrl", url);
             }
             Ok(b)
@@ -4478,7 +4488,7 @@ async fn get_open_subsonic_extensions(
         &[]
     };
     // An app's own server mounts no MCP.
-    let mcp: &[(&str, &[i64])] = if state.server_url.is_some() && state.host_key.is_none() {
+    let mcp: &[(&str, &[i64])] = if state.server_url().is_some() && state.host_key.is_none() {
         &[(koan_core::remote::profile::MCP, &[1])]
     } else {
         &[]
@@ -5368,9 +5378,10 @@ async fn koan_mcp(
 ) -> Response {
     offload_response(move || {
         respond_db_caller(&state, &params, Role::Readonly, |_, _, b| {
+            // An app's own server mounts no MCP.
             let base = state
-                .server_url
-                .as_deref()
+                .server_url()
+                .filter(|_| state.host_key.is_none())
                 .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
             Ok(b.child(
                 XmlNode::new("mcp")
@@ -6776,8 +6787,9 @@ pub fn subsonic_router(
         covers,
         last_modified: Default::default(),
         transcoder,
-        server_url: cfg.server_url(),
         push: crate::push::pusher().is_some(),
+        #[cfg(test)]
+        test_server_url: None,
         stop: stop.clone(),
         host_key,
     });
@@ -6823,8 +6835,8 @@ mod tests {
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
             transcoder: None,
-            server_url: None,
             push: false,
+            test_server_url: None,
             stop: Default::default(),
             host_key: None,
         });
@@ -8513,7 +8525,7 @@ mod tests {
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.server_url = Some("https://koan.example.com".into());
+        inner.test_server_url = Some("https://koan.example.com".into());
         let state = Arc::new(inner);
         assert!(extensions(state.clone()).await.contains("koanMcp"));
         let v = mcp(state.clone(), mate).await;
@@ -11062,7 +11074,7 @@ mod tests {
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.server_url = Some("https://koan.example.com".into());
+        inner.test_server_url = Some("https://koan.example.com".into());
         let r = json_of(build_test_router(Arc::new(inner)), &ping).await;
         assert_eq!(r["serverUrl"], "https://koan.example.com", "{r}");
     }

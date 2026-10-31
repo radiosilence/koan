@@ -398,6 +398,7 @@ impl KoanEngine {
                 })
                 .transpose()?;
             let port = serving_port();
+            let was_funnel = Config::cached().share.invite_to == Target::Funnel;
             if to == InviteTo::Funnel {
                 let port = port.ok_or_else(|| KoanError::Refused {
                     message: "start sharing first".into(),
@@ -409,7 +410,7 @@ impl KoanEngine {
                 // a failure is the library left on the internet, so it is
                 // said; otherwise there was most likely nothing to take down.
                 let port = port.unwrap_or(Config::cached().share.port);
-                if Config::cached().share.invite_to == Target::Funnel {
+                if was_funnel {
                     koan_core::tailscale::funnel_off(port).map_err(funnel_error)?;
                 } else {
                     unpublish(port);
@@ -419,6 +420,8 @@ impl KoanEngine {
                 cfg.share.invite_to = to.into();
                 match (to, address) {
                     (InviteTo::Custom, Some(a)) => cfg.server.url = (!a.is_empty()).then_some(a),
+                    // Funnel's address is not a custom one to keep.
+                    (InviteTo::Custom, None) if was_funnel => cfg.server.url = None,
                     // Funnel's was written by `publish`; a custom one kept.
                     (InviteTo::Custom | InviteTo::Funnel, None) => {}
                     _ => cfg.server.url = None,

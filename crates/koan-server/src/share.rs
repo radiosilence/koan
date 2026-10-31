@@ -591,7 +591,10 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
             &tracks,
             &subject,
             &credits,
-            s.server_url.as_deref(),
+            s.server_url
+                .clone()
+                .or_else(|| koan_core::config::Config::cached().server_url())
+                .as_deref(),
         ))
     })
     .await;

@@ -551,8 +551,11 @@ impl ApiServer {
                     // Public by design, so outside the auth layers: each route answers for
                     // one share's own tracks, or the one cover a notification's signed
                     // link names, and nothing else. The Host guard still applies.
+                    // An app's own server reads the address as each page is
+                    // asked for, since the app changes it as it runs.
+                    let share_url = (!embedded).then(|| cfg.server_url()).flatten();
                     let share_routes =
-                        crate::share::router(pool.clone(), cfg.server_url(), covers.clone())
+                        crate::share::router(pool.clone(), share_url, covers.clone())
                             .layer(tower_http::catch_panic::CatchPanicLayer::new());
                     // Subsonic on the GraphQL port whenever it is enabled: the remote
                     // TUI bridge builds its stream URL off the GraphQL base. Built once

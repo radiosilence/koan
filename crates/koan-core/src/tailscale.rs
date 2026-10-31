@@ -132,13 +132,12 @@ struct Served {
     root: Option<String>,
 }
 
-fn served() -> Vec<Served> {
-    let Ok(out) = run(&["funnel", "status", "--json"]) else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&out) else {
-        return Vec::new();
-    };
+/// An error when Tailscale could not say, which is not the same as serving
+/// nothing.
+fn served() -> Result<Vec<Served>, FunnelError> {
+    let out = run(&["funnel", "status", "--json"])?;
+    let json = serde_json::from_str::<serde_json::Value>(&out)
+        .map_err(|e| FunnelError::Failed(format!("unreadable status: {e}")))?;
     let port_of = |key: &str| {
         key.rsplit_once(':')
             .and_then(|(_, p)| p.parse::<u16>().ok())
@@ -162,7 +161,7 @@ fn served() -> Vec<Served> {
     );
     ports.sort_unstable();
     ports.dedup();
-    ports
+    Ok(ports
         .into_iter()
         .map(|port| Served {
             port,
@@ -175,7 +174,7 @@ fn served() -> Vec<Served> {
                     })
             }),
         })
-        .collect()
+        .collect())
 }
 
 /// Whether a proxy target is local `port`.
@@ -189,6 +188,7 @@ fn proxies_to(root: Option<&str>, port: u16) -> bool {
 /// The Funnel port publishing local `port` to the internet, if one does.
 pub fn funnel_port(port: u16) -> Option<u16> {
     served()
+        .ok()?
         .into_iter()
         .find(|s| s.public && proxies_to(s.root.as_deref(), port))
         .map(|s| s.port)
@@ -203,7 +203,7 @@ pub fn funnel(port: u16) -> Result<String, FunnelError> {
     if !tailscale.funnel_allowed {
         return Err(FunnelError::NotAllowed);
     }
-    let served = served();
+    let served = served()?;
     if let Some(on) = served
         .iter()
         .find(|s| s.public && proxies_to(s.root.as_deref(), port))
@@ -228,7 +228,7 @@ pub fn funnel(port: u16) -> Result<String, FunnelError> {
 /// to the tailnet stays, for local `port` too: `tailscale serve` set up by
 /// hand is not Funnel's to take down.
 pub fn funnel_off(port: u16) -> Result<(), FunnelError> {
-    for on in served()
+    for on in served()?
         .into_iter()
         .filter(|s| s.public && proxies_to(s.root.as_deref(), port))
     {
