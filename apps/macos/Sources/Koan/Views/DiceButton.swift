@@ -5,19 +5,22 @@ import SwiftUI
 /// play, which leaves the rows alone.
 ///
 /// A phone has no ⌘Z, so there it offers Undo beside itself for as many
-/// presses as it has made, until `reset` changes: a row added or removed is
-/// another edit, which Undo would take back first.
+/// presses as it has made. Any other edit to the list, which Undo would take
+/// back first, puts it away: `version` moves with every edit, and each move
+/// not owed to a press here or its Undo ends the run.
 struct DiceButton: View {
     /// Why it cannot shuffle now, shown as its help; nil when it can.
     let refusal: String?
     let help: String
     var labelled = false
-    let reset: Int
+    let version: Int
     let shuffle: () -> Void
     let undo: () -> Void
 
     #if os(iOS)
     @State private var presses = 0
+    /// Edits sent from here and not yet seen in `version`.
+    @State private var owed = 0
     #endif
 
     var body: some View {
@@ -26,6 +29,7 @@ struct DiceButton: View {
             if presses > 0 {
                 Button {
                     presses -= 1
+                    owed += 1
                     undo()
                 } label: {
                     if labelled {
@@ -40,6 +44,7 @@ struct DiceButton: View {
             Button {
                 #if os(iOS)
                 presses += 1
+                owed += 1
                 #endif
                 shuffle()
             } label: {
@@ -53,7 +58,13 @@ struct DiceButton: View {
             .help(refusal ?? help)
         }
         #if os(iOS)
-        .onChange(of: reset) { presses = 0 }
+        .onChange(of: version) {
+            if owed > 0 {
+                owed -= 1
+            } else {
+                presses = 0
+            }
+        }
         #endif
     }
 }

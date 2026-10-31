@@ -1085,12 +1085,13 @@ private struct JumpToPlayingButton: View {
 #if !os(tvOS)
 private struct QueueDiceButton: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
         DiceButton(
             refusal: player.queueDiceRefusal,
             help: "Shuffle the rest of the queue in place",
-            reset: player.queue.count,
+            version: Int(truncatingIfNeeded: mirror.queueRowsStamp),
             shuffle: { player.shuffleQueue() },
             undo: { player.undo() }
         )
