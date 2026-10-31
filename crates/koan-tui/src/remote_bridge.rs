@@ -8,8 +8,9 @@
 //! what signing in to it as a Subsonic server does, through the same engine,
 //! download queue and cache as everything else.
 
+use std::ops::ControlFlow;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
@@ -46,7 +47,7 @@ pub fn spawn_remote_bridge(
         let client = client.clone();
         std::thread::Builder::new()
             .name("koan-remote-mirror".into())
-            .spawn(move || mirror_loop(client, state))
+            .spawn(move || mirror_loop(client, Arc::downgrade(&state)))
             .expect("failed to spawn remote mirror");
     }
 
@@ -71,10 +72,13 @@ const RETRY: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(30)];
 /// nothing about: the server closes it on purpose whenever the access token
 /// it was opened with lapses, and the reopening refreshes the token. Only an
 /// attempt that fails to hear anything is an outage, shown and backed off.
-fn mirror_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
+///
+/// Ends once nothing else holds `state`: at the next message, reconnection or
+/// retry after the TUI lets it go.
+fn mirror_loop(client: GraphQLClient, state: Weak<SharedPlayerState>) {
     let mut retry = RETRY[0];
     let mut connected = true;
-    loop {
+    while state.strong_count() > 0 {
         let queries = [
             client.now_playing_subscription(),
             GraphQLClient::queue_subscription(),
@@ -83,6 +87,9 @@ fn mirror_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
         let opened = std::time::Instant::now();
         let mut heard = false;
         let ended = client.subscribe(&queries, |query, data| {
+            let Some(state) = state.upgrade() else {
+                return ControlFlow::Break(());
+            };
             heard = true;
             if !connected {
                 crate::tasks::say_later("reconnected to the server");
@@ -98,7 +105,11 @@ fn mirror_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
                 ),
                 _ => mirror_queue(&state, &QueueEntry::list(&data["queueUpdated"]["entries"])),
             }
+            ControlFlow::Continue(())
         });
+        if state.strong_count() == 0 {
+            return;
+        }
         if client.predates(&ended) {
             continue;
         }
@@ -154,13 +165,36 @@ fn mirror_now_playing(
     state.mirror_playhead(np.position_ms, np.moving);
 }
 
+/// The server's id for a queue entry. One that is not a UUID gets an id
+/// derived from it, so it keeps the same id from one message to the next.
+fn queue_item_id(id: &str) -> QueueItemId {
+    QueueItemId(uuid::Uuid::parse_str(id).unwrap_or_else(|_| {
+        use std::hash::{Hash, Hasher};
+        let half = |seed: u8| {
+            let mut h = std::hash::DefaultHasher::new();
+            (seed, id).hash(&mut h);
+            h.finish()
+        };
+        uuid::Uuid::from_u64_pair(half(0), half(1))
+    }))
+}
+
+/// The server's queue as this process's playlist: each entry played, failed
+/// or ready as the server says.
 fn mirror_queue(state: &SharedPlayerState, entries: &[QueueEntry]) {
     let items: Vec<PlaylistItem> = entries
         .iter()
         .map(|e| {
-            let qid = uuid::Uuid::parse_str(&e.queue_item_id)
-                .map(QueueItemId)
-                .unwrap_or_else(|_| QueueItemId::new());
+            let qid = queue_item_id(&e.queue_item_id);
+            let item_state = match e.status.as_str() {
+                "FAILED" => ItemState::Failed(
+                    e.failure_reason
+                        .clone()
+                        .unwrap_or_else(|| "failed on the server".into()),
+                ),
+                "DOWNLOADING" | "PRIORITY_PENDING" => ItemState::Pending,
+                _ => ItemState::Ready,
+            };
             PlaylistItem {
                 uid: None,
                 playlist_entry_id: None,
@@ -176,17 +210,16 @@ fn mirror_queue(state: &SharedPlayerState, entries: &[QueueEntry]) {
                 track_number: e.track_number,
                 disc: e.disc,
                 duration_ms: e.duration_ms,
-                state: ItemState::Ready,
-                played: false,
+                state: item_state,
+                played: e.status == "PLAYED",
             }
         })
         .collect();
 
-    let cursor = entries.iter().find(|e| e.is_current).and_then(|e| {
-        uuid::Uuid::parse_str(&e.queue_item_id)
-            .map(QueueItemId)
-            .ok()
-    });
+    let cursor = entries
+        .iter()
+        .find(|e| e.is_current)
+        .map(|e| queue_item_id(&e.queue_item_id));
 
     state.restore_playlist(items, cursor);
 }
@@ -278,5 +311,50 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             log::warn!("{cmd:?} failed on the server: {e}");
             crate::tasks::say_later(format!("server: {e}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str, status: &str, current: bool) -> QueueEntry {
+        QueueEntry {
+            queue_item_id: id.into(),
+            track_id: None,
+            title: id.into(),
+            artist: "A".into(),
+            album: "X".into(),
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: Some(1000),
+            is_current: current,
+            status: status.into(),
+            failure_reason: None,
+        }
+    }
+
+    #[test]
+    fn the_mirrored_queue_keeps_the_servers_statuses_and_ids() {
+        let played = uuid::Uuid::now_v7().to_string();
+        let entries = [
+            entry(&played, "PLAYED", false),
+            entry("not-a-uuid", "PLAYING", true),
+            entry(&uuid::Uuid::now_v7().to_string(), "FAILED", false),
+        ];
+        let state = SharedPlayerState::new();
+        mirror_queue(&state, &entries);
+        let (first, cursor) = state.snapshot_playlist();
+        assert!(first[0].played);
+        assert!(!first[1].played);
+        assert!(matches!(first[2].state, ItemState::Failed(_)));
+        assert_eq!(first[0].id.0.to_string(), played);
+        assert_eq!(cursor, Some(first[1].id));
+
+        // The same entries again name the same items, the odd id included.
+        mirror_queue(&state, &entries);
+        let again: Vec<_> = state.snapshot_playlist().0.iter().map(|i| i.id).collect();
+        assert_eq!(again, first.iter().map(|i| i.id).collect::<Vec<_>>());
     }
 }

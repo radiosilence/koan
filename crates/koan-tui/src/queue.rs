@@ -174,6 +174,17 @@ pub struct Facts {
 }
 
 impl Facts {
+    /// Reads again only where each track is, on the server and on this
+    /// device: what a download landing or the cache trimming changes while
+    /// the queue holds the same tracks. One query.
+    pub fn read_sources(&mut self, entries: &[QueueEntry]) {
+        let ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+        if let Ok(db) = koan_core::db::pool::shared().get() {
+            self.sources =
+                koan_core::db::queries::sources_for_tracks(&db.conn, &ids).unwrap_or_default();
+        }
+    }
+
     pub fn read(
         entries: &[QueueEntry],
         state: &koan_core::player::state::SharedPlayerState,

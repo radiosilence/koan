@@ -4,6 +4,7 @@ import cc.blit.koan.ffi.EntryStatus
 import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.RunRole
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class QueueRowsTest {
@@ -49,6 +50,37 @@ class QueueRowsTest {
         assertEquals(QueueRow.Single::class, rows[3]::class)
         assertEquals(QueueRow.Single::class, rows[4]::class)
         assertEquals(listOf("1", "2"), rows[0].itemIds)
+    }
+
+    @Test
+    fun aPatchRemakesOnlyTheRowsItTouched() {
+        val rows = QueueRow.build(queue, grouped = true)
+        val moved = queue.toMutableList().also { it[1] = it[1].copy(status = EntryStatus.PLAYING) }
+        val patched = QueueRow.patched(rows, moved)
+        assertEquals(QueueRow.build(moved, grouped = true), patched)
+        // The heading over the moved row and the row itself are new; the rest are the same objects.
+        assertEquals(listOf(false, true, false, true, true, true, true), rows.indices.map { rows[it] === patched[it] })
+    }
+
+    @Test
+    fun aNewShapeBuildsAgain() {
+        val cache = QueueRows()
+        val first = cache.of(queue, grouped = true)
+        assertTrue(first.zip(cache.of(queue, grouped = true)).all { (a, b) -> a === b })
+        assertEquals(QueueRow.build(queue.drop(1), grouped = true), cache.of(queue.drop(1), grouped = true))
+        assertEquals(QueueRow.build(queue, grouped = false), cache.of(queue, grouped = false))
+    }
+
+    @Test
+    fun aRunMovedByAPatchRegroups() {
+        val cache = QueueRows()
+        cache.of(queue, grouped = true)
+        // A rescan files track 3 under record X: it now continues 1 and 2's run.
+        val refiled = queue.toMutableList().also { it[2] = it[2].copy(album = "X", run = RunRole.CONTINUES) }
+        assertEquals(QueueRow.build(refiled, grouped = true), cache.of(refiled, grouped = true))
+        // Another source's queue of the same length is built afresh, whatever its version.
+        val other = queue.map { it.copy(queueItemId = "o" + it.queueItemId) }
+        assertEquals(QueueRow.build(other, grouped = true), cache.of(other, grouped = true))
     }
 
     @Test

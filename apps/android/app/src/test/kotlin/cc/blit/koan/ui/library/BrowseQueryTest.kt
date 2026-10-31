@@ -45,4 +45,16 @@ class BrowseQueryTest {
         assertEquals("1 album", count(1, "album"))
         assertEquals("3 albums", count(3, "album"))
     }
+
+    @Test
+    fun theNextTrackPageIsReadAfterTheTracksHeld() {
+        val q = BrowseQuery(TrackBrowseSort.ARTIST, NoFilter)
+        // Only the count is read here, so the rows need not be real tracks.
+        @Suppress("UNCHECKED_CAST")
+        val held = TrackPage(List(500) { null } as List<cc.blit.koan.ffi.Track>, 2000, q, "7")
+        assertEquals(500, held.readFrom(q, "7", 1000))
+        assertEquals(0, held.readFrom(q, "8", 1000))
+        assertEquals(0, held.readFrom(q.copy(search = "x"), "7", 1000))
+        assertEquals(0, held.readFrom(q, "7", 500))
+    }
 }
