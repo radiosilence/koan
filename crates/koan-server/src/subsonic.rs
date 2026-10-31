@@ -108,6 +108,9 @@ struct AppState {
     push: bool,
     /// Cancelled when the server stops, which ends every link.
     stop: tokio_util::sync::CancellationToken,
+    /// An embedded server's key for the app hosting it: signs in as the first
+    /// admin. See `ApiServer::host_key`.
+    host_key: Option<String>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -919,9 +922,22 @@ fn check_credential(params: &SubsonicParams, state: &AppState) -> Result<Caller,
             return Err(SubsonicError::conflicting_auth());
         }
         let db = state.open_db()?;
-        let user = queries::api_keys::authenticate_api_key(&db.conn, key)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(SubsonicError::invalid_api_key)?;
+        let host = state
+            .host_key
+            .as_deref()
+            .is_some_and(|host| bool::from(key.as_bytes().ct_eq(host.as_bytes())));
+        let user = if host {
+            queries::auth::first_admin(&db.conn)
+                .and_then(|id| match id {
+                    Some(id) => queries::auth::get_user_by_id(&db.conn, id),
+                    None => Ok(None),
+                })
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+        } else {
+            queries::api_keys::authenticate_api_key(&db.conn, key)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+        }
+        .ok_or_else(SubsonicError::invalid_api_key)?;
         return Ok(Caller {
             username: user.username,
             role: user.role,
@@ -5148,7 +5164,7 @@ fn username_param(params: &RawParams) -> Result<&str, SubsonicError> {
 
 /// The server's signing keypair: what invite tokens are signed and checked
 /// with.
-fn keypair() -> Result<&'static crate::auth::Keypair, SubsonicError> {
+fn keypair() -> Result<crate::auth::Keypair, SubsonicError> {
     crate::auth::signing_keys().map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
@@ -6689,8 +6705,11 @@ fn subsonic_app(state: Arc<AppState>) -> axum::Router {
         state.password.is_some().then(|| state.username.clone()),
         state.users.clone(),
     ));
+    // For the routes that hold a socket and take no state, as pairing does.
+    let stop = axum::Extension(state.stop.clone());
     register_subsonic_routes(axum::Router::new())
         .with_state(state)
+        .layer(stop)
         .layer(axum::middleware::from_fn_with_state(
             throttle,
             throttle_auth,
@@ -6710,6 +6729,7 @@ pub fn subsonic_router(
     users: Arc<PasswordVerifier>,
     profile: crate::graphql::Profile,
     stop: tokio_util::sync::CancellationToken,
+    host_key: Option<String>,
 ) -> axum::Router {
     let cfg = Config::cached();
 
@@ -6758,6 +6778,7 @@ pub fn subsonic_router(
         server_url: cfg.server_url(),
         push: crate::push::pusher().is_some(),
         stop: stop.clone(),
+        host_key,
     });
     spawn_key_publisher(state.pool.clone(), stop);
 
@@ -6804,6 +6825,7 @@ mod tests {
             server_url: None,
             push: false,
             stop: Default::default(),
+            host_key: None,
         });
         (state, dir)
     }
@@ -7106,7 +7128,7 @@ mod tests {
         crate::clients::registry()
             .share("keyowner", "kdev-phone", "keygrantee", true)
             .unwrap();
-        spawn_key_publisher(pool.clone());
+        spawn_key_publisher(pool.clone(), Default::default());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });

@@ -41,6 +41,19 @@ final class SettingsModel {
     /// account's password: one that can be revoked on its own, and the only
     /// thing worth typing on a device with no keyboard.
     var withApiKey = false
+    #if os(macOS)
+    /// This Mac's own server, while it shares its library.
+    @ObservationIgnored weak var sharing: SharingModel?
+    #endif
+
+    /// The account whose server Settings administers: the one signed in to,
+    /// or, while this Mac shares its library, the account it shares it under.
+    var serverAccount: String? {
+        #if os(macOS)
+        if let sharing, sharing.sharing != nil { return sharing.account }
+        #endif
+        return settings.remoteSignedIn ? settings.remoteUsername : nil
+    }
 
     init(engine: KoanEngine, activity: ActivityModel, art: CoverArtCache?) async {
         self.engine = engine

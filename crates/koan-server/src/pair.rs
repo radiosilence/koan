@@ -448,6 +448,7 @@ fn find(entries: &HashMap<String, Entry>, pair: &str) -> Option<String> {
 /// since it has nothing to sign in with yet.
 pub(crate) async fn route(
     RawQuery(raw): RawQuery,
+    axum::Extension(stop): axum::Extension<tokio_util::sync::CancellationToken>,
     ws: WebSocketUpgrade,
     request: axum::extract::Request,
 ) -> Response {
@@ -472,7 +473,7 @@ pub(crate) async fn route(
             .map(|(_, v)| v.as_str())
     };
     match pairings().open(param("name").unwrap_or_default(), param("device"), from) {
-        Ok(opened) => ws.on_upgrade(move |socket| session(socket, opened)),
+        Ok(opened) => ws.on_upgrade(move |socket| session(socket, opened, stop)),
         Err(OpenError::Full) => {
             (StatusCode::SERVICE_UNAVAILABLE, "too many pairings waiting").into_response()
         }
@@ -487,8 +488,16 @@ pub(crate) async fn route(
 
 /// Hold the device until its pairing is settled, then tell it the outcome,
 /// and tell an approval whether the socket took it.
-async fn session(mut socket: WebSocket, mut opened: Opened<'static>) {
-    let waited = wait(&mut socket, &mut opened).await;
+async fn session(
+    mut socket: WebSocket,
+    mut opened: Opened<'static>,
+    stop: tokio_util::sync::CancellationToken,
+) {
+    let waited = tokio::select! {
+        waited = wait(&mut socket, &mut opened) => waited,
+        // The pairing goes with the server; the device asks again.
+        () = stop.cancelled() => None,
+    };
     // Nothing reads the outcome after this, so `settle` now finds the device
     // gone. One settled just before is read here; dropped unsent, as when
     // the device went first, its approval is revoked by `settle`.
@@ -873,7 +882,7 @@ mod tests {
             "/",
             axum::routing::get(move |ws: WebSocketUpgrade| async move {
                 let opened = p.open("tv", None, LAN).unwrap();
-                ws.on_upgrade(move |socket| session(socket, opened))
+                ws.on_upgrade(move |socket| session(socket, opened, Default::default()))
             }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

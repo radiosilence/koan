@@ -35,6 +35,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub server: ServerConfig,
     pub sharing: SharingConfig,
+    pub share: ShareConfig,
     pub mcp: McpConfig,
     pub push: PushConfig,
     pub lastfm: LastfmConfig,
@@ -106,6 +107,28 @@ pub struct ServerConfig {
     /// scrobbling nobody can change. See koan-server's `demo`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub demo: bool,
+}
+
+/// An app serving its own library to the person's other devices: Settings →
+/// Server → Share this Mac. Separate from `[graphql]`, which configures the
+/// TUI's and the headless server's listener; that section's sign-in settings
+/// (`auth_enabled`, token lifetimes, `allowed_hosts`, `cookie_secure`) still
+/// apply to this one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShareConfig {
+    /// Serve whenever the app is open.
+    pub enabled: bool,
+    pub port: u16,
+}
+
+impl Default for ShareConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 4000,
+        }
+    }
 }
 
 /// Deprecated: `server.url` replaces `public_url`, which is read only while
@@ -1482,6 +1505,9 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.nearby_control"
         | "devices.refused"
         | "devices.keep_running"
+        // Whether this machine serves its library, and where.
+        | "share.enabled"
+        | "share.port"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.

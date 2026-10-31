@@ -73,7 +73,7 @@ pub fn cmd_serve(
         }
     });
 
-    let started = ApiServer::start(
+    let started = ApiServer::start_with(
         ApiServerOpts {
             state,
             cmd_tx,
@@ -84,6 +84,7 @@ pub fn cmd_serve(
             playground,
             viz: None, // headless — no viz analyzer
             profile: Profile::Headless,
+            hosts: Vec::new(),
         },
         jobs,
     );
@@ -187,12 +188,18 @@ pub struct ApiServerOpts {
     pub playground: bool,
     pub viz: Option<Arc<VizSnapshot>>,
     pub profile: Profile,
+    /// Names this server is reached by beyond `graphql.allowed_hosts`, such as
+    /// the Mac's Bonjour name.
+    pub hosts: Vec<String>,
 }
 
 /// A running API server. Dropping it asks the server to stop and does not
 /// wait for it.
 pub struct ApiServer {
     addr: std::net::SocketAddr,
+    /// What the app hosting an embedded server administers it with: an API
+    /// key good for the first admin, made for this run and never written down.
+    host_key: Option<String>,
     stop: tokio_util::sync::CancellationToken,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -207,7 +214,14 @@ impl ApiServer {
     ///
     /// `jobs` is made by the caller, so a library watch started before the
     /// server records its scans from the first.
-    pub fn start(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Result<Self, String> {
+    pub fn start(opts: ApiServerOpts) -> Result<Self, String> {
+        Self::start_with(opts, Default::default())
+    }
+
+    pub(crate) fn start_with(
+        opts: ApiServerOpts,
+        jobs: super::jobs::JobRegistry,
+    ) -> Result<Self, String> {
         let ApiServerOpts {
             state,
             cmd_tx,
@@ -218,6 +232,7 @@ impl ApiServer {
             playground,
             viz,
             profile,
+            hosts,
         } = opts;
         use axum::routing::{get, post};
 
@@ -327,6 +342,27 @@ impl ApiServer {
                 }
             });
 
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| format!("could not start the API server's runtime — {e}"))?;
+        let (gql_listener, sub_listener) = {
+            let _in = rt.enter();
+            let gql = tokio::net::TcpListener::from_std(gql_listener)
+                .map_err(|e| format!("failed to listen on {addr} — {e}"))?;
+            let sub = sub_listener.and_then(|l| match tokio::net::TcpListener::from_std(l) {
+                Ok(l) => Some(l),
+                Err(e) => {
+                    log::warn!("Dedicated Subsonic listener unusable — {e}");
+                    None
+                }
+            });
+            (gql, sub)
+        };
+
+        let host_key = embedded
+            .then(auth::random_token)
+            .transpose()
+            .map_err(|e| format!("failed to generate the host key: {e}"))?;
+
         if demo {
             let db = pool.get().map_err(|e| format!("demo: {e}"))?;
             crate::demo::start(&db.conn).map_err(|e| format!("demo: {e}"))?;
@@ -363,14 +399,18 @@ impl ApiServer {
 
         // Ends graceful shutdown, every open session and the MCP streams.
         let stop = tokio_util::sync::CancellationToken::new();
-        let mcp_routes = crate::mcp::router(
-            state.clone(),
-            cmd_tx.clone(),
-            auth_state.clone(),
-            cfg.server_url(),
-            profile == Profile::Headless,
-            stop.clone(),
-        );
+        // An app sharing its library serves its own apps; the web UI and MCP
+        // are for a server people reach with a browser or an assistant.
+        let mcp_routes = (!embedded).then(|| {
+            crate::mcp::router(
+                state.clone(),
+                cmd_tx.clone(),
+                auth_state.clone(),
+                cfg.server_url(),
+                profile == Profile::Headless,
+                stop.clone(),
+            )
+        });
         let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
 
         if auth_enabled {
@@ -394,9 +434,20 @@ impl ApiServer {
             log::info!("Auth disabled — all requests treated as admin");
         }
 
+        let mut allowed_hosts = cfg.graphql.allowed_hosts.clone();
+        allowed_hosts.extend(hosts);
+        // The address invites send phones to, which a tunnel may put in front.
+        if embedded
+            && let Some(host) = cfg
+                .server_url()
+                .and_then(|u| reqwest::Url::parse(&u).ok())
+                .and_then(|u| u.host_str().map(str::to_owned))
+        {
+            allowed_hosts.push(host);
+        }
         let browser_policy = Arc::new(BrowserPolicy {
             origins: cfg.graphql.cors_origins.clone(),
-            hosts: cfg.graphql.allowed_hosts.clone(),
+            hosts: allowed_hosts,
         });
 
         if cfg.graphql.cors_origins.is_empty() {
@@ -404,17 +455,11 @@ impl ApiServer {
         }
 
         let serving = stop.clone();
+        let serving_key = host_key.clone();
         let thread = std::thread::Builder::new()
             .name("koan-api".into())
             .spawn(move || {
                 let stop = serving;
-                let rt = match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        log::error!("API server not started: no runtime — {e}");
-                        return;
-                    }
-                };
                 rt.block_on(async {
                     if !embedded {
                         let stop = stop.clone();
@@ -451,7 +496,7 @@ impl ApiServer {
                     // to sign in rather than refused), so it sits outside the GraphQL auth
                     // layer. Built before the auth routes take their state.
                     let covers = Arc::new(crate::covers::Covers::in_config_dir());
-                    let ui_routes = crate::ui::router(
+                    let ui_routes = (!embedded).then(|| crate::ui::router(
                         pool.clone(),
                         auth_route_state.clone(),
                         auth_enabled,
@@ -463,12 +508,14 @@ impl ApiServer {
                         jobs,
                     )
                     // A template that fails to render panics; this makes it a 500.
-                    .layer(tower_http::catch_panic::CatchPanicLayer::new());
-                    let ui_routes = if demo {
-                        ui_routes.layer(axum::middleware::from_fn(crate::demo::guard))
-                    } else {
-                        ui_routes
-                    };
+                    .layer(tower_http::catch_panic::CatchPanicLayer::new()));
+                    let ui_routes = ui_routes.map(|ui| {
+                        if demo {
+                            ui.layer(axum::middleware::from_fn(crate::demo::guard))
+                        } else {
+                            ui
+                        }
+                    });
 
                     // Auth routes — always accessible (no auth middleware).
                     let auth_app = auth_router(auth_route_state);
@@ -515,6 +562,7 @@ impl ApiServer {
                                 users,
                                 profile,
                                 stop.clone(),
+                                serving_key,
                             )
                         })
                         .map(|sub| {
@@ -526,11 +574,13 @@ impl ApiServer {
                         });
                     let subsonic_dedicated = subsonic_merged.clone();
 
-                    let mut app = auth_app
-                        .merge(gql_app)
-                        .merge(share_routes)
-                        .merge(ui_routes)
-                        .merge(mcp_routes);
+                    let mut app = auth_app.merge(gql_app).merge(share_routes);
+                    if let Some(ui) = ui_routes {
+                        app = app.merge(ui);
+                    }
+                    if let Some(mcp) = mcp_routes {
+                        app = app.merge(mcp);
+                    }
                     if let Some(sub) = subsonic_merged {
                         app = app.merge(sub);
                     }
@@ -548,13 +598,6 @@ impl ApiServer {
                         host_guard,
                     ));
 
-                    let gql_listener = match tokio::net::TcpListener::from_std(gql_listener) {
-                        Ok(l) => l,
-                        Err(e) => {
-                            log::error!("API server not started: {e}");
-                            return;
-                        }
-                    };
                     log::info!("GraphQL API on http://{addr}/graphql");
                     if subsonic_enabled {
                         log::info!("Subsonic REST on http://{addr}/rest/");
@@ -581,16 +624,7 @@ impl ApiServer {
                     )
                     .with_graceful_shutdown(stop.clone().cancelled_owned());
 
-                    let sub = sub_listener
-                        .zip(subsonic_dedicated)
-                        .and_then(|(l, sub_app)| match tokio::net::TcpListener::from_std(l) {
-                            Ok(l) => Some((l, sub_app)),
-                            Err(e) => {
-                                log::warn!("Dedicated Subsonic listener unusable — {e}");
-                                None
-                            }
-                        });
-                    if let Some((sub_listener, sub_app)) = sub {
+                    if let Some((sub_listener, sub_app)) = sub_listener.zip(subsonic_dedicated) {
                         if let Ok(a) = sub_listener.local_addr() {
                             log::info!("Subsonic REST also on http://{a}/rest/ (dedicated port)");
                         }
@@ -623,9 +657,15 @@ impl ApiServer {
 
         Ok(Self {
             addr,
+            host_key,
             stop,
             thread: Some(thread),
         })
+    }
+
+    /// See `host_key` on the struct. `None` but for an embedded server.
+    pub fn host_key(&self) -> Option<&str> {
+        self.host_key.as_deref()
     }
 
     /// The address the main listener is bound to.
@@ -672,20 +712,18 @@ pub fn start_api_background(
     subsonic_port: Option<u16>,
     playground: bool,
 ) {
-    let started = ApiServer::start(
-        ApiServerOpts {
-            state,
-            cmd_tx,
-            pool: Arc::new(Pool::new(db_path)),
-            port,
-            bind,
-            subsonic_port,
-            playground,
-            viz: None,
-            profile: Profile::Tui,
-        },
-        Default::default(),
-    );
+    let started = ApiServer::start(ApiServerOpts {
+        state,
+        cmd_tx,
+        pool: Arc::new(Pool::new(db_path)),
+        port,
+        bind,
+        subsonic_port,
+        playground,
+        viz: None,
+        profile: Profile::Tui,
+        hosts: Vec::new(),
+    });
     match started {
         Ok(server) => server.wait(),
         Err(e) => log::error!("API server not started: {}", e),
@@ -1260,20 +1298,18 @@ mod tests {
             .unwrap();
 
         let start = || {
-            ApiServer::start(
-                ApiServerOpts {
-                    state: SharedPlayerState::new(),
-                    cmd_tx: CommandChannel::new().tx,
-                    pool: Arc::new(Pool::new(db_path.clone())),
-                    port: Some(0),
-                    bind: Some(std::net::Ipv4Addr::LOCALHOST.into()),
-                    subsonic_port: None,
-                    playground: false,
-                    viz: None,
-                    profile: Profile::Embedded,
-                },
-                Default::default(),
-            )
+            ApiServer::start(ApiServerOpts {
+                state: SharedPlayerState::new(),
+                cmd_tx: CommandChannel::new().tx,
+                pool: Arc::new(Pool::new(db_path.clone())),
+                port: Some(0),
+                bind: Some(std::net::Ipv4Addr::LOCALHOST.into()),
+                subsonic_port: None,
+                playground: false,
+                viz: None,
+                profile: Profile::Embedded,
+                hosts: Vec::new(),
+            })
             .unwrap()
         };
         // Subsonic answers, though `[subsonic]` is off by default.
@@ -1302,7 +1338,10 @@ mod tests {
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !linked() {
-            assert!(std::time::Instant::now() < deadline, "the device never linked");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the device never linked"
+            );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
 

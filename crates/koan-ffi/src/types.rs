@@ -2264,6 +2264,13 @@ pub struct Settings {
     pub devices_nearby_control: String,
     /// The Mac app stays in the menu bar with its window closed.
     pub devices_keep_running: bool,
+
+    /// This device serves its library whenever the app is open.
+    pub share_enabled: bool,
+    pub share_port: u16,
+    /// `server.url`: where a tunnel publishes this device, which invites
+    /// send phones to. Empty when there is none.
+    pub server_url: String,
 }
 
 /// A scanned folder, and what it contributed.
@@ -2741,6 +2748,8 @@ pub struct RendererOutput {
 /// this device offer. Settings shows it.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct ConnectionInfo {
+    /// The server this device signs in to, while it has an account there.
+    pub signed_in_to: Option<String>,
     /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from an older
     /// server, or before one has answered.
     pub server_kind: Option<String>,
