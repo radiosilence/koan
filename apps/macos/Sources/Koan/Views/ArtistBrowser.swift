@@ -53,10 +53,7 @@ struct ArtistBrowser: View {
                     favourites: library.favouriteArtistIds,
                     tint: NSColor(tint),
                     play: { artist in
-                        let engine = library.engine
-                        await player.playNow(resolving: artist.name) {
-                            await Playable.artist(id: artist.id, name: artist.name).trackIds(using: engine)
-                        }.value
+                        player.playNow([.artist(id: artist.id)], named: artist.name)
                     },
                     open: { nav.open(artist: $0) },
                     toggleFavourite: { library.toggleFavourite(artist: $0) }
@@ -126,16 +123,9 @@ struct ArtistBrowser: View {
         }
         #if os(iOS)
         .listSelectMode($editMode, selection: $selection) { ids in
-            let engine = library.engine
-            return SelectionBar.Actions(
+            SelectionBar.Actions(
                 favourites: ids.map { Playable.Key(kind: .artist, id: $0) },
-                tracks: {
-                    var tracks: [Int64] = []
-                    for id in ids {
-                        tracks += (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
-                    }
-                    return tracks
-                }
+                sources: ids.map { .artist(id: $0) }
             )
         }
         #endif
@@ -467,18 +457,12 @@ private struct FeaturesOn: View {
                 .font(.role(.body, system: .headline))
             HStack(spacing: 10) {
                 Button {
-                    let engine = library.engine, ids = albums.map(\.id)
-                    player.playNow(resolving: "Features on") {
-                        (try? await engine.albumTrackIds(albumIds: ids)) ?? []
-                    }
+                    player.playNow(albums.map { .album(id: $0.id) }, named: "Features on")
                 } label: {
                     Label("Play", koan: Icon.play)
                 }
                 Button {
-                    let engine = library.engine, ids = albums.map(\.id)
-                    Task {
-                        player.enqueue(trackIds: (try? await engine.albumTrackIds(albumIds: ids)) ?? [])
-                    }
+                    player.queue(albums.map { .album(id: $0.id) }, .append)
                 } label: {
                     Label("Queue", koan: Icon.queue)
                 }

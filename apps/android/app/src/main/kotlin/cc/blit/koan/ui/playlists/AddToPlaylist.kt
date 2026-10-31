@@ -15,9 +15,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import cc.blit.koan.engine.attempt
-import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ui.Read
+import cc.blit.koan.ffi.TrackSet
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.read
 import cc.blit.koan.ui.theme.KoanIcon
@@ -38,17 +38,17 @@ import kotlinx.coroutines.withContext
  *
  * ```
  * var adding by remember { mutableStateOf(false) }
- * if (adding) AddToPlaylistSheet({ trackIds(albumId, null) }) { adding = false }
+ * if (adding) AddToPlaylistSheet(listOf(TrackSet.Album(albumId))) { adding = false }
  * ```
  *
- * `trackIds` resolves what is being added against the engine, off the main
- * thread, once a playlist is chosen: an album or an artist is a query, and
- * nothing is asked if the sheet is dismissed. `onAdded` follows `onDismiss`
- * when a playlist was chosen or made.
+ * `sources` names what is being added; the engine reads it once a playlist
+ * is chosen, on its command lane, so an album or an artist costs nothing if
+ * the sheet is dismissed. `onAdded` follows `onDismiss` when a playlist was
+ * chosen or made.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onAdded: () -> Unit = {}, onDismiss: () -> Unit) {
+fun AddToPlaylistSheet(sources: List<TrackSet>, onAdded: () -> Unit = {}, onDismiss: () -> Unit) {
     val app = koanApp()
     val edits = remember { PlaylistEdits(app.mirror) }
     val playlists by produceState<Read<List<Playlist>>>(Read.Reading) {
@@ -65,7 +65,7 @@ fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onAdded: (
     if (naming) {
         NameDialog("New Playlist", "Create", onDismiss = onDismiss) { name ->
             app.mirror.launch {
-                val ids = trackIds()
+                val ids = trackIdsOf(sources)
                 val made = edits.create(name, ids) ?: return@launch
                 added(ids.size.toUInt(), made.name)
             }
@@ -106,7 +106,7 @@ fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onAdded: (
                     playlist.name,
                     trackCount(playlist.trackCount),
                     onClick = {
-                        app.mirror.launch { added(addToPlaylist(playlist.id, trackIds()), playlist.name) }
+                        app.mirror.launch { added(addToPlaylist(playlist.id, sources), playlist.name) }
                         onDismiss()
                         onAdded()
                     },

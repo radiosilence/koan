@@ -8,10 +8,15 @@ let package = Package(
     platforms: [.macOS(.v26)],
     targets: [
         .systemLibrary(name: "koan_ffiFFI", path: "Sources/koan_ffiFFI"),
+        // The bindings run an engine call on the caller's actor up to its
+        // first poll, which is when it joins the engine's command lane, so
+        // commands made on the main actor reach the lane in the order they
+        // were made. Without it every call starts on the cooperative pool.
         .target(
             name: "KoanFFI",
             dependencies: ["koan_ffiFFI"],
-            path: "Sources/KoanFFI"
+            path: "Sources/KoanFFI",
+            swiftSettings: [.enableUpcomingFeature("NonisolatedNonsendingByDefault")]
         ),
         .executableTarget(
             name: "Koan",
