@@ -1956,6 +1956,15 @@ mod tests {
         .unwrap();
         crate::db::queries::cache_lyrics(&db.conn, remote_id, "lrclib", true, "[00:01.00] la")
             .unwrap();
+        // The survivor remembers LRCLIB having nothing under its old title.
+        crate::db::queries::cache_lyrics(
+            &db.conn,
+            local_id,
+            crate::db::queries::lyrics::MISS,
+            false,
+            "",
+        )
+        .unwrap();
 
         let mut fixed = bad.clone();
         fixed.title = "Sunshine Recorder".into();

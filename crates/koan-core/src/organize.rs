@@ -1150,6 +1150,9 @@ fn execute_single_move(
     let mtime = mtime_secs(&source_meta);
 
     let staged = stage_across_devices(&file_move.from, to)?;
+    // The copy goes however this returns, a panic included; once renamed
+    // into place there is nothing left at its name to remove.
+    let _staged_copy = staged.as_deref().map(RemoveOnDrop);
     let rows = (|| {
         let tx = crate::db::queries::write_transaction(&db.conn)?;
         log_move(
@@ -1169,15 +1172,7 @@ fn execute_single_move(
         }
         Ok::<_, OrganizeError>(tx)
     })();
-    let tx = match rows {
-        Ok(tx) => tx,
-        Err(e) => {
-            if let Some(temp) = &staged {
-                let _ = std::fs::remove_file(temp);
-            }
-            return Err(e);
-        }
-    };
+    let tx = rows?;
 
     let mut moved_ancillary: Vec<(&PathBuf, PathBuf)> = Vec::new();
     let mut failure = None;
@@ -1564,6 +1559,15 @@ fn stage_across_devices(from: &Path, to: &Path) -> Result<Option<PathBuf>, Organ
     let temp = temp_sibling(to);
     copy_verified(from, &temp)?;
     Ok(Some(temp))
+}
+
+/// Removes a file when dropped.
+struct RemoveOnDrop<'a>(&'a Path);
+
+impl Drop for RemoveOnDrop<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0);
+    }
 }
 
 /// Rename a staged copy to its destination, refusing one already there as

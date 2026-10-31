@@ -1279,6 +1279,12 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
         ))?
         .execute(params![winner, loser])?;
     }
+    // A remembered miss gives way to the other track's lyrics.
+    conn.prepare_cached(
+        "DELETE FROM lyrics_cache WHERE track_id = ?1 AND source = 'none'
+           AND EXISTS (SELECT 1 FROM lyrics_cache WHERE track_id = ?2 AND source != 'none')",
+    )?
+    .execute(params![winner, loser])?;
     conn.prepare_cached(
         "UPDATE lyrics_cache SET track_id = ?1 WHERE track_id = ?2
            AND NOT EXISTS (SELECT 1 FROM lyrics_cache WHERE track_id = ?1)",
