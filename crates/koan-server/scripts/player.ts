@@ -39,8 +39,9 @@ const decodable = (t: Track | undefined) => t && t.dur > 0 && t.dur <= LONG;
 const webkit = !!navigator.audioSession;
 
 // Six seconds, since Chrome treats anything under five as a sound effect
-// rather than media, at about -80 dBFS rather than zero: Firefox gives an
-// element a media session only once it hears something.
+// rather than media, and a small constant offset rather than zero: Firefox
+// gives an element a media session only once it hears something, and an
+// offset is inaudible, survives resampling and loops without a seam.
 let hushUrl: string | null = null;
 function hush() {
   if (hushUrl) return hushUrl;
@@ -50,7 +51,7 @@ function hush() {
   v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
   v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
   ascii(36, "data"); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i & 1 ? 3 : -3, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, 8, true);
   return hushUrl = URL.createObjectURL(new Blob([v.buffer], { type: "audio/wav" }));
 }
 
@@ -122,7 +123,7 @@ export class Player<T extends Track> {
     if (ctx && webkit && !this.#dest && ctx.createMediaStreamDestination) {
       try { this.#dest = ctx.createMediaStreamDestination(); this.#out.srcObject = this.#dest.stream; } catch { this.#dest = null; }
     }
-    if (!webkit && !this.#out.src) { this.#out.src = hush(); this.#out.loop = true; }
+    if (!this.#dest && !this.#out.src) { this.#out.src = hush(); this.#out.loop = true; }
     if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
     // Started inside the tap, like the context, so iOS lets it run from here on.
     if (t) this.#hear();
