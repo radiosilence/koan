@@ -59,6 +59,18 @@ css:
 js:
     tsc -p crates/koan-server/scripts
 
+# The experimental web client (crates/koan-web) into target/koan-web, for
+# `KOAN_WEB_CLIENT_DIR=target/koan-web koan serve` to serve at /client/. Its
+# threads share one memory, which needs std rebuilt with atomics: nightly.
+# The memory's maximum is reserved up front, so it stays modest.
+web-client:
+    RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--max-memory=536870912" \
+        cargo +nightly build -p koan-web --release --target wasm32-unknown-unknown \
+        -Z build-std=std,panic_abort --target-dir target/koan-web-build
+    wasm-bindgen --target web --out-dir target/koan-web \
+        target/koan-web-build/wasm32-unknown-unknown/release/koan_web.wasm
+    cp crates/koan-web/www/* target/koan-web/
+
 # Compile the kōan icon set (apps/macos/Resources/Icons/*.svg) into
 # Support/KoanGlyphs.swift and the web's crates/koan-server/src/icon/glyphs.rs. The output is committed; `--check` fails if stale.
 icons *args:

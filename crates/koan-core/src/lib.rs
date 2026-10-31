@@ -5,6 +5,7 @@ pub mod audio;
 pub mod auth;
 #[cfg(feature = "native")]
 pub mod browse;
+#[cfg(feature = "native")]
 pub mod clock;
 pub mod config;
 #[cfg(feature = "native")]

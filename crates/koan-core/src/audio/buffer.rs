@@ -649,9 +649,9 @@ where
 /// its audio has drained or `stop` is set. What `start_decode` runs on its
 /// own thread; a browser's worker, which cannot spawn one, calls it directly.
 ///
-/// `stop` is read between packets and on each wake from a full ring, which
-/// sleeps for half the ring's playing time: a stop set from outside lands
-/// within that, as nothing unparks this thread but `DecodeHandle::stop`.
+/// `stop` is read between packets and on each wake from a full ring or the
+/// final drain, which sleep for up to the ring's playing time. Nothing
+/// unparks a caller of this, so a stop it is told of lands within that.
 #[allow(clippy::too_many_arguments)]
 pub fn run_decode<N>(
     first: SourceEntry,
