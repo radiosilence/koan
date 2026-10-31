@@ -79,7 +79,7 @@ pub(super) async fn form(State(s): State<UiState>, Query(q): Query<CodeQuery>) -
 
 fn code_page(s: &UiState, error: Option<&str>) -> Response {
     if !s.auth_enabled {
-        return without_accounts(&s);
+        return without_accounts(s);
     }
     let status = if error.is_none() {
         StatusCode::OK

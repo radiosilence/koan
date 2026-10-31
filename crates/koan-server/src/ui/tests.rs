@@ -689,7 +689,7 @@ async fn artists_and_albums_are_linked_wherever_they_are_named() {
     };
     let artist = ">Rrose</a>";
     let album = format!(
-        "<a href=\"/album/{}\">Hymn &#60;to&#62; Moisture</a>",
+        "<a href=\"album/{}\">Hymn &#60;to&#62; Moisture</a>",
         f.album_id
     );
 
@@ -777,7 +777,7 @@ async fn each_credited_artist_is_its_own_link() {
     // Two links, the "×" between them plain; never one link for the credit.
     let split = |html: &str| {
         let at = html
-            .find(">Rrose</a> × <a href=\"/artist/")
+            .find(">Rrose</a> × <a href=\"artist/")
             .unwrap_or_else(|| panic!("a split credit: {html}"));
         assert!(html[at..].contains(">Bob Ostertag</a>"), "{html}");
         assert!(!html.contains(">Rrose × Bob Ostertag</a>"), "{html}");
@@ -3056,7 +3056,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     };
 
     // A wide screen's sidebar links the Library page for an admin only.
-    let wide_link = "href=\"/library\" data-nav=\"library\"";
+    let wide_link = "href=\"library\" data-nav=\"library\"";
     let r = send(&f.app, library(&access_token(&f.state))).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains("/library/scan"), "{}", r.body);
