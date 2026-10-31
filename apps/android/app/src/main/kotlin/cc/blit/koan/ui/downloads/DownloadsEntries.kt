@@ -23,6 +23,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.art.Art
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferState
 import cc.blit.koan.ui.koanApp
@@ -117,7 +118,7 @@ private fun CacheUsage(onRemoveAll: () -> Unit) {
     // Read again as the cache moves; a limit changed in Settings shows on the next visit.
     val limit by produceState<Long?>(null, used) {
         // A limit of nothing is no cache, not a cache over its limit.
-        value = runCatching { app.mirror.engine().cacheLimitBytes()?.toLong() }.getOrNull()?.takeIf { it > 0 }
+        value = attempt { app.mirror.engine().cacheLimitBytes()?.toLong() }.getOrNull()?.takeIf { it > 0 }
     }
     val size = { bytes: Long -> Formatter.formatShortFileSize(context, bytes) }
 

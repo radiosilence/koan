@@ -58,6 +58,8 @@ final class EngineMirror: Observable {
     /// The rows the latest patch changed, to put back before the next.
     private var _patched: [Int] = []
     private var _queueVersion: UInt64 = 0
+    private var _queueStamp: UInt64 = 0
+    private var _queueRowsStamp: UInt64 = 0
     private var _queuedByTrack: [Int64: QueueItem] = [:]
     private var _queuedByPlaylistEntry: [Int64: QueueItem] = [:]
     private var _lock: QueueLock?
@@ -222,6 +224,22 @@ final class EngineMirror: Observable {
         return _queueVersion
     }
 
+    /// Moves whenever `queueRows` does: each time the queue is sent whole,
+    /// whichever device it is from. `queueVersion` is each source's own
+    /// count, so two sources can send the same one. Observed as `queueRows`.
+    var queueRowsStamp: UInt64 {
+        access(\.queueRows)
+        return _queueRowsStamp
+    }
+
+    /// Moves whenever `queue` does, patches included: what a view keys work
+    /// derived from the queue on, rather than the queue itself. Observed as
+    /// `queue`.
+    var queueStamp: UInt64 {
+        access(\.queue)
+        return _queueStamp
+    }
+
     /// Queue entries indexed by library track id, so a library row can say what
     /// the queue knows about it without scanning the queue once per row.
     ///
@@ -354,6 +372,8 @@ final class EngineMirror: Observable {
                     _queueBase = items
                     _queue = items
                     _queueVersion = version
+                    _queueStamp &+= 1
+                    _queueRowsStamp &+= 1
                     _patched = []
                     _queueAt = Dictionary(
                         items.enumerated().map { ($1.queueItemId, $0) },
@@ -374,6 +394,7 @@ final class EngineMirror: Observable {
             // an empty one on an unpatched queue says nothing.
             guard base == _queueVersion, !(items.isEmpty && _patched.isEmpty) else { return }
             mutate(\.queue) {
+                _queueStamp &+= 1
                 var touched = _patched
                 for row in _patched { _queue[row] = _queueBase[row] }
                 _patched = []

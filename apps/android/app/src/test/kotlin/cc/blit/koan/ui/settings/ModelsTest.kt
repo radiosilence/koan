@@ -2,6 +2,7 @@ package cc.blit.koan.ui.settings
 
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.Settings
+import cc.blit.koan.ui.ActivityModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -36,9 +37,9 @@ class ModelsTest {
 
     @After fun tearDown() = Dispatchers.resetMain()
 
-    private fun account() = AccountModel({ fake.engine })
+    private fun account() = AccountModel({ fake.engine }, ActivityModel())
 
-    private fun settingsModel() = SettingsModel({ fake.engine })
+    private fun settingsModel() = SettingsModel({ fake.engine }, ActivityModel())
 
     @Test fun anInviteIsReadByTheEngine() = runTest(dispatcher) {
         val invite = invite()

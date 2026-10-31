@@ -17,9 +17,11 @@ import SwiftUI
 /// is on and the platform's nearest equivalent when it is off, so a converted
 /// view carries no styling of its own in either.
 ///
-/// Read once, as the app opens, and never changed while it runs: a theme
-/// switched under a window would leave every view drawn before the switch in
-/// the old one.
+/// Whether the theme is on is read once, as the app opens, and never changed
+/// while it runs: a theme switched under a window would leave every view drawn
+/// before the switch in the old one. The Mac's text size is the exception: it
+/// changes while the app runs, and every window is drawn again at the new
+/// size (`AppearanceModel.textSize`).
 @MainActor
 enum KoanTheme {
     /// The kōan theme, rather than the platform's look. Written once, as the

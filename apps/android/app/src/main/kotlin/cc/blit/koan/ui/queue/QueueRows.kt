@@ -1,7 +1,8 @@
 package cc.blit.koan.ui.queue
 
 import cc.blit.koan.ffi.QueueItem
-import cc.blit.koan.ffi.RunRole
+import cc.blit.koan.ui.library.RunPiece
+import cc.blit.koan.ui.library.runPieces
 
 /**
  * A row of the queue list: a record's heading, one of its tracks, or a track
@@ -25,7 +26,7 @@ sealed interface QueueRow {
     data class Album(val group: QueueGroup) : QueueRow {
         override val key get() = "album:${group.items.first().queueItemId}"
         override val itemIds get() = group.items.map { it.queueItemId }
-        override val label get() = group.title
+        override val label get() = group.album
         override val items get() = group.items
 
         /** The records the run is of: one, unless editions share its tags. */
@@ -55,25 +56,12 @@ sealed interface QueueRow {
         fun build(queue: List<QueueItem>, grouped: Boolean): List<QueueRow> {
             if (!grouped) return queue.map(::Track)
             val rows = ArrayList<QueueRow>(queue.size + queue.size / 8)
-            var index = 0
-            while (index < queue.size) {
-                val first = queue[index]
-                when (first.run) {
-                    RunRole.ALONE, RunRole.CONTINUES -> {
-                        rows += Track(first)
-                        index++
-                    }
-                    RunRole.SINGLE -> {
-                        rows += Single(first)
-                        index++
-                    }
-                    RunRole.OPENS -> {
-                        var end = index + 1
-                        while (end < queue.size && queue[end].run == RunRole.CONTINUES) end++
-                        val run = queue.subList(index, end).toList()
-                        rows += Album(QueueGroup(first.album, run))
-                        run.mapTo(rows, ::Track)
-                        index = end
+            for (piece in runPieces(queue) { it.run }) {
+                when (piece) {
+                    is RunPiece.Alone -> rows += if (piece.single) Single(piece.row) else Track(piece.row)
+                    is RunPiece.Run -> {
+                        rows += Album(QueueGroup(piece.rows.first().album, piece.rows))
+                        piece.rows.mapTo(rows, ::Track)
                     }
                 }
             }
@@ -86,8 +74,6 @@ sealed interface QueueRow {
 }
 
 data class QueueGroup(val album: String, val items: List<QueueItem>) {
-    val title get() = album
-
     /** "2007 · 11 tracks · 59:10 · FLAC". The codec only when the whole run shares one. */
     val detail: String
         get() {

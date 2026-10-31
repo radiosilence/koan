@@ -5781,6 +5781,30 @@ mod tests {
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C", "D"]);
     }
 
+    /// A drag ends when the queue comes back under a new version, so a move
+    /// that changes nothing must still publish one.
+    #[test]
+    fn a_move_that_changes_nothing_still_moves_the_version() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let (a_id, b_id) = (items[0].id, items[1].id);
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        let (version, content) = (
+            player.shared_state.playlist_version(),
+            player.shared_state.content_version(),
+        );
+
+        // A before B, where it already is.
+        player.process_command(PlayerCommand::MoveItemsInPlaylist {
+            ids: vec![a_id],
+            target: b_id,
+            after: false,
+        });
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+        assert!(player.shared_state.playlist_version() > version);
+        assert!(player.shared_state.content_version() > content);
+    }
+
     // --- ClearPlaylist undo/redo ---
 
     #[test]

@@ -953,7 +953,7 @@ impl LinkIdentity {
                 .or_else(hostname)
                 .unwrap_or_else(|| label.to_string()),
             platform: platform.to_string(),
-            device_id: device_id(&config::config_dir()),
+            device_id: this_device_id(),
             files: "",
         }
     }
@@ -1527,6 +1527,12 @@ pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
         Err(crate::remote::sync::SyncError::Cancelled) => log::info!("link: sync cancelled"),
         Err(e) => log::warn!("link: sync failed: {e}"),
     }
+}
+
+/// The id this machine's app links with, which pairing sends too: the one
+/// place it is read.
+pub fn this_device_id() -> String {
+    device_id(&config::config_dir())
 }
 
 /// A random id kept in the config directory, and on iOS in the Keychain as

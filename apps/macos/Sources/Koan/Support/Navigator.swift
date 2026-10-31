@@ -139,7 +139,8 @@ final class Navigator {
     }
 
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
-        FrameTimer.shared.begin()
+        // The page already showing is not a move: nothing new would be drawn.
+        if current != .album(id) { FrameTimer.shared.begin() }
         // Set before the move rather than on arrival: the page that reads it is
         // not on screen yet, and this is the same click.
         highlightedTrackId = trackId

@@ -7,7 +7,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
 import cc.blit.koan.ffi.Album
@@ -73,7 +72,6 @@ fun KoanApp.play(playable: Playable, shuffled: Boolean = false) =
 fun PlayableMenu(playable: Playable, expanded: Boolean, more: @Composable ColumnScope.() -> Unit = {}, onDismiss: () -> Unit) {
     val app = koanApp()
     val nav = LocalNavigator.current
-    val context = LocalContext.current
     val signedIn = app.mirror.connection.collectAsStateWithLifecycle().value != null
     val store = favourites()
     val favouriteTracks by store.tracks.collectAsStateWithLifecycle()
@@ -110,7 +108,7 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, more: @Composable Column
                     KoanMenuItem(if (on) "Remove Favourite" else "Favourite Artist", if (on) KoanIcons.favourited else KoanIcons.favourite) { onDismiss(); store.toggleArtist(playable.id) }
                 }
             }
-            if (signedIn) KoanMenuItem("Share", KoanIcons.share) { onDismiss(); app.share(context, playable) }
+            if (signedIn) KoanMenuItem("Share", KoanIcons.share) { onDismiss(); app.share(playable) }
             // A track knows whether its file is here, so it is offered the one
             // verb that does something; a record or an artist is usually part
             // of the way there, and both apply.

@@ -111,9 +111,10 @@ class OutputPicker(private val engine: suspend () -> KoanEngineInterface, privat
 
     /**
      * Search, saying so until the answers are in: they are unicast, all back
-     * within the search's window. From then on the list follows renderers'
-     * announcements by itself, so the sheet searches once as it opens, and
-     * again only when asked.
+     * within the search's window. Android lets renderers' announcements in
+     * only during that window, so the list is kept current by searching:
+     * here as the sheet opens and when asked, and by `MainActivity` once a
+     * minute while the app is open.
      */
     suspend fun search() {
         _state.update { it.copy(searching = true) }

@@ -64,6 +64,8 @@ data class DspState(
     val output: DspResponse? = null,
     /** Moves on every change made here, for a profile's page to read again. */
     val version: Int = 0,
+    /** Moves when a target is added, for whatever lists the targets to read them again. */
+    val targetsVersion: Int = 0,
     val error: String? = null,
     /** What the last import of several files did. */
     val summary: String? = null,
@@ -323,7 +325,7 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
     fun chooseTarget(name: String, id: String?) = act { dspChooseTarget(name, id) }
 
     /** Add a target from a file the core can read. */
-    fun addTarget(path: String) = act { dspAddTarget(path) }
+    fun addTarget(path: String) = act({ _state.update { it.copy(targetsVersion = it.targetsVersion + 1) } }) { dspAddTarget(path) }
 
     /** The target a ready-made correction was made for, or `null` for Unknown. */
     fun setMadeFor(name: String, target: String?) = act { dspSetMadeFor(name, target) }

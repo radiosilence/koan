@@ -11,6 +11,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
 import cc.blit.koan.engine.EngineMirror
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
@@ -53,7 +54,7 @@ class Favourites(private val mirror: EngineMirror) {
     init {
         scope.launch {
             mirror.library.collect {
-                runCatching {
+                attempt {
                     val engine = mirror.engine()
                     val tracks = async { engine.favouriteTrackIds().toSet() }
                     val albums = async { engine.favouriteAlbumIds().toSet() }
@@ -74,7 +75,7 @@ class Favourites(private val mirror: EngineMirror) {
 
     private fun toggle(set: MutableStateFlow<Set<Long>>, id: Long, call: suspend KoanEngine.() -> Boolean) {
         scope.launch {
-            val on = runCatching { mirror.engine().call() }.getOrNull() ?: return@launch
+            val on = attempt { mirror.engine().call() }.getOrNull() ?: return@launch
             set.update { if (on) it + id else it - id }
         }
     }

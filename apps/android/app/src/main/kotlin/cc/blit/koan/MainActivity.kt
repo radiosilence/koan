@@ -42,9 +42,10 @@ class MainActivity : ComponentActivity() {
         }
         // Play on and Output show only once there is something to pick, so
         // the renderers have to be known before anyone asks for them: a
-        // search on opening, and again while the app stays open, for a
-        // renderer switched on since. Each search holds the multicast lock
-        // only for its own few seconds.
+        // search on opening, and again every minute while the app stays open.
+        // Each search holds the multicast lock only for its own few seconds,
+        // and announcements are heard only then, so the next search is what
+        // finds a renderer switched on since.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val mirror = (application as KoanApp).mirror

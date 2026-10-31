@@ -22,6 +22,7 @@ import androidx.media3.session.MediaSessionService
 import cc.blit.koan.KoanApp
 import cc.blit.koan.MainActivity
 import cc.blit.koan.R
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.RepeatMode
@@ -30,9 +31,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -52,14 +55,20 @@ class PlaybackService : MediaSessionService() {
     private lateinit var audio: AudioManager
     private val engine get() = (application as KoanApp).mirror
 
+    /** Whether the sound is this phone's: no other device controlled, no renderer as the output. */
+    private val local by lazy {
+        combine(engine.devices, engine.renderers) { devices, renderers -> devices.target == null && renderers.output == null }
+            .stateIn(scope, SharingStarted.Eagerly, true)
+    }
+
     private var focus: AudioFocusRequest? = null
     /** Paused for a transient loss of focus, so to resume when it comes back. */
     private var resumeOnGain = false
 
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            // `focusCommand` drops it while another device is controlled: the
-            // phone's headphones say nothing about that device.
+            // `focusCommand` drops it while the sound is made elsewhere: the
+            // phone's headphones say nothing about another device or a renderer.
             if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) focusCommand { pause() }
         }
     }
@@ -103,22 +112,18 @@ class PlaybackService : MediaSessionService() {
         )
         audio.registerAudioDeviceCallback(routes, null)
         // Focus is for sound this phone makes. While another device is
-        // controlled, what plays is that device's, and taking focus for it
-        // would silence the phone's other apps for nothing.
+        // controlled, or a renderer is the output, what plays is heard there,
+        // and taking focus for it would silence the phone's other apps for
+        // nothing.
         scope.launch {
-            combine(engine.nowPlaying, engine.devices) { now, devices ->
-                devices.target == null && now?.state == PlayState.PLAYING
-            }
+            combine(engine.nowPlaying, local) { now, local -> local && now?.state == PlayState.PLAYING }
                 .distinctUntilChanged()
                 .collect { playing -> if (playing) holdFocus() else if (!resumeOnGain) releaseFocus() }
         }
-        // A resume owed to a transient loss here is not owed to the device
-        // control moves to: let the focus go with it.
+        // A resume owed to a transient loss here is not owed to the device or
+        // renderer the sound moves to: let the focus go with it.
         scope.launch {
-            engine.devices
-                .map { it.target != null }
-                .distinctUntilChanged()
-                .collect { controlling -> if (controlling) releaseFocus() }
+            local.collect { local -> if (!local) releaseFocus() }
         }
         scope.launch {
             engine.nowPlaying
@@ -130,11 +135,16 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
 
-    /** Stop with the app's task when nothing is playing, as Media3 recommends. */
+    /**
+     * Stop with the app's task when nothing is playing, as Media3 recommends,
+     * once settings still being saved have reached the disk: the process may
+     * go soon after the service does.
+     */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Swiped away with nothing playing, the process may go soon after.
-        engine.flushSettings()
-        if (!session.player.playWhenReady) stopSelf()
+        scope.launch {
+            engine.flushSettings()
+            if (!session.player.playWhenReady) stopSelf()
+        }
     }
 
     override fun onDestroy() {
@@ -203,11 +213,12 @@ class PlaybackService : MediaSessionService() {
     /**
      * What the phone's own audio asks of the player: a call, a notification,
      * headphones pulled out. None of it is about a device this phone
-     * controls, so none of it is sent there, nor made to play here instead.
+     * controls or a renderer it plays to, so none of it is sent there, nor
+     * made to play here instead.
      */
     private fun focusCommand(block: suspend KoanEngine.() -> Unit) {
-        if (engine.devices.value.target != null) return
-        engine.launch { runCatching { block() } }
+        if (!local.value) return
+        engine.launch { attempt { block() } }
     }
 
     private fun releaseFocus() {
@@ -223,7 +234,7 @@ class PlaybackService : MediaSessionService() {
                 focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                resumeOnGain = engine.devices.value.target == null && engine.nowPlaying.value?.state == PlayState.PLAYING
+                resumeOnGain = local.value && engine.nowPlaying.value?.state == PlayState.PLAYING
                 focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {

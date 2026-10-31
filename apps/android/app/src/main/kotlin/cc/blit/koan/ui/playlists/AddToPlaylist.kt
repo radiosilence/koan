@@ -14,13 +14,21 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.Playlist
+import cc.blit.koan.ui.Read
 import cc.blit.koan.ffi.TrackSet
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.read
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanSectionHeader
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.value
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -43,8 +51,8 @@ import kotlinx.coroutines.withContext
 fun AddToPlaylistSheet(sources: List<TrackSet>, onAdded: () -> Unit = {}, onDismiss: () -> Unit) {
     val app = koanApp()
     val edits = remember { PlaylistEdits(app.mirror) }
-    val playlists by produceState<List<Playlist>?>(null) {
-        value = runCatching { app.mirror.engine().playlists() }.getOrDefault(emptyList()).filter { it.fillable }
+    val playlists by produceState<Read<List<Playlist>>>(Read.Reading) {
+        value = read { app.mirror.engine().playlists().filter { it.fillable } }
     }
     var naming by remember { mutableStateOf(false) }
     val thumb = LocalKoanTokens.current.thumb
@@ -79,9 +87,20 @@ fun AddToPlaylistSheet(sources: List<TrackSet>, onAdded: () -> Unit = {}, onDism
                     leading = { KoanIcon(KoanIcons.add, null) },
                 )
             }
-            items(playlists.orEmpty(), key = { it.id }) { playlist ->
+            (playlists as? Read.Failed)?.let { failed ->
+                item {
+                    KoanText(
+                        "Couldn't read your playlists: ${failed.reason}",
+                        Modifier.padding(horizontal = LocalKoanTokens.current.gutter, vertical = KoanSpace.s),
+                        role = KoanType.Meta,
+                        tone = KoanTone.Bad,
+                    )
+                }
+            }
+            items(playlists.value.orEmpty(), key = { it.id }) { playlist ->
+                // A mosaic is decoration: one that cannot be read is left blank.
                 val covers by produceState(emptyList<Long>(), playlist.id, playlist.changedAt) {
-                    value = runCatching { app.mirror.engine().playlistCoverAlbumIds(playlist.id) }.getOrDefault(emptyList())
+                    value = attempt { app.mirror.engine().playlistCoverAlbumIds(playlist.id) }.getOrDefault(emptyList())
                 }
                 CollectionRow(
                     playlist.name,

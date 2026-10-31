@@ -58,6 +58,7 @@ import androidx.navigation3.ui.NavDisplay
 import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.engine.Playhead
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.DeviceReach
 import cc.blit.koan.ffi.NowPlaying
 import cc.blit.koan.ffi.PlayState
@@ -256,7 +257,7 @@ private fun Titles(entry: QueueItem?) {
     val trackId = entry?.trackId
     // The library's row for the track: what its menu acts on and its links lead to.
     val track by produceState<Track?>(null, trackId, library) {
-        value = trackId?.let { id -> runCatching { mirror.engine().track(id) }.getOrNull() }
+        value = trackId?.let { id -> attempt { mirror.engine().track(id) }.getOrNull() }
     }
     // The titles open the track's info sheet, the artist and the record being links of their own.
     val showInfo = LocalShowTrackInfo.current
