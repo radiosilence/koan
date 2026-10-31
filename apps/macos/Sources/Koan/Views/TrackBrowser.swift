@@ -29,6 +29,34 @@ struct TrackBrowser: View {
 
     private var tracks: [Track] { library.visibleTracks }
 
+    #if os(macOS)
+    /// The table's lines and the ids they hold, kept across the body runs a
+    /// queue patch or a pause cause: rebuilt when the listing is replaced, and
+    /// added to when a page lands on its end.
+    @State private var listing = Listing()
+
+    @MainActor
+    final class Listing {
+        private var revision: Int?
+        private(set) var lines: [TrackLine] = []
+        private(set) var ids: Set<Int64> = []
+
+        func update(_ tracks: [Track], revision: Int) {
+            if revision != self.revision || tracks.count < lines.count {
+                self.revision = revision
+                lines = []
+                ids = []
+            }
+            guard tracks.count > lines.count else { return }
+            for position in lines.count..<tracks.count {
+                let track = tracks[position]
+                lines.append(TrackLine(id: track.id, kind: .track(track), lead: "\(position + 1)", position: position))
+                ids.insert(track.id)
+            }
+        }
+    }
+    #endif
+
     var body: some View {
         VStack(spacing: 0) {
             #if os(macOS)
@@ -66,7 +94,9 @@ struct TrackBrowser: View {
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private var table: some View {
-        let lines = tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), lead: "\($0 + 1)", position: $0) }
+        listing.update(tracks, revision: library.tracksRevision)
+        let lines = listing.lines
+        let listed = listing.ids
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
@@ -76,7 +106,10 @@ struct TrackBrowser: View {
             AnyHashable(library.favouriteTrackIds),
             // What the queue says of the tracks listed here, and nothing it
             // says of others: a patch to a row elsewhere redraws nothing.
-            AnyHashable(tracks.map { queued[$0.id].map { "\($0.status)" } }),
+            // Read from whichever side is shorter.
+            lines.count <= queued.count
+                ? AnyHashable(lines.map { queued[$0.id].map { "\($0.status)" } })
+                : AnyHashable(queued.compactMap { listed.contains($0.key) ? "\($0.key):\($0.value.status)" : nil }.sorted()),
         ]
         let library = library
         let nav = nav
@@ -105,6 +138,7 @@ struct TrackBrowser: View {
                 selection: $selection,
                 make: TrackTableRow.init,
                 rowHeight: TrackTableRow.artHeight,
+                shape: AnyHashable([library.tracksRevision, lines.count]),
                 menu: { ids, environment in hostedMenu(menu(for: ids), environment: environment) },
                 primaryAction: play,
                 drag: \.transfer,

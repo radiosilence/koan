@@ -60,10 +60,16 @@ final class EngineMirror: Observable {
     private var _queueVersion: UInt64 = 0
     private var _queueStamp: UInt64 = 0
     private var _queueRowsStamp: UInt64 = 0
+    /// The rows each patch since the queue was last sent whole changed, by
+    /// the `queueStamp` it moved to: the latest few, enough for a view that
+    /// keeps up. `_wholeAt` is the stamp of that send.
+    private var _patchLog: [(stamp: UInt64, rows: [Int])] = []
+    private var _wholeAt: UInt64 = 0
     private var _queuedByTrack: [Int64: QueueItem] = [:]
     private var _queuedByPlaylistEntry: [Int64: QueueItem] = [:]
     private var _lock: QueueLock?
     private var _transfers: [Transfer] = []
+    private var _arrivingByAlbum: [Int64: [Int64]] = [:]
     private var _figures: [Int64: TransferFigure] = [:]
     private var _libraryVersion: UInt64 = 0
     private var _historyVersion: UInt64 = 0
@@ -240,6 +246,20 @@ final class EngineMirror: Observable {
         return _queueStamp
     }
 
+    /// The rows of `queue` that patches have changed since it was at
+    /// `stamp`, in no order, for a view to redo those and keep the rest. Nil
+    /// when the queue has been sent whole since, or `stamp` is further back
+    /// than is kept: the view starts again. Not observed — read alongside
+    /// `queueStamp`.
+    func rowsPatched(since stamp: UInt64) -> [Int]? {
+        guard stamp >= _wholeAt, stamp <= _queueStamp else { return nil }
+        if stamp == _queueStamp { return [] }
+        guard let oldest = _patchLog.first, oldest.stamp <= stamp + 1 else { return nil }
+        var rows: [Int] = []
+        for entry in _patchLog where entry.stamp > stamp { rows += entry.rows }
+        return rows
+    }
+
     /// Queue entries indexed by library track id, so a library row can say what
     /// the queue knows about it without scanning the queue once per row.
     ///
@@ -273,6 +293,14 @@ final class EngineMirror: Observable {
     var transfers: [Transfer] {
         access(\.transfers)
         return _transfers
+    }
+
+    /// The tracks still to settle in the download store, by record. Grouped
+    /// once as the transfers arrive, not once per tile that asks. Observed as
+    /// `transfers`.
+    var arrivingByAlbum: [Int64: [Int64]] {
+        access(\.transfers)
+        return _arrivingByAlbum
     }
 
     /// Bumped whenever the library's rows change — a scan, a sync, an import,
@@ -374,6 +402,8 @@ final class EngineMirror: Observable {
                     _queueVersion = version
                     _queueStamp &+= 1
                     _queueRowsStamp &+= 1
+                    _wholeAt = _queueStamp
+                    _patchLog = []
                     _patched = []
                     _queueAt = Dictionary(
                         items.enumerated().map { ($1.queueItemId, $0) },
@@ -404,6 +434,8 @@ final class EngineMirror: Observable {
                     _patched.append(row)
                     touched.append(row)
                 }
+                _patchLog.append((_queueStamp, touched))
+                if _patchLog.count > 16 { _patchLog.removeFirst() }
                 // A patch never changes which track or playlist entry a row
                 // is, so only those indexes need asking again.
                 for row in touched {
@@ -419,7 +451,14 @@ final class EngineMirror: Observable {
         case .lock(let lock):
             mutate(\.lock) { _lock = lock }
         case .transfers(let transfers):
-            mutate(\.transfers) { _transfers = transfers }
+            mutate(\.transfers) {
+                _transfers = transfers
+                var arriving: [Int64: [Int64]] = [:]
+                for transfer in transfers where !transfer.state.isSettled {
+                    if let album = transfer.albumId { arriving[album, default: []].append(transfer.trackId) }
+                }
+                _arrivingByAlbum = arriving
+            }
         case .figures(let figures):
             mutate(\.figures) {
                 _figures = Dictionary(
@@ -525,10 +564,15 @@ extension EngineMirror {
     ///
     /// Whichever arrives first resumes; the `Once` is what makes the other one
     /// harmless, since observation is registered for one change and a handler
-    /// that lost the race still fires.
+    /// that lost the race still fires. A change ends the sleep, rather than
+    /// leaving one task per change asleep until the deadline.
     private func nextChange(before deadline: ContinuousClock.Instant) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let once = Once()
+            let sleep = Task { @MainActor in
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if once.take() { continuation.resume() }
+            }
             withObservationTracking {
                 _ = playback
                 _ = playhead
@@ -540,12 +584,11 @@ extension EngineMirror {
                 _ = tasks
             } onChange: {
                 Task { @MainActor in
-                    if once.take() { continuation.resume() }
+                    if once.take() {
+                        sleep.cancel()
+                        continuation.resume()
+                    }
                 }
-            }
-            Task { @MainActor in
-                try? await Task.sleep(until: deadline, clock: .continuous)
-                if once.take() { continuation.resume() }
             }
         }
     }
