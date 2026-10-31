@@ -110,6 +110,9 @@ function storeQueue(queue: UiTrack[], cur: number) {
     storedStart = start;
     storedEnd = start + kept.length;
   } catch {
+    // Not tried again until the queue changes.
+    storedStart = 0;
+    storedEnd = Infinity;
     console.warn("koan: the queue is too large to keep for the next visit");
     localStorage.removeItem(STORE);
     localStorage.removeItem(PLACE);
