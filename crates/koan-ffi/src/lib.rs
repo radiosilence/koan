@@ -1059,7 +1059,11 @@ impl KoanEngine {
         self: Arc<Self>,
         track_ids: Vec<i64>,
     ) -> Result<Vec<String>, KoanError> {
-        offload::sequenced(move || self.place(&self.db()?, &track_ids, Placement::Append)).await
+        offload::sequenced(move || {
+            self.db()
+                .and_then(|db| self.place(&db, &track_ids, Placement::Append))
+        })
+        .await
     }
 
     /// Replace the queue, starting at `start_at` (default: the first track),
@@ -1082,11 +1086,8 @@ impl KoanEngine {
                 self.send(PlayerCommand::ClearPlaylist)?;
                 return Ok(Vec::new());
             }
-            self.place(
-                &self.db()?,
-                &track_ids,
-                Placement::Replace { start_at, shuffled },
-            )
+            let db = self.db()?;
+            self.place(&db, &track_ids, Placement::Replace { start_at, shuffled })
         })
         .await
     }
@@ -1098,8 +1099,9 @@ impl KoanEngine {
         after_queue_item_id: String,
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
+            let db = self.db()?;
             self.place(
-                &self.db()?,
+                &db,
                 &track_ids,
                 Placement::After {
                     queue_item_id: after_queue_item_id,
@@ -2654,7 +2656,7 @@ impl KoanEngine {
             let moved =
                 control::move_music(to.clone(), asked, &engine.tx, &engine.state, Some(then))
                     .map_err(|message| KoanError::Remote { message })?;
-            Ok(moved.map(|moved| match moved {
+            Ok::<_, KoanError>(moved.map(|moved| match moved {
                 Moved::Sent(sent) => HandedOff {
                     left_out: sent.left_out,
                     to,
@@ -4806,7 +4808,7 @@ impl KoanEngine {
         self: Arc<Self>,
         sources: Vec<TrackSet>,
     ) -> Result<Vec<i64>, KoanError> {
-        offload::offload(move || self.resolve_sources(&self.db()?, &sources)).await
+        offload::offload(move || self.db().and_then(|db| self.resolve_sources(&db, &sources))).await
     }
 
     /// Track IDs for several records, each in running order and the records
