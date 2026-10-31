@@ -72,9 +72,9 @@ impl MutationRoot {
     /// several linked and none of them playing lately it is an error naming
     /// them: ask the person which.
     ///
-    /// Replacing the queue turns repeat off and shuffle off, or on with
-    /// `shuffle`, as playing from a play button in the apps does; enqueueing
-    /// leaves the modes alone.
+    /// Replacing the queue turns shuffle and repeat off, as playing from a
+    /// play button in the apps does; with `shuffle` the tracks are queued in
+    /// a random order. Enqueueing leaves the order and the modes alone.
     async fn play_on_client(
         &self,
         ctx: &Context<'_>,

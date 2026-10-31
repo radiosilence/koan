@@ -316,8 +316,8 @@ final class PlayerModel {
     /// lands: a record, an artist or a playlist, whose tracks are a database
     /// read away. The engine reads them on its command lane, so the command
     /// takes its place in line now rather than once they are read. `shuffled`
-    /// plays it with shuffle on rather than off; the engine turns repeat off
-    /// either way.
+    /// queues it in a random order; the engine turns shuffle play and repeat
+    /// off either way.
     @discardableResult
     func playNow(
         _ sources: [TrackSet], named name: String, shuffled: Bool = false

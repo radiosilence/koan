@@ -137,9 +137,9 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 # same on a linked app, whose modes `clients { shuffle repeat }` reports.
 mutation { setPlayMode(shuffle: true, repeat: QUEUE) { ok } }
 
-# Replacing the queue to play it resets the modes, as a play button does:
-# shuffle and repeat off, or shuffle on with `shuffle: true` (`shuffled` on
-# playPlaylist). Enqueueing leaves them alone.
+# Replacing the queue to play it turns shuffle and repeat off, as a play
+# button does; `shuffle: true` (`shuffled` on playPlaylist) queues the tracks
+# in a random order. Enqueueing leaves the order and the modes alone.
 mutation { playOnClient(trackIds: ["42", "43"], shuffle: true) { ok } }
 
 # Stop after 30 minutes, fading out, or at the end of the record (endOf:

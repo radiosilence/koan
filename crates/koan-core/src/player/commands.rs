@@ -97,8 +97,8 @@ pub enum PlayerCommand {
     /// where the source stopped without the top of the track being heard.
     ///
     /// `mode` says whether the play mode is reset, as a play from a play
-    /// button resets it. Shuffled, the track opened is the play order's
-    /// first, not `start`.
+    /// button resets it. Shuffled, the items are dealt in a random order and
+    /// the first of them opens, not `start`.
     ReplacePlaylist {
         items: Vec<PlaylistItem>,
         start: usize,
