@@ -5,10 +5,15 @@ use super::state::{PlaylistItem, QueueItemId};
 /// Maximum number of undo entries retained.
 const MAX_UNDO_DEPTH: usize = 100;
 
-/// Maximum number of queue rows the entries of one stack hold between them.
-/// A replaced queue is kept whole, so depth alone lets a hundred replacements
-/// of a large library sit in memory. The newest entry is always kept.
-const MAX_UNDO_ROWS: usize = 200_000;
+/// Maximum number of queue rows the entries of one stack hold between them,
+/// at roughly half a kilobyte a row. A replaced queue is kept whole, so depth
+/// alone lets a hundred replacements of a large library sit in memory. The
+/// newest entry is always kept.
+const MAX_UNDO_ROWS: usize = 50_000;
+
+/// Ids counted as one row: an entry that names rows by id holds a small
+/// fraction of what one holding the rows does.
+const IDS_PER_ROW: usize = 16;
 
 /// A reversible playlist operation. Stores enough state to undo/redo.
 ///
@@ -50,13 +55,15 @@ pub enum UndoEntry {
 }
 
 impl UndoEntry {
-    /// How many queue rows the entry holds.
+    /// How many queue rows' worth of memory the entry holds.
     fn rows(&self) -> usize {
         match self {
-            UndoEntry::Added { ids } | UndoEntry::Inserted { ids } => ids.len(),
+            UndoEntry::Added { ids } | UndoEntry::Inserted { ids } => {
+                ids.len().div_ceil(IDS_PER_ROW)
+            }
             UndoEntry::Removed { items } => items.len(),
             UndoEntry::Moved { .. } => 1,
-            UndoEntry::MovedBatch { entries } => entries.len(),
+            UndoEntry::MovedBatch { entries } => entries.len().div_ceil(IDS_PER_ROW),
             UndoEntry::Replaced { items, .. } => items.len(),
             UndoEntry::Batch(entries) => entries.iter().map(UndoEntry::rows).sum(),
         }
@@ -140,19 +147,27 @@ mod tests {
         QueueItemId::new()
     }
 
-    fn replaced(rows: usize) -> UndoEntry {
-        UndoEntry::Replaced {
-            items: Vec::new(),
-            cursor: None,
-        }
-        .with_rows(rows)
-    }
-
-    impl UndoEntry {
-        fn with_rows(self, rows: usize) -> Self {
-            UndoEntry::Added {
-                ids: (0..rows).map(|_| dummy_id()).collect(),
-            }
+    fn removed(rows: usize) -> UndoEntry {
+        let item = PlaylistItem {
+            uid: None,
+            playlist_entry_id: None,
+            id: dummy_id(),
+            db_id: None,
+            path: "/x.flac".into(),
+            title: String::new(),
+            artist: String::new(),
+            album_artist: String::new(),
+            album: String::new(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            state: super::super::state::ItemState::Ready,
+            played: false,
+        };
+        UndoEntry::Removed {
+            items: (0..rows).map(|_| (Box::new(item.clone()), None)).collect(),
         }
     }
 
@@ -160,15 +175,25 @@ mod tests {
     fn large_entries_are_bounded_by_rows() {
         let mut stack = UndoStack::new();
         for _ in 0..10 {
-            stack.push(replaced(50_000));
+            stack.push(removed(10_000));
         }
-        assert_eq!(stack.undo_len(), MAX_UNDO_ROWS / 50_000);
-        stack.push(replaced(MAX_UNDO_ROWS * 2));
+        assert_eq!(stack.undo_len(), MAX_UNDO_ROWS / 10_000);
+        stack.push(removed(MAX_UNDO_ROWS * 2));
         assert_eq!(
             stack.undo_len(),
             1,
             "the newest entry is kept whatever its size"
         );
+    }
+
+    #[test]
+    fn entries_of_ids_weigh_less_than_entries_of_rows() {
+        let mut stack = UndoStack::new();
+        stack.push(removed(MAX_UNDO_ROWS / 2));
+        stack.push(UndoEntry::Added {
+            ids: (0..MAX_UNDO_ROWS).map(|_| dummy_id()).collect(),
+        });
+        assert_eq!(stack.undo_len(), 2);
     }
 
     #[test]

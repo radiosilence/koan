@@ -2195,9 +2195,37 @@ impl SharedPlayerState {
         let ids: Vec<QueueItemId> = pl.items.iter().map(|i| i.id).collect();
         let mut prev: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::with_capacity(ids.len());
         let mut next: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::with_capacity(ids.len());
-        for (i, &id) in ids.iter().enumerate() {
-            prev.insert(id, i.checked_sub(1).map(|p| ids[p]));
-            next.insert(id, ids.get(i + 1).copied());
+        if entries.len() > 1 {
+            for (i, &id) in ids.iter().enumerate() {
+                prev.insert(id, i.checked_sub(1).map(|p| ids[p]));
+                next.insert(id, ids.get(i + 1).copied());
+            }
+        }
+        // A single move, or a queue whose ids are not unique, which links
+        // cannot describe: one row at a time.
+        if entries.len() <= 1 || next.len() != ids.len() {
+            let mut moved = false;
+            for &(id, after) in entries {
+                let Some(from) = pl.items.iter().position(|item| item.id == id) else {
+                    continue;
+                };
+                let item = pl.items.remove(from);
+                let at = match after {
+                    Some(a) => pl
+                        .items
+                        .iter()
+                        .position(|i| i.id == a)
+                        .map_or(pl.items.len(), |p| p + 1),
+                    None => 0,
+                };
+                pl.items.insert(at, item);
+                moved = true;
+            }
+            drop(pl);
+            if moved {
+                self.bump_content();
+            }
+            return;
         }
         let mut head = ids.first().copied();
         let mut tail = ids.last().copied();
