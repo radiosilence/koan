@@ -82,12 +82,13 @@ final class SharingModel {
         tailscaleChecked = true
     }
 
-    /// Publish on the internet through Tailscale Funnel, and send invites there.
-    func enableFunnel() async {
+    /// Where invites send phones: `network`, `tailnet`, `funnel` (publishing
+    /// through Tailscale Funnel) or `custom`.
+    func setInviteTo(_ to: String) async {
         busy = true
         defer { busy = false }
         do {
-            _ = try await engine.enableFunnel()
+            try await engine.setInviteTo(to: to)
             funnelError = nil
         } catch {
             funnelError = Self.reason(error)
@@ -96,17 +97,14 @@ final class SharingModel {
         await refreshTailscale()
     }
 
-    func disableFunnel() async {
-        busy = true
-        defer { busy = false }
+    /// `nil` when changed, else why not.
+    func resetPassword(_ password: String) async -> String? {
         do {
-            try await engine.disableFunnel()
-            funnelError = nil
+            try await engine.resetServerAdminPassword(password: password)
+            return nil
         } catch {
-            funnelError = Self.reason(error)
+            return Self.reason(error)
         }
-        revision += 1
-        await refreshTailscale()
     }
 
     /// Read the network address again, after a change of network.

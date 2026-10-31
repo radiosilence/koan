@@ -332,6 +332,12 @@ final class SettingsModel {
         lastError = message
     }
 
+    /// What something done outside this model came to, shown as its own are.
+    func done(_ message: String) {
+        lastError = nil
+        lastResult = message
+    }
+
     static func describe(_ error: Error) -> String {
         switch error {
         case let KoanError.BadArgument(message): message

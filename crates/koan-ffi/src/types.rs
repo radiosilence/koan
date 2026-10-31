@@ -2268,8 +2268,9 @@ pub struct Settings {
     /// This device serves its library whenever the app is open.
     pub share_enabled: bool,
     pub share_port: u16,
-    /// Invites go to the tailnet name where Tailscale runs.
-    pub share_tailnet_invites: bool,
+    /// Where invites send phones: `network`, `tailnet` or `public`. Read
+    /// only here; `set_invite_to` changes it, Funnel with it.
+    pub share_invite_to: String,
     /// `server.url`: where a tunnel publishes this device, which invites
     /// send phones to. Empty when there is none.
     pub server_url: String,

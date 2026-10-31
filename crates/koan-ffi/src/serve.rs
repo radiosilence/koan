@@ -116,21 +116,21 @@ pub(crate) fn refuse_while_sharing() -> Result<(), KoanError> {
     }
 }
 
-/// The address invites send phones to while sharing: `server.url` where
-/// Funnel or a tunnel publishes this device; else its tailnet name, where
-/// Tailscale runs and invites go there; else its address on the network.
+/// The address invites send phones to while sharing, by `share.invite_to`:
+/// `server.url`, the tailnet name, or the address on the network, which is
+/// also where the first two fall back to while they have nothing.
 pub(crate) fn invite_base() -> Option<String> {
+    use koan_core::config::InviteTo;
     let port = SERVING.read().as_ref()?.port;
     let cfg = koan_core::config::Config::cached();
-    cfg.server_url()
-        .or_else(|| {
-            cfg.share
-                .tailnet_invites
-                .then(koan_core::tailscale::status)
-                .flatten()
-                .map(|t| format!("http://{}:{port}", t.name))
-        })
-        .or_else(|| sharing(port).lan_url)
+    match cfg.share.invite_to {
+        InviteTo::Public => cfg.server_url(),
+        InviteTo::Tailnet => {
+            koan_core::tailscale::status().map(|t| format!("http://{}:{port}", t.name))
+        }
+        InviteTo::Network => None,
+    }
+    .or_else(|| sharing(port).lan_url)
 }
 
 #[uniffi::export]
@@ -187,7 +187,9 @@ impl KoanEngine {
                 client,
             });
             *server = Some(started);
-            koan_core::signal::engine_changed().bump();
+            // Settings offers its sections by the connection slice, which is
+            // published again when this moves.
+            koan_core::remote::devices::touch();
             if koan_core::config::Config::cached().share.funnel {
                 republish(before, port);
             }
@@ -203,7 +205,9 @@ impl KoanEngine {
         offload::offload(move || {
             let mut server = self.server.lock();
             let port = SERVING.write().take().map(|s| s.port);
-            koan_core::signal::engine_changed().bump();
+            // Settings offers its sections by the connection slice, which is
+            // published again when this moves.
+            koan_core::remote::devices::touch();
             // Taken down with the server, which it would otherwise answer
             // for with errors; `share.funnel` stays, for the next start.
             if koan_core::config::Config::cached().share.funnel
@@ -247,56 +251,88 @@ impl KoanEngine {
         .await
     }
 
-    /// Publish the library on the internet through Tailscale Funnel, now and
-    /// whenever it is served, and send invites to its address there.
-    /// Returns the address.
-    pub async fn enable_funnel(self: Arc<Self>) -> Result<String, KoanError> {
+    /// Where invites send phones: `network`, `tailnet`, `funnel` or
+    /// `custom`. `funnel` publishes the library on the internet through
+    /// Tailscale Funnel, now and whenever it is served, at an address invites
+    /// then use; any other choice stops publishing. `custom` sends invites to
+    /// the public address typed in Settings, emptied when it was Funnel's.
+    pub async fn set_invite_to(self: Arc<Self>, to: String) -> Result<(), KoanError> {
+        use koan_core::config::InviteTo;
         offload::offload(move || {
-            let port =
-                SERVING
-                    .read()
+            let port = SERVING.read().as_ref().map(|s| s.port);
+            let tailscale = koan_core::tailscale::status();
+            let funnelled = |url: &str| {
+                tailscale
                     .as_ref()
-                    .map(|s| s.port)
-                    .ok_or_else(|| KoanError::Refused {
+                    .is_some_and(|t| url.starts_with(&format!("https://{}", t.name)))
+            };
+            let funnel_url = match to.as_str() {
+                "funnel" => {
+                    let port = port.ok_or_else(|| KoanError::Refused {
                         message: "start sharing first".into(),
                     })?;
-            let url = koan_core::tailscale::funnel(port).map_err(funnel_error)?;
-            let address = url.clone();
+                    Some(koan_core::tailscale::funnel(port).map_err(funnel_error)?)
+                }
+                "network" | "tailnet" | "custom" => {
+                    if let Some(port) = port {
+                        koan_core::tailscale::funnel_off(port).map_err(funnel_error)?;
+                    }
+                    None
+                }
+                other => {
+                    return Err(KoanError::BadArgument {
+                        message: format!("{other:?} is not where invites can go"),
+                    });
+                }
+            };
             koan_core::config::Config::persist(move |cfg| {
-                cfg.share.funnel = true;
-                cfg.server.url = Some(address);
-            })
-            .map_err(|e| KoanError::BadArgument {
-                message: e.to_string(),
-            })?;
-            Ok(url)
-        })
-        .await
-    }
-
-    /// Stop publishing through Funnel. The public address goes with it, where
-    /// it was Funnel's.
-    pub async fn disable_funnel(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::offload(move || {
-            let tailscale = koan_core::tailscale::status();
-            if let Some(port) = SERVING.read().as_ref().map(|s| s.port) {
-                koan_core::tailscale::funnel_off(port).map_err(funnel_error)?;
-            }
-            koan_core::config::Config::persist(move |cfg| {
-                cfg.share.funnel = false;
-                // Any of Funnel's addresses for this machine is Funnel's.
-                let funnels = |url: &str| {
-                    tailscale
-                        .as_ref()
-                        .is_some_and(|t| url.starts_with(&format!("https://{}", t.name)))
+                cfg.share.funnel = funnel_url.is_some();
+                cfg.share.invite_to = match to.as_str() {
+                    "network" => InviteTo::Network,
+                    "tailnet" => InviteTo::Tailnet,
+                    _ => InviteTo::Public,
                 };
-                if cfg.server.url.as_deref().is_some_and(funnels) {
-                    cfg.server.url = None;
+                match funnel_url {
+                    Some(url) => cfg.server.url = Some(url),
+                    // A public address only invites use; Funnel's goes with it.
+                    None if to != "custom" || cfg.server.url.as_deref().is_some_and(funnelled) => {
+                        cfg.server.url = None;
+                    }
+                    None => {}
                 }
             })
             .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })
+        })
+        .await
+    }
+
+    /// Give the account the library is shared under a new password. This
+    /// device is the server's host, so the old one is not asked for. Signs
+    /// the account's other devices out.
+    pub async fn reset_server_admin_password(
+        self: Arc<Self>,
+        password: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            use koan_core::db::queries::auth;
+            let db = self.db()?;
+            let id = auth::first_admin(&db.conn)
+                .map_err(crate::db_err)?
+                .ok_or_else(|| KoanError::NotFound {
+                    message: "this library has no account yet".into(),
+                })?;
+            let user = auth::get_user_by_id(&db.conn, id)
+                .map_err(crate::db_err)?
+                .ok_or_else(|| KoanError::NotFound {
+                    message: "this library has no account yet".into(),
+                })?;
+            koan_core::invite::set_password(&db.conn, &user.username, Some(&password))
+                .map(|_| ())
+                .map_err(|e| KoanError::BadArgument {
+                    message: e.to_string(),
+                })
         })
         .await
     }

@@ -71,6 +71,8 @@ struct ShareSettings: View {
     @State private var visits = 0
     /// Asking before the library goes on the internet.
     @State private var confirmingFunnel = false
+    @State private var resettingPassword = false
+    @State private var newPassword = ""
 
     var body: some View {
         let sharing = app.sharing
@@ -174,7 +176,30 @@ struct ShareSettings: View {
             if let failure = sharing.failure {
                 KoanLabel(failure, icon: Icon.warning).koanText(.meta, .bad)
             }
-            LabeledContent("Account", value: account)
+            LabeledContent("Account") {
+                HStack(spacing: KoanTheme.Space.l) {
+                    Text(account)
+                    Button("Reset Password…") { resettingPassword = true }
+                        .koanButton(.compact, system: .bordered)
+                }
+            }
+            .alert("New password for \(account)", isPresented: $resettingPassword) {
+                SecureField("New password", text: $newPassword)
+                Button("Reset") {
+                    let password = newPassword
+                    newPassword = ""
+                    Task {
+                        if let reason = await app.sharing.resetPassword(password) {
+                            model.report(reason)
+                        } else {
+                            model.done("\(account)'s password is changed. Its other devices sign in again.")
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) { newPassword = "" }
+            } message: {
+                Text("Its phones and other devices are signed out and sign in again with the new one.")
+            }
             LabeledContent("Port") {
                 TextField("Port", text: Binding(
                     get: { port ?? String(model.settings.sharePort) },
@@ -203,73 +228,75 @@ struct ShareSettings: View {
 
     // MARK: Away from home
 
+    /// What "Invite phones to" shows: the setting, with `public` told apart
+    /// by whether Funnel is what publishes it.
+    private func inviteChoice(_ sharing: SharingModel) -> String {
+        switch model.settings.shareInviteTo {
+        case "public": sharing.tailscale?.funnelUrl != nil ? "funnel" : "custom"
+        case let to: to
+        }
+    }
+
+    /// The address invites use when nothing is typed: the tailnet's, else the
+    /// network's.
+    private func derivedAddress(_ sharing: SharingModel) -> String {
+        guard let running = sharing.sharing else { return "" }
+        if let tailscale = sharing.tailscale { return "http://\(tailscale.name):\(running.port)" }
+        return running.lanUrl ?? ""
+    }
+
     @ViewBuilder
     private func awayFromHome(_ sharing: SharingModel) -> some View {
+        let choice = inviteChoice(sharing)
         Section {
             LabeledContent("Tailscale") {
                 if let tailscale = sharing.tailscale {
                     Text("Detected · \(tailscale.name)")
                 } else if sharing.tailscaleChecked {
-                    Text("Not detected")
+                    Link("Not detected · Get Tailscale", destination: URL(string: "https://tailscale.com/download")!)
                 } else {
                     ProgressView().controlSize(.small)
                 }
             }
-            if let tailscale = sharing.tailscale {
-                if let running = sharing.sharing {
-                    // Inside the tailnet, WireGuard already encrypts it.
-                    LabeledContent("On your tailnet", value: "http://\(tailscale.name):\(running.port)")
+            KoanPicker("Invite phones to", selection: Binding(
+                get: { choice },
+                set: { to in
+                    guard to != choice else { return }
+                    if to == "funnel" {
+                        confirmingFunnel = true
+                    } else {
+                        Task { await sharing.setInviteTo(to) }
+                    }
                 }
-                KoanPicker("Invite phones to", selection: Binding(
-                    get: { model.settings.shareTailnetInvites },
-                    set: { on in
-                        model.edit { $0.shareTailnetInvites = on }
-                        // The code on screen is for the old address.
-                        visits += 1
-                    }
-                ), options: [("Your tailnet", true), ("This network", false)])
-                if let url = tailscale.funnelUrl {
-                    LabeledContent("On the internet", value: url)
-                    HStack {
-                        Button("Stop Publishing") { Task { await sharing.disableFunnel() } }
-                            .koanButton(.bordered)
-                            .disabled(sharing.busy)
-                        Spacer()
-                    }
-                    .rowButtons()
-                } else if tailscale.funnelAllowed {
-                    HStack {
-                        Button("Publish with Tailscale Funnel…") { confirmingFunnel = true }
-                            .koanButton(.bordered)
-                            .disabled(sharing.busy || sharing.sharing == nil)
-                        Spacer()
-                    }
-                    .rowButtons()
-                } else {
-                    Text("Funnel is off for your tailnet. Its admin turns it on in Tailscale's access controls.")
-                        .koanText(.meta, .muted)
+            ), options: inviteOptions(sharing, choice: choice))
+            .disabled(sharing.busy)
+            switch choice {
+            case "tailnet" where sharing.tailscale != nil, "network":
+                LabeledContent("Address", value: derivedAddress(sharing, network: choice == "network"))
+            case "funnel":
+                LabeledContent("Address", value: sharing.tailscale?.funnelUrl ?? "")
+            case "custom":
+                LabeledContent("Address") {
+                    TextField("Address", text: Binding(
+                        get: { publicAddress ?? model.settings.serverUrl },
+                        set: { publicAddress = $0 }
+                    ), prompt: Text(derivedAddress(sharing)))
+                    .verbatimEntry(.url)
+                    .onSubmit(commitPublicAddress)
+                    .koanField(publicAddress ?? model.settings.serverUrl, prompt: derivedAddress(sharing))
                 }
-            } else if sharing.tailscaleChecked {
-                Link("Get Tailscale", destination: URL(string: "https://tailscale.com/download")!)
+            default:
+                // The tailnet chosen, and Tailscale not running: invites fall
+                // back to the network's address.
+                LabeledContent("Address", value: derivedAddress(sharing, network: true))
             }
             if let funnelError = sharing.funnelError {
                 KoanLabel(funnelError, icon: Icon.warning).koanText(.meta, .bad)
             }
-            LabeledContent("Public address") {
-                TextField("Public address", text: Binding(
-                    get: { publicAddress ?? model.settings.serverUrl },
-                    set: { publicAddress = $0 }
-                ), prompt: Text("https://mac.example.ts.net"))
-                .verbatimEntry(.url)
-                .onSubmit(commitPublicAddress)
-                .koanField(publicAddress ?? model.settings.serverUrl, prompt: "https://mac.example.ts.net")
-            }
         } header: {
             KoanSectionHeader("Away from home")
         } footer: {
-            Text(sharing.tailscale == nil
-                ? "Tailscale on this Mac and your phone reaches it from anywhere, encrypted, and can publish it on the internet. Otherwise a tunnel's HTTPS address goes under Public address, and invites send phones there."
-                : "With Tailscale on your phone too, it reaches this Mac from anywhere, encrypted, and nothing is on the internet. Funnel publishes it on the internet, over HTTPS, for phones without Tailscale. A public address, when set, is where invites go.")
+            Text(inviteNote(choice))
                 .koanText(.fine, .muted)
         }
         .task { await sharing.refreshTailscale() }
@@ -278,13 +305,38 @@ struct ShareSettings: View {
             isPresented: $confirmingFunnel,
             titleVisibility: .visible
         ) {
-            Button("Publish") { Task { await sharing.enableFunnel() } }
+            Button("Publish") { Task { await sharing.setInviteTo("funnel") } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Tailscale Funnel publishes this Mac at https://\(sharing.tailscale?.name ?? "") with a certificate of its own, and keeps it published whenever this Mac shares. Anyone can reach it; only accounts made here can sign in. Invites will send phones there.")
+            Text("Tailscale Funnel publishes this Mac at https://\(sharing.tailscale?.name ?? "") with a certificate of its own, and keeps it published whenever this Mac shares. Anyone can reach it; only accounts made here can sign in.")
         }
         // The engine wrote the address Funnel publishes at.
         .onChange(of: sharing.revision) { model.reload() }
+    }
+
+    private func derivedAddress(_ sharing: SharingModel, network: Bool) -> String {
+        network ? (sharing.sharing?.lanUrl ?? "") : derivedAddress(sharing)
+    }
+
+    private func inviteOptions(_ sharing: SharingModel, choice: String) -> [(label: String, value: String)] {
+        var options: [(label: String, value: String)] = [("This network", "network")]
+        if sharing.tailscale != nil || choice == "tailnet" {
+            options.append((sharing.tailscale != nil ? "Your tailnet" : "Your tailnet (Tailscale not running)", "tailnet"))
+        }
+        if sharing.tailscale?.funnelAllowed == true || choice == "funnel" {
+            options.append(("Tailscale Funnel", "funnel"))
+        }
+        options.append(("Custom address", "custom"))
+        return options
+    }
+
+    private func inviteNote(_ choice: String) -> String {
+        switch choice {
+        case "network": "Phones reach this Mac on your network only."
+        case "tailnet": "Phones with Tailscale reach this Mac from anywhere, encrypted, and nothing is on the internet."
+        case "funnel": "On the internet over HTTPS, for phones without Tailscale. Taken down when this Mac stops sharing, and put back when it starts."
+        default: "A tunnel's HTTPS address, such as Cloudflare Tunnel's. Empty, invites use the address shown."
+        }
     }
 
     private func setSharing(_ on: Bool) {
@@ -326,12 +378,6 @@ struct ShareSettings: View {
             return
         }
         model.edit { $0.serverUrl = address }
-        // The address is this Mac's tailnet name, which only Funnel serves:
-        // offered as the way to make it work.
-        if let tailscale = app.sharing.tailscale, tailscale.funnelUrl == nil, tailscale.funnelAllowed,
-           URL(string: address)?.host() == tailscale.name {
-            confirmingFunnel = true
-        }
         restartIfSharing()
     }
 

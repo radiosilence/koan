@@ -4030,7 +4030,11 @@ impl KoanEngine {
                 devices_keep_running: cfg.devices.keep_running,
                 share_enabled: cfg.share.enabled,
                 share_port: cfg.share.port,
-                share_tailnet_invites: cfg.share.tailnet_invites,
+                share_invite_to: match cfg.share.invite_to {
+                    config::InviteTo::Network => "network".into(),
+                    config::InviteTo::Tailnet => "tailnet".into(),
+                    config::InviteTo::Public => "public".into(),
+                },
                 server_url: cfg.server.url.clone().unwrap_or_default(),
             }
         })
@@ -4082,7 +4086,6 @@ impl KoanEngine {
                 cfg.devices.keep_running = s.devices_keep_running;
                 cfg.share.enabled = s.share_enabled;
                 cfg.share.port = s.share_port;
-                cfg.share.tailnet_invites = s.share_tailnet_invites;
                 let url = s.server_url.trim().trim_end_matches('/');
                 cfg.server.url = (!url.is_empty()).then(|| url.to_owned());
                 cfg.devices.refused = s.devices_refused.clone();

@@ -123,10 +123,22 @@ pub struct ShareConfig {
     /// Publish the server on the internet through Tailscale Funnel whenever
     /// it serves, at the machine's tailnet name.
     pub funnel: bool,
-    /// Where Tailscale runs, send invites to the machine's tailnet name
-    /// rather than its address on the local network: phones with Tailscale
-    /// reach it from anywhere, encrypted.
-    pub tailnet_invites: bool,
+    /// Where invites send phones.
+    pub invite_to: InviteTo,
+}
+
+/// Where a sharing machine's invites send phones.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InviteTo {
+    /// Its address on the local network.
+    Network,
+    /// Its Tailscale name, where Tailscale runs: phones with Tailscale reach
+    /// it from anywhere, encrypted. The local address where it does not.
+    #[default]
+    Tailnet,
+    /// `server.url`: Funnel's address, or a tunnel's.
+    Public,
 }
 
 impl Default for ShareConfig {
@@ -135,7 +147,7 @@ impl Default for ShareConfig {
             enabled: false,
             port: 4000,
             funnel: false,
-            tailnet_invites: true,
+            invite_to: InviteTo::default(),
         }
     }
 }
@@ -1518,7 +1530,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "share.enabled"
         | "share.port"
         | "share.funnel"
-        | "share.tailnet_invites"
+        | "share.invite_to"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
