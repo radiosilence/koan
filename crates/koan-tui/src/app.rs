@@ -581,14 +581,15 @@ impl App {
     /// Toggle favourite status for a track. Returns true if now favourite.
     pub fn toggle_favourite(&mut self, track_id: i64) -> bool {
         use koan_core::db::queries;
-        // One transaction with the change it queues for the server, so a sync
-        // importing the server's favourites sees both or neither.
+        use koan_core::helpers::{FavouriteKind, set_favourite};
         if let Ok(db) = koan_core::db::pool::shared().get()
-            && let Ok(is_fav) = queries::atomically(&db.conn, || {
-                let now = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)?;
-                koan_core::helpers::sync_favourite_to_remote(&db, track_id, now);
-                Ok::<_, koan_core::db::connection::DbError>(now)
-            })
+            && let Ok(Some(is_fav)) = set_favourite(
+                &db,
+                queries::LOCAL_USER,
+                FavouriteKind::Track,
+                track_id,
+                None,
+            )
         {
             if is_fav {
                 self.favourites.insert(track_id);
@@ -608,18 +609,9 @@ impl App {
         let Ok(db) = koan_core::db::pool::shared().get() else {
             return;
         };
-        let now = queries::atomically(&db.conn, || {
-            let now = match kind {
-                FavouriteKind::Album => {
-                    queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, id)?
-                }
-                _ => queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, id)?,
-            };
-            koan_core::helpers::sync_collection_favourite_to_remote(&db, kind, id, now);
-            Ok::<_, koan_core::db::connection::DbError>(now)
-        });
+        let now = koan_core::helpers::set_favourite(&db, queries::LOCAL_USER, kind, id, None);
         drop(db);
-        let Ok(now) = now else {
+        let Ok(Some(now)) = now else {
             return;
         };
         self.say(match (kind, now) {

@@ -104,7 +104,8 @@ pub fn sync_remote(
         library
     };
     cancelled()?;
-    let favourites = reconcile_favourites(db, client);
+    let favourites =
+        reconcile_favourites(db, client).map_err(crate::db::connection::DbError::from)?;
     cancelled()?;
     let playlists = crate::playlists::reconcile_playlists(db, client, url, username);
     cancelled()?;

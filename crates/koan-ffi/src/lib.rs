@@ -1876,24 +1876,23 @@ impl KoanEngine {
     /// Returns the new state. Syncs to the remote server in the background when
     /// one is configured.
     pub async fn toggle_favourite(self: Arc<Self>, track_id: i64) -> Result<bool, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            queries::get_track_row(&db.conn, track_id)
-                .map_err(db_err)?
-                .ok_or_else(|| KoanError::NotFound {
-                    message: format!("track {track_id}"),
-                })?;
-            // One transaction with the change it queues for the server, so a
-            // sync importing the server's favourites sees both or neither.
-            let now_favourite = queries::atomically(&db.conn, || {
-                let now = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)?;
-                koan_core::helpers::sync_favourite_to_remote(&db, track_id, now);
-                Ok(now)
-            })
-            .map_err(fav_err)?;
-            Ok(now_favourite)
-        })
-        .await
+        self.toggle(koan_core::helpers::FavouriteKind::Track, track_id)
+            .await
+    }
+
+    /// Toggle an album favourite. Returns the new state.
+    pub async fn toggle_favourite_album(self: Arc<Self>, album_id: i64) -> Result<bool, KoanError> {
+        self.toggle(koan_core::helpers::FavouriteKind::Album, album_id)
+            .await
+    }
+
+    /// Toggle an artist favourite. Returns the new state.
+    pub async fn toggle_favourite_artist(
+        self: Arc<Self>,
+        artist_id: i64,
+    ) -> Result<bool, KoanError> {
+        self.toggle(koan_core::helpers::FavouriteKind::Artist, artist_id)
+            .await
     }
 
     /// Every favourited track id, for the UI to read row state from one place
@@ -1933,62 +1932,6 @@ impl KoanEngine {
                     .into_iter()
                     .collect(),
             )
-        })
-        .await
-    }
-
-    /// Toggle an album favourite. Returns the new state.
-    pub async fn toggle_favourite_album(self: Arc<Self>, album_id: i64) -> Result<bool, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            queries::get_album(&db.conn, album_id)
-                .map_err(db_err)?
-                .ok_or_else(|| KoanError::NotFound {
-                    message: format!("album {album_id}"),
-                })?;
-            // As for a track: the favourite and its queued change together.
-            let now = queries::atomically(&db.conn, || {
-                let now = queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, album_id)?;
-                koan_core::helpers::sync_collection_favourite_to_remote(
-                    &db,
-                    koan_core::helpers::FavouriteKind::Album,
-                    album_id,
-                    now,
-                );
-                Ok(now)
-            })
-            .map_err(fav_err)?;
-            Ok(now)
-        })
-        .await
-    }
-
-    /// Toggle an artist favourite. Returns the new state.
-    pub async fn toggle_favourite_artist(
-        self: Arc<Self>,
-        artist_id: i64,
-    ) -> Result<bool, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            queries::get_artist(&db.conn, artist_id)
-                .map_err(db_err)?
-                .ok_or_else(|| KoanError::NotFound {
-                    message: format!("artist {artist_id}"),
-                })?;
-            // As for a track: the favourite and its queued change together.
-            let now = queries::atomically(&db.conn, || {
-                let now =
-                    queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, artist_id)?;
-                koan_core::helpers::sync_collection_favourite_to_remote(
-                    &db,
-                    koan_core::helpers::FavouriteKind::Artist,
-                    artist_id,
-                    now,
-                );
-                Ok(now)
-            })
-            .map_err(fav_err)?;
-            Ok(now)
         })
         .await
     }
@@ -5150,6 +5093,22 @@ impl OrganizeSelection {
 // --- Internals -------------------------------------------------------------
 
 impl KoanEngine {
+    async fn toggle(
+        self: Arc<Self>,
+        kind: koan_core::helpers::FavouriteKind,
+        id: i64,
+    ) -> Result<bool, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            koan_core::helpers::set_favourite(&db, queries::LOCAL_USER, kind, id, None)
+                .map_err(fav_err)?
+                .ok_or_else(|| KoanError::NotFound {
+                    message: format!("{kind:?} {id}"),
+                })
+        })
+        .await
+    }
+
     /// Watch shared state and publish what changed.
     ///
     /// Woken rather than timed: every setter on `SharedPlayerState`, the

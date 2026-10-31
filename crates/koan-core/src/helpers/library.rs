@@ -249,6 +249,7 @@ pub fn forget_account_state(conn: &rusqlite::Connection) -> rusqlite::Result<()>
     conn.execute_batch(
         "DELETE FROM history_outbox;
          DELETE FROM favourite_outbox;
+         DELETE FROM favourite_server_stars;
          UPDATE remote_servers SET history_cursor = NULL;
          DELETE FROM dsp_synced;
          DELETE FROM dsp_sync_cursor;",
