@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.69.1
+
+### Changed
+
+- **Play shuffled deals the queue.** Shuffle beside Play queues the tracks in a random order and plays from the top, with shuffle play off, rather than turning shuffle play on; the queue shows the order they will play in, and its dice can deal the rest again.
+
+### Fixed
+
+- **A sharing Mac keeps to its own.** It takes down only the Tailscale Funnel it published, including when kōan quits; refuses a port another app already holds on this Mac; serves Subsonic and share pages only, so no invited account can drive its player; and keeps its public address in `share.url`, leaving `server.url` to a headless server on the same Mac.
+- **The queue's dice after a shuffled play.** It often had nothing to shuffle once shuffle play was turned off, and on the Mac it was drawn in the accent colour rather than the header's ink.
+
 ## 0.69.0
 
 ### Added
