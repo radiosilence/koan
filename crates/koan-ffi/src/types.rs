@@ -1380,6 +1380,10 @@ pub enum KoanError {
     /// server that answered and said no — this one is worth retrying.
     #[error("remote: {message}")]
     Remote { message: String },
+    /// The server answered and will not do it: it lacks the feature, or
+    /// refuses this account. Asking again changes nothing.
+    #[error("{message}")]
+    Refused { message: String },
     /// An import of coefficients that say nothing of their rate. Ask, and
     /// import again with one.
     #[error("{message}")]
