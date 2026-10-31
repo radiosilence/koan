@@ -30,10 +30,10 @@ lru = "0.19"
 rayon = "1"
 nucleo = "0.5"
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 md5 = "0.8"
 reqwest = { workspace = true, features = ["stream"] }
-rmcp = { version = "3.7", features = ["server", "macros", "transport-async-rw", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "3.8", features = ["server", "macros", "transport-async-rw", "transport-io", "transport-streamable-http-server"] }
 rusqlite = { workspace = true }
 sha2 = "0.11"
 subtle = "2"
@@ -46,15 +46,15 @@ tokio-util = { version = "0.7", features = ["io"] }
 tower = { version = "0.5", features = ["util", "limit", "load-shed"] }
 tower-http = { version = "0.7", features = ["catch-panic", "cors", "limit", "timeout"] }
 uuid = { version = "1.29.0", features = ["v7"] }
-zip = { version = "9.0.5", default-features = false }
+zip = { version = "9.1.3", default-features = false }
 chrono = "0.4"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 askama = "0.16"
 
-# Strips the types from scripts/*.ts (build.rs). 0.110 is the newest release
-# within the workspace's rust-version.
+# Strips the types from scripts/*.ts (build.rs). Pinned exactly: oxc's minor
+# releases break its API.
 [build-dependencies]
-oxc = { version = "=0.155.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
+oxc = { version = "=0.156.0", default-features = false, features = ["codegen", "semantic", "transformer"] }
 
 [dev-dependencies]
 tempfile = "3"

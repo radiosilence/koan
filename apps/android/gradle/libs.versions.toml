@@ -1,5 +1,5 @@
 [versions]
-agp = "9.4.1"
+agp = "9.5.0"
 kotlin = "2.4.21"
 compose-bom = "2026.09.00"
 activity-compose = "1.13.0"
@@ -8,16 +8,16 @@ lifecycle = "2.11.0"
 coroutines = "1.11.0"
 media3 = "1.11.1"
 navigation3 = "1.2.0"
-serialization = "1.11.0"
+serialization = "1.12.0"
 coil = "3.6.3"
 # uniffi's Kotlin bindings call the core through JNA.
 jna = "5.19.1"
 junit = "4.13.2"
 robolectric = "4.17"
 reorderable = "3.1.0"
-androidx-test-runner = "1.6.2"
-androidx-test-junit = "1.2.1"
-uiautomator = "2.3.0"
+androidx-test-runner = "1.7.0"
+androidx-test-junit = "1.3.0"
+uiautomator = "2.4.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }

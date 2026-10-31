@@ -26,7 +26,7 @@ getrandom = "0.4"
 libc = "0.2"
 log = "0.4"
 nucleo = "0.5"
-parking_lot = "0.12"
+parking_lot = "0.13"
 rusqlite = { workspace = true }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync"] }

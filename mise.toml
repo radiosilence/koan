@@ -9,5 +9,5 @@ lefthook = "2.2.2"
 "github:microsoft/typescript-go" = { version = "7.0.2", version_prefix = "typescript/v" }
 xcodegen = "2.46.0"
 # The Android app: Gradle's JDK, and the Rust core cross-compiled against the NDK.
-java = "temurin-21.0.12+8.0.LTS"
+java = "temurin-21.0.13+9.0.LTS"
 "cargo:cargo-ndk" = "4.1.2"
