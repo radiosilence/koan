@@ -43,7 +43,7 @@ pub(super) async fn form(State(s): State<UiState>) -> Response {
     if !open_for_setup(&s).await {
         return see_other("/login");
     }
-    html(StatusCode::OK, pages::setup("", None))
+    html(StatusCode::OK, pages::setup(&s, "", None))
 }
 
 pub(super) async fn create(
@@ -61,7 +61,7 @@ pub(super) async fn create(
     if f.password != f.confirm {
         return html(
             StatusCode::BAD_REQUEST,
-            pages::setup(&f.username, Some("The passwords do not match.")),
+            pages::setup(&s, &f.username, Some("The passwords do not match.")),
         );
     }
     let pool = s.pool.clone();
@@ -78,13 +78,13 @@ pub(super) async fn create(
         Some(Err(e)) => {
             return html(
                 StatusCode::BAD_REQUEST,
-                pages::setup(&f.username, Some(&capitalised(&e.to_string()))),
+                pages::setup(&s, &f.username, Some(&capitalised(&e.to_string()))),
             );
         }
         None => {
             return html(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                pages::setup(&f.username, Some("The account could not be made.")),
+                pages::setup(&s, &f.username, Some("The account could not be made.")),
             );
         }
     };

@@ -106,6 +106,7 @@ pub(super) fn scrub(extra: &str, height: &str) -> Html {
 #[derive(Template)]
 #[template(path = "shell.html")]
 struct Shell<'a> {
+    base: String,
     title: &'a str,
     content: &'a Html,
     username: &'a str,
@@ -137,6 +138,7 @@ pub(super) fn respond(
         html(
             StatusCode::OK,
             Shell {
+                base: s.base(),
                 title,
                 content: &content,
                 username: &user.username,
@@ -160,6 +162,7 @@ pub(super) fn unavailable() -> Response {
 #[derive(Template)]
 #[template(path = "pages/login.html")]
 struct Login<'a> {
+    base: String,
     title: &'a str,
     next: &'a str,
     error: Option<&'a str>,
@@ -167,8 +170,9 @@ struct Login<'a> {
     demo: Option<(&'a str, &'a str)>,
 }
 
-pub(super) fn login(next: &str, error: Option<&str>) -> Html {
+pub(super) fn login(s: &UiState, next: &str, error: Option<&str>) -> Html {
     Login {
+        base: s.base(),
         title: "Sign in",
         next,
         error,
@@ -181,13 +185,15 @@ pub(super) fn login(next: &str, error: Option<&str>) -> Html {
 #[derive(Template)]
 #[template(path = "pages/setup.html")]
 struct Setup<'a> {
+    base: String,
     title: &'a str,
     username: &'a str,
     error: Option<&'a str>,
 }
 
-pub(super) fn setup(username: &str, error: Option<&str>) -> Html {
+pub(super) fn setup(s: &UiState, username: &str, error: Option<&str>) -> Html {
     Setup {
+        base: s.base(),
         title: "Set up",
         username,
         error,
@@ -224,7 +230,7 @@ fn cover_versions(conn: &rusqlite::Connection, album_ids: &[i64]) -> Versions {
 
 pub(super) fn cover_url(album_id: i64, size: u32, versions: &Versions) -> String {
     format!(
-        "/ui/cover/{album_id}?size={size}&v={}",
+        "ui/cover/{album_id}?size={size}&v={}",
         versions.get(&album_id).copied().unwrap_or(0)
     )
 }
@@ -796,7 +802,7 @@ pub(super) async fn tracks(
     let at = |p: u32| {
         let q = b.query();
         let sep = if q.is_empty() { "" } else { "&" };
-        format!("/tracks?{q}{sep}page={p}")
+        format!("tracks?{q}{sep}page={p}")
     };
     let inner = TracksPage {
         total,

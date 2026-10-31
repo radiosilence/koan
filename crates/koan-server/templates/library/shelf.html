@@ -7,7 +7,7 @@
 {%- if let Some((total, href, preview)) = artists %}
 {% call head("Artists", total, href, false) %}{% endcall %}
 <div class="mb-6 flex flex-wrap gap-2">
-{%- for a in preview %}<a class="inline-flex max-w-full border border-muted px-3 py-1.5 text-control text-ink hover:bg-hover/30 hover:no-underline" href="/artist/{{ a.id }}"><span class="truncate">{{ a.name }}</span></a>{% endfor -%}
+{%- for a in preview %}<a class="inline-flex max-w-full border border-muted px-3 py-1.5 text-control text-ink hover:bg-hover/30 hover:no-underline" href="artist/{{ a.id }}"><span class="truncate">{{ a.name }}</span></a>{% endfor -%}
 </div>
 {%- endif %}
 {%- if let Some((total, href, tiles)) = albums %}

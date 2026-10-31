@@ -64,7 +64,7 @@ fn key_list(keys: &[ApiKeyRow]) -> Html {
             .map(|k| Credential::new(k.id, &k.name, k.created_at, k.last_used_at))
             .collect(),
         empty: "No keys yet.",
-        revoke: "/account/keys",
+        revoke: "account/keys",
         confirm: REVOKE_KEY,
     }
     .html()
@@ -78,7 +78,7 @@ fn app_password_list(passwords: &[AppPasswordRow]) -> Html {
             .map(|p| Credential::new(p.id, &p.name, p.created_at, p.last_used_at))
             .collect(),
         empty: "No app passwords yet.",
-        revoke: "/account/app-passwords",
+        revoke: "account/app-passwords",
         confirm: REVOKE_APP_PASSWORD,
     }
     .html()

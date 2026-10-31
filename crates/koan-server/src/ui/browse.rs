@@ -91,9 +91,9 @@ impl Kind {
 
     pub(super) fn path(self) -> &'static str {
         match self {
-            Kind::Albums => "/albums",
-            Kind::Artists => "/artists",
-            Kind::Tracks => "/tracks",
+            Kind::Albums => "albums",
+            Kind::Artists => "artists",
+            Kind::Tracks => "tracks",
         }
     }
 }
