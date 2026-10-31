@@ -882,7 +882,7 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
                 log::info!("nearby: {addr} is refused or held off; hung up");
             }
             Ok((stream, addr)) => {
-                let Some(slot) = Slot::take() else {
+                let Some(slot) = Slot::take(&CONNECTIONS, MAX_CONNECTIONS) else {
                     log::warn!("nearby: {addr} connected past {MAX_CONNECTIONS} others; hung up");
                     continue;
                 };
@@ -931,40 +931,94 @@ impl Stop {
 }
 
 /// The listener is open to the whole network, so what any device on it can
-/// make this one hold is bounded: a thread per connection, up to this many.
+/// make this one hold is bounded: a thread per connection, up to
+/// `MAX_CONNECTIONS`, of which at most `MAX_STRANGERS` stay once they have
+/// proved nothing. The rest are only ever held for a handshake and the proof
+/// that follows, each under a deadline, so a device that can prove itself
+/// always finds room.
 const MAX_CONNECTIONS: usize = 32;
+const MAX_STRANGERS: usize = 16;
 
-/// The largest message a connected device may send. Its largest real one is a
-/// command naming every track it plays, signed: about 42 bytes a track, so
-/// this is room for some 200,000.
+/// How long a connection has to complete the WebSocket handshake.
+const HANDSHAKE: Duration = Duration::from_secs(10);
+
+/// How long a connection has to prove itself before it counts as a stranger.
+/// Checked when the connection next wakes, which is within `wire::IDLE`.
+const PROVE_WINDOW: Duration = Duration::from_secs(10);
+
+/// The largest message either end of a nearby connection may send. The
+/// largest real one is a command naming every track it plays, signed: about
+/// 42 bytes a track, so this is room for some 200,000. A state carries only
+/// the part of a long queue around the current track.
 const MAX_MESSAGE: usize = 8 * 1024 * 1024;
 
 static CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+static STRANGERS: AtomicUsize = AtomicUsize::new(0);
 
-/// One of the `MAX_CONNECTIONS`, given back when dropped.
-struct Slot;
+/// One of a bounded number of places, given back when dropped.
+struct Slot(&'static AtomicUsize);
 
 impl Slot {
-    fn take() -> Option<Self> {
-        if CONNECTIONS.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
-            CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+    fn take(of: &'static AtomicUsize, max: usize) -> Option<Self> {
+        if of.fetch_add(1, Ordering::AcqRel) >= max {
+            of.fetch_sub(1, Ordering::AcqRel);
             None
         } else {
-            Some(Self)
+            Some(Self(of))
         }
     }
 }
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+        self.0.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
+/// Both ends' WebSocket limits. The write buffer holds one message beyond
+/// the usual buffer: a peer that stops reading is hung up on, not queued for.
 fn socket_config() -> tungstenite::protocol::WebSocketConfig {
-    tungstenite::protocol::WebSocketConfig::default()
+    let config = tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(MAX_MESSAGE))
-        .max_frame_size(Some(MAX_MESSAGE))
+        .max_frame_size(Some(MAX_MESSAGE));
+    let cap = config.write_buffer_size + MAX_MESSAGE;
+    config.max_write_buffer_size(cap)
+}
+
+/// Complete the server side of the WebSocket handshake within `deadline`,
+/// however slowly the request arrives. Leaves the socket non-blocking.
+fn handshake(
+    stream: TcpStream,
+    deadline: Duration,
+) -> Result<tungstenite::WebSocket<TcpStream>, String> {
+    use tungstenite::HandshakeError;
+    let started = Instant::now();
+    stream.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let fd = stream.as_raw_fd();
+    let mut attempt = tungstenite::accept_with_config(stream, Some(socket_config()));
+    loop {
+        match attempt {
+            Ok(socket) => return Ok(socket),
+            Err(HandshakeError::Failure(e)) => return Err(e.to_string()),
+            Err(HandshakeError::Interrupted(mid)) => {
+                let left = deadline
+                    .checked_sub(started.elapsed())
+                    .filter(|left| !left.is_zero())
+                    .ok_or("no handshake in time")?;
+                // Only reads wait on the peer; the response is a few hundred
+                // bytes, so a write that would block is retried soon after.
+                let mut fds = [libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                }];
+                let ms = left.as_millis().min(100) as i32;
+                // SAFETY: a live array of the length given.
+                unsafe { libc::poll(fds.as_mut_ptr(), 1, ms) };
+                attempt = mid.handshake();
+            }
+        }
+    }
 }
 
 /// Serve one device that connected to this one.
@@ -974,19 +1028,8 @@ fn serve(
     local: &Local,
     stop: &Arc<Stop>,
 ) -> Result<(), String> {
-    // Apple's accept hands back the listener's non-blocking mode, under which
-    // a request that arrives a moment after the connection fails the handshake.
-    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|e| e.to_string())?;
-    let mut socket = tungstenite::accept_with_config(stream, Some(socket_config()))
-        .map_err(|e| e.to_string())?;
+    let mut socket = handshake(stream, HANDSHAKE)?;
     let fd = socket.get_ref().as_raw_fd();
-    socket
-        .get_ref()
-        .set_nonblocking(true)
-        .map_err(|e| e.to_string())?;
     let _ = socket.get_ref().set_nodelay(true);
     let waker = Waker::new().map_err(|e| e.to_string())?;
     wire::wake_on_engine_change(&waker);
@@ -1005,6 +1048,9 @@ fn serve(
         proven: None,
         reports: None,
         pending: Vec::new(),
+        since: Instant::now(),
+        stranger: None,
+        crowded: false,
     };
     wire::drive(&mut socket, fd, &waker, &mut session)
 }
@@ -1035,9 +1081,33 @@ struct Serving<'a> {
     pending: Vec<String>,
     /// This connection as Settings lists it, and the flag that ends it.
     listed: Option<(Listed, Arc<AtomicBool>)>,
+    /// When the handshake finished.
+    since: Instant,
+    /// Its place among `MAX_STRANGERS`, once it has proved nothing.
+    stranger: Option<Slot>,
+    /// It proved nothing and there was no room for another stranger.
+    crowded: bool,
 }
 
 impl Serving<'_> {
+    /// Count the dialler among the strangers once it has proved nothing, by
+    /// answer or by silence, and hang up when they are full.
+    fn place(&mut self) {
+        if self.proven.is_some() || self.stranger.is_some() || self.crowded {
+            return;
+        }
+        if !self.answered && self.since.elapsed() < PROVE_WINDOW {
+            return;
+        }
+        match Slot::take(&STRANGERS, MAX_STRANGERS) {
+            Some(slot) => self.stranger = Some(slot),
+            None => {
+                log::warn!("nearby: {MAX_STRANGERS} unproven devices connected already; hung up");
+                self.crowded = true;
+            }
+        }
+    }
+
     fn proof(&mut self, frame_in: ProofFrame) {
         match frame_in {
             ProofFrame::Auth { id, nonce, sig } => {
@@ -1137,6 +1207,12 @@ impl Serving<'_> {
 
 impl wire::Session for Serving<'_> {
     fn outgoing(&mut self) -> Vec<String> {
+        self.place();
+        if self.crowded {
+            // Round again at once, for `done` to see it.
+            self.waker.wake();
+            return Vec::new();
+        }
         let mut out = Vec::new();
         if !self.greeted {
             let cfg = Config::load().unwrap_or_default();
@@ -1216,7 +1292,8 @@ impl wire::Session for Serving<'_> {
     }
 
     fn done(&self) -> bool {
-        self.stop.stopped()
+        self.crowded
+            || self.stop.stopped()
             || self
                 .listed
                 .as_ref()
@@ -1461,7 +1538,8 @@ fn connect(addr: &str) -> Result<tungstenite::WebSocket<TcpStream>, String> {
                     .map_err(|e| e.to_string())?;
                 let url = format!("ws://{host_port}/");
                 let (socket, _) =
-                    tungstenite::client(url.as_str(), stream).map_err(|e| e.to_string())?;
+                    tungstenite::client_with_config(url.as_str(), stream, Some(socket_config()))
+                        .map_err(|e| e.to_string())?;
                 socket
                     .get_ref()
                     .set_nonblocking(true)
@@ -2750,6 +2828,41 @@ mod dial_tests {
             Err(tungstenite::Error::Capacity(_))
         ));
         client.join().unwrap();
+    }
+
+    #[test]
+    fn a_trickled_handshake_runs_out_of_time() {
+        use std::io::Write as _;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let trickle = {
+            let done = done.clone();
+            std::thread::spawn(move || {
+                let mut stream = TcpStream::connect(addr).unwrap();
+                while !done.load(Ordering::Relaxed) {
+                    if stream.write_all(b"G").is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            })
+        };
+        let (stream, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        assert!(handshake(stream, Duration::from_millis(300)).is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        done.store(true, Ordering::Relaxed);
+        trickle.join().unwrap();
+
+        // A whole request in time is a socket.
+        let client = std::thread::spawn(move || {
+            let stream = TcpStream::connect(addr).unwrap();
+            tungstenite::client(format!("ws://{addr}/"), stream).map(|_| ())
+        });
+        let (stream, _) = listener.accept().unwrap();
+        assert!(handshake(stream, Duration::from_secs(5)).is_ok());
+        assert!(client.join().unwrap().is_ok());
     }
 }
 

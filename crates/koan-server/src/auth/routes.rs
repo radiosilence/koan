@@ -426,15 +426,28 @@ async fn buffer_body(
     next: axum::middleware::Next,
     deadline: std::time::Duration,
 ) -> Response {
+    use futures_util::StreamExt as _;
     let (parts, body) = request.into_parts();
-    let bytes =
-        match tokio::time::timeout(deadline, axum::body::to_bytes(body, AUTH_BODY_LIMIT)).await {
-            Ok(Ok(bytes)) => bytes,
-            Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-            Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
-        };
-    next.run(axum::extract::Request::from_parts(parts, bytes.into()))
-        .await
+    let read = async {
+        let mut stream = body.into_data_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| StatusCode::BAD_REQUEST)?;
+            if bytes.len() + chunk.len() > AUTH_BODY_LIMIT {
+                return Err(StatusCode::PAYLOAD_TOO_LARGE);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    };
+    match tokio::time::timeout(deadline, read).await {
+        Ok(Ok(bytes)) => {
+            next.run(axum::extract::Request::from_parts(parts, bytes.into()))
+                .await
+        }
+        Ok(Err(status)) => status.into_response(),
+        Err(_) => StatusCode::REQUEST_TIMEOUT.into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -916,8 +929,20 @@ mod tests {
             .body(axum::body::Body::from(vec![b' '; AUTH_BODY_LIMIT + 1]))
             .unwrap();
         assert_eq!(
-            app.oneshot(big).await.unwrap().status(),
+            app.clone().oneshot(big).await.unwrap().status(),
             StatusCode::PAYLOAD_TOO_LARGE
+        );
+        let broken = axum::http::Request::post("/auth/login")
+            .body(axum::body::Body::from_stream(tokio_stream::once(Err::<
+                axum::body::Bytes,
+                _,
+            >(
+                std::io::Error::other("reset"),
+            ))))
+            .unwrap();
+        assert_eq!(
+            app.oneshot(broken).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
         );
     }
 
