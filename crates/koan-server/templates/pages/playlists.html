@@ -4,6 +4,6 @@
 <p class="{{ crate::ui::pages::EMPTY }}">No playlists yet.</p>
 {%- else %}
 <ul>
-{%- for p in lists %}{% call library::list_row(format!("/playlist/{}", p.id), p.name, format!("{} track{} · {}", p.track_count, if p.track_count == 1 { "" } else { "s" }, crate::share::duration(Some(p.duration_ms.clone())))) %}{% endcall %}{% endfor %}
+{%- for p in lists %}{% call library::list_row(format!("playlist/{}", p.id), p.name, format!("{} track{} · {}", p.track_count, if p.track_count == 1 { "" } else { "s" }, crate::share::duration(Some(p.duration_ms.clone())))) %}{% endcall %}{% endfor %}
 </ul>
 {%- endif %}

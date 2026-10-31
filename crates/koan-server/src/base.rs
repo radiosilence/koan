@@ -32,15 +32,89 @@ pub(crate) fn href(url: Option<&str>) -> String {
     format!("{}/", path_of(url))
 }
 
-impl ServerUrl {
-    pub(crate) fn base(&self) -> String {
-        path_of(self.get().as_deref())
+/// The first segments of the routes. A base path starting with one would be
+/// ambiguous through a proxy that strips it: `/library/scan` could be the
+/// scan route, or the library page under `/library`.
+const ROUTES: &[&str] = &[
+    ".well-known",
+    "account",
+    "album",
+    "albums",
+    "apple-touch-icon.png",
+    "artist",
+    "artists",
+    "auth",
+    "connect",
+    "favicon.ico",
+    "favourite",
+    "favourites",
+    "graphql",
+    "history",
+    "keys",
+    "library",
+    "login",
+    "mcp",
+    "oauth",
+    "pair",
+    "playlist",
+    "playlists",
+    "queue",
+    "recent",
+    "rest",
+    "scrobbling",
+    "search",
+    "setup",
+    "share",
+    "track",
+    "tracks",
+    "ui",
+    "users",
+];
+
+/// Why a server cannot be served under `url`'s path, if it cannot.
+pub(crate) fn problem(url: &str) -> Option<String> {
+    let path = path_of(Some(url));
+    if !path
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"/-._~".contains(&b))
+    {
+        return Some(format!(
+            "the path {path:?} may use only letters, digits, '/', '-', '.', '_' and '~'"
+        ));
+    }
+    let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    ROUTES.contains(&first).then(|| {
+        format!("the path {path:?} begins with /{first}, which is one of kōan's own routes")
+    })
+}
+
+/// The base path the edge works with: read once from an address fixed at
+/// start, or as asked from an app's `share.url`, which it changes as it runs.
+#[derive(Clone)]
+pub(crate) enum Base {
+    Fixed(std::sync::Arc<str>),
+    Live,
+}
+
+impl Base {
+    pub(crate) fn of(url: &ServerUrl) -> Self {
+        match url {
+            ServerUrl::Fixed(url) => Self::Fixed(path_of(url.as_deref()).into()),
+            ServerUrl::Live => Self::Live,
+        }
+    }
+
+    fn get(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::Fixed(path) => std::borrow::Cow::Borrowed(path),
+            Self::Live => path_of(ServerUrl::Live.get().as_deref()).into(),
+        }
     }
 }
 
 /// Wraps the whole router, outside routing, so the routes match unprefixed.
-pub(crate) async fn edge(State(url): State<ServerUrl>, mut req: Request, next: Next) -> Response {
-    let base = url.base();
+pub(crate) async fn edge(State(base): State<Base>, mut req: Request, next: Next) -> Response {
+    let base = base.get();
     if base.is_empty() {
         return next.run(req).await;
     }
@@ -82,11 +156,18 @@ fn restore(response: &mut Response, base: &str) {
     let cookies: Vec<HeaderValue> = headers
         .get_all(header::SET_COOKIE)
         .iter()
-        .map(|v| {
-            v.to_str()
-                .ok()
-                .and_then(|c| HeaderValue::from_str(&cookie_path(c, base)).ok())
-                .unwrap_or_else(|| v.clone())
+        .flat_map(|v| {
+            let Some(c) = v.to_str().ok() else {
+                return vec![v.clone()];
+            };
+            let scoped = HeaderValue::from_str(&cookie_path(c, base)).unwrap_or_else(|_| v.clone());
+            // A cookie cleared is cleared at the root too, where a server
+            // that once had no path left it, and where it would still be sent.
+            if c.to_ascii_lowercase().contains("max-age=0") {
+                vec![scoped, v.clone()]
+            } else {
+                vec![scoped]
+            }
         })
         .collect();
     if !cookies.is_empty() {
@@ -141,6 +222,28 @@ mod tests {
     }
 
     #[test]
+    fn a_path_that_routes_could_mistake_is_refused() {
+        assert_eq!(problem("https://host"), None);
+        assert_eq!(problem("https://host/koan/music"), None);
+        assert!(problem("https://host/library").is_some());
+        assert!(problem("https://host/ui/koan").is_some());
+        assert!(problem("https://host/{koan}").is_some());
+        assert!(problem("https://host/music/*x").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_cleared_cookie_is_cleared_at_the_root_too() {
+        let mut r = Response::new(axum::body::Body::empty());
+        r.headers_mut().append(
+            header::SET_COOKIE,
+            HeaderValue::from_static("a=; Path=/; Max-Age=0"),
+        );
+        restore(&mut r, "/koan");
+        let set: Vec<_> = r.headers().get_all(header::SET_COOKIE).iter().collect();
+        assert_eq!(set, ["a=; Path=/koan; Max-Age=0", "a=; Path=/; Max-Age=0"]);
+    }
+
+    #[test]
     fn cookies_are_scoped_under_the_path() {
         assert_eq!(
             cookie_path("r=1; HttpOnly; Path=/auth; Max-Age=3", "/koan"),
@@ -170,7 +273,10 @@ mod tests {
 
     async fn call(base: &str, path: &str) -> Response {
         let url = ServerUrl::Fixed(Some(format!("https://host{base}")));
-        let wrapped = tower::Layer::layer(&axum::middleware::from_fn_with_state(url, edge), app());
+        let wrapped = tower::Layer::layer(
+            &axum::middleware::from_fn_with_state(Base::of(&url), edge),
+            app(),
+        );
         wrapped
             .oneshot(Request::get(path).body(Body::empty()).unwrap())
             .await

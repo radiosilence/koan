@@ -300,7 +300,7 @@ pub(crate) fn router(
 /// what a proxy forwards for the path. It reaches here when the proxy forwards
 /// that too; see `crate::base`.
 fn path_inserted_discovery(base: &str) -> axum::Router<UiState> {
-    if base.is_empty() {
+    if base.is_empty() || crate::base::problem(base).is_some() {
         return axum::Router::new();
     }
     axum::Router::new()

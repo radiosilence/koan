@@ -537,7 +537,8 @@ document.addEventListener("error", (e) => {
 // Where the UI is served: `/`, or a path such as `/koan/` behind a proxy.
 const BASE = new URL(document.baseURI).pathname;
 // A path in this UI as its routes name it, the base taken off.
-const route = (path: string) => (path.startsWith(BASE) ? `/${path.slice(BASE.length)}` : path);
+const route = (path: string) =>
+  path.startsWith(BASE) ? `/${path.slice(BASE.length)}` : `${path}/` === BASE ? "/" : path;
 const INTERNAL = /^\/(albums|tracks|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent|scrobbling)?$/;
 let navigating = 0;
 

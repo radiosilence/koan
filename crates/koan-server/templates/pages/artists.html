@@ -4,6 +4,6 @@
 <p class="{{ crate::ui::pages::EMPTY }}">No artists match.</p>
 {%- else %}
 <ul id="artists">
-{%- for a in artists %}{% call library::list_row(format!("/artist/{}", a.id), a.name, format!("{} album{}", a.album_count, if a.album_count == 1 { "" } else { "s" })) %}{% endcall %}{% endfor %}
+{%- for a in artists %}{% call library::list_row(format!("artist/{}", a.id), a.name, format!("{} album{}", a.album_count, if a.album_count == 1 { "" } else { "s" })) %}{% endcall %}{% endfor %}
 </ul>
 {%- endif %}
