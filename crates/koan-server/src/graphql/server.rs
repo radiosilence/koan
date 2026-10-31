@@ -1019,9 +1019,11 @@ async fn graphql_playground(
         }
     }
 
-    // Use async-graphql's built-in GraphiQL (self-contained, no CDN).
+    // Use async-graphql's built-in GraphiQL (self-contained, no CDN). The
+    // endpoint is relative to this page, which is the endpoint, under a
+    // server's base path too.
     // Inject the introspection key as a default header so all queries are authed.
-    let mut source = async_graphql::http::GraphiQLSource::build().endpoint("/graphql");
+    let mut source = async_graphql::http::GraphiQLSource::build().endpoint("graphql");
     if let Some(ref k) = key {
         source = source.header("X-Introspection-Key", k.as_str());
     }
