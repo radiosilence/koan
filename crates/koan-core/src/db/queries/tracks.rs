@@ -1040,9 +1040,12 @@ pub fn queue_item_extras(
 /// offset finds its first id on the primary key alone, before any join.
 pub fn tracks_page(conn: &Connection, limit: u32, offset: u32) -> Result<Vec<TrackRow>, DbError> {
     /// Where recent walks stopped: the database, the offset the next page
-    /// starts at, and the last id served.
-    static WALKS: parking_lot::Mutex<Vec<(String, u32, i64)>> = parking_lot::Mutex::new(Vec::new());
+    /// starts at, the last id served, and when. A walk idle for `WALK_FOR`
+    /// is over, and a sync since may have moved the rows under its offset.
+    type Walk = (String, u32, i64, std::time::Instant);
+    static WALKS: parking_lot::Mutex<Vec<Walk>> = parking_lot::Mutex::new(Vec::new());
     const WALKS_KEPT: usize = 32;
+    const WALK_FOR: std::time::Duration = std::time::Duration::from_secs(10 * 60);
     const COLUMNS: &str = "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
@@ -1058,7 +1061,7 @@ pub fn tracks_page(conn: &Connection, limit: u32, offset: u32) -> Result<Vec<Tra
         Some(db) => WALKS
             .lock()
             .iter()
-            .find(|(d, o, _)| d == db && *o == offset)
+            .find(|(d, o, _, at)| d == db && *o == offset && at.elapsed() < WALK_FOR)
             .map(|w| w.2),
         None => None,
     };
@@ -1078,11 +1081,13 @@ pub fn tracks_page(conn: &Connection, limit: u32, offset: u32) -> Result<Vec<Tra
     if let (Some(db), Some(last)) = (db, rows.last()) {
         let next = offset.saturating_add(rows.len() as u32);
         let mut walks = WALKS.lock();
-        walks.retain(|(d, o, _)| !(*d == db && (*o == offset || *o == next)));
+        walks.retain(|(d, o, _, at)| {
+            at.elapsed() < WALK_FOR && !(*d == db && (*o == offset || *o == next))
+        });
         if walks.len() >= WALKS_KEPT {
             walks.remove(0);
         }
-        walks.push((db, next, last.id));
+        walks.push((db, next, last.id, std::time::Instant::now()));
     }
     Ok(rows)
 }

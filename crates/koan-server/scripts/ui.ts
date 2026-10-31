@@ -91,19 +91,24 @@ const PLACE = "koan.place";
 // Most a queue too large for storage keeps: the playing track and those after.
 const KEPT = 2000;
 let storedKey: string | null = null;
+// The part of the queue stored: all of it, or what fitted from `storedStart`.
 let storedStart = 0;
+let storedEnd = Infinity;
 function storeQueue(queue: UiTrack[], cur: number) {
   try {
     localStorage.setItem(STORE, JSON.stringify({ queue } satisfies Saved));
     storedStart = 0;
+    storedEnd = Infinity;
     return;
   } catch {}
   // Past the quota: what is still to play, so a restore does not bring back
   // an older queue.
   const start = Math.max(cur, 0);
   try {
-    localStorage.setItem(STORE, JSON.stringify({ queue: queue.slice(start, start + KEPT), start } satisfies Saved));
+    const kept = queue.slice(start, start + KEPT);
+    localStorage.setItem(STORE, JSON.stringify({ queue: kept, start } satisfies Saved));
     storedStart = start;
+    storedEnd = start + kept.length;
   } catch {
     console.warn("koan: the queue is too large to keep for the next visit");
     localStorage.removeItem(STORE);
@@ -114,7 +119,10 @@ const save = (from?: number) => {
   const { queue, cur } = player;
   try {
     const key = queue.map((t) => t.id).join();
-    if (key !== storedKey) { storedKey = key; storeQueue(queue, cur); }
+    // Stored again when the tracks change, or when the playing one has left
+    // the part of a queue too large to store whole.
+    const outside = cur >= 0 && (cur < storedStart || cur >= storedEnd);
+    if (key !== storedKey || outside) { storedKey = key; storeQueue(queue, cur); }
     localStorage.setItem(PLACE, JSON.stringify({ cur: cur - storedStart, pos: from ?? player.position } satisfies Place));
   } catch {}
 };

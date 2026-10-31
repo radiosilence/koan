@@ -313,7 +313,7 @@ impl Registry {
         wants_devices: bool,
         acks: bool,
         remember: bool,
-    ) -> String {
+    ) -> (String, Vec<Envelope>) {
         let id = uuid::Uuid::now_v7().to_string();
         if let Some((sent, how)) = WOKEN
             .lock()
@@ -324,15 +324,15 @@ impl Registry {
                 sent.elapsed().as_millis()
             );
         }
-        // What waited for this device while it was away goes down the new
-        // link first.
+        // What waited for this device while it was away is handed back for
+        // the session to write before anything else: it is not bounded by
+        // the link's queue, and the entry, which takes live commands, is
+        // added only after it is taken.
+        let mut waiting = Vec::new();
         if remember {
             let live = self.live();
-            let (waiting, pruned) =
-                outbox::take_and_remember(username, device, name, platform, &live);
-            for envelope in waiting {
-                let _ = tx.send(envelope);
-            }
+            let pruned;
+            (waiting, pruned) = outbox::take_and_remember(username, device, name, platform, &live);
             // Devices forgotten for age take their addresses with them.
             if pruned {
                 let kept = outbox::load_addresses();
@@ -378,7 +378,7 @@ impl Registry {
         {
             self.send_live(username, device, LinkCommand::WatchLevels { on: true });
         }
-        id
+        (id, waiting)
     }
 
     /// Send the link `id` the account's device keys from now on.
@@ -1897,6 +1897,15 @@ pub fn changed_if_library_moved(conn: &rusqlite::Connection) {
     }
 }
 
+/// Leave `envelope` waiting for `username`'s `device`, as a command queued
+/// while it was away is.
+#[cfg(test)]
+pub(crate) fn seed_outbox(username: &str, device: &str, envelope: Envelope) {
+    outbox::SEEDED
+        .lock()
+        .push((device.to_string(), username.to_string(), envelope));
+}
+
 /// The server-side record of devices and their waiting commands, in the
 /// library database so it outlives a restart.
 mod outbox {
@@ -1960,7 +1969,7 @@ mod outbox {
         live: &[(String, String)],
     ) -> (Vec<koan_core::remote::acks::Envelope>, bool) {
         let Some(db) = db() else {
-            return (Vec::new(), false);
+            return (seeded(username, device), false);
         };
         let now = chrono::Utc::now().timestamp();
         let _ = db.conn.execute(
@@ -1989,6 +1998,28 @@ mod outbox {
             .filter_map(|(_, c)| serde_json::from_str(&c).ok())
             .collect();
         (waiting, pruned)
+    }
+
+    /// Commands a test has left waiting for a device: tests have no outbox
+    /// database.
+    #[cfg(test)]
+    pub(crate) static SEEDED: parking_lot::Mutex<
+        Vec<(String, String, koan_core::remote::acks::Envelope)>,
+    > = parking_lot::Mutex::new(Vec::new());
+
+    #[cfg(test)]
+    fn seeded(username: &str, device: &str) -> Vec<koan_core::remote::acks::Envelope> {
+        let mut seeded = SEEDED.lock();
+        let (taken, kept) = std::mem::take(&mut *seeded)
+            .into_iter()
+            .partition(|(d, u, _)| d == device && u == username);
+        *seeded = kept;
+        taken.into_iter().map(|(_, _, e)| e).collect::<Vec<_>>()
+    }
+
+    #[cfg(not(test))]
+    fn seeded(_: &str, _: &str) -> Vec<koan_core::remote::acks::Envelope> {
+        Vec::new()
     }
 
     /// Drop undelivered commands, devices and push tokens older than
@@ -2606,7 +2637,9 @@ mod tests {
         let reg = Registry::default();
         let (tx_mac, mut mac) = super::LinkTx::channel();
         let (tx_phone, mut phone) = super::LinkTx::channel();
-        let mac_id = reg.register("lv", "mac", "macos", "lv-mac", tx_mac, false, false);
+        let mac_id = reg
+            .register("lv", "mac", "macos", "lv-mac", tx_mac, false, false)
+            .0;
         reg.register("lv", "phone", "ios", "lv-phone", tx_phone, false, false);
         let levels = |rx: &mut tokio::sync::mpsc::Receiver<Envelope>| {
             std::iter::from_fn(|| rx.try_recv().ok().map(|e| e.command))
@@ -2730,7 +2763,9 @@ mod tests {
         let (tx2, mut rx2) = super::LinkTx::channel();
         let (tx3, _rx3) = super::LinkTx::channel();
         reg.register("j", "phone", "ios", "dev-1", tx1, false, false);
-        let id = reg.register("j", "phone", "ios", "dev-1", tx2, false, false);
+        let id = reg
+            .register("j", "phone", "ios", "dev-1", tx2, false, false)
+            .0;
         reg.register("someone", "laptop", "macos", "dev-2", tx3, false, false);
 
         assert_eq!(reg.list(Some("j")).len(), 1);
@@ -2821,8 +2856,12 @@ mod tests {
         let reg = Registry::default();
         let (tx1, _rx1) = super::LinkTx::channel();
         let (tx2, mut rx2) = super::LinkTx::channel();
-        let mac = reg.register("j", "mac", "macos", "dev-1", tx1, false, false);
-        let phone = reg.register("j", "phone", "ios", "dev-2", tx2, false, false);
+        let mac = reg
+            .register("j", "mac", "macos", "dev-1", tx1, false, false)
+            .0;
+        let phone = reg
+            .register("j", "phone", "ios", "dev-2", tx2, false, false)
+            .0;
 
         // Two idle devices: no telling, so the caller is told to ask.
         let err = reg.send(Some("j"), None, LinkCommand::Pause).unwrap_err();
@@ -2865,7 +2904,9 @@ mod tests {
         let (phone_tx, mut phone) = super::LinkTx::channel();
         let (mac_tx, mac) = super::LinkTx::channel();
         let (k_tx, k) = super::LinkTx::channel();
-        let id = reg.register("j", "phone", "ios", "dev-phone", phone_tx, true, false);
+        let id = reg
+            .register("j", "phone", "ios", "dev-phone", phone_tx, true, false)
+            .0;
         reg.register("j", "mac", "macos", "dev-mac", mac_tx, true, false);
         reg.register("k", "laptop", "macos", "dev-k", k_tx, true, false);
         reg.report(
@@ -3214,7 +3255,9 @@ mod tests {
         let (tx2, mut rx2) = super::LinkTx::channel();
         let (tx3, mut rx3) = super::LinkTx::channel();
         reg.register("j", "mac", "macos", "dev-mac", tx1, true, false);
-        let phone = reg.register("j", "phone", "ios", "dev-phone", tx2, true, false);
+        let phone = reg
+            .register("j", "phone", "ios", "dev-phone", tx2, true, false)
+            .0;
         reg.register("someone", "laptop", "macos", "dev-other", tx3, true, false);
 
         reg.report(

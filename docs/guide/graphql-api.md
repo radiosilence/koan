@@ -115,6 +115,9 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 # so a client draws its seek bar against it rather than letting someone scrub
 # into audio that has not arrived. `moving` is whether the playhead is
 # advancing: false while paused, and while playing but waiting on a download.
+# The `nowPlaying` subscription sends again on a seek, a stall, a pause or a
+# drift past 1 s, not as the playhead runs on time, so a client counts on from
+# `positionMs` while `moving` is true.
 {
   nowPlaying {
     state
