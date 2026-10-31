@@ -197,6 +197,18 @@ private fun QueuePage() {
     val list = rememberLazyListState()
     var following by remember { mutableStateOf(false) }
     val current = now?.queueItemId
+    val devices by mirror.devices.collectAsStateWithLifecycle()
+    // As the core sees it: rows after the playing one, or every row with
+    // nothing playing; never another device's queue, nor one shuffle play
+    // is picking its own way through.
+    val canShuffle = devices.target == null && now?.shuffle != true && run {
+        val at = current?.let { id -> queue.items.indexOfFirst { it.queueItemId == id } }
+        when {
+            at == null -> queue.items.size >= 2
+            at < 0 -> false
+            else -> queue.items.size - at - 1 >= 2
+        }
+    }
     LaunchedEffect(list) {
         list.interactionSource.interactions.collect { if (it is DragInteraction.Start) following = false }
     }
@@ -254,6 +266,8 @@ private fun QueuePage() {
                 select = { if (selecting) stopSelecting() else selecting = true },
                 save = { saving = true },
                 clear = { mirror.launch { clearQueue() } },
+                canShuffle = canShuffle,
+                shuffle = { mirror.launch { shuffleQueue() } },
             )
             if (queue.items.isEmpty()) {
                 KoanUnavailable("Queue is empty", KoanIcons.queueSection, "Find something to play from the library.")
@@ -529,6 +543,8 @@ private fun Header(
     select: () -> Unit,
     save: () -> Unit,
     clear: () -> Unit,
+    canShuffle: Boolean,
+    shuffle: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth().padding(start = KoanSpace.l, top = KoanSpace.s, bottom = KoanSpace.xs), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -549,6 +565,7 @@ private fun Header(
                 color = KoanTheme.color(if (following) KoanTone.Accent else KoanTone.Ink),
             )
         }
+        KoanButton("Shuffle the rest of the queue", shuffle, kind = KoanButtonKind.Icon, icon = KoanIcons.reshuffle, enabled = canShuffle)
         KoanIconToggle(KoanIcons.album, "Group by album", grouped, setGrouped)
         KoanButton(if (selecting) "Done" else "Select", select, kind = KoanButtonKind.Icon, icon = if (selecting) KoanIcons.selecting else KoanIcons.select, enabled = items.isNotEmpty())
         var menu by remember { mutableStateOf(false) }

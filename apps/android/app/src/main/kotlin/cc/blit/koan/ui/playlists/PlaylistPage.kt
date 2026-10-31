@@ -128,9 +128,6 @@ fun PlaylistPage(playlistId: Long) {
                     KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
                     KoanMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         if (playlist?.fromFile == false) KoanMenuItem("Rename…") { menu = false; renaming = true }
-                        if (fillable && entries.size > 1) {
-                            KoanMenuItem("Shuffle Order", KoanIcons.reshuffle) { menu = false; edits.shuffleOrder(playlistId) }
-                        }
                         if (entries.isNotEmpty()) {
                             KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; adding = entries.map { it.track.id } }
                             DownloadMenuItems(onDisk = null, dismiss = { menu = false }, trackIds = allTrackIds)
@@ -309,6 +306,8 @@ private fun PlaylistHeader(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
                 KoanButton("Play Next", { app.player.playNext(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.playNext, enabled = any)
                 KoanButton("Add to Queue", { app.player.enqueue(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue, enabled = any)
+                // The playlist's own order, dealt again; each press is a step of its undo.
+                if (playlist.fillable) KoanButton("Shuffle Order", { edits.shuffleOrder(playlist.id) }, kind = KoanButtonKind.Icon, icon = KoanIcons.reshuffle, enabled = entries.size > 1)
                 Spacer(Modifier.weight(1f))
                 if (showLayout && any) KoanIconToggle(KoanIcons.album, "Group by album", grouped) { edits.setGrouped(playlist.id, it) }
             }
