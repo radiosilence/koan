@@ -1,7 +1,5 @@
 package cc.blit.koan.ui.playlists
 
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,20 +17,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.art.Art
@@ -75,6 +69,8 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.value
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 /**
  * A playlist, laid out the way the queue is: grouped under its records or one
@@ -194,43 +190,30 @@ private fun PlaylistList(
     onAdd: (List<Long>) -> Unit,
 ) {
     val grouped = playlist.grouped ?: false
-    // One state object for the page's life: each row's gesture outlives a
-    // recomposition and keeps the state it started with.
     val latest by rememberUpdatedState(entries)
     var order by remember { mutableStateOf(entries) }
     var dragging by remember { mutableStateOf<Long?>(null) }
-    var offset by remember { mutableFloatStateOf(0f) }
     // The engine's order, except under a drag: a library update landing then
     // must not move rows out from under the finger. The drop is written and comes back.
     LaunchedEffect(entries) { if (dragging == null) order = entries }
-
-    fun dragBy(delta: Float) {
-        offset += delta
-        val visible = listState.layoutInfo.visibleItemsInfo
-        val current = visible.firstOrNull { it.key == "entry:$dragging" } ?: return
-        val middle = current.offset + offset + current.size / 2
-        val target = visible.firstOrNull {
-            it.key != current.key && (it.key as? String)?.startsWith("entry:") == true &&
-                middle >= it.offset && middle < it.offset + it.size
-        } ?: return
-        val from = order.indexOfFirst { it.entryId == dragging }
-        val to = order.indexOfFirst { "entry:${it.entryId}" == target.key }
-        if (from < 0 || to < 0) return
-        order = order.toMutableList().apply { add(to, removeAt(from)) }
-        // The row is laid out at its new place next frame; keep it under the finger.
-        offset += current.offset - target.offset
+    val haptics = LocalHapticFeedback.current
+    val reorder = rememberReorderableLazyListState(listState) { from, to ->
+        val a = order.indexOfFirst { "entry:${it.entryId}" == from.key }
+        val b = order.indexOfFirst { "entry:${it.entryId}" == to.key }
+        if (a >= 0 && b >= 0) {
+            order = order.toMutableList().apply { add(b, removeAt(a)) }
+            haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+        }
     }
 
     // The move is applied to the entries as they are now, not as they were
     // when the drag began: the dragged row goes after the row it was dropped
     // below, so anything added, removed or moved meanwhile is kept.
-    fun drop(commit: Boolean) {
-        val moved = dragging
+    fun drop() {
+        val moved = dragging ?: return
         val shown = order
         dragging = null
-        offset = 0f
         order = latest
-        if (!commit || moved == null) return
         val at = shown.indexOfFirst { it.entryId == moved }
         val entry = latest.firstOrNull { it.entryId == moved } ?: return
         val above = shown.take(at.coerceAtLeast(0)).lastOrNull { prior -> latest.any { it.entryId == prior.entryId } }
@@ -242,24 +225,6 @@ private fun PlaylistList(
         order = arranged
         // A failed write brings no new entries, so nothing else would undo the move shown.
         edits.reorder(playlist.id, arranged.map { it.entryId }) { if (dragging == null) order = latest }
-    }
-
-    // Near an edge, a dragged row scrolls the list a frame at a time, and the
-    // list moving under it is a drag like any other.
-    val edge = with(LocalDensity.current) { 64.dp.toPx() }
-    LaunchedEffect(dragging) {
-        if (dragging == null) return@LaunchedEffect
-        while (true) {
-            withFrameNanos {}
-            val info = listState.layoutInfo
-            val current = info.visibleItemsInfo.firstOrNull { it.key == "entry:$dragging" } ?: continue
-            val top = current.offset + offset
-            val step = edgeScroll(top, top + current.size, info.viewportStartOffset.toFloat(), info.viewportEndOffset.toFloat(), edge)
-            if (step == 0f) continue
-            val moved = listState.scrollBy(step)
-            offset += moved
-            dragBy(0f)
-        }
     }
 
     val rows = if (editing) order.map(PlaylistRow::Entry) else playlistRows(entries, grouped)
@@ -280,7 +245,7 @@ private fun PlaylistList(
         items(rows, key = { it.key }) { row ->
             when (row) {
                 is PlaylistRow.Heading -> RecordHeading(row, selection)
-                is PlaylistRow.Entry -> {
+                is PlaylistRow.Entry -> ReorderableItem(reorder, key = row.key, enabled = editing) {
                     val id = row.entry.entryId
                     EntryRow(
                         entry = row.entry,
@@ -291,19 +256,7 @@ private fun PlaylistList(
                         selection = selection,
                         edits = edits,
                         onAdd = onAdd,
-                        handle = Modifier.pointerInput(id) {
-                            detectDragGestures(
-                                onDragStart = { dragging = id; offset = 0f },
-                                onDragEnd = { drop(commit = true) },
-                                onDragCancel = { drop(commit = false) },
-                                onDrag = { change, amount -> change.consume(); dragBy(amount.y) },
-                            )
-                        },
-                        modifier = if (dragging == id) {
-                            Modifier.zIndex(1f).graphicsLayer { translationY = offset }
-                        } else {
-                            Modifier.animateItem()
-                        },
+                        handle = Modifier.draggableHandle(onDragStarted = { dragging = id }, onDragStopped = ::drop),
                     )
                 }
             }
@@ -342,18 +295,6 @@ private fun PlaylistHeader(
         },
     )
 }
-
-/**
- * How far to scroll this frame for a row dragged between `top` and `bottom`:
- * nothing away from the edges, and faster the further into the `edge` band it
- * reaches, up to a fifth of the band a frame.
- */
-fun edgeScroll(top: Float, bottom: Float, start: Float, end: Float, edge: Float): Float = when {
-    top < start + edge -> -((start + edge - top).coerceAtMost(edge) / 5f)
-    bottom > end - edge -> (bottom - (end - edge)).coerceAtMost(edge) / 5f
-    else -> 0f
-}
-
 
 /** "12 tracks · 48 min · synced": what it holds, and whether edits reach the server. */
 private fun contentsSummary(playlist: Playlist, entries: List<PlaylistEntry>): String {
@@ -404,7 +345,6 @@ private fun EntryRow(
     selection: Selection<PlaylistEntry>,
     edits: PlaylistEdits,
     onAdd: (List<Long>) -> Unit,
-    modifier: Modifier,
     handle: Modifier,
 ) {
     val app = koanApp()
@@ -413,7 +353,7 @@ private fun EntryRow(
     var menu by remember { mutableStateOf(false) }
     val showInfo = LocalShowTrackInfo.current
 
-    Box(modifier) {
+    Box {
         CollectionRow(
             track.title,
             null,

@@ -20,7 +20,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,11 +38,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
-import cc.blit.koan.ffi.DspEarKind
 import cc.blit.koan.ffi.DspImpulse
 import cc.blit.koan.ffi.DspLayerInfo
-import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspPoint
 import cc.blit.koan.ffi.DspProfileDetail
 import cc.blit.koan.ffi.DspProfileSummary
@@ -71,8 +70,6 @@ import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import kotlin.math.abs
 import kotlin.math.hypot
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -95,23 +92,14 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
     val scope = rememberCoroutineScope()
     val settings by model.state.collectAsStateWithLifecycle()
     val state by dsp.state.collectAsStateWithLifecycle()
-    val library by app.mirror.library.collectAsStateWithLifecycle()
-    var name by rememberSaveable { mutableStateOf(initial) }
+    val profile = viewModel { DspProfileModel(createSavedStateHandle(), dsp, app.mirror.library, initial, device) }
+    val view by profile.state.collectAsStateWithLifecycle()
+    val name = view.name
+    val detail = view.detail
+    val before = view.before
+    val now = view.now
+    val targetOverview = view.targetOverview
     var editingName by rememberSaveable(name) { mutableStateOf(name) }
-    var detail by remember { mutableStateOf<DspProfileDetail?>(null) }
-    var response by remember { mutableStateOf<DspResponse?>(null) }
-    var targets by remember { mutableStateOf<DspTargets?>(null) }
-    var madeForChoices by remember { mutableStateOf(TargetGroups()) }
-    // For a tuning: the target it looks made against while it does not say, and what it adds on the output's correction for each choice.
-    var suggestion by remember { mutableStateOf<DspTargetName?>(null) }
-    var previews by remember { mutableStateOf(emptyMap<String, List<Double>>()) }
-    // The EQ as it was when the page opened, which Save as copy puts back, and as it is now.
-    var before by remember { mutableStateOf<String?>(null) }
-    var now by remember { mutableStateOf<String?>(null) }
-    // Edits made here when `before` was taken: until there are more, a change is another device's, and `before` follows it.
-    var editsAtBefore by remember { mutableStateOf<Int?>(null) }
-    // What became of the last Save as copy, where it needs saying.
-    var notice by remember { mutableStateOf<String?>(null) }
     var showingMore by rememberSaveable { mutableStateOf(false) }
     var copying by remember { mutableStateOf(false) }
     var resetting by remember { mutableStateOf(false) }
@@ -125,57 +113,19 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
     val inUse = state.overview?.device
     // The device whose filters and correction Used for acts on: the one the EQ page showed, else the output in use.
     val target = device ?: inUse
-    var targetOverview by remember { mutableStateOf<DspOverview?>(null) }
-    // The targets there are, read again only when one is added.
-    LaunchedEffect(state.targetsVersion, state.overview?.inEar) {
-        coroutineScope {
-            val over = async { dsp.targetsFor(DspEarKind.OVER_EAR) }
-            val inEar = async { dsp.targetsFor(DspEarKind.IN_EAR) }
-            madeForChoices = TargetGroups.of(over.await(), inEar.await(), state.overview?.inEar)
-        }
-    }
-    // Read again whenever a change lands, here or synced.
-    LaunchedEffect(name, state.version, library) {
-        coroutineScope {
-            val snapshot = async { dsp.snapshot(name) }
-            val d = async { dsp.detail(name) }
-            val r = async { dsp.response(name) }
-            val t = async { dsp.targets(name) }
-            val o = async { target?.let { dsp.overviewFor(it) } }
-            now = snapshot.await()
-            val edits = dsp.edits(name)
-            if (before == null || editsAtBefore == edits) {
-                before = now
-                editsAtBefore = edits
-            }
-            detail = d.await()
-            response = r.await()
-            targets = t.await()
-            targetOverview = o.await()
-            if (detail?.role == DspRole.TUNING) {
-                val s = async { dsp.suggestMadeAgainst(name) }
-                val p = async { dsp.madeAgainstPreviews(name) }
-                suggestion = s.await()
-                previews = p.await()
-            } else {
-                suggestion = null
-                previews = emptyMap()
-            }
-        }
-    }
     val label = { d: String -> state.overview?.names?.get(d) ?: d }
     val ink = KoanTheme.color(KoanTone.Ink)
 
     SettingsPage(name, settings) {
         val d = detail ?: return@SettingsPage
-        val r = response
+        val r = view.response
         // Stereo needs bands to copy: an empty EQ has no channels to split.
         val layout = d.channels?.takeIf { !d.readOnly && d.bands.isNotEmpty() }
         val editing = if (layout?.stereo == true) channel else null
         if (r != null) {
             // A tuning as it plays on the output's correction, where that differs from the tuning alone: with the
             // target difference its Made against asks for, so a wrong choice shows as a preference doubled or taken out.
-            val onCorrection = previews[d.tunedFor ?: ""]?.takeIf { it.size == r.total.size && it != r.total }
+            val onCorrection = view.previews[d.tunedFor ?: ""]?.takeIf { it.size == r.total.size && it != r.total }
             item { EqEditor(dsp, name, d, r, editing, onCorrection?.let { Curve(it, ink, 1.2f, dashed = true, pattern = StageStroke.eq(1).pattern!!) }) }
         }
         item { ChainSummaryCard(d.corrects, d.correctsBaked, d.tunings, inset.padding(vertical = KoanSpace.s)) }
@@ -189,11 +139,11 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = {
                     val new = editingName.trim()
-                    if (new.isNotEmpty() && new != name) dsp.rename(name, new) { ok -> if (ok) name = new else editingName = name }
+                    if (new.isNotEmpty() && new != name) profile.rename(new) { ok -> if (!ok) editingName = name }
                 }),
             )
         }
-        (notice ?: state.error)?.let { line(it, KoanTone.Bad) }
+        (view.notice ?: state.error)?.let { line(it, KoanTone.Bad) }
 
         layout?.let { l ->
             header("Channels")
@@ -269,7 +219,7 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
 
         // A stack with nothing of its own is what its layers are.
         if (d.layers.isEmpty() || d.bands.isNotEmpty() || d.impulses.isNotEmpty()) {
-            roleSection(dsp, d, madeForChoices, targets, suggestion, previews, addTarget = { addTarget.launch(arrayOf("*/*")) }) {
+            roleSection(dsp, d, view.madeForChoices, view.targets, view.suggestion, view.previews, addTarget = { addTarget.launch(arrayOf("*/*")) }) {
                 nav.push(SplitRoute(name))
             }
         }
@@ -313,16 +263,7 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
             { copying = false },
             message = "The copy takes this EQ's place in the filters, and this one goes back to how it was.",
             taken = { new -> "There is already an EQ called $new.".takeIf { state.overview?.profiles?.any { it.name == new } == true } },
-        ) { new ->
-            val (from, kept, on) = Triple(name, before, device ?: inUse)
-            scope.launch {
-                val copy = dsp.saveAsCopy(from, new, kept, on) ?: return@launch
-                notice = if (copy.placed) null
-                else "${copy.name} is saved, but $from is not in ${on?.let(label) ?: "the output"}'s filters, so the copy is not either. Add it on the EQ page."
-                before = null
-                name = copy.name
-            }
-        }
+        ) { new -> profile.saveAsCopy(new, device ?: inUse, label) }
     }
     if (resetting) {
         AlertDialog(
@@ -332,8 +273,7 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
             confirmButton = {
                 KoanButton("Reset", {
                     resetting = false
-                    dsp.revert(name)
-                    before = null
+                    profile.revert()
                 }, destructive = true)
             },
             dismissButton = { KoanButton("Cancel", { resetting = false }) },
