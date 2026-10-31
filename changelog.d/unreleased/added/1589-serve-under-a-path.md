@@ -1,0 +1,1 @@
+- **Serving under a path.** A `server.url` with a path, such as `https://host.example/koan`, serves kōan there behind a proxy that forwards or strips the path, so it can share a host with other services, as Tailscale Funnel arranges them. See [Under a path](docs/guide/headless-server.md#under-a-path).
