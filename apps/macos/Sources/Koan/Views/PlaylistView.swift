@@ -361,9 +361,7 @@ struct PlaylistView: View {
                 : entries.count < 2 ? "Nothing to shuffle" : nil,
             help: "Shuffle the playlist's order, for good",
             labelled: true,
-            version: entries.map(\.entryId).hashValue,
-            shuffle: { playlists.shuffle(id: playlistId) },
-            undo: { player.undo(playlist: playlistId) }
+            shuffle: { playlists.shuffle(id: playlistId) }
         )
         .koanButton(.compact)
     }
