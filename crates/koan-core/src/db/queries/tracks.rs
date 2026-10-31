@@ -1033,25 +1033,62 @@ pub fn queue_item_extras(
 /// One page of every track, in id order.
 ///
 /// What a client walking the whole library pages through. Ordered by the
-/// primary key, so the page is a range scan rather than a sort, and a track
-/// added mid-walk lands after the offset rather than shifting every page past
-/// it.
+/// primary key, so a track added mid-walk lands after the offset rather than
+/// shifting every page past it. A page that follows one already served
+/// continues from the last id that page held, so a walk reads each row once
+/// rather than stepping over every row before its offset again; any other
+/// offset finds its first id on the primary key alone, before any join.
 pub fn tracks_page(conn: &Connection, limit: u32, offset: u32) -> Result<Vec<TrackRow>, DbError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+    /// Where recent walks stopped: the database, the offset the next page
+    /// starts at, the last id served, and when. A walk idle for `WALK_FOR`
+    /// is over, and a sync since may have moved the rows under its offset.
+    type Walk = (String, u32, i64, std::time::Instant);
+    static WALKS: parking_lot::Mutex<Vec<Walk>> = parking_lot::Mutex::new(Vec::new());
+    const WALKS_KEPT: usize = 32;
+    const WALK_FOR: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    const COLUMNS: &str = "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
-         LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY t.id
-         LIMIT ?1 OFFSET ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![limit, offset], row_to_track_row)?
-        .collect::<Result<Vec<_>, _>>()?;
+         LEFT JOIN artists aa ON al.artist_id = aa.id";
+    // An in-memory database has no name to tell it from another.
+    let db = conn.path().filter(|p| !p.is_empty()).map(str::to_owned);
+    let after = match &db {
+        _ if offset == 0 => Some(i64::MIN),
+        Some(db) => WALKS
+            .lock()
+            .iter()
+            .find(|(d, o, _, at)| d == db && *o == offset && at.elapsed() < WALK_FOR)
+            .map(|w| w.2),
+        None => None,
+    };
+    let rows = match after {
+        Some(after) => conn
+            .prepare_cached(&format!("{COLUMNS} WHERE t.id > ?2 ORDER BY t.id LIMIT ?1"))?
+            .query_map(params![limit, after], row_to_track_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+        None => conn
+            .prepare_cached(&format!(
+                "{COLUMNS} WHERE t.id >= (SELECT id FROM tracks ORDER BY id LIMIT 1 OFFSET ?2)
+                 ORDER BY t.id LIMIT ?1"
+            ))?
+            .query_map(params![limit, offset], row_to_track_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    if let (Some(db), Some(last)) = (db, rows.last()) {
+        let next = offset.saturating_add(rows.len() as u32);
+        let mut walks = WALKS.lock();
+        walks.retain(|(d, o, _, at)| {
+            at.elapsed() < WALK_FOR && !(*d == db && (*o == offset || *o == next))
+        });
+        if walks.len() >= WALKS_KEPT {
+            walks.remove(0);
+        }
+        walks.push((db, next, last.id, std::time::Instant::now()));
+    }
     Ok(rows)
 }
 
@@ -1286,6 +1323,46 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    /// A walk reads every track once, in id order, and one removed mid-walk
+    /// moves none of the rest out of reach; an offset no walk reached is read
+    /// as an offset.
+    #[test]
+    fn a_page_walk_reads_each_track_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("walk.db")).unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let ids: Vec<i64> = (0..10)
+            .map(|i| {
+                let mut meta = sample_meta(&format!("Track {i}"), "Burial", "Untrue");
+                meta.path = Some(format!("/music/{i}.flac"));
+                upsert_track(&conn, &meta).unwrap()
+            })
+            .collect();
+        assert_eq!(
+            tracks_page(&conn, 3, 4)
+                .unwrap()
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            ids[4..7]
+        );
+        let mut seen = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = tracks_page(&conn, 3, offset).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len() as u32;
+            seen.extend(page.iter().map(|t| t.id));
+            if seen.len() == 3 {
+                conn.execute("DELETE FROM tracks WHERE id = ?1", [ids[0]])
+                    .unwrap();
+            }
+        }
+        assert_eq!(seen, ids);
     }
 
     #[test]

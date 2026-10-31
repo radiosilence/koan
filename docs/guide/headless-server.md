@@ -130,7 +130,7 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Media keys, headphone buttons and the system's now-playing controls drive it. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
+The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Media keys, headphone buttons and the system's now-playing controls drive it. Covers are resized once and kept in `covers/` in the config directory, which is held to 1 GiB by removing the covers read least recently; deleting it only costs regenerating them.
 
 - **Albums, artists and tracks** sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the apps offer, so a filtered view can be bookmarked or sent.
 - **Playlists** are the account's own and anyone's public ones, played or queued like an album. They are edited from the apps.
@@ -267,7 +267,7 @@ The apps reach this through the `koanScrobbling` extension: `koanScrobbling` rep
 
 ## Sharing
 
-A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `<server.url>/share/<id>`, a page anyone can open without an account, with a player for each shared track and a Download button that sends the shared files, untouched, as one zip.
+A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `<server.url>/share/<id>`, a page anyone can open without an account, with a player for each shared track and a Download button that sends the shared files, untouched, as one zip. The server writes at most four zips at once and answers further downloads with 503 until one finishes; a download whose visitor stops reading for 30 seconds is ended.
 
 A share is a slice of the library, shown the way the app shows it: one track shares its album cued to that track, an album the album, an artist their albums in release order, and several tracks stay a list. What a share covers is fixed when it is made; an artist share does not grow when the library does. Pages carry OpenGraph and Twitter card tags, with the cover as an absolute `og:image` on `server.url`, so a pasted link unfurls with its artwork.
 

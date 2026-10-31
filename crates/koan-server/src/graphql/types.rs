@@ -569,8 +569,8 @@ impl GqlNowPlaying {
             };
         };
 
-        let (items, _cursor) = state.snapshot_playlist();
-        let playlist_item = items.iter().find(|i| i.id == info.id);
+        let playlist_item = state.get_item(info.id);
+        let playlist_item = playlist_item.as_ref();
         Self {
             state: playback_state,
             position_ms,
