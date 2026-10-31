@@ -18,10 +18,17 @@ struct TvWakeTarget: Identifiable, Equatable {
 }
 
 /// A device signed in from here, and when: an Apple TV among them that links
-/// soon after is offered waking.
+/// soon after is offered waking. Known by the id it links with; by its name
+/// only from a server that does not say the id, since two televisions are
+/// often called the same.
 struct SignedInHere: Equatable {
+    let id: String?
     let name: String
     let at: Date
+
+    func `is`(_ device: DeviceInfo) -> Bool {
+        if let id { device.id == id } else { device.name == name }
+    }
 }
 
 /// The offer after a sign-in, and the sheet that pairs.
@@ -34,7 +41,7 @@ struct TvWakePrompts: ViewModifier {
     private var arrived: TvWakeTarget? {
         guard let signed = state.ui.signedInHere, signed.at.timeIntervalSinceNow > -300 else { return nil }
         return state.mirror.devices
-            .first { $0.tvPairable && !$0.tvPaired && $0.awake && $0.name == signed.name }
+            .first { $0.tvPairable && !$0.tvPaired && $0.awake && signed.is($0) }
             .map { TvWakeTarget(id: $0.id, name: $0.name) }
     }
 

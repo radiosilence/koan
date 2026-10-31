@@ -44,6 +44,7 @@ import cc.blit.koan.KoanApp
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.ShelfKind
 import cc.blit.koan.ffi.ShelfSummary
+import cc.blit.koan.ui.Read
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.AlbumsRoute
@@ -124,6 +125,9 @@ fun SearchPage() {
             when {
                 query.isBlank() -> KoanUnavailable("Search your library", KoanIcons.search, null)
                 shown == null || (shown.isEmpty && searching) -> Unit
+                shown.read is Read.Failed -> KoanUnavailable("Couldn't search", KoanIcons.warningFilled, shown.read.reason) {
+                    KoanButton("Try Again", model::retry)
+                }
                 shelf == null || shown.isEmpty ->
                     KoanUnavailable("Nothing found", KoanIcons.search, "No artists, albums or tracks match “${shown.query}”.")
                 else -> Found(shown.query, shelf, selection)

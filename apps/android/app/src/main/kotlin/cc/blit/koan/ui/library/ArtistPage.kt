@@ -40,8 +40,10 @@ import cc.blit.koan.ffi.Placement
 import cc.blit.koan.ffi.ReleaseSection
 import cc.blit.koan.ffi.TrackSet
 import cc.blit.koan.ffi.releaseSectionTitle
+import cc.blit.koan.ui.StaleNotice
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.shown
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcons
@@ -51,6 +53,7 @@ import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.value
 
 /**
  * An artist: their photograph and name, play and shuffle, the opening of their
@@ -63,7 +66,7 @@ fun ArtistPage(artistId: Long) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val model = viewModel { ArtistModel(app.mirror, artistId) }
-    val record by model.record.collectAsStateWithLifecycle()
+    val read by model.record.state.collectAsStateWithLifecycle()
     val info by model.info.collectAsStateWithLifecycle()
     val looking by model.looking.collectAsStateWithLifecycle()
     val selection = model.selection
@@ -72,15 +75,19 @@ fun ArtistPage(artistId: Long) {
     val grid = rememberLazyGridState()
     val list = rememberLazyListState()
     val (current, playing) = nowPlayingTrack()
-    val held = record
+    val held = read.value
     // The name moves into the bar once the header has scrolled away.
     val scrolled by remember { derivedStateOf { grid.firstVisibleItemIndex > 0 || list.firstVisibleItemIndex > 0 } }
     Column {
         PageBar(if (scrolled) held?.artist?.name.orEmpty() else "", appText = false) {
             if (held != null && (held.albums.isNotEmpty() || held.features.isNotEmpty() || held.appearances.isNotEmpty())) SelectButton(selection)
         }
+        read.StaleNotice("this artist", model.record::retry)
         Box(Modifier.weight(1f)) {
-            if (held == null) return@Box
+            if (held == null) {
+                read.shown("this artist", model.record::retry)
+                return@Box
+            }
             val artist = held.artist ?: return@Box KoanUnavailable("This artist isn't in the library any more", KoanIcons.artist, null)
             if (held.albums.isEmpty() && held.features.isEmpty() && held.appearances.isNotEmpty()) {
                 val ids = remember(held) { held.appearances.map { it.id } }

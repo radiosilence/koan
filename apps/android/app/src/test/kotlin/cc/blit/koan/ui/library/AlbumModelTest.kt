@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.library
 
 import cc.blit.koan.ffi.AlbumPage
+import cc.blit.koan.ui.Read
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,21 +30,37 @@ class AlbumModelTest {
     fun aFailedReadSaysSoAndTryAgainReadsAgain() = runTest(dispatcher) {
         var failing = true
         val model = AlbumModel({ if (failing) error("database is locked") else gone }, library)
-        backgroundScope.launch { model.page.collect {} }
-        assertEquals(AlbumRead.Reading, model.page.value)
+        backgroundScope.launch { model.page.state.collect {} }
+        assertEquals(Read.Reading, model.page.state.value)
         advanceUntilIdle()
-        assertEquals(AlbumRead.Failed, model.page.value)
+        assertEquals(Read.Failed("database is locked"), model.page.state.value)
         failing = false
-        model.retry()
+        model.page.retry()
         advanceUntilIdle()
-        assertEquals(AlbumRead.Read(gone), model.page.value)
+        assertEquals(Read.Done(gone), model.page.state.value)
+    }
+
+    @Test
+    fun aFailedReadAgainKeepsWhatWasReadAndSaysWhy() = runTest(dispatcher) {
+        var failing = false
+        val model = AlbumModel({ if (failing) error("database is locked") else gone }, library)
+        backgroundScope.launch { model.page.state.collect {} }
+        advanceUntilIdle()
+        failing = true
+        library.value = 1
+        advanceUntilIdle()
+        assertEquals(Read.Done(gone, stale = "database is locked"), model.page.state.value)
+        failing = false
+        model.page.retry()
+        advanceUntilIdle()
+        assertEquals(Read.Done(gone), model.page.state.value)
     }
 
     @Test
     fun theLibraryMovingReadsAgain() = runTest(dispatcher) {
         var reads = 0
         val model = AlbumModel({ reads++; gone }, library)
-        backgroundScope.launch { model.page.collect {} }
+        backgroundScope.launch { model.page.state.collect {} }
         advanceUntilIdle()
         library.value = 1
         advanceUntilIdle()

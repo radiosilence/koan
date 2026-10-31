@@ -2,6 +2,7 @@ package cc.blit.koan.art
 
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.CoverArt
+import cc.blit.koan.ui.library.SleeveAccents
 import coil3.ImageLoader
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
@@ -107,7 +108,8 @@ class ArtFetcher(
  * SQLite reuses a freed row id, so a cover cached under a deleted album's id
  * would show for the next album given it; a rescanned folder may have a new
  * cover beside its tracks. Each time the library moves, ask the engine what
- * went (`art_evictions`) and forget those covers at every size.
+ * went (`art_evictions`) and forget those covers, and the accents taken from
+ * them, at every size.
  */
 fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
     mirror.launch {
@@ -119,6 +121,7 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
             val keys = HashSet<String>()
             for ((kind, id) in arts) {
                 for (size in ArtSize.entries) {
+                    SleeveAccents.forget(Art(kind, id, size))
                     val key = Art(kind, id, size).key
                     loader.diskCache?.remove(key)
                     keys += key

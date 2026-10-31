@@ -63,7 +63,7 @@ data class AccountState(
  */
 class AccountModel(
     private val engine: suspend () -> KoanEngineInterface,
-    private val activity: ActivityModel = ActivityModel(),
+    private val activity: ActivityModel,
 ) : ViewModel() {
     private val _state = MutableStateFlow(AccountState())
     val state: StateFlow<AccountState> = _state.asStateFlow()

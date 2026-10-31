@@ -5689,10 +5689,14 @@ async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
 /// A pairing as an approver sees it: the device's name, the address it asked
 /// from, and whether that address is on a private network.
 fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
-    XmlNode::new("pair")
+    let node = XmlNode::new("pair")
         .attr("device", &info.device)
         .attr("from", &info.from.to_string())
-        .attr_bool("local", info.local())
+        .attr_bool("local", info.local());
+    match &info.device_id {
+        Some(id) => node.attr("deviceId", id),
+        None => node,
+    }
 }
 
 /// Who may look a pairing up, approve it or decline it: a caller who could
@@ -7670,7 +7674,7 @@ mod tests {
         };
         let mate = "u=mate&p=hunter22&v=1.16.1&c=test&f=json";
         let opened = crate::pair::pairings()
-            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .open("Den TV", Some("0192-den"), "198.51.100.7".parse().unwrap())
             .unwrap();
         let (id, code) = (
             opened.id.clone(),
@@ -7682,7 +7686,9 @@ mod tests {
         assert!(body.contains("code=\"10\""), "{body}");
         let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
         assert!(
-            body.contains("\"device\":\"Den TV\",\"from\":\"198.51.100.7\",\"local\":false"),
+            body.contains(
+                "\"device\":\"Den TV\",\"deviceId\":\"0192-den\",\"from\":\"198.51.100.7\",\"local\":false"
+            ),
             "{body}"
         );
 
@@ -7847,7 +7853,7 @@ mod tests {
         }
 
         let opened = crate::pair::pairings()
-            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .open("Den TV", Some("0192-den"), "198.51.100.7".parse().unwrap())
             .unwrap();
         let mut mate = as_app_password("mate").to_vec();
         mate.push(auth_query(""));

@@ -3,13 +3,13 @@ package cc.blit.koan.ui.library
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.VizLevels
 import cc.blit.koan.ui.koanApp
@@ -25,8 +25,9 @@ import kotlinx.coroutines.flow.stateIn
 /**
  * The music's level in three bands, for every playing indicator on screen.
  *
- * One analyser subscription, held only while a bar is drawn: the analyser
- * publishes nothing while paused, and parks with no one reading.
+ * One analyser subscription, held only while a bar is drawn and the app is in
+ * the foreground: the analyser publishes nothing while paused, and parks with
+ * no one reading.
  */
 private object Levels {
     private var held: StateFlow<VizLevels?>? = null
@@ -49,7 +50,7 @@ private object Levels {
  */
 @Composable
 fun PlayingBars(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 14.dp, color: Color = KoanTheme.look.accent) {
-    val levels = if (playing) Levels.of(koanApp().mirror).collectAsState() else null
+    val levels = if (playing) Levels.of(koanApp().mirror).collectAsStateWithLifecycle() else null
     Canvas(modifier.size(size)) {
         val l = levels?.value
         val heights = if (l == null) listOf(0.3f, 0.5f, 0.4f) else listOf(l.low, l.mid, l.high).map { it.coerceIn(0.12f, 1f) }

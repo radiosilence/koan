@@ -44,6 +44,10 @@ final class FrameTimer: NSObject {
     private static let stall = Duration.milliseconds(34)
     /// Enough ticks at cadence to call it settled.
     private static let calm = 4
+    /// A move that has not settled by now never will be measured: it was
+    /// superseded by a page that does not report, or nothing was drawn at all.
+    /// The link stops rather than ticking on.
+    private static let patience = Duration.seconds(5)
 
     private let log = Logger(subsystem: "cc.blit.koan", category: "frames")
     private var link: CADisplayLink?
@@ -89,7 +93,13 @@ final class FrameTimer: NSObject {
 
     @objc private func tick() {
         guard var move else { return discard() }
-        move.ticks.append(.now - move.started)
+        let elapsed = ContinuousClock.now - move.started
+        guard elapsed < Self.patience else {
+            Trace.signposter.endInterval("tap-to-frame", move.signpost)
+            log.info("tap-to-frame abandoned after \(Self.ms(elapsed), privacy: .public)ms")
+            return discard()
+        }
+        move.ticks.append(elapsed)
         self.move = move
         guard let evaluated = move.evaluated, settled(move.ticks) else { return }
         Trace.signposter.endInterval("tap-to-frame", move.signpost)

@@ -46,6 +46,8 @@ class QueueRowsTest {
     fun groupsContiguousRunsOnly() {
         val rows = QueueRow.build(queue, grouped = true)
         assertEquals(listOf("album:1", "1", "2", "3", "4", "album:5", "5"), rows.map { it.key })
+        // A row on no record is drawn as its own record, as a single is.
+        assertEquals(QueueRow.Single::class, rows[3]::class)
         assertEquals(QueueRow.Single::class, rows[4]::class)
         assertEquals(listOf("1", "2"), rows[0].itemIds)
     }

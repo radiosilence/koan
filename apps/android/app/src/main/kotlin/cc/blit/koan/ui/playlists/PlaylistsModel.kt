@@ -1,18 +1,15 @@
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package cc.blit.koan.ui.playlists
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.blit.koan.engine.EngineMirror
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ffi.PlaylistEntry
 import cc.blit.koan.ffi.RunRole
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.stateIn
+import cc.blit.koan.ui.Listing
+import cc.blit.koan.ui.library.RunPiece
+import cc.blit.koan.ui.library.runPieces
 
 /**
  * The playlists, asked for again whenever the library moves. Writing a
@@ -20,27 +17,21 @@ import kotlinx.coroutines.flow.stateIn
  * from the server, reaches the list the same way.
  */
 class PlaylistsModel(mirror: EngineMirror) : ViewModel() {
-    val playlists: StateFlow<List<Playlist>?> = mirror.library
-        .mapLatest { runCatching { mirror.engine().playlists() }.getOrDefault(emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val playlists = Listing(viewModelScope, mirror.library) { mirror.engine().playlists() }
 }
 
 /** One playlist: its row, its entries and the records its mosaic is made of, read together. */
 data class PlaylistContents(val playlist: Playlist?, val entries: List<PlaylistEntry>, val covers: List<Long>)
 
 class PlaylistModel(mirror: EngineMirror, playlistId: Long) : ViewModel() {
-    val contents: StateFlow<PlaylistContents?> = mirror.library
-        .mapLatest {
-            runCatching {
-                val engine = mirror.engine()
-                PlaylistContents(
-                    engine.playlists().firstOrNull { it.id == playlistId },
-                    engine.playlistTracks(playlistId),
-                    engine.playlistCoverAlbumIds(playlistId),
-                )
-            }.getOrNull()
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val contents = Listing(viewModelScope, mirror.library) {
+        val engine = mirror.engine()
+        PlaylistContents(
+            engine.playlists().firstOrNull { it.id == playlistId },
+            engine.playlistTracks(playlistId),
+            engine.playlistCoverAlbumIds(playlistId),
+        )
+    }
 }
 
 /**
@@ -51,7 +42,7 @@ class PlaylistModel(mirror: EngineMirror, playlistId: Long) : ViewModel() {
 class PlaylistEdits(private val mirror: EngineMirror) {
     suspend fun create(name: String, trackIds: List<Long> = emptyList()): Playlist? =
         name.trim().takeIf { it.isNotEmpty() }?.let { trimmed ->
-            runCatching { mirror.engine().createPlaylist(trimmed, trackIds) }.getOrNull()
+            attempt { mirror.engine().createPlaylist(trimmed, trackIds) }.onFailure { mirror.report(it as Exception) }.getOrNull()
         }
 
     fun rename(playlist: Playlist, name: String) {
@@ -112,20 +103,15 @@ sealed interface PlaylistRow {
 fun playlistRows(entries: List<PlaylistEntry>, grouped: Boolean): List<PlaylistRow> {
     if (!grouped) return entries.map(PlaylistRow::Entry)
     val rows = ArrayList<PlaylistRow>(entries.size + entries.size / 8)
-    var index = 0
-    while (index < entries.size) {
-        val first = entries[index]
-        if (first.run != RunRole.OPENS) {
-            rows += PlaylistRow.Entry(first)
-            index++
-            continue
+    for (piece in runPieces(entries) { it.run }) {
+        when (piece) {
+            is RunPiece.Alone -> rows += PlaylistRow.Entry(piece.row)
+            is RunPiece.Run -> {
+                val first = piece.rows.first()
+                rows += PlaylistRow.Heading(first.track.albumTitle, first.track.albumId, piece.rows)
+                piece.rows.mapTo(rows, PlaylistRow::Entry)
+            }
         }
-        var end = index + 1
-        while (end < entries.size && entries[end].run == RunRole.CONTINUES) end++
-        val run = entries.subList(index, end).toList()
-        rows += PlaylistRow.Heading(first.track.albumTitle, first.track.albumId, run)
-        run.mapTo(rows, PlaylistRow::Entry)
-        index = end
     }
     return rows
 }
