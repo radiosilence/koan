@@ -2105,6 +2105,19 @@ impl SharedPlayerState {
         self.bump_content();
     }
 
+    /// Whether `shuffle_upcoming` has two rows or more to move.
+    pub fn upcoming_shufflable(&self) -> bool {
+        let pl = self.playlist.read();
+        let start = match pl.cursor {
+            Some(cursor) => match pl.items.iter().position(|i| i.id == cursor) {
+                Some(at) => at + 1,
+                None => return false,
+            },
+            None => 0,
+        };
+        pl.items.len() - start >= 2
+    }
+
     /// Shuffle the rows after the cursor in place, or every row when nothing
     /// is under it. Returns where each moved row sat before, for undo, or
     /// `None` when fewer than two rows would move.

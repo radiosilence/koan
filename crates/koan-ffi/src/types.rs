@@ -506,8 +506,11 @@ pub struct NowPlaying {
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
     /// How many shuffles of the queue undo would take back before reaching
-    /// any other edit: what a phone's Undo beside the dice offers.
+    /// any other edit.
     pub undo_shuffles: u32,
+    /// `shuffle_queue` has two rows or more to move: after the playing one,
+    /// or anywhere with nothing playing.
+    pub queue_shufflable: bool,
     /// The sleep timer, while one is set.
     pub sleep: Option<SleepState>,
     /// The sleep timer is fading playback out: not bit-perfect meanwhile.

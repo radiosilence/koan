@@ -2167,8 +2167,8 @@ impl KoanEngine {
     }
 
     /// How many shuffles undo would take back from the playlist before
-    /// reaching any other edit: what a phone's Undo beside the dice offers.
-    /// Read again whenever the playlist is. Async: an undo holds the history
+    /// reaching any other edit. Moves only with an edit to the playlist, so
+    /// read again whenever the playlist is. Async: an undo holds the history
     /// while it writes.
     pub async fn playlist_undo_shuffles(self: Arc<Self>, playlist_id: i64) -> u32 {
         offload::offload(move || self.playlist_history.shuffles_on_top(playlist_id)).await
@@ -5585,8 +5585,9 @@ impl KoanEngine {
                 playlist_version: 0,
                 shuffle: st.shuffle,
                 repeat_mode: st.repeat.into(),
-                // The dice is this device's alone.
+                // Shuffling the queue in place is this device's alone.
                 undo_shuffles: 0,
+                queue_shufflable: false,
                 sleep: st.sleep.map(Into::into),
                 sleep_fading: st.sleep_fading,
                 start_failure: None,
@@ -6092,6 +6093,7 @@ impl KoanEngine {
             shuffle: self.state.play_mode().shuffle,
             repeat_mode: self.state.play_mode().repeat.into(),
             undo_shuffles: self.state.undo_shuffles(),
+            queue_shufflable: self.state.upcoming_shufflable(),
             sleep: self.state.sleep().map(Into::into),
             sleep_fading: self.state.sleep_fading(),
             start_failure: self.state.start_failure(),

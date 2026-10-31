@@ -46,7 +46,7 @@ pub enum UndoEntry {
 
     /// The rows after the cursor were shuffled in place. Undone as
     /// `MovedBatch` is; kept apart so the shuffles on top of the stack can be
-    /// counted, which is what a phone's Undo beside the dice shows.
+    /// counted.
     Shuffled {
         entries: Vec<(QueueItemId, Option<QueueItemId>)>,
     },

@@ -73,6 +73,7 @@ import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.queue.ShuffleUndoButton
 import cc.blit.koan.ui.value
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -147,6 +148,7 @@ fun PlaylistPage(playlistId: Long) {
                         playlist = playlist,
                         entries = entries,
                         covers = contents.covers,
+                        undoShuffles = contents.undoShuffles,
                         playingEntry = nowPlaying?.entry?.playlistEntryId,
                         editing = editing && fillable,
                         selection = selection,
@@ -186,6 +188,7 @@ private fun PlaylistList(
     playlist: Playlist,
     entries: List<PlaylistEntry>,
     covers: List<Long>,
+    undoShuffles: UInt,
     playingEntry: Long?,
     editing: Boolean,
     selection: Selection<PlaylistEntry>,
@@ -247,7 +250,7 @@ private fun PlaylistList(
     val rows = if (editing) order.map(PlaylistRow::Entry) else playlistRows(entries, grouped)
     LazyColumn(state = listState) {
         item(key = "header") {
-            PlaylistHeader(playlist, entries, covers, grouped, showLayout = !editing, edits)
+            PlaylistHeader(playlist, entries, covers, grouped, showLayout = !editing, edits, undoShuffles)
         }
         if (entries.isEmpty()) {
             item(key = "empty") {
@@ -289,6 +292,7 @@ private fun PlaylistHeader(
     grouped: Boolean,
     showLayout: Boolean,
     edits: PlaylistEdits,
+    undoShuffles: UInt,
 ) {
     val app = koanApp()
     val any = entries.isNotEmpty()
@@ -307,6 +311,7 @@ private fun PlaylistHeader(
                 KoanButton("Play Next", { app.player.playNext(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.playNext, enabled = any)
                 KoanButton("Add to Queue", { app.player.enqueue(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue, enabled = any)
                 // The playlist's own order, dealt again; each press is a step of its undo.
+                if (playlist.fillable) ShuffleUndoButton(undoShuffles) { app.mirror.launch { undo(playlist.id) } }
                 if (playlist.fillable) KoanButton("Shuffle Order", { edits.shuffleOrder(playlist.id) }, kind = KoanButtonKind.Icon, icon = KoanIcons.reshuffle, enabled = entries.size > 1)
                 Spacer(Modifier.weight(1f))
                 if (showLayout && any) KoanIconToggle(KoanIcons.album, "Group by album", grouped) { edits.setGrouped(playlist.id, it) }

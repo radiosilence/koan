@@ -21,7 +21,8 @@ class PlaylistsModel(mirror: EngineMirror) : ViewModel() {
 }
 
 /** One playlist: its row, its entries and the records its mosaic is made of, read together. */
-data class PlaylistContents(val playlist: Playlist?, val entries: List<PlaylistEntry>, val covers: List<Long>)
+/** `undoShuffles`: how many shuffles undo would take back before reaching any other edit. */
+data class PlaylistContents(val playlist: Playlist?, val entries: List<PlaylistEntry>, val covers: List<Long>, val undoShuffles: UInt = 0u)
 
 class PlaylistModel(mirror: EngineMirror, playlistId: Long) : ViewModel() {
     val contents = Listing(viewModelScope, mirror.library) {
@@ -30,6 +31,7 @@ class PlaylistModel(mirror: EngineMirror, playlistId: Long) : ViewModel() {
             engine.playlists().firstOrNull { it.id == playlistId },
             engine.playlistTracks(playlistId),
             engine.playlistCoverAlbumIds(playlistId),
+            engine.playlistUndoShuffles(playlistId),
         )
     }
 }

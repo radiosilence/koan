@@ -414,14 +414,7 @@ final class PlayerModel {
     var queueDiceRefusal: String? {
         if controlled != nil { return "Can't shuffle another device's queue from here" }
         if shuffle { return "Shuffle play picks its own order; turn it off to reorder the queue" }
-        var rest = queue.count
-        if let id = currentItemId {
-            guard let at = queue.firstIndex(where: { $0.queueItemId == id }) else {
-                return "Nothing after the playing track to shuffle"
-            }
-            rest = queue.count - at - 1
-        }
-        if rest >= 2 { return nil }
+        if mirror.playback.queueShufflable { return nil }
         return currentItemId == nil ? "Nothing to shuffle" : "Nothing after the playing track to shuffle"
     }
 
