@@ -7240,7 +7240,7 @@ mod tests {
         const WAITING: usize = 1500;
         for i in 0..WAITING {
             crate::clients::seed_outbox(
-                "mate",
+                "drainer",
                 "outbox-drain-test",
                 Envelope::from(LinkCommand::JumpTo {
                     track_id: i.to_string(),
@@ -7248,11 +7248,17 @@ mod tests {
             );
         }
         let (state, _dir) = test_state();
+        // Its own account: links are registered process-wide, and other tests
+        // here end or refuse the links of the shared one.
+        {
+            let db = state.pool.get().unwrap();
+            queries::auth::create_user(&db.conn, "drainer", "hunter22", Role::Readonly).unwrap();
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
         let url = format!(
-            "ws://{addr}/rest/koanLink?u=mate&p=hunter22&v=1.16.1&c=test&device=outbox-drain-test"
+            "ws://{addr}/rest/koanLink?u=drainer&p=hunter22&v=1.16.1&c=test&device=outbox-drain-test"
         );
         let got = tokio::task::spawn_blocking(move || {
             let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
@@ -7284,7 +7290,7 @@ mod tests {
         assert_eq!(got, expected);
         assert!(
             crate::clients::registry()
-                .list(Some("mate"))
+                .list(Some("drainer"))
                 .iter()
                 .any(|c| c.device == "outbox-drain-test"),
             "the link survived its outbox"
