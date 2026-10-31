@@ -1,0 +1,1 @@
+- **The TUI's track list no longer repeats or skips rows when the library changes between pages.** Queue credits follow library changes made by other processes. Now Playing no longer goes blank when it gets ahead of the queue, and the cover is retried after a partial download. A remote server's downloading tracks show their progress.
