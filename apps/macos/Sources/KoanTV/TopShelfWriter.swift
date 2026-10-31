@@ -124,7 +124,7 @@ final class TopShelfWriter {
         guard let data = await state.art.bytes(for: .album(record.album.id)) else { return nil }
         return await Task.detached(priority: .utility) {
             let digest = SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
-            let name = "\(digest).jpg"
+            let name = "\(digest)-\(Self.pixels).jpg"
             let file = directory.appending(path: name)
             if FileManager.default.fileExists(atPath: file.path) { return name }
             guard let jpeg = Self.thumbnail(data), (try? jpeg.write(to: file, options: .atomic)) != nil

@@ -1814,7 +1814,8 @@ impl KoanEngine {
             Ok(TopShelf {
                 recent: records(Shelf::Recent.albums(user, now))?,
                 // The newest first: in the Favourites page's order, a dozen
-                // would only ever be the first few artists.
+                // would only ever be the first few artists. A favourite synced
+                // from the server is dated by the sync that brought it.
                 favourites: records(queries::AlbumQuery {
                     order: queries::AlbumOrder::Favourited,
                     ..Shelf::Favourites.albums(user, now)
