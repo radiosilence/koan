@@ -193,6 +193,7 @@ struct TabShell: View {
             if shown { pushedShowing.insert(id) } else { pushedShowing.remove(id) }
         }
         .defaultFocus($barFocus, selection)
+        .onChange(of: app.ui.nowPlayingAsked) { selection = .nowPlaying }
         #else
         .modifier(AdaptableTabs(sidebar: sidebar))
         .onChange(of: sidebar) { regroup() }
@@ -221,7 +222,6 @@ struct TabShell: View {
         .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
             Task { await checkSignedIn() }
         }
-        .onChange(of: app.ui.nowPlayingAsked) { selection = .nowPlaying }
         #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
