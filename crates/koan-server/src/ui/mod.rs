@@ -541,9 +541,11 @@ impl<T, E: std::fmt::Display> Logged<T> for Result<T, E> {
 
 /// A track's audio, from a local file; Range requests are honoured, so the
 /// browser can seek a stream.
-async fn stream(State(s): State<UiState>, Path(id): Path<i64>, headers: HeaderMap) -> Response {
+/// A track's file, named by its uid or row id.
+async fn stream(State(s): State<UiState>, Path(id): Path<String>, headers: HeaderMap) -> Response {
     let path = blocking(move || {
         let db = open(&s.pool)?;
+        let id = queries::resolve_id(&db.conn, queries::UidKind::Track, &id).logged()??;
         let t = queries::tracks_by_ids(&db.conn, &[id]).logged()?.pop()?;
         crate::subsonic::track_file_path(&t).map(PathBuf::from)
     })

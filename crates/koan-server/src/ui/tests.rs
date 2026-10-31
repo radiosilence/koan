@@ -399,6 +399,31 @@ async fn streams_serve_ranges_to_a_signed_in_user() {
 }
 
 #[tokio::test]
+async fn streams_are_named_by_uid_too() {
+    let f = setup(true);
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    let uid = queries::uids_for(&db.conn, queries::UidKind::Track, [f.track_id]).unwrap()
+        [&f.track_id]
+        .clone();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/ui/stream/{uid}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!((r.status, r.body.as_str()), (StatusCode::OK, "0123456789"));
+    let r = send(
+        &f.app,
+        authed(&f.state, "/ui/stream/not-an-id")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn every_class_on_every_page_has_a_rule() {
     let f = setup(true);
     let db = Database::open(f.state.pool.path()).unwrap();
