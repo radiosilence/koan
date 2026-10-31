@@ -2,12 +2,23 @@
 
 package cc.blit.koan.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import cc.blit.koan.engine.attempt
 import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -24,7 +35,8 @@ import kotlinx.coroutines.flow.update
 sealed interface Read<out T> {
     data object Reading : Read<Nothing>
 
-    data class Done<T>(val value: T) : Read<T>
+    /** `stale` is why the latest read failed, where this is what an earlier one read. */
+    data class Done<T>(val value: T, val stale: String? = null) : Read<T>
 
     data class Failed(val reason: String) : Read<Nothing>
 }
@@ -41,18 +53,20 @@ inline fun <T> read(block: () -> T): Read<T> = attempt(block).fold(
 /**
  * A listing read again whenever `keys` moves, and when asked to after a
  * failed read. A new read replaces the last one's answer only when it lands,
- * so a page keeps what it shows meanwhile; and a read again of the same key
- * that fails keeps what was read, since the library moving reads it again.
+ * so a page keeps what it shows meanwhile. A read that fails after one that
+ * did not keeps the earlier answer, marked stale with the failure, so the
+ * page keeps its content and says what went wrong beside it.
  */
 class Listing<K, T>(scope: CoroutineScope, keys: Flow<K>, fetch: suspend (K) -> T) {
     private val retries = MutableStateFlow(0)
-    private var last: Pair<K, Read.Done<T>>? = null
+    private var last: Read.Done<T>? = null
 
     val state: StateFlow<Read<T>> = combine(keys, retries) { key, _ -> key }
         .mapLatest { key ->
             when (val r = read { fetch(key) }) {
-                is Read.Done -> r.also { last = key to it }
-                else -> last?.takeIf { it.first == key }?.second ?: r
+                is Read.Done -> r.also { last = it }
+                is Read.Failed -> last?.copy(stale = r.reason) ?: r
+                Read.Reading -> r
             }
         }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), Read.Reading)
@@ -74,4 +88,18 @@ fun <T> Read<T>.shown(what: String, retry: () -> Unit): T? {
         }
     }
     return null
+}
+
+/** Why the latest read failed, over content an earlier read left, with a way to try again; nothing when the content is current. */
+@Composable
+fun Read<*>.StaleNotice(what: String, retry: () -> Unit) {
+    val stale = (this as? Read.Done)?.stale ?: return
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = KoanSpace.l, vertical = KoanSpace.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
+    ) {
+        KoanText("Couldn't read $what again: $stale", Modifier.weight(1f), role = KoanType.Fine, tone = KoanTone.Bad, maxLines = 2)
+        KoanButton("Try Again", retry, kind = KoanButtonKind.Link)
+    }
 }
