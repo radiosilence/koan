@@ -8,8 +8,6 @@
 //! [`refresh_due`]); entries are rewritten only when the selection changed, so
 //! a read that finds nothing new writes nothing.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, params, params_from_iter};
 

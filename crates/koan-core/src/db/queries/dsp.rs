@@ -89,9 +89,7 @@ pub fn save(
         return Ok(Saved { rev, stored: false });
     }
     let rev = next_rev(conn, user)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64);
+    let now = crate::clock::unix_ms();
     conn.execute(
         "INSERT INTO dsp_profiles (user_id, uid, rev, edited_at, doc) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (user_id, uid) DO UPDATE

@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{Connection, params};
 
 use crate::db::connection::DbError;

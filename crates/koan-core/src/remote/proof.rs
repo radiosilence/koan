@@ -24,8 +24,6 @@
 //! A peer that proves nothing, because it is older, signed out, or on another
 //! server, is classed as it always was.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use base64::Engine as _;
 use parking_lot::Mutex;
 use ring::rand::SecureRandom as _;
