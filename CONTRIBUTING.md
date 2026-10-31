@@ -34,7 +34,7 @@ builds on nightly
 
 ```bash
 just web-client
-KOAN_WEB_CLIENT_DIR=target/koan-web koan serve
+KOAN_WEB_CLIENT_DIR=target/koan-web koan --headless
 ```
 
 Sign in to the web UI, then open `/client/` and load a track by its id. The

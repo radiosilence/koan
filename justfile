@@ -60,7 +60,7 @@ js:
     tsc -p crates/koan-server/scripts
 
 # The experimental web client (crates/koan-web) into target/koan-web, for
-# `KOAN_WEB_CLIENT_DIR=target/koan-web koan serve` to serve at /client/. Its
+# `KOAN_WEB_CLIENT_DIR=target/koan-web koan --headless` to serve at /client/. Its
 # threads share one memory, which needs std rebuilt with atomics: nightly.
 # The memory's maximum is reserved up front, so it stays modest.
 web-client:
