@@ -37,6 +37,9 @@ use uuid::Uuid;
 
 use koan_core::db::queries::RECENT_LIMIT;
 
+/// How many records each Top Shelf section holds.
+const TOP_SHELF_LIMIT: u32 = 12;
+
 #[cfg(target_os = "android")]
 mod android;
 mod offload;
@@ -1775,6 +1778,52 @@ impl KoanEngine {
                 tracks: self.decorate(&db, s.tracks.preview),
                 track_total: s.tracks.total,
             })
+        })
+        .await
+    }
+
+    /// The Apple TV's Top Shelf: the first `TOP_SHELF_LIMIT` records of the
+    /// Recently played and Favourites shelves. Not narrowed to what this device
+    /// holds while offline: the system shows the shelf when koan is not
+    /// running, by which time the connection may be back.
+    pub async fn top_shelf(self: Arc<Self>) -> Result<TopShelf, KoanError> {
+        use koan_core::shelves::{self, Shelf};
+        offload::offload(move || {
+            let db = self.db()?;
+            let (user, now) = (queries::LOCAL_USER, shelves::now());
+            let records = |shelf: Shelf| -> Result<Vec<TopShelfRecord>, KoanError> {
+                let rows = queries::list_albums(
+                    &db.conn,
+                    &queries::AlbumQuery {
+                        limit: Some(TOP_SHELF_LIMIT),
+                        ..shelf.albums(user, now)
+                    },
+                )
+                .map_err(db_err)?;
+                let mut uids =
+                    queries::uids_for(&db.conn, queries::UidKind::Album, rows.iter().map(|r| r.id))
+                        .map_err(db_err)?;
+                Ok(decorate_albums(&db, rows)
+                    .into_iter()
+                    .filter_map(|album| {
+                        let uid = uids.remove(&album.id)?;
+                        Some(TopShelfRecord { album, uid })
+                    })
+                    .collect())
+            };
+            Ok(TopShelf {
+                recent: records(Shelf::Recent)?,
+                favourites: records(Shelf::Favourites)?,
+            })
+        })
+        .await
+    }
+
+    /// The record holding `uid`, for a link that names one. Only a uid: a
+    /// bare row id may by now be another record's.
+    pub async fn album_for_uid(self: Arc<Self>, uid: String) -> Result<Option<i64>, KoanError> {
+        offload::offload(move || {
+            queries::id_for_uid(&self.db()?.conn, queries::UidKind::Album, &uid).map_err(db_err)
         })
         .await
     }

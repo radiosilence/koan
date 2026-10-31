@@ -47,19 +47,27 @@ struct PlayRecordIntent: AudioPlaybackIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let app = try await IntentTarget.ready()
-        guard let album = try await app.engine.album(albumId: Int64(record.id)) else {
-            throw IntentError.notInLibrary(record.title)
+        let album = try await IntentTarget.ready().playRecord(Int64(record.id), named: record.title)
+        return .result(dialog: "Playing \(album.title) by \(album.artistCredit.text).")
+    }
+}
+
+extension AppState {
+    /// Replaces the queue with a record, from its first track: what Siri and
+    /// the Top Shelf's play button do. `title` names the record if it is gone.
+    func playRecord(_ id: Int64, named title: String) async throws -> Album {
+        guard let album = try await engine.album(albumId: id) else {
+            throw IntentError.notInLibrary(title)
         }
         // While the server is out of reach, only what is downloaded can play.
-        let offline = app.mirror.connection?.offline == true
-        let tracks = try await app.engine.tracks(albumId: album.id, artistId: nil)
+        let offline = mirror.connection?.offline == true
+        let tracks = try await engine.tracks(albumId: album.id, artistId: nil)
         let ids = tracks.filter { !offline || $0.onDisk }.map(\.id)
         guard !ids.isEmpty else {
             throw offline ? IntentError.notDownloaded(album.title) : IntentError.nothingToPlay(album.title)
         }
-        try await IntentError.saying { _ = try await app.engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: false) }
-        return .result(dialog: "Playing \(album.title) by \(album.artistCredit.text).")
+        try await IntentError.saying { _ = try await self.engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: false) }
+        return album
     }
 }
 

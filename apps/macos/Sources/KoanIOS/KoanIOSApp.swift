@@ -174,6 +174,7 @@ struct KoanIOSApp: App {
                     }
                     #if os(tvOS)
                     IntentTarget.set(built)
+                    TopShelfWriter.start(built)
                     #endif
                     if let pendingURL {
                         open(pendingURL, in: built)
@@ -207,11 +208,45 @@ extension KoanIOSApp {
             state.dsp.importFiles([url], copy: url)
         } else if url.scheme == "koan", url.host == "dsp-inbox" {
             ShareInbox.collect(into: state.dsp)
+        #if os(tvOS)
+        } else if url.scheme == "koan", url.host == "album" {
+            openRecord(url, in: state)
+        #endif
         } else {
             state.open(url: url)
         }
     }
 }
+
+#if os(tvOS)
+extension KoanIOSApp {
+    /// A record chosen on the Top Shelf: `koan://album/<uid>` opens its page,
+    /// `?play` plays it. Television only: on a phone or a Mac the scheme would
+    /// let any web page start the music.
+    private func openRecord(_ url: URL, in state: AppState) {
+        let uid = url.lastPathComponent
+        let play = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.contains { $0.name == "play" } == true
+        Task {
+            guard let id = try? await state.engine.albumForUid(uid: uid) else {
+                state.player.lastNotice = "That record is no longer in the library."
+                return
+            }
+            if play {
+                do {
+                    _ = try await state.playRecord(id, named: "That record")
+                } catch let error as IntentError {
+                    state.player.lastError = String(localized: error.localizedStringResource)
+                } catch {
+                    state.player.lastError = SettingsModel.describe(error)
+                }
+            } else {
+                state.nav.open(album: id)
+            }
+        }
+    }
+}
+#endif
 
 /// What shows while the engine starts: the launch screen, continued.
 ///
