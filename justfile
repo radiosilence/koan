@@ -384,14 +384,16 @@ macos-run: macos-bundle
     open {{app_dir}}/.build/pkg/kōan.app
     echo "launched $(date +%H:%M:%S)"
 
-# Run the app from the terminal: logs on stderr, and no local library folders,
-# so macOS stops asking for disk and removable-volume access on every launch.
+# Run the app from the terminal: logs on stderr. Against your own config it
+# runs with no local library folders, so macOS stops asking for disk and
+# removable-volume access on every launch; a `KOAN_CONFIG_DIR` of its own
+# keeps its folders, since adding them is usually what the run is for.
 # Env vars only reach the process this way — `open` does not pass them on.
 macos-dev *ARGS: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
     osascript -e 'quit app "kōan"' 2>/dev/null || true
-    KOAN_LIBRARY__FOLDERS='[]' \
+    if [ -z "${KOAN_CONFIG_DIR:-}" ]; then export KOAN_LIBRARY__FOLDERS='[]'; fi
     RUST_LOG="${RUST_LOG:-info}" \
         {{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app {{ARGS}}
 
