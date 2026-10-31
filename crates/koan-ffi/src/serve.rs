@@ -211,6 +211,9 @@ pub(crate) fn invite_base() -> Option<String> {
 fn host_of(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
     let host = match authority.strip_prefix('[') {
         Some(v6) => v6.split(']').next()?,
         None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
@@ -476,5 +479,29 @@ impl KoanEngine {
                 })
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_of;
+
+    #[test]
+    fn a_custom_address_names_its_host() {
+        assert_eq!(
+            host_of("https://mac.example.ts.net").as_deref(),
+            Some("mac.example.ts.net")
+        );
+        assert_eq!(
+            host_of("https://music.example.com:8443/koan?x=1").as_deref(),
+            Some("music.example.com")
+        );
+        assert_eq!(
+            host_of("https://user:secret@music.example.com/").as_deref(),
+            Some("music.example.com")
+        );
+        assert_eq!(host_of("http://[fd7a::1]:4000").as_deref(), Some("fd7a::1"));
+        assert_eq!(host_of("music.example.com"), None);
+        assert_eq!(host_of("https://"), None);
     }
 }

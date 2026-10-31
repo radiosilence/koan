@@ -138,6 +138,10 @@ fn served() -> Result<Vec<Served>, FunnelError> {
     let out = run(&["funnel", "status", "--json"])?;
     let json = serde_json::from_str::<serde_json::Value>(&out)
         .map_err(|e| FunnelError::Failed(format!("unreadable status: {e}")))?;
+    Ok(parse_served(&json))
+}
+
+fn parse_served(json: &serde_json::Value) -> Vec<Served> {
     let port_of = |key: &str| {
         key.rsplit_once(':')
             .and_then(|(_, p)| p.parse::<u16>().ok())
@@ -161,7 +165,7 @@ fn served() -> Result<Vec<Served>, FunnelError> {
     );
     ports.sort_unstable();
     ports.dedup();
-    Ok(ports
+    ports
         .into_iter()
         .map(|port| Served {
             port,
@@ -174,7 +178,17 @@ fn served() -> Result<Vec<Served>, FunnelError> {
                     })
             }),
         })
-        .collect())
+        .collect()
+}
+
+/// The Funnel ports publishing local `port` to the internet: what turning
+/// Funnel off takes down, and nothing served only to the tailnet.
+fn published_for(served: &[Served], port: u16) -> Vec<u16> {
+    served
+        .iter()
+        .filter(|s| s.public && proxies_to(s.root.as_deref(), port))
+        .map(|s| s.port)
+        .collect()
 }
 
 /// Whether a proxy target is local `port`.
@@ -233,11 +247,8 @@ pub fn funnel_off(port: u16) -> Result<(), FunnelError> {
     if cli().is_none() {
         return Ok(());
     }
-    for on in served()?
-        .into_iter()
-        .filter(|s| s.public && proxies_to(s.root.as_deref(), port))
-    {
-        match run(&["funnel", &format!("--https={}", on.port), "off"]) {
+    for on in published_for(&served()?, port) {
+        match run(&["funnel", &format!("--https={on}"), "off"]) {
             Ok(_) => {}
             // Gone already.
             Err(FunnelError::Failed(why)) if why.contains("does not exist") => {}
@@ -245,4 +256,35 @@ pub fn funnel_off(port: u16) -> Result<(), FunnelError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `tailscale funnel status --json` with kōan on Funnel's 443 and the
+    /// person's own tailnet-only serve of the same port on 8443.
+    const STATUS: &str = r#"{
+        "TCP": {"443": {"HTTPS": true}, "8443": {"HTTPS": true}},
+        "Web": {
+            "mac.tailnet.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:4000"}}},
+            "mac.tailnet.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:4000"}}}
+        },
+        "AllowFunnel": {"mac.tailnet.ts.net:443": true}
+    }"#;
+
+    #[test]
+    fn turning_funnel_off_leaves_what_is_served_to_the_tailnet() {
+        let served = parse_served(&serde_json::from_str(STATUS).unwrap());
+        assert_eq!(served.len(), 2);
+        assert_eq!(published_for(&served, 4000), vec![443]);
+        assert!(published_for(&served, 4001).is_empty());
+    }
+
+    #[test]
+    fn nothing_served_is_nothing_published() {
+        let served = parse_served(&serde_json::from_str("{}").unwrap());
+        assert!(served.is_empty());
+        assert!(published_for(&served, 4000).is_empty());
+    }
 }
