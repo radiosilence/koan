@@ -25,14 +25,14 @@ pub enum SyncError {
 }
 
 /// A server and an account on it, as syncs are told apart: by address
-/// without a trailing slash, and by username without case, as servers
-/// compare them.
+/// without a trailing slash, and by username without ASCII case, as servers
+/// and `helpers::same_account` compare them.
 type Account = (String, String);
 
 fn account(url: &str, username: &str) -> Account {
     (
         url.trim_end_matches('/').to_owned(),
-        username.to_lowercase(),
+        username.to_ascii_lowercase(),
     )
 }
 

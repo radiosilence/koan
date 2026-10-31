@@ -755,6 +755,67 @@ mod refusal_tests {
         );
     }
 
+    /// Signing in to an account left earlier lets its syncs run from before
+    /// the config write, which is what wakes the automatic sync: whether
+    /// another account was signed in or this one was signed out of.
+    #[test]
+    fn an_account_signed_back_in_to_syncs_from_the_write() {
+        use crate::remote::sync::{Running, cancel};
+        use std::sync::atomic::Ordering;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        struct Unhook;
+        impl Drop for Unhook {
+            fn drop(&mut self) {
+                on_leaving_server(None);
+            }
+        }
+        let _unhook = Unhook;
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = "https://one.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.password = "secret".into();
+        })
+        .unwrap();
+        let password = || Credential::Password("secret".into());
+
+        let joining = "https://two.example.com";
+        cancel(joining, "other");
+        let cancelled_then = Arc::new(Mutex::new(Vec::new()));
+        let told = cancelled_then.clone();
+        on_leaving_server(Some(Arc::new(move || {
+            let entered = Running::enter(joining, "other");
+            told.lock()
+                .unwrap()
+                .push(entered.cancel.load(Ordering::Relaxed));
+        })));
+        remember_remote(joining, "Other", password()).unwrap();
+        assert_eq!(
+            *cancelled_then.lock().unwrap(),
+            [false],
+            "resumed before the write, across a switch of account"
+        );
+
+        on_leaving_server(None);
+        sign_out().unwrap();
+        assert!(
+            Running::enter(joining, "other")
+                .cancel
+                .load(Ordering::Relaxed)
+        );
+        remember_remote(joining, "other", password()).unwrap();
+        assert!(
+            !Running::enter(joining, "other")
+                .cancel
+                .load(Ordering::Relaxed),
+            "resumed when signing back in as the account signed out of"
+        );
+    }
+
     #[test]
     fn a_revoked_key_is_reported_until_signing_in_again() {
         let _guard = crate::config::tests::PERSIST_LOCK

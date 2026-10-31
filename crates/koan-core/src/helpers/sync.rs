@@ -51,7 +51,7 @@ pub(crate) fn hold_syncs() -> parking_lot::MutexGuard<'static, ()> {
 /// what is recorded, and the next sync walks again. Favourites and playlists
 /// are a request or two each, and are reconciled every time.
 ///
-/// Signing out of the server, or in to another, stops it with
+/// Signing out, or in as another account, stops it with
 /// `SyncError::Cancelled`, whether it is running or still waiting for the
 /// one before it: see `remote::sync::cancel`.
 pub fn sync_remote(
