@@ -2168,9 +2168,10 @@ impl KoanEngine {
 
     /// How many shuffles undo would take back from the playlist before
     /// reaching any other edit: what a phone's Undo beside the dice offers.
-    /// Read again whenever the playlist is.
-    pub fn playlist_undo_shuffles(&self, playlist_id: i64) -> u32 {
-        self.playlist_history.shuffles_on_top(playlist_id)
+    /// Read again whenever the playlist is. Async: an undo holds the history
+    /// while it writes.
+    pub async fn playlist_undo_shuffles(self: Arc<Self>, playlist_id: i64) -> u32 {
+        offload::offload(move || self.playlist_history.shuffles_on_top(playlist_id)).await
     }
 
     /// Where the playlists sit in the sidebar, in the order given. Local only —
