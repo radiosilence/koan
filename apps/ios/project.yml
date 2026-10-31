@@ -32,6 +32,10 @@ targets:
     platform: iOS
     sources:
       - path: ../macos/Sources/KoanFFI
+    settings:
+      base:
+        # As in the package: see apps/macos/Package.swift.
+        SWIFT_UPCOMING_FEATURE_NONISOLATED_NONSENDING_BY_DEFAULT: YES
 
   Koan:
     type: application
@@ -162,6 +166,7 @@ targets:
     settings:
       base:
         PRODUCT_MODULE_NAME: KoanFFI
+        SWIFT_UPCOMING_FEATURE_NONISOLATED_NONSENDING_BY_DEFAULT: YES
 
   # The shared sources on the Apple TV. Push, extensions and the Live Activity
   # are the phone's; ActivityKit does not exist on tvOS.

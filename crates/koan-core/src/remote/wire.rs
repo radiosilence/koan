@@ -105,6 +105,11 @@ pub trait Session {
     fn done(&self) -> bool {
         false
     }
+    /// When to wake next even if nothing arrives, so a deadline of the
+    /// session's own is checked on time.
+    fn deadline(&self) -> Option<Instant> {
+        None
+    }
 }
 
 /// A link that has heard nothing for this long pings, so a dead connection is
@@ -238,6 +243,11 @@ pub fn drive<S: Read + Write>(
                 revents: 0,
             },
         ];
+        if let Some(at) = session.deadline() {
+            // A millisecond past it, so the wake finds it passed.
+            left =
+                left.min(at.saturating_duration_since(Instant::now()) + Duration::from_millis(1));
+        }
         let ms = left.as_millis().min(i32::MAX as u128) as i32;
         // SAFETY: `fds` is a live array of the length given.
         unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, ms) };
