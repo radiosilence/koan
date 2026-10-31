@@ -156,8 +156,9 @@ async fn settle(
         return without_accounts(&s);
     }
     let username = user.username.clone();
+    let pool = s.pool.clone();
     let settled = blocking(move || {
-        let db = open(&s.pool)?;
+        let db = open(&pool)?;
         Some(crate::pair::pairings().settle(&db.conn, &pair, user.user_id, &user.username, decline))
     })
     .await;

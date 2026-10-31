@@ -170,7 +170,7 @@ mod tests {
 
     async fn call(base: &str, path: &str) -> Response {
         let url = ServerUrl::Fixed(Some(format!("https://host{base}")));
-        let wrapped = axum::middleware::from_fn_with_state(url, edge).layer(app());
+        let wrapped = tower::Layer::layer(&axum::middleware::from_fn_with_state(url, edge), app());
         wrapped
             .oneshot(Request::get(path).body(Body::empty()).unwrap())
             .await
