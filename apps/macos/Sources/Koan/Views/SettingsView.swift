@@ -280,6 +280,7 @@ struct SettingsView: View {
             self.people = people
         }
         #endif
+        .onReceive(NotificationCenter.default.publisher(for: .koanSignedIn)) { _ in model?.reload() }
         // The CLI and TUI write the same file; coming back to this window is
         // the moment to notice they did.
         #if os(macOS)

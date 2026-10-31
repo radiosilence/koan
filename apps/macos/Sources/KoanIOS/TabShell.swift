@@ -336,21 +336,15 @@ struct TabShell: View {
             #if os(tvOS)
             .onExitCommand(perform: toBar)
             #endif
+            .modifier(BannerInset(signIn: openServerSettings))
             .environment(\.onStage, showing && routes.isEmpty)
             .navigationDestination(for: Route.self) { route in
                 RouteView(route: route)
                     .koanPushedPage()
+                    .modifier(BannerInset(signIn: openServerSettings))
                     .environment(\.onStage, showing && route == routes.last)
             }
         }
-        #if os(iOS)
-        // On each stack rather than the tab view, whose inset a stack's list
-        // does not scroll clear of: the banner covered the first rows.
-        .safeAreaInset(edge: .top, spacing: 0) {
-            ServerBanner(signIn: openServerSettings)
-                .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
-        }
-        #endif
         .id(resets[tab, default: 0])
     }
 
@@ -888,5 +882,24 @@ private final class HeldTask {
         guard id != .invalid else { return }
         UIApplication.shared.endBackgroundTask(id)
         id = .invalid
+    }
+}
+
+/// The server banner under a page's navigation bar. On each page inside the
+/// stack: put on the stack, it lay over the bar and its back button, and on
+/// the tab view, lists did not scroll clear of it.
+private struct BannerInset: ViewModifier {
+    @Environment(EngineMirror.self) private var mirror
+    let signIn: () -> Void
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.safeAreaInset(edge: .top, spacing: 0) {
+            ServerBanner(signIn: signIn)
+                .koanAnimation(KoanTheme.Motion.normal, value: mirror.connection?.standing)
+        }
+        #else
+        content
+        #endif
     }
 }

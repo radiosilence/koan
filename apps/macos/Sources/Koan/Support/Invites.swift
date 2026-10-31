@@ -44,6 +44,7 @@ extension AppState {
                 player.lastError = "Could not sign in to \(host): \(SettingsModel.describe(error))"
                 return
             }
+            NotificationCenter.default.post(name: .koanSignedIn, object: nil)
             nav.show(.albums)
             let synced = await activity.run(
                 "Loading the library", uses: [.remoteTracks], followsSync: true
