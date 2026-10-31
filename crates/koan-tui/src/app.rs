@@ -3590,7 +3590,12 @@ impl App {
     fn apply_queue_readings(&mut self) -> bool {
         let readings = self.state.queue_readings();
         let entries = &mut self.queue.vq_cache.entries;
-        if readings.len() != entries.len() || readings.iter().zip(entries.iter()).any(|(r, e)| r.id != e.id) {
+        if readings.len() != entries.len()
+            || readings
+                .iter()
+                .zip(entries.iter())
+                .any(|(r, e)| r.id != e.id)
+        {
             return false;
         }
         for (e, r) in entries.iter_mut().zip(readings) {

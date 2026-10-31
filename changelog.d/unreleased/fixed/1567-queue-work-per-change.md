@@ -1,0 +1,1 @@
+- **The TUI and the Android app no longer redo queue work on every frame or patch.** The TUI keeps the library's reading of the queue across status changes, updates download progress without re-deriving the queue, reads each track page from where the last one ended, and loads the Now Playing cover off the frame thread. Android rebuilds only the queue rows a patch changes.
