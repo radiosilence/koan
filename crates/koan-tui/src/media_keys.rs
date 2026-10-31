@@ -2,11 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossbeam_channel::Sender;
-use koan_core::helpers::{ListCredits, credit_text};
+use crossbeam_channel::{Receiver, Sender};
 use koan_core::index::folder_art::cover_art;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, SharedPlayerState};
+use koan_core::player::state::{PlaybackState, QueueEntry, SharedPlayerState};
+
+use crate::queue::Facts;
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
     SeekDirection,
@@ -34,8 +35,50 @@ const SEEK_STEP_MS: u64 = 10_000;
 
 pub struct MediaKeyHandler {
     controls: MediaControls,
-    /// Temp file for cover art — reused across tracks, cleaned up on drop.
-    cover_art_path: Option<PathBuf>,
+    /// What Now Playing was last told, to tell it again once the cover
+    /// arrives.
+    shown: Option<Shown>,
+    /// Asks the cover thread for a track's art, tagged with a generation.
+    covers: Sender<(u64, PathBuf)>,
+    /// The cover thread's answers: a file:// URL, or none.
+    cover_urls: Receiver<(u64, Option<String>)>,
+    generation: u64,
+}
+
+/// A track's metadata as Now Playing was given it.
+struct Shown {
+    title: String,
+    artist: String,
+    album: String,
+    duration: Option<u64>,
+}
+
+/// Reads covers and writes them to the one temp file Now Playing is pointed
+/// at, off the frame thread, the latest ask of a burst only. Removes the file
+/// once the handler is gone.
+fn spawn_cover_thread() -> (Sender<(u64, PathBuf)>, Receiver<(u64, Option<String>)>) {
+    let (tx, asks) = crossbeam_channel::unbounded::<(u64, PathBuf)>();
+    let (done, rx) = crossbeam_channel::unbounded();
+    std::thread::Builder::new()
+        .name("koan-media-cover".into())
+        .spawn(move || {
+            let tmp = std::env::temp_dir().join(format!("koan-cover-{}", std::process::id()));
+            while let Ok(mut next) = asks.recv() {
+                while let Ok(newer) = asks.try_recv() {
+                    next = newer;
+                }
+                let (generation, path) = next;
+                let url = cover_art(&path)
+                    .and_then(|bytes| std::fs::write(&tmp, bytes).ok())
+                    .map(|()| format!("file://{}", tmp.display()));
+                if done.send((generation, url)).is_err() {
+                    break;
+                }
+            }
+            std::fs::remove_file(&tmp).ok();
+        })
+        .ok();
+    (tx, rx)
 }
 
 impl MediaKeyHandler {
@@ -106,54 +149,67 @@ impl MediaKeyHandler {
             })
             .ok()?;
 
+        let (covers, cover_urls) = spawn_cover_thread();
         Some(Self {
             controls,
-            cover_art_path: None,
+            shown: None,
+            covers,
+            cover_urls,
+            generation: 0,
         })
     }
 
-    pub fn update_metadata(&mut self, state: &SharedPlayerState, track_path: Option<&PathBuf>) {
+    /// Tells Now Playing of the playing track, from the queue and credits
+    /// the frame already holds. Its cover follows from the cover thread.
+    pub(crate) fn update_metadata(
+        &mut self,
+        state: &SharedPlayerState,
+        entries: &[QueueEntry],
+        facts: &Facts,
+        track_path: Option<&PathBuf>,
+    ) {
         let Some(info) = state.track_info() else {
             return;
         };
-
-        // Get metadata from playlist for the currently playing track.
-        let vq = state.derive_visible_queue();
-        let entry = vq.entries.iter().find(|e| e.id == info.id);
-
-        let title = entry.map(|e| e.title.clone()).unwrap_or_default();
-        // Read once per track: the credit as the library has it.
-        let artist = entry.map(|e| {
-            let ids: Vec<i64> = e.db_id.into_iter().collect();
-            let (places, credits) = koan_core::db::pool::shared()
-                .get()
-                .map(|db| ListCredits::read_tracks(&db.conn, &ids))
-                .unwrap_or_default();
-            let place = e
-                .db_id
-                .and_then(|id| places.get(&id).copied())
-                .unwrap_or_default();
-            credit_text(
-                &credits
-                    .row(e.db_id, place, &e.artist, &e.album_artist)
-                    .artist,
-            )
+        let entry = entries.iter().find(|e| e.id == info.id);
+        let artist = entry.map(|e| match facts.credits.get(&e.id) {
+            Some(c) => c.artist.clone(),
+            None => crate::credits::of_names(&e.artist, &e.album_artist).artist,
         });
-        let artist = artist.unwrap_or_default();
-        let album = entry.map(|e| e.album.clone()).unwrap_or_default();
-        let duration = entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms));
+        self.generation += 1;
+        self.shown = Some(Shown {
+            title: entry.map(|e| e.title.clone()).unwrap_or_default(),
+            artist: artist.unwrap_or_default(),
+            album: entry.map(|e| e.album.clone()).unwrap_or_default(),
+            duration: entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms)),
+        });
+        self.set_metadata(None);
+        if let Some(path) = track_path {
+            self.covers.send((self.generation, path.clone())).ok();
+        }
+    }
 
-        // Extract cover art to a temp file for macOS Now Playing.
-        let cover_url = self.write_cover_art(track_path);
-        let cover_url_str = cover_url.as_deref();
+    /// Takes in a cover the cover thread has written, for the track still
+    /// shown.
+    pub fn poll(&mut self) {
+        while let Ok((generation, url)) = self.cover_urls.try_recv() {
+            if generation == self.generation && url.is_some() {
+                self.set_metadata(url.as_deref());
+            }
+        }
+    }
 
+    fn set_metadata(&mut self, cover_url: Option<&str>) {
+        let Some(shown) = self.shown.as_ref() else {
+            return;
+        };
         self.controls
             .set_metadata(MediaMetadata {
-                title: Some(&title),
-                artist: Some(&artist),
-                album: Some(&album),
-                cover_url: cover_url_str,
-                duration: duration.map(Duration::from_millis),
+                title: Some(&shown.title),
+                artist: Some(&shown.artist),
+                album: Some(&shown.album),
+                cover_url,
+                duration: shown.duration.map(Duration::from_millis),
             })
             .ok();
     }
@@ -169,27 +225,5 @@ impl MediaKeyHandler {
             PlaybackState::Stopped => MediaPlayback::Stopped,
         };
         self.controls.set_playback(playback).ok();
-    }
-
-    /// Write embedded cover art to a temp file, returning a file:// URL.
-    /// Reuses a single temp path — overwritten each track change.
-    fn write_cover_art(&mut self, track_path: Option<&PathBuf>) -> Option<String> {
-        let path = track_path?;
-        let bytes = cover_art(path)?;
-
-        let tmp = self.cover_art_path.get_or_insert_with(|| {
-            std::env::temp_dir().join(format!("koan-cover-{}", std::process::id()))
-        });
-
-        std::fs::write(&*tmp, &bytes).ok()?;
-        Some(format!("file://{}", tmp.display()))
-    }
-}
-
-impl Drop for MediaKeyHandler {
-    fn drop(&mut self) {
-        if let Some(ref path) = self.cover_art_path {
-            std::fs::remove_file(path).ok();
-        }
     }
 }

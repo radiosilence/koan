@@ -116,13 +116,16 @@ fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
             val gone = artEvictions(seq)
             seq = gone.seq
             val arts = gone.albums.map { Art.Kind.Album to it } + gone.tracks.map { Art.Kind.Track to it }
+            val keys = HashSet<String>()
             for ((kind, id) in arts) {
                 for (size in ArtSize.entries) {
                     val key = Art(kind, id, size).key
                     loader.diskCache?.remove(key)
-                    loader.memoryCache?.keys?.filter { it.key == key }?.forEach { loader.memoryCache?.remove(it) }
+                    keys += key
                 }
             }
+            // One pass over the memory cache for every cover gone, not one per cover.
+            loader.memoryCache?.let { cache -> cache.keys.filter { it.key in keys }.forEach(cache::remove) }
         }
     }
 }

@@ -1084,6 +1084,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_status_change_keeps_the_queue_facts() {
+        use koan_core::player::state::{ItemState, PlaylistItem};
+        let mut app = app_with_queue(0);
+        let items: Vec<PlaylistItem> = (0..3)
+            .map(|n| PlaylistItem {
+                uid: None,
+                playlist_entry_id: None,
+                id: QueueItemId::new(),
+                db_id: None,
+                path: format!("/music/{n}.flac").into(),
+                title: format!("t{n}"),
+                artist: "A".into(),
+                album_artist: "A".into(),
+                album: "X".into(),
+                year: None,
+                codec: None,
+                track_number: None,
+                disc: None,
+                duration_ms: Some(1000),
+                state: ItemState::Ready,
+                played: false,
+            })
+            .collect();
+        let first = items[0].id;
+        app.state.add_items(items);
+        app.refresh_visible_queue();
+        let read_at = app.queue.facts_version;
+        assert_eq!(read_at, app.state.content_version());
+        assert_eq!(app.queue.vq_cache.entries.len(), 3);
+
+        app.state.mark_played(first);
+        app.refresh_visible_queue();
+        assert_eq!(app.queue.vq_version, app.state.playlist_version());
+        assert_eq!(app.queue.facts_version, read_at, "facts are not read again");
+        assert_eq!(app.queue.layout.total_ms, 3000);
+    }
+
     /// An `App` with a queue and a track playing, detached from any real player.
     fn app_with_queue(len: usize) -> App {
         app_and_player(len).0

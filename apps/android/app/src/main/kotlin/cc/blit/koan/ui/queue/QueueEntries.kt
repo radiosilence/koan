@@ -130,7 +130,8 @@ private fun QueuePage() {
     val lock by mirror.lock.collectAsStateWithLifecycle()
     val prefs = LocalContext.current.getSharedPreferences("queue", Context.MODE_PRIVATE)
     var grouped by remember { mutableStateOf(prefs.getBoolean("grouped", true)) }
-    val built = remember(queue, grouped) { QueueRow.build(queue.items, grouped) }
+    val cache = remember { QueueRows() }
+    val built = remember(queue, grouped) { cache.of(queue.items, queue.version, grouped) }
 
     // The rows as a drag has them, from its start until the engine sends the
     // queue back moved. A heading carries its run, whose rows leave the list
@@ -160,7 +161,8 @@ private fun QueuePage() {
     // that never saw rows keeps its pick for them, and one that did ends
     // selecting when the queue empties, so select mode never outlives it.
     var loaded by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(built) {
+    // A patch changes no row's key, so only a new version or grouping prunes.
+    LaunchedEffect(queue.version, grouped, built.isEmpty()) {
         if (built.isNotEmpty()) {
             loaded = true
             val keys = built.mapTo(HashSet()) { it.key }

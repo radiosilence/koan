@@ -80,6 +80,25 @@ sealed interface QueueRow {
             return rows
         }
 
+        /**
+         * `rows`, built from a queue of the same shape, brought up to `queue`:
+         * a patch moves rows' status and never their order or runs, so only
+         * the rows whose items changed are made again and the rest are kept.
+         */
+        fun patched(rows: List<QueueRow>, queue: List<QueueItem>): List<QueueRow> {
+            var index = 0
+            return rows.map { row ->
+                when (row) {
+                    is Album -> {
+                        val run = queue.subList(index, index + row.group.items.size)
+                        if (run == row.group.items) row else Album(QueueGroup(row.group.album, run.toList()))
+                    }
+                    is Track -> queue[index++].let { if (it == row.item) row else Track(it) }
+                    is Single -> queue[index++].let { if (it == row.item) row else Single(it) }
+                }
+            }
+        }
+
         /** The queue items a set of row keys stands for; a heading stands for its run. */
         fun itemIds(keys: Set<String>, rows: List<QueueRow>) = rows.filter { it.key in keys }.flatMap { it.itemIds }.distinct()
     }
@@ -123,4 +142,21 @@ fun duration(ms: Long): String {
     val s = ms.coerceAtLeast(0) / 1000
     val h = s / 3600
     return if (h > 0) "%d:%02d:%02d".format(h, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+}
+
+/** The queue's rows, built again only when the queue's shape changes; between edits a patch only replaces the rows it touched. */
+class QueueRows {
+    private var version = -1L
+    private var grouped = false
+    private var size = -1
+    private var rows = emptyList<QueueRow>()
+
+    fun of(items: List<QueueItem>, version: Long, grouped: Boolean): List<QueueRow> {
+        val same = version == this.version && grouped == this.grouped && items.size == size
+        rows = if (same) QueueRow.patched(rows, items) else QueueRow.build(items, grouped)
+        this.version = version
+        this.grouped = grouped
+        size = items.size
+        return rows
+    }
 }

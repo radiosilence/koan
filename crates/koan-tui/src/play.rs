@@ -212,11 +212,13 @@ impl NowPlaying {
     /// A playhead this far from where its clock would have it was moved.
     const SEEKED_MS: u64 = 1000;
 
-    fn sync(&mut self, mk: &mut crate::media_keys::MediaKeyHandler, state: &SharedPlayerState) {
+    fn sync(&mut self, mk: &mut crate::media_keys::MediaKeyHandler, app: &app::App) {
+        let state = &app.state;
+        mk.poll();
         let track = state.track_info().map(|t| t.path);
         let metadata = state.take_metadata_refresh() || track != self.track;
         if metadata {
-            mk.update_metadata(state, track.as_ref());
+            mk.update_metadata(state, app.visible_queue(), &app.queue.facts, track.as_ref());
             self.track = track;
         }
         let playback = state.playback_state();
@@ -445,7 +447,7 @@ pub fn run_tui(
         app.handle_tick();
 
         if let Some(ref mut mk) = media {
-            now_playing.sync(mk, &app.state);
+            now_playing.sync(mk, &app);
         }
         crate::media_keys::pump_run_loop();
 

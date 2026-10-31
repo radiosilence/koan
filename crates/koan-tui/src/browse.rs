@@ -398,6 +398,9 @@ struct Ask {
     text: String,
     /// How many tracks to read.
     limit: u32,
+    /// The first track to read: the length of what is shown when reading
+    /// ahead, which only the tracks after it are read for.
+    from: u32,
 }
 
 /// A listing as the database answered it.
@@ -409,6 +412,8 @@ struct Listing {
     tracks: Vec<TrackRow>,
     /// How many tracks pass, of which `tracks` are the first.
     track_total: u64,
+    /// Where `tracks` start: past zero, they follow the tracks shown.
+    from: u32,
     /// The artist's name, on an artist's page.
     artist: Option<String>,
     credited: Credited,
@@ -453,8 +458,13 @@ fn read(ask: &Ask) -> Listing {
         }
         Source::Tracks => {
             let tracks = core_browse::tracks(&ask.filter, text, ask.track_sort);
-            listing.track_total = tracks.count(&db.conn).unwrap_or_default();
-            listing.tracks = tracks.page(&db.conn, ask.limit, 0).unwrap_or_default();
+            if ask.from == 0 {
+                listing.track_total = tracks.count(&db.conn).unwrap_or_default();
+            }
+            listing.from = ask.from;
+            listing.tracks = tracks
+                .page(&db.conn, ask.limit, ask.from)
+                .unwrap_or_default();
         }
         Source::Artist(id) => {
             let query = AlbumQuery {
@@ -666,6 +676,11 @@ impl Browse {
     /// Asks for the listing again, keeping the cursor on what it is on.
     /// Cheap enough to do whenever the page opens.
     pub fn reload(&mut self) {
+        self.ask(0, self.limit);
+    }
+
+    /// Asks for `limit` tracks from `from`: from zero, the whole listing.
+    fn ask(&mut self, from: u32, limit: u32) {
         self.stale = false;
         if let Source::Artist(id) = self.source
             && self.header.is_none()
@@ -680,7 +695,8 @@ impl Browse {
             track_sort: self.track_sort,
             seed: self.seed,
             text: self.filter.clone(),
-            limit: self.limit,
+            limit,
+            from,
         };
         self.tx.send((self.asked, ask)).ok();
     }
@@ -705,6 +721,9 @@ impl Browse {
     fn show(&mut self, generation: u64, listing: Listing) -> bool {
         if generation != self.asked {
             return false;
+        }
+        if listing.from > 0 {
+            return self.extend(generation, listing);
         }
         let on = self.cursor_id();
         let kind = self.kind();
@@ -749,6 +768,22 @@ impl Browse {
         } else {
             self.cursor = self.cursor.min(self.len().saturating_sub(1));
         }
+        true
+    }
+
+    /// Appends a page read ahead to the tracks shown, which stay where they
+    /// are.
+    fn extend(&mut self, generation: u64, listing: Listing) -> bool {
+        self.shown = generation;
+        if listing.from as usize != self.tracks.len() {
+            self.reload();
+            return false;
+        }
+        self.tracks.extend(listing.tracks);
+        self.credited.tracks.extend(listing.credited.tracks);
+        self.fav_albums = listing.favourites.albums;
+        self.fav_artists = listing.favourites.artists;
+        self.fav_tracks = listing.favourites.tracks;
         true
     }
 
@@ -893,9 +928,10 @@ impl Browse {
             && (n as u64) < self.track_total
             && near >= n
             && self.limit as usize <= n
+            && self.shown == self.asked
         {
             self.limit = self.limit.saturating_add(TRACK_PAGE);
-            self.reload();
+            self.ask(n as u32, TRACK_PAGE);
         }
     }
 
@@ -2227,6 +2263,20 @@ pub(super) mod tests {
         b.move_to(TRACK_PAGE as usize - 5);
         assert_eq!(b.asked, asked + 1);
         assert_eq!(b.limit, TRACK_PAGE * 2);
+        // The next page is read from where the shown tracks end, not from
+        // the top, and lands after them with the cursor left where it is.
+        let next = Listing {
+            tracks: (TRACK_PAGE as i64..2 * TRACK_PAGE as i64)
+                .map(|i| track(i, 1))
+                .collect(),
+            from: TRACK_PAGE,
+            ..Default::default()
+        };
+        assert!(b.show(b.asked, next));
+        assert_eq!(b.tracks.len(), 2 * TRACK_PAGE as usize);
+        assert_eq!(b.track_total, 5000);
+        assert_eq!(b.cursor, TRACK_PAGE as usize - 5);
+        assert!(b.tracks.iter().enumerate().all(|(i, t)| t.id == i as i64));
     }
 
     #[test]

@@ -14,6 +14,7 @@ import coil3.request.allowHardware
 import coil3.toBitmap
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import com.google.common.util.concurrent.SettableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -36,11 +37,16 @@ class ArtBitmapLoader(private val context: Context, private val scope: Coroutine
     override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> {
         val art = ArtProvider.artOf(uri) ?: return Futures.immediateFailedFuture(IllegalArgumentException("not a koan cover: $uri"))
         val done = SettableFuture.create<Bitmap>()
-        scope.launch {
+        val load = scope.launch {
             val request = ImageRequest.Builder(context).data(art).allowHardware(false).build()
             val bitmap = (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image?.toBitmap()
             if (bitmap != null) done.set(bitmap) else done.setException(IllegalStateException("no cover for $uri"))
         }
+        // A load cancelled with the service, or one that threw, still settles
+        // the future, so Media3 is never left waiting on it; a future the
+        // caller cancels stops the load.
+        load.invokeOnCompletion { cause -> if (cause != null) done.setException(cause) }
+        done.addListener({ if (done.isCancelled) load.cancel() }, MoreExecutors.directExecutor())
         return done
     }
 }

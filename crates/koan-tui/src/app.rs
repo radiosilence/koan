@@ -180,6 +180,8 @@ pub struct QueueState {
     /// Cached visible queue snapshot — refreshed once per frame.
     pub(super) vq_cache: VisibleQueueSnapshot,
     pub(super) vq_version: u64,
+    /// The `content_version` `facts` and `layout` were built at.
+    pub(super) facts_version: u64,
     /// The queue's lines, built when it changes or is regrouped.
     pub(super) layout: queue::Layout,
     /// What the library says of the queue's tracks, read when it changes.
@@ -460,6 +462,7 @@ impl App {
             last_skip: None,
             queue: QueueState {
                 flat: !cfg.playback.queue_grouped,
+                facts_version: u64::MAX,
                 ..Default::default()
             },
             picker: None,
@@ -2228,6 +2231,7 @@ impl App {
             self.state = shown;
             // The two states count versions apart.
             self.queue.vq_version = u64::MAX;
+            self.queue.facts_version = u64::MAX;
         }
         if let Some(p) = self.play_on.as_mut() {
             p.refresh(&self.view.local);
@@ -3536,32 +3540,66 @@ impl App {
         let mutated = v != self.queue.vq_version;
         // Download progress lives in an atomic the download thread writes
         // directly, so it moves without the version moving. A queue with
-        // something in flight re-derives every frame; nothing else does.
+        // something in flight takes its rows' readings every frame, and
+        // derives itself again only when they no longer line up.
         let downloading = self
             .queue
             .vq_cache
             .entries
             .iter()
             .any(|e| e.download_progress.is_some());
-        if !mutated && !downloading {
+        if !mutated {
+            if downloading && !self.apply_queue_readings() {
+                self.queue.vq_cache = self.state.derive_visible_queue();
+            }
             return;
         }
 
         self.queue.vq_cache = self.state.derive_visible_queue();
-        if mutated {
-            self.queue.vq_version = v;
+        self.queue.vq_version = v;
+        // The library's reading of the queue depends on which tracks it
+        // holds, so a bump that only moved a status or the cursor keeps it.
+        let content = self.state.content_version();
+        if content != self.queue.facts_version {
+            self.queue.facts_version = content;
             self.queue.facts = queue::Facts::read(&self.queue.vq_cache.entries, &self.state);
             self.relayout_queue();
-
-            self.clamp_queue_cursor();
-            // A queue that shrank under the scroll would draw its last line
-            // alone at the top, and clicks would land on rows not drawn.
-            let max = queue::display_line_count(&self.queue.layout)
-                .saturating_sub(self.queue_visible_height());
-            self.queue.scroll_offset = self.queue.scroll_offset.min(max);
-            self.close_stale_track_info();
-            self.note_new_failures();
+        } else {
+            self.queue.layout.total_ms = self
+                .queue
+                .vq_cache
+                .entries
+                .iter()
+                .filter_map(|e| e.duration_ms)
+                .sum();
         }
+
+        self.clamp_queue_cursor();
+        // A queue that shrank under the scroll would draw its last line
+        // alone at the top, and clicks would land on rows not drawn.
+        let max = queue::display_line_count(&self.queue.layout)
+            .saturating_sub(self.queue_visible_height());
+        self.queue.scroll_offset = self.queue.scroll_offset.min(max);
+        self.close_stale_track_info();
+        self.note_new_failures();
+    }
+
+    /// Bring the cached rows' status, length and progress up to date without
+    /// deriving the queue. False when the readings name other rows than the
+    /// cache holds.
+    fn apply_queue_readings(&mut self) -> bool {
+        let readings = self.state.queue_readings();
+        let entries = &mut self.queue.vq_cache.entries;
+        if readings.len() != entries.len() || readings.iter().zip(entries.iter()).any(|(r, e)| r.id != e.id) {
+            return false;
+        }
+        for (e, r) in entries.iter_mut().zip(readings) {
+            e.status = r.status;
+            e.duration_ms = r.duration_ms;
+            e.download_progress = r.download_progress;
+            e.error = r.error;
+        }
+        true
     }
 
     /// Say why a track cannot play. Without it, a queue nothing could fetch

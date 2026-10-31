@@ -4,6 +4,7 @@ import cc.blit.koan.ffi.EntryStatus
 import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.RunRole
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class QueueRowsTest {
@@ -47,6 +48,25 @@ class QueueRowsTest {
         assertEquals(listOf("album:1", "1", "2", "3", "4", "album:5", "5"), rows.map { it.key })
         assertEquals(QueueRow.Single::class, rows[4]::class)
         assertEquals(listOf("1", "2"), rows[0].itemIds)
+    }
+
+    @Test
+    fun aPatchRemakesOnlyTheRowsItTouched() {
+        val rows = QueueRow.build(queue, grouped = true)
+        val moved = queue.toMutableList().also { it[1] = it[1].copy(status = EntryStatus.PLAYING) }
+        val patched = QueueRow.patched(rows, moved)
+        assertEquals(QueueRow.build(moved, grouped = true), patched)
+        // The heading over the moved row and the row itself are new; the rest are the same objects.
+        assertEquals(listOf(false, true, false, true, true, true, true), rows.indices.map { rows[it] === patched[it] })
+    }
+
+    @Test
+    fun aNewVersionBuildsAgain() {
+        val cache = QueueRows()
+        val first = cache.of(queue, version = 1, grouped = true)
+        assertTrue(first.zip(cache.of(queue, version = 1, grouped = true)).all { (a, b) -> a === b })
+        assertEquals(QueueRow.build(queue.drop(1), grouped = true), cache.of(queue.drop(1), version = 2, grouped = true))
+        assertEquals(QueueRow.build(queue, grouped = false), cache.of(queue, version = 2, grouped = false))
     }
 
     @Test
