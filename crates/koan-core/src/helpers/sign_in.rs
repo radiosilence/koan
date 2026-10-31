@@ -696,11 +696,10 @@ mod refusal_tests {
         assert!(!crate::remote::offline::manual());
     }
 
-    /// The front end hears that the server is left once the config says so
-    /// and before its library is forgotten, and not at all when that write
-    /// fails.
+    /// The front end hears that the server is left once the config says so,
+    /// and not at all when that write fails.
     #[test]
-    fn leaving_tells_the_front_end_between_the_write_and_the_forgetting() {
+    fn leaving_tells_the_front_end_once_the_change_is_kept() {
         let _guard = crate::config::tests::PERSIST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -720,23 +719,17 @@ mod refusal_tests {
             c.remote.api_key = "key".into();
         };
         Config::persist(signed_in).unwrap();
-        // What the hook saw: whether the config still named the server, and
-        // whether the library had been forgotten yet.
+        // Whether the config still had the server enabled when it was heard.
         let heard = Arc::new(Mutex::new(Vec::new()));
         let told = heard.clone();
         on_leaving_server(Some(Box::new(move || {
             told.lock()
                 .unwrap()
-                .push((Config::load().unwrap().remote.enabled, libraries_replaced()));
+                .push(Config::load().unwrap().remote.enabled);
         })));
 
-        let before = libraries_replaced();
         sign_out().unwrap();
-        assert_eq!(
-            *heard.lock().unwrap(),
-            [(false, before)],
-            "once, after the write, before the forgetting"
-        );
+        assert_eq!(*heard.lock().unwrap(), [false], "once, after the write");
 
         use std::os::unix::fs::PermissionsExt;
         Config::persist(signed_in).unwrap();

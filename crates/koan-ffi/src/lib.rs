@@ -4675,7 +4675,8 @@ impl KoanEngine {
     /// The library of a server just signed in to. Walked only if the server's
     /// has moved since the last complete walk, which on a first sign-in it
     /// has: signing in also starts koan's own sync, and when that one has
-    /// walked it first, this one waits for it and does not walk it again.
+    /// walked it first and recorded the server's version, this one waits for
+    /// it and does not walk it again.
     pub async fn load_remote_library(self: Arc<Self>) -> Result<SyncSummary, KoanError> {
         offload::offload(move || self.sync_blocking(koan_core::helpers::Walk::IfChanged)).await
     }
@@ -5727,6 +5728,7 @@ impl KoanEngine {
         queries::library_written();
         koan_core::signal::engine_changed().bump();
     }
+
     /// `sync_remote` and `load_remote_library`, on the calling thread.
     fn sync_blocking(&self, walk: koan_core::helpers::Walk) -> Result<SyncSummary, KoanError> {
         let db = self.db()?;

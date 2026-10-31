@@ -885,9 +885,8 @@ private final class HeldTask {
     }
 }
 
-/// The server banner under a page's navigation bar. On each page inside the
-/// stack: put on the stack, it lay over the bar and its back button, and on
-/// the tab view, lists did not scroll clear of it.
+/// The server banner, on each page inside the stack, so it sits under the
+/// page's navigation bar and lists scroll clear of it.
 private struct BannerInset: ViewModifier {
     @Environment(EngineMirror.self) private var mirror
     let signIn: () -> Void
