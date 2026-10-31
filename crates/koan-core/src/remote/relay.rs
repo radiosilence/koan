@@ -110,12 +110,6 @@ fn save(store: &Store) {
 /// One registration at a time: the store is read, changed and written whole.
 static WORKING: Mutex<()> = Mutex::new(());
 
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
 fn sha256(data: &[u8]) -> Vec<u8> {
     Sha256::digest(data).to_vec()
 }
@@ -146,7 +140,7 @@ pub fn handle_for(server: &str, token: &str, sandbox: bool) -> Option<String> {
     let fresh = entry.token == token
         && entry.sandbox == sandbox
         && !entry.handle.is_empty()
-        && entry.expires > now() + 30 * 24 * 60 * 60;
+        && entry.expires > crate::clock::unix_secs() as u64 + 30 * 24 * 60 * 60;
     if fresh {
         return Some(entry.handle.clone());
     }
@@ -238,7 +232,7 @@ fn attested_key(
 ) -> Option<Key> {
     if let Some(key) = held.as_ref()
         && key.production == !sandbox
-        && key.expires > now() + 24 * 60 * 60
+        && key.expires > crate::clock::unix_secs() as u64 + 24 * 60 * 60
     {
         return Some(key.clone());
     }

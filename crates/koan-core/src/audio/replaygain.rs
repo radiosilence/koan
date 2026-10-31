@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn test_apply_gain_without_peak_never_clips() {
         // A quiet recording tagged +20 dB with no peak tag: ~10x gain, which
-        // would previously have gone to the DAC unbounded.
+        // must not reach the DAC unbounded.
         let mut samples = vec![0.9f32, -0.9];
         apply_gain(&mut samples, 20.0, None, 0.0);
         assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));

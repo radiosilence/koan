@@ -17,7 +17,6 @@ import cc.blit.koan.ffi.BrowseFilter
 import cc.blit.koan.ffi.ShelfSummary
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ffi.TrackBrowseSort
-import cc.blit.koan.ffi.TrackSort
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -313,7 +312,7 @@ class ArtistModel(mirror: EngineMirror, artistId: Long) : ViewModel() {
                     engine.artist(artistId),
                     albums,
                     engine.artistFeatures(artistId),
-                    if (albums.isEmpty()) engine.tracks(null, artistId, TrackSort.ALBUM, 500u, 0u) else emptyList(),
+                    if (albums.isEmpty()) engine.tracks(null, artistId) else emptyList(),
                 )
             }.getOrNull()
         },

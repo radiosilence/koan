@@ -21,7 +21,7 @@ use koan_core::helpers::{
 
 use super::browse::{self, Browse, Kind};
 use super::favourite::Hearts;
-use super::{PARTIAL, UiState, events, html, open, patch};
+use super::{Logged, PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
 use crate::html::{Html, NOTHING, Render};
 use crate::share::{blocking, duration, not_found};
@@ -279,24 +279,36 @@ fn cells(
 /// The codecs and genres the filters offer.
 pub(super) type Options = Arc<(Vec<String>, Vec<String>)>;
 
-/// How long the filter options are reused. Counting genres reads every track,
-/// and a library changes far more slowly than people page through it.
-const OPTIONS_TTL: std::time::Duration = std::time::Duration::from_secs(300);
-
+/// The filter options, read again only when the library has moved
+/// (`library_stamp`): counting genres reads every track. Read outside the
+/// lock, and a failed read is shown as no options and not kept.
 fn filter_options(s: &UiState) -> Option<Options> {
-    let mut held = s.options.lock().ok()?;
-    if let Some((at, options)) = held.as_ref()
-        && at.elapsed() < OPTIONS_TTL
+    let db = open(&s.pool)?;
+    let stamp = match queries::library_stamp(&db.conn) {
+        Ok(stamp) => stamp.key(),
+        Err(e) => {
+            log::warn!("library stamp: {e}");
+            return Some(Options::default());
+        }
+    };
+    if let Some((at, options)) = s.options.lock().ok()?.as_ref()
+        && *at == stamp
     {
         return Some(options.clone());
     }
-    let db = open(&s.pool)?;
-    let options = Arc::new((
-        queries::album_codecs(&db.conn).unwrap_or_default(),
-        queries::genres(&db.conn, GENRES_OFFERED).unwrap_or_default(),
-    ));
-    *held = Some((std::time::Instant::now(), options.clone()));
-    Some(options)
+    let read = queries::album_codecs(&db.conn)
+        .and_then(|codecs| Ok((codecs, queries::genres(&db.conn, GENRES_OFFERED)?)));
+    match read {
+        Ok(read) => {
+            let options = Arc::new(read);
+            *s.options.lock().ok()? = Some((stamp, options.clone()));
+            Some(options)
+        }
+        Err(e) => {
+            log::warn!("filter options: {e}");
+            Some(Options::default())
+        }
+    }
 }
 
 #[derive(Template)]
@@ -509,7 +521,8 @@ fn album_list(
     b: &Browse,
 ) -> Option<(Vec<AlbumRow>, Versions, Credits, Option<Hearts>)> {
     let db = open(&s.pool)?;
-    let albums = queries::list_albums(&db.conn, &b.albums(user.user_id, shelves::now())).ok()?;
+    let albums =
+        queries::list_albums(&db.conn, &b.albums(user.user_id, shelves::now())).logged()?;
     let versions = album_versions(&db.conn, &albums);
     let credits = Credits::load(&db.conn, &[], &album_ids(&albums));
     Some((albums, versions, credits, Hearts::load(&db.conn, user)))
@@ -573,8 +586,8 @@ pub(super) async fn album(
     let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let album = queries::get_album(&db.conn, id).ok()??;
-        let tracks = queries::tracks_for_album(&db.conn, id).ok()?;
+        let album = queries::get_album(&db.conn, id).logged()??;
+        let tracks = queries::tracks_for_album(&db.conn, id).logged()?;
         let versions = cover_versions(&db.conn, &[id]);
         let credits = Credits::load(&db.conn, &tracks, &[id]);
         Some((
@@ -685,7 +698,7 @@ async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
     let result = if user.role.has_permission(Role::User) {
         blocking(move || {
             let db = open(&s.pool)?;
-            let cfg = koan_core::config::Config::load().unwrap_or_default();
+            let cfg = koan_core::config::Config::cached();
             Some(
                 koan_core::helpers::create_native_share(&db, user.user_id, &cfg, &target, None)
                     .map(|o| o.url)
@@ -711,7 +724,7 @@ struct ArtistsPage {
 
 fn artist_rows(s: &UiState, user: i64, b: &Browse) -> Option<Vec<queries::ArtistRow>> {
     let db = open(&s.pool)?;
-    queries::list_artists(&db.conn, &b.artists(user, shelves::now())).ok()
+    queries::list_artists(&db.conn, &b.artists(user, shelves::now())).logged()
 }
 
 pub(super) async fn artists(
@@ -760,10 +773,10 @@ pub(super) async fn tracks(
     let found = blocking(move || {
         let db = open(&st.pool)?;
         let listing = bb.tracks(who.user_id, shelves::now());
-        let total = listing.count(&db.conn).ok()?;
+        let total = listing.count(&db.conn).logged()?;
         let rows = listing
             .page(&db.conn, TRACKS_PAGE, page * TRACKS_PAGE)
-            .ok()?;
+            .logged()?;
         let versions = track_versions(&db.conn, &rows);
         let credits = Credits::load(&db.conn, &rows, &[]);
         let hearts = Hearts::load(&db.conn, &who);
@@ -820,8 +833,8 @@ pub(super) async fn artist(
     let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let artist = queries::get_artist(&db.conn, id).ok()??;
-        let albums = queries::albums_for_artist(&db.conn, id).ok()?;
+        let artist = queries::get_artist(&db.conn, id).logged()??;
+        let albums = queries::albums_for_artist(&db.conn, id).logged()?;
         let features = queries::list_albums(
             &db.conn,
             &queries::AlbumQuery {
@@ -872,7 +885,7 @@ pub(super) async fn playlists(
     let st = s.clone();
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        queries::list_playlists(&db.conn, user.user_id).ok()
+        queries::list_playlists(&db.conn, user.user_id).logged()
     })
     .await;
     let Some(lists) = found else {
@@ -904,11 +917,11 @@ pub(super) async fn playlist(
     let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let me = queries::auth::resolve_user(&db.conn, who.user_id).ok()?;
+        let me = queries::auth::resolve_user(&db.conn, who.user_id).logged()?;
         let list = queries::get_playlist(&db.conn, id)
-            .ok()?
+            .logged()?
             .filter(|p| p.readable_by(me))?;
-        let tracks = queries::playlist_tracks(&db.conn, id).ok()?;
+        let tracks = queries::playlist_tracks(&db.conn, id).logged()?;
         let versions = track_versions(&db.conn, &tracks);
         let credits = Credits::load(&db.conn, &tracks, &[]);
         Some((
@@ -969,7 +982,7 @@ fn results(s: &UiState, user: &AuthUser, q: &str) -> Html {
         let shelf = Shelf::Search(q);
         let found = open(&s.pool).and_then(|db| {
             let summary =
-                shelves::summary(&db.conn, shelf, user.user_id, shelves::now(), false).ok()?;
+                shelves::summary(&db.conn, shelf, user.user_id, shelves::now(), false).logged()?;
             let versions = shelf_versions(&db.conn, &summary);
             let credits = shelf_credits(&db.conn, &summary);
             Some((summary, versions, credits, Hearts::load(&db.conn, user)))
@@ -1136,7 +1149,8 @@ async fn shelf_page(
     let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now(), false).ok()?;
+        let summary =
+            shelves::summary(&db.conn, shelf, who.user_id, shelves::now(), false).logged()?;
         let versions = shelf_versions(&db.conn, &summary);
         let credits = shelf_credits(&db.conn, &summary);
         Some((summary, versions, credits, Hearts::load(&db.conn, &who)))

@@ -16,13 +16,6 @@ pub struct Bookmark {
     pub changed_at: i64,
 }
 
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
-
 /// Save where `user` is in a track, replacing the bookmark already there.
 pub fn save_bookmark(
     conn: &Connection,
@@ -44,7 +37,7 @@ pub fn save_bookmark(
         track_id,
         position_ms.max(0),
         comment,
-        now()
+        crate::clock::unix_secs()
     ])?;
     Ok(())
 }

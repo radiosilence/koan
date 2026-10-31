@@ -17,7 +17,7 @@ use koan_core::db::queries::app_passwords::{self, AppPasswordRow};
 use koan_core::invite::{self, Invite};
 
 use super::pages::{COPY_ERROR, Failed, respond};
-use super::{UiState, events, open, patch};
+use super::{Logged, UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
 use crate::share::blocking;
@@ -104,8 +104,9 @@ struct AccountPage<'a> {
 }
 
 fn link_device(conn: &rusqlite::Connection, server: &str, user: &AuthUser) -> Option<LinkDevice> {
-    let keys = crate::auth::signing_keys().ok()?;
-    let token = invite::mint_token(conn, &keys.0, user.user_id, invite::QR_TOKEN_TTL_SECS).ok()?;
+    let keys = crate::auth::signing_keys().logged()?;
+    let token =
+        invite::mint_token(conn, &keys.0, user.user_id, invite::QR_TOKEN_TTL_SECS).logged()?;
     let link = Invite::with_token(server, &user.username, &token, None).qr_link();
     Some(LinkDevice {
         qr: super::users::invite_qr(&link)?,
@@ -127,8 +128,8 @@ pub(super) async fn page(
                 st.server_url
                     .as_deref()
                     .and_then(|server| link_device(&db.conn, server, &u)),
-                api_keys::list_api_keys(&db.conn, Some(u.user_id)).ok()?,
-                app_passwords::list_app_passwords(&db.conn, u.user_id).ok()?,
+                api_keys::list_api_keys(&db.conn, Some(u.user_id)).logged()?,
+                app_passwords::list_app_passwords(&db.conn, u.user_id).logged()?,
             ))
         })
         .await
@@ -212,8 +213,8 @@ pub(super) async fn create_key(
     };
     let created = blocking(move || {
         let db = open(&s.pool)?;
-        let (_, key) = api_keys::create_api_key(&db.conn, user.user_id, &name).ok()?;
-        let keys = api_keys::list_api_keys(&db.conn, Some(user.user_id)).ok()?;
+        let (_, key) = api_keys::create_api_key(&db.conn, user.user_id, &name).logged()?;
+        let keys = api_keys::list_api_keys(&db.conn, Some(user.user_id)).logged()?;
         Some((key, keys))
     })
     .await;
@@ -230,8 +231,8 @@ pub(super) async fn revoke_key(
 ) -> Response {
     let keys = blocking(move || {
         let db = open(&s.pool)?;
-        api_keys::revoke_api_key(&db.conn, id, Some(user.user_id)).ok()?;
-        api_keys::list_api_keys(&db.conn, Some(user.user_id)).ok()
+        api_keys::revoke_api_key(&db.conn, id, Some(user.user_id)).logged()?;
+        api_keys::list_api_keys(&db.conn, Some(user.user_id)).logged()
     })
     .await
     .unwrap_or_default();
@@ -268,7 +269,7 @@ pub(super) async fn create_app_password(
             }
             Err(_) => return None,
         };
-        let passwords = app_passwords::list_app_passwords(&db.conn, user.user_id).ok()?;
+        let passwords = app_passwords::list_app_passwords(&db.conn, user.user_id).logged()?;
         Some(Ok((password, passwords)))
     })
     .await;
@@ -292,8 +293,8 @@ pub(super) async fn revoke_app_password(
 ) -> Response {
     let passwords = blocking(move || {
         let db = open(&s.pool)?;
-        app_passwords::revoke_app_password(&db.conn, id, user.user_id).ok()?;
-        app_passwords::list_app_passwords(&db.conn, user.user_id).ok()
+        app_passwords::revoke_app_password(&db.conn, id, user.user_id).logged()?;
+        app_passwords::list_app_passwords(&db.conn, user.user_id).logged()
     })
     .await
     .unwrap_or_default();

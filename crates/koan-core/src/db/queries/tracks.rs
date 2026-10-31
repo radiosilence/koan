@@ -201,12 +201,11 @@ pub fn remove_vanished_remote(
 
 /// Fold together the rows one file got by being spelled two ways.
 ///
-/// A drop from Finder used to index a file under the precomposed spelling
-/// Foundation hands over, and the next scan stored the same file again under
-/// the directory entry's own, decomposed bytes — the two open the same file on
-/// a Mac, and `tracks.path` is compared bytewise. Paths are resolved against
-/// the directory on the way in now, so only this can bring the pairs it left
-/// back together.
+/// A pair is a file indexed under the precomposed spelling Foundation hands
+/// over and again under the directory entry's own decomposed bytes: the two
+/// open the same file on a Mac, and `tracks.path` is compared bytewise. Paths
+/// are resolved against the directory on the way in, so pairs exist only in
+/// libraries indexed before that, and only this brings them together.
 ///
 /// The older row wins: it carries the play history, and the sync link if a
 /// server has the recording. It takes the decomposed spelling, which is the one
@@ -731,30 +730,6 @@ pub fn random_tracks_where(
     Ok(rows)
 }
 
-/// Get all tracks with pagination.
-pub fn all_tracks_paged(
-    conn: &Connection,
-    limit: u32,
-    offset: u32,
-) -> Result<Vec<TrackRow>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
-                t.disc, t.track_number, t.title, t.duration_ms, t.path,
-                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path, al.artist_id
-         FROM tracks t
-         LEFT JOIN artists a ON t.artist_id = a.id
-         LEFT JOIN albums al ON t.album_id = al.id
-         LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number
-         LIMIT ?1 OFFSET ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![limit, offset], row_to_track_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
-}
-
 /// Fetch many tracks in one query, in the order the ids were given, rather
 /// than one round trip per track.
 pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, DbError> {
@@ -871,10 +846,7 @@ pub fn clear_cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<()
 /// Update the cached_path for a track after downloading, recording size and timestamp.
 pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(), DbError> {
     let size_bytes: Option<i64> = std::fs::metadata(path).ok().map(|m| m.len() as i64);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::clock::unix_secs();
     conn.execute(
         "UPDATE tracks SET cached_path = ?1, cache_size_bytes = ?2, cache_download_date = ?3
          WHERE id = ?4",

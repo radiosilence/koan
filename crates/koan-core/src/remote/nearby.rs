@@ -641,7 +641,7 @@ pub fn start(local: Local) {
 
 /// `devices.nearby`: whether this device takes part in the local network.
 fn enabled() -> bool {
-    Config::load().map(|c| c.devices.nearby).unwrap_or(true)
+    Config::cached().devices.nearby
 }
 
 /// Stop looking for other devices, and hang up on them: a phone in the
@@ -701,7 +701,7 @@ fn dial_remembered() {
 /// Apply `devices.*` from the config as it is now: listen or stop, and dial
 /// the addresses listed. For a settings screen that has just written them.
 pub fn reconfigure() {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let mut running = RUNNING.lock();
     let Some(r) = running.as_mut() else { return };
     // Off: no listener, no dialers, no browsing, until it is turned on again.
@@ -1096,7 +1096,7 @@ impl wire::Session for Serving<'_> {
     fn outgoing(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         if !self.greeted {
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             let id = &self.local.identity;
             out.push(LinkReport::Hello(LinkHello {
                 id: id.device_id.clone(),

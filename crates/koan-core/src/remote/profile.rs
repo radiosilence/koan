@@ -177,7 +177,7 @@ pub fn forget() {
 
 /// The configured server's profile as last probed, without asking it.
 pub fn current() -> Option<ServerProfile> {
-    let cfg = crate::config::Config::load().unwrap_or_default();
+    let cfg = crate::config::Config::cached();
     let auth = crate::helpers::subsonic_auth(&cfg)?;
     PROFILE
         .lock()

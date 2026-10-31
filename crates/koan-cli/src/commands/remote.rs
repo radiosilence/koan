@@ -37,7 +37,7 @@ pub fn cmd_remote_login(url: &str, username: &str) {
 }
 
 pub fn cmd_remote_sync() {
-    let cfg = config::Config::load().unwrap_or_default();
+    let cfg = config::Config::cached();
     let client = match koan_core::helpers::subsonic_client(&cfg) {
         Some(c) => c,
         None => {
@@ -129,7 +129,7 @@ fn draw_progress(p: SyncProgress) {
 }
 
 pub fn cmd_remote_status() {
-    let cfg = config::Config::load().unwrap_or_default();
+    let cfg = config::Config::cached();
     if !cfg.remote.enabled || cfg.remote.url.is_empty() {
         println!("no remote server configured");
         return;

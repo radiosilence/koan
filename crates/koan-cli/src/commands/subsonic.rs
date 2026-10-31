@@ -36,7 +36,7 @@ pub fn cmd_subsonic_setup(username: &str) {
 
 /// `koan subsonic status`
 pub fn cmd_subsonic_status() {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let has_secret = koan_core::helpers::get_subsonic_password(&cfg).is_some();
 
     println!(
