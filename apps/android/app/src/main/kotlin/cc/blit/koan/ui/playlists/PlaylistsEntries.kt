@@ -1,7 +1,5 @@
 package cc.blit.koan.ui.playlists
 
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -11,7 +9,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -19,22 +16,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
+import cc.blit.koan.ui.shown
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
@@ -44,8 +39,11 @@ import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.value
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @Serializable
 data class PlaylistsRoute(val nonce: String = nonce()) : NavKey
@@ -66,7 +64,8 @@ fun EntryProviderScope<NavKey>.playlistsEntries() {
 private fun PlaylistsPage() {
     val app = koanApp()
     val model = viewModel { PlaylistsModel(app.mirror) }
-    val playlists by model.playlists.collectAsStateWithLifecycle()
+    val read by model.playlists.state.collectAsStateWithLifecycle()
+    val playlists = read.value
     val edits = remember { PlaylistEdits(app.mirror) }
     val nav = LocalNavigator.current
     val scope = rememberCoroutineScope()
@@ -80,7 +79,7 @@ private fun PlaylistsPage() {
             }
             KoanButton("New Playlist", { naming = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.add)
         }
-        val shown = playlists
+        val shown = read.shown("your playlists", model.playlists::retry)
         when {
             shown == null -> Unit
             shown.isEmpty() -> KoanUnavailable("No playlists", KoanIcons.playlist, "Made here or on your server, they show up in both.")
@@ -99,72 +98,38 @@ private fun PlaylistsPage() {
 @Composable
 private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: PlaylistEdits, open: (Long) -> Unit) {
     val listState = rememberLazyListState()
-    // One state object for the page's life: each row's gesture outlives a
-    // recomposition and keeps the state it started with, so a fresh one per
-    // emission would leave the next drag moving a copy nobody draws.
     val latest by rememberUpdatedState(playlists)
     var order by remember { mutableStateOf(playlists) }
-    var dragging by remember { mutableStateOf<Long?>(null) }
-    var offset by remember { mutableFloatStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
     // The engine's order, except under a drag: a sync landing then must not
     // move rows out from under the finger. The drop is written and comes back.
-    LaunchedEffect(playlists) { if (dragging == null) order = playlists }
-
-    fun dragBy(delta: Float) {
-        offset += delta
-        val visible = listState.layoutInfo.visibleItemsInfo
-        val current = visible.firstOrNull { it.key == dragging } ?: return
-        val middle = current.offset + offset + current.size / 2
-        val target = visible.firstOrNull { it.key != current.key && middle >= it.offset && middle < it.offset + it.size } ?: return
-        val from = order.indexOfFirst { it.id == dragging }
-        val to = order.indexOfFirst { it.id == target.key }
-        if (from < 0 || to < 0) return
-        order = order.toMutableList().apply { add(to, removeAt(from)) }
-        // The row is laid out at its new place next frame; keep it under the finger.
-        offset += current.offset - target.offset
-    }
-
-    fun drop() {
-        if (dragging != null && order.map { it.id } != latest.map { it.id }) edits.arrange(order.map { it.id })
-        dragging = null
-        offset = 0f
-    }
-
-    val edge = with(LocalDensity.current) { 64.dp.toPx() }
-    LaunchedEffect(dragging) {
-        if (dragging == null) return@LaunchedEffect
-        while (true) {
-            withFrameNanos {}
-            val info = listState.layoutInfo
-            val current = info.visibleItemsInfo.firstOrNull { it.key == dragging } ?: continue
-            val top = current.offset + offset
-            val step = edgeScroll(top, top + current.size, info.viewportStartOffset.toFloat(), info.viewportEndOffset.toFloat(), edge)
-            if (step == 0f) continue
-            offset += listState.scrollBy(step)
-            dragBy(0f)
+    LaunchedEffect(playlists) { if (!dragging) order = playlists }
+    val haptics = LocalHapticFeedback.current
+    val reorder = rememberReorderableLazyListState(listState) { from, to ->
+        val a = order.indexOfFirst { it.id == from.key }
+        val b = order.indexOfFirst { it.id == to.key }
+        if (a >= 0 && b >= 0) {
+            order = order.toMutableList().apply { add(b, removeAt(a)) }
+            haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
         }
     }
 
     LazyColumn(state = listState) {
         items(order, key = { it.id }) { playlist ->
-            PlaylistListRow(
-                playlist,
-                edits,
-                editing = editing,
-                handle = Modifier.pointerInput(playlist.id) {
-                    detectDragGestures(
-                        onDragStart = { dragging = playlist.id; offset = 0f },
-                        onDragEnd = { drop() },
-                        onDragCancel = { order = latest; dragging = null; offset = 0f },
-                        onDrag = { change, amount -> change.consume(); dragBy(amount.y) },
-                    )
-                },
-                modifier = if (dragging == playlist.id) {
-                    Modifier.zIndex(1f).graphicsLayer { translationY = offset }
-                } else {
-                    Modifier.animateItem()
-                },
-            ) { open(playlist.id) }
+            ReorderableItem(reorder, key = playlist.id) {
+                PlaylistListRow(
+                    playlist,
+                    edits,
+                    editing = editing,
+                    handle = Modifier.draggableHandle(
+                        onDragStarted = { dragging = true },
+                        onDragStopped = {
+                            dragging = false
+                            if (order.map { it.id } != latest.map { it.id }) edits.arrange(order.map { it.id })
+                        },
+                    ),
+                ) { open(playlist.id) }
+            }
         }
     }
 }
@@ -175,20 +140,19 @@ private fun PlaylistListRow(
     edits: PlaylistEdits,
     editing: Boolean,
     handle: Modifier,
-    modifier: Modifier,
     open: () -> Unit,
 ) {
     val app = koanApp()
     val thumb = LocalKoanTokens.current.thumb
     // Keyed on `changedAt`: adding tracks changes a playlist's face.
     val covers by produceState(emptyList<Long>(), playlist.id, playlist.changedAt) {
-        value = runCatching { app.mirror.engine().playlistCoverAlbumIds(playlist.id) }.getOrDefault(emptyList())
+        value = attempt { app.mirror.engine().playlistCoverAlbumIds(playlist.id) }.getOrDefault(emptyList())
     }
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
 
-    Box(modifier) {
+    Box {
         CollectionRow(
             playlist.name,
             playlist.summary(),

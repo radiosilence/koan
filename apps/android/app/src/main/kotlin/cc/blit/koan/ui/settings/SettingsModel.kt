@@ -54,7 +54,7 @@ data class SettingsState(
  */
 class SettingsModel(
     private val engine: suspend () -> KoanEngineInterface,
-    private val activity: ActivityModel = ActivityModel(),
+    private val activity: ActivityModel,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()

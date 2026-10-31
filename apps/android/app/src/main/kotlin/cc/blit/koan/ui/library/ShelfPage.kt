@@ -24,10 +24,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.ShelfSummary
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.shown
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.value
 
 /**
  * A page of artists, records and tracks answering one question: what is
@@ -43,7 +45,8 @@ import cc.blit.koan.ui.theme.LocalKoanTokens
 fun ShelfPage(shelf: Shelf) {
     val app = koanApp()
     val model = viewModel { ShelfModel(app.mirror, shelf) }
-    val summary by model.summary.collectAsStateWithLifecycle()
+    val read by model.summary.state.collectAsStateWithLifecycle()
+    val summary = read.value
     val selection = model.selection
     SelectMode(selection)
     val empty = summary?.run { artists.isEmpty() && albums.isEmpty() && tracks.isEmpty() } ?: true
@@ -51,7 +54,7 @@ fun ShelfPage(shelf: Shelf) {
         PageBar(shelf.title, summary?.counts(), appText = shelf !is Shelf.Search) {
             if (!empty) SelectButton(selection)
         }
-        val held = summary ?: return@Column
+        val held = read.shown("this shelf", model.summary::retry) ?: return@Column
         if (empty) {
             val (title, detail) = shelf.empty
             KoanUnavailable(title, shelf.icon, detail)

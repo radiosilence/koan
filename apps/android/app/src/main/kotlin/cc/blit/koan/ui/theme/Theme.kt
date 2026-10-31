@@ -1,6 +1,5 @@
 package cc.blit.koan.ui.theme
 
-import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -19,12 +18,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * How the app is drawn: the kōan theme or the platform's look, whether icons
@@ -235,17 +231,4 @@ fun KoanRecordAccent(accent: KoanAccent?, content: @Composable () -> Unit) {
     if (accent == null) return content()
     val look = LocalKoanLook.current
     KoanTheme(koan = look.isOn, icons = look.icons, accent = accent, dark = look.dark, content = content)
-}
-
-/**
- * `content` in the accent of a decoded sleeve, worked out off the main thread;
- * the accent in force until it is, and for `null`. A Coil bitmap needs
- * `allowHardware(false)` for its pixels to be read.
- */
-@Composable
-fun KoanRecordAccent(sleeve: Bitmap?, content: @Composable () -> Unit) {
-    val accent by produceState<KoanAccent?>(null, sleeve) {
-        value = sleeve?.let { withContext(Dispatchers.Default) { KoanAccent.of(it) } }
-    }
-    KoanRecordAccent(accent, content)
 }

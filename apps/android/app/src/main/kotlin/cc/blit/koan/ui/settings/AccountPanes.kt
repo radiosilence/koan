@@ -52,6 +52,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.AccountRole
 import cc.blit.koan.ffi.Invite
 import cc.blit.koan.ffi.qrCode
@@ -109,7 +110,7 @@ fun AccountPane(model: SettingsModel) {
         if (!linking) return@produceState
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                value = runCatching { app.mirror.engine().inviteServerAccount(username!!, false) }.getOrNull()
+                value = attempt { app.mirror.engine().inviteServerAccount(username!!, false) }.getOrNull()
                 delay(if (value == null) 60_000L else 9 * 60_000L)
             }
         }

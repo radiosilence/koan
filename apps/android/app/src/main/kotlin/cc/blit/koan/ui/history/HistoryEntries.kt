@@ -1,5 +1,3 @@
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package cc.blit.koan.ui.history
 
 import android.text.format.DateFormat
@@ -36,6 +34,7 @@ import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.art.Art
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.PlayHistoryEntry
+import cc.blit.koan.ui.Listing
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.FilterField
 import cc.blit.koan.ui.library.Named
@@ -56,6 +55,7 @@ import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
+import cc.blit.koan.ui.shown
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanDivider
@@ -70,6 +70,7 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanSurface
+import cc.blit.koan.ui.value
 import java.text.DecimalFormatSymbols
 import java.time.Instant
 import java.time.LocalDate
@@ -78,13 +79,8 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Calendar
 import java.util.Date
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -102,9 +98,9 @@ fun EntryProviderScope<NavKey>.historyEntries() {
 class HistoryModel(mirror: EngineMirror) : ViewModel() {
     val query = MutableStateFlow("")
 
-    val entries: StateFlow<List<PlayHistoryEntry>?> = combine(mirror.history, mirror.library, query) { _, _, q -> q.trim() }
-        .mapLatest { q -> runCatching { mirror.engine().playHistory(q.ifEmpty { null }) }.getOrDefault(emptyList()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val entries = Listing(viewModelScope, combine(mirror.history, mirror.library, query) { _, _, q -> q.trim() }) { q ->
+        mirror.engine().playHistory(q.ifEmpty { null })
+    }
 }
 
 /**
@@ -117,7 +113,8 @@ class HistoryModel(mirror: EngineMirror) : ViewModel() {
 private fun HistoryPage() {
     val app = koanApp()
     val model = viewModel { HistoryModel(app.mirror) }
-    val entries by model.entries.collectAsStateWithLifecycle()
+    val read by model.entries.state.collectAsStateWithLifecycle()
+    val entries = read.value
     val query by model.query.collectAsStateWithLifecycle()
     var clearing by remember { mutableStateOf(false) }
     val zone = ZoneId.systemDefault()
@@ -134,7 +131,7 @@ private fun HistoryPage() {
             KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty() && query.isBlank())
         }
         FilterField(query, "Filter history", { model.query.value = it })
-        val shown = entries
+        val shown = read.shown("your history", model.entries::retry)
         when {
             shown == null -> Unit
             shown.isEmpty() && query.isNotBlank() -> KoanUnavailable("No matches", KoanIcons.search, null)

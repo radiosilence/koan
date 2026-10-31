@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.Assistants
 import cc.blit.koan.ffi.KoanException
@@ -141,7 +142,7 @@ fun IntegrationsPane(model: SettingsModel) {
     // Read once per page and server: the address only changes with the server.
     val assistants by produceState<Result<Assistants>?>(null, connection.offers(ASSISTANTS), state.settings?.remoteUrl) {
         value = null
-        if (connection.offers(ASSISTANTS)) value = runCatching { app.mirror.engine().assistants() }
+        if (connection.offers(ASSISTANTS)) value = attempt { app.mirror.engine().assistants() }
     }
 
     SettingsPage(Pane.Integrations.title, state) {
