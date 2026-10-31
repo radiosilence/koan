@@ -1442,7 +1442,9 @@ impl SharedPlayerState {
     }
 
     /// Batch move: extract items by ID, reinsert them at `target` position.
-    /// Preserves the relative order of the moved items.
+    /// Preserves the relative order of the moved items. Moves the content
+    /// version whether or not the order changed: a client holding a drag
+    /// ends it on the next version, so every move must answer with one.
     pub fn move_items(&self, ids: &[QueueItemId], target: QueueItemId, after: bool) {
         use std::collections::HashSet;
         let id_set: HashSet<QueueItemId> = ids.iter().copied().collect();
