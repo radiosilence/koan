@@ -86,35 +86,113 @@ struct QueueView: View {
     ///
     /// Kept until what is listed moves: the body runs again for a pause, the
     /// tint or the stage, and regrouping a long queue for those is work that
-    /// changes nothing.
+    /// changes nothing. On the Mac, where rows draw the patched queue, a
+    /// patch redoes the rows it touched and leaves the rest.
     @State private var layout = Layout()
 
     @MainActor
-    private final class Layout {
+    final class Layout {
         private var key: (stamp: UInt64, grouped: Bool)?
         private(set) var rows: [Row] = []
         private(set) var numbering = Numbering()
+        /// Moves with every regrouping: the rows' ids are the same until it
+        /// does.
+        private(set) var shape = 0
 
         func update(_ listed: [QueueItem], stamp: UInt64, grouped: Bool) {
             if let key, key == (stamp, grouped) { return }
+            rebuild(listed, stamp: stamp, grouped: grouped)
+        }
+
+        private func rebuild(_ listed: [QueueItem], stamp: UInt64, grouped: Bool) {
             key = (stamp, grouped)
+            shape += 1
             rows = grouped ? Row.build(from: listed) : listed.map(Row.track)
             numbering = grouped ? QueueView.numbering(listed) : Numbering()
+            #if os(macOS)
+            lines = rows.map { QueueView.line($0, numbering: numbering, grouped: grouped) }
+            places = Self.places(of: rows)
+            #endif
         }
+
+        #if os(macOS)
+        /// The table's line for each of `rows`.
+        private(set) var lines: [QueueLine] = []
+        /// Where each queue row is among `rows`: its own, and the heading of
+        /// the run it is in with its place there.
+        private var places: [(row: Int, heading: (row: Int, offset: Int)?)] = []
+        /// The `queueStamp` the rows were last brought up to.
+        private var patchedTo: UInt64 = 0
+
+        /// `listed` is the queue with its patches; `rowsStamp` moves when it
+        /// is sent whole.
+        func update(_ listed: [QueueItem], rowsStamp: UInt64, mirror: EngineMirror, grouped: Bool) {
+            let stamp = mirror.queueStamp
+            defer { patchedTo = stamp }
+            if let key, key == (rowsStamp, grouped), places.count == listed.count,
+               let changed = mirror.rowsPatched(since: patchedTo),
+               patch(Set(changed), from: listed, grouped: grouped) {
+                return
+            }
+            rebuild(listed, stamp: rowsStamp, grouped: grouped)
+        }
+
+        /// Redo the rows `changed` names. False, changing nothing, when one
+        /// moved to another record or run: that regroups, which only a
+        /// rebuild does.
+        func patch(_ changed: Set<Int>, from listed: [QueueItem], grouped: Bool) -> Bool {
+            for queueRow in changed {
+                guard queueRow < listed.count, let held = rows[places[queueRow].row].item,
+                      held.run == listed[queueRow].run, held.albumId == listed[queueRow].albumId
+                else { return false }
+            }
+            var headings = Set<Int>()
+            for queueRow in changed {
+                let place = places[queueRow]
+                let item = listed[queueRow]
+                rows[place.row] = rows[place.row].with(item)
+                lines[place.row] = QueueView.line(rows[place.row], numbering: numbering, grouped: grouped)
+                if let heading = place.heading, case .album(let id, var group) = rows[heading.row] {
+                    group.items[heading.offset] = item
+                    rows[heading.row] = .album(id: id, group: group)
+                    headings.insert(heading.row)
+                }
+            }
+            for row in headings {
+                lines[row] = QueueView.line(rows[row], numbering: numbering, grouped: grouped)
+            }
+            return true
+        }
+
+        static func places(of rows: [Row]) -> [(row: Int, heading: (row: Int, offset: Int)?)] {
+            var places: [(row: Int, heading: (row: Int, offset: Int)?)] = []
+            var run: (row: Int, count: Int, offset: Int)?
+            for (index, row) in rows.enumerated() {
+                switch row {
+                case .album(_, let group):
+                    run = (index, group.items.count, 0)
+                case .track, .single:
+                    if let open = run, open.offset < open.count {
+                        places.append((index, (open.row, open.offset)))
+                        run?.offset += 1
+                    } else {
+                        run = nil
+                        places.append((index, nil))
+                    }
+                }
+            }
+            return places
+        }
+        #endif
     }
 
     private var rows: [Row] {
-        layout.update(listed, stamp: listedStamp, grouped: grouped)
-        return layout.rows
-    }
-
-    /// Moves with `listed`.
-    private var listedStamp: UInt64 {
         #if os(macOS)
-        mirror.queueStamp
+        layout.update(listed, rowsStamp: mirror.queueRowsStamp, mirror: mirror, grouped: grouped)
         #else
-        mirror.queueRowsStamp
+        layout.update(listed, stamp: mirror.queueRowsStamp, grouped: grouped)
         #endif
+        return layout.rows
     }
 
     /// The records that number by disc (`numbersByDisc`) from their tracks in
@@ -157,7 +235,6 @@ struct QueueView: View {
 
     var body: some View {
         let rows = self.rows
-        let numbering = layout.numbering
 
         VStack(spacing: 0) {
             header(rows)
@@ -174,9 +251,9 @@ struct QueueView: View {
                 #endif
             } else {
                 #if os(macOS)
-                table(rows, numbering: numbering)
+                table(rows, lines: layout.lines, shape: layout.shape)
                 #else
-                list(rows, numbering: numbering)
+                list(rows, numbering: layout.numbering)
                 #endif
             }
         }
@@ -190,8 +267,7 @@ struct QueueView: View {
 
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
-    private func table(_ rows: [Row], numbering: Numbering) -> some View {
-        let lines = rows.map { line($0, numbering: numbering) }
+    private func table(_ rows: [Row], lines: [QueueLine], shape: Int) -> some View {
         let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
         let jumpTarget: String? = switch ui.queueJumpTarget {
@@ -230,6 +306,7 @@ struct QueueView: View {
                 make: QueueTableRow.init,
                 heightOf: QueueTableRow.height(of:),
                 changed: { $0 != $1 },
+                shape: AnyHashable(shape),
                 menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
                 primaryAction: { play(rowIds: $0) },
                 // Out of the queue a row is its track, and a heading the whole
@@ -265,7 +342,7 @@ struct QueueView: View {
     }
 
     /// A row of the queue as the table draws it.
-    private func line(_ row: Row, numbering: Numbering) -> QueueLine {
+    static func line(_ row: Row, numbering: Numbering, grouped: Bool) -> QueueLine {
         switch row {
         case .album(let id, let group):
             QueueLine(id: id, kind: .heading(QueueHeading(
@@ -805,6 +882,23 @@ extension QueueView {
             switch self {
             case .album(let id, _): id
             case .track(let item), .single(let item): item.queueItemId
+            }
+        }
+
+        /// The queue item a track's row draws.
+        var item: QueueItem? {
+            switch self {
+            case .album: nil
+            case .track(let item), .single(let item): item
+            }
+        }
+
+        /// This row drawing `item` instead.
+        func with(_ item: QueueItem) -> Row {
+            switch self {
+            case .album: self
+            case .track: .track(item)
+            case .single: .single(item)
             }
         }
 

@@ -74,9 +74,14 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     /// Each row's height, where a list's rows differ — an album heading in
     /// the queue is taller than its tracks.
     var heightOf: ((Row.Item) -> CGFloat)?
-    /// Whether rows that kept their identity changed what they show — a
-    /// queue row's status. Visible rows are redrawn when it says so.
-    var changed: (([Row.Item], [Row.Item]) -> Bool)?
+    /// Whether a row that kept its identity changed what it shows — a queue
+    /// row's status. Asked of the rows on screen only: the rest are drawn
+    /// from the new items as they scroll in.
+    var changed: ((Row.Item, Row.Item) -> Bool)?
+    /// Moves whenever the items' ids may have, for a list long enough that
+    /// reading every id on each update is the cost: while it holds still the
+    /// ids are taken to be the same. Without it they are compared.
+    var shape: AnyHashable?
     /// The context menu for these rows, built with the page's environment.
     var menu: (Set<ID>, EnvironmentValues) -> NSMenu? = { _, _ in nil }
     /// Double-click or Return.
@@ -193,6 +198,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var bundled = false
         private var index: [ID: Int] = [:]
         private var shownKey: AnyHashable?
+        private var shownShape: AnyHashable?
         private var selectAllToken: Int?
         private var rewinds: Int?
         private var restored = false
@@ -259,19 +265,35 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             self.environment = environment
             guard let table else { return }
 
-            let ids = parent.items.map(parent.id)
+            let sameShape = parent.shape != nil && parent.shape == shownShape && parent.items.count == self.ids.count
+            let ids = sameShape ? self.ids : parent.items.map(parent.id)
+            shownShape = parent.shape
             if ids != self.ids {
+                let before = self.ids.count
+                // A listing read a page at a time grows at its end: the rows
+                // already made stay, and only the page is added.
+                let appended = before > 0 && ids.count > before && ids.starts(with: self.ids)
                 self.items = parent.items
                 self.ids = ids
-                index = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
                 reloading = true
-                table.reloadData()
+                if appended {
+                    for offset in before..<ids.count where index[ids[offset]] == nil { index[ids[offset]] = offset }
+                    table.insertRows(at: IndexSet(integersIn: before..<ids.count), withAnimation: [])
+                } else {
+                    index = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+                    table.reloadData()
+                }
                 reloading = false
+                if appended, parent.contextKey != shownKey { reshowVisible() }
                 shownKey = parent.contextKey
-            } else if parent.contextKey != shownKey || parent.changed?(self.items, parent.items) == true {
+            } else if parent.contextKey != shownKey {
                 self.items = parent.items
                 shownKey = parent.contextKey
                 reshowVisible()
+            } else if let changed = parent.changed {
+                let shown = self.items
+                self.items = parent.items
+                reshowVisible { changed(shown[$0], parent.items[$0]) }
             } else {
                 self.items = parent.items
             }
@@ -420,10 +442,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             scroll.reflectScrolledClipView(scroll.contentView)
         }
 
-        private func reshowVisible() {
+        private func reshowVisible(where wanted: (Int) -> Bool = { _ in true }) {
             guard let table, let parent else { return }
             let rows = table.rows(in: table.visibleRect)
-            for row in rows.lowerBound..<rows.upperBound where row < items.count {
+            for row in rows.lowerBound..<rows.upperBound where row < items.count && wanted(row) {
                 (table.view(atColumn: 0, row: row, makeIfNecessary: false) as? Row)?.show(items[row], in: parent.context)
             }
         }
