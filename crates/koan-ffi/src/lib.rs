@@ -4350,7 +4350,7 @@ impl KoanEngine {
             let made = client
                 .koan_create_user(&username, role.as_str())
                 .map_err(remote_error)?;
-            Ok(account_invite(&invite_base(&client), made).into())
+            Ok(account_invite(&invite_base(&client)?, made).into())
         })
         .await
     }
@@ -4384,7 +4384,7 @@ impl KoanEngine {
                 SubsonicError::Api { message, .. } => KoanError::Refused { message },
                 e => remote_error(e),
             })?;
-            Ok(account_invite(&invite_base(&client), made).into())
+            Ok(account_invite(&invite_base(&client)?, made).into())
         })
         .await
     }
@@ -6837,8 +6837,14 @@ fn client_offering(
 
 /// Where an invite sends the person it is for: while sharing, the address
 /// phones reach this device at, not the loopback one it is administered over.
-fn invite_base(client: &koan_core::remote::client::SubsonicClient) -> String {
-    serve::invite_base().unwrap_or_else(|| client.base_url().to_owned())
+fn invite_base(client: &koan_core::remote::client::SubsonicClient) -> Result<String, KoanError> {
+    if serve::loopback_client().is_none() {
+        return Ok(client.base_url().to_owned());
+    }
+    serve::invite_base().ok_or_else(|| KoanError::Refused {
+        message: "this Mac has no address on a network to invite a phone to; set a public address"
+            .into(),
+    })
 }
 
 /// The invite a koan server answered with, as a link to the address this

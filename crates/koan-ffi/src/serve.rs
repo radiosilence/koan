@@ -23,11 +23,12 @@ pub struct Sharing {
     pub lan_url: Option<String>,
 }
 
-/// The running server's port and host key. Set once it has started and
+/// The running server's port and its client. Set once it has started and
 /// cleared as it begins to stop, so a read never waits on a stop's drain.
 struct Serving {
     port: u16,
-    key: String,
+    /// The server administered as its first admin, made once per run.
+    client: Arc<SubsonicClient>,
     /// What the server said of itself when it started: the extensions
     /// Settings offers its sections by.
     profile: Option<koan_core::remote::profile::ServerProfile>,
@@ -35,19 +36,10 @@ struct Serving {
 
 static SERVING: RwLock<Option<Serving>> = RwLock::new(None);
 
-/// The address of the interface the default route leaves by: the one a phone
-/// on the same network reaches. A UDP socket connects without sending.
-fn lan_ip() -> Option<std::net::IpAddr> {
-    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
-    socket.connect(("1.1.1.1", 80)).ok()?;
-    let ip = socket.local_addr().ok()?.ip();
-    (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
-}
-
 fn sharing(port: u16) -> Sharing {
     Sharing {
         port,
-        lan_url: lan_ip().map(|ip| format!("http://{ip}:{port}")),
+        lan_url: koan_core::remote::devices::lan_address().map(|ip| format!("http://{ip}:{port}")),
     }
 }
 
@@ -62,9 +54,7 @@ fn client(port: u16, key: &str) -> Arc<SubsonicClient> {
 /// The running server, administered as its first admin. `None` while not
 /// sharing.
 pub(crate) fn loopback_client() -> Option<Arc<SubsonicClient>> {
-    let serving = SERVING.read();
-    let serving = serving.as_ref()?;
-    Some(client(serving.port, &serving.key))
+    Some(SERVING.read().as_ref()?.client.clone())
 }
 
 /// The running server's own profile, which stands in for a remote's while
@@ -138,12 +128,12 @@ impl KoanEngine {
             let port = started.addr().port();
             let key = started
                 .host_key()
-                .expect("an embedded server has a host key")
-                .to_owned();
+                .expect("an embedded server has a host key");
+            let client = client(port, key);
             *SERVING.write() = Some(Serving {
                 port,
-                profile: client(port, &key).profile().ok(),
-                key,
+                profile: client.profile().ok(),
+                client,
             });
             *server = Some(started);
             koan_core::signal::engine_changed().bump();

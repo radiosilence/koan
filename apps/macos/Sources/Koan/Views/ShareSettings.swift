@@ -261,7 +261,12 @@ struct ShareSettings: View {
     private func restartIfSharing() {
         guard model.settings.shareEnabled else { return }
         let (port, address) = (model.settings.sharePort, model.settings.serverUrl)
-        Task { await app.sharing.start(port: port, publicAddress: address) }
+        Task {
+            await app.sharing.start(port: port, publicAddress: address)
+            // A start stops the running server first, so a failed one leaves
+            // nothing serving: the switch says so, as it does when turned on.
+            if app.sharing.failure != nil { model.edit { $0.shareEnabled = false } }
+        }
     }
 }
 

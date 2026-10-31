@@ -4477,7 +4477,8 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
-    let mcp: &[(&str, &[i64])] = if state.server_url.is_some() {
+    // An app's own server mounts no MCP.
+    let mcp: &[(&str, &[i64])] = if state.server_url.is_some() && state.host_key.is_none() {
         &[(koan_core::remote::profile::MCP, &[1])]
     } else {
         &[]
@@ -6831,8 +6832,10 @@ mod tests {
     }
 
     fn build_test_router(state: Arc<AppState>) -> axum::Router {
+        let stop = axum::Extension(state.stop.clone());
         register_subsonic_routes(axum::Router::new())
             .with_state(state)
+            .layer(stop)
             .layer(axum::middleware::from_fn(form_post))
     }
 
