@@ -409,12 +409,19 @@ final class PlayerModel {
     func shuffleQueue() { mutate { try await $0.shuffleQueue() } }
     /// Why the queue's dice cannot shuffle now, or nil when it can.
     var queueDiceRefusal: String? {
-        if controlled != nil { return "Shuffle the queue on the device playing it" }
+        if controlled != nil { return "Can't shuffle another device's queue from here" }
         if shuffle { return "Shuffle play picks its own order; turn it off to reorder the queue" }
-        let rest = currentItemId.flatMap { id in queue.firstIndex { $0.queueItemId == id } }
-            .map { queue.count - $0 - 1 } ?? queue.count
-        return rest < 2 ? "Nothing after the playing track to shuffle" : nil
+        var rest = queue.count
+        if let id = currentItemId {
+            guard let at = queue.firstIndex(where: { $0.queueItemId == id }) else {
+                return "Nothing after the playing track to shuffle"
+            }
+            rest = queue.count - at - 1
+        }
+        if rest >= 2 { return nil }
+        return currentItemId == nil ? "Nothing to shuffle" : "Nothing after the playing track to shuffle"
     }
+
     /// The last edit to a playlist taken back, or to the queue when none is
     /// named.
     func undo(playlist: Int64? = nil) { attempt { try await self.engine.undo(playlistId: playlist) } }

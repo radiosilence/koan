@@ -19,8 +19,9 @@ struct DiceButton: View {
 
     #if os(iOS)
     @State private var presses = 0
-    /// Edits sent from here and not yet seen in `version`.
-    @State private var owed = 0
+    /// What each edit sent from here and not yet seen in `version` will do to
+    /// `presses` when it lands: a press counts once the list has moved.
+    @State private var owed: [Int] = []
     #endif
 
     var body: some View {
@@ -28,8 +29,7 @@ struct DiceButton: View {
             #if os(iOS)
             if presses > 0 {
                 Button {
-                    presses -= 1
-                    owed += 1
+                    owed.append(-1)
                     undo()
                 } label: {
                     if labelled {
@@ -41,28 +41,31 @@ struct DiceButton: View {
                 .help("Undo the last shuffle")
             }
             #endif
-            Button {
-                #if os(iOS)
-                presses += 1
-                owed += 1
-                #endif
-                shuffle()
-            } label: {
-                if labelled {
-                    Label("Shuffle Order", koan: Icon.reshuffle)
-                } else {
-                    KoanIcon(Icon.reshuffle).touchTarget()
+            // The reason it is off goes on a wrapper: a disabled control
+            // shows no tooltip.
+            HStack {
+                Button {
+                    #if os(iOS)
+                    owed.append(1)
+                    #endif
+                    shuffle()
+                } label: {
+                    if labelled {
+                        Label("Shuffle Order", koan: Icon.reshuffle)
+                    } else {
+                        KoanIcon(Icon.reshuffle).touchTarget()
+                    }
                 }
+                .disabled(refusal != nil)
             }
-            .disabled(refusal != nil)
             .help(refusal ?? help)
         }
         #if os(iOS)
         .onChange(of: version) {
-            if owed > 0 {
-                owed -= 1
-            } else {
+            if owed.isEmpty {
                 presses = 0
+            } else {
+                presses = max(0, presses + owed.removeFirst())
             }
         }
         #endif
