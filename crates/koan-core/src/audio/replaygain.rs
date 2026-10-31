@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use lofty::prelude::*;
-use lofty::tag::ItemValue;
 use thiserror::Error;
 
 use crate::config::ReplayGainMode;
