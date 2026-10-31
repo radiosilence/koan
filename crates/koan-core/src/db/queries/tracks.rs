@@ -85,10 +85,8 @@ fn upsert_track_with(
     meta: &TrackMeta,
     seen: Option<&HashSet<String>>,
 ) -> Result<(i64, bool), DbError> {
-    // Use a savepoint so this works both standalone and inside an existing
-    // transaction (e.g. the chunk transactions in scan_folder).
-    conn.execute_batch("SAVEPOINT upsert_track")?;
-    let result = (|| {
+    // Standalone or inside a caller's transaction, such as a scan chunk's.
+    super::atomically(conn, || {
         let mut recorded = None;
         if meta.path.is_some() {
             recorded = Some(sources::record(conn, sources::Kind::Local, meta, None)?);
@@ -98,12 +96,7 @@ fn upsert_track_with(
             recorded = Some((track, recorded.is_some_and(|(_, i)| i) || inserted));
         }
         recorded.ok_or(DbError::NoSource)
-    })();
-    match &result {
-        Ok(_) => conn.execute_batch("RELEASE upsert_track")?,
-        Err(_) => conn.execute_batch("ROLLBACK TO upsert_track; RELEASE upsert_track")?,
-    }
-    result
+    })
 }
 
 /// Clear the disc numbers stored as 0, which matching reads as none. Run
@@ -127,12 +120,11 @@ pub fn remove_vanished_remote(
     live_tracks: Option<&HashSet<String>>,
     live_albums: Option<&HashSet<String>>,
 ) -> Result<usize, DbError> {
-    conn.execute_batch(
-        "SAVEPOINT remove_vanished;
-         CREATE TEMP TABLE IF NOT EXISTS live_ids (kind TEXT, id TEXT, PRIMARY KEY (kind, id));
-         DELETE FROM temp.live_ids;",
-    )?;
-    let removed = (|| {
+    let removed = super::atomically(conn, || {
+        conn.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS live_ids (kind TEXT, id TEXT, PRIMARY KEY (kind, id));
+             DELETE FROM temp.live_ids;",
+        )?;
         let mut insert =
             conn.prepare("INSERT OR IGNORE INTO temp.live_ids (kind, id) VALUES (?1, ?2)")?;
         for (kind, ids) in [("track", live_tracks), ("album", live_albums)] {
@@ -174,29 +166,21 @@ pub fn remove_vanished_remote(
             }
         }
         Ok::<_, DbError>((gone.len(), downloads))
-    })();
-    match removed {
-        Ok((n, downloads)) => {
-            conn.execute_batch("RELEASE remove_vanished")?;
-            // A downloaded copy goes with its track; nothing would ever play
-            // or clean it up otherwise.
-            let mut freed = 0;
-            for path in downloads {
-                let size = std::fs::metadata(&path).map_or(0, |m| m.len());
-                if std::fs::remove_file(&path).is_ok() {
-                    freed += size;
-                }
-            }
-            if freed > 0 {
-                crate::helpers::cache_shrank(freed);
-            }
-            Ok(n)
-        }
-        Err(e) => {
-            conn.execute_batch("ROLLBACK TO remove_vanished; RELEASE remove_vanished")?;
-            Err(e)
+    })?;
+    let (n, downloads) = removed;
+    // A downloaded copy goes with its track; nothing would ever play or clean
+    // it up otherwise.
+    let mut freed = 0;
+    for path in downloads {
+        let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+        if std::fs::remove_file(&path).is_ok() {
+            freed += size;
         }
     }
+    if freed > 0 {
+        crate::helpers::cache_shrank(freed);
+    }
+    Ok(n)
 }
 
 /// Fold together the rows one file got by being spelled two ways.
@@ -478,6 +462,7 @@ pub fn adopt_moved_files(
         .prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?
         .query_map(params![lower, upper], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    let arrived = super::json_list(arrived);
     let mut adopted = 0;
     // A file the walk found has not moved.
     for path in paths
@@ -485,7 +470,7 @@ pub fn adopt_moved_files(
         .filter(|path| !walked.is_some_and(|w| w.contains(path)))
     {
         if crate::index::known_missing(Path::new(&path))
-            && sources::adopt_moved(conn, &path, arrived)?
+            && sources::adopt_moved(conn, &path, &arrived)?
         {
             adopted += 1;
         }
@@ -821,6 +806,50 @@ pub fn track_id_by_path(conn: &Connection, path: &str) -> Result<Option<i64>, Db
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
     }
+}
+
+/// [`track_id_by_path`] for many paths in one query: each path found, with
+/// its track.
+pub fn track_ids_by_paths(
+    conn: &Connection,
+    paths: &[String],
+) -> Result<std::collections::HashMap<String, i64>, DbError> {
+    if paths.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows = conn
+        .prepare_cached(
+            "WITH p(v) AS (SELECT value FROM json_each(?1))
+             SELECT p.v, t.id FROM p JOIN tracks t ON t.path = p.v
+             UNION ALL SELECT p.v, t.id FROM p JOIN tracks t ON t.cached_path = p.v
+             UNION ALL SELECT p.v, t.id FROM p JOIN tracks t ON t.remote_url = p.v",
+        )?
+        .query_map(params![super::json_list(paths)], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<(String, i64)>>>()?;
+    let mut found = std::collections::HashMap::with_capacity(rows.len());
+    for (path, id) in rows {
+        found.entry(path).or_insert(id);
+    }
+    Ok(found)
+}
+
+/// The server id of each of these tracks that has one.
+pub fn remote_ids_for_tracks(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, String>, DbError> {
+    let rows = conn
+        .prepare_cached(
+            "SELECT id, remote_id FROM tracks
+              WHERE id IN (SELECT value FROM json_each(?1)) AND remote_id IS NOT NULL",
+        )?
+        .query_map(params![super::json_list(ids)], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
 }
 
 /// Clear all cached_path values (used when purging the download cache).
@@ -1314,6 +1343,26 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    #[test]
+    fn paths_resolve_in_one_query_as_one_by_one() {
+        let db = test_db();
+        let a = upsert_track(&db.conn, &sample_meta("A", "X", "Y")).unwrap();
+        let b = upsert_track(&db.conn, &sample_meta("B", "X", "Y")).unwrap();
+        let paths: Vec<String> = ["/music/Y/A.flac", "/music/Y/B.flac", "/nowhere.flac"]
+            .map(String::from)
+            .into();
+        let found = track_ids_by_paths(&db.conn, &paths).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found["/music/Y/A.flac"], a);
+        assert_eq!(found["/music/Y/B.flac"], b);
+        for path in &paths {
+            assert_eq!(
+                found.get(path).copied(),
+                track_id_by_path(&db.conn, path).unwrap()
+            );
+        }
     }
 
     #[test]

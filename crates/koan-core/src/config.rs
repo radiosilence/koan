@@ -2543,8 +2543,29 @@ password = "secret"
         assert_eq!(cfg.remote.password, "secret");
     }
 
+    /// The environment layer, read in a child process given the variables at
+    /// spawn: setting them here would race every other test reading the
+    /// environment, which `set_var` makes undefined behaviour.
     #[test]
     fn test_env_var_override() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "config::tests::env_var_override_child",
+                "--ignored",
+                "--quiet",
+            ])
+            .env("KOAN_REMOTE__URL", "https://env.example.com")
+            .env("KOAN_REMOTE__PASSWORD", "env-secret")
+            .env("KOAN_GRAPHQL__PORT", "9999")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    #[ignore = "run by test_env_var_override with its environment"]
+    fn env_var_override_child() {
         let dir = tempfile::tempdir().unwrap();
         let base_path = dir.path().join("config.toml");
 
@@ -2557,13 +2578,6 @@ url = "https://file.example.com"
         )
         .unwrap();
 
-        // SAFETY: test is single-threaded and vars are cleaned up immediately after.
-        unsafe {
-            std::env::set_var("KOAN_REMOTE__URL", "https://env.example.com");
-            std::env::set_var("KOAN_REMOTE__PASSWORD", "env-secret");
-            std::env::set_var("KOAN_GRAPHQL__PORT", "9999");
-        }
-
         let cfg: Config = Figment::from(Serialized::defaults(Config::default()))
             .merge(Toml::file(&base_path))
             .merge(Env::prefixed("KOAN_").split("__"))
@@ -2573,13 +2587,6 @@ url = "https://file.example.com"
         assert_eq!(cfg.remote.url, "https://env.example.com");
         assert_eq!(cfg.remote.password, "env-secret");
         assert_eq!(cfg.graphql.port, 9999);
-
-        // Clean up env vars.
-        unsafe {
-            std::env::remove_var("KOAN_REMOTE__URL");
-            std::env::remove_var("KOAN_REMOTE__PASSWORD");
-            std::env::remove_var("KOAN_GRAPHQL__PORT");
-        }
     }
 
     #[test]

@@ -6233,11 +6233,7 @@ impl KoanEngine {
         let Ok(db) = self.db() else {
             return HashMap::new();
         };
-        queries::tracks_by_ids(&db.conn, ids)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|t| t.remote_id.map(|r| (t.id, r)))
-            .collect()
+        queries::remote_ids_for_tracks(&db.conn, ids).unwrap_or_default()
     }
 
     /// Send to this device's player, whatever the app is controlling.
