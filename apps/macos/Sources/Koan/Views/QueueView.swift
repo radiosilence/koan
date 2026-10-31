@@ -1111,7 +1111,8 @@ private struct QueueDiceButton: View {
 #if os(iOS)
 /// Undo for the shuffles on top of a list's history, while there are any.
 /// Hidden from a tap until the count answers, so a second tap cannot reach
-/// past the last shuffle to whatever edit came before.
+/// past the last shuffle to whatever edit came before; back after a few
+/// seconds if it never does.
 struct ShuffleUndoButton: View {
     let shuffles: UInt32
     let undo: () -> Void
@@ -1132,6 +1133,12 @@ struct ShuffleUndoButton: View {
             }
         }
         .onChange(of: shuffles) { tappedAt = nil }
+        // An undo that failed never moves the count: offer it again.
+        .task(id: tappedAt) {
+            guard tappedAt != nil else { return }
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled { tappedAt = nil }
+        }
     }
 }
 #endif

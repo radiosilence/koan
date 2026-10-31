@@ -698,12 +698,20 @@ private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) ->
 /**
  * Undo beside the dice while the list's last edits are shuffles, taking them
  * back one at a time. Hidden from a tap until the count answers, so a second
- * tap cannot reach past the last shuffle to whatever edit came before.
+ * tap cannot reach past the last shuffle to whatever edit came before; back
+ * after a few seconds if it never does.
  */
 @Composable
 fun ShuffleUndoButton(shuffles: UInt, undo: () -> Unit) {
     var tappedAt by remember { mutableStateOf<UInt?>(null) }
     LaunchedEffect(shuffles) { tappedAt = null }
+    // An undo that failed never moves the count: offer it again.
+    LaunchedEffect(tappedAt) {
+        if (tappedAt != null) {
+            delay(3_000)
+            tappedAt = null
+        }
+    }
     if (shuffles > 0u && tappedAt != shuffles) {
         KoanButton("Undo shuffle", { tappedAt = shuffles; undo() }, kind = KoanButtonKind.Icon, icon = KoanIcons.undo)
     }

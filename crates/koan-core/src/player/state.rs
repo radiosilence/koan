@@ -267,8 +267,12 @@ fn scatter(order: &mut Vec<QueueItemId>, mut fresh: Vec<QueueItemId>) {
 }
 
 /// Where the rows a shuffle of the queue moves begin: after the cursor, or
-/// at the top with nothing under it. `None` when the cursor names no row.
+/// at the top with nothing under it. `None` when the cursor names no row, or
+/// under shuffle play, whose order the queue's does not decide.
 fn upcoming_start(pl: &Playlist) -> Option<usize> {
+    if pl.order.is_some() {
+        return None;
+    }
     match pl.cursor {
         Some(cursor) => Some(pl.items.iter().position(|i| i.id == cursor)? + 1),
         None => Some(0),
@@ -2132,17 +2136,11 @@ impl SharedPlayerState {
         let was: Vec<_> = (start..pl.items.len())
             .map(|i| (pl.items[i].id, i.checked_sub(1).map(|p| pl.items[p].id)))
             .collect();
-        // A press always moves something: drawn again while the order comes
-        // back as it was, which for two rows is every other draw.
-        let unchanged = |items: &[PlaylistItem]| items.iter().zip(&was).all(|(i, w)| i.id == w.0);
-        for _ in 0..8 {
-            crate::helpers::shuffle(&mut pl.items[start..]);
-            if !unchanged(&pl.items[start..]) {
-                break;
-            }
-        }
-        if unchanged(&pl.items[start..]) {
-            return None;
+        crate::helpers::shuffle(&mut pl.items[start..]);
+        // A press always moves something: a draw that comes back as it was,
+        // every other one for two rows, is turned by one instead.
+        if pl.items[start..].iter().zip(&was).all(|(i, w)| i.id == w.0) {
+            pl.items[start..].rotate_left(1);
         }
         drop(pl);
         self.bump_content();

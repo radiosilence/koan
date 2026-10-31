@@ -2702,6 +2702,7 @@ impl Player {
 
     /// Apply an undo/redo entry: mutate the playlist and return the inverse entry.
     fn apply_entry(&mut self, entry: UndoEntry) -> UndoEntry {
+        let shuffled = matches!(entry, UndoEntry::Shuffled { .. });
         match entry {
             UndoEntry::Added { ids } | UndoEntry::Inserted { ids } => {
                 // Undo of "items were added": snapshot them with positions, then remove.
@@ -2728,20 +2729,18 @@ impl Player {
                     was_after: current_after,
                 }
             }
-            UndoEntry::MovedBatch { entries } => {
+            UndoEntry::MovedBatch { entries } | UndoEntry::Shuffled { entries } => {
                 let ids: Vec<QueueItemId> = entries.iter().map(|(id, _)| *id).collect();
                 let current_positions = self.shared_state.items_before(&ids);
                 self.shared_state.move_items_to(&entries);
-                UndoEntry::MovedBatch {
-                    entries: current_positions,
-                }
-            }
-            UndoEntry::Shuffled { entries } => {
-                let ids: Vec<QueueItemId> = entries.iter().map(|(id, _)| *id).collect();
-                let current_positions = self.shared_state.items_before(&ids);
-                self.shared_state.move_items_to(&entries);
-                UndoEntry::Shuffled {
-                    entries: current_positions,
+                if shuffled {
+                    UndoEntry::Shuffled {
+                        entries: current_positions,
+                    }
+                } else {
+                    UndoEntry::MovedBatch {
+                        entries: current_positions,
+                    }
                 }
             }
             UndoEntry::Replaced { items, cursor } => {
@@ -4659,11 +4658,23 @@ mod tests {
         );
 
         player.shared_state.pick(original[27]);
-        player.process_command(PlayerCommand::ShuffleUpcoming);
+        for _ in 0..20 {
+            player.process_command(PlayerCommand::ShuffleUpcoming);
+        }
         assert_eq!(
             playlist_ids(&player)[28..],
-            [original[29], original[28]],
+            [original[28], original[29]],
             "two rows left are swapped on every press"
+        );
+
+        player.process_command(PlayerCommand::SetShuffle(true));
+        assert!(!player.shared_state.upcoming_shufflable());
+        let before = playlist_ids(&player);
+        player.process_command(PlayerCommand::ShuffleUpcoming);
+        assert_eq!(
+            playlist_ids(&player),
+            before,
+            "shuffle play's order is its own"
         );
     }
 
