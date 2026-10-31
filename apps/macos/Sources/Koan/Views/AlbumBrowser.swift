@@ -111,11 +111,7 @@ struct AlbumBrowser: View {
             // its sleeve leaves you, as `PlayableArtwork` does.
             play: { id in
                 nav.open(album: id)
-                let engine = library.engine
-                await CommandLane.submit {
-                    let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
-                    player.playNow(trackIds: ids)
-                }.value
+                await player.queue([.album(id: id)], .replace(startAt: 0, shuffled: false)).value
             },
             toggleFavourite: { library.toggleFavourite(album: $0) }
         )

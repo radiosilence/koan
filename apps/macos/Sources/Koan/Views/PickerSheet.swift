@@ -189,40 +189,23 @@ struct PickerSheet: View {
             : picked
         guard !rows.isEmpty else { return }
 
+        let sources: [TrackSet] = rows.map { row in
+            switch row.kind {
+            case .track: .tracks(ids: [row.id])
+            case .album: .album(id: row.id)
+            case .artist: .artist(id: row.id)
+            }
+        }
+        let placement: Placement = switch action {
+        case .append: .append
+        // Plays the first thing just added rather than the queue head.
+        case .appendAndPlay: .appendAndPlay
+        case .replace: .replace(startAt: 0, shuffled: false)
+        }
         resolving = true
-        let engine = library.engine
-        CommandLane.submit {
-            var trackIds: [Int64] = []
-            for row in rows {
-                switch row.kind {
-                case .track:
-                    trackIds.append(row.id)
-                case .album:
-                    trackIds += (try? await engine.trackIds(albumId: row.id, artistId: nil)) ?? []
-                case .artist:
-                    trackIds += (try? await engine.trackIds(albumId: nil, artistId: row.id)) ?? []
-                }
-            }
-
+        Task {
+            await player.queue(sources, placement).value
             resolving = false
-            guard !trackIds.isEmpty else { return }
-
-            switch action {
-            case .append:
-                player.enqueue(trackIds: trackIds)
-            case .appendAndPlay:
-                let existing = player.queue.count
-                player.enqueue(trackIds: trackIds)
-                // Jump to the first thing just added rather than the queue head.
-                if existing > 0 {
-                    await player.settle(within: .milliseconds(500)) { player.queue.count > existing }
-                    if player.queue.indices.contains(existing) {
-                        player.play(itemId: player.queue[existing].queueItemId)
-                    }
-                }
-            case .replace:
-                player.playNow(trackIds: trackIds)
-            }
             isPresented = false
         }
     }

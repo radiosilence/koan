@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
+import cc.blit.koan.ffi.Placement
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
@@ -75,7 +76,7 @@ fun ReplaceQueueDialog(playable: Playable, onDismiss: () -> Unit) {
                 KoanButton("Cancel", onDismiss)
                 KoanButton("Add to Queue", {
                     onDismiss()
-                    app.mirror.launch { addToQueue(playable.trackIds(this)) }
+                    app.player.queue(listOf(playable.source), Placement.Append)
                 })
             }
         },

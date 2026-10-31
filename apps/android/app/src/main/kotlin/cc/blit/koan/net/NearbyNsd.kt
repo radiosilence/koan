@@ -38,7 +38,7 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
     private val events = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED)
 
     init {
-        mirror.background { for (event in events) runCatching { event() } }
+        mirror.launch { for (event in events) runCatching { event() } }
     }
 
     override fun advertise(name: String, port: UShort, txt: List<TxtEntry>) {

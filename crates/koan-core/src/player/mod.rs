@@ -2367,6 +2367,7 @@ impl Player {
             cmd,
             PlayerCommand::AddToPlaylist(_)
                 | PlayerCommand::InsertInPlaylist { .. }
+                | PlayerCommand::PlayNext(_)
                 | PlayerCommand::RemoveFromPlaylist(_)
                 | PlayerCommand::RemoveFromPlaylistBatch(_)
                 | PlayerCommand::MoveInPlaylist { .. }
@@ -2452,6 +2453,19 @@ impl Player {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
                 self.shared_state.insert_items_after(items, after);
                 self.push_undo(UndoEntry::Inserted { ids });
+            }
+            PlayerCommand::PlayNext(items) => {
+                let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+                match self.shared_state.cursor() {
+                    Some(after) => {
+                        self.shared_state.insert_items_after(items, after);
+                        self.push_undo(UndoEntry::Inserted { ids });
+                    }
+                    None => {
+                        self.shared_state.add_items(items);
+                        self.push_undo(UndoEntry::Added { ids });
+                    }
+                }
             }
             PlayerCommand::ClearPlaylist => self.clear_playlist(),
             PlayerCommand::SignedOut => {
@@ -4522,6 +4536,25 @@ mod tests {
         replace(&mut player, 5, QueueMode::Keep);
         assert_eq!(player.shared_state.play_mode(), mode);
         assert!(player.shared_state.is_shuffled());
+    }
+
+    #[test]
+    fn play_next_goes_after_the_cursor_as_the_player_finds_it() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::PlayNext(vec![make_item("first")]));
+        assert_eq!(playlist_titles(&player), ["first"], "no cursor: appended");
+
+        seed(&mut player, 3);
+        let ids = playlist_ids(&player);
+        player.shared_state.pick(ids[1]);
+        player.process_command(PlayerCommand::PlayNext(vec![make_item("next")]));
+        assert_eq!(
+            playlist_titles(&player),
+            ["first", "t0", "next", "t1", "t2"]
+        );
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), ["first", "t0", "t1", "t2"]);
     }
 
     #[test]

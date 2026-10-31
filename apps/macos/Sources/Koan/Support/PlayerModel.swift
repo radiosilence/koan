@@ -312,30 +312,37 @@ final class PlayerModel {
     /// The index goes with the command rather than following it as a separate
     /// `play`. Two commands meant the first track started before the cursor
     /// jumped, which showed as track one flashing as playing.
-    /// Replace the queue with what `resolve` finds, named `name` until it
+    /// Replace the queue with what `sources` name, called `name` until it
     /// lands: a record, an artist or a playlist, whose tracks are a database
-    /// read away. `shuffled` plays it with shuffle on rather than off; the
-    /// engine turns repeat off either way. Resolved on the `CommandLane`, so
-    /// it lands in turn with whatever was asked before and after it.
+    /// read away. The engine reads them on its command lane, so the command
+    /// takes its place in line now rather than once they are read. `shuffled`
+    /// plays it with shuffle on rather than off; the engine turns repeat off
+    /// either way.
     @discardableResult
     func playNow(
-        resolving name: String, shuffled: Bool = false, _ resolve: @escaping () async -> [Int64]
+        _ sources: [TrackSet], named name: String, shuffled: Bool = false
     ) -> Task<Void, Never> {
         resolving = name
         let engine = self.engine
         pendingMutations += 1
-        return CommandLane.submit {
-            let ids = await resolve()
-            if !ids.isEmpty {
-                do {
-                    _ = try await engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: shuffled)
-                } catch {
-                    self.lastError = SettingsModel.describe(error)
-                }
+        return Task {
+            do {
+                _ = try await engine.queue(
+                    sources: sources, placement: .replace(startAt: 0, shuffled: shuffled)
+                )
+            } catch {
+                self.lastError = SettingsModel.describe(error)
             }
             self.resolving = nil
             self.pendingMutations -= 1
         }
+    }
+
+    /// Put what `sources` name in the queue at `placement`, resolved on the
+    /// engine's command lane. The task ends once it has landed.
+    @discardableResult
+    func queue(_ sources: [TrackSet], _ placement: Placement) -> Task<Void, Never> {
+        mutate { _ = try await $0.queue(sources: sources, placement: placement) }
     }
 
     /// The most a tap on a row queues from the listing it is in. A listing can
@@ -362,11 +369,11 @@ final class PlayerModel {
     }
 
     /// Queue immediately after whatever is playing, rather than at the end.
-    /// Falls back to appending when nothing is playing to insert after.
+    /// The engine finds what is playing as it applies it, and appends when
+    /// nothing is.
     func playNext(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
-        guard let cursor = currentItemId else { return enqueue(trackIds: trackIds) }
-        mutate { _ = try await $0.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
+        queue([.tracks(ids: trackIds)], .next)
     }
 
     /// Surface a one-off message in the same place engine errors appear.
@@ -678,9 +685,7 @@ final class PlayerModel {
     /// They are indexed where they lie rather than copied anywhere: a drop is
     /// "play this", and giving the files library rows is what lets organize
     /// move them into the music tree afterwards, on purpose and with a preview.
-    /// Folders are walked, so dropping a rip queues the album. Indexing is
-    /// not on the `CommandLane`: a large folder takes seconds, and every
-    /// command would wait behind it. The queueing is, once the files are in.
+    /// Folders are walked, so dropping a rip queues the album.
     func importFiles(_ urls: [URL]) {
         let paths = urls.filter(\.isFileURL).map(\.path)
         guard !paths.isEmpty else { return }
@@ -704,18 +709,12 @@ final class PlayerModel {
         }
     }
 
-    /// Resolve dropped playables and queue them. Order is preserved: dropping a
-    /// selection of albums queues them in the order they were dragged.
+    /// Queue dropped playables. Order is preserved: dropping a selection of
+    /// albums queues them in the order they were dragged.
     func acceptDrop(_ dropped: [PlayableTransfer], playImmediately: Bool = false) {
         guard !dropped.isEmpty else { return }
-        let engine = self.engine
-        CommandLane.submit {
-            var ids: [Int64] = []
-            for item in dropped.inDragOrder {
-                ids += await item.trackIds(using: engine)
-            }
-            guard !ids.isEmpty else { return }
-            if playImmediately { self.playNow(trackIds: ids) } else { self.enqueue(trackIds: ids) }
+        dropped.withSources(using: engine) { sources in
+            self.queue(sources, playImmediately ? .replace(startAt: 0, shuffled: false) : .append)
         }
     }
 
@@ -803,15 +802,18 @@ final class PlayerModel {
 
     // MARK: - Errors
 
-    /// A command, on the `CommandLane` with every other. Engine calls fail
-    /// for real reasons (device vanished, track gone) but none of them are
-    /// worth a modal. Surface it and carry on.
+    /// Engine calls fail for real reasons (device vanished, track gone) but
+    /// none of them are worth a modal. Surface it and carry on.
+    ///
+    /// `body` runs on the main actor, and the bindings run an engine call on
+    /// their caller's actor up to the moment it joins the engine's command
+    /// lane, so commands join it in the order they were made here.
     private func attempt(_ body: @escaping @MainActor () async throws -> Void) {
-        CommandLane.submit {
+        Task {
             do {
                 try await body()
             } catch {
-                self.lastError = SettingsModel.describe(error)
+                lastError = SettingsModel.describe(error)
             }
         }
     }
@@ -820,20 +822,22 @@ final class PlayerModel {
     /// them wants.
     ///
     /// Nothing waits for the result — the engine publishes the queue when it
-    /// changes. Mutations go through the `CommandLane`, so dropping in an
-    /// album and then pressing undo cannot land the wrong way round.
-    private func mutate(_ body: @escaping @MainActor (KoanEngine) async throws -> Void) {
+    /// changes. Each joins the engine's command lane before this returns to
+    /// the main actor (see `attempt`), so dropping in an album and then
+    /// pressing undo cannot land the wrong way round.
+    @discardableResult
+    private func mutate(_ body: @escaping @MainActor (KoanEngine) async throws -> Void) -> Task<Void, Never> {
         let engine = self.engine
         pendingMutations += 1
         let job = activity?.begin("Updating queue")
-        CommandLane.submit {
+        return Task {
             do {
                 try await body(engine)
             } catch {
-                self.lastError = SettingsModel.describe(error)
+                lastError = SettingsModel.describe(error)
             }
-            if let job { self.activity?.end(job) }
-            self.pendingMutations -= 1
+            if let job { activity?.end(job) }
+            pendingMutations -= 1
         }
     }
 }

@@ -13,7 +13,9 @@ import cc.blit.koan.KoanApp
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.CreditPart
 import cc.blit.koan.ffi.KoanEngine
+import cc.blit.koan.ffi.Placement
 import cc.blit.koan.ffi.Track
+import cc.blit.koan.ffi.TrackSet
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
@@ -48,11 +50,18 @@ sealed interface Playable {
         is OfAlbum -> engine.trackIds(album.id, null)
         is OfArtist -> engine.trackIds(null, id)
     }
+
+    /** What it names, for the engine to read on its command lane. */
+    val source: TrackSet get() = when (this) {
+        is OfTrack -> TrackSet.Tracks(listOf(track.id))
+        is OfAlbum -> TrackSet.Album(album.id)
+        is OfArtist -> TrackSet.Artist(id)
+    }
 }
 
-/** Replace the queue with `playable`, in order or shuffled from a track at random. */
+/** Replace the queue with `playable`, in order or shuffled. */
 fun KoanApp.play(playable: Playable, shuffled: Boolean = false) =
-    player.playNow(playable.name, shuffled) { playable.trackIds(this) }
+    player.playNow(playable.name, listOf(playable.source), shuffled)
 
 /**
  * The long-press menu for a playable thing, anchored where it is placed.
@@ -78,12 +87,12 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, more: @Composable Column
         }
     }
     var adding by remember { mutableStateOf(false) }
-    if (adding) AddToPlaylistSheet({ playable.trackIds(this) }) { adding = false }
+    if (adding) AddToPlaylistSheet(listOf(playable.source)) { adding = false }
     Box {
         KoanMenu(expanded = expanded, onDismissRequest = onDismiss) {
             KoanMenuItem("Play", KoanIcons.play) { onDismiss(); app.play(playable) }
-            KoanMenuItem("Play Next", KoanIcons.playNext) { act { ids -> app.player.queueNext(this, ids) } }
-            KoanMenuItem("Add to Queue", KoanIcons.queue) { act { ids -> addToQueue(ids) } }
+            KoanMenuItem("Play Next", KoanIcons.playNext) { onDismiss(); app.player.queue(listOf(playable.source), Placement.Next) }
+            KoanMenuItem("Add to Queue", KoanIcons.queue) { onDismiss(); app.player.queue(listOf(playable.source), Placement.Append) }
             if (playable !is Playable.OfTrack) KoanMenuItem("Shuffle", KoanIcons.shuffle) { onDismiss(); app.play(playable, shuffled = true) }
             KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { onDismiss(); adding = true }
             KoanDivider()

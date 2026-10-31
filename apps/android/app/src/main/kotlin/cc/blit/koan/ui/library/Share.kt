@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
 fun KoanApp.share(context: Context, playable: Playable) = share(context, playable.name) { playable.trackIds(this) }
 
 /** A link to the tracks `trackIds` reads, called `name`: a run of the queue, say, rather than a whole record. */
-fun KoanApp.share(context: Context, name: String, trackIds: suspend KoanEngine.() -> List<Long>) = mirror.background {
+fun KoanApp.share(context: Context, name: String, trackIds: suspend KoanEngine.() -> List<Long>) = mirror.launch {
     val result = runCatching { createShare(trackIds(), name) }
     withContext(Dispatchers.Main) {
         result

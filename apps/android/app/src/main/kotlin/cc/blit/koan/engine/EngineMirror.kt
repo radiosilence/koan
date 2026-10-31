@@ -19,12 +19,12 @@ import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferFigure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -226,45 +226,20 @@ class EngineMirror(deviceName: String) {
     suspend fun engine(): KoanEngine = opened.await()
 
     /**
-     * The person's commands and edits, run one at a time in the order they
-     * were made. The engine keeps the order calls reach it in, but a call
-     * launched on its own reaches it from whichever of Default's threads
-     * picks it up first, and one that resolves what it acts on (an artist's
-     * tracks) first would leave a wider window still. Each block here starts
-     * once the one before it has finished, its resolving included.
-     */
-    private val commands = Channel<suspend KoanEngine.() -> Unit>(Channel.UNLIMITED).also { commands ->
-        scope.launch {
-            for (block in commands) {
-                try {
-                    opened.await().block()
-                } catch (e: CancellationException) {
-                    ensureActive()
-                } catch (e: Exception) {
-                    report(e)
-                }
-            }
-        }
-    }
-
-    /**
-     * Run a command against the engine off the main thread, in turn with every
-     * other, without waiting for it. A failure is told to the person, never
-     * dropped: a call that may fail quietly catches its own.
+     * Run `block` against the engine without waiting for it. A failure is told
+     * to the person, never dropped: a call that may fail quietly catches its
+     * own.
      *
-     * The next command waits for this one, so a block that follows something
-     * for as long as the app runs, or waits on the network, goes to
-     * [background] instead; and a block here acts on the engine directly
-     * rather than calling `launch` again, which would put the rest of it at
-     * the back of the line.
+     * Started on the calling thread: an engine call joins the engine's command
+     * lane on its first poll, which happens here, before `launch` returns, so
+     * commands reach the lane in the order they were made. The block goes on
+     * on Default after its first suspension, so a block that waits on
+     * something before its command (a read, say) loses that place; name what
+     * the command acts on instead (`TrackSet`) and the engine reads it on the
+     * lane.
      */
     fun launch(block: suspend KoanEngine.() -> Unit) {
-        commands.trySend(block)
-    }
-
-    /** Run `block` against the engine off the main thread, outside the order of [launch]. */
-    fun background(block: suspend KoanEngine.() -> Unit) {
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 opened.await().block()
             } catch (e: CancellationException) {

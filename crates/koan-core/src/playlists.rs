@@ -57,15 +57,15 @@ impl PlaylistHistory {
     /// it was is read in the same transaction as the change, so no other
     /// writer's edit can fall between the two and be undone with this one. A
     /// change that fails is rolled back and never recorded.
-    pub fn edit<T>(
+    pub fn edit<T, E: From<DbError> + From<rusqlite::Error>>(
         &self,
         conn: &rusqlite::Connection,
         id: i64,
-        change: impl FnOnce() -> Result<T, DbError>,
-    ) -> Result<T, DbError> {
+        change: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, E> {
         let (before, out) = queries::atomically(conn, || {
             let before = Self::before(conn, id)?;
-            Ok::<_, DbError>((before, change()?))
+            Ok::<_, E>((before, change()?))
         })?;
         self.record(before);
         Ok(out)

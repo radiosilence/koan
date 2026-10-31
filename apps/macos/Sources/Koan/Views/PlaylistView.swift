@@ -443,7 +443,7 @@ struct PlaylistView: View {
     /// nothing the queue would show that this does not.
     private func start(at entry: Int64) {
         let engine = playlists.engine
-        CommandLane.submit {
+        Task {
             _ = try? await engine.playPlaylist(
                 playlistId: playlistId,
                 startEntry: entry,
@@ -491,7 +491,7 @@ struct PlaylistView: View {
         }
         return SelectionBar.Actions(
             favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
-            tracks: { tracks },
+            sources: [.tracks(ids: tracks)],
             remove: remove
         )
     }
@@ -514,7 +514,7 @@ struct PlaylistView: View {
             Label("Add to Queue", koan: Icon.queue)
         }
         Divider()
-        AddToPlaylistMenu { $0(trackIds(in: ids)) }
+        AddToPlaylistMenu { [.tracks(ids: trackIds(in: ids))] }
         Divider()
         Button(role: .destructive) {
             playlists.remove(entryIds: entryIds(in: ids), from: playlistId)

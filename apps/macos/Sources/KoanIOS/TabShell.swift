@@ -521,7 +521,7 @@ struct TabShell: View {
     /// Play it where you stand, as the Mac's sidebar does.
     private func play(_ playlist: Playlist, shuffled: Bool = false) {
         let engine = playlists.engine
-        CommandLane.submit {
+        Task {
             _ = try? await engine.playPlaylist(
                 playlistId: playlist.id, startEntry: nil, shuffled: shuffled
             )

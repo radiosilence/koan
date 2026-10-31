@@ -1,6 +1,8 @@
 package cc.blit.koan.engine
 
 import cc.blit.koan.ffi.KoanEngine
+import cc.blit.koan.ffi.Placement
+import cc.blit.koan.ffi.TrackSet
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,21 +32,24 @@ class PlayerModel(private val mirror: EngineMirror) {
     val resolving: StateFlow<String?> = _resolving.asStateFlow()
 
     /**
-     * Replace the queue with what `resolve` finds, named `name` until it
+     * Replace the queue with what `sources` name, called `name` until it
      * lands: a record, an artist or a playlist, whose tracks are a database
-     * read away. Shuffled from a track at random, or in order.
+     * read away. The engine reads them on its command lane, so the command
+     * takes its place in line now. Shuffled, or in order.
      */
-    fun playNow(name: String, shuffled: Boolean = false, resolve: suspend KoanEngine.() -> List<Long>) {
+    fun playNow(name: String, sources: List<TrackSet>, shuffled: Boolean = false) {
         _resolving.value = name
         mirror.launch {
             try {
-                val ids = resolve()
-                if (ids.isNotEmpty()) replaceQueue(ids, (if (shuffled) ids.indices.random() else 0).toUInt(), shuffled)
+                queue(sources, Placement.Replace(0u, shuffled))
             } finally {
                 _resolving.value = null
             }
         }
     }
+
+    /** Put what `sources` name in the queue at `placement`, read by the engine on its command lane. */
+    fun queue(sources: List<TrackSet>, placement: Placement) = mirror.launch { queue(sources, placement) }
 
     fun play(queueItemId: String) = mirror.launch { play(queueItemId) }
 
@@ -54,13 +59,8 @@ class PlayerModel(private val mirror: EngineMirror) {
 
     fun enqueue(trackIds: List<Long>) = mirror.launch { addToQueue(trackIds) }
 
-    fun playNext(trackIds: List<Long>) = mirror.launch { queueNext(this, trackIds) }
-
-    /** Play Next, for a block already running in turn on [EngineMirror.launch]. */
-    suspend fun queueNext(engine: KoanEngine, trackIds: List<Long>) {
-        val current = mirror.nowPlaying.value?.queueItemId
-        if (current == null) engine.addToQueue(trackIds) else engine.insertAfter(trackIds, current)
-    }
+    /** After the playing track, as the engine finds it, or at the end when nothing plays. */
+    fun playNext(trackIds: List<Long>) = queue(listOf(TrackSet.Tracks(trackIds)), Placement.Next)
 
     fun remove(queueItemIds: List<String>) = mirror.launch { removeFromQueue(queueItemIds) }
 
@@ -94,7 +94,7 @@ class PlayerModel(private val mirror: EngineMirror) {
      * second, and at each pause or stop. A queue the size of a library is
      * only rewritten when it changed; otherwise only the position is.
      */
-    fun followSession() = mirror.background {
+    fun followSession() = mirror.launch {
         val restored = runCatching { restoreSession() }.getOrDefault(0u)
         // The player thread applies the restored rows; saving before they
         // arrive would write the empty queue over the one just read.
@@ -113,7 +113,7 @@ class PlayerModel(private val mirror: EngineMirror) {
     }
 
     /** The app is leaving the screen: the session here, and the queue on the server when this device keeps it there. */
-    fun saveOnLeaving() = mirror.background {
+    fun saveOnLeaving() = mirror.launch {
         runCatching { saveSession() }.onSuccess { savedQueueVersion = mirror.queue.value.version }
         saveServerQueueNow()
     }

@@ -1026,32 +1026,32 @@ impl KoanEngine {
 
     // --- Queue mutation ----------------------------------------------------
 
+    /// Put the tracks `sources` name in the queue at `placement`. Returns the
+    /// new queue item IDs.
+    ///
+    /// The sources are resolved here, on the command lane, so a command that
+    /// names an artist takes its place in line the moment it is made rather
+    /// than once its tracks have been read.
+    pub async fn queue(
+        self: Arc<Self>,
+        sources: Vec<TrackSet>,
+        placement: Placement,
+    ) -> Result<Vec<String>, KoanError> {
+        offload::sequenced(move || {
+            let db = self.db()?;
+            let track_ids = self.resolve_sources(&db, &sources)?;
+            self.place(&db, &track_ids, placement)
+        })
+        .await
+    }
+
     /// Append tracks. Starts playback if the player was stopped, and kicks off
     /// downloads for anything remote. Returns the new queue item IDs.
     pub async fn add_to_queue(
         self: Arc<Self>,
         track_ids: Vec<i64>,
     ) -> Result<Vec<String>, KoanError> {
-        offload::sequenced(move || {
-            let db = self.db()?;
-            let items = self.build_items(&db, &track_ids);
-            if items.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-            let first = items[0].id;
-            let was_stopped = self.state.is_idle();
-
-            self.send(PlayerCommand::AddToPlaylist(items))?;
-            // Another device starts what it was sent by itself when stopped.
-            if was_stopped && koan_core::remote::devices::target().is_none() {
-                let _ = self.tx.send(PlayerCommand::Play(first));
-            }
-
-            Ok(ids)
-        })
-        .await
+        offload::sequenced(move || self.place(&self.db()?, &track_ids, Placement::Append)).await
     }
 
     /// Replace the queue, starting at `start_at` (default: the first track),
@@ -1069,27 +1069,11 @@ impl KoanEngine {
         shuffled: bool,
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
-            let db = self.db()?;
-            let items = self.build_items(&db, &track_ids);
-            if items.is_empty() {
-                self.send(PlayerCommand::ClearPlaylist)?;
-                return Ok(Vec::new());
-            }
-
-            let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-            self.send(PlayerCommand::ReplacePlaylist {
-                items,
-                start: start_at.unwrap_or(0) as usize,
-                position_ms: 0,
-                play: true,
-                mode: if shuffled {
-                    QueueMode::Shuffled
-                } else {
-                    QueueMode::InOrder
-                },
-            })?;
-
-            Ok(ids)
+            self.place(
+                &self.db()?,
+                &track_ids,
+                Placement::Replace { start_at, shuffled },
+            )
         })
         .await
     }
@@ -1101,17 +1085,13 @@ impl KoanEngine {
         after_queue_item_id: String,
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
-            let after = parse_qid(&after_queue_item_id)?;
-            let db = self.db()?;
-            let items = self.build_items(&db, &track_ids);
-            if items.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-            self.send(PlayerCommand::InsertInPlaylist { items, after })?;
-
-            Ok(ids)
+            self.place(
+                &self.db()?,
+                &track_ids,
+                Placement::After {
+                    queue_item_id: after_queue_item_id,
+                },
+            )
         })
         .await
     }
@@ -2135,22 +2115,24 @@ impl KoanEngine {
         .await
     }
 
-    /// Append tracks. Returns how many landed.
+    /// Append the tracks `sources` name, resolved on the command lane. Returns
+    /// how many landed.
     pub async fn add_to_playlist(
         self: Arc<Self>,
         playlist_id: i64,
-        track_ids: Vec<i64>,
+        sources: Vec<TrackSet>,
     ) -> Result<u32, KoanError> {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
+                let track_ids = self.resolve_sources(db, &sources)?;
                 Ok(queries::add_tracks(&db.conn, playlist_id, &track_ids)?.len() as u32)
             })
         })
         .await
     }
 
-    /// Add tracks at a position rather than at the end — what dropping between
-    /// two rows means.
+    /// Add the tracks `sources` name at a position rather than at the end —
+    /// what dropping between two rows means.
     ///
     /// Both halves happen here, in one transaction, rather than as an add
     /// followed by a reorder from the caller: the caller would be reordering
@@ -2158,11 +2140,12 @@ impl KoanEngine {
     pub async fn insert_into_playlist(
         self: Arc<Self>,
         playlist_id: i64,
-        track_ids: Vec<i64>,
+        sources: Vec<TrackSet>,
         at: u32,
     ) -> Result<u32, KoanError> {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
+                let track_ids = self.resolve_sources(db, &sources)?;
                 let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)?;
                 if !added.is_empty() {
                     let mut order: Vec<i64> = queries::playlist_entries(&db.conn, playlist_id)?
@@ -2190,7 +2173,7 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::sequenced(move || {
             self.edit_playlist(playlist_id, |db| {
-                queries::reorder_entries(&db.conn, playlist_id, &entry_ids)
+                Ok(queries::reorder_entries(&db.conn, playlist_id, &entry_ids)?)
             })
         })
         .await
@@ -2218,7 +2201,7 @@ impl KoanEngine {
                 let mut entries = queries::playlist_entries(&db.conn, playlist_id)?;
                 koan_core::helpers::shuffle(&mut entries);
                 let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
-                queries::reorder_entries(&db.conn, playlist_id, &order)
+                Ok(queries::reorder_entries(&db.conn, playlist_id, &order)?)
             })
         })
         .await
@@ -4861,6 +4844,15 @@ impl KoanEngine {
         .await
     }
 
+    /// The tracks `sources` name, as `queue` resolves them: for something
+    /// that wants the list itself, such as a new playlist's contents.
+    pub async fn track_ids_of(
+        self: Arc<Self>,
+        sources: Vec<TrackSet>,
+    ) -> Result<Vec<i64>, KoanError> {
+        offload::offload(move || self.resolve_sources(&self.db()?, &sources)).await
+    }
+
     /// Track IDs for several records, each in running order and the records
     /// in the order given. One read for a section's worth of albums.
     pub async fn album_track_ids(
@@ -6260,6 +6252,88 @@ impl KoanEngine {
         self.send_local(PlayerCommand::Barrier(reply)).is_ok() && done.recv_timeout(within).is_ok()
     }
 
+    /// The tracks `sources` name, in order: an album's and an artist's as
+    /// `track_ids` lists them, a playlist's as `playlist_tracks` does.
+    fn resolve_sources(&self, db: &Database, sources: &[TrackSet]) -> Result<Vec<i64>, KoanError> {
+        let mut ids = Vec::new();
+        for source in sources {
+            match source {
+                TrackSet::Tracks { ids: tracks } => ids.extend_from_slice(tracks),
+                TrackSet::Album { id } => ids.extend(
+                    self.tracks_blocking(Some(*id), None, TrackSort::Album, 2000, 0)?
+                        .into_iter()
+                        .map(|t| t.id),
+                ),
+                TrackSet::Artist { id } => ids.extend(
+                    self.tracks_blocking(None, Some(*id), TrackSort::Album, 2000, 0)?
+                        .into_iter()
+                        .map(|t| t.id),
+                ),
+                TrackSet::Playlist { id } => {
+                    self.refresh_smart(db, Some(*id));
+                    let mut entries = queries::playlist_entries(&db.conn, *id).map_err(db_err)?;
+                    if offline() {
+                        entries.retain(|e| e.track.cached_path.is_some() || e.track.path.is_some());
+                    }
+                    ids.extend(entries.into_iter().map(|e| e.track.id));
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Send tracks to the queue at `placement`. Returns the new queue item IDs.
+    fn place(
+        &self,
+        db: &Database,
+        track_ids: &[i64],
+        placement: Placement,
+    ) -> Result<Vec<String>, KoanError> {
+        let after = match &placement {
+            Placement::After { queue_item_id } => Some(parse_qid(queue_item_id)?),
+            _ => None,
+        };
+        let items = self.build_items(db, track_ids);
+        if items.is_empty() {
+            if let Placement::Replace { .. } = placement {
+                self.send(PlayerCommand::ClearPlaylist)?;
+            }
+            return Ok(Vec::new());
+        }
+        let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
+        match placement {
+            Placement::Replace { start_at, shuffled } => {
+                self.send(PlayerCommand::ReplacePlaylist {
+                    items,
+                    start: start_at.unwrap_or(0) as usize,
+                    position_ms: 0,
+                    play: true,
+                    mode: if shuffled {
+                        QueueMode::Shuffled
+                    } else {
+                        QueueMode::InOrder
+                    },
+                })?;
+            }
+            Placement::Append => {
+                let first = items[0].id;
+                let was_stopped = self.state.is_idle();
+                self.send(PlayerCommand::AddToPlaylist(items))?;
+                // Another device starts what it was sent by itself when stopped.
+                if was_stopped && koan_core::remote::devices::target().is_none() {
+                    let _ = self.tx.send(PlayerCommand::Play(first));
+                }
+            }
+            Placement::AppendAndPlay => self.send(PlayerCommand::AddAndPlay(items))?,
+            Placement::Next => self.send(PlayerCommand::PlayNext(items))?,
+            Placement::After { .. } => self.send(PlayerCommand::InsertInPlaylist {
+                items,
+                after: after.expect("parsed above"),
+            })?,
+        }
+        Ok(ids)
+    }
+
     /// Resolve track IDs into playlist items. Skips IDs that aren't in the
     /// library. Remote ones download once the player has them — the download
     /// queue follows the playlist.
@@ -6272,31 +6346,32 @@ impl KoanEngine {
         koan_core::helpers::playlist_items_for_tracks(db, &rows)
     }
 
-    /// Undo or redo a playlist edit: put it back, follow it from the queue if
-    /// the queue is following, and tell everyone as any edit would.
     /// An edit to the contents of a playlist: refused for one that is not the
-    /// person's to fill, made and recorded for undo in one transaction, carried
-    /// to the queue if it follows the playlist, and pushed to the server.
-    /// Called on the command lane, so edits land in the order they were made
-    /// and in turn with the queue commands around them.
+    /// person's to fill, made and recorded for undo in one transaction with
+    /// that check and with whether the queue follows it, carried to the queue
+    /// if it does, and pushed to the server. Called on the command lane, so
+    /// edits land in the order they were made and in turn with the queue
+    /// commands around them.
     fn edit_playlist<T>(
         &self,
         playlist_id: i64,
-        change: impl FnOnce(&Database) -> Result<T, koan_core::db::connection::DbError>,
+        change: impl FnOnce(&Database) -> Result<T, KoanError>,
     ) -> Result<T, KoanError> {
         let db = self.db()?;
-        fillable(&db, playlist_id)?;
-        let locked = self.locked_to(&db, playlist_id);
-        let out = self
-            .playlist_history
-            .edit(&db.conn, playlist_id, || change(&db))
-            .map_err(playlist_write_err)?;
+        let mut locked = false;
+        let out = self.playlist_history.edit(&db.conn, playlist_id, || {
+            fillable(&db, playlist_id)?;
+            locked = self.locked_to(&db, playlist_id);
+            change(&db)
+        })?;
         self.follow_playlist(&db, playlist_id, locked);
         self.bump_library();
         koan_core::playlists::push_to_remote(playlist_id);
         Ok(out)
     }
 
+    /// Undo or redo a playlist edit: put it back, follow it from the queue if
+    /// the queue is following, and tell everyone as any edit would.
     async fn step_playlist(self: Arc<Self>, playlist_id: i64, back: bool) -> Result<(), KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
@@ -6658,6 +6733,20 @@ fn fillable(db: &Database, playlist_id: i64) -> Result<(), KoanError> {
 fn db_err(e: impl std::fmt::Display) -> KoanError {
     KoanError::Database {
         message: e.to_string(),
+    }
+}
+
+/// A database failure inside a playlist edit's transaction; see
+/// [`playlist_write_err`].
+impl From<koan_core::db::connection::DbError> for KoanError {
+    fn from(e: koan_core::db::connection::DbError) -> Self {
+        playlist_write_err(e)
+    }
+}
+
+impl From<rusqlite::Error> for KoanError {
+    fn from(e: rusqlite::Error) -> Self {
+        db_err(e)
     }
 }
 
