@@ -303,7 +303,7 @@ impl GraphQLClient {
     /// Follow `queries`, each a GraphQL subscription, over `/graphql/ws` in the
     /// `graphql-transport-ws` protocol, handing every message's `data` to
     /// `on_next` with the index of the query it answers. `on_next` breaking
-    /// closes the connection, and the error returned says it was stopped.
+    /// closes the connection and returns [`GraphQLError::Stopped`].
     ///
     /// Blocks while the connection lasts and sleeps between messages, pinging
     /// only after a long silence so a dead connection is noticed. Returns why
@@ -476,6 +476,9 @@ pub enum GraphQLError {
     Query(String),
     #[error("unauthorised: {0}")]
     Unauthorized(String),
+    /// A subscription's `on_next` asked to stop.
+    #[error("stopped")]
+    Stopped,
 }
 
 /// What the server said when it refused a request: the `message` of a JSON
@@ -494,7 +497,7 @@ fn reason(resp: reqwest::blocking::Response) -> String {
     }
 }
 
-const QUEUE_FIELDS: &str = "queueItemId trackId title artist album codec trackNumber disc durationMs isCurrent status failureReason";
+const QUEUE_FIELDS: &str = "queueItemId trackId title artist album codec trackNumber disc durationMs isCurrent status failureReason downloadProgress { downloaded total }";
 
 type WsSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
 
@@ -666,7 +669,7 @@ impl<F: FnMut(usize, &Value) -> std::ops::ControlFlow<()>> crate::remote::wire::
                 } else if let Some(id) = message["id"].as_str().and_then(|id| id.parse().ok())
                     && (self.on_next)(id, &payload["data"]).is_break()
                 {
-                    self.ended = Some(GraphQLError::Http("stopped".into()));
+                    self.ended = Some(GraphQLError::Stopped);
                 }
             }
             Some("error") => {
@@ -776,6 +779,9 @@ pub struct QueueEntry {
     /// `FAILED` and so on.
     pub status: String,
     pub failure_reason: Option<String>,
+    /// (downloaded, total) bytes while the server fetches it; total 0 when
+    /// unknown.
+    pub download_progress: Option<(u64, u64)>,
 }
 
 impl QueueEntry {
@@ -799,6 +805,9 @@ impl QueueEntry {
                 is_current: e["isCurrent"].as_bool().unwrap_or(false),
                 status: e["status"].as_str().unwrap_or("").to_string(),
                 failure_reason: e["failureReason"].as_str().map(String::from),
+                download_progress: e["downloadProgress"]["downloaded"]
+                    .as_u64()
+                    .map(|done| (done, e["downloadProgress"]["total"].as_u64().unwrap_or(0))),
             })
             .collect()
     }

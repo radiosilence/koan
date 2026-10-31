@@ -82,6 +82,11 @@ pub struct Layout {
     pub total_ms: u64,
 }
 
+/// The whole queue's length, as its foot shows it.
+pub fn total_ms(entries: &[QueueEntry]) -> u64 {
+    entries.iter().filter_map(|e| e.duration_ms).sum()
+}
+
 impl Layout {
     /// Whether it was built from these entries' count; a queue changed under
     /// it is drawn from a layout built on the spot instead.
@@ -137,7 +142,7 @@ impl Layout {
             grouped,
             lines,
             line_of,
-            total_ms: entries.iter().filter_map(|e| e.duration_ms).sum(),
+            total_ms: total_ms(entries),
         }
     }
 

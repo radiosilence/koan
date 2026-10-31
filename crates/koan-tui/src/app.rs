@@ -180,8 +180,9 @@ pub struct QueueState {
     /// Cached visible queue snapshot — refreshed once per frame.
     pub(super) vq_cache: VisibleQueueSnapshot,
     pub(super) vq_version: u64,
-    /// The `content_version` `facts` and `layout` were built at.
-    pub(super) facts_version: u64,
+    /// The `content_version` and library stamp `facts` and `layout` were
+    /// built at; `None` until they are built.
+    pub(super) facts_version: Option<(u64, u64)>,
     /// The download store's version `facts.sources` was read at.
     pub(super) transfers_version: u64,
     /// The queue's lines, built when it changes or is regrouped.
@@ -464,7 +465,6 @@ impl App {
             last_skip: None,
             queue: QueueState {
                 flat: !cfg.playback.queue_grouped,
-                facts_version: u64::MAX,
                 ..Default::default()
             },
             picker: None,
@@ -2228,7 +2228,7 @@ impl App {
             self.state = shown;
             // The two states count versions apart.
             self.queue.vq_version = u64::MAX;
-            self.queue.facts_version = u64::MAX;
+            self.queue.facts_version = None;
         }
         if let Some(p) = self.play_on.as_mut() {
             p.refresh(&self.view.local);
@@ -3547,34 +3547,40 @@ impl App {
         let moved = transfers != self.queue.transfers_version;
         self.queue.transfers_version = transfers;
         if !mutated {
-            if downloading && !self.apply_queue_readings() {
-                self.queue.vq_cache = self.state.derive_visible_queue();
+            // Readings that still name the cached rows are all that moved;
+            // ones that do not mean the queue changed under the version, and
+            // it is taken in again whole, as an edit is.
+            if !downloading || self.apply_queue_readings() {
+                if moved {
+                    self.queue.facts.read_sources(&self.queue.vq_cache.entries);
+                }
+                return;
             }
-            if moved {
-                self.queue.facts.read_sources(&self.queue.vq_cache.entries);
-            }
-            return;
+            self.queue.facts_version = None;
         }
 
         self.queue.vq_cache = self.state.derive_visible_queue();
         self.queue.vq_version = v;
-        // Credits and grouping depend on which tracks the queue holds, so a
-        // bump that only moved a status or the cursor keeps them; where each
-        // track is can change with any bump, and is one query.
-        let content = self.state.content_version();
-        if content != self.queue.facts_version {
-            self.queue.facts_version = content;
+        // Credits, places and the lock's name depend on which tracks the
+        // queue holds and on what the library says of them, so a bump that
+        // only moved a status or the cursor keeps them. A scan or sync in
+        // this process re-reads them itself (`reload_library_pages`); the
+        // stamp sees another process add or remove rows.
+        let library = koan_core::db::pool::shared()
+            .get()
+            .ok()
+            .and_then(|db| koan_core::db::queries::library_stamp(&db.conn).ok())
+            .map_or(0, |s| s.rows);
+        let at = Some((self.state.content_version(), library));
+        if at != self.queue.facts_version {
+            self.queue.facts_version = at;
             self.queue.facts = queue::Facts::read(&self.queue.vq_cache.entries, &self.state);
             self.relayout_queue();
         } else {
-            self.queue.facts.read_sources(&self.queue.vq_cache.entries);
-            self.queue.layout.total_ms = self
-                .queue
-                .vq_cache
-                .entries
-                .iter()
-                .filter_map(|e| e.duration_ms)
-                .sum();
+            if moved {
+                self.queue.facts.read_sources(&self.queue.vq_cache.entries);
+            }
+            self.queue.layout.total_ms = queue::total_ms(&self.queue.vq_cache.entries);
         }
 
         self.clamp_queue_cursor();

@@ -1112,7 +1112,7 @@ mod tests {
         app.state.add_items(items);
         app.refresh_visible_queue();
         let read_at = app.queue.facts_version;
-        assert_eq!(read_at, app.state.content_version());
+        assert_eq!(read_at.map(|(c, _)| c), Some(app.state.content_version()));
         assert_eq!(app.queue.vq_cache.entries.len(), 3);
 
         app.state.mark_played(first);

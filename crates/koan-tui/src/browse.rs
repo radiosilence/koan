@@ -412,7 +412,8 @@ struct Listing {
     tracks: Vec<TrackRow>,
     /// How many tracks pass, of which `tracks` are the first.
     track_total: u64,
-    /// Where `tracks` start: past zero, they follow the tracks shown.
+    /// Where `tracks` start: past zero, a page read ahead, whose first row is
+    /// the last of the tracks shown.
     from: u32,
     /// The library's rows as the listing was read (`LibraryStamp::rows`): a
     /// page read ahead belongs after the shown tracks only if they match.
@@ -783,13 +784,17 @@ impl Browse {
     /// are.
     fn extend(&mut self, generation: u64, listing: Listing) -> bool {
         self.shown = generation;
-        // A sync or scan between pages would have this page start somewhere
-        // the shown tracks do not end.
-        if listing.from as usize != self.tracks.len() || listing.library != self.library {
+        // The page is read from the last row shown. Anything that moved a row
+        // across that boundary since the shown tracks were read (a play under
+        // Last Played, a retag, a scan or sync) moves that row too, and the
+        // page would repeat or skip rows; so would rows added or removed.
+        let anchored = self.tracks.len().checked_sub(1) == Some(listing.from as usize)
+            && listing.tracks.first().map(|t| t.id) == self.tracks.last().map(|t| t.id);
+        if !anchored || listing.library != self.library {
             self.reload();
             return false;
         }
-        self.tracks.extend(listing.tracks);
+        self.tracks.extend(listing.tracks.into_iter().skip(1));
         self.credited.tracks.extend(listing.credited.tracks);
         self.fav_albums = listing.favourites.albums;
         self.fav_artists = listing.favourites.artists;
@@ -941,7 +946,9 @@ impl Browse {
             && self.shown == self.asked
         {
             self.limit = self.limit.saturating_add(TRACK_PAGE);
-            self.ask(n as u32, TRACK_PAGE);
+            // From the last row shown, which the page must start with: see
+            // `extend`.
+            self.ask(n as u32 - 1, TRACK_PAGE + 1);
         }
     }
 
@@ -2276,10 +2283,10 @@ pub(super) mod tests {
         // The next page is read from where the shown tracks end, not from
         // the top, and lands after them with the cursor left where it is.
         let next = Listing {
-            tracks: (TRACK_PAGE as i64..2 * TRACK_PAGE as i64)
+            tracks: (TRACK_PAGE as i64 - 1..2 * TRACK_PAGE as i64)
                 .map(|i| track(i, 1))
                 .collect(),
-            from: TRACK_PAGE,
+            from: TRACK_PAGE - 1,
             ..Default::default()
         };
         assert!(b.show(b.asked, next));
@@ -2293,14 +2300,36 @@ pub(super) mod tests {
         b.move_to(2 * TRACK_PAGE as usize - 5);
         let asked = b.asked;
         let moved = Listing {
-            tracks: vec![track(9999, 1)],
-            from: 2 * TRACK_PAGE,
+            tracks: vec![track(2 * TRACK_PAGE as i64 - 1, 1), track(9999, 1)],
+            from: 2 * TRACK_PAGE - 1,
             library: 1,
             ..Default::default()
         };
         assert!(!b.show(asked, moved));
         assert_eq!(b.tracks.len(), 2 * TRACK_PAGE as usize);
         assert_eq!(b.asked, asked + 1, "the whole listing is asked for again");
+
+        // So is a page whose first row is not the last one shown: a play under
+        // Last Played moved a row across the boundary.
+        let asked = b.asked;
+        b.show(
+            asked,
+            Listing {
+                tracks: (0..2 * TRACK_PAGE as i64).map(|i| track(i, 1)).collect(),
+                track_total: 5000,
+                ..Default::default()
+            },
+        );
+        let shifted = Listing {
+            tracks: vec![
+                track(2 * TRACK_PAGE as i64 - 2, 1),
+                track(2 * TRACK_PAGE as i64 - 1, 1),
+            ],
+            from: 2 * TRACK_PAGE - 1,
+            ..Default::default()
+        };
+        assert!(!b.show(asked, shifted));
+        assert_eq!(b.asked, asked + 1);
     }
 
     #[test]

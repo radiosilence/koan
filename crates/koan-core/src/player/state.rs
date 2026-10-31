@@ -837,6 +837,11 @@ pub struct SharedPlayerState {
     /// Every transfer this player's items are fetched by.
     downloads: Arc<DownloadStore>,
 
+    /// Transfers another player reports for items mirrored here, which have
+    /// no library row to key `downloads` by: (written, total) by item, total
+    /// 0 when unknown. Only the TUI's remote bridge writes it.
+    mirrored_transfers: parking_lot::RwLock<HashMap<QueueItemId, (u64, u64)>>,
+
     /// Set by external signals (e.g. souvlaki Quit event) to request clean shutdown.
     quit_requested: AtomicBool,
 
@@ -911,6 +916,7 @@ impl SharedPlayerState {
             pending_version: AtomicU64::new(0),
             played_version: AtomicU64::new(0),
             downloads: DownloadStore::new(),
+            mirrored_transfers: parking_lot::RwLock::new(HashMap::new()),
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
@@ -1370,6 +1376,12 @@ impl SharedPlayerState {
     /// The transfers this player's items are fetched by.
     pub fn downloads(&self) -> &Arc<DownloadStore> {
         &self.downloads
+    }
+
+    /// Sets the transfers another player reports for the items mirrored
+    /// here; see the field. A pending item listed is downloading.
+    pub fn mirror_transfers(&self, transfers: HashMap<QueueItemId, (u64, u64)>) {
+        *self.mirrored_transfers.write() = transfers;
     }
 
     fn load_state(&self, item: &PlaylistItem) -> LoadState {
@@ -2371,6 +2383,7 @@ impl SharedPlayerState {
             .map(|r| (r.track_id, (r.written, r.total)))
             .collect();
         let unreachable = crate::helpers::server_unreachable();
+        let mirrored = self.mirrored_transfers.read();
         let pl = self.playlist.read();
 
         for item in &pl.items {
@@ -2386,7 +2399,10 @@ impl SharedPlayerState {
             // chunk without the playlist lock, so a transfer never bumps the
             // playlist version.
             let download_progress = match item.state {
-                ItemState::Pending => item.db_id.and_then(|id| transfers.get(&id).copied()),
+                ItemState::Pending => item
+                    .db_id
+                    .and_then(|id| transfers.get(&id).copied())
+                    .or_else(|| mirrored.get(&item.id).copied()),
                 _ => None,
             };
             let transferring = download_progress.is_some();
