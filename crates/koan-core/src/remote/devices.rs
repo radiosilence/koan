@@ -198,6 +198,30 @@ struct Store {
     /// Paired Apple TVs away from this device's network, as `check_tvs` last
     /// found: not switched on from here.
     tv_away: HashSet<String>,
+    /// What `save` left to be written once the lock is let go.
+    unsaved: Option<Unsaved>,
+}
+
+/// `devices.json` as of one `save`, numbered in the order the saves were made
+/// under the store's lock, so a later one written first is never overwritten.
+struct Unsaved {
+    seq: u64,
+    json: Vec<u8>,
+}
+
+impl Unsaved {
+    fn write(self) {
+        static WRITTEN: Mutex<(u64, Vec<u8>)> = Mutex::new((0, Vec::new()));
+        let mut written = WRITTEN.lock();
+        if self.seq <= written.0 || self.json == written.1 {
+            return;
+        }
+        if let Err(e) = crate::config::write_private(&saved_path(), &self.json) {
+            log::warn!("devices: could not save the device list: {e}");
+            return;
+        }
+        *written = (self.seq, self.json);
+    }
 }
 
 /// A command that was queued for a device asleep, or did not reach one: what
@@ -342,8 +366,16 @@ static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static LOCAL: OnceLock<Local> = OnceLock::new();
 
 fn with<R>(f: impl FnOnce(&mut Store) -> R) -> R {
-    let mut store = STORE.lock();
-    f(store.get_or_insert_with(Store::default))
+    let (out, unsaved) = {
+        let mut store = STORE.lock();
+        let store = store.get_or_insert_with(Store::default);
+        let out = f(store);
+        (out, store.unsaved.take())
+    };
+    if let Some(unsaved) = unsaved {
+        unsaved.write();
+    }
+    out
 }
 
 /// `f` changed something the app shows.
@@ -402,10 +434,21 @@ fn clock() {
 }
 
 impl Store {
-    fn save(&self) {
+    /// Leaves what `restore` reads to be written as the lock is let go: the
+    /// account's devices without their state, which a relaunch discards.
+    fn save(&mut self) {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let saved = Saved {
             target: self.target.clone(),
-            account: self.account.iter().map(|(d, _)| d.clone()).collect(),
+            account: self
+                .account
+                .iter()
+                .map(|(d, _)| LinkDevice {
+                    linked: false,
+                    state: None,
+                    ..d.clone()
+                })
+                .collect(),
             account_library: self.account_library.clone(),
             nearby: self.seen.clone(),
             live: self.live.clone(),
@@ -417,8 +460,9 @@ impl Store {
             }),
             tv_addrs: self.tv_addrs.clone(),
         };
-        if let Ok(json) = serde_json::to_string(&saved) {
-            let _ = std::fs::write(saved_path(), json);
+        if let Ok(json) = serde_json::to_vec(&saved) {
+            let seq = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+            self.unsaved = Some(Unsaved { seq, json });
         }
     }
 }
@@ -3745,6 +3789,43 @@ pub(crate) mod tests {
         assert!(same(here(), "phone"));
 
         set_target(None);
+        with(|s| *s = Store::default());
+    }
+
+    /// The file keeps what a relaunch reads, and is not rewritten when that
+    /// has not changed.
+    #[test]
+    fn the_saved_list_holds_no_state_and_is_written_on_change() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let asleep = LinkDevice {
+            linked: false,
+            last_seen: Some(100),
+            ..device("mac", true)
+        };
+        set_account(vec![asleep.clone()], None);
+        let text = std::fs::read_to_string(saved_path()).unwrap();
+        let saved: Saved = serde_json::from_str(&text).unwrap();
+        assert_eq!(saved.account.len(), 1);
+        assert!(saved.account[0].state.is_none(), "{text}");
+
+        std::fs::remove_file(saved_path()).unwrap();
+        set_account(vec![asleep.clone()], None);
+        assert!(!saved_path().exists(), "the same bytes again: not written");
+
+        set_account(
+            vec![LinkDevice {
+                name: "renamed".into(),
+                ..asleep
+            }],
+            None,
+        );
+        assert!(
+            std::fs::read_to_string(saved_path())
+                .unwrap()
+                .contains("renamed")
+        );
         with(|s| *s = Store::default());
     }
 

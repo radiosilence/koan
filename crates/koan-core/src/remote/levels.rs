@@ -81,8 +81,10 @@ struct FeedState {
     pumping: bool,
 }
 
+/// Held weakly, as is whatever `position_ms` reads: the feed is the
+/// process's, and must not keep an engine that has been dropped.
 struct Source {
-    viz: Arc<VizSnapshot>,
+    viz: Weak<VizSnapshot>,
     position_ms: Box<dyn Fn() -> u64 + Send + Sync>,
 }
 
@@ -115,7 +117,7 @@ impl Feed {
     ) {
         let mut inner = self.inner.lock();
         inner.source = Some(Arc::new(Source {
-            viz,
+            viz: Arc::downgrade(&viz),
             position_ms: Box::new(position_ms),
         }));
         self.changed.notify_all();
@@ -151,21 +153,29 @@ impl Feed {
 
     fn pump(&self) {
         loop {
-            let source = {
+            let (source, viz) = {
                 let mut inner = self.inner.lock();
                 loop {
                     inner.watchers.retain(|(_, w)| w.strong_count() > 0);
-                    match &inner.source {
-                        Some(source) if !inner.watchers.is_empty() => break Arc::clone(source),
+                    let upgraded = inner
+                        .source
+                        .as_ref()
+                        .map(|s| (Arc::clone(s), s.viz.upgrade()));
+                    match upgraded {
+                        Some((_, None)) => inner.source = None,
+                        Some((source, Some(viz))) if !inner.watchers.is_empty() => {
+                            break (source, viz);
+                        }
                         _ => self.changed.wait(&mut inner),
                     }
                 }
             };
             // Wanting a frame wakes an analyser parked for want of a reader.
-            let seen = source.viz.frames().generation();
-            source.viz.touch();
-            source.viz.frames().wait(seen);
-            let frame = Frame::new((source.position_ms)(), source.viz.levels());
+            let seen = viz.frames().generation();
+            viz.touch();
+            viz.frames().wait(seen);
+            let frame = Frame::new((source.position_ms)(), viz.levels());
+            drop(viz);
             let mut inner = self.inner.lock();
             let seq = inner.latest.map_or(0, |(seq, _)| seq) + 1;
             inner.latest = Some((seq, frame));
@@ -862,6 +872,15 @@ mod tests {
 
         drop(watch);
         assert_eq!(feed.watchers(), 0);
+    }
+
+    /// The feed is the process's; the engine that provided it may go.
+    #[test]
+    fn the_feed_keeps_no_analyser_alive() {
+        let feed = Feed::new();
+        let viz = VizSnapshot::new();
+        feed.provide(Arc::clone(&viz), || 0);
+        assert_eq!(Arc::strong_count(&viz), 1);
     }
 
     #[test]

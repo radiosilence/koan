@@ -42,8 +42,10 @@ pub fn serve(
     library_changed: fn(),
     here: bool,
 ) {
-    let playhead = state.clone();
-    crate::remote::levels::feed().provide(viz, move || playhead.position_ms());
+    let playhead = Arc::downgrade(&state);
+    crate::remote::levels::feed().provide(viz, move || {
+        playhead.upgrade().map_or(0, |s| s.position_ms())
+    });
     crate::remote::dsp_sync::set_device_name(Some(identity.name.clone()));
 
     let (commands, inbox) =

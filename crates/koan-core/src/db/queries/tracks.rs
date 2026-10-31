@@ -944,6 +944,30 @@ pub fn cached_files_lru(conn: &Connection) -> Result<Vec<CachedFile>, DbError> {
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// The files `cached_files_lru` lists, in no order: for a caller that counts
+/// them, which then need not rank them against the whole play history.
+pub fn cached_files(conn: &Connection) -> Result<Vec<CachedFile>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT t.id, t.cached_path, COALESCE(t.cache_size_bytes, 0), t.cache_pinned != 0
+         FROM tracks t
+         WHERE t.cached_path IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM tracks s
+                             JOIN favourites f
+                             JOIN tracks ft ON ft.id = f.track_id
+                                           AND (ft.id = s.id OR ft.album_id = s.album_id)
+                           WHERE s.cached_path = t.cached_path)",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(CachedFile {
+            track_id: row.get(0)?,
+            path: row.get(1)?,
+            size: row.get(2)?,
+            pinned: row.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// What downloading each of these tracks would add to the cache, for those
 /// not already in it. Tracks with a library file or no server entry cost
 /// nothing. The server rarely says how large a file is, so the size is
@@ -3429,6 +3453,29 @@ mod tests {
         with_pinned.extend(&upcoming);
         let fits = crate::helpers::playback_window(&db, 45_000_000, &with_pinned).unwrap();
         assert_eq!(fits, 4);
+    }
+
+    /// Estimated a chunk at a time, the window still lands on the track that
+    /// crosses the limit, however deep in the queue that is.
+    #[test]
+    fn the_window_is_found_past_the_first_chunk() {
+        crate::config::isolate_config_for_tests();
+        let db = test_db();
+        let mut upcoming = Vec::new();
+        for n in 1..=600 {
+            let mut meta = sample_meta(&format!("Q{n}"), "Artist", "Long");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("long-{n}"));
+            meta.track_number = Some(n);
+            meta.size_bytes = Some(10_000_000);
+            upcoming.push(upsert_track(&db.conn, &meta).unwrap());
+        }
+        // Room for 299 and a half: the 300th crosses.
+        let fits = crate::helpers::playback_window(&db, 2_995_000_000, &upcoming).unwrap();
+        assert_eq!(fits, 299);
+        let fits = crate::helpers::playback_window(&db, u64::MAX, &upcoming).unwrap();
+        assert_eq!(fits, 600);
     }
 
     #[test]

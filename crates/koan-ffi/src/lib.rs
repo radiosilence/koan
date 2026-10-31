@@ -640,6 +640,18 @@ pub struct KoanEngine {
     /// The library's reading of the item under the cursor: read once per
     /// track and library version, not on every wake of the state watcher.
     cursor_reading: parking_lot::Mutex<Option<CursorReading>>,
+    /// The controlled device's queue as last published: built again only
+    /// when that queue or the library moves, not on every change to the
+    /// device list.
+    remote_queue: parking_lot::Mutex<Option<RemoteQueue>>,
+}
+
+/// What `KoanEngine::remote_queue` holds.
+struct RemoteQueue {
+    entries: Vec<koan_core::remote::link::LinkQueueEntry>,
+    library: u64,
+    version: u64,
+    items: Vec<QueueItem>,
 }
 
 /// What `KoanEngine::cursor_reading` holds.
@@ -5641,12 +5653,69 @@ impl KoanEngine {
 
     /// Publish another device's playback, playhead and queue as the app's.
     fn publish_remote(&self, device: Option<&koan_core::remote::devices::Device>) {
-        let st = device.and_then(|d| d.state.clone()).unwrap_or_default();
-        let ids: Vec<String> = st.queue.iter().filter_map(|e| e.track_id.clone()).collect();
+        let none = koan_core::remote::link::LinkState::default();
+        let st = device.and_then(|d| d.state.as_ref()).unwrap_or(&none);
+        let current = st.queue.iter().position(|e| e.current);
+        let library = self
+            .library_version
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let mut held = self.remote_queue.lock();
+        let (version, items) = match held
+            .as_ref()
+            .filter(|h| h.library == library && h.entries == st.queue)
+        {
+            Some(h) => (h.version, h.items.clone()),
+            None => {
+                let items = self.remote_items(&st.queue, current);
+                let version = koan_core::remote::devices::version();
+                *held = Some(RemoteQueue {
+                    entries: st.queue.clone(),
+                    library,
+                    version,
+                    items: items.clone(),
+                });
+                (version, items)
+            }
+        };
+        drop(held);
+        let entry = current.and_then(|c| items.get(c).cloned());
+        let out = &self.out;
+        out.publish(StateSlice::Playback {
+            now_playing: NowPlaying {
+                state: play_state(&st),
+                waiting: false,
+                position_ms: 0,
+                duration_ms: st.duration_ms,
+                queue_item_id: entry.as_ref().map(|e| e.queue_item_id.clone()),
+                entry,
+                format: None,
+                playlist_version: 0,
+                shuffle: st.shuffle,
+                repeat_mode: st.repeat.into(),
+                sleep: st.sleep.map(Into::into),
+                sleep_fading: st.sleep_fading,
+                start_failure: None,
+            },
+        });
+        out.publish(StateSlice::Playhead {
+            position_ms: device.map_or(0, |d| d.position_ms()),
+            seekable_ms: st.duration_ms,
+            playing: st.playing,
+        });
+        out.publish(StateSlice::Queue { version, items });
+        out.publish(StateSlice::Lock { lock: None });
+    }
+
+    /// Another device's queue, read against this library in a few queries.
+    fn remote_items(
+        &self,
+        queue: &[koan_core::remote::link::LinkQueueEntry],
+        current: Option<usize>,
+    ) -> Vec<QueueItem> {
+        let ids: Vec<String> = queue.iter().filter_map(|e| e.track_id.clone()).collect();
         let rows = self.rows_for_remote(&ids);
         let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
         let joins = self.queue_joins(&row_ids);
-        let current = st.queue.iter().position(|e| e.current);
         let mut items: Vec<QueueItem> = st
             .queue
             .iter()
@@ -5708,35 +5777,7 @@ impl KoanEngine {
         for (item, run) in items.iter_mut().zip(runs) {
             item.run = run.into();
         }
-        let entry = current.and_then(|c| items.get(c).cloned());
-        let out = &self.out;
-        out.publish(StateSlice::Playback {
-            now_playing: NowPlaying {
-                state: play_state(&st),
-                waiting: false,
-                position_ms: 0,
-                duration_ms: st.duration_ms,
-                queue_item_id: entry.as_ref().map(|e| e.queue_item_id.clone()),
-                entry,
-                format: None,
-                playlist_version: 0,
-                shuffle: st.shuffle,
-                repeat_mode: st.repeat.into(),
-                sleep: st.sleep.map(Into::into),
-                sleep_fading: st.sleep_fading,
-                start_failure: None,
-            },
-        });
-        out.publish(StateSlice::Playhead {
-            position_ms: device.map_or(0, |d| d.position_ms()),
-            seekable_ms: st.duration_ms,
-            playing: st.playing,
-        });
-        out.publish(StateSlice::Queue {
-            version: koan_core::remote::devices::version(),
-            items,
-        });
-        out.publish(StateSlice::Lock { lock: None });
+        items
     }
 
     /// This library's rows for the server's track ids, keyed by those ids.
@@ -5744,17 +5785,17 @@ impl KoanEngine {
         let Ok(db) = self.db() else {
             return HashMap::new();
         };
-        let Ok(mut stmt) = db
+        let wanted = queries::json_list(remote_ids);
+        let ids: Vec<i64> = db
             .conn
-            .prepare_cached("SELECT id FROM tracks WHERE remote_id = ?1")
-        else {
-            return HashMap::new();
-        };
-        let ids: Vec<i64> = remote_ids
-            .iter()
-            .filter_map(|r| stmt.query_row([r], |row| row.get(0)).ok())
-            .collect();
-        drop(stmt);
+            .prepare_cached(
+                "SELECT id FROM tracks WHERE remote_id IN (SELECT value FROM json_each(?1))",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map([wanted], |row| row.get(0))?
+                    .collect::<Result<_, _>>()
+            })
+            .unwrap_or_default();
         queries::tracks_by_ids(&db.conn, &ids)
             .unwrap_or_default()
             .into_iter()
@@ -6053,6 +6094,7 @@ impl KoanEngine {
             pairing: Default::default(),
             pairing_cancel: Default::default(),
             cursor_reading: Default::default(),
+            remote_queue: Default::default(),
             device_name: device_name.clone(),
         });
         engine.spawn_watcher();
@@ -6062,9 +6104,10 @@ impl KoanEngine {
         let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
         // What a device controlling this one draws its bars from, while it
         // watches.
-        let playhead = engine.state.clone();
-        koan_core::remote::levels::feed()
-            .provide(engine.viz.clone(), move || playhead.position_ms());
+        let playhead = Arc::downgrade(&engine.state);
+        koan_core::remote::levels::feed().provide(engine.viz.clone(), move || {
+            playhead.upgrade().map_or(0, |s| s.position_ms())
+        });
         let held =
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
         // Profiles of one name from two devices are told apart by it.
