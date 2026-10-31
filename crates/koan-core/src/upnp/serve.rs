@@ -46,6 +46,28 @@ pub type EventSink = Box<dyn Fn(&str, String) + Send + Sync>;
 /// client can make it hold is bounded: connections, the request head, and a
 /// `NOTIFY` body.
 const MAX_CONNECTIONS: usize = 32;
+
+/// Have the system drop a connection whose renderer has gone, without a
+/// write timeout: a paused renderer stops reading for as long as it likes,
+/// and the processed stream relies on that backpressure. A renderer powered
+/// off without closing would otherwise hold its slot until TCP gives up on
+/// its own, a quarter of an hour or more. Keepalive covers an idle
+/// connection; where the system has it, a user timeout covers one with data
+/// unacknowledged, which a live renderer refusing more by its window does not
+/// trip, since it answers the probes.
+fn notice_departure(stream: &std::net::TcpStream) {
+    let socket = socket2::SockRef::from(stream);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(30))
+        .with_interval(Duration::from_secs(10));
+    if let Err(e) = socket.set_tcp_keepalive(&keepalive) {
+        log::debug!("upnp http: keepalive: {e}");
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Err(e) = socket.set_tcp_user_timeout(Some(Duration::from_secs(120))) {
+        log::debug!("upnp http: user timeout: {e}");
+    }
+}
 const MAX_HEAD: u64 = 8 * 1024;
 const MAX_BODY: usize = 64 * 1024;
 
@@ -82,6 +104,7 @@ impl Listener {
                         break;
                     }
                     let Ok(stream) = stream else { continue };
+                    notice_departure(&stream);
                     if accept.connections.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
                         accept.connections.fetch_sub(1, Ordering::AcqRel);
                         continue;
