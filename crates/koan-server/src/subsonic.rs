@@ -7721,10 +7721,11 @@ mod tests {
         assert!(body.contains("code=\"10\""), "{body}");
         let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
         assert!(
-            body.contains("\"device\":\"Den TV\",\"from\":\"198.51.100.7\",\"local\":false"),
+            body.contains(
+                "\"device\":\"Den TV\",\"deviceId\":\"0192-den\",\"from\":\"198.51.100.7\",\"local\":false"
+            ),
             "{body}"
         );
-        assert!(body.contains("\"deviceId\":\"0192-den\""), "{body}");
 
         let body = call(format!("/rest/koanPairApprove?pair={id}&{mate}")).await;
         assert!(body.contains("\"device\":\"Den TV\""), "{body}");
