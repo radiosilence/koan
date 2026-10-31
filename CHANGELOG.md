@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.69.0
+
+### Added
+
+- **The macOS app shares its own library.** Settings → Server → Shares its library makes an account and serves this Mac's library to phones and other devices as a kōan server, with a QR code to sign a phone in. With Tailscale on the Mac, phones on the tailnet reach it from anywhere, and one button publishes it on the internet through Tailscale Funnel and points invites there. The sidebar says whether the Mac plays its own library, is connected to a server, or is sharing. See [Sharing your Mac](https://koan.rocks/docs/sharing-your-mac/).
+- **Dice on the queue and on playlists.** On the Mac, iPhone, iPad and Android, a dice in the queue's header shuffles the tracks after the current one in place, and one on a playlist's page shuffles the playlist. Each press is one undo step, so pressing again keeps dealing and undo walks back to the order you had; on a phone, Undo stands beside the dice while the last edits are shuffles. Shuffle play is unchanged and still leaves the rows alone.
+
+### Fixed
+
+- **Sign-out clears the queue at once, a server signed back in to syncs, and sign-in syncs once.** The queue stayed until the server's library had been deleted, which on a large library took a while. A server signed out of, or left for another, refused every sync until the app restarted, the Sync button included, and reported it as up to date. Signing in ran the automatic sync and the app's own after it, walking the library twice behind two progress rows; the apps draw one row, and the second sync walks only if the first did not. On iPhone the server banner sits under the navigation bar instead of over its back button, and Settings shows the account an invite signed in to rather than the sign-in form.
+
 ## 0.68.0
 
 ### Security
