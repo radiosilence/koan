@@ -132,11 +132,11 @@ struct SelectionBar: View {
     }
 
     /// Resolves the pick, which for records and artists is a read of the
-    /// database, then acts on it and ends the mode.
+    /// database, then acts on it, on the `CommandLane`, and ends the mode.
     private func run(_ body: @escaping @MainActor ([Int64]) -> Void) {
         let tracks = actions.tracks
         done()
-        Task {
+        CommandLane.submit {
             let ids = await tracks()
             guard !ids.isEmpty else { return }
             body(ids)

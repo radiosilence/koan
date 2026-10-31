@@ -315,7 +315,8 @@ final class PlayerModel {
     /// Replace the queue with what `resolve` finds, named `name` until it
     /// lands: a record, an artist or a playlist, whose tracks are a database
     /// read away. `shuffled` plays it with shuffle on rather than off; the
-    /// engine turns repeat off either way.
+    /// engine turns repeat off either way. Resolved on the `CommandLane`, so
+    /// it lands in turn with whatever was asked before and after it.
     @discardableResult
     func playNow(
         resolving name: String, shuffled: Bool = false, _ resolve: @escaping () async -> [Int64]
@@ -323,7 +324,7 @@ final class PlayerModel {
         resolving = name
         let engine = self.engine
         pendingMutations += 1
-        return Task {
+        return CommandLane.submit {
             let ids = await resolve()
             if !ids.isEmpty {
                 do {
@@ -677,7 +678,9 @@ final class PlayerModel {
     /// They are indexed where they lie rather than copied anywhere: a drop is
     /// "play this", and giving the files library rows is what lets organize
     /// move them into the music tree afterwards, on purpose and with a preview.
-    /// Folders are walked, so dropping a rip queues the album.
+    /// Folders are walked, so dropping a rip queues the album. Indexing is
+    /// not on the `CommandLane`: a large folder takes seconds, and every
+    /// command would wait behind it. The queueing is, once the files are in.
     func importFiles(_ urls: [URL]) {
         let paths = urls.filter(\.isFileURL).map(\.path)
         guard !paths.isEmpty else { return }
@@ -706,13 +709,13 @@ final class PlayerModel {
     func acceptDrop(_ dropped: [PlayableTransfer], playImmediately: Bool = false) {
         guard !dropped.isEmpty else { return }
         let engine = self.engine
-        Task {
+        CommandLane.submit {
             var ids: [Int64] = []
             for item in dropped.inDragOrder {
                 ids += await item.trackIds(using: engine)
             }
             guard !ids.isEmpty else { return }
-            if playImmediately { playNow(trackIds: ids) } else { enqueue(trackIds: ids) }
+            if playImmediately { self.playNow(trackIds: ids) } else { self.enqueue(trackIds: ids) }
         }
     }
 
@@ -800,14 +803,15 @@ final class PlayerModel {
 
     // MARK: - Errors
 
-    /// Engine calls fail for real reasons (device vanished, track gone) but
-    /// none of them are worth a modal. Surface it and carry on.
-    private func attempt(_ body: @escaping () async throws -> Void) {
-        Task {
+    /// A command, on the `CommandLane` with every other. Engine calls fail
+    /// for real reasons (device vanished, track gone) but none of them are
+    /// worth a modal. Surface it and carry on.
+    private func attempt(_ body: @escaping @MainActor () async throws -> Void) {
+        CommandLane.submit {
             do {
                 try await body()
             } catch {
-                lastError = SettingsModel.describe(error)
+                self.lastError = SettingsModel.describe(error)
             }
         }
     }
@@ -816,21 +820,20 @@ final class PlayerModel {
     /// them wants.
     ///
     /// Nothing waits for the result — the engine publishes the queue when it
-    /// changes — but these are ordered against each other on the
-    /// engine's side, so dropping in an album and then pressing undo cannot
-    /// land the wrong way round.
-    private func mutate(_ body: @escaping (KoanEngine) async throws -> Void) {
+    /// changes. Mutations go through the `CommandLane`, so dropping in an
+    /// album and then pressing undo cannot land the wrong way round.
+    private func mutate(_ body: @escaping @MainActor (KoanEngine) async throws -> Void) {
         let engine = self.engine
         pendingMutations += 1
         let job = activity?.begin("Updating queue")
-        Task {
+        CommandLane.submit {
             do {
                 try await body(engine)
             } catch {
-                lastError = SettingsModel.describe(error)
+                self.lastError = SettingsModel.describe(error)
             }
-            if let job { activity?.end(job) }
-            pendingMutations -= 1
+            if let job { self.activity?.end(job) }
+            self.pendingMutations -= 1
         }
     }
 }

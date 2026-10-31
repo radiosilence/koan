@@ -125,7 +125,7 @@ final class PlayableSelection {
     func commit(engine: KoanEngine, player: PlayerModel, play: Bool) {
         let items = picked
         end()
-        Task {
+        CommandLane.submit {
             var tracks: [Int64] = []
             for item in items {
                 tracks += await item.trackIds(using: engine)

@@ -188,10 +188,10 @@ final class PlaylistsModel {
     func add(dropped: [PlayableTransfer], to id: Int64) {
         let dropped = dropped.filter { $0.origin?.playlistId != id }
         guard !dropped.isEmpty else { return }
-        Task {
-            let ids = await resolve(dropped)
+        CommandLane.submit {
+            let ids = await self.resolve(dropped)
             guard !ids.isEmpty else { return }
-            add(trackIds: ids, to: id)
+            self.add(trackIds: ids, to: id)
         }
     }
 
@@ -201,10 +201,10 @@ final class PlaylistsModel {
     func insert(dropped: [PlayableTransfer], into id: Int64, at position: Int) {
         let dropped = dropped.filter { $0.origin?.playlistId != id }
         guard !dropped.isEmpty, fillable(id) else { return }
-        Task {
-            let ids = await resolve(dropped)
+        CommandLane.submit {
+            let ids = await self.resolve(dropped)
             guard !ids.isEmpty else { return }
-            act {
+            self.act {
                 _ = try await $0.insertIntoPlaylist(
                     playlistId: id, trackIds: ids, at: UInt32(position)
                 )
@@ -277,8 +277,7 @@ final class PlaylistsModel {
         guard order != playlists.map(\.id) else { return }
         let byId = Dictionary(playlists.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         playlists = order.compactMap { byId[$0] }
-        let engine = self.engine
-        Task { try? await engine.reorderPlaylists(ids: order) }
+        act { try await $0.reorderPlaylists(ids: order) }
     }
 
     /// Remember how this playlist is looked at. Local to this machine — a
@@ -323,19 +322,20 @@ final class PlaylistsModel {
         return ids
     }
 
-    /// A mutation, with the error reporting every one of them wants.
+    /// A mutation, on the `CommandLane` with every other, with the error
+    /// reporting every one of them wants.
     ///
     /// Nothing reloads here. Writing playlist rows is a library change like any
     /// other, so the engine says so and whatever is on screen asks again — the
     /// same path a sync from the server takes. A reload written in per mutation
     /// is one that only covers the mutations somebody remembered.
-    private func act(_ body: @escaping (KoanEngine) async throws -> Void) {
+    private func act(_ body: @escaping @MainActor (KoanEngine) async throws -> Void) {
         let engine = self.engine
-        Task {
+        CommandLane.submit {
             do {
                 try await body(engine)
             } catch {
-                report?(String(describing: error))
+                self.report?(String(describing: error))
             }
         }
     }

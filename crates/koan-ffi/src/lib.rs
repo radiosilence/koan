@@ -2141,19 +2141,10 @@ impl KoanEngine {
         playlist_id: i64,
         track_ids: Vec<i64>,
     ) -> Result<u32, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            fillable(&db, playlist_id)?;
-            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
-                .map_err(db_err)?;
-            let locked = self.locked_to(&db, playlist_id);
-            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)
-                .map_err(playlist_write_err)?;
-            self.playlist_history.record(before);
-            self.follow_playlist(&db, playlist_id, locked);
-            self.bump_library();
-            koan_core::playlists::push_to_remote(playlist_id);
-            Ok(added.len() as u32)
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                Ok(queries::add_tracks(&db.conn, playlist_id, &track_ids)?.len() as u32)
+            })
         })
         .await
     }
@@ -2161,63 +2152,46 @@ impl KoanEngine {
     /// Add tracks at a position rather than at the end — what dropping between
     /// two rows means.
     ///
-    /// Both halves happen here rather than as an add followed by a reorder from
-    /// the caller: the caller would be reordering against the list as it was
-    /// before its own insert landed, and racing the reload that tells it
-    /// otherwise.
+    /// Both halves happen here, in one transaction, rather than as an add
+    /// followed by a reorder from the caller: the caller would be reordering
+    /// against the list as it was before its own insert landed.
     pub async fn insert_into_playlist(
         self: Arc<Self>,
         playlist_id: i64,
         track_ids: Vec<i64>,
         at: u32,
     ) -> Result<u32, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            fillable(&db, playlist_id)?;
-            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
-                .map_err(db_err)?;
-            let locked = self.locked_to(&db, playlist_id);
-            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)
-                .map_err(playlist_write_err)?;
-            if !added.is_empty() {
-                let mut order: Vec<i64> = queries::playlist_entries(&db.conn, playlist_id)
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|e| e.id)
-                    .filter(|id| !added.contains(id))
-                    .collect();
-                let at = (at as usize).min(order.len());
-                order.splice(at..at, added.iter().copied());
-                queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
-            }
-            self.playlist_history.record(before);
-            self.follow_playlist(&db, playlist_id, locked);
-            self.bump_library();
-            koan_core::playlists::push_to_remote(playlist_id);
-            Ok(added.len() as u32)
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                let added = queries::add_tracks(&db.conn, playlist_id, &track_ids)?;
+                if !added.is_empty() {
+                    let mut order: Vec<i64> = queries::playlist_entries(&db.conn, playlist_id)?
+                        .into_iter()
+                        .map(|e| e.id)
+                        .filter(|id| !added.contains(id))
+                        .collect();
+                    let at = (at as usize).min(order.len());
+                    order.splice(at..at, added.iter().copied());
+                    queries::reorder_entries(&db.conn, playlist_id, &order)?;
+                }
+                Ok(added.len() as u32)
+            })
         })
         .await
     }
 
     /// Put the entries in this order. Ids survive, so anything holding one —
-    /// a queue item, say — still knows which row it means.
+    /// a queue item, say — still knows which row it means. Entries not named
+    /// keep their order after the named ones.
     pub async fn reorder_playlist(
         self: Arc<Self>,
         playlist_id: i64,
         entry_ids: Vec<i64>,
     ) -> Result<(), KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            fillable(&db, playlist_id)?;
-            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
-                .map_err(db_err)?;
-            let locked = self.locked_to(&db, playlist_id);
-            queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
-            self.playlist_history.record(before);
-            self.follow_playlist(&db, playlist_id, locked);
-            self.bump_library();
-            koan_core::playlists::push_to_remote(playlist_id);
-            Ok(())
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                queries::reorder_entries(&db.conn, playlist_id, &entry_ids)
+            })
         })
         .await
     }
@@ -2228,19 +2202,10 @@ impl KoanEngine {
         playlist_id: i64,
         entry_ids: Vec<i64>,
     ) -> Result<u32, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            fillable(&db, playlist_id)?;
-            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
-                .map_err(db_err)?;
-            let locked = self.locked_to(&db, playlist_id);
-            let removed =
-                queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
-            self.playlist_history.record(before);
-            self.follow_playlist(&db, playlist_id, locked);
-            self.bump_library();
-            koan_core::playlists::push_to_remote(playlist_id);
-            Ok(removed as u32)
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                Ok(queries::remove_entries(&db.conn, playlist_id, &entry_ids)? as u32)
+            })
         })
         .await
     }
@@ -2248,29 +2213,22 @@ impl KoanEngine {
     /// Shuffle the playlist itself, in place. Distinct from shuffling it into
     /// the queue, which leaves the playlist alone.
     pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            fillable(&db, playlist_id)?;
-            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
-                .map_err(db_err)?;
-            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
-            koan_core::helpers::shuffle(&mut entries);
-            let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
-            let locked = self.locked_to(&db, playlist_id);
-            queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
-            self.playlist_history.record(before);
-            self.follow_playlist(&db, playlist_id, locked);
-            self.bump_library();
-            koan_core::playlists::push_to_remote(playlist_id);
-            Ok(())
+        offload::sequenced(move || {
+            self.edit_playlist(playlist_id, |db| {
+                let mut entries = queries::playlist_entries(&db.conn, playlist_id)?;
+                koan_core::helpers::shuffle(&mut entries);
+                let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
+                queries::reorder_entries(&db.conn, playlist_id, &order)
+            })
         })
         .await
     }
 
     /// Where the playlists sit in the sidebar, in the order given. Local only —
-    /// no server has anywhere to put it.
+    /// no server has anywhere to put it. On the command lane with the edits,
+    /// so two drags land in the order they were made.
     pub async fn reorder_playlists(self: Arc<Self>, ids: Vec<i64>) -> Result<(), KoanError> {
-        offload::offload(move || {
+        offload::sequenced(move || {
             let db = self.db()?;
             queries::reorder_playlists(&db.conn, &ids).map_err(db_err)?;
             self.bump_library();
@@ -6316,8 +6274,31 @@ impl KoanEngine {
 
     /// Undo or redo a playlist edit: put it back, follow it from the queue if
     /// the queue is following, and tell everyone as any edit would.
+    /// An edit to the contents of a playlist: refused for one that is not the
+    /// person's to fill, made and recorded for undo in one transaction, carried
+    /// to the queue if it follows the playlist, and pushed to the server.
+    /// Called on the command lane, so edits land in the order they were made
+    /// and in turn with the queue commands around them.
+    fn edit_playlist<T>(
+        &self,
+        playlist_id: i64,
+        change: impl FnOnce(&Database) -> Result<T, koan_core::db::connection::DbError>,
+    ) -> Result<T, KoanError> {
+        let db = self.db()?;
+        fillable(&db, playlist_id)?;
+        let locked = self.locked_to(&db, playlist_id);
+        let out = self
+            .playlist_history
+            .edit(&db.conn, playlist_id, || change(&db))
+            .map_err(playlist_write_err)?;
+        self.follow_playlist(&db, playlist_id, locked);
+        self.bump_library();
+        koan_core::playlists::push_to_remote(playlist_id);
+        Ok(out)
+    }
+
     async fn step_playlist(self: Arc<Self>, playlist_id: i64, back: bool) -> Result<(), KoanError> {
-        offload::offload(move || {
+        offload::sequenced(move || {
             let db = self.db()?;
             let locked = self.locked_to(&db, playlist_id);
             let history = &self.playlist_history;

@@ -110,7 +110,7 @@ class ArtFetcher(
  * went (`art_evictions`) and forget those covers at every size.
  */
 fun followArtEvictions(mirror: EngineMirror, loader: ImageLoader) {
-    mirror.launch {
+    mirror.background {
         var seq = artEvictions(0).seq
         mirror.library.drop(1).collect {
             val gone = artEvictions(seq)

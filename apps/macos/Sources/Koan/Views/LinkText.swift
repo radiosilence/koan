@@ -220,9 +220,9 @@ struct PlayableArtwork: View {
         let engine = library.engine
         let albumId = self.albumId
         nav.open(album: albumId)
-        Task {
+        CommandLane.submit {
             let ids = (try? await engine.trackIds(albumId: albumId, artistId: nil)) ?? []
-            loading = false
+            self.loading = false
             player.playNow(trackIds: ids)
         }
     }

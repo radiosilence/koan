@@ -75,7 +75,7 @@ fun ReplaceQueueDialog(playable: Playable, onDismiss: () -> Unit) {
                 KoanButton("Cancel", onDismiss)
                 KoanButton("Add to Queue", {
                     onDismiss()
-                    app.mirror.launch { app.player.enqueue(playable.trackIds(this)) }
+                    app.mirror.launch { addToQueue(playable.trackIds(this)) }
                 })
             }
         },

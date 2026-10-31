@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
+import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.playlists.ConfirmDialog
@@ -154,7 +155,7 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
     val store = favourites()
     val picks = selection.picked.size
     var adding by remember { mutableStateOf<List<Playable>?>(null) }
-    fun run(action: (List<Long>) -> Unit) {
+    fun run(action: suspend KoanEngine.(List<Long>) -> Unit) {
         val items = selection.picked.map(playable)
         selection.end()
         app.mirror.launch {
@@ -164,9 +165,9 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
     }
     var confirming by remember { mutableStateOf(false) }
     SelectionBarFrame(picks, selection::end) {
-        BarItem("Play", "play", KoanIcons.play, picks > 0) { run(app.player::playTracks) }
-        BarItem("Play Next", "next", KoanIcons.playNext, picks > 0) { run(app.player::playNext) }
-        BarItem("Add to Queue", "queue", KoanIcons.queue, picks > 0) { run(app.player::enqueue) }
+        BarItem("Play", "play", KoanIcons.play, picks > 0) { run { replaceQueue(it, 0u, false) } }
+        BarItem("Play Next", "next", KoanIcons.playNext, picks > 0) { run { app.player.queueNext(this, it) } }
+        BarItem("Add to Queue", "queue", KoanIcons.queue, picks > 0) { run { addToQueue(it) } }
         BarItem("Add to Playlist", "playlist", KoanIcons.playlist, picks > 0) { adding = selection.picked.map(playable) }
         BarItem("Favourite", "favourite", KoanIcons.favourite, picks > 0) { favourite(store, selection.picked.map { playable(it).heart }); selection.end() }
         remove?.let { removal ->

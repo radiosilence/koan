@@ -191,7 +191,7 @@ struct PickerSheet: View {
 
         resolving = true
         let engine = library.engine
-        Task {
+        CommandLane.submit {
             var trackIds: [Int64] = []
             for row in rows {
                 switch row.kind {

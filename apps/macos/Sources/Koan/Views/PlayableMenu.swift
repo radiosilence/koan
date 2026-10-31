@@ -234,8 +234,8 @@ struct PlayableMenu: View {
         }
     }
 
-    /// Replace the queue with this, in turn with every other request: see
-    /// `PlayerModel.playNow(resolving:shuffled:_:)`.
+    /// Replace the queue with this, resolved on the `CommandLane` in turn with
+    /// every other request: see `PlayerModel.playNow(resolving:shuffled:_:)`.
     private func playNow(shuffled: Bool) {
         let engine = library.engine
         let playable = self.playable
@@ -244,12 +244,13 @@ struct PlayableMenu: View {
         }
     }
 
-    /// Resolve off the main actor, then act. An artist can be thousands of
-    /// tracks and the resolution is a database query.
+    /// Resolve, then act, on the `CommandLane`: an artist can be thousands of
+    /// tracks and the resolution is a database query, so a command asked for
+    /// after this one waits for it rather than overtaking it.
     private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
         let engine = library.engine
         let playable = self.playable
-        Task {
+        CommandLane.submit {
             let ids = await playable.trackIds(using: engine)
             guard !ids.isEmpty else { return }
             body(ids)
@@ -579,14 +580,14 @@ struct QueueButtons: View {
     }
 
     /// An artist is thousands of tracks and resolving them is a database read,
-    /// so it happens off the main actor.
+    /// so it happens off the main actor, on the `CommandLane`.
     private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
         guard let playable else { return }
         working = true
         let engine = library.engine
-        Task {
+        CommandLane.submit {
             let ids = await playable.trackIds(using: engine)
-            working = false
+            self.working = false
             guard !ids.isEmpty else { return }
             body(ids)
         }

@@ -309,7 +309,7 @@ struct SidebarView: View {
     /// is not on its own a reason to be moved anywhere.
     private func play(_ playlist: Playlist, shuffled: Bool = false) {
         let engine = playlists.engine
-        Task {
+        CommandLane.submit {
             _ = try? await engine.playPlaylist(
                 playlistId: playlist.id, startEntry: nil, shuffled: shuffled
             )

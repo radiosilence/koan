@@ -443,7 +443,7 @@ struct PlaylistView: View {
     /// nothing the queue would show that this does not.
     private func start(at entry: Int64) {
         let engine = playlists.engine
-        Task {
+        CommandLane.submit {
             _ = try? await engine.playPlaylist(
                 playlistId: playlistId,
                 startEntry: entry,

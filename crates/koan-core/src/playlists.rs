@@ -53,6 +53,24 @@ impl PlaylistHistory {
         })
     }
 
+    /// Make `change` to playlist `id` and record it for undo. The playlist as
+    /// it was is read in the same transaction as the change, so no other
+    /// writer's edit can fall between the two and be undone with this one. A
+    /// change that fails is rolled back and never recorded.
+    pub fn edit<T>(
+        &self,
+        conn: &rusqlite::Connection,
+        id: i64,
+        change: impl FnOnce() -> Result<T, DbError>,
+    ) -> Result<T, DbError> {
+        let (before, out) = queries::atomically(conn, || {
+            let before = Self::before(conn, id)?;
+            Ok::<_, DbError>((before, change()?))
+        })?;
+        self.record(before);
+        Ok(out)
+    }
+
     /// After an edit has landed: the playlist as it was before. An edit that
     /// failed is never recorded, so undo has nothing to step over. A new edit
     /// forgets what had been undone.
@@ -87,8 +105,23 @@ impl PlaylistHistory {
         let Some(target) = target else {
             return Ok(false);
         };
-        let now = queries::entry_snapshot(conn, id)?;
-        queries::restore_entries(conn, id, &target)?;
+        let restored = queries::atomically(conn, || {
+            let now = queries::entry_snapshot(conn, id)?;
+            queries::restore_entries(conn, id, &target)?;
+            Ok::<_, DbError>(now)
+        });
+        let now = match restored {
+            Ok(now) => now,
+            Err(e) => {
+                // Nothing moved, so the step stays where it was.
+                if back {
+                    steps.undo.push(target)
+                } else {
+                    steps.redo.push(target)
+                }
+                return Err(e);
+            }
+        };
         if back {
             steps.redo.push(now)
         } else {
@@ -131,6 +164,30 @@ mod history_tests {
 
         assert!(history.redo(&conn, id).unwrap());
         assert_eq!(queries::entry_snapshot(&conn, id).unwrap(), full);
+    }
+
+    #[test]
+    fn an_edit_that_fails_is_rolled_back_and_not_recorded() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let a = upsert_track(&conn, &sample_meta("A", "Artist", "X")).unwrap();
+        let id = queries::create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        let history = PlaylistHistory::default();
+
+        let failed = history.edit(&conn, id, || {
+            queries::add_tracks(&conn, id, &[a])?;
+            queries::add_tracks(&conn, id, &[a + 100])
+        });
+        assert!(matches!(failed, Err(DbError::MissingTracks(_))));
+        assert!(queries::entry_snapshot(&conn, id).unwrap().is_empty());
+        assert!(!history.undo(&conn, id).unwrap(), "nothing was recorded");
+
+        history
+            .edit(&conn, id, || queries::add_tracks(&conn, id, &[a]))
+            .unwrap();
+        assert!(history.undo(&conn, id).unwrap());
+        assert!(queries::entry_snapshot(&conn, id).unwrap().is_empty());
     }
 }
 

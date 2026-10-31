@@ -112,8 +112,10 @@ struct AlbumBrowser: View {
             play: { id in
                 nav.open(album: id)
                 let engine = library.engine
-                let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
-                player.playNow(trackIds: ids)
+                await CommandLane.submit {
+                    let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
+                    player.playNow(trackIds: ids)
+                }.value
             },
             toggleFavourite: { library.toggleFavourite(album: $0) }
         )

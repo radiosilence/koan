@@ -82,7 +82,7 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, more: @Composable Column
     Box {
         KoanMenu(expanded = expanded, onDismissRequest = onDismiss) {
             KoanMenuItem("Play", KoanIcons.play) { onDismiss(); app.play(playable) }
-            KoanMenuItem("Play Next", KoanIcons.playNext) { act { ids -> app.player.playNext(ids) } }
+            KoanMenuItem("Play Next", KoanIcons.playNext) { act { ids -> app.player.queueNext(this, ids) } }
             KoanMenuItem("Add to Queue", KoanIcons.queue) { act { ids -> addToQueue(ids) } }
             if (playable !is Playable.OfTrack) KoanMenuItem("Shuffle", KoanIcons.shuffle) { onDismiss(); app.play(playable, shuffled = true) }
             KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { onDismiss(); adding = true }

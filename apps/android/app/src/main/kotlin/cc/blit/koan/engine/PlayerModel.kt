@@ -54,9 +54,12 @@ class PlayerModel(private val mirror: EngineMirror) {
 
     fun enqueue(trackIds: List<Long>) = mirror.launch { addToQueue(trackIds) }
 
-    fun playNext(trackIds: List<Long>) {
-        val current = mirror.nowPlaying.value?.queueItemId ?: return enqueue(trackIds)
-        mirror.launch { insertAfter(trackIds, current) }
+    fun playNext(trackIds: List<Long>) = mirror.launch { queueNext(this, trackIds) }
+
+    /** Play Next, for a block already running in turn on [EngineMirror.launch]. */
+    suspend fun queueNext(engine: KoanEngine, trackIds: List<Long>) {
+        val current = mirror.nowPlaying.value?.queueItemId
+        if (current == null) engine.addToQueue(trackIds) else engine.insertAfter(trackIds, current)
     }
 
     fun remove(queueItemIds: List<String>) = mirror.launch { removeFromQueue(queueItemIds) }
@@ -91,7 +94,7 @@ class PlayerModel(private val mirror: EngineMirror) {
      * second, and at each pause or stop. A queue the size of a library is
      * only rewritten when it changed; otherwise only the position is.
      */
-    fun followSession() = mirror.launch {
+    fun followSession() = mirror.background {
         val restored = runCatching { restoreSession() }.getOrDefault(0u)
         // The player thread applies the restored rows; saving before they
         // arrive would write the empty queue over the one just read.
@@ -110,7 +113,7 @@ class PlayerModel(private val mirror: EngineMirror) {
     }
 
     /** The app is leaving the screen: the session here, and the queue on the server when this device keeps it there. */
-    fun saveOnLeaving() = mirror.launch {
+    fun saveOnLeaving() = mirror.background {
         runCatching { saveSession() }.onSuccess { savedQueueVersion = mirror.queue.value.version }
         saveServerQueueNow()
     }
