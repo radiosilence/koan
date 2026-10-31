@@ -5998,6 +5998,7 @@ async fn koan_command(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
         respond(&state, &auth, |caller, b| {
+            require_write(caller.role)?;
             let to = params
                 .get("to")
                 .ok_or_else(|| SubsonicError::missing_param("to"))?;
@@ -7170,7 +7171,7 @@ mod tests {
         let (_, body) = get_response(
             build_test_router(state),
             &format!(
-                "/rest/koanCommand?u=mate&p=hunter22&v=1.16.1&c=test&f=json&to=dev-b&command={command}"
+                "/rest/koanCommand?u=owner&p=sesame&v=1.16.1&c=test&f=json&to=dev-b&command={command}"
             ),
         )
         .await;
@@ -7645,6 +7646,13 @@ mod tests {
         let (_, body) = get_response(
             build_test_router(state.clone()),
             "/rest/star?id=mf-1&u=mate&p=hunter22&v=1.16.1&c=test",
+        )
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        // Controlling a device is a write, as GraphQL's `controlClient` is.
+        let (_, body) = get_response(
+            build_test_router(state.clone()),
+            "/rest/koanCommand?to=dev-b&command=%7B%22type%22%3A%22pause%22%7D&u=mate&p=hunter22&v=1.16.1&c=test",
         )
         .await;
         assert!(body.contains("code=\"50\""), "{body}");

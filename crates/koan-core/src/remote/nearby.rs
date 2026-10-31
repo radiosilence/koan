@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -882,11 +882,16 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
                 log::info!("nearby: {addr} is refused or held off; hung up");
             }
             Ok((stream, addr)) => {
+                let Some(slot) = Slot::take() else {
+                    log::warn!("nearby: {addr} connected past {MAX_CONNECTIONS} others; hung up");
+                    continue;
+                };
                 log::info!("nearby: {addr} connected");
                 let (local, stop) = (local.clone(), stop.clone());
                 let _ = std::thread::Builder::new()
                     .name("koan-nearby-peer".into())
                     .spawn(move || {
+                        let _slot = slot;
                         if let Err(e) = serve(stream, addr, &local, &stop) {
                             log::info!("nearby: {addr}: {e}");
                         }
@@ -925,6 +930,43 @@ impl Stop {
     }
 }
 
+/// The listener is open to the whole network, so what any device on it can
+/// make this one hold is bounded: a thread per connection, up to this many.
+const MAX_CONNECTIONS: usize = 32;
+
+/// The largest message a connected device may send. Its largest real one is a
+/// command naming every track it plays, signed: about 42 bytes a track, so
+/// this is room for some 200,000.
+const MAX_MESSAGE: usize = 8 * 1024 * 1024;
+
+static CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// One of the `MAX_CONNECTIONS`, given back when dropped.
+struct Slot;
+
+impl Slot {
+    fn take() -> Option<Self> {
+        if CONNECTIONS.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+            CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+            None
+        } else {
+            Some(Self)
+        }
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn socket_config() -> tungstenite::protocol::WebSocketConfig {
+    tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(MAX_MESSAGE))
+        .max_frame_size(Some(MAX_MESSAGE))
+}
+
 /// Serve one device that connected to this one.
 fn serve(
     stream: TcpStream,
@@ -938,7 +980,8 @@ fn serve(
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| e.to_string())?;
-    let mut socket = tungstenite::accept(stream).map_err(|e| e.to_string())?;
+    let mut socket = tungstenite::accept_with_config(stream, Some(socket_config()))
+        .map_err(|e| e.to_string())?;
     let fd = socket.get_ref().as_raw_fd();
     socket
         .get_ref()
@@ -2685,6 +2728,28 @@ mod dial_tests {
     #[test]
     fn a_redial_skips_the_wait() {
         assert_eq!(next_wait(RETRY_MAX, false, true), RETRY_MIN);
+    }
+
+    #[test]
+    fn a_served_connection_refuses_oversized_messages() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = std::thread::spawn(move || {
+            let stream = TcpStream::connect(addr).unwrap();
+            let (mut socket, _) = tungstenite::client(format!("ws://{addr}/"), stream).unwrap();
+            socket
+                .send(tungstenite::Message::text("x".repeat(1024)))
+                .unwrap();
+            let _ = socket.send(tungstenite::Message::text("x".repeat(MAX_MESSAGE + 1)));
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = tungstenite::accept_with_config(stream, Some(socket_config())).unwrap();
+        assert_eq!(socket.read().unwrap().len(), 1024);
+        assert!(matches!(
+            socket.read(),
+            Err(tungstenite::Error::Capacity(_))
+        ));
+        client.join().unwrap();
     }
 }
 

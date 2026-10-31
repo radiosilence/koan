@@ -1347,6 +1347,25 @@ mod tests {
         assert!(cfg["libraryFolders"].is_array());
         assert!(cfg["targetFps"].as_i64().unwrap() > 0);
         assert!(cfg["artSize"].as_i64().unwrap() > 0);
+
+        for role in [Role::User, Role::Readonly] {
+            let resp = schema
+                .execute(
+                    async_graphql::Request::new("{ config { libraryFolders } }").data(AuthUser {
+                        user_id: 2,
+                        username: "bob".into(),
+                        role,
+                    }),
+                )
+                .await;
+            assert!(
+                resp.errors
+                    .iter()
+                    .any(|e| e.message.starts_with("forbidden")),
+                "{role} read the config: {:?}",
+                resp.errors
+            );
+        }
     }
 
     #[tokio::test]
