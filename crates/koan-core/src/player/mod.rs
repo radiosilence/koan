@@ -4619,13 +4619,21 @@ mod tests {
         assert_eq!(playlist_ids(&player), original);
 
         player.shared_state.pick(original[28]);
+        let steps = player.undo_stack.undo_len();
         player.process_command(PlayerCommand::ShuffleUpcoming);
         assert_eq!(playlist_ids(&player), original);
-        assert!(
-            !player.undo_stack.can_undo() || {
-                player.process_command(PlayerCommand::Undo);
-                playlist_ids(&player) == original
-            }
+        assert_eq!(
+            player.undo_stack.undo_len(),
+            steps,
+            "no undo step for nothing"
+        );
+
+        player.shared_state.pick(original[27]);
+        player.process_command(PlayerCommand::ShuffleUpcoming);
+        assert_eq!(
+            playlist_ids(&player)[28..],
+            [original[29], original[28]],
+            "two rows left are swapped on every press"
         );
     }
 
