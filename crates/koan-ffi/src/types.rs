@@ -352,6 +352,22 @@ pub struct RecentlyPlayed {
     pub tracks: Vec<Track>,
 }
 
+/// What the Apple TV's Top Shelf shows: the records played lately and the
+/// favourite records, in the order their shelf pages list them.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct TopShelf {
+    pub recent: Vec<TopShelfRecord>,
+    pub favourites: Vec<TopShelfRecord>,
+}
+
+/// A record on the Top Shelf, with the uid its link names it by: the shelf is
+/// read while koan is not running, and a row id may by then be another row's.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct TopShelfRecord {
+    pub album: Album,
+    pub uid: String,
+}
+
 /// Which shelf: see `koan_core::shelves::Shelf`.
 #[derive(uniffi::Enum, Debug, Clone)]
 pub enum ShelfKind {

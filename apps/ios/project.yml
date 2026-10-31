@@ -196,6 +196,7 @@ targets:
         buildPhase: resources
     dependencies:
       - target: KoanFFITV
+      - target: KoanTVTopShelf
     settings:
       base:
         PRODUCT_NAME: koan
@@ -224,6 +225,9 @@ targets:
         # App Attest, as the phone has it: the TV registers with the push
         # relay too.
         com.apple.developer.devicecheck.appattest-environment: development
+        # Where the app leaves the Top Shelf's snapshot for the extension.
+        com.apple.security.application-groups:
+          - group.cc.blit.koan
     info:
       path: ../../target/ios-project/TV-Info.plist
       properties:
@@ -240,6 +244,36 @@ targets:
           and finds other koan apps on it to play music on.
         NSBonjourServices: [_koan._tcp]
         ITSAppUsesNonExemptEncryption: false
+
+  # The Apple TV's Top Shelf: reads the snapshot the app writes to the app
+  # group and links nothing of the engine. See `ContentProvider`.
+  KoanTVTopShelf:
+    type: app-extension
+    platform: tvOS
+    sources:
+      - path: TopShelf
+      - path: ../macos/Sources/KoanTV/TopShelfSnapshot.swift
+    settings:
+      base:
+        PRODUCT_NAME: KoanTVTopShelf
+        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.topshelf
+        MARKETING_VERSION: ${KOAN_VERSION}
+        CURRENT_PROJECT_VERSION: ${KOAN_BUILD}
+        TARGETED_DEVICE_FAMILY: "3"
+    entitlements:
+      path: ../../target/ios-project/KoanTVTopShelf.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cc.blit.koan
+    info:
+      path: ../../target/ios-project/TopShelf-Info.plist
+      properties:
+        CFBundleDisplayName: kōan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.tv-top-shelf
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentProvider
 
   # Draws the Live Activity; the intents its buttons run are the app's.
   KoanWidgets:

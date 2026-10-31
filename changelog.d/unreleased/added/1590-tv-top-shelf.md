@@ -1,0 +1,1 @@
+- **Top Shelf on Apple TV.** With kōan in the top row of the Home Screen, the shelf shows recently played and favourite records; choosing one opens it, Play plays it.

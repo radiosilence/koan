@@ -306,7 +306,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     /// The record's encoded artwork, from disk or the network. One fetch per
     /// record however many sizes are waiting on it.
-    private func bytes(for source: AlbumArtwork.Source) async -> Data? {
+    func bytes(for source: AlbumArtwork.Source) async -> Data? {
         let key = Self.key(source)
         guard !locked({ absent.contains(key) }) else { return nil }
 

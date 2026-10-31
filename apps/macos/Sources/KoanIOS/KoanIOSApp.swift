@@ -174,6 +174,7 @@ struct KoanIOSApp: App {
                     }
                     #if os(tvOS)
                     IntentTarget.set(built)
+                    TopShelfWriter.start(built)
                     #endif
                     if let pendingURL {
                         open(pendingURL, in: built)
@@ -202,6 +203,12 @@ struct KoanIOSApp: App {
 
 extension KoanIOSApp {
     private func open(_ url: URL, in state: AppState) {
+        #if os(tvOS)
+        if url.scheme == "koan", url.host == "album" {
+            openRecord(url, in: state)
+            return
+        }
+        #endif
         if url.isFileURL {
             // A copy iOS made in the app's Inbox for it, not opened in place.
             state.dsp.importFiles([url], copy: url)
@@ -212,6 +219,44 @@ extension KoanIOSApp {
         }
     }
 }
+
+#if os(tvOS)
+extension KoanIOSApp {
+    /// A record chosen on the Top Shelf: `koan://album/<uid>` opens its page,
+    /// `?play` plays it. Television only: on a phone or a Mac the scheme would
+    /// let any web page start the music.
+    private func openRecord(_ url: URL, in state: AppState) {
+        let uid = url.lastPathComponent
+        let play = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.contains { $0.name == "play" } == true
+        Task {
+            let found: Int64?
+            do {
+                found = try await state.engine.albumForUid(uid: uid)
+            } catch {
+                state.player.lastError = SettingsModel.describe(error)
+                return
+            }
+            guard let id = found else {
+                state.player.lastNotice = "That record is no longer in the library."
+                return
+            }
+            if play {
+                do {
+                    _ = try await state.playRecord(id, named: "That record")
+                    state.ui.nowPlayingAsked += 1
+                } catch let error as IntentError {
+                    state.player.lastError = String(localized: error.localizedStringResource)
+                } catch {
+                    state.player.lastError = SettingsModel.describe(error)
+                }
+            } else {
+                state.nav.open(album: id)
+            }
+        }
+    }
+}
+#endif
 
 /// What shows while the engine starts: the launch screen, continued.
 ///

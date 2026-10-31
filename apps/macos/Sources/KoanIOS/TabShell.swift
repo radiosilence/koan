@@ -193,6 +193,7 @@ struct TabShell: View {
             if shown { pushedShowing.insert(id) } else { pushedShowing.remove(id) }
         }
         .defaultFocus($barFocus, selection)
+        .onChange(of: app.ui.nowPlayingAsked) { selection = .nowPlaying }
         #else
         .modifier(AdaptableTabs(sidebar: sidebar))
         .onChange(of: sidebar) { regroup() }
@@ -434,6 +435,12 @@ struct TabShell: View {
             selection = owner
             return
         }
+        #if os(tvOS)
+        // Now Playing is a page with no stack to push on, and links nowhere:
+        // a move made while it is in front, as by a record opened from the
+        // Top Shelf, goes on the library's.
+        if selection == .nowPlaying { selection = .library }
+        #endif
         var routes = paths[selection] ?? []
         if let index = routes.lastIndex(of: .page(page)) {
             routes.removeSubrange((index + 1)...)
