@@ -21,6 +21,16 @@ final class SharingModel {
     private(set) var account: String?
     /// A start or stop is under way.
     private(set) var busy = false
+    /// Tailscale on this Mac, while it runs; `nil` until asked or when not.
+    private(set) var tailscale: TailscaleStatus?
+    /// Tailscale has been looked for, so `nil` means it is not here.
+    private(set) var tailscaleChecked = false
+    /// Why the last Funnel change failed.
+    private(set) var funnelError: String?
+    /// Moves whenever the engine itself wrote a setting (the public address
+    /// Funnel publishes at), so Settings reads them again rather than writing
+    /// its older copy back.
+    private(set) var revision = 0
 
     init(engine: KoanEngine) {
         self.engine = engine
@@ -61,6 +71,42 @@ final class SharingModel {
             sharing = nil
             failure = Self.reason(error)
         }
+        // A start publishes the Funnel again where it was left on, and may
+        // move its address.
+        revision += 1
+        await refreshTailscale()
+    }
+
+    func refreshTailscale() async {
+        tailscale = await engine.tailscale()
+        tailscaleChecked = true
+    }
+
+    /// Publish on the internet through Tailscale Funnel, and send invites there.
+    func enableFunnel() async {
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await engine.enableFunnel()
+            funnelError = nil
+        } catch {
+            funnelError = Self.reason(error)
+        }
+        revision += 1
+        await refreshTailscale()
+    }
+
+    func disableFunnel() async {
+        busy = true
+        defer { busy = false }
+        do {
+            try await engine.disableFunnel()
+            funnelError = nil
+        } catch {
+            funnelError = Self.reason(error)
+        }
+        revision += 1
+        await refreshTailscale()
     }
 
     /// Read the network address again, after a change of network.

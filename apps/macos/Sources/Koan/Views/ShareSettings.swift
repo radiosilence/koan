@@ -69,6 +69,8 @@ struct ShareSettings: View {
     @State private var publicAddress: String?
     @State private var copied = false
     @State private var visits = 0
+    /// Asking before the library goes on the internet.
+    @State private var confirmingFunnel = false
 
     var body: some View {
         let sharing = app.sharing
@@ -190,28 +192,91 @@ struct ShareSettings: View {
         }
 
         if model.settings.shareEnabled {
-            Section {
-                LabeledContent("Public address") {
-                    TextField("Public address", text: Binding(
-                        get: { publicAddress ?? model.settings.serverUrl },
-                        set: { publicAddress = $0 }
-                    ), prompt: Text("https://mac.example.ts.net"))
-                    .verbatimEntry(.url)
-                    .onSubmit(commitPublicAddress)
-                    .koanField(publicAddress ?? model.settings.serverUrl, prompt: "https://mac.example.ts.net")
-                }
-            } header: {
-                KoanSectionHeader("Away from home")
-            } footer: {
-                Text("A tunnel such as Tailscale Funnel or Cloudflare Tunnel gives this Mac an HTTPS address on the internet. Put it here and invites send phones there. Without one, phones reach this Mac on your network only.")
-                    .koanText(.fine, .muted)
-            }
+            awayFromHome(sharing)
         }
 
         if sharing.sharing != nil {
             LinkDeviceSection(username: account, visit: visits)
                 .onAppear { visits += 1 }
         }
+    }
+
+    // MARK: Away from home
+
+    @ViewBuilder
+    private func awayFromHome(_ sharing: SharingModel) -> some View {
+        Section {
+            LabeledContent("Tailscale") {
+                if let tailscale = sharing.tailscale {
+                    Text("Detected · \(tailscale.name)")
+                } else if sharing.tailscaleChecked {
+                    Text("Not detected")
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            if let tailscale = sharing.tailscale {
+                if let running = sharing.sharing {
+                    // Inside the tailnet, WireGuard already encrypts it.
+                    LabeledContent("On your tailnet", value: "http://\(tailscale.name):\(running.port)")
+                }
+                if let url = tailscale.funnelUrl {
+                    LabeledContent("On the internet", value: url)
+                    HStack {
+                        Button("Stop Publishing") { Task { await sharing.disableFunnel() } }
+                            .koanButton(.bordered)
+                            .disabled(sharing.busy)
+                        Spacer()
+                    }
+                    .rowButtons()
+                } else if tailscale.funnelAllowed {
+                    HStack {
+                        Button("Publish with Tailscale Funnel…") { confirmingFunnel = true }
+                            .koanButton(.bordered)
+                            .disabled(sharing.busy || sharing.sharing == nil)
+                        Spacer()
+                    }
+                    .rowButtons()
+                } else {
+                    Text("Funnel is off for your tailnet. Its admin turns it on in Tailscale's access controls.")
+                        .koanText(.meta, .muted)
+                }
+            } else if sharing.tailscaleChecked {
+                Link("Get Tailscale", destination: URL(string: "https://tailscale.com/download")!)
+            }
+            if let funnelError = sharing.funnelError {
+                KoanLabel(funnelError, icon: Icon.warning).koanText(.meta, .bad)
+            }
+            LabeledContent("Public address") {
+                TextField("Public address", text: Binding(
+                    get: { publicAddress ?? model.settings.serverUrl },
+                    set: { publicAddress = $0 }
+                ), prompt: Text("https://mac.example.ts.net"))
+                .verbatimEntry(.url)
+                .onSubmit(commitPublicAddress)
+                .koanField(publicAddress ?? model.settings.serverUrl, prompt: "https://mac.example.ts.net")
+            }
+        } header: {
+            KoanSectionHeader("Away from home")
+        } footer: {
+            Text(sharing.tailscale == nil
+                ? "Tailscale on this Mac and your phone reaches it from anywhere, encrypted, and can publish it on the internet. Otherwise a tunnel's HTTPS address goes under Public address, and invites send phones there."
+                : "Phones signed in to your tailnet reach this Mac from anywhere. Funnel publishes it on the internet, over HTTPS, for phones without Tailscale. Invites send phones to the public address.")
+                .koanText(.fine, .muted)
+        }
+        .task { await sharing.refreshTailscale() }
+        .confirmationDialog(
+            "Publish kōan on the internet?",
+            isPresented: $confirmingFunnel,
+            titleVisibility: .visible
+        ) {
+            Button("Publish") { Task { await sharing.enableFunnel() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Tailscale Funnel publishes this Mac at https://\(sharing.tailscale?.name ?? "") with a certificate of its own, and keeps it published whenever this Mac shares. Anyone can reach it; only accounts made here can sign in. Invites will send phones there.")
+        }
+        // The engine wrote the address Funnel publishes at.
+        .onChange(of: sharing.revision) { model.reload() }
     }
 
     private func setSharing(_ on: Bool) {
@@ -253,6 +318,12 @@ struct ShareSettings: View {
             return
         }
         model.edit { $0.serverUrl = address }
+        // The address is this Mac's tailnet name, which only Funnel serves:
+        // offered as the way to make it work.
+        if let tailscale = app.sharing.tailscale, tailscale.funnelUrl == nil, tailscale.funnelAllowed,
+           URL(string: address)?.host() == tailscale.name {
+            confirmingFunnel = true
+        }
         restartIfSharing()
     }
 

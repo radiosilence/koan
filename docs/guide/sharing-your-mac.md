@@ -23,13 +23,23 @@ The connection is plain HTTP: sign-ins and music cross your network unencrypted,
 
 ## Away from home
 
-kōan does not run a relay or a tunnel of its own. These give the Mac an address reachable from anywhere, and the first two encrypt the connection:
+### With Tailscale
 
-- **Tailscale** (recommended). Install Tailscale on the Mac and the phone and sign both in to the same tailnet. The phone reaches the Mac at its tailnet address, such as `http://100.101.102.103:4000`, encrypted end to end, and nothing is published to the internet. To use its MagicDNS name (`mac.tailnet.ts.net`) instead, put that name under **Public address**: the Mac answers only to names it has been told, so a web page elsewhere cannot reach it by pointing a name of its own at the Mac. To reach the Mac from a device without Tailscale, `tailscale funnel 4000` publishes it at `https://<mac>.<tailnet>.ts.net` with a certificate Tailscale provides.
+With [Tailscale](https://tailscale.com/download) running on the Mac, **Away from home** in Settings shows it as detected, with the Mac's name on your tailnet.
+
+- **Phones on your tailnet** reach the Mac from anywhere at `http://<mac>.<tailnet>.ts.net:4000`, encrypted by Tailscale, with nothing published to the internet.
+- **Publish with Tailscale Funnel** publishes the Mac on the internet at `https://<mac>.<tailnet>.ts.net`, with a certificate Tailscale provides, for phones without Tailscale. It fills in **Public address**, so invites and QR codes send phones there, and kōan publishes it again whenever the Mac starts sharing. **Stop Publishing** takes it down.
+
+Funnel publishes at the Mac's own name on the tailnet; to change the address, rename the Mac in Tailscale. It uses port 443 unless something else on the Mac is already published there, then 8443 or 10000, and leaves what else Tailscale serves alone. Funnel has to be turned on for the tailnet first, in its access controls; Settings says so when it is not.
+
+### Without Tailscale
+
+A tunnel gives the Mac an HTTPS address of its own; put it under **Public address**.
+
 - **Cloudflare Tunnel.** Free, with HTTPS at Cloudflare's edge, but needs a domain on Cloudflare. Cloudflare's terms restrict serving large media through tunnels on the free plan; personal use is common, but it is a risk to weigh.
 - **Not recommended:** ngrok's free plan, which transfers 1 GB a month; Cloudflare quick tunnels, whose address changes on every start and signs every phone out; and forwarding a router port to the Mac, which publishes plain HTTP to the internet.
 
-Put the tunnel's HTTPS address under **Public address**. Invites and QR codes then send phones there rather than to the Mac's address on your network.
+kōan does not run a relay or a tunnel of its own.
 
 ## What sharing serves
 

@@ -23,6 +23,45 @@ pub struct Sharing {
     pub lan_url: Option<String>,
 }
 
+/// Tailscale on this device, for Settings.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct TailscaleStatus {
+    /// The device's name on the tailnet, `mac.tailnet.ts.net`.
+    pub name: String,
+    /// The tailnet lets this device use Funnel.
+    pub funnel_allowed: bool,
+    /// Where Funnel publishes the library, while it does.
+    pub funnel_url: Option<String>,
+}
+
+fn funnel_error(e: koan_core::tailscale::FunnelError) -> KoanError {
+    KoanError::Refused {
+        message: e.to_string(),
+    }
+}
+
+/// Publish the server on its new `port` after a start, taking the Funnel off
+/// the port it had `before`, and keep the public address on Funnel's: the
+/// machine's tailnet name, or Funnel's port, may have changed meanwhile.
+fn republish(before: Option<u16>, port: u16) {
+    if let Some(before) = before.filter(|&b| b != port)
+        && let Err(e) = koan_core::tailscale::funnel_off(before)
+    {
+        log::warn!("share: Funnel on the old port left up: {e}");
+    }
+    match koan_core::tailscale::funnel(port) {
+        Ok(url) => {
+            let changed = koan_core::config::Config::cached().server.url.as_deref() != Some(&url);
+            if changed
+                && let Err(e) = koan_core::config::Config::persist(|cfg| cfg.server.url = Some(url))
+            {
+                log::warn!("share: Funnel's address not saved: {e}");
+            }
+        }
+        Err(e) => log::warn!("share: Funnel not published: {e}"),
+    }
+}
+
 /// The running server's port and its client. Set once it has started and
 /// cleared as it begins to stop, so a read never waits on a stop's drain.
 struct Serving {
@@ -108,10 +147,14 @@ impl KoanEngine {
             }
             // Held throughout, so a start and a stop never interleave.
             let mut server = self.server.lock();
-            *SERVING.write() = None;
+            let before = SERVING.write().take().map(|s| s.port);
             if let Some(running) = server.take() {
                 running.stop();
             }
+            // Phones on the tailnet reach this device by its name there.
+            let tailscale = koan_core::tailscale::status();
+            let mut names = names;
+            names.extend(tailscale.as_ref().map(|t| t.name.clone()));
             let started = ApiServer::start(ApiServerOpts {
                 state: self.state.clone(),
                 cmd_tx: self.tx.clone(),
@@ -137,6 +180,9 @@ impl KoanEngine {
             });
             *server = Some(started);
             koan_core::signal::engine_changed().bump();
+            if koan_core::config::Config::cached().share.funnel {
+                republish(before, port);
+            }
             Ok(sharing(port))
         })
         .await
@@ -148,8 +194,16 @@ impl KoanEngine {
     pub async fn stop_server(self: Arc<Self>) {
         offload::offload(move || {
             let mut server = self.server.lock();
-            *SERVING.write() = None;
+            let port = SERVING.write().take().map(|s| s.port);
             koan_core::signal::engine_changed().bump();
+            // Taken down with the server, which it would otherwise answer
+            // for with errors; `share.funnel` stays, for the next start.
+            if koan_core::config::Config::cached().share.funnel
+                && let Some(port) = port
+                && let Err(e) = koan_core::tailscale::funnel_off(port)
+            {
+                log::warn!("share: Funnel left up: {e}");
+            }
             if let Some(running) = server.take() {
                 running.stop();
             }
@@ -163,6 +217,78 @@ impl KoanEngine {
         offload::offload(move || {
             let port = SERVING.read().as_ref()?.port;
             Some(sharing(port))
+        })
+        .await
+    }
+
+    /// Tailscale on this device, while it is running and signed in.
+    pub async fn tailscale(self: Arc<Self>) -> Option<TailscaleStatus> {
+        offload::offload(move || {
+            let tailscale = koan_core::tailscale::status()?;
+            let port = SERVING.read().as_ref().map(|s| s.port);
+            let funnel_url = port
+                .filter(|_| koan_core::config::Config::cached().share.funnel)
+                .and_then(koan_core::tailscale::funnel_port)
+                .map(|on| tailscale.url_on(on));
+            Some(TailscaleStatus {
+                name: tailscale.name,
+                funnel_allowed: tailscale.funnel_allowed,
+                funnel_url,
+            })
+        })
+        .await
+    }
+
+    /// Publish the library on the internet through Tailscale Funnel, now and
+    /// whenever it is served, and send invites to its address there.
+    /// Returns the address.
+    pub async fn enable_funnel(self: Arc<Self>) -> Result<String, KoanError> {
+        offload::offload(move || {
+            let port =
+                SERVING
+                    .read()
+                    .as_ref()
+                    .map(|s| s.port)
+                    .ok_or_else(|| KoanError::Refused {
+                        message: "start sharing first".into(),
+                    })?;
+            let url = koan_core::tailscale::funnel(port).map_err(funnel_error)?;
+            let address = url.clone();
+            koan_core::config::Config::persist(move |cfg| {
+                cfg.share.funnel = true;
+                cfg.server.url = Some(address);
+            })
+            .map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })?;
+            Ok(url)
+        })
+        .await
+    }
+
+    /// Stop publishing through Funnel. The public address goes with it, where
+    /// it was Funnel's.
+    pub async fn disable_funnel(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let tailscale = koan_core::tailscale::status();
+            if let Some(port) = SERVING.read().as_ref().map(|s| s.port) {
+                koan_core::tailscale::funnel_off(port).map_err(funnel_error)?;
+            }
+            koan_core::config::Config::persist(move |cfg| {
+                cfg.share.funnel = false;
+                // Any of Funnel's addresses for this machine is Funnel's.
+                let funnels = |url: &str| {
+                    tailscale
+                        .as_ref()
+                        .is_some_and(|t| url.starts_with(&format!("https://{}", t.name)))
+                };
+                if cfg.server.url.as_deref().is_some_and(funnels) {
+                    cfg.server.url = None;
+                }
+            })
+            .map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })
         })
         .await
     }

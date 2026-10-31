@@ -120,6 +120,9 @@ pub struct ShareConfig {
     /// Serve whenever the app is open.
     pub enabled: bool,
     pub port: u16,
+    /// Publish the server on the internet through Tailscale Funnel whenever
+    /// it serves, at the machine's tailnet name.
+    pub funnel: bool,
 }
 
 impl Default for ShareConfig {
@@ -127,6 +130,7 @@ impl Default for ShareConfig {
         Self {
             enabled: false,
             port: 4000,
+            funnel: false,
         }
     }
 }
@@ -1508,6 +1512,7 @@ pub fn layer_of(path: &str) -> Layer {
         // Whether this machine serves its library, and where.
         | "share.enabled"
         | "share.port"
+        | "share.funnel"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
