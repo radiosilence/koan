@@ -1238,4 +1238,93 @@ mod tests {
             .unwrap();
         assert_eq!(run_browser(req).await, StatusCode::OK);
     }
+
+    /// A server in an app is stopped and started again within one process:
+    /// a stop ends its links rather than waiting them out, and leaves nothing
+    /// behind that the next start trips over.
+    #[test]
+    fn an_embedded_server_ends_its_links_on_stop_and_starts_again() {
+        use koan_core::auth::Role;
+        use koan_core::db::connection::Database;
+        use koan_core::player::commands::CommandChannel;
+
+        let _own = koan_core::config::SWITCHING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        koan_core::config::set_config_dir(dir.path());
+        let db_path = dir.path().join("koan.db");
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::schema::create_tables(&db.conn).unwrap();
+        koan_core::db::queries::auth::create_user(&db.conn, "sharer", "hunter22", Role::Admin)
+            .unwrap();
+
+        let start = || {
+            ApiServer::start(
+                ApiServerOpts {
+                    state: SharedPlayerState::new(),
+                    cmd_tx: CommandChannel::new().tx,
+                    pool: Arc::new(Pool::new(db_path.clone())),
+                    port: Some(0),
+                    bind: Some(std::net::Ipv4Addr::LOCALHOST.into()),
+                    subsonic_port: None,
+                    playground: false,
+                    viz: None,
+                    profile: Profile::Embedded,
+                },
+                Default::default(),
+            )
+            .unwrap()
+        };
+        // Subsonic answers, though `[subsonic]` is off by default.
+        let ping = |addr: std::net::SocketAddr| {
+            let body = reqwest::blocking::get(format!(
+                "http://{addr}/rest/ping?u=sharer&p=hunter22&v=1.16.1&c=test&f=json"
+            ))
+            .unwrap()
+            .text()
+            .unwrap();
+            assert!(body.contains(r#""status":"ok""#), "{body}");
+        };
+        let linked = || {
+            crate::clients::registry()
+                .list(Some("sharer"))
+                .iter()
+                .any(|c| c.device == "embedded-restart")
+        };
+
+        let server = start();
+        let addr = server.addr();
+        ping(addr);
+        let (mut socket, _) = tungstenite::connect(format!(
+            "ws://{addr}/rest/koanLink?u=sharer&p=hunter22&v=1.16.1&c=test&device=embedded-restart"
+        ))
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !linked() {
+            assert!(std::time::Instant::now() < deadline, "the device never linked");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let stopping = std::time::Instant::now();
+        server.stop();
+        assert!(stopping.elapsed() < DRAIN, "stop waited out the drain");
+        assert!(!linked(), "the link outlived the server");
+        // The device is told, so it links again once the server is back.
+        let closed = loop {
+            match socket.read() {
+                Ok(tungstenite::Message::Close(frame)) => break frame,
+                Ok(_) => continue,
+                Err(e) => panic!("no close frame: {e}"),
+            }
+        };
+        assert_eq!(
+            closed.map(|f| f.code),
+            Some(tungstenite::protocol::frame::coding::CloseCode::Away)
+        );
+
+        let again = start();
+        ping(again.addr());
+        again.stop();
+    }
 }
