@@ -75,6 +75,8 @@ url = "https://host.example/koan"
 
 The server takes the path off each request before routing it, so a proxy may forward `/koan/rest/ping` as it is or strip it to `/rest/ping` (Funnel's `--set-path` strips it); both reach the same place. Redirects and cookies are given the path back, and the web UI and share pages link relative to it. Apps, the TUI and Subsonic clients are given the whole address, path included.
 
+The path may use letters, digits, `/`, `-`, `.`, `_` and `~`, and may not begin with a segment kōan routes itself (`/rest`, `/ui`, `/library`, `/share` and the like), which a stripping proxy would make ambiguous; the server refuses to start with one.
+
 The web UI then works only through that address: a browser that reaches the server directly, on its LAN address, is sent to `/koan/…`, which the server does not prefix for itself. Apps and Subsonic clients work on either.
 
 An MCP client looks for the OAuth server's metadata between the host and the path, at `https://host.example/.well-known/oauth-authorization-server/koan`, which is outside what the proxy forwards for `/koan`. Forward that path to the same path on kōan, which answers it. With Funnel, as a second mount:
