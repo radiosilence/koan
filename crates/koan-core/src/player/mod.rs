@@ -2508,7 +2508,10 @@ impl Player {
                 let mut items = items;
                 let start = if mode == QueueMode::Shuffled {
                     crate::helpers::shuffle(&mut items);
-                    0
+                    items
+                        .iter()
+                        .position(state::PlaylistItem::playable)
+                        .unwrap_or(0)
                 } else {
                     start
                 };

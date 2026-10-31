@@ -211,7 +211,7 @@ impl PlaylistItem {
         }
     }
 
-    fn playable(&self) -> bool {
+    pub(crate) fn playable(&self) -> bool {
         !matches!(self.state, ItemState::Failed(_))
     }
 }
