@@ -100,12 +100,16 @@ struct AppState {
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
     /// `server.url`: where an assistant reaches `/mcp`, and what `ping` gives
-    /// clients to know the server by. Without it, MCP's sign-in cannot work,
-    /// so none is offered.
-    server_url: Option<String>,
+    /// clients to know the server by.
+    server_url: crate::ServerUrl,
     /// Whether `[push]` is enabled: the server pushes through the relay, and
     /// the app asks to show notifications only where it does.
     push: bool,
+    /// Cancelled when the server stops, which ends every link.
+    stop: tokio_util::sync::CancellationToken,
+    /// An embedded server's key for the app hosting it: signs in as the first
+    /// admin. See `ApiServer::host_key`.
+    host_key: Option<String>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -122,6 +126,10 @@ struct LibraryModified {
 }
 
 impl AppState {
+    fn server_url(&self) -> Option<String> {
+        self.server_url.get()
+    }
+
     fn open_db(&self) -> Result<Handle<'_>, SubsonicError> {
         self.pool
             .get()
@@ -917,9 +925,22 @@ fn check_credential(params: &SubsonicParams, state: &AppState) -> Result<Caller,
             return Err(SubsonicError::conflicting_auth());
         }
         let db = state.open_db()?;
-        let user = queries::api_keys::authenticate_api_key(&db.conn, key)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(SubsonicError::invalid_api_key)?;
+        let host = state
+            .host_key
+            .as_deref()
+            .is_some_and(|host| bool::from(key.as_bytes().ct_eq(host.as_bytes())));
+        let user = if host {
+            queries::auth::first_admin(&db.conn)
+                .and_then(|id| match id {
+                    Some(id) => queries::auth::get_user_by_id(&db.conn, id),
+                    None => Ok(None),
+                })
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+        } else {
+            queries::api_keys::authenticate_api_key(&db.conn, key)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+        }
+        .ok_or_else(SubsonicError::invalid_api_key)?;
         return Ok(Caller {
             username: user.username,
             role: user.role,
@@ -2120,7 +2141,7 @@ async fn ping(
     offload_response(move || {
         respond(&state, &params, |_, mut b| {
             // The address clients know this server by: see `server.url`.
-            if let Some(url) = &state.server_url {
+            if let Some(url) = &state.server_url() {
                 b.root = b.root.attr("serverUrl", url);
             }
             Ok(b)
@@ -4459,7 +4480,8 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
-    let mcp: &[(&str, &[i64])] = if state.server_url.is_some() {
+    // An app's own server mounts no MCP.
+    let mcp: &[(&str, &[i64])] = if state.server_url().is_some() && state.host_key.is_none() {
         &[(koan_core::remote::profile::MCP, &[1])]
     } else {
         &[]
@@ -5146,7 +5168,7 @@ fn username_param(params: &RawParams) -> Result<&str, SubsonicError> {
 
 /// The server's signing keypair: what invite tokens are signed and checked
 /// with.
-fn keypair() -> Result<&'static crate::auth::Keypair, SubsonicError> {
+fn keypair() -> Result<crate::auth::Keypair, SubsonicError> {
     crate::auth::signing_keys().map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
@@ -5349,9 +5371,10 @@ async fn koan_mcp(
 ) -> Response {
     offload_response(move || {
         respond_db_caller(&state, &params, Role::Readonly, |_, _, b| {
+            // An app's own server mounts no MCP.
             let base = state
-                .server_url
-                .as_deref()
+                .server_url()
+                .filter(|_| state.host_key.is_none())
                 .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
             Ok(b.child(
                 XmlNode::new("mcp")
@@ -5869,6 +5892,7 @@ async fn koan_link(
         }
     }
     let pool = state.pool.clone();
+    let stop = state.stop.clone();
     let lease = crate::auth::Lease {
         user_id: caller.user_id,
         mark,
@@ -5879,6 +5903,7 @@ async fn koan_link(
             socket,
             caller.username,
             lease,
+            stop,
             LinkPeer {
                 name,
                 platform,
@@ -5915,11 +5940,11 @@ struct LinkPeer {
 /// and the accounts it was shared with are linked on their own, so nothing
 /// else would tell them. Account changes are rare, and each sends every
 /// keyed account its list again.
-fn spawn_key_publisher(pool: Arc<Pool>) {
+fn spawn_key_publisher(pool: Arc<Pool>, stop: tokio_util::sync::CancellationToken) {
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {
         return;
     };
-    runtime.spawn(async move {
+    runtime.spawn(stop.run_until_cancelled_owned(async move {
         let mut mark = koan_core::auth::account_mark();
         loop {
             mark = koan_core::auth::any_account_changed_since(mark).await;
@@ -5931,7 +5956,7 @@ fn spawn_key_publisher(pool: Arc<Pool>) {
             })
             .await;
         }
-    });
+    }));
 }
 
 /// Send `username`'s links that asked for them the device keys they check
@@ -6066,6 +6091,7 @@ async fn link_session(
     mut socket: axum::extract::ws::WebSocket,
     username: String,
     lease: crate::auth::Lease,
+    stop: tokio_util::sync::CancellationToken,
     peer: LinkPeer,
     pool: Arc<Pool>,
 ) {
@@ -6156,6 +6182,15 @@ async fn link_session(
                     let close = socket.send(Message::Close(Some(CloseFrame {
                         code: close_code::NORMAL,
                         reason: "sign in again".into(),
+                    })));
+                    let _ = tokio::time::timeout(LINK_SEND, close).await;
+                    break;
+                }
+                // Going away, so the device links again once the server is back.
+                _ = stop.cancelled() => {
+                    let close = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::AWAY,
+                        reason: "server stopping".into(),
                     })));
                     let _ = tokio::time::timeout(LINK_SEND, close).await;
                     break;
@@ -6675,8 +6710,11 @@ fn subsonic_app(state: Arc<AppState>) -> axum::Router {
         state.password.is_some().then(|| state.username.clone()),
         state.users.clone(),
     ));
+    // For the routes that hold a socket and take no state, as pairing does.
+    let stop = axum::Extension(state.stop.clone());
     register_subsonic_routes(axum::Router::new())
         .with_state(state)
+        .layer(stop)
         .layer(axum::middleware::from_fn_with_state(
             throttle,
             throttle_auth,
@@ -6694,15 +6732,17 @@ pub fn subsonic_router(
     pool: Arc<Pool>,
     covers: Arc<crate::covers::Covers>,
     users: Arc<PasswordVerifier>,
-) -> Option<axum::Router> {
+    profile: crate::graphql::Profile,
+    stop: tokio_util::sync::CancellationToken,
+    host_key: Option<String>,
+) -> axum::Router {
     let cfg = Config::cached();
 
-    if !cfg.subsonic.enabled {
-        return None;
-    }
-
+    // The shared secret belongs to a deployment that chose it; an app sharing
+    // its library signs in accounts only.
     let password = koan_core::helpers::get_subsonic_password(&cfg)
-        .filter(|_| !cfg.subsonic.username.is_empty());
+        .filter(|_| !cfg.subsonic.username.is_empty())
+        .filter(|_| profile != crate::graphql::Profile::Embedded);
     if password.is_none() {
         log::info!("Subsonic: no shared secret, so only koan accounts sign in (with p=).");
     }
@@ -6740,14 +6780,17 @@ pub fn subsonic_router(
         covers,
         last_modified: Default::default(),
         transcoder,
-        server_url: cfg.server_url(),
         push: crate::push::pusher().is_some(),
+        server_url: match profile {
+            crate::graphql::Profile::Embedded => crate::ServerUrl::Live,
+            _ => crate::ServerUrl::Fixed(cfg.server_url()),
+        },
+        stop: stop.clone(),
+        host_key,
     });
-    // Once per process, though the router may be built for two ports.
-    static KEYS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    KEYS.get_or_init(|| spawn_key_publisher(state.pool.clone()));
+    spawn_key_publisher(state.pool.clone(), stop);
 
-    Some(subsonic_app(state))
+    subsonic_app(state)
 }
 
 // ===========================================================================
@@ -6787,15 +6830,19 @@ mod tests {
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
             transcoder: None,
-            server_url: None,
             push: false,
+            server_url: crate::ServerUrl::Fixed(None),
+            stop: Default::default(),
+            host_key: None,
         });
         (state, dir)
     }
 
     fn build_test_router(state: Arc<AppState>) -> axum::Router {
+        let stop = axum::Extension(state.stop.clone());
         register_subsonic_routes(axum::Router::new())
             .with_state(state)
+            .layer(stop)
             .layer(axum::middleware::from_fn(form_post))
     }
 
@@ -7091,7 +7138,7 @@ mod tests {
         crate::clients::registry()
             .share("keyowner", "kdev-phone", "keygrantee", true)
             .unwrap();
-        spawn_key_publisher(pool.clone());
+        spawn_key_publisher(pool.clone(), Default::default());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
@@ -8473,7 +8520,7 @@ mod tests {
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.server_url = Some("https://koan.example.com".into());
+        inner.server_url = crate::ServerUrl::Fixed(Some("https://koan.example.com".into()));
         let state = Arc::new(inner);
         assert!(extensions(state.clone()).await.contains("koanMcp"));
         let v = mcp(state.clone(), mate).await;
@@ -11022,7 +11069,7 @@ mod tests {
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.server_url = Some("https://koan.example.com".into());
+        inner.server_url = crate::ServerUrl::Fixed(Some("https://koan.example.com".into()));
         let r = json_of(build_test_router(Arc::new(inner)), &ping).await;
         assert_eq!(r["serverUrl"], "https://koan.example.com", "{r}");
     }

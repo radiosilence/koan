@@ -23,6 +23,14 @@ extension AppState {
     }
 
     func offer(_ invite: Invite) async {
+        #if os(macOS)
+        // Signing in would serve phones a library this Mac no longer plays
+        // from; sharing has to end first, as a choice.
+        if sharing.sharing != nil {
+            player.lastNotice = "This Mac is sharing its library. Turn sharing off in Settings → Server to sign in to \(Self.host(of: invite))."
+            return
+        }
+        #endif
         let current = await engine.settings()
         let elsewhere = current.remoteUrl != invite.server || current.remoteUsername != invite.username
         if current.remoteSignedIn && elsewhere {

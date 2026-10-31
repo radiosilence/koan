@@ -41,6 +41,7 @@ use koan_core::db::queries::RECENT_LIMIT;
 mod android;
 mod offload;
 mod queue_slice;
+mod serve;
 mod server_queue;
 mod state;
 mod types;
@@ -637,6 +638,8 @@ pub struct KoanEngine {
     /// when that queue or the library moves, not on every change to the
     /// device list.
     remote_queue: parking_lot::Mutex<Option<RemoteQueue>>,
+    /// The server sharing this library, while one runs. See `serve`.
+    server: parking_lot::Mutex<Option<koan_server::graphql::ApiServer>>,
 }
 
 /// What `KoanEngine::remote_queue` holds.
@@ -4025,6 +4028,10 @@ impl KoanEngine {
                     config::NearbyControl::Playback => "playback".into(),
                 },
                 devices_keep_running: cfg.devices.keep_running,
+                share_enabled: cfg.share.enabled,
+                share_port: cfg.share.port,
+                share_invite_to: cfg.share.invite_to.into(),
+                server_url: cfg.server.url.clone().unwrap_or_default(),
             }
         })
         .await
@@ -4073,6 +4080,8 @@ impl KoanEngine {
                     _ => config::NearbyControl::Full,
                 };
                 cfg.devices.keep_running = s.devices_keep_running;
+                cfg.share.enabled = s.share_enabled;
+                cfg.share.port = s.share_port;
                 cfg.devices.refused = s.devices_refused.clone();
                 cfg.devices.addresses = s
                     .devices_addresses
@@ -4120,6 +4129,7 @@ impl KoanEngine {
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             self.signing_in(|| {
                 koan_core::helpers::set_remote_credentials(&url, &username, &password)
             })
@@ -4138,6 +4148,7 @@ impl KoanEngine {
         api_key: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             self.signing_in(|| koan_core::helpers::set_remote_api_key(&url, &username, &api_key))
                 .map_err(|e| KoanError::BadArgument {
                     message: e.to_string(),
@@ -4151,6 +4162,7 @@ impl KoanEngine {
     /// the server before anything is written.
     pub async fn join_invite(self: Arc<Self>, invite: Invite) -> Result<(), KoanError> {
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             let invite = koan_core::invite::Invite {
                 server: invite.server,
                 username: invite.username,
@@ -4182,6 +4194,7 @@ impl KoanEngine {
     pub async fn start_pairing(self: Arc<Self>, url: String) -> Result<PairingCode, KoanError> {
         self.cancel_pairing();
         offload::offload(move || {
+            serve::refuse_while_sharing()?;
             let device =
                 koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
             let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
@@ -4336,7 +4349,7 @@ impl KoanEngine {
             let made = client
                 .koan_create_user(&username, role.as_str())
                 .map_err(remote_error)?;
-            Ok(account_invite(client.base_url(), made).into())
+            Ok(account_invite(&invite_base(&client)?, made).into())
         })
         .await
     }
@@ -4353,7 +4366,7 @@ impl KoanEngine {
             // asked is `Remote`, worth asking again.
             let client = account_client()?;
             let to = "invite people";
-            match profile::for_auth(client.auth()) {
+            match serve::own_profile().or_else(|| profile::for_auth(client.auth())) {
                 None => {
                     return Err(KoanError::Remote {
                         message: profile::lacking(None, to),
@@ -4370,7 +4383,7 @@ impl KoanEngine {
                 SubsonicError::Api { message, .. } => KoanError::Refused { message },
                 e => remote_error(e),
             })?;
-            Ok(account_invite(client.base_url(), made).into())
+            Ok(account_invite(&invite_base(&client)?, made).into())
         })
         .await
     }
@@ -4513,6 +4526,11 @@ impl KoanEngine {
         password: String,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
+            let db = self.db()?;
+            if serve::is_shared_admin(&db.conn, &username) {
+                return serve::reset_password(&db.conn, &username, &password);
+            }
+            drop(db);
             client_offering(profile::PASSWORDS, "change passwords here")?
                 .koan_set_user_password(&username, &password)
                 .map_err(remote_error)
@@ -5950,6 +5968,7 @@ impl KoanEngine {
             pairing_cancel: Default::default(),
             cursor_reading: Default::default(),
             remote_queue: Default::default(),
+            server: Default::default(),
             device_name: device_name.clone(),
         });
         engine.spawn_watcher();
@@ -6730,8 +6749,9 @@ fn play_state(state: &koan_core::remote::link::LinkState) -> PlayState {
 /// The server and the network, for Settings.
 fn connection_info() -> ConnectionInfo {
     use koan_core::remote::{devices, nearby};
-    let p = profile::current();
+    let p = serve::own_profile().or_else(profile::current);
     ConnectionInfo {
+        signed_in_to: koan_core::helpers::subsonic_auth(&Config::cached()).map(|a| a.base_url),
         server_kind: p.as_ref().and_then(|p| p.kind.clone()),
         server_version: p.as_ref().and_then(|p| p.version.clone()),
         open_subsonic: p.as_ref().is_some_and(|p| p.open_subsonic),
@@ -6836,6 +6856,10 @@ fn client_offering(
     extension: &str,
     to: &str,
 ) -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    // This device's own server is this build, offering what it offers.
+    if let Some(own) = serve::loopback_client() {
+        return Ok(own);
+    }
     let client = account_client()?;
     let found = profile::for_auth(client.auth());
     if found.as_ref().is_some_and(|p| p.offers(extension)) {
@@ -6843,6 +6867,18 @@ fn client_offering(
     }
     Err(KoanError::BadArgument {
         message: profile::lacking(found.as_ref(), to),
+    })
+}
+
+/// Where an invite sends the person it is for: while sharing, the address
+/// phones reach this device at, not the loopback one it is administered over.
+fn invite_base(client: &koan_core::remote::client::SubsonicClient) -> Result<String, KoanError> {
+    if serve::loopback_client().is_none() {
+        return Ok(client.base_url().to_owned());
+    }
+    serve::invite_base().ok_or_else(|| KoanError::Refused {
+        message: "this Mac has no address on a network to invite a phone to; set a public address"
+            .into(),
     })
 }
 
@@ -6862,6 +6898,9 @@ fn account_invite(
 }
 
 fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    if let Some(own) = serve::loopback_client() {
+        return Ok(own);
+    }
     koan_core::helpers::subsonic_client(&Config::cached()).ok_or_else(|| KoanError::BadArgument {
         message: "no remote server configured".into(),
     })

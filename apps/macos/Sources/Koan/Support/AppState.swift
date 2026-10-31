@@ -34,6 +34,7 @@ final class AppState {
     let textFocus = TextFocus()
     let hotkeys: Hotkeys
     let residency = Residency()
+    let sharing: SharingModel
     #endif
     private var nowPlaying: NowPlayingCentre?
     private let network: NetworkWatch
@@ -76,6 +77,9 @@ final class AppState {
         self.meter = TransferMeter(engine: engine, mirror: mirror)
         self.dsp = DspModel(engine: engine)
         self.network = NetworkWatch(engine: engine)
+        #if os(macOS)
+        self.sharing = SharingModel(engine: engine)
+        #endif
         library.activity = activity
         library.art = art
         library.mirror = mirror
@@ -141,6 +145,7 @@ final class AppState {
         await player.restoreSession()
         #if os(macOS)
         await residency.load(engine: engine)
+        await sharing.resume()
         #endif
     }
 }

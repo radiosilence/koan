@@ -325,6 +325,10 @@ private struct SidebarFooter: View {
             // Every long task, one row each.
             ActivityList()
 
+            #if os(macOS)
+            SidebarServerMode()
+            #endif
+
             if let stats = library.stats {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Format.count(stats.totalTracks, "track"))

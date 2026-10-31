@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.settings
 
 import cc.blit.koan.ffi.Invite
+import cc.blit.koan.ffi.InviteTo
 import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.Settings
 import java.lang.reflect.Proxy
@@ -65,6 +66,10 @@ fun settings(signedIn: Boolean = true, url: String = "https://music.example.com"
     devicesRefused = emptyList(),
     devicesNearbyControl = "full",
     devicesKeepRunning = false,
+    shareEnabled = false,
+    sharePort = 4000u,
+    shareInviteTo = InviteTo.TAILNET,
+    serverUrl = "",
 )
 
 fun invite(server: String = "https://other.example.com", username: String = "guest") = Invite(

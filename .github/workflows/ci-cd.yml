@@ -199,21 +199,21 @@ jobs:
               apple=true
             fi
             # What the Apple apps contain, for CD: everything above, and the
-            # core they link, which the Linux jobs check.
+            # core and server they link, which the Linux jobs check.
             apple_apps=$apple
-            if touches '^crates/koan-core/|^Cargo\.toml$'; then
+            if touches '^crates/(koan-core|koan-server)/|^Cargo\.toml$'; then
               apple_apps=true
             fi
             if [ "$EVENT" != "pull_request" ] && [ "$rust" = true ]; then
               apple=true
             fi
 
-            # The Android app links koan-core through koan-ffi and nothing else
-            # of the workspace, so the server, TUI and CLI cannot break it, nor
-            # can the Apple apps or the site.
+            # The Android app links koan-core and koan-server through koan-ffi
+            # and nothing else of the workspace, so the TUI and CLI cannot
+            # break it, nor can the Apple apps or the site.
             android=false
             if [ "$release" = true ] || [ "$inputs_android" = true ] \
-              || touches '^apps/android/|^crates/(koan-core|koan-ffi)/|^tools/|^Cargo\.toml$|^\.cargo/|^rust-toolchain|^\.github/'; then
+              || touches '^apps/android/|^crates/(koan-core|koan-server|koan-ffi)/|^tools/|^Cargo\.toml$|^\.cargo/|^rust-toolchain|^\.github/'; then
               android=true
             fi
           fi

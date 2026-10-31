@@ -19,6 +19,7 @@ pub mod scrobbling;
 pub mod shelves;
 pub mod signal;
 pub mod smart;
+pub mod tailscale;
 pub mod upnp;
 
 pub use sift::format;

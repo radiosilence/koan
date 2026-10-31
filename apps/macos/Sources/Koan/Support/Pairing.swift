@@ -38,6 +38,15 @@ extension AppState {
     func offer(_ link: PairingLink) async {
         let current = await engine.settings()
         let host = URL(string: link.server)?.host() ?? link.server
+        #if os(macOS)
+        // Sharing and signing in are exclusive, so a pairing link is for this
+        // Mac's own server, whichever of its addresses the device used. One
+        // that is not is answered as unknown by the server.
+        if sharing.sharing != nil {
+            await offerPairing(link.id)
+            return
+        }
+        #endif
         let signedIn = current.remoteUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard current.remoteSignedIn, signedIn == link.server else {
             player.lastNotice = "A device is asking to sign in to \(host), which kōan is not signed in to. Approve it on \(host)'s own pair page instead."
@@ -50,12 +59,19 @@ extension AppState {
     /// typed code, and put the question to the person.
     func offerPairing(_ pair: String) async {
         let current = await engine.settings()
-        let host = URL(string: current.remoteUrl)?.host() ?? current.remoteUrl
+        var host = URL(string: current.remoteUrl)?.host() ?? current.remoteUrl
+        var username = current.remoteUsername
+        #if os(macOS)
+        if sharing.sharing != nil, let account = sharing.account {
+            host = "this Mac"
+            username = account
+        }
+        #endif
         do {
             let info = try await engine.pairingInfo(pair: pair)
             ui.pendingPairing = PairingRequest(
                 pair: pair, device: info.device, deviceId: info.deviceId, from: info.from, local: info.local,
-                username: current.remoteUsername, host: host
+                username: username, host: host
             )
         } catch {
             player.report(SettingsModel.describe(error))

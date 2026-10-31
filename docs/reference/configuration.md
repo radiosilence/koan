@@ -478,6 +478,20 @@ The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). 
 
 ---
 
+## `[share]`
+
+```toml
+# config.local.toml -- whether this machine serves its library
+[share]
+enabled = true
+port = 4000
+invite_to = "tailnet"
+```
+
+The macOS app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, `server.url`. Each falls back to the tailnet name, then the local address, while it has nothing. Settings writes these through the engine. Separate from `[graphql]`, which is the terminal UI's and the headless server's listener, though its sign-in settings apply here too. `server.url`, when set, is the address invites send phones to.
+
+---
+
 ## `[lastfm]`
 
 ```toml

@@ -12,7 +12,9 @@ pub mod middleware;
 pub mod password;
 pub mod routes;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use koan_core::auth::{Claims, Role};
 use koan_core::db::pool::Pool;
@@ -21,23 +23,26 @@ use koan_core::db::queries::auth as auth_queries;
 /// The server's signing keypair as PEM, private then public.
 pub(crate) type Keypair = (Arc<Vec<u8>>, Arc<Vec<u8>>);
 
-static SIGNING: OnceLock<Keypair> = OnceLock::new();
+static SIGNING: RwLock<Option<Keypair>> = RwLock::new(None);
 
-/// Set once at startup to the keys sessions are signed with, so invite tokens
+/// Set at each start to the keys sessions are signed with, so invite tokens
 /// are signed and checked with the same pair on every path, whatever happens
 /// to the files on disk while the server runs.
 pub(crate) fn set_signing_keys(private: Arc<Vec<u8>>, public: Arc<Vec<u8>>) {
-    let _ = SIGNING.set((private, public));
+    *SIGNING.write() = Some((private, public));
 }
 
 /// The keys `set_signing_keys` was given; read from disk, once, where nothing
 /// set them, as in tests.
-pub(crate) fn signing_keys() -> Result<&'static Keypair, koan_core::auth::AuthError> {
-    if let Some(keys) = SIGNING.get() {
+pub(crate) fn signing_keys() -> Result<Keypair, koan_core::auth::AuthError> {
+    if let Some(keys) = SIGNING.read().clone() {
         return Ok(keys);
     }
     let (private, public) = koan_core::auth::load_or_generate_keypair()?;
-    Ok(SIGNING.get_or_init(|| (Arc::new(private), Arc::new(public))))
+    Ok(SIGNING
+        .write()
+        .get_or_insert_with(|| (Arc::new(private), Arc::new(public)))
+        .clone())
 }
 
 /// Authenticated user context injected into request extensions and GraphQL context.

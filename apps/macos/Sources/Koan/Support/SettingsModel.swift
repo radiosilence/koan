@@ -41,6 +41,29 @@ final class SettingsModel {
     /// account's password: one that can be revoked on its own, and the only
     /// thing worth typing on a device with no keyboard.
     var withApiKey = false
+    #if os(macOS)
+    /// This Mac's own server, while it shares its library.
+    @ObservationIgnored weak var sharing: SharingModel?
+    #endif
+
+    /// This Mac is serving its own library. Its account's password is then
+    /// reset from Share this Mac, as its host, rather than changed here.
+    var sharesThisMac: Bool {
+        #if os(macOS)
+        sharing?.sharing != nil
+        #else
+        false
+        #endif
+    }
+
+    /// The account whose server Settings administers: the one signed in to,
+    /// or, while this Mac shares its library, the account it shares it under.
+    var serverAccount: String? {
+        #if os(macOS)
+        if let sharing, sharing.sharing != nil { return sharing.account }
+        #endif
+        return settings.remoteSignedIn ? settings.remoteUsername : nil
+    }
 
     init(engine: KoanEngine, activity: ActivityModel, art: CoverArtCache?) async {
         self.engine = engine
@@ -317,6 +340,13 @@ final class SettingsModel {
     /// of them does not.
     func report(_ message: String) {
         lastError = message
+    }
+
+    /// What something done outside this model came to, shown where this
+    /// model's own results are.
+    func done(_ message: String) {
+        lastError = nil
+        lastResult = message
     }
 
     static func describe(_ error: Error) -> String {

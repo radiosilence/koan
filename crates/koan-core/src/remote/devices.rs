@@ -818,6 +818,21 @@ struct Interface {
     point_to_point: bool,
 }
 
+/// The address devices on this device's local network reach it at: a private
+/// address on an interface that is not a tunnel, so a VPN or a Tailscale exit
+/// node holding the default route does not hide the Wi-Fi's. Where no
+/// interface says, the address the default route leaves from.
+pub fn lan_address() -> Option<std::net::IpAddr> {
+    interfaces()
+        .into_iter()
+        .find(|i| !i.point_to_point && i.addr.is_private())
+        .map(|i| i.addr.into())
+        .or_else(|| {
+            crate::upnp::serve::local_ip_towards(std::net::Ipv4Addr::new(1, 1, 1, 1).into())
+                .filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
+        })
+}
+
 /// This device's IPv4 interfaces that are up.
 #[cfg(target_vendor = "apple")]
 fn interfaces() -> Vec<Interface> {

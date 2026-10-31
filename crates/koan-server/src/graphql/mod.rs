@@ -28,7 +28,8 @@ use loaders::DbLoader;
 use mutations::MutationRoot;
 use queries::QueryRoot;
 pub use server::{
-    ApiServerOpts, cmd_serve, cmd_serve_daemon, execute_in_process, start_api_background,
+    ApiServer, ApiServerOpts, Profile, cmd_serve, cmd_serve_daemon, execute_in_process,
+    start_api_background,
 };
 use subscriptions::SubscriptionRoot;
 

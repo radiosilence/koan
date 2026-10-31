@@ -156,6 +156,12 @@ struct SettingsView: View {
                 .onChange(of: app.dsp.editing, initial: true) { _, asked in
                     if asked != nil { pane = "eq" }
                 }
+                // The sidebar's server line asks for this pane.
+                .onChange(of: app.ui.showingServerSettings, initial: true) { _, asked in
+                    guard asked else { return }
+                    pane = "server"
+                    app.ui.showingServerSettings = false
+                }
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #else
                 // A phone has no room for a second row of tabs — and it already
@@ -261,7 +267,11 @@ struct SettingsView: View {
         #endif
         .task {
             if model == nil {
-                model = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
+                let made = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
+                #if os(macOS)
+                made.sharing = app.sharing
+                #endif
+                model = made
             }
         }
         // Asked again for each account signed in as, of a server that has
@@ -270,9 +280,9 @@ struct SettingsView: View {
         // none shows under another server. A television manages no accounts,
         // and asks for none.
         #if !os(tvOS)
-        .task(id: model.map { "\($0.settings.remoteSignedIn) \($0.settings.remoteUrl) \($0.settings.remoteUsername) \(mirror.offers(PeopleModel.extensionName))" }) {
+        .task(id: model.map { "\($0.serverAccount ?? "") \($0.settings.remoteUrl) \(mirror.offers(PeopleModel.extensionName))" }) {
             people = nil
-            guard let model, model.settings.remoteSignedIn, mirror.offers(PeopleModel.extensionName) else { return }
+            guard let model, model.serverAccount != nil, mirror.offers(PeopleModel.extensionName) else { return }
             let people = PeopleModel(engine: library.engine)
             await people.load()
             // Signed in elsewhere while it loaded: that account's task sets its own.
@@ -501,6 +511,24 @@ private struct RemoteSettings: View {
     @State private var choosingLimit = false
     /// A change to the cache that deletes files, waiting to be confirmed.
     @State private var pendingLimit: String?
+    #if os(macOS)
+    /// Which side of the Server pane is showing. Starts on what this Mac is
+    /// doing; only choosing changes it.
+    @State private var mode: ServerMode
+    #endif
+
+    #if os(macOS)
+    /// `mode` opens a side other than the one this Mac is on, for the
+    /// evidence renderer.
+    init(model: SettingsModel, mode: ServerMode? = nil) {
+        _model = Bindable(model)
+        _mode = State(initialValue: mode ?? (model.settings.shareEnabled ? .share : .connect))
+    }
+    #else
+    init(model: SettingsModel) {
+        _model = Bindable(model)
+    }
+    #endif
 
     private func join(_ text: String) {
         guard let invite = state.engine.parseInvite(link: text) else {
@@ -513,6 +541,57 @@ private struct RemoteSettings: View {
 
     var body: some View {
         KoanForm {
+            #if os(macOS)
+            ServerModeSection(model: model, mode: $mode)
+            if mode == .share {
+                ShareSettings(model: model)
+            } else if model.settings.shareEnabled {
+                Section {
+                    Text("This Mac is sharing its library. Turn sharing off under Shares its library to sign in to a server instead.")
+                        .koanText(.body, .muted)
+                }
+            } else {
+                connectSections
+            }
+            #else
+            connectSections
+            #endif
+        }
+        .koanSheet()
+        .decimalPadDone($focus, order: [.cacheLimit], label: "Set")
+        .onAppear {
+            url = model.settings.remoteUrl
+            username = model.settings.remoteUsername
+        }
+        .confirmationDialog(
+            pendingLimit == "0" ? "Keep only what plays next?" : "Lower the limit to \(pendingLimit ?? "")?",
+            isPresented: Binding(get: { pendingLimit != nil }, set: { if !$0 { pendingLimit = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Downloads", role: .destructive) {
+                if let limit = pendingLimit { setLimit(limit) }
+            }
+            Button("Cancel", role: .cancel) { pendingLimit = nil }
+        } message: {
+            Text(pendingLimit == "0"
+                ? "Tracks fetched to play that are not in the queue ahead are deleted now. Downloads you asked for and favourite records stay."
+                : "Downloads over the limit are deleted now, the tracks played longest ago first. Favourite records stay.")
+        }
+        .confirmationDialog(
+            "Sign out of \(model.settings.remoteUrl)?",
+            isPresented: $confirmingSignOut,
+            titleVisibility: .visible
+        ) {
+            Button("Sign Out", role: .destructive) { model.signOut() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its tracks, favourites, history, playlists and downloads are removed from this device. Signing in again brings them back. Local files stay.")
+        }
+    }
+
+    /// Connecting to a server: signing in, and what this device keeps of its
+    /// library.
+    @ViewBuilder private var connectSections: some View {
             if model.settings.remoteSignedIn {
                 Section {
                     #if os(tvOS)
@@ -740,37 +819,6 @@ private struct RemoteSettings: View {
                         .koanText(.fine, .muted)
                 }
             }
-        }
-        .koanSheet()
-        .decimalPadDone($focus, order: [.cacheLimit], label: "Set")
-        .onAppear {
-            url = model.settings.remoteUrl
-            username = model.settings.remoteUsername
-        }
-        .confirmationDialog(
-            pendingLimit == "0" ? "Keep only what plays next?" : "Lower the limit to \(pendingLimit ?? "")?",
-            isPresented: Binding(get: { pendingLimit != nil }, set: { if !$0 { pendingLimit = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Delete Downloads", role: .destructive) {
-                if let limit = pendingLimit { setLimit(limit) }
-            }
-            Button("Cancel", role: .cancel) { pendingLimit = nil }
-        } message: {
-            Text(pendingLimit == "0"
-                ? "Tracks fetched to play that are not in the queue ahead are deleted now. Downloads you asked for and favourite records stay."
-                : "Downloads over the limit are deleted now, the tracks played longest ago first. Favourite records stay.")
-        }
-        .confirmationDialog(
-            "Sign out of \(model.settings.remoteUrl)?",
-            isPresented: $confirmingSignOut,
-            titleVisibility: .visible
-        ) {
-            Button("Sign Out", role: .destructive) { model.signOut() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Its tracks, favourites, history, playlists and downloads are removed from this device. Signing in again brings them back. Local files stay.")
-        }
     }
 
     /// What the cache keeps, read from the limit as the core reads it: none
@@ -884,7 +932,7 @@ private struct AccountSettings: View {
 
     /// Whether there is anything here: signed in to a server with either.
     static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
-        model.settings.remoteSignedIn
+        model.serverAccount != nil
             && (mirror.offers(PeopleModel.extensionName) || mirror.offers(PasswordChange.extensionName)
                 || mirror.offers(ApiKeysSettings.extensionName))
     }
@@ -893,12 +941,12 @@ private struct AccountSettings: View {
         KoanForm {
             #if !os(tvOS)
             if mirror.offers(PeopleModel.extensionName) {
-                LinkDeviceSection(username: model.settings.remoteUsername, visit: visits)
+                LinkDeviceSection(username: model.serverAccount ?? "", visit: visits)
             }
             #endif
-            if mirror.offers(PasswordChange.extensionName) {
+            if mirror.offers(PasswordChange.extensionName), !model.sharesThisMac {
                 Section {
-                    LabeledContent("User", value: model.settings.remoteUsername)
+                    LabeledContent("User", value: model.serverAccount ?? "")
                     Button("Change Password…") { changingPassword = true }
                         .koanButton(.bordered)
                 } header: {
@@ -948,11 +996,11 @@ private struct PeoplePane: View {
     let people: PeopleModel
 
     static func shown(_ model: SettingsModel, _ people: PeopleModel?) -> Bool {
-        model.settings.remoteSignedIn && people?.accounts != nil
+        model.serverAccount != nil && people?.accounts != nil
     }
 
     var body: some View {
-        PeopleSettings(signedInAs: model.settings.remoteUsername, model: people)
+        PeopleSettings(signedInAs: model.serverAccount ?? "", model: people)
             .koanSheet()
     }
 }
@@ -965,7 +1013,7 @@ private struct ServerCapabilitySections: View {
     @Environment(EngineMirror.self) private var mirror
 
     static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
-        model.settings.remoteSignedIn
+        model.serverAccount != nil
             && (mirror.connection?.scrobbling == true || mirror.offers(AssistantsSettings.extensionName))
     }
 
@@ -2015,6 +2063,7 @@ private struct SettingsTitlebar: NSViewRepresentable {
 enum SettingsEvidence {
     static func pages(_ state: AppState) async -> [(name: String, size: CGSize, view: AnyView)] {
         let model = await SettingsModel(engine: state.library.engine, activity: state.activity, art: state.art)
+        model.sharing = state.sharing
         let people = PeopleModel(engine: state.library.engine)
         await people.load()
         // What the Settings scene injects, so a pane renders as it does there.
@@ -2033,7 +2082,8 @@ enum SettingsEvidence {
         let size = CGSize(width: 820, height: 780)
         return [
             ("settings-library", size, page(LibrarySettings(model: model))),
-            ("settings-server", size, page(RemoteSettings(model: model))),
+            ("settings-server", size, page(RemoteSettings(model: model, mode: .connect))),
+            ("settings-server-share", size, page(RemoteSettings(model: model, mode: .share))),
             ("settings-account", size, page(AccountSettings(model: model))),
             ("settings-people", size, page(PeoplePane(model: model, people: people))),
             ("settings-server-capabilities", size, page(ServerCapabilitiesSettings())),

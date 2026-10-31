@@ -108,22 +108,50 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for ClientIp {
     }
 }
 
+/// Whose `X-Forwarded-For` a server believes, set on each request as an
+/// extension. Without one, `Private`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForwardedFrom {
+    /// Any private address: a server behind an ingress, where only the proxy
+    /// shares its private network.
+    Private,
+    /// Loopback alone: a server on a home network, where every device has a
+    /// private address and only a tunnel client on the same machine forwards.
+    /// A loopback connection that names no client comes from nowhere known,
+    /// so it neither counts as this network nor shares a limit with it.
+    Loopback,
+}
+
 fn address(extensions: &axum::http::Extensions, headers: &axum::http::HeaderMap) -> IpAddr {
+    let unknown = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
     let Some(ConnectInfo(peer)) = extensions.get::<ConnectInfo<SocketAddr>>() else {
-        return IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+        return unknown;
     };
     let peer = peer.ip().to_canonical();
-    if !is_internal(peer) {
+    let trust = extensions
+        .get::<ForwardedFrom>()
+        .copied()
+        .unwrap_or(ForwardedFrom::Private);
+    let believed = match trust {
+        ForwardedFrom::Private => is_internal(peer),
+        ForwardedFrom::Loopback => peer.is_loopback(),
+    };
+    if !believed {
         return peer;
     }
-    headers
+    let forwarded = headers
         .get_all("x-forwarded-for")
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(','))
         .filter_map(|ip| ip.trim().parse::<IpAddr>().ok())
         .next_back()
-        .map_or(peer, |ip| ip.to_canonical())
+        .map(|ip| ip.to_canonical());
+    match (forwarded, trust) {
+        (Some(ip), _) => ip,
+        (None, ForwardedFrom::Private) => peer,
+        (None, ForwardedFrom::Loopback) => unknown,
+    }
 }
 
 /// The network an address counts against a per-address limit as: itself, or
@@ -884,6 +912,30 @@ mod tests {
         r.headers_mut()
             .insert("x-forwarded-for", "203.0.113.9".parse().unwrap());
         assert_eq!(client_ip(&r), IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    }
+
+    #[test]
+    fn a_home_server_believes_only_a_tunnel_on_this_machine() {
+        let from = |peer, forwarded| {
+            let mut r = request_from(peer, forwarded);
+            r.extensions_mut().insert(ForwardedFrom::Loopback);
+            client_ip(&r)
+        };
+        // Another device on the network is itself, whatever it claims.
+        assert_eq!(
+            from("192.168.1.30", Some("203.0.113.9")),
+            "192.168.1.30".parse::<IpAddr>().unwrap()
+        );
+        // A tunnel client here: the client it names.
+        assert_eq!(
+            from("127.0.0.1", Some("203.0.113.9")),
+            "203.0.113.9".parse::<IpAddr>().unwrap()
+        );
+        // A tunnel client that names nobody is not this network.
+        assert_eq!(
+            from("127.0.0.1", None),
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        );
     }
 
     #[tokio::test]

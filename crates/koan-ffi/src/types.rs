@@ -2264,6 +2264,16 @@ pub struct Settings {
     pub devices_nearby_control: String,
     /// The Mac app stays in the menu bar with its window closed.
     pub devices_keep_running: bool,
+
+    /// This device serves its library whenever the app is open.
+    pub share_enabled: bool,
+    pub share_port: u16,
+    /// Where invites send phones. Read only here, as `server_url` is:
+    /// `set_invite_to` changes both, and Funnel with them.
+    pub share_invite_to: crate::serve::InviteTo,
+    /// `server.url`: the custom address invites send phones to. Empty when
+    /// there is none.
+    pub server_url: String,
 }
 
 /// A scanned folder, and what it contributed.
@@ -2741,6 +2751,8 @@ pub struct RendererOutput {
 /// this device offer. Settings shows it.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct ConnectionInfo {
+    /// The server this device signs in to, while it has an account there.
+    pub signed_in_to: Option<String>,
     /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from an older
     /// server, or before one has answered.
     pub server_kind: Option<String>,
