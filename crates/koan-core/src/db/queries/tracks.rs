@@ -3440,7 +3440,10 @@ mod tests {
             meta.path = None;
             meta.remote_id = Some(format!("long-{n}"));
             meta.track_number = Some(n);
-            meta.size_bytes = Some(10_000_000);
+            // 10MB each, reckoned at 1000kbps.
+            meta.size_bytes = None;
+            meta.bitrate = Some(1000);
+            meta.duration_ms = Some(80_000);
             upcoming.push(upsert_track(&db.conn, &meta).unwrap());
         }
         // Room for 299 and a half: the 300th crosses.
