@@ -1152,8 +1152,9 @@ impl Resample {
             partial = 0;
         }
         self.pending.clear();
-        let over = (self.emitted - target) as usize * self.channels;
-        dst.truncate((dst.len() - over).max(start));
+        // Short of the target when the resampler failed part way.
+        let over = self.emitted.saturating_sub(target) as usize * self.channels;
+        dst.truncate(dst.len().saturating_sub(over).max(start));
         self.emitted = target;
     }
 

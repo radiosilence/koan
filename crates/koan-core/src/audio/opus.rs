@@ -133,7 +133,13 @@ impl OpusBridge {
         })) {
             Ok(Ok(frames)) => frames,
             Ok(Err(e)) => return Err(OpusError::Decode(e.into())),
-            Err(_) => return Err(OpusError::Panicked),
+            Err(_) => {
+                // Whatever the panic left half-updated is not decoded from.
+                if let Ok(fresh) = OpusDecoder::new(48000, self.channels) {
+                    self.decoder = fresh;
+                }
+                return Err(OpusError::Panicked);
+            }
         };
 
         let total_samples = frames_per_channel * self.channels;
