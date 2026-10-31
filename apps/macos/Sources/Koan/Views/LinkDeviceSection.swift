@@ -5,11 +5,14 @@ import SwiftUI
 /// invite, which every account may have. Its token lapses in ten minutes, so a
 /// fresh one is fetched each time the section appears and again before it
 /// lapses. A server that refuses (one older than self-invites, to an account
-/// that is not an admin) is not asked again while the page is open. One that
-/// could not be reached is asked again when the connection to it changes.
-/// Either way the section is not drawn meanwhile.
+/// that is not an admin) is not asked again for that account. One that
+/// could not be reached is asked once more half a minute later, then again
+/// when the connection to it changes or the page is shown again. The section
+/// is not drawn while the server refuses, nor after the retry fails.
 struct LinkDeviceSection: View {
     let username: String
+    /// Moves each time the page holding this is shown again.
+    let visit: Int
     @Environment(LibraryModel.self) private var library
     @Environment(EngineMirror.self) private var mirror
     @State private var invite: Invite?
@@ -20,6 +23,7 @@ struct LinkDeviceSection: View {
 
     private struct Ask: Equatable {
         let username: String
+        let visit: Int
         let linked: Bool
         let offline: Bool
     }
@@ -27,10 +31,15 @@ struct LinkDeviceSection: View {
     private var ask: Ask {
         Ask(
             username: username,
+            visit: visit,
             linked: mirror.connection?.linked == true,
             offline: mirror.connection?.offline == true
         )
     }
+
+    /// How long a failure to reach the server waits before the one retry it
+    /// gets; after that, only a change of connection or a visit asks again.
+    private static let retryAfter = Duration.seconds(30)
 
     var body: some View {
         if refused != username, unreached != ask { section }
@@ -62,17 +71,24 @@ struct LinkDeviceSection: View {
         }
         .task(id: ask) {
             let asked = ask
+            var retried = false
             while !Task.isCancelled {
                 do {
                     invite = try await library.engine.inviteServerAccount(username: username, reset: false)
-                } catch KoanError.BadArgument {
+                    retried = false
+                } catch KoanError.Refused {
                     invite = nil
                     refused = asked.username
                     return
                 } catch {
                     invite = nil
-                    unreached = asked
-                    return
+                    guard !retried else {
+                        unreached = asked
+                        return
+                    }
+                    retried = true
+                    try? await Task.sleep(for: Self.retryAfter)
+                    continue
                 }
                 // Fetched again before the token lapses at ten minutes.
                 try? await Task.sleep(for: .seconds(9 * 60))

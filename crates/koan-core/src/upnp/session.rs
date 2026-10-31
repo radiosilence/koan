@@ -398,10 +398,6 @@ impl Session {
         .map(|_| ())
     }
 
-    pub fn has_volume(&self) -> bool {
-        self.shared.renderer.rendering_control.is_some()
-    }
-
     /// Run an AVTransport action, and move the epoch once the renderer has
     /// taken it.
     ///

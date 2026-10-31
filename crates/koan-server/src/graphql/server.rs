@@ -21,7 +21,7 @@ use crate::auth::routes::{AuthRouteState, RateLimiter, auth_router};
 /// A server hands out links to itself — invites, shares, sign-ins — and is
 /// known to its clients by one address, which it cannot work out for itself.
 fn require_server_url() {
-    let why = match Config::load().unwrap_or_default().server_url() {
+    let why = match Config::cached().server_url() {
         None => "server.url is not set. Set it, or KOAN_SERVER__URL, to the address clients reach this server at, e.g. https://koan.example.com".to_owned(),
         Some(url) if !url.starts_with("https://") && !url.starts_with("http://") => {
             format!("server.url is {url:?}, which is not an http:// or https:// address")
@@ -192,7 +192,7 @@ fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Resu
     } = opts;
     use axum::routing::{get, post};
 
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let port = port.unwrap_or(cfg.graphql.port);
     // The wizard is for a server with no shell to hand, in a container. One
     // beside a terminal session would open its /setup to any local process
@@ -829,7 +829,7 @@ pub fn cmd_serve_daemon(
 
     require_server_url();
 
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let port_val = port.unwrap_or(cfg.graphql.port);
     let bind_val = bind.unwrap_or(cfg.graphql.bind);
 

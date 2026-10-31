@@ -208,9 +208,7 @@ pub fn create_native_share(
 ) -> Result<ShareOutcome, ShareError> {
     let base = cfg.server_url().ok_or(ShareError::NoServerUrl)?;
     let (slice, ids) = resolve_share(&db.conn, target)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
+    let now = crate::clock::unix_secs();
     let share = queries::shares::create_share(&db.conn, user, slice, &ids, description, now, None)?;
     Ok(ShareOutcome {
         url: share_url(&base, &share.id),

@@ -986,7 +986,7 @@ fn run(local: Local) {
         // Before the config is read: a sign-in after this closes the link
         // about to open with what it read.
         let signed_in = SIGN_IN.load(Ordering::SeqCst);
-        let cfg = Config::load().unwrap_or_default();
+        let cfg = Config::cached();
         let account = crate::remote::proof::account_of(&cfg);
         let Some(auth) = subsonic_auth(&cfg) else {
             rest(RETRY_MAX);
@@ -1006,7 +1006,7 @@ fn run(local: Local) {
             }
         }
         // After the probe, which may have just adopted the server's own address.
-        let library = library_fingerprint(&Config::load().unwrap_or_default());
+        let library = library_fingerprint(&Config::cached());
 
         match connect(&auth, &local.identity) {
             Ok((mut socket, fd)) => {
@@ -1448,7 +1448,7 @@ fn recently_missed(id: &str) -> bool {
 /// A sync from the configured server, as the app runs its own: the library,
 /// then favourites and playlists.
 pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let Some(client) = subsonic_client(&cfg) else {
         return;
     };
@@ -1488,25 +1488,36 @@ fn device_id(dir: &Path) -> String {
             return id;
         }
         let id = file_device_id(&dir.join("device-id"));
-        let _ = set_generic_password(SERVICE, "device-id", id.as_bytes());
+        if let Err(e) = set_generic_password(SERVICE, "device-id", id.as_bytes()) {
+            log::warn!("link: keeping the device id in the Keychain: {e}");
+        }
         id
     }
     #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     file_device_id(&dir.join("device-id"))
 }
 
+/// An id that cannot be kept is still used for this run, but the device will
+/// appear to the server as a new one next time, so the failure is logged.
 fn file_device_id(path: &Path) -> String {
-    if let Ok(id) = std::fs::read_to_string(path) {
-        let id = id.trim();
-        if !id.is_empty() {
-            return id.to_string();
-        }
+    match std::fs::read_to_string(path) {
+        Ok(id) if !id.trim().is_empty() => return id.trim().to_string(),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::error!("link: reading {}: {e}", path.display()),
     }
     let id = uuid::Uuid::now_v7().to_string();
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    let written = match path.parent() {
+        Some(dir) => std::fs::create_dir_all(dir),
+        None => Ok(()),
     }
-    let _ = std::fs::write(path, &id);
+    .and_then(|()| std::fs::write(path, &id));
+    if let Err(e) = written {
+        log::error!(
+            "link: keeping the device id in {}: {e}; this device will appear as a new one next launch",
+            path.display()
+        );
+    }
     id
 }
 

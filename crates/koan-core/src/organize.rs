@@ -141,6 +141,27 @@ impl OrganizeResult {
         self.moves().count()
     }
 
+    /// Where each of these queue items' files went, for those that moved.
+    ///
+    /// The database follows a move by itself, but a live playlist is in
+    /// memory: a front end sends this as `PlayerCommand::UpdatePaths`.
+    pub fn queue_path_updates<'a>(
+        &self,
+        items: impl IntoIterator<Item = (crate::player::state::QueueItemId, &'a Path)>,
+    ) -> Vec<(crate::player::state::QueueItemId, PathBuf)> {
+        let moved: HashMap<&Path, &Path> = self
+            .moves()
+            .filter_map(|e| e.to.as_deref().map(|to| (e.from.as_path(), to)))
+            .collect();
+        if moved.is_empty() {
+            return Vec::new();
+        }
+        items
+            .into_iter()
+            .filter_map(|(id, path)| moved.get(path).map(|to| (id, to.to_path_buf())))
+            .collect()
+    }
+
     /// Files already where the pattern puts them.
     pub fn unchanged_count(&self) -> usize {
         self.entries
@@ -820,7 +841,7 @@ fn run(
             .collect::<Result<Vec<_>, _>>()
         });
     match moved {
-        Ok(moved) => follow_playlist_files(db, &moved),
+        Ok(moved) => follow_moved(db, &moved),
         Err(e) => log::warn!("organize: could not read back what moved: {e}"),
     }
 
@@ -982,7 +1003,6 @@ fn rewrite_path_references(conn: &Connection, old: &Path, new: &Path) -> Result<
         "UPDATE playlists SET source_path = ?1 WHERE source_path = ?2",
         params![new_path, old_path],
     )?;
-    rewrite_queue_json(conn, old_path, new_path)?;
     Ok(())
 }
 
@@ -1045,18 +1065,28 @@ fn follow_playlist_files(db: &Database, moved: &[(PathBuf, PathBuf)]) {
     }
 }
 
-/// Rewrite paths inside the saved session's serialized queue.
-fn rewrite_queue_json(
+/// Point the saved sessions' queues at where their files went: one pass
+/// over each queue for the whole batch.
+fn rewrite_saved_queues(
     conn: &Connection,
-    old_path: &str,
-    new_path: &str,
+    moved: &[(PathBuf, PathBuf)],
 ) -> Result<(), OrganizeError> {
-    let mut stmt =
-        conn.prepare("SELECT id, queue_json FROM playback_state WHERE instr(queue_json, ?1) > 0")?;
-    let rows: Vec<(i64, String)> = stmt
-        .query_map(params![old_path], |row| Ok((row.get(0)?, row.get(1)?)))?
+    if moved.is_empty() {
+        return Ok(());
+    }
+    let to: HashMap<String, String> = moved
+        .iter()
+        .map(|(from, to)| {
+            (
+                from.to_string_lossy().into_owned(),
+                to.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    let rows: Vec<(i64, String)> = conn
+        .prepare("SELECT id, queue_json FROM playback_state")?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
-    drop(stmt);
 
     for (id, json) in rows {
         let Ok(mut items) = serde_json::from_str::<Vec<PersistedQueueItem>>(&json) else {
@@ -1064,8 +1094,8 @@ fn rewrite_queue_json(
         };
         let mut changed = false;
         for item in &mut items {
-            if item.path == old_path {
-                item.path = new_path.to_string();
+            if let Some(new) = to.get(&item.path) {
+                item.path = new.clone();
                 changed = true;
             }
         }
@@ -1081,6 +1111,15 @@ fn rewrite_queue_json(
         )?;
     }
     Ok(())
+}
+
+/// Files that moved and the places they went, for everything the moves'
+/// own transactions do not cover.
+fn follow_moved(db: &Database, moved: &[(PathBuf, PathBuf)]) {
+    follow_playlist_files(db, moved);
+    if let Err(e) = rewrite_saved_queues(&db.conn, moved) {
+        log::warn!("organize: the saved queue still names files at their old paths: {e}");
+    }
 }
 
 /// Execute a single file move: write the database rows first, then move the file.
@@ -1222,78 +1261,84 @@ fn undo_within(db: &Database, floors: &[PathBuf]) -> Result<UndoResult, Organize
     let mut result = UndoResult::default();
     let mut restored = Vec::new();
 
-    for (log_id, from_path, to_path, size, mtime) in &entries {
-        let to = Path::new(to_path);
-        let from = Path::new(from_path);
+    // What was restored before a failure still moved, so it is followed
+    // whether or not the rest of the batch was.
+    let undone = (|| -> Result<(), OrganizeError> {
+        for (log_id, from_path, to_path, size, mtime) in &entries {
+            let to = Path::new(to_path);
+            let from = Path::new(from_path);
 
-        if !matches!(to.try_exists(), Ok(true)) {
-            // Gone while the place it was moved to is still there: moved back
-            // or deleted by hand, so there is nothing to undo. Anything less
-            // certain — a volume unplugged, a share away, an IO error — keeps
-            // the row for an undo once it is back.
-            if crate::index::known_missing(to) && destination_reachable(to, floors) {
-                db.conn
-                    .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
-            } else {
-                result.errors.push((
-                    to.to_path_buf(),
-                    "cannot be reached; kept for an undo once it is back".into(),
-                ));
+            if !matches!(to.try_exists(), Ok(true)) {
+                // Gone while the place it was moved to is still there: moved back
+                // or deleted by hand, so there is nothing to undo. Anything less
+                // certain — a volume unplugged, a share away, an IO error — keeps
+                // the row for an undo once it is back.
+                if crate::index::known_missing(to) && destination_reachable(to, floors) {
+                    db.conn
+                        .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
+                } else {
+                    result.errors.push((
+                        to.to_path_buf(),
+                        "cannot be reached; kept for an undo once it is back".into(),
+                    ));
+                }
+                continue;
             }
-            continue;
-        }
 
-        if from.exists() && !paths_equal(from, to) {
-            result.errors.push((
-                from.to_path_buf(),
-                format!(
-                    "another file now occupies the original path; {} left in place",
-                    to.display()
-                ),
-            ));
-            continue;
-        }
+            if from.exists() && !paths_equal(from, to) {
+                result.errors.push((
+                    from.to_path_buf(),
+                    format!(
+                        "another file now occupies the original path; {} left in place",
+                        to.display()
+                    ),
+                ));
+                continue;
+            }
 
-        if let Err(msg) = matches_logged_file(to, *size, *mtime) {
-            result.errors.push((to.to_path_buf(), msg));
-            continue;
-        }
+            if let Err(msg) = matches_logged_file(to, *size, *mtime) {
+                result.errors.push((to.to_path_buf(), msg));
+                continue;
+            }
 
-        if let Some(parent) = from.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            result.errors.push((from.to_path_buf(), e.to_string()));
-            continue;
-        }
+            if let Some(parent) = from.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                result.errors.push((from.to_path_buf(), e.to_string()));
+                continue;
+            }
 
-        let tx = crate::db::queries::write_transaction(&db.conn)?;
-        if let Err(e) = rewrite_path_references(&tx, to, from) {
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
-        if let Err(e) = move_file(to, from) {
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
-        if let Err(e) = tx.execute("DELETE FROM organize_log WHERE id = ?1", params![log_id]) {
-            let _ = move_file(from, to);
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
-        if let Err(e) = tx.commit() {
-            let _ = move_file(from, to);
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
+            let tx = crate::db::queries::write_transaction(&db.conn)?;
+            if let Err(e) = rewrite_path_references(&tx, to, from) {
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
+            if let Err(e) = move_file(to, from) {
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
+            if let Err(e) = tx.execute("DELETE FROM organize_log WHERE id = ?1", params![log_id]) {
+                let _ = move_file(from, to);
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
+            if let Err(e) = tx.commit() {
+                let _ = move_file(from, to);
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
 
-        if let Some(parent) = to.parent() {
-            remove_empty_dirs(parent, floors);
-        }
+            if let Some(parent) = to.parent() {
+                remove_empty_dirs(parent, floors);
+            }
 
-        result.restored += 1;
-        restored.push((to.to_path_buf(), from.to_path_buf()));
-    }
-    follow_playlist_files(db, &restored);
+            result.restored += 1;
+            restored.push((to.to_path_buf(), from.to_path_buf()));
+        }
+        Ok(())
+    })();
+    follow_moved(db, &restored);
+    undone?;
 
     Ok(result)
 }
@@ -1360,9 +1405,13 @@ fn mtime_secs(meta: &std::fs::Metadata) -> Option<i64> {
 /// Directories an empty-directory sweep must never remove or climb past.
 fn cleanup_floors(base: Option<&Path>) -> Vec<PathBuf> {
     let mut floors: Vec<PathBuf> = base.map(Path::to_path_buf).into_iter().collect();
-    if let Ok(config) = crate::config::Config::load() {
-        floors.extend(config.library.folders);
-    }
+    floors.extend(
+        crate::config::Config::cached()
+            .library
+            .folders
+            .iter()
+            .cloned(),
+    );
     floors
 }
 
@@ -1607,9 +1656,7 @@ fn resolve_base_dir(base_dir: Option<&Path>) -> Result<PathBuf, OrganizeError> {
 /// Whether cover art and cue sheets travel with the music. A preference, so it
 /// is read where it is used rather than threaded through every signature.
 fn move_ancillary() -> bool {
-    crate::config::Config::load()
-        .map(|c| c.organize.move_ancillary)
-        .unwrap_or(true)
+    crate::config::Config::cached().organize.move_ancillary
 }
 
 fn batch_id() -> String {

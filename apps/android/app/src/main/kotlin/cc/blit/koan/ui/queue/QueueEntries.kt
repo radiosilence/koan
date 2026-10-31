@@ -57,6 +57,7 @@ import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.R
 import cc.blit.koan.art.ArtSize
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.EntryStatus
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
@@ -101,7 +102,9 @@ import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -222,13 +225,12 @@ private fun QueuePage() {
             return
         }
         mirror.launch {
-            try {
-                moveInQueue(row.itemIds, target.first, target.second)
-            } catch (e: Exception) {
-                // Nothing comes back whole for a move that failed: put the rows back as the engine has them.
-                dragged = null
-                throw e
-            }
+            // A move comes back as the queue whole under a new version, which
+            // ends the drag. One refused sends nothing: then the rows go back
+            // to the engine's order here, on the main thread.
+            val failure = attempt { moveInQueue(row.itemIds, target.first, target.second) }.exceptionOrNull() ?: return@launch
+            withContext(Dispatchers.Main) { if (dragged === drawn) dragged = null }
+            throw failure
         }
     }
 

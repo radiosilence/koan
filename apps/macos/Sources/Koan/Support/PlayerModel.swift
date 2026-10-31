@@ -739,12 +739,14 @@ final class PlayerModel {
     private struct Saved: Equatable {
         let queue: UInt64
         let current: String?
-        let positionMs: UInt64
+        /// Where the playhead is now, to the second: the anchor alone does
+        /// not move while the music plays on.
+        let second: UInt64
 
         @MainActor init(_ player: PlayerModel) {
             queue = player.queueVersion
             current = player.currentItemId
-            positionMs = player.mirror.playhead.positionMs
+            second = player.mirror.playhead.at() / 1000
         }
     }
 

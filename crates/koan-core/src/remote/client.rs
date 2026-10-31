@@ -14,16 +14,27 @@ const PLAYBACK_REPORT_EXTENSION: &str = "playbackReport";
 /// without art, which other Subsonic clients draw and koan's own replace.
 pub const PLACEHOLDER_HEADER: &str = "x-koan-placeholder";
 /// The images Navidrome answers `getCoverArt` with for a record that has no
-/// art, served unresized, by byte length and SHA-256: `album-placeholder.webp`,
-/// `artist-placeholder.webp`, and `placeholder.png` before 0.56. The length is
-/// checked first, so real art is never hashed.
-const NAVIDROME_PLACEHOLDERS: [(usize, [u8; 32]); 3] = [
+/// art, by byte length and SHA-256: `album-placeholder.webp` (0.56 on, and
+/// 0.54–0.55's), `artist-placeholder.webp`, and `placeholder.png` (0.50–0.53).
+/// From 0.50 every release serves them unresized whatever `size` asks:
+/// `GetOrPlaceholder` opens the file and returns it as is, and only playlist
+/// art goes through the resizer. The length is checked first, so real art is
+/// never hashed.
+const NAVIDROME_PLACEHOLDERS: [(usize, [u8; 32]); 4] = [
     (
         69228,
         [
             0x27, 0x3a, 0x4d, 0xbd, 0x61, 0xdf, 0xbb, 0x0a, 0x12, 0xd5, 0xd8, 0xff, 0xe7, 0x80,
             0xeb, 0x7a, 0x3d, 0x4d, 0x00, 0x0b, 0xc9, 0x77, 0x1c, 0x54, 0x11, 0xcc, 0x70, 0xae,
             0x4d, 0xfa, 0x8a, 0x1f,
+        ],
+    ),
+    (
+        17464,
+        [
+            0xb5, 0x02, 0x97, 0x9c, 0x46, 0x4a, 0xb7, 0xa6, 0x1f, 0x79, 0xbf, 0xd8, 0x20, 0xe2,
+            0x3b, 0x8d, 0xc3, 0xee, 0xb3, 0x60, 0x34, 0xb0, 0x72, 0x2f, 0x75, 0x88, 0x97, 0x2f,
+            0xd9, 0xfa, 0x73, 0x92,
         ],
     ),
     (
@@ -387,8 +398,10 @@ impl SubsonicClient {
         Self::reject_error_body(&resp)?;
         let headers = resp.headers().clone();
         let body = resp.bytes()?;
+        // This client's own server, as last probed: no config read, no
+        // request.
         let navidrome = || {
-            crate::remote::profile::current()
+            crate::remote::profile::probed(self.auth())
                 .and_then(|p| p.kind)
                 .is_some_and(|kind| kind.eq_ignore_ascii_case("navidrome"))
         };
@@ -758,21 +771,6 @@ impl SubsonicClient {
             .shares
             .and_then(|s| s.share.into_iter().next())
             .ok_or(SubsonicError::BadResponse)
-    }
-
-    /// Get similar songs for a track (Subsonic getSimilarSongs2 endpoint).
-    /// Returns up to `count` similar songs based on the server's algorithm.
-    pub fn get_similar_songs(
-        &self,
-        song_id: &str,
-        count: usize,
-    ) -> Result<Vec<SubsonicSong>, SubsonicError> {
-        let count_str = count.to_string();
-        let resp = self.get_with_params(
-            "getSimilarSongs2",
-            &[("id", song_id), ("count", &count_str)],
-        )?;
-        Ok(resp.similar_songs2.and_then(|s| s.song).unwrap_or_default())
     }
 
     // --- Playlists ---------------------------------------------------------
@@ -1306,7 +1304,6 @@ struct SubsonicResponse {
     search_result3: Option<SubsonicSearchResult>,
     starred2: Option<SubsonicStarred>,
     shares: Option<SubsonicShares>,
-    similar_songs2: Option<SubsonicSimilarSongs>,
     playlists: Option<SubsonicPlaylists>,
     playlist: Option<SubsonicPlaylistFull>,
     scan_status: Option<SubsonicScanStatus>,
@@ -1913,11 +1910,6 @@ pub struct SubsonicStarred {
     pub album: Vec<SubsonicAlbum>,
     #[serde(default)]
     pub artist: Vec<SubsonicArtist>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SubsonicSimilarSongs {
-    pub song: Option<Vec<SubsonicSong>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

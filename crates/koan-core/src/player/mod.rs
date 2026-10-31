@@ -2139,14 +2139,9 @@ impl Player {
         self.sleep = timer.map(|timer| match timer {
             SleepTimer::After { minutes } => {
                 let after = std::time::Duration::from_secs(u64::from(minutes) * 60);
-                let unix_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    + after;
+                let unix_ms = crate::clock::unix_ms() as u64 + after.as_millis() as u64;
                 SleepSet {
-                    sleep: Sleep::At {
-                        unix_ms: unix_ms.as_millis() as u64,
-                    },
+                    sleep: Sleep::At { unix_ms },
                     at: Some(std::time::Instant::now() + after),
                     fade: Some(sleep::fade_length(minutes)),
                 }
@@ -4047,10 +4042,7 @@ mod tests {
         let Some(Sleep::At { unix_ms }) = player.shared_state.sleep() else {
             panic!("published as a time");
         };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::clock::unix_ms() as u64;
         assert!(unix_ms.abs_diff(now + 30 * 60_000) < 5_000);
         let at = player.sleep.and_then(|s| s.at).unwrap();
         assert!(player.next_wake().is_some_and(|w| w <= at), "woken for it");
@@ -5754,6 +5746,30 @@ mod tests {
 
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C", "D"]);
+    }
+
+    /// A drag ends when the queue comes back under a new version, so a move
+    /// that changes nothing must still publish one.
+    #[test]
+    fn a_move_that_changes_nothing_still_moves_the_version() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let (a_id, b_id) = (items[0].id, items[1].id);
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        let (version, content) = (
+            player.shared_state.playlist_version(),
+            player.shared_state.content_version(),
+        );
+
+        // A before B, where it already is.
+        player.process_command(PlayerCommand::MoveItemsInPlaylist {
+            ids: vec![a_id],
+            target: b_id,
+            after: false,
+        });
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+        assert!(player.shared_state.playlist_version() > version);
+        assert!(player.shared_state.content_version() > content);
     }
 
     // --- ClearPlaylist undo/redo ---

@@ -1,0 +1,1 @@
+- **Misspelt searches find things over GraphQL and Subsonic.** Every front end searches through core, with one fuzzy ranking.

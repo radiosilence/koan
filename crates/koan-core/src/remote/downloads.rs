@@ -361,7 +361,11 @@ impl DownloadStore {
     pub fn resync(&self, wanted: &[(i64, QueueItemId)]) -> Vec<(i64, QueueItemId)> {
         let mut entries = self.entries.write();
         let mut live: HashMap<i64, usize> = HashMap::new();
+        let mut was_wanted = Vec::new();
         for (ix, entry) in entries.iter_mut().enumerate().filter(|(_, e)| e.is_live()) {
+            if entry.wanted() {
+                was_wanted.push(ix);
+            }
             entry.waiters.clear();
             live.insert(entry.download.track_id, ix);
         }
@@ -373,6 +377,13 @@ impl DownloadStore {
                 }
                 None => unfetched.push((track_id, id)),
             }
+        }
+        let abandoned = was_wanted.iter().any(|&ix| !entries[ix].wanted());
+        drop(entries);
+        // A transfer nobody wants any more is news to the download running
+        // it, which may be waiting out an outage on the engine's signal.
+        if abandoned {
+            crate::signal::engine_changed().bump();
         }
         unfetched
     }

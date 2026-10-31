@@ -108,7 +108,7 @@ impl Lease {
         let lapsed = async {
             match self.expires {
                 Some(at) => {
-                    let left = at.saturating_sub(koan_core::auth::now_unix());
+                    let left = at.saturating_sub(koan_core::clock::unix_secs() as u64);
                     tokio::time::sleep(std::time::Duration::from_secs(left)).await;
                 }
                 None => std::future::pending().await,
@@ -161,7 +161,7 @@ mod tests {
         let lease = Lease {
             user_id: 9003,
             mark: koan_core::auth::account_mark(),
-            expires: Some(koan_core::auth::now_unix()),
+            expires: Some(koan_core::clock::unix_secs() as u64),
         };
         tokio::time::timeout(Duration::from_secs(1), lease.ended())
             .await

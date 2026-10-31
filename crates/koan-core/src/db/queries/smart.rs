@@ -8,8 +8,6 @@
 //! [`refresh_due`]); entries are rewritten only when the selection changed, so
 //! a read that finds nothing new writes nothing.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, params, params_from_iter};
 
@@ -26,13 +24,6 @@ pub const REFRESH_SECS: i64 = 60;
 /// How long a random order stands. Drawing it again on every read would make
 /// it a different playlist each time a client synced.
 pub const RANDOM_REFRESH_SECS: i64 = 24 * 60 * 60;
-
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
 
 /// A track column or derived value, as SQL over the joins in [`FROM`].
 fn column(field: Field) -> &'static str {
@@ -215,7 +206,8 @@ fn condition(rule: &Rule, params: &mut Vec<SqlValue>, now: i64) -> Result<String
 /// The track ids the rules select for `user`, in order.
 pub fn evaluate(conn: &Connection, rules: &Rules, user: i64) -> Result<Vec<i64>, DbError> {
     let user = resolve_user(conn, user)?;
-    let (sql, params) = compile(rules, user, now_secs()).map_err(DbError::InvalidRules)?;
+    let (sql, params) =
+        compile(rules, user, crate::clock::unix_secs()).map_err(DbError::InvalidRules)?;
     let mut stmt = conn.prepare(&sql)?;
     let ids = stmt
         .query_map(params_from_iter(params), |r| r.get(0))?
@@ -293,7 +285,7 @@ pub fn refresh(conn: &Connection, id: i64) -> Result<bool, DbError> {
 /// rules again only to be refused.
 fn refresh_for_read(conn: &Connection, id: i64) -> Result<bool, DbError> {
     let key = (conn.path().unwrap_or_default().to_owned(), id);
-    let now = now_secs();
+    let now = crate::clock::unix_secs();
     if refused()
         .lock()
         .get(&key)
@@ -373,7 +365,7 @@ fn store(conn: &Connection, id: i64, tracks: &[i64]) -> Result<bool, DbError> {
     super::atomically(conn, || {
         conn.execute(
             "UPDATE playlists SET refreshed_at = ?2 WHERE id = ?1",
-            params![id, now_secs()],
+            params![id, crate::clock::unix_secs()],
         )?;
         super::playlists::replace_entries(conn, id, tracks)
     })
@@ -384,7 +376,7 @@ fn store(conn: &Connection, id: i64, tracks: &[i64]) -> Result<bool, DbError> {
 /// Returns the ids whose contents changed.
 pub fn refresh_due(conn: &Connection, user: i64) -> Result<Vec<i64>, DbError> {
     let user = resolve_user(conn, user)?;
-    let now = now_secs();
+    let now = crate::clock::unix_secs();
     let due: Vec<(i64, String)> = conn
         .prepare_cached(
             "SELECT id, rules FROM playlists
@@ -433,7 +425,7 @@ pub fn refresh_if_due(conn: &Connection, id: i64) -> Result<bool, DbError> {
     } else {
         REFRESH_SECS
     };
-    if refreshed.is_some_and(|at| at > now_secs() - stands) {
+    if refreshed.is_some_and(|at| at > crate::clock::unix_secs() - stands) {
         return Ok(false);
     }
     refresh_for_read(conn, id)
@@ -559,7 +551,7 @@ mod tests {
         let a = track(&conn, "A", "Artist", "X");
         let b = track(&conn, "B", "Artist", "Y");
         let c = track(&conn, "C", "Artist", "Z");
-        let now = now_secs();
+        let now = crate::clock::unix_secs();
         let plays = [
             (a, now - 100),
             (a, now - 50),
@@ -643,7 +635,8 @@ mod tests {
             [],
         )
         .unwrap();
-        super::super::record_plays_at(&conn, 7, &[(a, now_secs())], "local").unwrap();
+        super::super::record_plays_at(&conn, 7, &[(a, crate::clock::unix_secs())], "local")
+            .unwrap();
         let played = rules(r#"{"rules":[{"field":"playCount","op":"gt","value":0}]}"#);
         assert_eq!(evaluate(&conn, &played, 7).unwrap(), vec![a]);
         assert!(evaluate(&conn, &played, LOCAL_USER).unwrap().is_empty());
@@ -667,7 +660,13 @@ mod tests {
                 .is_empty()
         );
 
-        super::super::record_plays_at(&conn, LOCAL_USER, &[(a, now_secs())], "local").unwrap();
+        super::super::record_plays_at(
+            &conn,
+            LOCAL_USER,
+            &[(a, crate::clock::unix_secs())],
+            "local",
+        )
+        .unwrap();
         assert!(refresh(&conn, id).unwrap());
         let entries = super::super::playlist_entry_ids(&conn, id).unwrap();
         assert_eq!(
@@ -689,7 +688,13 @@ mod tests {
         );
 
         let b = track(&conn, "B", "Artist", "X");
-        super::super::record_plays_at(&conn, LOCAL_USER, &[(b, now_secs())], "local").unwrap();
+        super::super::record_plays_at(
+            &conn,
+            LOCAL_USER,
+            &[(b, crate::clock::unix_secs())],
+            "local",
+        )
+        .unwrap();
         assert!(refresh(&conn, id).unwrap());
         let after = super::super::playlist_entry_ids(&conn, id).unwrap();
         assert_eq!(after.len(), 2);
@@ -739,7 +744,13 @@ mod tests {
             &rules(r#"{"rules":[{"field":"favourite","op":"is","value":true}]}"#),
         )
         .unwrap();
-        super::super::record_plays_at(&conn, LOCAL_USER, &[(a, now_secs())], "local").unwrap();
+        super::super::record_plays_at(
+            &conn,
+            LOCAL_USER,
+            &[(a, crate::clock::unix_secs())],
+            "local",
+        )
+        .unwrap();
         let plays = [Field::PlayCount, Field::LastPlayed];
         assert_eq!(
             refresh_after_activity(&conn, LOCAL_USER, &plays).unwrap(),
@@ -765,7 +776,13 @@ mod tests {
             &rules(r#"{"rules":[{"field":"playCount","op":"gt","value":0}]}"#),
         )
         .unwrap();
-        super::super::record_plays_at(&conn, LOCAL_USER, &[(a, now_secs())], "subsonic").unwrap();
+        super::super::record_plays_at(
+            &conn,
+            LOCAL_USER,
+            &[(a, crate::clock::unix_secs())],
+            "subsonic",
+        )
+        .unwrap();
         let plays = [Field::PlayCount, Field::LastPlayed];
         refresh_after_activity(&conn, LOCAL_USER, &plays).unwrap();
         assert_eq!(
