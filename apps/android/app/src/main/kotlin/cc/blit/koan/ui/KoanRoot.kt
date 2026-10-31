@@ -49,8 +49,10 @@ fun KoanRoot(content: @Composable () -> Unit) {
     // Keyed on the cover, not the entry: the tracks of one record share it.
     // Held while the next is fetched, so the room keeps its colour meanwhile.
     val sleeve by produceState(Sleeve(null, null, null), art) {
-        val bitmap = art?.let { sleeve(context, it) }
-        value = Sleeve(art, bitmap, bitmap?.let { SleeveAccents.of(art, it) })
+        value = art?.let { a ->
+            val bitmap = sleeve(context, a)
+            Sleeve(a, bitmap, bitmap?.let { SleeveAccents.of(a, it) })
+        } ?: Sleeve(null, null, null)
     }
     val step = rainbowStep(appearance?.rainbow == true)
     KoanTheme(

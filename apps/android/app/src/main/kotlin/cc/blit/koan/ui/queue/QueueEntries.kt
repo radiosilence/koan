@@ -221,7 +221,15 @@ private fun QueuePage() {
             dragged = null
             return
         }
-        mirror.launch { moveInQueue(row.itemIds, target.first, target.second) }
+        mirror.launch {
+            try {
+                moveInQueue(row.itemIds, target.first, target.second)
+            } catch (e: Exception) {
+                // Nothing comes back whole for a move that failed: put the rows back as the engine has them.
+                dragged = null
+                throw e
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize()) {

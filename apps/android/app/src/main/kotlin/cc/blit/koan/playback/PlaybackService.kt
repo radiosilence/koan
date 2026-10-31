@@ -31,9 +31,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -56,9 +58,8 @@ class PlaybackService : MediaSessionService() {
     /** Whether the sound is this phone's: no other device controlled, no renderer as the output. */
     private val local by lazy {
         combine(engine.devices, engine.renderers) { devices, renderers -> devices.target == null && renderers.output == null }
-            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.Eagerly, true)
     }
-    private val isLocal get() = engine.devices.value.target == null && engine.renderers.value.output == null
 
     private var focus: AudioFocusRequest? = null
     /** Paused for a transient loss of focus, so to resume when it comes back. */
@@ -216,7 +217,7 @@ class PlaybackService : MediaSessionService() {
      * made to play here instead.
      */
     private fun focusCommand(block: suspend KoanEngine.() -> Unit) {
-        if (!isLocal) return
+        if (!local.value) return
         engine.launch { attempt { block() } }
     }
 
@@ -233,7 +234,7 @@ class PlaybackService : MediaSessionService() {
                 focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                resumeOnGain = isLocal && engine.nowPlaying.value?.state == PlayState.PLAYING
+                resumeOnGain = local.value && engine.nowPlaying.value?.state == PlayState.PLAYING
                 focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {

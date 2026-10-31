@@ -41,13 +41,20 @@ inline fun <T> read(block: () -> T): Read<T> = attempt(block).fold(
 /**
  * A listing read again whenever `keys` moves, and when asked to after a
  * failed read. A new read replaces the last one's answer only when it lands,
- * so a page keeps what it shows meanwhile.
+ * so a page keeps what it shows meanwhile; and a read again of the same key
+ * that fails keeps what was read, since the library moving reads it again.
  */
 class Listing<K, T>(scope: CoroutineScope, keys: Flow<K>, fetch: suspend (K) -> T) {
     private val retries = MutableStateFlow(0)
+    private var last: Pair<K, Read.Done<T>>? = null
 
     val state: StateFlow<Read<T>> = combine(keys, retries) { key, _ -> key }
-        .mapLatest { key -> read { fetch(key) } }
+        .mapLatest { key ->
+            when (val r = read { fetch(key) }) {
+                is Read.Done -> r.also { last = key to it }
+                else -> last?.takeIf { it.first == key }?.second ?: r
+            }
+        }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), Read.Reading)
 
     fun retry() = retries.update { it + 1 }
