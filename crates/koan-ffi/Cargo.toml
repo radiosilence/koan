@@ -19,7 +19,9 @@ crate-type = ["staticlib", "cdylib", "lib"]
 [dependencies]
 # Config is written back from the settings window.
 toml = "1.1"
-koan-core = { path = "../koan-core" }
+koan-core = { workspace = true }
+# Sharing this device's library: see `serve.rs`.
+koan-server = { workspace = true }
 crossbeam-channel = "0.5"
 getrandom = "0.4"
 # The open file limit, raised when the engine opens.

@@ -3106,6 +3106,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jni",
  "koan-core",
+ "koan-server",
  "libc",
  "log",
  "nucleo",

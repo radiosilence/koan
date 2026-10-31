@@ -73,7 +73,7 @@ pub fn cmd_serve(
         }
     });
 
-    if let Err(e) = run_api_blocking(
+    let started = ApiServer::start(
         ApiServerOpts {
             state,
             cmd_tx,
@@ -83,12 +83,16 @@ pub fn cmd_serve(
             subsonic_port,
             playground,
             viz: None, // headless — no viz analyzer
-            headless: true,
+            profile: Profile::Headless,
         },
         jobs,
-    ) {
-        eprintln!("koan: {}", e);
-        std::process::exit(1);
+    );
+    match started {
+        Ok(server) => server.wait(),
+        Err(e) => {
+            eprintln!("koan: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -154,6 +158,22 @@ where
         )
 }
 
+/// Who the server runs for, which decides what it takes from the `[graphql]`,
+/// `[subsonic]` and `[server]` settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profile {
+    /// `koan --headless`: a server and nothing else. Its player is heard by
+    /// nobody.
+    Headless,
+    /// Beside the TUI, on the TUI's player.
+    Tui,
+    /// Inside an app sharing its library, on the app's player. Subsonic is
+    /// always on and only accounts sign in to it. The app owns the process, so
+    /// signals are left to it, and the settings a headless deployment uses
+    /// (demo, proxy sign-in, the playground) do not apply.
+    Embedded,
+}
+
 /// Options for the API server — avoids too-many-arguments.
 pub struct ApiServerOpts {
     pub state: Arc<SharedPlayerState>,
@@ -166,378 +186,482 @@ pub struct ApiServerOpts {
     pub subsonic_port: Option<u16>,
     pub playground: bool,
     pub viz: Option<Arc<VizSnapshot>>,
-    /// No TUI or app: the player here is heard by nobody.
-    pub headless: bool,
+    pub profile: Profile,
 }
 
-/// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
-/// Called from `cmd_serve` (headless) and `start_api_background` (TUI companion).
-///
-/// `Err` means the server refused to start on a misconfiguration the caller has
-/// to surface — never a silent downgrade to an unauthenticated server.
-///
-/// `jobs` is made by the caller, so a library watch started before the server
-/// records its scans from the first.
-fn run_api_blocking(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Result<(), String> {
-    let ApiServerOpts {
-        state,
-        cmd_tx,
-        pool,
-        port,
-        bind,
-        subsonic_port,
-        playground,
-        viz,
-        headless,
-    } = opts;
-    use axum::routing::{get, post};
+/// A running API server. Dropping it asks the server to stop and does not
+/// wait for it.
+pub struct ApiServer {
+    addr: std::net::SocketAddr,
+    stop: tokio_util::sync::CancellationToken,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
 
-    let cfg = Config::cached();
-    let port = port.unwrap_or(cfg.graphql.port);
-    // The wizard is for a server with no shell to hand, in a container. One
-    // beside a terminal session would open its /setup to any local process
-    // with nothing on screen to say so; its first admin comes from
-    // `koan auth setup`.
-    let setup_wizard = cfg.graphql.setup_wizard && headless;
-    let bind = bind.unwrap_or(cfg.graphql.bind);
-    let subsonic_port = subsonic_port.or(cfg.subsonic.port);
-    let playground_enabled = playground || cfg.graphql.playground;
-    let auth_enabled = cfg.graphql.auth_enabled;
+impl ApiServer {
+    /// Bind the listeners, then serve on a thread of its own.
+    ///
+    /// `Err` means the server refused to start, on a misconfiguration or a port
+    /// it could not bind, and the caller has to surface it — never a silent
+    /// downgrade to an unauthenticated server. Nothing process-wide is touched
+    /// until the main port is bound.
+    ///
+    /// `jobs` is made by the caller, so a library watch started before the
+    /// server records its scans from the first.
+    pub fn start(opts: ApiServerOpts, jobs: super::jobs::JobRegistry) -> Result<Self, String> {
+        let ApiServerOpts {
+            state,
+            cmd_tx,
+            pool,
+            port,
+            bind,
+            subsonic_port,
+            playground,
+            viz,
+            profile,
+        } = opts;
+        use axum::routing::{get, post};
 
-    // Load or generate Ed25519 keypair for JWT signing. A server's first start
-    // makes its own: it is this server's signing key and nothing else, a fresh
-    // one invalidates no token (there can be none yet), and a server in a
-    // container has no terminal to run `koan auth setup` in before it starts.
-    // Accounts are still created deliberately; until one exists, nothing signs in.
-    let (private_pem, public_pem) = if auth_enabled {
-        let kp = auth::load_or_generate_keypair().map_err(|e| {
-            format!(
-                "auth_enabled = true but the keypair could not be loaded or created: {}",
-                e
-            )
-        })?;
-        // An empty or truncated key file would otherwise leave every request an
-        // unauthenticated admin, which is the opposite of what was asked for.
-        if kp.0.is_empty() || kp.1.is_empty() {
-            return Err("auth_enabled = true but the keypair files are empty. \
-                 Run `koan auth regenerate-keys`."
-                .into());
+        let cfg = Config::cached();
+        let embedded = profile == Profile::Embedded;
+        let port = port.unwrap_or(cfg.graphql.port);
+        // The wizard is for a server with no shell to hand, in a container. One
+        // beside a terminal session or inside an app would open its /setup to
+        // any local process with nothing on screen to say so.
+        let setup_wizard = cfg.graphql.setup_wizard && profile == Profile::Headless;
+        let bind = bind.unwrap_or(cfg.graphql.bind);
+        let subsonic_port = subsonic_port.or(cfg.subsonic.port);
+        let subsonic_enabled = embedded || cfg.subsonic.enabled;
+        let playground_enabled = !embedded && (playground || cfg.graphql.playground);
+        let auth_enabled = cfg.graphql.auth_enabled;
+        let demo = cfg.server.demo;
+
+        if embedded && !auth_enabled {
+            return Err(
+                "graphql.auth_enabled is off, which would make anyone who reaches \
+                 this port an admin"
+                    .into(),
+            );
         }
-        kp
-    } else {
-        // When auth is disabled, we still need dummy keys for the route state
-        // (routes exist but won't be hit by middleware). Generate if available.
-        auth::load_or_generate_keypair().unwrap_or_default()
-    };
-
-    // What once encrypted account passwords for Subsonic token auth. Nothing
-    // is encrypted with it any more; a copy left on disk is a liability.
-    let _ = std::fs::remove_file(auth::keypair_dir().join("subsonic.key"));
-
-    let access_ttl = parse_duration_secs(&cfg.graphql.access_token_ttl).unwrap_or(900);
-    let refresh_ttl = parse_duration_secs(&cfg.graphql.refresh_token_ttl).unwrap_or(2_592_000);
-
-    // Process-scoped introspection key for playground access. It is a bearer
-    // credential compared verbatim, so it has to be full-entropy random — a
-    // UUID would leak the server start time and cut the guessable space.
-    let introspection_key = if playground_enabled && auth_enabled {
-        Some(Arc::new(auth::random_token().map_err(|e| {
-            format!("failed to generate introspection key: {}", e)
-        })?))
-    } else {
-        None
-    };
-
-    let auth_state = AuthState {
-        public_pem: Arc::new(public_pem.clone()),
-        auth_enabled,
-        introspection_key: introspection_key.clone(),
-        pool: pool.clone(),
-    };
-
-    crate::auth::set_signing_keys(Arc::new(private_pem.clone()), Arc::new(public_pem.clone()));
-
-    // One for every door a password comes through, so its limits are shared.
-    let users = Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone()));
-    let auth_route_state = AuthRouteState {
-        users: users.clone(),
-        pool: pool.clone(),
-        private_pem: Arc::new(private_pem),
-        public_pem: Arc::new(public_pem),
-        access_ttl_secs: access_ttl,
-        refresh_ttl_secs: refresh_ttl,
-        cookie_secure: cfg.graphql.cookie_secure,
-        login_limiter: Arc::new(RateLimiter::default()),
-    };
-
-    // Plays accounts forward to ListenBrainz; it sleeps while none do.
-    koan_core::scrobbling::start(pool.path().to_path_buf());
-
-    let shutdown = tokio_util::sync::CancellationToken::new();
-    let mcp_routes = crate::mcp::router(
-        state.clone(),
-        cmd_tx.clone(),
-        auth_state.clone(),
-        cfg.server_url(),
-        headless,
-        shutdown.clone(),
-    );
-    let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
-
-    // A demo is one shared account; without sign-in everyone would be admin.
-    if cfg.server.demo {
-        if !auth_enabled {
+        if demo && embedded {
+            return Err("server.demo is for a headless server".into());
+        }
+        // A demo is one shared account; without sign-in everyone would be admin.
+        if demo && !auth_enabled {
             return Err("server.demo needs graphql.auth_enabled".into());
         }
-        let db = pool.get().map_err(|e| format!("demo: {e}"))?;
-        crate::demo::start(&db.conn).map_err(|e| format!("demo: {e}"))?;
-    }
-    if auth_enabled {
-        log::info!(
-            "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",
-            access_ttl,
-            refresh_ttl
-        );
-        let no_accounts = pool
-            .get()
-            .ok()
-            .and_then(|db| koan_core::db::queries::auth::has_users(&db.conn).ok())
-            == Some(false);
-        if no_accounts && setup_wizard {
-            log::warn!(
-                "No accounts yet: whoever opens /setup first becomes the admin. \
-                 Set graphql.setup_wizard = false to make it with `koan auth setup` instead."
-            );
-        }
-    } else {
-        log::info!("Auth disabled — all requests treated as admin");
-    }
 
-    let browser_policy = Arc::new(BrowserPolicy {
-        origins: cfg.graphql.cors_origins.clone(),
-        hosts: cfg.graphql.allowed_hosts.clone(),
-    });
-
-    if cfg.graphql.cors_origins.is_empty() {
-        log::info!("CORS: no origins configured — browsers get no cross-origin access");
-    }
-
-    let proxy_auth = crate::ui::ProxyAuth::from_config(
-        &cfg.graphql.proxy_auth_header,
-        &cfg.graphql.proxy_auth_from,
-    )?;
-
-    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    rt.block_on(async {
-        // GraphQL routes — protected by auth middleware.
-        //
-        // The query route carries the load perimeter; the WebSocket route does
-        // not, because a subscription is meant to outlive any request timeout.
-        let query_route = load_perimeter(axum::Router::new().route("/graphql", post(graphql_handler)));
-
-        let gql_app = axum::Router::new()
-            .merge(query_route)
-            .route("/graphql/ws", get(graphql_ws_handler))
-            .layer(axum::middleware::from_fn_with_state(
-                auth_state.clone(),
-                auth_middleware,
-            ))
-            // Runs before auth: a rejected request should never reach a
-            // credential check, let alone execute.
-            .layer(axum::middleware::from_fn_with_state(
-                browser_policy.clone(),
-                browser_guard,
-            ))
-            .with_state(schema);
-
-        // The web UI checks its own session (a page load without one is sent
-        // to sign in rather than refused), so it sits outside the GraphQL auth
-        // layer. Built before the auth routes take their state.
-        let covers = Arc::new(crate::covers::Covers::in_config_dir());
-        let ui_routes = crate::ui::router(
-            pool.clone(),
-            auth_route_state.clone(),
-            auth_enabled,
-            setup_wizard,
-            covers.clone(),
-            cfg.server_url(),
-            cfg.mcp.redirect_hosts.clone(),
-            proxy_auth,
-            jobs,
-        )
-        // A template that fails to render panics; this makes it a 500.
-        .layer(tower_http::catch_panic::CatchPanicLayer::new());
-        let ui_routes = if cfg.server.demo {
-            ui_routes.layer(axum::middleware::from_fn(crate::demo::guard))
+        // Load or generate Ed25519 keypair for JWT signing. A server's first
+        // start makes its own: it is this server's signing key and nothing
+        // else, a fresh one invalidates no token (there can be none yet), and a
+        // server in a container has no terminal to run `koan auth setup` in
+        // before it starts. Accounts are still created deliberately; until one
+        // exists, nothing signs in.
+        let (private_pem, public_pem) = if auth_enabled {
+            let kp = auth::load_or_generate_keypair().map_err(|e| {
+                format!(
+                    "auth_enabled = true but the keypair could not be loaded or created: {}",
+                    e
+                )
+            })?;
+            // An empty or truncated key file would otherwise leave every request an
+            // unauthenticated admin, which is the opposite of what was asked for.
+            if kp.0.is_empty() || kp.1.is_empty() {
+                return Err("auth_enabled = true but the keypair files are empty. \
+                     Run `koan auth regenerate-keys`."
+                    .into());
+            }
+            kp
         } else {
-            ui_routes
+            // When auth is disabled, we still need dummy keys for the route state
+            // (routes exist but won't be hit by middleware). Generate if available.
+            auth::load_or_generate_keypair().unwrap_or_default()
         };
 
-        // Auth routes — always accessible (no auth middleware).
-        let auth_app = auth_router(auth_route_state);
+        let access_ttl = parse_duration_secs(&cfg.graphql.access_token_ttl).unwrap_or(900);
+        let refresh_ttl = parse_duration_secs(&cfg.graphql.refresh_token_ttl).unwrap_or(2_592_000);
 
-        // CORS. An empty origin list emits no `Access-Control-Allow-Origin` at
-        // all; a wildcard would let any web page read this library.
-        let origins: Vec<axum::http::HeaderValue> = cfg
-            .graphql
-            .cors_origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect();
-        let cors = tower_http::cors::CorsLayer::new()
-            .allow_origin(origins)
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::OPTIONS,
-            ])
-            .allow_headers([
-                axum::http::header::AUTHORIZATION,
-                axum::http::header::CONTENT_TYPE,
-                axum::http::HeaderName::from_static("x-introspection-key"),
-            ])
-            .allow_credentials(true);
-
-
-        // Public by design, so outside the auth layers: each route answers for
-        // one share's own tracks, or the one cover a notification's signed
-        // link names, and nothing else. The Host guard still applies.
-        let share_routes = crate::share::router(
-            pool.clone(),
-            cfg.server_url(),
-            covers.clone(),
-        )
-        .layer(tower_http::catch_panic::CatchPanicLayer::new());
-        // Subsonic on the GraphQL port whenever `[subsonic]` is enabled: the
-        // remote TUI bridge builds its stream URL off the GraphQL base. Built
-        // once and cloned for the dedicated listener, since each build reads
-        // the config from disk.
-        // The demo guard goes on Subsonic itself, so a dedicated Subsonic
-        // port has it too, and on the web UI above.
-        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers, users).map(|sub| {
-            if cfg.server.demo {
-                sub.layer(axum::middleware::from_fn(crate::demo::guard))
-            } else {
-                sub
-            }
-        });
-        let subsonic_on_main = subsonic_merged.is_some();
-        let subsonic_dedicated = subsonic_merged.clone();
-
-        let mut app = auth_app
-            .merge(gql_app)
-            .merge(share_routes)
-            .merge(ui_routes)
-            .merge(mcp_routes);
-        if let Some(sub) = subsonic_merged {
-            app = app.merge(sub);
-        }
-        if playground_enabled {
-            app = app.route(
-                "/graphql",
-                get(graphql_playground).with_state(introspection_key.clone()),
-            );
-        }
-        // Outermost: a request whose `Host` we do not recognise is refused
-        // before anything else looks at it. Without this a DNS-rebinding page
-        // reaches the API as same-origin and CORS stops mattering.
-        let app = app.layer(cors).layer(axum::middleware::from_fn_with_state(
-            browser_policy.clone(),
-            host_guard,
-        ));
-
-        // Build playground URL with introspection key.
-        let playground_url = if playground_enabled {
-            if let Some(ref key) = introspection_key {
-                format!("http://{}:{}/graphql?introspection-key={}", bind, port, key)
-            } else {
-                format!("http://{}:{}/graphql", bind, port)
-            }
+        // Process-scoped introspection key for playground access. It is a bearer
+        // credential compared verbatim, so it has to be full-entropy random — a
+        // UUID would leak the server start time and cut the guessable space.
+        let introspection_key = if playground_enabled && auth_enabled {
+            Some(Arc::new(auth::random_token().map_err(|e| {
+                format!("failed to generate introspection key: {}", e)
+            })?))
         } else {
-            format!("http://{}:{}/graphql", bind, port)
+            None
         };
 
-        let gql_addr = std::net::SocketAddr::new(bind, port);
-
-        let gql_listener = match tokio::net::TcpListener::bind(gql_addr).await {
-            Ok(l) => {
-                log::info!("GraphQL API on http://{}:{}/graphql", bind, port);
-                if subsonic_on_main {
-                    log::info!("Subsonic REST on http://{}:{}/rest/", bind, port);
-                }
-                if playground_enabled {
-                    log::info!("GraphiQL: {}", playground_url);
-                    // Open browser on macOS/Linux.
-                    #[cfg(target_os = "macos")]
-                    let _ = std::process::Command::new("open").arg(&playground_url).spawn();
-                    #[cfg(target_os = "linux")]
-                    let _ = std::process::Command::new("xdg-open").arg(&playground_url).spawn();
-                }
-                l
-            }
-            Err(e) => {
-                return Err(format!(
-                    "failed to bind GraphQL port {port} — {e} (another instance running?)"
-                ));
-            }
+        let proxy_auth = if embedded {
+            None
+        } else {
+            crate::ui::ProxyAuth::from_config(
+                &cfg.graphql.proxy_auth_header,
+                &cfg.graphql.proxy_auth_from,
+            )?
         };
-        let gql_server = axum::serve(
-            gql_listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            shutdown.cancel();
-        });
+
+        let gql_listener = std::net::TcpListener::bind((bind, port))
+            .and_then(|l| l.set_nonblocking(true).map(|()| l))
+            .map_err(|e| {
+                format!("failed to bind GraphQL port {port} — {e} (another instance running?)")
+            })?;
+        let addr = gql_listener
+            .local_addr()
+            .map_err(|e| format!("failed to read the GraphQL listener's address — {e}"))?;
 
         // `--subsonic <port>` set to something other than the GraphQL port adds
         // a dedicated Subsonic listener.
-        let extra_sub_port = subsonic_port.filter(|p| *p != port);
-        if let Some(sub_port) = extra_sub_port
-            && let Some(sub_app) = subsonic_dedicated
-        {
-            let sub_addr = std::net::SocketAddr::new(bind, sub_port);
-            match tokio::net::TcpListener::bind(sub_addr).await {
-                Ok(sub_listener) => {
-                    log::info!(
-                        "Subsonic REST also on http://{}:{}/rest/ (dedicated port)",
-                        bind,
-                        sub_port,
-                    );
-                    // With connection info, as the main listener: the sign-in
-                    // throttle keys on the client's address.
-                    let sub_server = axum::serve(
-                        sub_listener,
-                        sub_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        let sub_listener = subsonic_port
+            .filter(|p| subsonic_enabled && *p != port)
+            .and_then(|sub_port| {
+                match std::net::TcpListener::bind((bind, sub_port))
+                    .and_then(|l| l.set_nonblocking(true).map(|()| l))
+                {
+                    Ok(l) => Some(l),
+                    Err(e) => {
+                        log::warn!(
+                            "Dedicated Subsonic port {sub_port} unavailable — {e}. Mounted on GraphQL port only."
+                        );
+                        None
+                    }
+                }
+            });
+
+        if demo {
+            let db = pool.get().map_err(|e| format!("demo: {e}"))?;
+            crate::demo::start(&db.conn).map_err(|e| format!("demo: {e}"))?;
+        }
+
+        // What once encrypted account passwords for Subsonic token auth. Nothing
+        // is encrypted with it any more; a copy left on disk is a liability.
+        let _ = std::fs::remove_file(auth::keypair_dir().join("subsonic.key"));
+
+        crate::auth::set_signing_keys(Arc::new(private_pem.clone()), Arc::new(public_pem.clone()));
+
+        let auth_state = AuthState {
+            public_pem: Arc::new(public_pem.clone()),
+            auth_enabled,
+            introspection_key: introspection_key.clone(),
+            pool: pool.clone(),
+        };
+
+        // One for every door a password comes through, so its limits are shared.
+        let users = Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone()));
+        let auth_route_state = AuthRouteState {
+            users: users.clone(),
+            pool: pool.clone(),
+            private_pem: Arc::new(private_pem),
+            public_pem: Arc::new(public_pem),
+            access_ttl_secs: access_ttl,
+            refresh_ttl_secs: refresh_ttl,
+            cookie_secure: cfg.graphql.cookie_secure,
+            login_limiter: Arc::new(RateLimiter::default()),
+        };
+
+        // Plays accounts forward to ListenBrainz; it sleeps while none do.
+        koan_core::scrobbling::start(pool.path().to_path_buf());
+
+        // Ends graceful shutdown, every open session and the MCP streams.
+        let stop = tokio_util::sync::CancellationToken::new();
+        let mcp_routes = crate::mcp::router(
+            state.clone(),
+            cmd_tx.clone(),
+            auth_state.clone(),
+            cfg.server_url(),
+            profile == Profile::Headless,
+            stop.clone(),
+        );
+        let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
+
+        if auth_enabled {
+            log::info!(
+                "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",
+                access_ttl,
+                refresh_ttl
+            );
+            let no_accounts = pool
+                .get()
+                .ok()
+                .and_then(|db| koan_core::db::queries::auth::has_users(&db.conn).ok())
+                == Some(false);
+            if no_accounts && setup_wizard {
+                log::warn!(
+                    "No accounts yet: whoever opens /setup first becomes the admin. \
+                     Set graphql.setup_wizard = false to make it with `koan auth setup` instead."
+                );
+            }
+        } else {
+            log::info!("Auth disabled — all requests treated as admin");
+        }
+
+        let browser_policy = Arc::new(BrowserPolicy {
+            origins: cfg.graphql.cors_origins.clone(),
+            hosts: cfg.graphql.allowed_hosts.clone(),
+        });
+
+        if cfg.graphql.cors_origins.is_empty() {
+            log::info!("CORS: no origins configured — browsers get no cross-origin access");
+        }
+
+        let serving = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("koan-api".into())
+            .spawn(move || {
+                let stop = serving;
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        log::error!("API server not started: no runtime — {e}");
+                        return;
+                    }
+                };
+                rt.block_on(async {
+                    if !embedded {
+                        let stop = stop.clone();
+                        tokio::spawn(async move {
+                            shutdown_signal().await;
+                            stop.cancel();
+                        });
+                    }
+
+                    // GraphQL routes — protected by auth middleware.
+                    //
+                    // The query route carries the load perimeter; the WebSocket route does
+                    // not, because a subscription is meant to outlive any request timeout.
+                    let query_route =
+                        load_perimeter(axum::Router::new().route("/graphql", post(graphql_handler)));
+
+                    let gql_app = axum::Router::new()
+                        .merge(query_route)
+                        .route("/graphql/ws", get(graphql_ws_handler))
+                        .layer(axum::Extension(stop.clone()))
+                        .layer(axum::middleware::from_fn_with_state(
+                            auth_state.clone(),
+                            auth_middleware,
+                        ))
+                        // Runs before auth: a rejected request should never reach a
+                        // credential check, let alone execute.
+                        .layer(axum::middleware::from_fn_with_state(
+                            browser_policy.clone(),
+                            browser_guard,
+                        ))
+                        .with_state(schema);
+
+                    // The web UI checks its own session (a page load without one is sent
+                    // to sign in rather than refused), so it sits outside the GraphQL auth
+                    // layer. Built before the auth routes take their state.
+                    let covers = Arc::new(crate::covers::Covers::in_config_dir());
+                    let ui_routes = crate::ui::router(
+                        pool.clone(),
+                        auth_route_state.clone(),
+                        auth_enabled,
+                        setup_wizard,
+                        covers.clone(),
+                        cfg.server_url(),
+                        cfg.mcp.redirect_hosts.clone(),
+                        proxy_auth,
+                        jobs,
                     )
-                    .with_graceful_shutdown(shutdown_signal());
+                    // A template that fails to render panics; this makes it a 500.
+                    .layer(tower_http::catch_panic::CatchPanicLayer::new());
+                    let ui_routes = if demo {
+                        ui_routes.layer(axum::middleware::from_fn(crate::demo::guard))
+                    } else {
+                        ui_routes
+                    };
+
+                    // Auth routes — always accessible (no auth middleware).
+                    let auth_app = auth_router(auth_route_state);
+
+                    // CORS. An empty origin list emits no `Access-Control-Allow-Origin` at
+                    // all; a wildcard would let any web page read this library.
+                    let origins: Vec<axum::http::HeaderValue> = cfg
+                        .graphql
+                        .cors_origins
+                        .iter()
+                        .filter_map(|o| o.parse().ok())
+                        .collect();
+                    let cors = tower_http::cors::CorsLayer::new()
+                        .allow_origin(origins)
+                        .allow_methods([
+                            axum::http::Method::GET,
+                            axum::http::Method::POST,
+                            axum::http::Method::OPTIONS,
+                        ])
+                        .allow_headers([
+                            axum::http::header::AUTHORIZATION,
+                            axum::http::header::CONTENT_TYPE,
+                            axum::http::HeaderName::from_static("x-introspection-key"),
+                        ])
+                        .allow_credentials(true);
+
+                    // Public by design, so outside the auth layers: each route answers for
+                    // one share's own tracks, or the one cover a notification's signed
+                    // link names, and nothing else. The Host guard still applies.
+                    let share_routes =
+                        crate::share::router(pool.clone(), cfg.server_url(), covers.clone())
+                            .layer(tower_http::catch_panic::CatchPanicLayer::new());
+                    // Subsonic on the GraphQL port whenever it is enabled: the remote
+                    // TUI bridge builds its stream URL off the GraphQL base. Built once
+                    // and cloned for the dedicated listener, since each build reads the
+                    // config from disk.
+                    // The demo guard goes on Subsonic itself, so a dedicated Subsonic
+                    // port has it too, and on the web UI above.
+                    let subsonic_merged = subsonic_enabled
+                        .then(|| {
+                            crate::subsonic::subsonic_router(
+                                pool,
+                                covers,
+                                users,
+                                profile,
+                                stop.clone(),
+                            )
+                        })
+                        .map(|sub| {
+                            if demo {
+                                sub.layer(axum::middleware::from_fn(crate::demo::guard))
+                            } else {
+                                sub
+                            }
+                        });
+                    let subsonic_dedicated = subsonic_merged.clone();
+
+                    let mut app = auth_app
+                        .merge(gql_app)
+                        .merge(share_routes)
+                        .merge(ui_routes)
+                        .merge(mcp_routes);
+                    if let Some(sub) = subsonic_merged {
+                        app = app.merge(sub);
+                    }
+                    if playground_enabled {
+                        app = app.route(
+                            "/graphql",
+                            get(graphql_playground).with_state(introspection_key.clone()),
+                        );
+                    }
+                    // Outermost: a request whose `Host` we do not recognise is refused
+                    // before anything else looks at it. Without this a DNS-rebinding page
+                    // reaches the API as same-origin and CORS stops mattering.
+                    let app = app.layer(cors).layer(axum::middleware::from_fn_with_state(
+                        browser_policy.clone(),
+                        host_guard,
+                    ));
+
+                    let gql_listener = match tokio::net::TcpListener::from_std(gql_listener) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            log::error!("API server not started: {e}");
+                            return;
+                        }
+                    };
+                    log::info!("GraphQL API on http://{addr}/graphql");
+                    if subsonic_enabled {
+                        log::info!("Subsonic REST on http://{addr}/rest/");
+                    }
+                    if playground_enabled {
+                        let playground_url = match introspection_key {
+                            Some(ref key) => {
+                                format!("http://{addr}/graphql?introspection-key={key}")
+                            }
+                            None => format!("http://{addr}/graphql"),
+                        };
+                        log::info!("GraphiQL: {}", playground_url);
+                        // Open browser on macOS/Linux.
+                        #[cfg(target_os = "macos")]
+                        let _ = std::process::Command::new("open").arg(&playground_url).spawn();
+                        #[cfg(target_os = "linux")]
+                        let _ = std::process::Command::new("xdg-open")
+                            .arg(&playground_url)
+                            .spawn();
+                    }
+                    let gql_server = axum::serve(
+                        gql_listener,
+                        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    )
+                    .with_graceful_shutdown(stop.clone().cancelled_owned());
+
+                    let sub = sub_listener
+                        .zip(subsonic_dedicated)
+                        .and_then(|(l, sub_app)| match tokio::net::TcpListener::from_std(l) {
+                            Ok(l) => Some((l, sub_app)),
+                            Err(e) => {
+                                log::warn!("Dedicated Subsonic listener unusable — {e}");
+                                None
+                            }
+                        });
+                    if let Some((sub_listener, sub_app)) = sub {
+                        if let Ok(a) = sub_listener.local_addr() {
+                            log::info!("Subsonic REST also on http://{a}/rest/ (dedicated port)");
+                        }
+                        // With connection info, as the main listener: the sign-in
+                        // throttle keys on the client's address.
+                        let sub_server = axum::serve(
+                            sub_listener,
+                            sub_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                        )
+                        .with_graceful_shutdown(stop.clone().cancelled_owned());
+
+                        tokio::select! {
+                            r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
+                            r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
+                            _ = drain_deadline(&stop) => log::info!("shutting down with connections still open"),
+                        }
+                        return;
+                    }
 
                     tokio::select! {
                         r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
-                        r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
-                        _ = drain_deadline() => log::info!("shutting down with connections still open"),
+                        _ = drain_deadline(&stop) => log::info!("shutting down with connections still open"),
                     }
-                    return Ok(());
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Dedicated Subsonic port {} unavailable — {}. Mounted on GraphQL port only.",
-                        sub_port,
-                        e,
-                    );
-                }
-            }
-        }
+                });
+                // Blocking work still running (a scan job, a stream's file read)
+                // is left to finish on its own rather than holding up the stop.
+                rt.shutdown_timeout(DRAIN);
+            })
+            .map_err(|e| format!("could not start the API server thread — {e}"))?;
 
-        tokio::select! {
-            r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
-            _ = drain_deadline() => log::info!("shutting down with connections still open"),
+        Ok(Self {
+            addr,
+            stop,
+            thread: Some(thread),
+        })
+    }
+
+    /// The address the main listener is bound to.
+    pub fn addr(&self) -> std::net::SocketAddr {
+        self.addr
+    }
+
+    /// Stop accepting, close open sessions, and wait for the server to finish:
+    /// at most `DRAIN` for connections, then `DRAIN` for blocking work.
+    pub fn stop(mut self) {
+        self.stop.cancel();
+        self.join();
+    }
+
+    /// Wait until the server stops on its own: on a signal, for the profiles
+    /// that listen for them.
+    pub fn wait(mut self) {
+        self.join();
+    }
+
+    fn join(&mut self) {
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            log::error!("API server thread panicked");
         }
-        Ok(())
-    })
+    }
 }
 
-/// Start the API server on the current thread (blocks forever).
+impl Drop for ApiServer {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
+}
+
+/// Start the API server beside the TUI, blocking until it stops.
 /// Called from a background thread when TUI mode has API enabled.
 pub fn start_api_background(
     state: Arc<SharedPlayerState>,
@@ -548,9 +672,7 @@ pub fn start_api_background(
     subsonic_port: Option<u16>,
     playground: bool,
 ) {
-    // Runs on a spawned thread in TUI mode, where a panic would take the API
-    // down with nothing on screen to say so.
-    if let Err(e) = run_api_blocking(
+    let started = ApiServer::start(
         ApiServerOpts {
             state,
             cmd_tx,
@@ -560,11 +682,13 @@ pub fn start_api_background(
             subsonic_port,
             playground,
             viz: None,
-            headless: false,
+            profile: Profile::Tui,
         },
         Default::default(),
-    ) {
-        log::error!("API server not started: {}", e);
+    );
+    match started {
+        Ok(server) => server.wait(),
+        Err(e) => log::error!("API server not started: {}", e),
     }
 }
 
@@ -723,11 +847,11 @@ async fn shutdown_signal() {
 /// How long shutdown waits for open connections before giving up on them.
 const DRAIN: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Resolves `DRAIN` after a shutdown signal. Graceful shutdown waits for every
+/// Resolves `DRAIN` after the server is told to stop. Graceful shutdown waits for every
 /// connection to close, and subscription websockets and audio streams never
 /// close on their own, so without a deadline the wait ends only in a kill.
-async fn drain_deadline() {
-    shutdown_signal().await;
+async fn drain_deadline(stop: &tokio_util::sync::CancellationToken) {
+    stop.cancelled().await;
     tokio::time::sleep(DRAIN).await;
 }
 
@@ -745,10 +869,12 @@ async fn graphql_handler(
 
 /// Subscriptions over a WebSocket, as the account the upgrade request
 /// authenticated. Closed when that account changes or its token lapses (see
-/// `Lease`); without a lease, as when auth is off, it stays open.
+/// `Lease`), and when the server stops; otherwise, as when auth is off, it
+/// stays open.
 async fn graphql_ws_handler(
     axum::Extension(user): axum::Extension<AuthUser>,
     lease: Option<axum::Extension<crate::auth::Lease>>,
+    axum::Extension(stop): axum::Extension<tokio_util::sync::CancellationToken>,
     axum::extract::State(schema): axum::extract::State<KoanSchema>,
     protocol: async_graphql_axum::GraphQLProtocol,
     websocket: axum::extract::WebSocketUpgrade,
@@ -774,15 +900,16 @@ async fn graphql_ws_handler(
                     None => std::future::pending().await,
                 }
             };
-            let ended = tokio::select! {
-                _ = serve => false,
-                _ = ended => true,
+            let close = tokio::select! {
+                _ = serve => None,
+                _ = ended => Some((close_code::NORMAL, "sign in again")),
+                _ = stop.cancelled() => Some((close_code::AWAY, "server stopping")),
             };
-            if ended {
+            if let Some((code, reason)) = close {
                 let _ = sink
                     .send(Message::Close(Some(CloseFrame {
-                        code: close_code::NORMAL,
-                        reason: "sign in again".into(),
+                        code,
+                        reason: reason.into(),
                     })))
                     .await;
             }

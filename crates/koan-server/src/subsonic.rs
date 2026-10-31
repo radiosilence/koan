@@ -106,6 +106,8 @@ struct AppState {
     /// Whether `[push]` is enabled: the server pushes through the relay, and
     /// the app asks to show notifications only where it does.
     push: bool,
+    /// Cancelled when the server stops, which ends every link.
+    stop: tokio_util::sync::CancellationToken,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -5869,6 +5871,7 @@ async fn koan_link(
         }
     }
     let pool = state.pool.clone();
+    let stop = state.stop.clone();
     let lease = crate::auth::Lease {
         user_id: caller.user_id,
         mark,
@@ -5879,6 +5882,7 @@ async fn koan_link(
             socket,
             caller.username,
             lease,
+            stop,
             LinkPeer {
                 name,
                 platform,
@@ -5915,11 +5919,11 @@ struct LinkPeer {
 /// and the accounts it was shared with are linked on their own, so nothing
 /// else would tell them. Account changes are rare, and each sends every
 /// keyed account its list again.
-fn spawn_key_publisher(pool: Arc<Pool>) {
+fn spawn_key_publisher(pool: Arc<Pool>, stop: tokio_util::sync::CancellationToken) {
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {
         return;
     };
-    runtime.spawn(async move {
+    runtime.spawn(stop.run_until_cancelled_owned(async move {
         let mut mark = koan_core::auth::account_mark();
         loop {
             mark = koan_core::auth::any_account_changed_since(mark).await;
@@ -5931,7 +5935,7 @@ fn spawn_key_publisher(pool: Arc<Pool>) {
             })
             .await;
         }
-    });
+    }));
 }
 
 /// Send `username`'s links that asked for them the device keys they check
@@ -6066,6 +6070,7 @@ async fn link_session(
     mut socket: axum::extract::ws::WebSocket,
     username: String,
     lease: crate::auth::Lease,
+    stop: tokio_util::sync::CancellationToken,
     peer: LinkPeer,
     pool: Arc<Pool>,
 ) {
@@ -6156,6 +6161,15 @@ async fn link_session(
                     let close = socket.send(Message::Close(Some(CloseFrame {
                         code: close_code::NORMAL,
                         reason: "sign in again".into(),
+                    })));
+                    let _ = tokio::time::timeout(LINK_SEND, close).await;
+                    break;
+                }
+                // Going away, so the device links again once the server is back.
+                _ = stop.cancelled() => {
+                    let close = socket.send(Message::Close(Some(CloseFrame {
+                        code: close_code::AWAY,
+                        reason: "server stopping".into(),
                     })));
                     let _ = tokio::time::timeout(LINK_SEND, close).await;
                     break;
@@ -6694,15 +6708,16 @@ pub fn subsonic_router(
     pool: Arc<Pool>,
     covers: Arc<crate::covers::Covers>,
     users: Arc<PasswordVerifier>,
-) -> Option<axum::Router> {
+    profile: crate::graphql::Profile,
+    stop: tokio_util::sync::CancellationToken,
+) -> axum::Router {
     let cfg = Config::cached();
 
-    if !cfg.subsonic.enabled {
-        return None;
-    }
-
+    // The shared secret belongs to a deployment that chose it; an app sharing
+    // its library signs in accounts only.
     let password = koan_core::helpers::get_subsonic_password(&cfg)
-        .filter(|_| !cfg.subsonic.username.is_empty());
+        .filter(|_| !cfg.subsonic.username.is_empty())
+        .filter(|_| profile != crate::graphql::Profile::Embedded);
     if password.is_none() {
         log::info!("Subsonic: no shared secret, so only koan accounts sign in (with p=).");
     }
@@ -6742,12 +6757,11 @@ pub fn subsonic_router(
         transcoder,
         server_url: cfg.server_url(),
         push: crate::push::pusher().is_some(),
+        stop: stop.clone(),
     });
-    // Once per process, though the router may be built for two ports.
-    static KEYS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    KEYS.get_or_init(|| spawn_key_publisher(state.pool.clone()));
+    spawn_key_publisher(state.pool.clone(), stop);
 
-    Some(subsonic_app(state))
+    subsonic_app(state)
 }
 
 // ===========================================================================
@@ -6789,6 +6803,7 @@ mod tests {
             transcoder: None,
             server_url: None,
             push: false,
+            stop: Default::default(),
         });
         (state, dir)
     }

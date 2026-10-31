@@ -41,6 +41,7 @@ use koan_core::db::queries::RECENT_LIMIT;
 mod android;
 mod offload;
 mod queue_slice;
+mod serve;
 mod server_queue;
 mod state;
 mod types;
@@ -637,6 +638,8 @@ pub struct KoanEngine {
     /// when that queue or the library moves, not on every change to the
     /// device list.
     remote_queue: parking_lot::Mutex<Option<RemoteQueue>>,
+    /// The server sharing this library, while one runs. See `serve`.
+    server: parking_lot::Mutex<Option<koan_server::graphql::ApiServer>>,
 }
 
 /// What `KoanEngine::remote_queue` holds.
@@ -5942,6 +5945,7 @@ impl KoanEngine {
             pairing_cancel: Default::default(),
             cursor_reading: Default::default(),
             remote_queue: Default::default(),
+            server: Default::default(),
             device_name: device_name.clone(),
         });
         engine.spawn_watcher();
