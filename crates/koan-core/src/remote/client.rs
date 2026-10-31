@@ -2094,9 +2094,14 @@ mod tests {
 
     use super::*;
 
+    /// The cover slots are process-wide, and each of these tests needs all of
+    /// them: run in parallel, one would starve the other.
+    static COVER_SLOT_TESTS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[test]
     fn cover_fetches_are_bounded() {
         use std::sync::atomic::{AtomicUsize, Ordering};
+        let _slots = COVER_SLOT_TESTS.lock();
         let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
         std::thread::scope(|s| {
             for _ in 0..COVER_FETCHES * 3 {
@@ -2115,6 +2120,7 @@ mod tests {
 
     #[test]
     fn a_cover_fetch_gives_up_when_no_slot_frees() {
+        let _slots = COVER_SLOT_TESTS.lock();
         let held: Vec<_> = (0..COVER_FETCHES)
             .map(|_| CoverSlots::take().unwrap())
             .collect();
