@@ -639,7 +639,7 @@ impl LinkState {
 /// The state a session last sent, and when the engine was last read for it.
 #[derive(Default)]
 pub(crate) struct SentState {
-    sent: SentState,
+    sent: Option<(LinkState, Instant)>,
     /// The engine's change generation and the moment of the last read.
     read: Option<(u64, Instant)>,
 }
