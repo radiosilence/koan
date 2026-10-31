@@ -356,13 +356,15 @@ struct PlaylistView: View {
     }
 
     private var shuffleButton: some View {
-        DiceButton(
-            refusal: !playlists.fillable(playlistId) ? "This playlist can't be edited here"
-                : entries.count < 2 ? "Nothing to shuffle" : nil,
-            help: "Shuffle the playlist's order, for good",
-            labelled: true,
-            shuffle: { playlists.shuffle(id: playlistId) }
-        )
+        let refusal: String? = !playlists.fillable(playlistId) ? "This playlist can't be edited here"
+            : entries.count < 2 ? "Nothing to shuffle" : nil
+        return HStack {
+            Button { playlists.shuffle(id: playlistId) } label: {
+                Label("Shuffle Order", koan: Icon.reshuffle)
+            }
+            .disabled(refusal != nil)
+        }
+        .help(refusal ?? "Shuffle the playlist's order, for good")
         .koanButton(.compact)
     }
 

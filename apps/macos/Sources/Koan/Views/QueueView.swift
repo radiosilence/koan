@@ -1080,18 +1080,24 @@ private struct JumpToPlayingButton: View {
     }
 }
 
-/// Its own view because what the dice reads, the queue and what is playing,
-/// moves on every edit.
+/// Shuffles the rows after the playing one in place, each press one undo
+/// step; shuffle play leaves the rows alone. Its own view because what it
+/// reads, the queue and what is playing, moves on every edit.
 #if !os(tvOS)
 private struct QueueDiceButton: View {
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
-        DiceButton(
-            refusal: player.queueDiceRefusal,
-            help: "Shuffle the rest of the queue in place",
-            shuffle: { player.shuffleQueue() }
-        )
+        let refusal = player.queueDiceRefusal
+        // The reason goes on a wrapper, which disabling the button does not
+        // reach.
+        HStack {
+            Button { player.shuffleQueue() } label: {
+                KoanIcon(Icon.reshuffle).touchTarget()
+            }
+            .disabled(refusal != nil)
+        }
+        .help(refusal ?? "Shuffle the rest of the queue in place")
     }
 }
 #endif
