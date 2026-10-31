@@ -882,6 +882,10 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
                 log::info!("nearby: {addr} is refused or held off; hung up");
             }
             Ok((stream, addr)) => {
+                let Some(host) = HostSlot::take(addr.ip()) else {
+                    log::warn!("nearby: {addr} has {MAX_PER_HOST} connections already; hung up");
+                    continue;
+                };
                 let Some(slot) = Slot::take(&CONNECTIONS, MAX_CONNECTIONS) else {
                     log::warn!("nearby: {addr} connected past {MAX_CONNECTIONS} others; hung up");
                     continue;
@@ -891,7 +895,7 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
                 let _ = std::thread::Builder::new()
                     .name("koan-nearby-peer".into())
                     .spawn(move || {
-                        let _slot = slot;
+                        let _slots = (host, slot);
                         if let Err(e) = serve(stream, addr, &local, &stop) {
                             log::info!("nearby: {addr}: {e}");
                         }
@@ -932,18 +936,19 @@ impl Stop {
 
 /// The listener is open to the whole network, so what any device on it can
 /// make this one hold is bounded: a thread per connection, up to
-/// `MAX_CONNECTIONS`, of which at most `MAX_STRANGERS` stay once they have
-/// proved nothing. The rest are only ever held for a handshake and the proof
-/// that follows, each under a deadline, so a device that can prove itself
-/// always finds room.
+/// `MAX_CONNECTIONS`, at most `MAX_PER_HOST` of them from one address, and at
+/// most `MAX_STRANGERS` that stay once they have proved nothing. The rest are
+/// only ever held for a handshake and the proof that follows, each under its
+/// own deadline, so a device that can prove itself finds room unless many
+/// hosts are churning connections at once.
 const MAX_CONNECTIONS: usize = 32;
 const MAX_STRANGERS: usize = 16;
+const MAX_PER_HOST: usize = 4;
 
 /// How long a connection has to complete the WebSocket handshake.
 const HANDSHAKE: Duration = Duration::from_secs(10);
 
 /// How long a connection has to prove itself before it counts as a stranger.
-/// Checked when the connection next wakes, which is within `wire::IDLE`.
 const PROVE_WINDOW: Duration = Duration::from_secs(10);
 
 /// The largest message either end of a nearby connection may send. The
@@ -972,6 +977,39 @@ impl Slot {
 impl Drop for Slot {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+static HOSTS: Mutex<Option<HashMap<std::net::IpAddr, usize>>> = Mutex::new(None);
+
+/// One of `MAX_PER_HOST` places for an address, given back when dropped.
+struct HostSlot(std::net::IpAddr);
+
+impl HostSlot {
+    fn take(ip: std::net::IpAddr) -> Option<Self> {
+        let mut hosts = HOSTS.lock();
+        let count = hosts
+            .get_or_insert_with(HashMap::new)
+            .entry(ip)
+            .or_default();
+        if *count >= MAX_PER_HOST {
+            return None;
+        }
+        *count += 1;
+        Some(Self(ip))
+    }
+}
+
+impl Drop for HostSlot {
+    fn drop(&mut self) {
+        let mut hosts = HOSTS.lock();
+        let Some(hosts) = hosts.as_mut() else { return };
+        if let Some(count) = hosts.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                hosts.remove(&self.0);
+            }
+        }
     }
 }
 
@@ -1132,6 +1170,9 @@ impl Serving<'_> {
                 }
                 self.proven =
                     proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
+                if self.proven.is_some() {
+                    self.stranger = None;
+                }
                 let sig = proof::sign_listen(&id, me, &nonce, &listen_nonce, verified);
                 if sig.is_some() && proof::signs_reports(&listen_nonce, &nonce) {
                     self.reports = Some(proof::Session::reports(me, &id, &listen_nonce, &nonce));
@@ -1206,6 +1247,11 @@ impl Serving<'_> {
 }
 
 impl wire::Session for Serving<'_> {
+    fn deadline(&self) -> Option<Instant> {
+        let placed = self.proven.is_some() || self.stranger.is_some() || self.crowded;
+        (!placed).then(|| self.since + PROVE_WINDOW)
+    }
+
     fn outgoing(&mut self) -> Vec<String> {
         self.place();
         if self.crowded {
@@ -2863,11 +2909,11 @@ mod dial_tests {
         // A whole request in time is a socket.
         let client = std::thread::spawn(move || {
             let stream = TcpStream::connect(addr).unwrap();
-            tungstenite::client(format!("ws://{addr}/"), stream).map(|_| ())
+            tungstenite::client(format!("ws://{addr}/"), stream).is_ok()
         });
         let (stream, _) = listener.accept().unwrap();
         assert!(handshake(stream, Duration::from_secs(5)).is_ok());
-        assert!(client.join().unwrap().is_ok());
+        assert!(client.join().unwrap());
     }
 }
 

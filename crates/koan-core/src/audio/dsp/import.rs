@@ -552,6 +552,9 @@ impl Scratch {
         let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
         let file = std::fs::File::open(path).map_err(|e| fail(&e))?;
         let mut archive = zip::ZipArchive::new(file).map_err(|e| fail(&e))?;
+        if archive.len() > MAX_ENTRIES {
+            return Err(fail(&TOO_LARGE));
+        }
         let dir = self.0.join(uuid::Uuid::now_v7().to_string());
         let mut left = budget;
         for i in 0..archive.len() {
@@ -586,6 +589,9 @@ impl Scratch {
 /// The most a zip may unpack to. Filters are a few megabytes each; a zip of
 /// them that comes near this is not one.
 const MAX_UNZIPPED: u64 = 1 << 30;
+
+/// The most entries a zip may hold. A set of filters is tens of files.
+const MAX_ENTRIES: usize = 4096;
 
 const TOO_LARGE: &str = "too large to be a set of filters";
 
@@ -825,6 +831,15 @@ mod tests {
         let scratch = Scratch::new().unwrap();
         assert!(scratch.unzip_within(&zip_path, 3000).is_ok());
         let err = scratch.unzip_within(&zip_path, 2999).unwrap_err();
+        assert!(err.contains(TOO_LARGE), "{err}");
+
+        let many = dir.path().join("many.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&many).unwrap());
+        for i in 0..=MAX_ENTRIES {
+            zip.start_file(format!("{i}.txt"), opts).unwrap();
+        }
+        zip.finish().unwrap();
+        let err = scratch.unzip_within(&many, MAX_UNZIPPED).unwrap_err();
         assert!(err.contains(TOO_LARGE), "{err}");
     }
 
