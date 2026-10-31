@@ -320,6 +320,24 @@ impl ApiServer {
             )?
         };
 
+        // A listener on every interface may share its port with another
+        // process's on loopback, which then answers everything sent to
+        // 127.0.0.1: an app's own administration and Funnel among it. Such a
+        // port counts as taken.
+        if bind.is_unspecified() && port != 0 {
+            // `::` takes IPv4 as well, so both loopbacks count.
+            let loopbacks: &[std::net::IpAddr] = match bind {
+                std::net::IpAddr::V4(_) => &[std::net::Ipv4Addr::LOCALHOST.into()],
+                std::net::IpAddr::V6(_) => &[
+                    std::net::Ipv4Addr::LOCALHOST.into(),
+                    std::net::Ipv6Addr::LOCALHOST.into(),
+                ],
+            };
+            for loopback in loopbacks {
+                std::net::TcpListener::bind((*loopback, port))
+                    .map_err(|e| format!("port {port} is already in use on this machine — {e}"))?;
+            }
+        }
         let gql_listener = std::net::TcpListener::bind((bind, port))
             .and_then(|l| l.set_nonblocking(true).map(|()| l))
             .map_err(|e| {
@@ -586,7 +604,13 @@ impl ApiServer {
                         });
                     let subsonic_dedicated = subsonic_merged.clone();
 
-                    let mut app = auth_app.merge(gql_app).merge(share_routes);
+                    // An app's own server serves its apps: Subsonic and the
+                    // share pages. GraphQL and its sign-in would let any
+                    // account drive the app's own player.
+                    let mut app = match embedded {
+                        true => share_routes,
+                        false => auth_app.merge(gql_app).merge(share_routes),
+                    };
                     if let Some(ui) = ui_routes {
                         app = app.merge(ui);
                     }
@@ -1380,5 +1404,36 @@ mod tests {
         let again = start();
         ping(again.addr());
         again.stop();
+    }
+
+    /// A port another process holds on loopback is taken, though the system
+    /// would let a listener on every interface share it.
+    #[test]
+    fn an_embedded_server_refuses_a_port_held_on_loopback() {
+        use koan_core::player::commands::CommandChannel;
+
+        let _own = koan_core::config::SWITCHING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        koan_core::config::set_config_dir(dir.path());
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = held.local_addr().unwrap().port();
+        let started = ApiServer::start(ApiServerOpts {
+            state: SharedPlayerState::new(),
+            cmd_tx: CommandChannel::new().tx,
+            pool: Arc::new(Pool::new(dir.path().join("koan.db"))),
+            port: Some(port),
+            bind: Some(std::net::Ipv4Addr::UNSPECIFIED.into()),
+            subsonic_port: None,
+            playground: false,
+            viz: None,
+            profile: Profile::Embedded,
+            hosts: Vec::new(),
+        });
+        let Err(why) = started else {
+            panic!("started beside another listener on port {port}");
+        };
+        assert!(why.contains("already in use"), "{why}");
     }
 }

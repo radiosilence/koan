@@ -488,7 +488,9 @@ port = 4000
 invite_to = "tailnet"
 ```
 
-The macOS app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, `server.url`. Each falls back to the tailnet name, then the local address, while it has nothing. Settings writes these through the engine. Separate from `[graphql]`, which is the terminal UI's and the headless server's listener, though its sign-in settings apply here too. `server.url`, when set, is the address invites send phones to.
+The macOS app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface, and is refused when another process holds it on loopback. `invite_to` is where invites send phones: `"tailnet"`, the machine's Tailscale name; `"network"`, its local address; `"funnel"`, its address on the internet through Tailscale Funnel, which is published whenever it serves; `"custom"`, `url`. Each falls back to the tailnet name, then the local address, while it has nothing.
+
+`url` is the shared library's address from outside, Funnel's or a tunnel's, which share links and invites are built on. It is the app's own: `server.url` stays a headless server's on the same machine. `funnel` records the Funnel kōan published (`[443, 4000]`, Funnel's port and the local one), so it takes down its own and none set up by hand. Settings writes all of these through the engine. `[graphql]`, the terminal UI's and the headless server's listener, is separate, though its sign-in settings apply here too.
 
 ---
 

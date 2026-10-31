@@ -269,12 +269,12 @@ struct ShareSettings: View {
                 if choice == .custom {
                     LabeledContent("Address") {
                         TextField("Address", text: Binding(
-                            get: { publicAddress ?? model.settings.serverUrl },
+                            get: { publicAddress ?? model.settings.shareUrl },
                             set: { publicAddress = $0 }
                         ), prompt: Text(addresses.fallback ?? ""))
                         .verbatimEntry(.url)
                         .onSubmit(commitPublicAddress)
-                        .koanField(publicAddress ?? model.settings.serverUrl, prompt: addresses.fallback ?? "")
+                        .koanField(publicAddress ?? model.settings.shareUrl, prompt: addresses.fallback ?? "")
                     }
                 } else {
                     LabeledContent("Address", value: addresses.current ?? "")
@@ -365,7 +365,7 @@ struct ShareSettings: View {
         guard let typed = publicAddress else { return }
         publicAddress = nil
         let address = typed.trimmingCharacters(in: .whitespaces)
-        guard address != model.settings.serverUrl else { return }
+        guard address != model.settings.shareUrl else { return }
         Task {
             await app.sharing.setInviteTo(.custom, address: address)
             // The server answers to the names it was started with, the

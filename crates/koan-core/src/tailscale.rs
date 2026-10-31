@@ -181,14 +181,11 @@ fn parse_served(json: &serde_json::Value) -> Vec<Served> {
         .collect()
 }
 
-/// The Funnel ports publishing local `port` to the internet: what turning
-/// Funnel off takes down, and nothing served only to the tailnet.
-fn published_for(served: &[Served], port: u16) -> Vec<u16> {
+/// Whether Funnel's `funnel_port` publishes local `port` to the internet.
+fn ours(served: &[Served], funnel_port: u16, port: u16) -> bool {
     served
         .iter()
-        .filter(|s| s.public && proxies_to(s.root.as_deref(), port))
-        .map(|s| s.port)
-        .collect()
+        .any(|s| s.port == funnel_port && s.public && proxies_to(s.root.as_deref(), port))
 }
 
 /// Whether a proxy target is local `port`.
@@ -209,20 +206,19 @@ pub fn funnel_port(port: u16) -> Option<u16> {
 }
 
 /// Publish local `port` on the internet at this machine's tailnet name, over
-/// HTTPS. Kept where it already is; otherwise on the first of Funnel's ports
-/// nothing is served on, so whatever else this machine publishes stays.
-/// Returns the address.
-pub fn funnel(port: u16) -> Result<String, FunnelError> {
+/// HTTPS. Kept on `ours`, Funnel's port it was published on before, while
+/// that still publishes it; otherwise on the first of Funnel's ports nothing
+/// is served on, so whatever else this machine publishes stays, a Funnel of
+/// the same port set up by hand included. Returns the address and Funnel's
+/// port.
+pub fn funnel(port: u16, ours: Option<u16>) -> Result<(String, u16), FunnelError> {
     let tailscale = status().ok_or(FunnelError::NotRunning)?;
     if !tailscale.funnel_allowed {
         return Err(FunnelError::NotAllowed);
     }
     let served = served()?;
-    if let Some(on) = served
-        .iter()
-        .find(|s| s.public && proxies_to(s.root.as_deref(), port))
-    {
-        return Ok(tailscale.url_on(on.port));
+    if let Some(on) = ours.filter(|&on| self::ours(&served, on, port)) {
+        return Ok((tailscale.url_on(on), on));
     }
     let free = FUNNEL_PORTS
         .into_iter()
@@ -235,27 +231,40 @@ pub fn funnel(port: u16) -> Result<String, FunnelError> {
         &format!("--https={free}"),
         &format!("http://127.0.0.1:{port}"),
     ])?;
-    Ok(tailscale.url_on(free))
+    Ok((tailscale.url_on(free), free))
 }
 
-/// Stop publishing local `port` on the internet. What Tailscale serves only
-/// to the tailnet stays, for local `port` too: `tailscale serve` set up by
-/// hand is not Funnel's to take down.
-pub fn funnel_off(port: u16) -> Result<(), FunnelError> {
-    // Not installed: nothing is published through it. Installed but stopped
-    // is refused below: a Funnel kept in its preferences comes back with it.
+/// Take down the Funnel on `funnel_port` proxying to local `port`: the one
+/// kōan published. Anything else Tailscale serves stays, on that port or any
+/// other. Refused when Tailscale is installed but cannot say what it
+/// serves, since a Funnel kept in a stopped Tailscale's preferences comes
+/// back with it; nothing to do when it is not installed at all.
+pub fn funnel_off(funnel_port: u16, port: u16) -> Result<(), FunnelError> {
     if cli().is_none() {
         return Ok(());
     }
-    for on in published_for(&served()?, port) {
-        match run(&["funnel", &format!("--https={on}"), "off"]) {
-            Ok(_) => {}
-            // Gone already.
-            Err(FunnelError::Failed(why)) if why.contains("does not exist") => {}
-            Err(e) => return Err(e),
-        }
+    if !ours(&served()?, funnel_port, port) {
+        return Ok(());
     }
-    Ok(())
+    match run(&["funnel", &format!("--https={funnel_port}"), "off"]) {
+        Ok(_) => Ok(()),
+        // Gone already.
+        Err(FunnelError::Failed(why)) if why.contains("does not exist") => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Start taking down the Funnel on `funnel_port` without waiting: for an app
+/// quitting, which a hung Tailscale must not hold up.
+pub fn funnel_off_detached(funnel_port: u16) {
+    if let Some(cli) = cli() {
+        let _ = Command::new(cli)
+            .args(["funnel", &format!("--https={funnel_port}"), "off"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
 }
 
 #[cfg(test)]
@@ -274,17 +283,20 @@ mod tests {
     }"#;
 
     #[test]
-    fn turning_funnel_off_leaves_what_is_served_to_the_tailnet() {
+    fn only_the_funnel_published_is_taken_down() {
         let served = parse_served(&serde_json::from_str(STATUS).unwrap());
         assert_eq!(served.len(), 2);
-        assert_eq!(published_for(&served, 4000), vec![443]);
-        assert!(published_for(&served, 4001).is_empty());
+        assert!(ours(&served, 443, 4000));
+        // Served to the tailnet only, by hand: not Funnel's.
+        assert!(!ours(&served, 8443, 4000));
+        // Another local port's.
+        assert!(!ours(&served, 443, 4001));
     }
 
     #[test]
     fn nothing_served_is_nothing_published() {
         let served = parse_served(&serde_json::from_str("{}").unwrap());
         assert!(served.is_empty());
-        assert!(published_for(&served, 4000).is_empty());
+        assert!(!ours(&served, 443, 4000));
     }
 }

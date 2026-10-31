@@ -69,7 +69,7 @@ fun settings(signedIn: Boolean = true, url: String = "https://music.example.com"
     shareEnabled = false,
     sharePort = 4000u,
     shareInviteTo = InviteTo.TAILNET,
-    serverUrl = "",
+    shareUrl = "",
 )
 
 fun invite(server: String = "https://other.example.com", username: String = "guest") = Invite(

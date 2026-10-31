@@ -1,0 +1,1 @@
+- **A sharing Mac keeps to its own.** It takes down only the Tailscale Funnel it published, including when kōan quits; refuses a port another app already holds on this Mac; serves Subsonic and share pages only, so no invited account can drive its player; and keeps its public address in `share.url`, leaving `server.url` to a headless server on the same Mac.
