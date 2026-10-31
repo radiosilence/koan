@@ -2192,10 +2192,12 @@ impl SharedPlayerState {
     /// undoing a reorder of the whole queue names every row.
     pub fn move_items_to(&self, entries: &[(QueueItemId, Option<QueueItemId>)]) {
         let mut pl = self.playlist.write();
-        let ids: Vec<QueueItemId> = pl.items.iter().map(|i| i.id).collect();
-        let mut prev: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::with_capacity(ids.len());
-        let mut next: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::with_capacity(ids.len());
+        let mut prev: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::new();
+        let mut next: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::new();
         if entries.len() > 1 {
+            let ids: Vec<QueueItemId> = pl.items.iter().map(|i| i.id).collect();
+            prev.reserve(ids.len());
+            next.reserve(ids.len());
             for (i, &id) in ids.iter().enumerate() {
                 prev.insert(id, i.checked_sub(1).map(|p| ids[p]));
                 next.insert(id, ids.get(i + 1).copied());
@@ -2203,7 +2205,7 @@ impl SharedPlayerState {
         }
         // A single move, or a queue whose ids are not unique, which links
         // cannot describe: one row at a time.
-        if entries.len() <= 1 || next.len() != ids.len() {
+        if entries.len() <= 1 || next.len() != pl.items.len() {
             let mut moved = false;
             for &(id, after) in entries {
                 let Some(from) = pl.items.iter().position(|item| item.id == id) else {
@@ -2227,8 +2229,8 @@ impl SharedPlayerState {
             }
             return;
         }
-        let mut head = ids.first().copied();
-        let mut tail = ids.last().copied();
+        let mut head = pl.items.first().map(|i| i.id);
+        let mut tail = pl.items.last().map(|i| i.id);
         let mut moved = false;
         for &(id, after) in entries {
             let (Some(p), Some(n)) = (prev.remove(&id), next.remove(&id)) else {

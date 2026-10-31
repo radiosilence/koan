@@ -53,13 +53,23 @@ impl Element {
     }
 }
 
+/// Deeper than any UPnP document nests. The tree is searched and dropped
+/// recursively, and documents come from anything on the network, so a deeper
+/// one is refused rather than allowed to exhaust the thread's stack.
+const MAX_DEPTH: usize = 64;
+
 /// Parse a document into its root element.
 pub fn parse(doc: &str) -> Result<Element, String> {
     let mut reader = quick_xml::Reader::from_str(doc);
     let mut stack: Vec<Element> = vec![Element::default()];
     loop {
         match reader.read_event().map_err(|e| e.to_string())? {
-            Event::Start(start) => stack.push(element(&start)?),
+            Event::Start(start) => {
+                if stack.len() > MAX_DEPTH {
+                    return Err("document nests too deeply".into());
+                }
+                stack.push(element(&start)?)
+            }
             Event::Empty(start) => {
                 let el = element(&start)?;
                 push_child(&mut stack, el);
@@ -132,6 +142,14 @@ pub fn escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_documents_are_refused() {
+        let deep = format!("{}{}", "<a>".repeat(100_000), "</a>".repeat(100_000));
+        assert!(parse(&deep).is_err());
+        let fine = format!("{}{}", "<a>".repeat(MAX_DEPTH), "</a>".repeat(MAX_DEPTH));
+        assert!(parse(&fine).is_ok());
+    }
 
     #[test]
     fn local_names_ignore_prefixes_and_entities_resolve() {

@@ -859,7 +859,13 @@ impl Player {
         let extension = container_of(&path);
         let link = self.renderer.as_ref().expect("checked above");
         let Some(mime) = link.session.mime_for(&extension) else {
-            // Left for the end of this track, where it is skipped with a reason.
+            // Left for the end of this track, where it is skipped with a
+            // reason; until what follows changes, not looked at again.
+            if let Some((_, session)) = self.on_renderer()
+                && let Output::Renderer(play) = &mut session.output
+            {
+                play.next_refused = Some(next_id);
+            }
             return;
         };
         let duration = buffer::probe_file(&path)

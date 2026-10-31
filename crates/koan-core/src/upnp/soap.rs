@@ -30,13 +30,37 @@ pub enum SoapError {
 /// No idle connections are kept. Renderers' HTTP servers are small and many
 /// close a connection without saying so; a request sent down one of those is
 /// lost, and a SOAP call is rare enough that a fresh connection costs nothing.
+/// The client itself is shared: each one runs a thread of its own.
 pub fn client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .pool_max_idle_per_host(0)
-        .timeout(TIMEOUT)
-        .connect_timeout(Duration::from_secs(2))
-        .build()
-        .expect("reqwest client builds")
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .pool_max_idle_per_host(0)
+                .timeout(TIMEOUT)
+                .connect_timeout(Duration::from_secs(2))
+                .build()
+                .expect("reqwest client builds")
+        })
+        .clone()
+}
+
+/// Larger than any description, SCPD or SOAP reply. A device on the network
+/// can name any URL as its description, so a body is read only this far.
+const MAX_BODY: u64 = 1 << 20;
+
+/// A response's body as text, refused past `MAX_BODY`.
+pub fn read_body(response: reqwest::blocking::Response) -> Result<String, String> {
+    use std::io::Read;
+    let mut body = String::new();
+    response
+        .take(MAX_BODY + 1)
+        .read_to_string(&mut body)
+        .map_err(|e| e.to_string())?;
+    if body.len() as u64 > MAX_BODY {
+        return Err(format!("body larger than {MAX_BODY} bytes"));
+    }
+    Ok(body)
 }
 
 pub fn envelope(service_type: &str, action: &str, args: &[(&str, &str)]) -> String {
@@ -78,9 +102,7 @@ pub fn call(
             }
         })?;
     let status = response.status();
-    let text = response
-        .text()
-        .map_err(|e| SoapError::Http(e.to_string()))?;
+    let text = read_body(response).map_err(SoapError::Http)?;
     parse_response(action, status.as_u16(), &text)
 }
 

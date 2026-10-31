@@ -47,11 +47,18 @@ fn parse_peak(s: &str) -> Option<f64> {
 
 /// Read ReplayGain tags from a file using lofty.
 pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
-    // Read at every track start: the embedded art is never wanted here.
+    // Read at every track start: only the tags are wanted. The type is read
+    // from the file, since downloads are cached under extensions that do not
+    // name their format.
     let tagged_file = lofty::probe::Probe::open(path)
+        .and_then(|p| p.guess_file_type())
         .and_then(|p| {
-            p.options(lofty::config::ParseOptions::new().read_cover_art(false))
-                .read()
+            p.options(
+                lofty::config::ParseOptions::new()
+                    .read_cover_art(false)
+                    .read_properties(false),
+            )
+            .read()
         })
         .map_err(|e| ReplayGainError::Tag(e.to_string()))?;
 

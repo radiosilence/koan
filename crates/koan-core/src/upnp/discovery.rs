@@ -38,7 +38,13 @@ struct Known {
 struct Store {
     renderers: HashMap<String, Known>,
     describing: HashSet<String>,
+    /// Descriptions that could not be read, by device: where, and when.
+    /// Announcements repeat, and each would otherwise fetch again.
+    failed: HashMap<String, (Url, Instant)>,
 }
+
+/// How long a description that could not be read is left before asking again.
+const RETRY_DESCRIBE: Duration = Duration::from_secs(60);
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static SEARCH: OnceLock<Option<UdpSocket>> = OnceLock::new();
@@ -191,6 +197,7 @@ pub fn remember(renderer: Renderer, max_age: Duration) {
         let expires = Instant::now() + max_age;
         let changed = s.renderers.get(&udn).is_none_or(|k| k.renderer != renderer);
         let busy = s.renderers.get(&udn).is_some_and(|k| k.busy);
+        s.failed.remove(&udn);
         s.renderers.insert(
             udn,
             Known {
@@ -284,7 +291,13 @@ pub fn search_if_stale() {
     let fresh = SEARCHED
         .lock()
         .is_some_and(|t| now.duration_since(t) < DEFAULT_MAX_AGE)
-        && with(|s| s.renderers.values().all(|k| k.expires > now));
+        && with(|s| {
+            let fresh = s.renderers.values().all(|k| k.expires > now);
+            // A renderer gone without saying goodbye is searched for once,
+            // not on every call after.
+            s.renderers.retain(|_, k| k.expires > now);
+            fresh
+        });
     if !fresh {
         search();
     }
@@ -456,6 +469,15 @@ fn heard(msg: Message) {
                     known.expires = Instant::now() + max_age;
                     return false;
                 }
+                let now = Instant::now();
+                s.failed
+                    .retain(|_, (_, at)| now.duration_since(*at) < RETRY_DESCRIBE);
+                if s.failed
+                    .get(&msg.udn)
+                    .is_some_and(|(url, _)| *url == location)
+                {
+                    return false;
+                }
                 s.describing.insert(msg.udn.clone())
             });
             if fresh {
@@ -471,6 +493,10 @@ fn describe(udn: String, location: Url, max_age: Duration) {
         .spawn({
             let udn = udn.clone();
             move || {
+                let failed = |s: &mut Store| {
+                    s.failed
+                        .insert(udn.clone(), (location.clone(), Instant::now()));
+                };
                 match fetch(&location) {
                     Ok(Some(renderer)) => {
                         log::info!(
@@ -482,8 +508,14 @@ fn describe(udn: String, location: Url, max_age: Duration) {
                         );
                         remember(renderer, max_age);
                     }
-                    Ok(None) => log::debug!("upnp: {location} is not a renderer"),
-                    Err(e) => log::info!("upnp: cannot describe {location}: {e}"),
+                    Ok(None) => {
+                        log::debug!("upnp: {location} is not a renderer");
+                        with(failed);
+                    }
+                    Err(e) => {
+                        log::info!("upnp: cannot describe {location}: {e}");
+                        with(failed);
+                    }
                 }
                 with(|s| s.describing.remove(&udn));
             }
@@ -498,11 +530,12 @@ fn describe(udn: String, location: Url, max_age: Duration) {
 pub fn fetch(location: &Url) -> Result<Option<Renderer>, String> {
     let http = super::soap::client();
     let get = |url: &Url| -> Result<String, String> {
-        http.get(url.clone())
+        let response = http
+            .get(url.clone())
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.text())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        super::soap::read_body(response)
     };
     let Some(mut renderer) = description::parse_device(&get(location)?, location)? else {
         return Ok(None);
