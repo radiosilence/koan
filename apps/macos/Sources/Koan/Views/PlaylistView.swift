@@ -359,6 +359,11 @@ struct PlaylistView: View {
         let refusal: String? = !playlists.fillable(playlistId) ? "This playlist can't be edited here"
             : entries.count < 2 ? "Nothing to shuffle" : nil
         return HStack {
+            #if os(iOS)
+            ShuffleUndoButton(shuffles: playlists.openId == playlistId ? playlists.undoShuffles : 0) {
+                player.undo(playlist: playlistId)
+            }
+            #endif
             Button { playlists.shuffle(id: playlistId) } label: {
                 Label("Shuffle Order", koan: Icon.reshuffle)
             }

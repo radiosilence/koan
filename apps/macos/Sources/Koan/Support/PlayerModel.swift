@@ -405,6 +405,9 @@ final class PlayerModel {
     }
 
     func clearQueue() { attempt { try await self.engine.clearQueue() } }
+    /// How many shuffles undo would take back from the queue before reaching
+    /// any other edit.
+    var undoShuffles: UInt32 { mirror.playback.undoShuffles }
     /// Shuffle what follows the playing row in place, as one undo step.
     func shuffleQueue() { mutate { try await $0.shuffleQueue() } }
     /// Why the queue's dice cannot shuffle now, or nil when it can.

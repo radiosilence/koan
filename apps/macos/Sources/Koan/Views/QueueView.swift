@@ -1083,11 +1083,17 @@ private struct JumpToPlayingButton: View {
 /// Shuffles the rows after the playing one in place, each press one undo
 /// step; shuffle play leaves the rows alone. Its own view because what it
 /// reads, the queue and what is playing, moves on every edit.
+///
+/// A phone has no ⌘Z, so there Undo stands beside the dice while the queue's
+/// last edits are shuffles, and takes them back one at a time.
 #if !os(tvOS)
 private struct QueueDiceButton: View {
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
+        #if os(iOS)
+        ShuffleUndoButton(shuffles: player.undoShuffles) { player.undo() }
+        #endif
         let refusal = player.queueDiceRefusal
         // The reason goes on a wrapper, which disabling the button does not
         // reach.
@@ -1098,6 +1104,34 @@ private struct QueueDiceButton: View {
             .disabled(refusal != nil)
         }
         .help(refusal ?? "Shuffle the rest of the queue in place")
+    }
+}
+#endif
+
+#if os(iOS)
+/// Undo for the shuffles on top of a list's history, while there are any.
+/// Hidden from a tap until the count answers, so a second tap cannot reach
+/// past the last shuffle to whatever edit came before.
+struct ShuffleUndoButton: View {
+    let shuffles: UInt32
+    let undo: () -> Void
+    @State private var tappedAt: UInt32?
+
+    var body: some View {
+        // A container that is always there, so the count is watched while
+        // the button is hidden.
+        HStack(spacing: 0) {
+            if shuffles > 0, tappedAt != shuffles {
+                Button {
+                    tappedAt = shuffles
+                    undo()
+                } label: {
+                    KoanIcon(Icon.undo).touchTarget()
+                }
+                .accessibilityLabel("Undo shuffle")
+            }
+        }
+        .onChange(of: shuffles) { tappedAt = nil }
     }
 }
 #endif
