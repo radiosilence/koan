@@ -47,8 +47,13 @@ fn parse_peak(s: &str) -> Option<f64> {
 
 /// Read ReplayGain tags from a file using lofty.
 pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
-    let tagged_file =
-        lofty::read_from_path(path).map_err(|e| ReplayGainError::Tag(e.to_string()))?;
+    // Read at every track start: the embedded art is never wanted here.
+    let tagged_file = lofty::probe::Probe::open(path)
+        .and_then(|p| {
+            p.options(lofty::config::ParseOptions::new().read_cover_art(false))
+                .read()
+        })
+        .map_err(|e| ReplayGainError::Tag(e.to_string()))?;
 
     let tag = tagged_file
         .primary_tag()
@@ -73,38 +78,17 @@ pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
     })
 }
 
-/// Search for a ReplayGain tag value by its standard field name.
-/// Tries lofty's built-in ItemKey mapping first, then falls back to
-/// searching by raw key name for formats that use string-keyed items.
+/// A ReplayGain value by its standard field name, through lofty's mapping
+/// of Vorbis comments, ID3v2 TXXX frames and APE items.
 fn find_rg_value(tag: &lofty::tag::Tag, key_name: &str) -> Option<String> {
-    // Map RG field names to lofty's ItemKey variants.
-    let item_key = match key_name {
-        TAG_TRACK_GAIN => Some(ItemKey::ReplayGainTrackGain),
-        TAG_TRACK_PEAK => Some(ItemKey::ReplayGainTrackPeak),
-        TAG_ALBUM_GAIN => Some(ItemKey::ReplayGainAlbumGain),
-        TAG_ALBUM_PEAK => Some(ItemKey::ReplayGainAlbumPeak),
-        _ => None,
+    let key = match key_name {
+        TAG_TRACK_GAIN => ItemKey::ReplayGainTrackGain,
+        TAG_TRACK_PEAK => ItemKey::ReplayGainTrackPeak,
+        TAG_ALBUM_GAIN => ItemKey::ReplayGainAlbumGain,
+        TAG_ALBUM_PEAK => ItemKey::ReplayGainAlbumPeak,
+        _ => return None,
     };
-
-    if let Some(ik) = item_key
-        && let Some(val) = tag.get_string(ik)
-    {
-        return Some(val.to_string());
-    }
-
-    // Fallback: iterate items looking for a text value matching the key name.
-    // Covers edge cases where the tag format uses raw string keys.
-    for item in tag.items() {
-        if let ItemValue::Text(ref text) = *item.value() {
-            // Check if any item's key maps to our key_name via its string repr.
-            let key_str = format!("{:?}", item.key());
-            if key_str.contains(key_name) {
-                return Some(text.clone());
-            }
-        }
-    }
-
-    None
+    tag.get_string(key).map(str::to_owned)
 }
 
 /// Apply ReplayGain to an f32 sample buffer in-place.
