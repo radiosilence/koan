@@ -153,7 +153,7 @@ impl Covers {
         use std::sync::atomic::Ordering;
         let _ = std::fs::create_dir_all(&self.dir);
         let n = self.writes.fetch_add(1, Ordering::Relaxed);
-        if n % SWEEP_EVERY == 0 && !self.sweeping.swap(true, Ordering::AcqRel) {
+        if n.is_multiple_of(SWEEP_EVERY) && !self.sweeping.swap(true, Ordering::AcqRel) {
             let (dir, budget, sweeping) = (self.dir.clone(), self.budget, self.sweeping.clone());
             std::thread::spawn(move || {
                 sweep(&dir, budget);
