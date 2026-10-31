@@ -206,20 +206,19 @@ pub fn funnel_port(port: u16) -> Option<u16> {
 }
 
 /// Publish local `port` on the internet at this machine's tailnet name, over
-/// HTTPS. Kept where it already is; otherwise on the first of Funnel's ports
-/// nothing is served on, so whatever else this machine publishes stays.
-/// Returns the address and Funnel's port.
-pub fn funnel(port: u16) -> Result<(String, u16), FunnelError> {
+/// HTTPS. Kept on `ours`, Funnel's port it was published on before, while
+/// that still publishes it; otherwise on the first of Funnel's ports nothing
+/// is served on, so whatever else this machine publishes stays, a Funnel of
+/// the same port set up by hand included. Returns the address and Funnel's
+/// port.
+pub fn funnel(port: u16, ours: Option<u16>) -> Result<(String, u16), FunnelError> {
     let tailscale = status().ok_or(FunnelError::NotRunning)?;
     if !tailscale.funnel_allowed {
         return Err(FunnelError::NotAllowed);
     }
     let served = served()?;
-    if let Some(on) = served
-        .iter()
-        .find(|s| s.public && proxies_to(s.root.as_deref(), port))
-    {
-        return Ok((tailscale.url_on(on.port), on.port));
+    if let Some(on) = ours.filter(|&on| self::ours(&served, on, port)) {
+        return Ok((tailscale.url_on(on), on));
     }
     let free = FUNNEL_PORTS
         .into_iter()

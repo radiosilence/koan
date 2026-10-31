@@ -183,12 +183,7 @@ fn status(port: Option<u16>) -> ShareStatus {
         Target::Network => None,
         Target::Tailnet => tailnet,
         Target::Funnel => funnel.clone().or_else(|| fallback.clone()),
-        Target::Custom => cfg
-            .share
-            .url
-            .clone()
-            .filter(|u| !u.is_empty())
-            .or_else(|| fallback.clone()),
+        Target::Custom => cfg.share_url().or_else(|| fallback.clone()),
     }
     .or_else(|| sharing(port).lan_url);
     ShareStatus {
@@ -233,7 +228,10 @@ fn host_of(url: &str) -> Option<String> {
 /// reached are built on. The address moves with the machine's tailnet name
 /// and Funnel's port.
 fn publish(port: u16) -> Result<(), KoanError> {
-    let (url, funnel_port) = koan_core::tailscale::funnel(port).map_err(funnel_error)?;
+    let ours = recorded()
+        .filter(|&[_, p]| p == port)
+        .map(|[funnel_port, _]| funnel_port);
+    let (url, funnel_port) = koan_core::tailscale::funnel(port, ours).map_err(funnel_error)?;
     let cfg = Config::cached();
     if cfg.share.url.as_deref() != Some(&url) || cfg.share.funnel != Some([funnel_port, port]) {
         Config::persist(move |cfg| {
@@ -245,9 +243,23 @@ fn publish(port: u16) -> Result<(), KoanError> {
     Ok(())
 }
 
+/// The Funnel kōan published, as Funnel's port and the local one. 0.69.0
+/// recorded none and left its Funnel up at quit: where Funnel is the choice
+/// and nothing is recorded, the one publishing the sharing port is taken as
+/// that.
+fn recorded() -> Option<[u16; 2]> {
+    let cfg = Config::cached();
+    cfg.share.funnel.or_else(|| {
+        (cfg.share.invite_to == Target::Funnel)
+            .then(|| koan_core::tailscale::funnel_port(cfg.share.port))
+            .flatten()
+            .map(|funnel_port| [funnel_port, cfg.share.port])
+    })
+}
+
 /// Take down the Funnel kōan published, if there is one, and forget it.
 fn take_down() -> Result<(), KoanError> {
-    let Some([funnel_port, port]) = Config::cached().share.funnel else {
+    let Some([funnel_port, port]) = recorded() else {
         return Ok(());
     };
     koan_core::tailscale::funnel_off(funnel_port, port).map_err(funnel_error)?;
@@ -327,22 +339,23 @@ impl KoanEngine {
             if let Some(running) = server.take() {
                 running.stop();
             }
-            // One left by a crash, or by a choice made since, goes; one for
-            // another port is put back below on this one.
-            let funnel = Config::cached().share.invite_to == Target::Funnel;
-            if !funnel
-                || Config::cached()
-                    .share
-                    .funnel
-                    .is_some_and(|[_, p]| p != port)
+            // Down before the start, which may fail and leave the port to
+            // another process; put back below once this server holds it. One
+            // left by a crash, or a choice made since, goes with it.
+            take_down_quietly();
+            // 0.69.0 kept a custom address in `server.url`.
+            let cfg = Config::cached();
+            if cfg.share.invite_to == Target::Custom
+                && cfg.share_url().is_none()
+                && let Some(url) = cfg.server_url()
             {
-                take_down_quietly();
+                Config::persist(|c| c.share.url = Some(url)).map_err(persist_error)?;
             }
             // Phones on the tailnet reach this device by its name there, and
             // a tunnel's by the custom address.
             let mut names = names;
             names.extend(koan_core::tailscale::status().map(|t| t.name));
-            names.extend(Config::cached().share.url.as_deref().and_then(host_of));
+            names.extend(Config::cached().share_url().as_deref().and_then(host_of));
             let started = ApiServer::start(ApiServerOpts {
                 state: self.state.clone(),
                 cmd_tx: self.tx.clone(),
@@ -415,7 +428,11 @@ impl KoanEngine {
     /// server is not stopped then, so nothing else would. Returns at once;
     /// the next start publishes it again where it is wanted.
     pub fn release_funnel(&self) {
-        if let Some([funnel_port, _]) = Config::cached().share.funnel {
+        // Only while sharing: otherwise what is on that port now may not be
+        // kōan's, and the next start checks before taking anything down.
+        if SERVING.read().is_some()
+            && let Some([funnel_port, _]) = Config::cached().share.funnel
+        {
             koan_core::tailscale::funnel_off_detached(funnel_port);
         }
     }

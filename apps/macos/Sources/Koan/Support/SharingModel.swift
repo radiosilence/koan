@@ -35,8 +35,23 @@ final class SharingModel {
     /// its older copy back.
     private(set) var revision = 0
 
+    /// The start, stop or change running, which the next waits for, so they
+    /// reach the engine in the order they were asked: turning sharing off
+    /// while launch is still starting it ends with it off.
+    @ObservationIgnored private var queue: Task<Void, Never>?
+
     init(engine: KoanEngine) {
         self.engine = engine
+    }
+
+    private func serially(_ op: @escaping @MainActor () async -> Void) async {
+        let previous = queue
+        let next = Task { @MainActor in
+            await previous?.value
+            await op()
+        }
+        queue = next
+        await next.value
     }
 
     /// Read the account, and serve again if sharing was left on.
@@ -61,14 +76,16 @@ final class SharingModel {
     }
 
     func start(port: UInt16) async {
-        busy = true
-        defer { busy = false }
-        do {
-            sharing = try await engine.startServer(port: port, names: Self.names)
-            failure = nil
-        } catch {
-            sharing = nil
-            failure = Self.reason(error)
+        await serially { [self] in
+            busy = true
+            defer { busy = false }
+            do {
+                sharing = try await engine.startServer(port: port, names: Self.names)
+                failure = nil
+            } catch {
+                sharing = nil
+                failure = Self.reason(error)
+            }
         }
         // A start publishes the Funnel again where it was left on, and may
         // move its address.
@@ -83,16 +100,18 @@ final class SharingModel {
     /// Where invites send phones. `.funnel` publishes through Tailscale
     /// Funnel; `.custom` takes `address`, or keeps the one set.
     func setInviteTo(_ to: InviteTo, address: String? = nil) async {
-        busy = true
-        defer { busy = false }
-        do {
-            try await engine.setInviteTo(to: to, address: address)
-            funnelError = nil
-        } catch {
-            funnelError = Self.reason(error)
+        await serially { [self] in
+            busy = true
+            defer { busy = false }
+            do {
+                try await engine.setInviteTo(to: to, address: address)
+                funnelError = nil
+            } catch {
+                funnelError = Self.reason(error)
+            }
+            revision += 1
+            await refreshStatus()
         }
-        revision += 1
-        await refreshStatus()
     }
 
     /// `nil` when changed, else why not.
@@ -113,12 +132,14 @@ final class SharingModel {
     }
 
     func stop() async {
-        busy = true
-        defer { busy = false }
-        // Gone at once from everything that shows it; the server drains behind.
-        sharing = nil
-        failure = nil
-        await engine.stopServer()
+        await serially { [self] in
+            busy = true
+            defer { busy = false }
+            // Gone at once from everything that shows it; the server drains behind.
+            sharing = nil
+            failure = nil
+            await engine.stopServer()
+        }
     }
 
     /// What the server answers to besides IP addresses: this Mac's Bonjour

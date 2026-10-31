@@ -1596,6 +1596,15 @@ fn stamp_of(base: &Path, local: &Path) -> (Option<SystemTime>, Option<SystemTime
 impl Config {
     /// `server.url`, trimmed and without a trailing slash; `sharing.public_url`
     /// while it is unset, with a warning. `None` when neither is set.
+    /// `share.url`, cleaned as `server_url` is.
+    pub fn share_url(&self) -> Option<String> {
+        self.share
+            .url
+            .as_deref()
+            .map(|u| u.trim().trim_end_matches('/').to_owned())
+            .filter(|u| !u.is_empty())
+    }
+
     pub fn server_url(&self) -> Option<String> {
         let clean = |u: &Option<String>| {
             u.as_deref()

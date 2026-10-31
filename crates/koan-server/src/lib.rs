@@ -33,11 +33,7 @@ impl ServerUrl {
     pub fn get(&self) -> Option<String> {
         match self {
             Self::Fixed(url) => url.clone(),
-            Self::Live => koan_core::config::Config::cached()
-                .share
-                .url
-                .clone()
-                .filter(|u| !u.trim().is_empty()),
+            Self::Live => koan_core::config::Config::cached().share_url(),
         }
     }
 }

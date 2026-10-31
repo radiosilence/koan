@@ -325,12 +325,18 @@ impl ApiServer {
         // 127.0.0.1: an app's own administration and Funnel among it. Such a
         // port counts as taken.
         if bind.is_unspecified() && port != 0 {
-            let loopback: std::net::IpAddr = match bind {
-                std::net::IpAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),
-                std::net::IpAddr::V6(_) => std::net::Ipv6Addr::LOCALHOST.into(),
+            // `::` takes IPv4 as well, so both loopbacks count.
+            let loopbacks: &[std::net::IpAddr] = match bind {
+                std::net::IpAddr::V4(_) => &[std::net::Ipv4Addr::LOCALHOST.into()],
+                std::net::IpAddr::V6(_) => &[
+                    std::net::Ipv4Addr::LOCALHOST.into(),
+                    std::net::Ipv6Addr::LOCALHOST.into(),
+                ],
             };
-            std::net::TcpListener::bind((loopback, port))
-                .map_err(|e| format!("port {port} is already in use on this machine — {e}"))?;
+            for loopback in loopbacks {
+                std::net::TcpListener::bind((*loopback, port))
+                    .map_err(|e| format!("port {port} is already in use on this machine — {e}"))?;
+            }
         }
         let gql_listener = std::net::TcpListener::bind((bind, port))
             .and_then(|l| l.set_nonblocking(true).map(|()| l))

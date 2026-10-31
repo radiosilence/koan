@@ -4954,9 +4954,9 @@ fn share_node(
 /// Where share links point; sharing is refused without it rather than
 /// handing out an address that may not be reachable.
 fn share_base(state: &AppState) -> Result<String, SubsonicError> {
-    state
-        .server_url()
-        .ok_or_else(|| SubsonicError::internal("server.url is not set on this server"))
+    state.server_url().ok_or_else(|| {
+        SubsonicError::internal("this server has no public address to share links on")
+    })
 }
 
 /// `expires` is milliseconds since the epoch; 0 or absent never expires.
