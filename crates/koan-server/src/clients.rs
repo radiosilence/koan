@@ -263,7 +263,7 @@ impl Registry {
         tx: LinkTx,
         wants_devices: bool,
         acks: bool,
-    ) -> String {
+    ) -> (String, Vec<Envelope>) {
         self.link(
             username,
             name,
@@ -289,7 +289,7 @@ impl Registry {
         tx: LinkTx,
         wants_devices: bool,
         acks: bool,
-    ) -> String {
+    ) -> (String, Vec<Envelope>) {
         self.link(
             username,
             name,
