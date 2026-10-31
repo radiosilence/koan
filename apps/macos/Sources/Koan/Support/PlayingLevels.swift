@@ -9,9 +9,27 @@ import Observation
 
 /// What the analyser's frames are handed to: the playing bars, and gay mode's
 /// disco over the wash.
-@MainActor
-protocol LevelsListener: AnyObject {
-    func apply(_ bands: [Double])
+///
+/// Out of a window it is not read for, whoever attached it: a table torn down
+/// or a page pushed over says nothing to the rows inside it. It rejoins on
+/// coming back.
+class LevelsView: LayerView {
+    /// Who is feeding this, so leaving can say so.
+    weak var source: PlayingLevels?
+
+    func apply(_ bands: [Double]) {}
+
+    #if canImport(AppKit)
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        source?.moved(self)
+    }
+    #else
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        source?.moved(self)
+    }
+    #endif
 }
 
 /// The audio behind the playing indicators.
@@ -45,8 +63,11 @@ final class PlayingLevels: Observable {
     private let engine: KoanEngine
 
     /// The bars on screen. Weak, so a row that scrolls away is forgotten
-    /// without having to say goodbye.
-    private let bars = NSHashTable<AnyObject>.weakObjects()
+    /// without having to say goodbye; the next frame finds the table empty
+    /// and ends the follow.
+    private let bars = NSHashTable<LevelsView>.weakObjects()
+    /// Attached, but out of a window: read for again when they are back in one.
+    private let parked = NSHashTable<LevelsView>.weakObjects()
 
     /// How high each bar stands, 0...1, low band to high. The spectrum in
     /// three columns: what the analyser says is coming out of the speakers,
@@ -120,13 +141,19 @@ final class PlayingLevels: Observable {
         if away {
             follow?.cancel()
             follow = nil
-        } else if !bars.allObjects.isEmpty {
+        } else if bars.anyObject != nil {
             startFollowing()
         }
     }
 
     /// A bar that wants the music. The first one starts the follow.
-    func attach(_ bar: some LevelsListener) {
+    func attach(_ bar: LevelsView) {
+        bar.source = self
+        guard bar.window != nil else {
+            parked.add(bar)
+            return
+        }
+        parked.remove(bar)
         bars.add(bar)
         bar.apply(bands)
         startFollowing()
@@ -146,9 +173,25 @@ final class PlayingLevels: Observable {
     /// A bar that has stopped listening — off stage, held still, or gone. The
     /// last one to leave ends the follow, and with nothing reading it the
     /// analyser parks.
-    func detach(_ bar: some LevelsListener) {
+    func detach(_ bar: LevelsView) {
+        parked.remove(bar)
         bars.remove(bar)
-        guard bars.allObjects.isEmpty else { return }
+        guard bars.anyObject == nil else { return }
+        stopFollowing()
+    }
+
+    /// `bar` left a window or came back to one.
+    func moved(_ bar: LevelsView) {
+        if bar.window == nil {
+            guard bars.contains(bar) else { return }
+            detach(bar)
+            parked.add(bar)
+        } else if parked.contains(bar) {
+            attach(bar)
+        }
+    }
+
+    private func stopFollowing() {
         follow?.cancel()
         follow = nil
     }
@@ -157,6 +200,8 @@ final class PlayingLevels: Observable {
     /// each band is measured against — the fall is the analyser's, which is
     /// also what decays the bars to flat when the music stops.
     private func take(_ levels: VizLevels) {
+        // Every bar went without detaching — a table torn down with its rows.
+        guard bars.anyObject != nil else { return stopFollowing() }
         let now = Date().timeIntervalSinceReferenceDate
         // Clamped: a machine that slept owes the bars nothing.
         let elapsed = min(max(now - stamp, 0), 0.25)
@@ -173,7 +218,8 @@ final class PlayingLevels: Observable {
         // most of a quiet passage, and it is not worth a commit a frame.
         guard next != bands else { return }
         bands = next
-        for bar in bars.allObjects { (bar as? LevelsListener)?.apply(next) }
+        // Enumerated in place: `allObjects` would be an array per frame.
+        for case let bar as LevelsView in bars.objectEnumerator() { bar.apply(next) }
     }
 
     private func matchDisplay() {

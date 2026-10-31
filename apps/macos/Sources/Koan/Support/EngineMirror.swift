@@ -525,10 +525,15 @@ extension EngineMirror {
     ///
     /// Whichever arrives first resumes; the `Once` is what makes the other one
     /// harmless, since observation is registered for one change and a handler
-    /// that lost the race still fires.
+    /// that lost the race still fires. A change ends the sleep, rather than
+    /// leaving one task per change asleep until the deadline.
     private func nextChange(before deadline: ContinuousClock.Instant) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let once = Once()
+            let sleep = Task { @MainActor in
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if once.take() { continuation.resume() }
+            }
             withObservationTracking {
                 _ = playback
                 _ = playhead
@@ -540,12 +545,11 @@ extension EngineMirror {
                 _ = tasks
             } onChange: {
                 Task { @MainActor in
-                    if once.take() { continuation.resume() }
+                    if once.take() {
+                        sleep.cancel()
+                        continuation.resume()
+                    }
                 }
-            }
-            Task { @MainActor in
-                try? await Task.sleep(until: deadline, clock: .continuous)
-                if once.take() { continuation.resume() }
             }
         }
     }
