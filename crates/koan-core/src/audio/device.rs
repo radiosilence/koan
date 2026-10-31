@@ -287,48 +287,81 @@ pub fn get_device_sample_rate(device_id: AudioDeviceID) -> Result<f64> {
     Ok(rate)
 }
 
-/// RAII guard that removes a CoreAudio property listener on drop.
-/// Prevents listener registration leaks even on early returns or panics.
+/// What each registered rate listener does, by the id CoreAudio is handed in
+/// place of a pointer. Removing a listener does not wait for a call already
+/// running on the HAL's notification thread, so that call must not reach
+/// anything the remover then frees: it finds the handler here, or nothing.
+type Handler = std::sync::Arc<dyn Fn() + Send + Sync>;
+static HANDLERS: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<usize, Handler>>,
+> = std::sync::LazyLock::new(Default::default);
+static NEXT_HANDLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
+/// A nominal-rate listener on a device, removed on drop.
 struct ListenerGuard {
     device_id: AudioDeviceID,
     property: AudioObjectPropertyAddress,
-    callback: AudioObjectPropertyListenerProc,
-    client_data: *mut c_void,
+    id: usize,
+}
+
+impl ListenerGuard {
+    fn add(device_id: AudioDeviceID, handler: Handler) -> Result<Self> {
+        let property = AudioObjectPropertyAddress {
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain,
+        };
+        let id = NEXT_HANDLER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        HANDLERS.lock().insert(id, handler);
+        // SAFETY: the client data is an id, never dereferenced.
+        let added = check(unsafe {
+            AudioObjectAddPropertyListener(
+                device_id,
+                &property,
+                Some(rate_listener),
+                id as *mut c_void,
+            )
+        });
+        if let Err(e) = added {
+            HANDLERS.lock().remove(&id);
+            return Err(e);
+        }
+        Ok(Self {
+            device_id,
+            property,
+            id,
+        })
+    }
 }
 
 impl Drop for ListenerGuard {
     fn drop(&mut self) {
-        // SAFETY: Removing the same listener+client_data pair that was registered.
-        // Must happen exactly once — guaranteed by the Drop trait.
+        // SAFETY: removes the listener+id pair registered in `add`, once.
         unsafe {
             AudioObjectRemovePropertyListener(
                 self.device_id,
                 &self.property,
-                self.callback,
-                self.client_data,
+                Some(rate_listener),
+                self.id as *mut c_void,
             );
         }
+        HANDLERS.lock().remove(&self.id);
     }
 }
 
-/// CoreAudio property listener callback. Fires on the HAL I/O thread when the
-/// nominal sample rate changes. Zero work — just signals the waiting thread.
-///
-/// # Safety
-/// `in_client_data` must point to a valid `mpsc::SyncSender<()>`. The pointer
-/// is valid for the lifetime of the `ListenerGuard` in `set_device_sample_rate`.
-unsafe extern "C" fn rate_change_callback(
+/// Fires on the HAL notification thread when a device's nominal rate moves.
+/// Runs the handler registered under the id it is given, if it is still
+/// registered; the lock is not held while it runs.
+unsafe extern "C" fn rate_listener(
     _in_object_id: AudioObjectID,
     _in_number_addresses: UInt32,
     _in_addresses: *const AudioObjectPropertyAddress,
     in_client_data: *mut c_void,
 ) -> OSStatus {
-    // SAFETY: `in_client_data` points to a valid `SyncSender<()>` on the calling
-    // thread's stack, kept alive by the `ListenerGuard` which removes this listener
-    // before the sender is dropped.
-    let tx = unsafe { &*(in_client_data as *const mpsc::SyncSender<()>) };
-    // Ignore send errors — receiver may have already been dropped (timeout).
-    let _ = tx.try_send(());
+    let handler = HANDLERS.lock().get(&(in_client_data as usize)).cloned();
+    if let Some(handler) = handler {
+        handler();
+    }
     0
 }
 
@@ -352,30 +385,15 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64
         return Ok(current);
     }
 
-    // Set up a oneshot channel for the property listener callback.
+    // Signalled by the listener when the rate moves.
     let (tx, rx) = mpsc::sync_channel::<()>(1);
-
-    // SAFETY: `tx` lives on the stack for the duration of this function.
-    // The ListenerGuard removes the listener before `tx` is dropped, so the
-    // callback never sees a dangling pointer.
-    let client_data = &tx as *const mpsc::SyncSender<()> as *mut c_void;
-
-    check(unsafe {
-        AudioObjectAddPropertyListener(
-            device_id,
-            &property,
-            Some(rate_change_callback),
-            client_data,
-        )
-    })?;
-
-    // RAII: ensures RemovePropertyListener runs even on early return/panic.
-    let _guard = ListenerGuard {
+    let _guard = ListenerGuard::add(
         device_id,
-        property,
-        callback: Some(rate_change_callback),
-        client_data,
-    };
+        std::sync::Arc::new(move || {
+            // Ignore send errors: the receiver may have timed out.
+            let _ = tx.try_send(());
+        }),
+    )?;
 
     // Request the rate change.
     // SAFETY: `rate` is a stack-allocated f64 with correct size for the property.
@@ -415,14 +433,6 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64
             Ok(actual)
         }
     }
-    // _guard drops here → AudioObjectRemovePropertyListener called before tx is dropped
-}
-
-/// Callback data for a live rate subscription. Boxed so the pointer handed to
-/// CoreAudio stays put for the life of the watch.
-struct RateSink {
-    device_id: AudioDeviceID,
-    on_change: Box<dyn Fn(f64) + Send + Sync>,
 }
 
 /// A live subscription to a device's nominal sample rate.
@@ -434,33 +444,6 @@ struct RateSink {
 /// this player exists to make. Dropping the watch unsubscribes.
 pub struct RateWatch {
     _guard: ListenerGuard,
-    _sink: Box<RateSink>,
-}
-
-// SAFETY: the raw pointer in `_guard` addresses `_sink`'s heap allocation,
-// which the watch owns. Fields drop in declaration order, so the listener is
-// removed before the sink it points at. Nothing else observes either.
-unsafe impl Send for RateWatch {}
-unsafe impl Sync for RateWatch {}
-
-/// Fires on the HAL notification thread whenever the nominal rate moves.
-///
-/// # Safety
-/// `in_client_data` must point to a `RateSink` kept alive by the `RateWatch`
-/// that registered this listener.
-unsafe extern "C" fn rate_watch_callback(
-    _in_object_id: AudioObjectID,
-    _in_number_addresses: UInt32,
-    _in_addresses: *const AudioObjectPropertyAddress,
-    in_client_data: *mut c_void,
-) -> OSStatus {
-    // SAFETY: the registering `RateWatch` owns the sink and removes this
-    // listener on drop, so the pointer is live for every call that can reach here.
-    let sink = unsafe { &*(in_client_data as *const RateSink) };
-    if let Ok(rate) = get_device_sample_rate(sink.device_id) {
-        (sink.on_change)(rate);
-    }
-    0
 }
 
 /// Subscribe to nominal sample rate changes on a device.
@@ -468,29 +451,13 @@ pub fn watch_device_sample_rate(
     device_id: AudioDeviceID,
     on_change: Box<dyn Fn(f64) + Send + Sync>,
 ) -> Result<RateWatch> {
-    let property = AudioObjectPropertyAddress {
-        mSelector: kAudioDevicePropertyNominalSampleRate,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain,
-    };
-
-    let sink = Box::new(RateSink {
+    let guard = ListenerGuard::add(
         device_id,
-        on_change,
-    });
-    let client_data = &*sink as *const RateSink as *mut c_void;
-
-    check(unsafe {
-        AudioObjectAddPropertyListener(device_id, &property, Some(rate_watch_callback), client_data)
-    })?;
-
-    Ok(RateWatch {
-        _guard: ListenerGuard {
-            device_id,
-            property,
-            callback: Some(rate_watch_callback),
-            client_data,
-        },
-        _sink: sink,
-    })
+        std::sync::Arc::new(move || {
+            if let Ok(rate) = get_device_sample_rate(device_id) {
+                on_change(rate);
+            }
+        }),
+    )?;
+    Ok(RateWatch { _guard: guard })
 }
