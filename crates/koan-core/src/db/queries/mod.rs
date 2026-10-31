@@ -103,6 +103,19 @@ pub fn json_list<T: serde::Serialize>(items: &[T]) -> String {
     serde_json::to_string(items).unwrap_or_else(|_| "[]".into())
 }
 
+/// An ORDER BY list, read backwards when `descending`.
+///
+/// Every term flipped at once, whatever its own direction, by numbering the
+/// rows in the order and ordering by that number from the top. A window
+/// function may stand in an ORDER BY, and sees the GROUP BY's aggregates.
+pub(crate) fn reversed(order_by: &str, descending: bool) -> String {
+    if descending {
+        format!("row_number() OVER (ORDER BY {order_by}) DESC")
+    } else {
+        order_by.to_owned()
+    }
+}
+
 /// The half-open range of paths under a folder, for `path >= .0 AND path < .1`.
 ///
 /// A prefix match on an indexed column, rather than `LIKE 'folder/%'` — which
@@ -443,14 +456,16 @@ mod write_transaction_tests {
         drop(tx);
 
         let path_for_writer = path.clone();
+        let (holding, held) = std::sync::mpsc::channel();
         let writer = std::thread::spawn(move || {
             let conn = open(&path_for_writer);
             conn.execute_batch("BEGIN IMMEDIATE; INSERT INTO t VALUES (3)")
                 .unwrap();
+            holding.send(()).unwrap();
             std::thread::sleep(Duration::from_millis(200));
             conn.execute_batch("COMMIT").unwrap();
         });
-        std::thread::sleep(Duration::from_millis(50));
+        held.recv().unwrap();
         let conn = open(&path);
         let tx = super::write_transaction(&conn).unwrap();
         let _: i64 = tx

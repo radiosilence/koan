@@ -259,6 +259,8 @@ folders = ["/Volumes/Music/library", "/Users/me/Music"]
 
 One or more directories to scan for music. Subdirectories are scanned recursively.
 
+While kōan runs it watches the folders and indexes what changes in them, rather than scanning on a timer. A folder on a network share (NFS, SMB, AFP, or any FUSE mount) is scanned whole every fifteen minutes as well, because a file another machine writes there raises no event on this one. A folder added in the apps, the TUI, the web UI or by editing the file is watched at once, and a folder that does not exist yet is watched as soon as it is created.
+
 None by default: kōan reads no folder you have not named. Looking in `~/Music` unasked meant reading the Apple Music library inside it, and macOS asking whether kōan may. Versions before 0.61.1 used `~/Music` when no folder was set; if your library was indexed from there, the first newer kōan to open it writes `~/Music` into `config.local.toml`, so nothing is lost. A `folders` key in either file, an empty list included, is left as it is.
 
 `public_playlists = true` (`KOAN_LIBRARY__PUBLIC_PLAYLISTS`) makes the playlists read from `.m3u`, `.m3u8` and `.nsp` files in the library public, so every account on a server sees them, read-only. Off by default: they are the first admin's alone, as Navidrome imports them. It applies at each scan to every file's playlist, those read before included; playlists made in kōan keep their own setting.
@@ -287,6 +289,8 @@ download_workers = 5             # parallel download threads (default: 5)
 auto_sync = true                 # check the server for changes on a timer (default: true)
 auto_sync_interval_mins = 60     # minutes between checks; 0 checks once at startup (default: 60)
 ```
+
+A server that links (a kōan server) tells the app when its library changes, so the interval applies only to other Subsonic servers. Auto-sync runs again as soon as its settings change, in the apps or in the file.
 
 `cache_limit` takes a size such as `"500MB"` or `"50GB"`; unset or empty is unlimited. `"0"` keeps only what the queue is about to play, the downloads asked for and favourite albums, deleting each track once it has played. `download_ahead` counts tracks past the playing one: `1` is the least that keeps playback gapless, and `0` fetches each track only when it starts. Both are Settings → Downloads in the apps; see [Cache management](../recipes/cache-management.md).
 

@@ -22,7 +22,8 @@ impl SubscriptionRoot {
     /// `positionMs` is an anchor rather than a reading. A playhead advancing at
     /// one second per second is the one thing a client can work out for itself,
     /// so this pushes when that stops being true — a seek, a pause, a track
-    /// boundary, a stall — and not on a clock. Derive the current position from
+    /// boundary, a stall — and not on a clock. `moving` says whether it is
+    /// advancing at all. Derive the current position from
     /// the last message and `state`; that is what the native client does, and
     /// what lets a paused koan send nothing at all.
     async fn now_playing(
@@ -43,18 +44,22 @@ impl SubscriptionRoot {
             let mut last_state = 255u8; // impossible value to force first emit
             let mut last_position = u64::MAX;
             let mut last_queue_item: Option<String> = None;
+            let mut last_moving: Option<bool> = None;
 
             loop {
                 let playback_state = state.playback_state() as u8;
                 let position_ms = state.position_ms();
                 let queue_item_id = state.track_info().map(|ti| ti.id.0.to_string());
+                let moving = Some(state.playhead_moving());
 
                 let changed = playback_state != last_state
                     || position_ms != last_position
-                    || queue_item_id != last_queue_item;
+                    || queue_item_id != last_queue_item
+                    || moving != last_moving;
 
                 if changed {
                     last_state = playback_state;
+                    last_moving = moving;
                     last_position = position_ms;
                     last_queue_item = queue_item_id;
 

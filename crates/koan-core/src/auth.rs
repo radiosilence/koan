@@ -5,7 +5,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use ring::signature::KeyPair;
@@ -420,7 +419,7 @@ pub fn mint_scoped_token(
     ttl_secs: u64,
     scope: Option<&str>,
 ) -> Result<String, AuthError> {
-    let now = now_unix();
+    let now = crate::clock::unix_secs() as u64;
 
     let claims = Claims {
         sub: user_id,
@@ -547,13 +546,6 @@ pub async fn account_changed_since(user_id: i64, mark: u64) {
 // ---------------------------------------------------------------------------
 // Time helpers
 // ---------------------------------------------------------------------------
-
-pub fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
 
 /// Parse a duration string like "15m", "7d", "24h", "3600s" into seconds.
 pub fn parse_duration_secs(s: &str) -> Option<u64> {

@@ -53,7 +53,7 @@ struct PlayRecordIntent: AudioPlaybackIntent {
         }
         // While the server is out of reach, only what is downloaded can play.
         let offline = app.mirror.connection?.offline == true
-        let tracks = try await app.engine.tracks(albumId: album.id, artistId: nil, sort: .album, limit: 2000, offset: 0)
+        let tracks = try await app.engine.tracks(albumId: album.id, artistId: nil)
         let ids = tracks.filter { !offline || $0.onDisk }.map(\.id)
         guard !ids.isEmpty else {
             throw offline ? IntentError.notDownloaded(album.title) : IntentError.nothingToPlay(album.title)

@@ -480,7 +480,7 @@ thread_local! {
 /// Sync with the server signed in to, as a device does when told the
 /// profiles moved.
 pub fn sync(db: &Database) -> DspSync {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let Some(client) = crate::helpers::subsonic_client(&cfg) else {
         return DspSync::default();
     };
@@ -505,7 +505,7 @@ pub fn flush(db: &Database) -> Option<Result<DspSync, String>> {
     if !PENDING.swap(false, Ordering::Relaxed) {
         return None;
     }
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let client = crate::helpers::subsonic_client(&cfg)?;
     let offers = crate::remote::profile::for_auth(client.auth())
         .is_some_and(|p| p.offers(crate::remote::profile::DSP_PROFILES));
@@ -628,12 +628,6 @@ struct Local {
     paths: HashMap<String, PathBuf>,
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
-
 fn sync_with(db: &Database, remote: &dyn Remote, url: &str) -> Result<DspSync, Failed> {
     let mut out = DspSync::default();
     first_sync(db)?;
@@ -750,7 +744,7 @@ fn observe(db: &Database, url: &str) -> Result<HashMap<String, Local>, Failed> {
             Ok((doc, paths)) => {
                 let hash = doc.hash();
                 if seen.get(&uid).is_none_or(|s| s.hash != hash) {
-                    rows::set_local_edit(&db.conn, &uid, &hash, now_ms())?;
+                    rows::set_local_edit(&db.conn, &uid, &hash, crate::clock::unix_ms())?;
                 }
                 locals.insert(uid, Local { doc, hash, paths });
             }
@@ -759,7 +753,7 @@ fn observe(db: &Database, url: &str) -> Result<HashMap<String, Local>, Failed> {
                     .get(&uid)
                     .is_none_or(|s| s.refused.as_deref() != Some(&why))
                 {
-                    rows::set_local_edit(&db.conn, &uid, "", now_ms())?;
+                    rows::set_local_edit(&db.conn, &uid, "", crate::clock::unix_ms())?;
                     rows::set_refused(&db.conn, &uid, Some(&why))?;
                 }
             }
@@ -955,7 +949,7 @@ fn push(
             restore = true;
             continue;
         }
-        let saved = remote.delete(uid, now_ms())?;
+        let saved = remote.delete(uid, crate::clock::unix_ms())?;
         rows::forget_synced(&db.conn, url, uid)?;
         sent.insert(uid.clone());
         if !saved.stored {
@@ -1016,8 +1010,10 @@ fn push(
         // Never synced from here, or synced and then deleted on the server
         // when it was kept here alone: sending it now is the edit.
         let edited_at = match synced.get(uid) {
-            Some(_) => edits.get(uid).map_or_else(now_ms, |e| e.edited_at),
-            None => now_ms(),
+            Some(_) => edits
+                .get(uid)
+                .map_or_else(crate::clock::unix_ms, |e| e.edited_at),
+            None => crate::clock::unix_ms(),
         };
         let saved = match remote.save(uid, edited_at, &local.doc.json()) {
             Ok(saved) => saved,
@@ -1718,7 +1714,9 @@ mod tests {
             .find(|(u, _)| *u == uid)
             .unwrap()
             .1;
-        server.save(&uid, now_ms() + 30_000, &doc).unwrap();
+        server
+            .save(&uid, crate::clock::unix_ms() + 30_000, &doc)
+            .unwrap();
 
         let mut out = DspSync::default();
         let again = push(&a.db, &server, url, &locals, &HashSet::new(), &mut out).unwrap();
@@ -2138,7 +2136,9 @@ mod tests {
         let (uid, json) = rows::live_docs(&server.conn, USER).unwrap().pop().unwrap();
         let mut newer: serde_json::Value = serde_json::from_str(&json).unwrap();
         newer["profile"]["from_the_future"] = serde_json::json!({"a": 1});
-        server.save(&uid, now_ms() + 1, &newer.to_string()).unwrap();
+        server
+            .save(&uid, crate::clock::unix_ms() + 1, &newer.to_string())
+            .unwrap();
         for device in [&a, &b, &a, &b] {
             let synced = device.sync(&server);
             assert_eq!(synced.sent, 0, "{synced:?}");

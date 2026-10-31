@@ -323,10 +323,7 @@ pub(crate) fn sleep_label(sleep: Option<Sleep>, fading: bool) -> String {
     let what = match sleep {
         _ if fading => "fading".to_string(),
         Some(Sleep::At { unix_ms }) => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
+            let now = koan_core::clock::unix_ms() as u64;
             format_time(unix_ms.saturating_sub(now))
         }
         Some(Sleep::EndOfTrack) => "track".into(),
