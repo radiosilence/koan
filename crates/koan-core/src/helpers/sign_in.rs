@@ -696,13 +696,21 @@ mod refusal_tests {
         assert!(!crate::remote::offline::manual());
     }
 
-    /// The front end hears that the server is left once the config says so,
-    /// and not at all when that write fails.
+    /// The front end hears that the server is left once the config says so
+    /// and before its library is forgotten, and not at all when that write
+    /// fails.
     #[test]
-    fn leaving_tells_the_front_end_once_the_change_is_kept() {
+    fn leaving_tells_the_front_end_between_the_write_and_the_forgetting() {
         let _guard = crate::config::tests::PERSIST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        struct Unhook;
+        impl Drop for Unhook {
+            fn drop(&mut self) {
+                on_leaving_server(None);
+            }
+        }
+        let _unhook = Unhook;
         let dir = tempfile::tempdir().unwrap();
         crate::config::set_config_dir(dir.path());
         let signed_in = |c: &mut Config| {
@@ -712,19 +720,22 @@ mod refusal_tests {
             c.remote.api_key = "key".into();
         };
         Config::persist(signed_in).unwrap();
+        // What the hook saw: whether the config still named the server, and
+        // whether the library had been forgotten yet.
         let heard = Arc::new(Mutex::new(Vec::new()));
         let told = heard.clone();
         on_leaving_server(Some(Box::new(move || {
             told.lock()
                 .unwrap()
-                .push(Config::load().unwrap().remote.enabled);
+                .push((Config::load().unwrap().remote.enabled, libraries_replaced()));
         })));
 
+        let before = libraries_replaced();
         sign_out().unwrap();
         assert_eq!(
             *heard.lock().unwrap(),
-            [false],
-            "heard once, after the write"
+            [(false, before)],
+            "once, after the write, before the forgetting"
         );
 
         use std::os::unix::fs::PermissionsExt;
@@ -733,7 +744,6 @@ mod refusal_tests {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
         let failed = sign_out();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-        on_leaving_server(None);
         assert!(failed.is_err(), "the write was refused");
         assert!(
             heard.lock().unwrap().is_empty(),

@@ -245,7 +245,7 @@ class AccountModel(
     private suspend fun syncAfterSignIn() {
         _state.update { it.copy(signedIn = true) }
         try {
-            activity.run("Loading the library", followsSync = true) { engine().syncRemote() }
+            activity.run("Loading the library", followsSync = true) { engine().loadRemoteLibrary() }
         } catch (e: KoanException) {
             notice("Signed in, but the library did not load: ${e.describe()}")
         }

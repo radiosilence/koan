@@ -40,7 +40,11 @@ pub(crate) struct Running {
 impl Running {
     pub(crate) fn enter(url: &str) -> Self {
         let url = url.trim_end_matches('/');
-        let cancel = Arc::new(AtomicBool::new(LEFT.lock().iter().any(|l| l == url)));
+        let left = LEFT.lock().iter().any(|l| l == url);
+        if left {
+            log::warn!("not syncing {url}: this device left it and has not signed in again");
+        }
+        let cancel = Arc::new(AtomicBool::new(left));
         RUNNING.lock().push((url.to_owned(), cancel.clone()));
         Self { cancel }
     }

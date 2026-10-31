@@ -230,7 +230,7 @@ struct TabShell: View {
         .overlay(alignment: .bottom) {
             // The card, not only its rows: an empty list inside a material
             // still draws the material.
-            if !activity.tasks.isEmpty {
+            if !activity.shown.isEmpty {
                 ActivityList()
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -553,7 +553,7 @@ struct TabShell: View {
             let synced = await activity.run(
                 "Loading the library", uses: [.remoteTracks], followsSync: true
             ) {
-                try await engine.syncRemote()
+                try await engine.loadRemoteLibrary()
             }
             if case .failure(let error) = synced {
                 player.lastError = SettingsModel.describe(error)

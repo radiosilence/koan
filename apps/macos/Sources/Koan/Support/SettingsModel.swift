@@ -205,7 +205,7 @@ final class SettingsModel {
             let synced = await activity.run(
                 "Loading the library", uses: [.remoteTracks], followsSync: true
             ) {
-                try await engine.syncRemote()
+                try await engine.loadRemoteLibrary()
             }
             if case .failure(let e) = synced {
                 lastError = "Signed in, but the library did not load: \(Self.describe(e))"

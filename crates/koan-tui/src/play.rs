@@ -374,7 +374,10 @@ pub fn run_tui(
     // leaves, before its library is forgotten.
     let leaving = tx.clone();
     koan_core::helpers::on_leaving_server(Some(Box::new(move || {
-        let _ = leaving.try_send(PlayerCommand::SignedOut);
+        let sent = leaving.send_timeout(PlayerCommand::SignedOut, Duration::from_secs(1));
+        if sent.is_err() {
+            log::warn!("the player did not take the sign-out; the queue stays");
+        }
     })));
     let mut app = app::App::new(state, viz_snapshot, tx, target_fps);
     // Before anything reads the keyboard: the terminal answers on stdin.
