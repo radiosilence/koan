@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.69.2
+
+### Added
+
+- **Serving under a path.** A `server.url` with a path, such as `https://host.example/koan`, serves kōan there behind a proxy that forwards or strips the path, so it can share a host with other services, as Tailscale Funnel arranges them. A server whose `server.url` already had a path while its web UI was served at a root now links and scopes its cookies under that path: set `server.url` to where it is served. See [Under a path](docs/guide/headless-server.md#under-a-path).
+- **Top Shelf on Apple TV.** With kōan in the top row of the Home Screen, the shelf shows recently played and favourite records; choosing one opens it, Play plays it.
+
+### Fixed
+
+- **Long credits keep whole names.** A credit naming more artists than fit shows the names that fit in full and ends in "…", where every name used to be cut to its first letters.
+- **Apple TV builds again.** The TV app failed to compile after 0.69.0, so its TestFlight build for 0.69.1 was not made.
+
 ## 0.69.1
 
 ### Changed
