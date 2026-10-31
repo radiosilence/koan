@@ -133,10 +133,10 @@ private fun QueuePage() {
     val built = remember(queue, grouped) { QueueRow.build(queue.items, grouped) }
 
     // The rows as a drag has them, from its start until the engine sends the
-    // queue back moved. A heading carries its run, whose rows leave the list
-    // while it moves.
+    // queue back moved: a new version, not a patch to a row's status. A heading
+    // carries its run, whose rows leave the list while it moves.
     var dragged by remember { mutableStateOf<List<QueueRow>?>(null) }
-    LaunchedEffect(queue) { dragged = null }
+    LaunchedEffect(queue.version) { dragged = null }
     val rows = dragged ?: built
     fun lifted(row: QueueRow): List<QueueRow> {
         if (row !is QueueRow.Album) return built
@@ -396,7 +396,7 @@ private fun AlbumHeading(group: QueueGroup, linked: Boolean) {
         Spacer(Modifier.width(KoanSpace.m))
         Column {
             val first = group.items.first()
-            NameLine(listOf(albumName(group.title, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
+            NameLine(listOf(albumName(group.album, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
             NameLine(listOf(artistCredit(first.albumArtistCredit)), linked = linked)
             KoanText(group.detail, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
         }
@@ -627,7 +627,6 @@ private fun QueueMenu(row: QueueRow, onDismiss: () -> Unit, remove: () -> Unit, 
 @Composable
 private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) -> Unit, addToPlaylist: (List<Long>) -> Unit) {
     val app = koanApp()
-    val context = LocalContext.current
     val signedIn = app.mirror.connection.collectAsStateWithLifecycle().value != null
     val store = favourites()
     val hearted by store.tracks.collectAsStateWithLifecycle()
@@ -653,8 +652,8 @@ private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) ->
         }
     }
     if (signedIn) {
-        val (title, name) = if (heading) "Share Album" to (row as QueueRow.Album).group.title else "Share" to first.title
-        KoanMenuItem(title, KoanIcons.share) { act { app.share(context, name) { trackIds } } }
+        val (title, name) = if (heading) "Share Album" to (row as QueueRow.Album).group.album else "Share" to first.title
+        KoanMenuItem(title, KoanIcons.share) { act { app.share(name) { trackIds } } }
     }
     // A track knows whether its file is here; a run is usually part of the way there, and both apply.
     if (trackId != null) {

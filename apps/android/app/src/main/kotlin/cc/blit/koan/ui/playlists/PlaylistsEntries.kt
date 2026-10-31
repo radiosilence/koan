@@ -30,11 +30,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
+import cc.blit.koan.ui.shown
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
@@ -44,6 +46,7 @@ import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.value
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -66,7 +69,8 @@ fun EntryProviderScope<NavKey>.playlistsEntries() {
 private fun PlaylistsPage() {
     val app = koanApp()
     val model = viewModel { PlaylistsModel(app.mirror) }
-    val playlists by model.playlists.collectAsStateWithLifecycle()
+    val read by model.playlists.state.collectAsStateWithLifecycle()
+    val playlists = read.value
     val edits = remember { PlaylistEdits(app.mirror) }
     val nav = LocalNavigator.current
     val scope = rememberCoroutineScope()
@@ -80,7 +84,7 @@ private fun PlaylistsPage() {
             }
             KoanButton("New Playlist", { naming = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.add)
         }
-        val shown = playlists
+        val shown = read.shown("your playlists", model.playlists::retry)
         when {
             shown == null -> Unit
             shown.isEmpty() -> KoanUnavailable("No playlists", KoanIcons.playlist, "Made here or on your server, they show up in both.")
@@ -182,7 +186,7 @@ private fun PlaylistListRow(
     val thumb = LocalKoanTokens.current.thumb
     // Keyed on `changedAt`: adding tracks changes a playlist's face.
     val covers by produceState(emptyList<Long>(), playlist.id, playlist.changedAt) {
-        value = runCatching { app.mirror.engine().playlistCoverAlbumIds(playlist.id) }.getOrDefault(emptyList())
+        value = attempt { app.mirror.engine().playlistCoverAlbumIds(playlist.id) }.getOrDefault(emptyList())
     }
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }

@@ -11,6 +11,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
 import cc.blit.koan.engine.EngineMirror
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
@@ -24,9 +25,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -42,19 +49,15 @@ class Favourites(private val mirror: EngineMirror) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _tracks = MutableStateFlow(emptySet<Long>())
-    val tracks: StateFlow<Set<Long>> = _tracks.asStateFlow()
-
     private val _albums = MutableStateFlow(emptySet<Long>())
-    val albums: StateFlow<Set<Long>> = _albums.asStateFlow()
-
     private val _artists = MutableStateFlow(emptySet<Long>())
-    val artists: StateFlow<Set<Long>> = _artists.asStateFlow()
 
-    init {
-        scope.launch {
-            mirror.library.collect {
-                runCatching {
-                    val engine = mirror.engine()
+    /** The sets read again as the library moves, while anything draws a heart. */
+    private val reading = mirror.library
+        .onEach {
+            attempt {
+                val engine = mirror.engine()
+                coroutineScope {
                     val tracks = async { engine.favouriteTrackIds().toSet() }
                     val albums = async { engine.favouriteAlbumIds().toSet() }
                     val artists = async { engine.favouriteArtistIds().toSet() }
@@ -64,7 +67,16 @@ class Favourites(private val mirror: EngineMirror) {
                 }
             }
         }
-    }
+        .shareIn(scope, SharingStarted.WhileSubscribed(5_000))
+
+    /** A set, holding `reading` open for as long as it is collected. */
+    private fun MutableStateFlow<Set<Long>>.whileDrawn(): StateFlow<Set<Long>> =
+        combine(this, reading.onStart { emit(0) }) { set, _ -> set }
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), value)
+
+    val tracks = _tracks.whileDrawn()
+    val albums = _albums.whileDrawn()
+    val artists = _artists.whileDrawn()
 
     fun toggleTrack(id: Long) = toggle(_tracks, id) { toggleFavourite(id) }
 
@@ -74,7 +86,7 @@ class Favourites(private val mirror: EngineMirror) {
 
     private fun toggle(set: MutableStateFlow<Set<Long>>, id: Long, call: suspend KoanEngine.() -> Boolean) {
         scope.launch {
-            val on = runCatching { mirror.engine().call() }.getOrNull() ?: return@launch
+            val on = attempt { mirror.engine().call() }.getOrNull() ?: return@launch
             set.update { if (on) it + id else it - id }
         }
     }

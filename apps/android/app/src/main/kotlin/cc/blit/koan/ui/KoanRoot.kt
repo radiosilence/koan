@@ -18,22 +18,18 @@ import androidx.lifecycle.compose.currentStateAsState
 import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.ffi.PlayState
+import cc.blit.koan.ui.library.SleeveAccents
+import cc.blit.koan.ui.library.sleeve
 import cc.blit.koan.ui.nowplaying.art
 import cc.blit.koan.ui.theme.KoanAccent
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.LocalRainbowStep
 import cc.blit.koan.ui.theme.ProvideRecordWash
 import cc.blit.koan.ui.theme.Rainbow
-import coil3.SingletonImageLoader
-import coil3.request.ImageRequest
-import coil3.request.allowHardware
-import coil3.toBitmap
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 
-/** A record's sleeve as answered: `art` is which cover it is for, `bitmap` null for one with none. */
-private data class Sleeve(val art: Art?, val bitmap: Bitmap?)
+/** A record's sleeve as answered: `art` is which cover it is for, `bitmap` and `accent` null for one with none. */
+private data class Sleeve(val art: Art?, val bitmap: Bitmap?, val accent: KoanAccent?)
 
 /**
  * The theme as `[appearance]` sets it, in the colours of the record playing:
@@ -52,21 +48,15 @@ fun KoanRoot(content: @Composable () -> Unit) {
     val context = LocalContext.current
     // Keyed on the cover, not the entry: the tracks of one record share it.
     // Held while the next is fetched, so the room keeps its colour meanwhile.
-    val sleeve by produceState(Sleeve(null, null), art) {
-        val bitmap = art?.let {
-            val request = ImageRequest.Builder(context).data(it).allowHardware(false).build()
-            SingletonImageLoader.get(context).execute(request).image?.toBitmap()
-        }
-        value = Sleeve(art, bitmap)
-    }
-    val accent by produceState<KoanAccent?>(null, sleeve) {
-        value = sleeve.bitmap?.let { withContext(Dispatchers.Default) { KoanAccent.of(it) } }
+    val sleeve by produceState(Sleeve(null, null, null), art) {
+        val bitmap = art?.let { sleeve(context, it) }
+        value = Sleeve(art, bitmap, bitmap?.let { SleeveAccents.of(art, it) })
     }
     val step = rainbowStep(appearance?.rainbow == true)
     KoanTheme(
         koan = appearance?.koan != false,
         icons = appearance?.icons != false,
-        accent = step?.let(Rainbow::accent) ?: accent,
+        accent = step?.let(Rainbow::accent) ?: sleeve.accent,
     ) {
         ProvideRecordWash(
             sleeve = sleeve.bitmap,

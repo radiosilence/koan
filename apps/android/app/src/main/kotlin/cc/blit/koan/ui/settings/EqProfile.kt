@@ -126,8 +126,8 @@ fun DspProfilePage(initial: String, device: String?, model: SettingsModel) {
     // The device whose filters and correction Used for acts on: the one the EQ page showed, else the output in use.
     val target = device ?: inUse
     var targetOverview by remember { mutableStateOf<DspOverview?>(null) }
-    // The targets there are, read once: they change only when one is added.
-    LaunchedEffect(Unit) {
+    // The targets there are, read again only when one is added.
+    LaunchedEffect(state.targetsVersion, state.overview?.inEar) {
         coroutineScope {
             val over = async { dsp.targetsFor(DspEarKind.OVER_EAR) }
             val inEar = async { dsp.targetsFor(DspEarKind.IN_EAR) }

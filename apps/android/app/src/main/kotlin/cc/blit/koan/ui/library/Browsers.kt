@@ -29,11 +29,13 @@ import cc.blit.koan.ffi.AlbumSort
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.shown
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.value
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 
@@ -60,7 +62,8 @@ fun AlbumsPage(shelf: Shelf?) {
     val app = koanApp()
     val context = LocalContext.current
     val model = viewModel { AlbumsModel(app.mirror, shelf, context.libraryPrefs()) }
-    val albums by model.albums.collectAsStateWithLifecycle()
+    val read by model.albums.state.collectAsStateWithLifecycle()
+    val albums = read.value
     val query by model.query.collectAsStateWithLifecycle()
     val layout by model.layout.collectAsStateWithLifecycle()
     val choices by model.choices.collectAsStateWithLifecycle()
@@ -89,7 +92,7 @@ fun AlbumsPage(shelf: Shelf?) {
         }
         FilterField(query.search, "Filter albums", model::search)
         Box(Modifier.weight(1f)) {
-            val shown = albums ?: return@Box
+            val shown = read.shown("the albums", model.albums::retry) ?: return@Box
             when {
                 shown.isEmpty() -> KoanUnavailable(
                     if (narrowed) "Nothing matches" else "No albums yet",
@@ -128,7 +131,8 @@ fun AlbumGrid(albums: List<Album>, state: LazyGridState, modifier: Modifier = Mo
 fun ArtistsPage(shelf: Shelf?) {
     val app = koanApp()
     val model = viewModel { ArtistsModel(app.mirror, shelf) }
-    val artists by model.artists.collectAsStateWithLifecycle()
+    val read by model.artists.state.collectAsStateWithLifecycle()
+    val artists = read.value
     val query by model.query.collectAsStateWithLifecycle()
     val choices by model.choices.collectAsStateWithLifecycle()
     val selection = model.selection
@@ -145,7 +149,7 @@ fun ArtistsPage(shelf: Shelf?) {
         }
         FilterField(query.search, "Filter artists", model::search)
         Box(Modifier.weight(1f)) {
-            val shown = artists ?: return@Box
+            val shown = read.shown("the artists", model.artists::retry) ?: return@Box
             if (shown.isEmpty()) {
                 KoanUnavailable(
                     if (narrowed) "Nothing matches" else "No artists yet",
@@ -168,7 +172,8 @@ fun TracksPage(shelf: Shelf) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val model = viewModel { TracksModel(app.mirror, shelf) }
-    val page by model.page.collectAsStateWithLifecycle()
+    val read by model.page.state.collectAsStateWithLifecycle()
+    val page = read.value
     val query by model.query.collectAsStateWithLifecycle()
     val choices by model.choices.collectAsStateWithLifecycle()
     val selection = model.selection
@@ -178,7 +183,7 @@ fun TracksPage(shelf: Shelf) {
     LaunchedEffect(list) {
         snapshotFlow { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .distinctUntilChanged()
-            .filter { it >= (model.page.value?.tracks?.size ?: 0) - 100 }
+            .filter { it >= (model.page.state.value.value?.tracks?.size ?: 0) - 100 }
             .collect { model.more() }
     }
     Column {
@@ -193,7 +198,7 @@ fun TracksPage(shelf: Shelf) {
         }
         FilterField(query.search, "Filter tracks", model::search)
         Box(Modifier.weight(1f)) {
-            val shown = page ?: return@Box
+            val shown = read.shown("the tracks", model.page::retry) ?: return@Box
             if (shown.tracks.isEmpty()) {
                 // Narrowed beyond what the shelf itself is.
                 val narrowed = shelf.trackQuery().let { query.filter != it.filter || query.search != it.search }

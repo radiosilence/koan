@@ -10,6 +10,7 @@ import cc.blit.koan.ffi.NewAppPassword
 import cc.blit.koan.ffi.ServerAccount
 import cc.blit.koan.ffi.ServerExtension
 import cc.blit.koan.ffi.ServerStanding
+import cc.blit.koan.ui.ActivityModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -167,7 +168,7 @@ class AccountModelsTest {
     )
 
     @Test fun anEngineThatWouldNotOpenLeavesSignInUnknown() = runTest(dispatcher) {
-        val model = AccountModel({ throw KoanException.Database("database is newer") })
+        val model = AccountModel({ throw KoanException.Database("database is newer") }, ActivityModel())
         advanceUntilIdle()
         assertNull(model.state.value.signedIn)
     }

@@ -1,6 +1,5 @@
 package cc.blit.koan.ui.playlists
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -22,7 +21,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -32,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -47,6 +44,7 @@ import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.library.PageHeader
+import cc.blit.koan.ui.library.RecordAccent
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.Removal
 import cc.blit.koan.ui.library.SelectButton
@@ -62,6 +60,7 @@ import cc.blit.koan.ui.library.favourites
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.nowplaying.LocalShowTrackInfo
 import cc.blit.koan.ui.nowplaying.clock
+import cc.blit.koan.ui.shown
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
@@ -69,18 +68,13 @@ import cc.blit.koan.ui.theme.KoanIconToggle
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanMenu
 import cc.blit.koan.ui.theme.KoanMenuItem
-import cc.blit.koan.ui.theme.KoanRecordAccent
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
-import coil3.SingletonImageLoader
-import coil3.request.ImageRequest
-import coil3.request.SuccessResult
-import coil3.request.allowHardware
-import coil3.toBitmap
+import cc.blit.koan.ui.value
 
 /**
  * A playlist, laid out the way the queue is: grouped under its records or one
@@ -95,7 +89,8 @@ import coil3.toBitmap
 fun PlaylistPage(playlistId: Long) {
     val app = koanApp()
     val model = viewModel { PlaylistModel(app.mirror, playlistId) }
-    val contents by model.contents.collectAsStateWithLifecycle()
+    val read by model.contents.state.collectAsStateWithLifecycle()
+    val contents = read.value
     val nowPlaying by app.mirror.nowPlaying.collectAsStateWithLifecycle()
     val edits = remember { PlaylistEdits(app.mirror) }
     val nav = LocalNavigator.current
@@ -116,7 +111,7 @@ fun PlaylistPage(playlistId: Long) {
     // The name moves into the bar once the header has scrolled away.
     val scrolled by remember { derivedStateOf { list.firstVisibleItemIndex > 0 } }
 
-    PlaylistAccent(contents?.covers?.firstOrNull()) {
+    RecordAccent(contents?.covers?.firstOrNull()) {
         Column {
             val title = when {
                 playlist == null -> if (contents == null) "" else "Playlist"
@@ -146,13 +141,13 @@ fun PlaylistPage(playlistId: Long) {
 
             Box(Modifier.weight(1f)) {
                 when {
-                    contents == null -> Unit
+                    contents == null -> read.shown("this playlist", model.contents::retry)
                     playlist == null -> KoanUnavailable("Playlist not found", KoanIcons.playlist, "It may have been deleted here or on your server.")
                     else -> PlaylistList(
                         listState = list,
                         playlist = playlist,
                         entries = entries,
-                        covers = contents?.covers.orEmpty(),
+                        covers = contents.covers,
                         playingEntry = nowPlaying?.entry?.playlistEntryId,
                         editing = editing && fillable,
                         selection = selection,
@@ -359,21 +354,6 @@ fun edgeScroll(top: Float, bottom: Float, start: Float, end: Float, edge: Float)
     else -> 0f
 }
 
-/**
- * The page in the colour of the playlist's first sleeve, as a record's page is
- * in its own.
- */
-@Composable
-private fun PlaylistAccent(albumId: Long?, content: @Composable () -> Unit) {
-    val context = LocalContext.current
-    val sleeve by produceState<Bitmap?>(null, albumId) {
-        value = albumId?.let {
-            val request = ImageRequest.Builder(context).data(Art.album(it)).allowHardware(false).build()
-            (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image?.toBitmap()
-        }
-    }
-    KoanRecordAccent(sleeve, content)
-}
 
 /** "12 tracks · 48 min · synced": what it holds, and whether edits reach the server. */
 private fun contentsSummary(playlist: Playlist, entries: List<PlaylistEntry>): String {

@@ -72,14 +72,14 @@ fun availability(onServer: Boolean, onDisk: Boolean, transfer: TransferState?) =
     }
 }
 
-/** The download store by track, one map for every row on screen. */
+/** The download store by track, one map for every row on screen, kept only while a row draws it. */
 private object TransfersByTrack {
     private var held: StateFlow<Map<Long, Transfer>>? = null
 
     fun of(mirror: EngineMirror): StateFlow<Map<Long, Transfer>> = synchronized(this) {
         held ?: mirror.transfers
             .map { all -> all.associateBy { it.trackId } }
-            .stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, emptyMap())
+            .stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.WhileSubscribed(5_000), emptyMap())
             .also { held = it }
     }
 }

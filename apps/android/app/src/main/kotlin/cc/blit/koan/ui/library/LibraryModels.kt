@@ -7,6 +7,7 @@ import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.blit.koan.engine.EngineMirror
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.AlbumPage
 import cc.blit.koan.ffi.AlbumSort
@@ -14,10 +15,12 @@ import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.ArtistInfo
 import cc.blit.koan.ffi.BrowseChoices
 import cc.blit.koan.ffi.BrowseFilter
-import cc.blit.koan.ffi.ShelfSummary
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ffi.TrackBrowseSort
 import cc.blit.koan.ffi.TrackSort
+import cc.blit.koan.ui.Listing
+import cc.blit.koan.ui.read
+import cc.blit.koan.ui.value
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,12 +59,12 @@ val BrowseFilter.activeCount
 private fun EngineMirror.versions(readsHistory: Flow<Boolean>) =
     combine(library, history, readsHistory) { v, h, r -> if (r) "$v:$h" else "$v" }.distinctUntilChanged()
 
-private fun <T> ViewModel.held(flow: Flow<T>, initial: T): StateFlow<T> =
-    flow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
+private fun <K, T> ViewModel.listing(keys: Flow<K>, fetch: suspend (K) -> T) = Listing(viewModelScope, keys, fetch)
 
-/** The values the browsers' filters offer, read again when the library moves. */
+/** The values the browsers' filters offer, read again when the library moves; none offered while they cannot be read. */
 private fun ViewModel.choicesOf(mirror: EngineMirror): StateFlow<BrowseChoices?> =
-    held(mirror.library.mapLatest { runCatching { mirror.engine().browseChoices() }.getOrNull() }, null)
+    mirror.library.mapLatest { read { mirror.engine().browseChoices() }.value }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
 /** What a browser is narrowed and ordered by. */
 data class BrowseQuery<S>(val sort: S, val filter: BrowseFilter, val search: String = "", val seed: Long = 0)
@@ -141,13 +144,9 @@ class AlbumsModel(private val mirror: EngineMirror, private val shelf: Shelf?, p
 
     val layout = MutableStateFlow(prefs.getString(LAYOUT, null)?.let { runCatching { AlbumLayout.valueOf(it) }.getOrNull() } ?: AlbumLayout.Grid)
 
-    val albums: StateFlow<List<Album>?> = held(
-        combine(mirror.versions(query.map { it.filter.recent }), query) { _, q -> q }
-            .mapLatest { q ->
-                runCatching { mirror.engine().albums(null, q.sort, q.seed, q.search.ifBlank { null }, q.filter) }.getOrDefault(emptyList())
-            },
-        null,
-    )
+    val albums = listing(combine(mirror.versions(query.map { it.filter.recent }), query) { _, q -> q }) { q ->
+        mirror.engine().albums(null, q.sort, q.seed, q.search.ifBlank { null }, q.filter)
+    }
 
     val choices = choicesOf(mirror)
 
@@ -178,11 +177,9 @@ class ArtistsModel(private val mirror: EngineMirror, shelf: Shelf?) : ViewModel(
 
     val query = MutableStateFlow(shelf.albumQuery(AlbumSort.ARTIST))
 
-    val artists: StateFlow<List<Artist>?> = held(
-        combine(mirror.versions(query.map { it.filter.recent }), query) { _, q -> q }
-            .mapLatest { q -> runCatching { mirror.engine().artists(q.search.ifBlank { null }, q.filter) }.getOrDefault(emptyList()) },
-        null,
-    )
+    val artists = listing(combine(mirror.versions(query.map { it.filter.recent }), query) { _, q -> q }) { q ->
+        mirror.engine().artists(q.search.ifBlank { null }, q.filter)
+    }
 
     val choices = choicesOf(mirror)
 
@@ -204,21 +201,15 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
     val query = MutableStateFlow(shelf.trackQuery())
     private val wanted = MutableStateFlow(PAGE)
 
-    val page: StateFlow<TrackPage?> = held(
-        combine(mirror.versions(query.map { it.filter.recent }), query, wanted) { _, q, n -> q to n }
-            .mapLatest { (q, n) ->
-                runCatching {
-                    val listing = mirror.engine().trackListing(q.sort, q.search.ifBlank { null }, q.filter, n.toUInt(), 0u)
-                    TrackPage(listing.tracks, listing.total.toLong(), q)
-                }.getOrNull()
-            },
-        null,
-    )
+    val page = listing(combine(mirror.versions(query.map { it.filter.recent }), query, wanted) { _, q, n -> q to n }) { (q, n) ->
+        val listing = mirror.engine().trackListing(q.sort, q.search.ifBlank { null }, q.filter, n.toUInt(), 0u)
+        TrackPage(listing.tracks, listing.total.toLong(), q)
+    }
 
     /** Read the next page, once the rows read so far are nearly all on screen. */
     fun more() {
         // Not until the new query's first page has arrived.
-        val held = page.value?.takeIf { it.query == query.value } ?: return
+        val held = page.state.value.value?.takeIf { it.query == query.value } ?: return
         if (held.tracks.size < held.total && wanted.value <= held.tracks.size) wanted.update { it + PAGE }
     }
 
@@ -250,39 +241,19 @@ class ShelfModel(mirror: EngineMirror, shelf: Shelf) : ViewModel() {
     /** Things picked to play or queue together; ends with the page. */
     val selection = playableSelection()
 
-    val summary: StateFlow<ShelfSummary?> = held(
-        mirror.versions(flowOf(shelf == Shelf.Recent))
-            .mapLatest { runCatching { mirror.engine().shelfSummary(shelf.kind) }.getOrNull() },
-        null,
-    )
-}
-
-/** A record's page as read: still reading, read (its `album` `null` when it has left the library), or the read failed. */
-sealed interface AlbumRead {
-    data object Reading : AlbumRead
-
-    data class Read(val page: AlbumPage) : AlbumRead
-
-    data object Failed : AlbumRead
+    val summary = listing(mirror.versions(flowOf(shelf == Shelf.Recent))) { mirror.engine().shelfSummary(shelf.kind) }
 }
 
 /**
  * A record's page, read again when the library moves or when asked to after a
- * failed read. A failure is said as one, never left as a page still reading.
+ * failed read. A failure is said as one, never left as a page still reading;
+ * a page read with no `album` is a record that has left the library.
  */
-class AlbumModel(read: suspend () -> AlbumPage, library: Flow<Long>) : ViewModel() {
+class AlbumModel(fetch: suspend () -> AlbumPage, library: Flow<Long>) : ViewModel() {
     /** Things picked to play or queue together; ends with the page. */
     val selection = playableSelection()
 
-    private val attempt = MutableStateFlow(0)
-
-    val page: StateFlow<AlbumRead> = held(
-        combine(library, attempt) { v, a -> v to a }
-            .mapLatest { runCatching { read() }.fold({ AlbumRead.Read(it) }, { AlbumRead.Failed }) },
-        AlbumRead.Reading,
-    )
-
-    fun retry() = attempt.update { it + 1 }
+    val page = listing(library) { fetch() }
 }
 
 data class ArtistRecord(
@@ -304,21 +275,16 @@ class ArtistModel(mirror: EngineMirror, artistId: Long) : ViewModel() {
     /** Things picked to play or queue together; ends with the page. */
     val selection = playableSelection()
 
-    val record: StateFlow<ArtistRecord?> = held(
-        mirror.library.mapLatest {
-            runCatching {
-                val engine = mirror.engine()
-                val albums = engine.albums(artistId, AlbumSort.YEAR, 0, null, NoFilter)
-                ArtistRecord(
-                    engine.artist(artistId),
-                    albums,
-                    engine.artistFeatures(artistId),
-                    if (albums.isEmpty()) engine.tracks(null, artistId, TrackSort.ALBUM, 500u, 0u) else emptyList(),
-                )
-            }.getOrNull()
-        },
-        null,
-    )
+    val record = listing(mirror.library) {
+        val engine = mirror.engine()
+        val albums = engine.albums(artistId, AlbumSort.YEAR, 0, null, NoFilter)
+        ArtistRecord(
+            engine.artist(artistId),
+            albums,
+            engine.artistFeatures(artistId),
+            if (albums.isEmpty()) engine.tracks(null, artistId, TrackSort.ALBUM, 500u, 0u) else emptyList(),
+        )
+    }
 
     private val _info = MutableStateFlow<ArtistInfo?>(null)
     val info: StateFlow<ArtistInfo?> = _info
@@ -331,10 +297,11 @@ class ArtistModel(mirror: EngineMirror, artistId: Long) : ViewModel() {
     init {
         viewModelScope.launch {
             val engine = mirror.engine()
-            val cached = runCatching { engine.artistInfo(artistId) }.getOrNull()
+            // A biography is extra to the page: one that cannot be read is left out.
+            val cached = attempt { engine.artistInfo(artistId) }.getOrNull()
             _info.value = cached
             _looking.value = cached == null
-            val fetched = runCatching { engine.fetchArtistInfo(artistId) }.getOrNull()
+            val fetched = attempt { engine.fetchArtistInfo(artistId) }.getOrNull()
             _looking.value = false
             if (fetched != null) _info.value = fetched
         }

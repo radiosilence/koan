@@ -92,7 +92,7 @@ class PlayerModel(private val mirror: EngineMirror) {
      * only rewritten when it changed; otherwise only the position is.
      */
     fun followSession() = mirror.launch {
-        val restored = runCatching { restoreSession() }.getOrDefault(0u)
+        val restored = attempt { restoreSession() }.getOrDefault(0u)
         // The player thread applies the restored rows; saving before they
         // arrive would write the empty queue over the one just read.
         if (restored > 0u) withTimeoutOrNull(500) { mirror.queue.first { it.items.size >= restored.toInt() } }
@@ -111,13 +111,13 @@ class PlayerModel(private val mirror: EngineMirror) {
 
     /** The app is leaving the screen: the session here, and the queue on the server when this device keeps it there. */
     fun saveOnLeaving() = mirror.launch {
-        runCatching { saveSession() }.onSuccess { savedQueueVersion = mirror.queue.value.version }
+        attempt { saveSession() }.onSuccess { savedQueueVersion = mirror.queue.value.version }
         saveServerQueueNow()
     }
 
     private suspend fun KoanEngine.save() {
         val version = mirror.queue.value.version
-        runCatching {
+        attempt {
             if (version != savedQueueVersion) {
                 saveSession()
                 savedQueueVersion = version
