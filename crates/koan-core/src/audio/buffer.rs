@@ -24,7 +24,7 @@ use crate::config::ReplayGainMode;
 use crate::queue_id::QueueItemId;
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
-pub(crate) const RING_BUFFER_SIZE: usize = 192_000 * 2;
+pub const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
 #[derive(Debug, Error)]
 pub enum DecodeError {
