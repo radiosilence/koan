@@ -182,6 +182,8 @@ pub struct QueueState {
     pub(super) vq_version: u64,
     /// The `content_version` `facts` and `layout` were built at.
     pub(super) facts_version: u64,
+    /// The download store's version `facts.sources` was read at.
+    pub(super) transfers_version: u64,
     /// The queue's lines, built when it changes or is regrouped.
     pub(super) layout: queue::Layout,
     /// What the library says of the queue's tracks, read when it changes.
@@ -3540,23 +3542,32 @@ impl App {
             .entries
             .iter()
             .any(|e| e.download_progress.is_some());
+        // A transfer settling or being forgotten moves where tracks are.
+        let transfers = self.state.downloads().version();
+        let moved = transfers != self.queue.transfers_version;
+        self.queue.transfers_version = transfers;
         if !mutated {
             if downloading && !self.apply_queue_readings() {
                 self.queue.vq_cache = self.state.derive_visible_queue();
+            }
+            if moved {
+                self.queue.facts.read_sources(&self.queue.vq_cache.entries);
             }
             return;
         }
 
         self.queue.vq_cache = self.state.derive_visible_queue();
         self.queue.vq_version = v;
-        // The library's reading of the queue depends on which tracks it
-        // holds, so a bump that only moved a status or the cursor keeps it.
+        // Credits and grouping depend on which tracks the queue holds, so a
+        // bump that only moved a status or the cursor keeps them; where each
+        // track is can change with any bump, and is one query.
         let content = self.state.content_version();
         if content != self.queue.facts_version {
             self.queue.facts_version = content;
             self.queue.facts = queue::Facts::read(&self.queue.vq_cache.entries, &self.state);
             self.relayout_queue();
         } else {
+            self.queue.facts.read_sources(&self.queue.vq_cache.entries);
             self.queue.layout.total_ms = self
                 .queue
                 .vq_cache

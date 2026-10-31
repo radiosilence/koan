@@ -43,6 +43,9 @@ pub struct MediaKeyHandler {
     /// The cover thread's answers: a file:// URL, or none.
     cover_urls: CoverUrls,
     generation: u64,
+    /// The file Now Playing's cover was asked for, and the cover once written.
+    cover_path: Option<PathBuf>,
+    cover_url: Option<String>,
 }
 
 /// The cover thread's answers, each tagged with the generation it was asked for.
@@ -159,6 +162,8 @@ impl MediaKeyHandler {
             covers,
             cover_urls,
             generation: 0,
+            cover_path: None,
+            cover_url: None,
         })
     }
 
@@ -179,13 +184,22 @@ impl MediaKeyHandler {
             Some(c) => c.artist.clone(),
             None => crate::credits::of_names(&e.artist, &e.album_artist).artist,
         });
-        self.generation += 1;
         self.shown = Some(Shown {
             title: entry.map(|e| e.title.clone()).unwrap_or_default(),
             artist: artist.unwrap_or_default(),
             album: entry.map(|e| e.album.clone()).unwrap_or_default(),
             duration: entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms)),
         });
+        // A refresh for the same file keeps its cover, rather than dropping
+        // it and reading it again.
+        if track_path.is_some() && track_path == self.cover_path.as_ref() {
+            let url = self.cover_url.clone();
+            self.set_metadata(url.as_deref());
+            return;
+        }
+        self.generation += 1;
+        self.cover_path = track_path.cloned();
+        self.cover_url = None;
         self.set_metadata(None);
         if let Some(path) = track_path {
             self.covers.send((self.generation, path.clone())).ok();
@@ -198,6 +212,7 @@ impl MediaKeyHandler {
         while let Ok((generation, url)) = self.cover_urls.try_recv() {
             if generation == self.generation && url.is_some() {
                 self.set_metadata(url.as_deref());
+                self.cover_url = url;
             }
         }
     }

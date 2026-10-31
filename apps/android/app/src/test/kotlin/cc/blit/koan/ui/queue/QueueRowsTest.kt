@@ -63,12 +63,24 @@ class QueueRowsTest {
     }
 
     @Test
-    fun aNewVersionBuildsAgain() {
+    fun aNewShapeBuildsAgain() {
         val cache = QueueRows()
-        val first = cache.of(queue, version = 1, grouped = true)
-        assertTrue(first.zip(cache.of(queue, version = 1, grouped = true)).all { (a, b) -> a === b })
-        assertEquals(QueueRow.build(queue.drop(1), grouped = true), cache.of(queue.drop(1), version = 2, grouped = true))
-        assertEquals(QueueRow.build(queue, grouped = false), cache.of(queue, version = 2, grouped = false))
+        val first = cache.of(queue, grouped = true)
+        assertTrue(first.zip(cache.of(queue, grouped = true)).all { (a, b) -> a === b })
+        assertEquals(QueueRow.build(queue.drop(1), grouped = true), cache.of(queue.drop(1), grouped = true))
+        assertEquals(QueueRow.build(queue, grouped = false), cache.of(queue, grouped = false))
+    }
+
+    @Test
+    fun aRunMovedByAPatchRegroups() {
+        val cache = QueueRows()
+        cache.of(queue, grouped = true)
+        // A rescan files track 3 under record X: it now continues 1 and 2's run.
+        val refiled = queue.toMutableList().also { it[2] = it[2].copy(album = "X", run = RunRole.CONTINUES) }
+        assertEquals(QueueRow.build(refiled, grouped = true), cache.of(refiled, grouped = true))
+        // Another source's queue of the same length is built afresh, whatever its version.
+        val other = queue.map { it.copy(queueItemId = "o" + it.queueItemId) }
+        assertEquals(QueueRow.build(other, grouped = true), cache.of(other, grouped = true))
     }
 
     @Test

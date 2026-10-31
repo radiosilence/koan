@@ -69,9 +69,9 @@ sealed interface QueueRow {
         }
 
         /**
-         * `rows`, built from a queue of the same shape, brought up to `queue`:
-         * a patch moves rows' status and never their order or runs, so only
-         * the rows whose items changed are made again and the rest are kept.
+         * `rows`, built from a queue of the same shape (the same items in the
+         * same order, each in the same run), brought up to `queue`: only the
+         * rows whose items changed are made again and the rest are kept.
          */
         fun patched(rows: List<QueueRow>, queue: List<QueueItem>): List<QueueRow> {
             var index = 0
@@ -79,7 +79,7 @@ sealed interface QueueRow {
                 when (row) {
                     is Album -> {
                         val run = queue.subList(index, index + row.group.items.size)
-                        if (run == row.group.items) row else Album(QueueGroup(row.group.album, run.toList()))
+                        if (run == row.group.items) row else Album(QueueGroup(run.first().album, run.toList()))
                     }
                     is Track -> queue[index++].let { if (it == row.item) row else Track(it) }
                     is Single -> queue[index++].let { if (it == row.item) row else Single(it) }
@@ -130,19 +130,24 @@ fun duration(ms: Long): String {
     return if (h > 0) "%d:%02d:%02d".format(h, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
-/** The queue's rows, built again only when the queue's shape changes; between edits a patch only replaces the rows it touched. */
+/**
+ * The queue's rows, built again only when the queue's shape changes: its
+ * items, their order or their runs. A patch can move a run when the library
+ * re-files a track, and two sources can share a version, so the shape is
+ * read from the items rather than the version. Otherwise only the rows whose
+ * items changed are replaced.
+ */
 class QueueRows {
-    private var version = -1L
     private var grouped = false
-    private var size = -1
+    private var items = emptyList<QueueItem>()
     private var rows = emptyList<QueueRow>()
 
-    fun of(items: List<QueueItem>, version: Long, grouped: Boolean): List<QueueRow> {
-        val same = version == this.version && grouped == this.grouped && items.size == size
-        rows = if (same) QueueRow.patched(rows, items) else QueueRow.build(items, grouped)
-        this.version = version
+    fun of(items: List<QueueItem>, grouped: Boolean): List<QueueRow> {
+        val same = grouped == this.grouped && items.size == this.items.size &&
+            items.indices.all { items[it].queueItemId == this.items[it].queueItemId && items[it].run == this.items[it].run }
+        rows = if (same && rows.isNotEmpty()) QueueRow.patched(rows, items) else QueueRow.build(items, grouped)
         this.grouped = grouped
-        size = items.size
+        this.items = items
         return rows
     }
 }

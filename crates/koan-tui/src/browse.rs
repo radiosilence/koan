@@ -414,6 +414,9 @@ struct Listing {
     track_total: u64,
     /// Where `tracks` start: past zero, they follow the tracks shown.
     from: u32,
+    /// The library's rows as the listing was read (`LibraryStamp::rows`): a
+    /// page read ahead belongs after the shown tracks only if they match.
+    library: u64,
     /// The artist's name, on an artist's page.
     artist: Option<String>,
     credited: Credited,
@@ -445,6 +448,7 @@ fn read(ask: &Ask) -> Listing {
     let text = Some(ask.text.as_str());
     let mut listing = Listing {
         favourites: Favourites::read(&db),
+        library: queries::library_stamp(&db.conn).map_or(0, |s| s.rows),
         ..Listing::default()
     };
     match ask.source {
@@ -565,6 +569,8 @@ pub struct Browse {
     /// read is under way, and a listing from any but the last is dropped.
     asked: u64,
     shown: u64,
+    /// The library's rows the shown listing was read at.
+    library: u64,
     /// Whether the listing is to be read again before it is next drawn.
     stale: bool,
     /// Whether the next listing to arrive starts at the top, as it does when
@@ -614,6 +620,7 @@ impl Browse {
             limit: TRACK_PAGE,
             asked: 0,
             shown: 0,
+            library: 0,
             stale: true,
             to_top: false,
             tx,
@@ -732,6 +739,7 @@ impl Browse {
         self.artists = listing.artists;
         self.tracks = listing.tracks;
         self.track_total = listing.track_total;
+        self.library = listing.library;
         self.credited = listing.credited;
         self.fav_albums = listing.favourites.albums;
         self.fav_artists = listing.favourites.artists;
@@ -775,7 +783,9 @@ impl Browse {
     /// are.
     fn extend(&mut self, generation: u64, listing: Listing) -> bool {
         self.shown = generation;
-        if listing.from as usize != self.tracks.len() {
+        // A sync or scan between pages would have this page start somewhere
+        // the shown tracks do not end.
+        if listing.from as usize != self.tracks.len() || listing.library != self.library {
             self.reload();
             return false;
         }
@@ -2277,6 +2287,20 @@ pub(super) mod tests {
         assert_eq!(b.track_total, 5000);
         assert_eq!(b.cursor, TRACK_PAGE as usize - 5);
         assert!(b.tracks.iter().enumerate().all(|(i, t)| t.id == i as i64));
+
+        // A page read after the library moved is not appended: the listing is
+        // read again from the top.
+        b.move_to(2 * TRACK_PAGE as usize - 5);
+        let asked = b.asked;
+        let moved = Listing {
+            tracks: vec![track(9999, 1)],
+            from: 2 * TRACK_PAGE,
+            library: 1,
+            ..Default::default()
+        };
+        assert!(!b.show(asked, moved));
+        assert_eq!(b.tracks.len(), 2 * TRACK_PAGE as usize);
+        assert_eq!(b.asked, asked + 1, "the whole listing is asked for again");
     }
 
     #[test]

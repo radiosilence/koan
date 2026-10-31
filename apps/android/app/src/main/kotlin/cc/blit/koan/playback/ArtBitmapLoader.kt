@@ -16,6 +16,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.google.common.util.concurrent.SettableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -38,14 +39,22 @@ class ArtBitmapLoader(private val context: Context, private val scope: Coroutine
         val art = ArtProvider.artOf(uri) ?: return Futures.immediateFailedFuture(IllegalArgumentException("not a koan cover: $uri"))
         val done = SettableFuture.create<Bitmap>()
         val load = scope.launch {
-            val request = ImageRequest.Builder(context).data(art).allowHardware(false).build()
-            val bitmap = (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image?.toBitmap()
-            if (bitmap != null) done.set(bitmap) else done.setException(IllegalStateException("no cover for $uri"))
+            // Caught here, so a failed cover settles the future and never
+            // reaches the service's scope.
+            runCatching {
+                val request = ImageRequest.Builder(context).data(art).allowHardware(false).build()
+                (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image?.toBitmap()
+            }.onSuccess { bitmap ->
+                if (bitmap != null) done.set(bitmap) else done.setException(IllegalStateException("no cover for $uri"))
+            }.onFailure { e ->
+                done.setException(e)
+                if (e is CancellationException) throw e
+            }
         }
-        // A load cancelled with the service, or one that threw, still settles
-        // the future, so Media3 is never left waiting on it; a future the
-        // caller cancels stops the load.
-        load.invokeOnCompletion { cause -> if (cause != null) done.setException(cause) }
+        // A load cancelled with the service still settles the future, so
+        // Media3 is never left waiting on it; a future the caller cancels
+        // stops the load.
+        load.invokeOnCompletion { cause -> if (cause is CancellationException) done.setException(cause) }
         done.addListener({ if (done.isCancelled) load.cancel() }, MoreExecutors.directExecutor())
         return done
     }
