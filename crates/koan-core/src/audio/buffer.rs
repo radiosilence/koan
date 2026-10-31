@@ -652,6 +652,8 @@ where
 /// `stop` is read between packets and on each wake from a full ring or the
 /// final drain, which sleep for up to the ring's playing time. Nothing
 /// unparks a caller of this, so a stop it is told of lands within that.
+///
+/// Answers how many sources could not be opened or decoded and were skipped.
 #[allow(clippy::too_many_arguments)]
 pub fn run_decode<N>(
     first: SourceEntry,
@@ -662,7 +664,8 @@ pub fn run_decode<N>(
     timeline: &PlaybackTimeline,
     viz_buffer: Option<&VizBuffer>,
     processing: &Processing,
-) where
+) -> u32
+where
     N: Fn() -> Option<SourceEntry>,
 {
     decode_queue_loop(
@@ -674,7 +677,7 @@ pub fn run_decode<N>(
         &timeline.writer(),
         viz_buffer,
         processing,
-    );
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +709,8 @@ fn decode_queue_loop<N>(
     timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
     processing: &Processing,
-) where
+) -> u32
+where
     N: Fn() -> Option<SourceEntry>,
 {
     // The delay line is indexed against the engine's played counter, which the
@@ -719,6 +723,7 @@ fn decode_queue_loop<N>(
     let mut seek_ms = initial_seek_ms;
     let mut format: Option<PcmFormat> = None;
     let mut failures: u32 = 0;
+    let mut skipped: u32 = 0;
     let mut chain: Option<Chain> = None;
 
     while let Some(entry) = pending.take() {
@@ -761,6 +766,7 @@ fn decode_queue_loop<N>(
                     break;
                 }
                 failures += 1;
+                skipped += 1;
                 log::error!("skipping {}: {}", path.display(), e);
                 if failures >= MAX_CONSECUTIVE_FAILURES {
                     log::error!(
@@ -793,6 +799,7 @@ fn decode_queue_loop<N>(
     }
 
     wait_for_drain(&producer, stop, format);
+    skipped
 }
 
 /// Write `samples` into the ring, blocking while it is full. False once the

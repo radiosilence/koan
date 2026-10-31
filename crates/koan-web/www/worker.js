@@ -16,6 +16,9 @@ function start() {
     worker_init();
     return { module, memory: wasm.memory };
   })();
+  ready.catch(() => {
+    ready = null;
+  });
   return ready;
 }
 
@@ -24,6 +27,8 @@ async function load(track) {
   if (!res.ok) {
     throw new Error(res.status === 401 ? "signed out" : `the server answered ${res.status}`);
   }
+  // The body arrives decoded, so a compressed one is longer than its length.
+  if (res.headers.has("Content-Encoding")) throw new Error("the server compressed the file");
   const length = Number(res.headers.get("Content-Length"));
   if (!length) throw new Error("the server sent no Content-Length");
   const loader = new Loader(length);
@@ -53,7 +58,7 @@ const handlers = {
     } finally {
       loading = false;
     }
-    postMessage({
+    const message = {
       type: "prepared",
       module,
       memory,
@@ -68,7 +73,14 @@ const handlers = {
       scratch: session.scratch,
       scratchLen: session.scratch_len,
       stop: session.stop,
-    });
+    };
+    try {
+      postMessage(message);
+    } catch (e) {
+      session.free();
+      session = null;
+      throw e;
+    }
   },
   run() {
     if (!session) throw new Error("nothing is loaded");

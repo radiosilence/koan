@@ -342,7 +342,8 @@ async fn isolate(mut res: Response) -> Response {
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(CLIENT_CSP),
     );
-    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    // Revalidated, not stored blind: a rebuild replaces the files in place.
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),

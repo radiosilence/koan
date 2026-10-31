@@ -21,8 +21,8 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use wasm_bindgen::prelude::*;
 
-/// The most samples one `render` call hands over: well past a render
-/// quantum (128 frames today) at any channel count the client accepts.
+/// The most samples one `render` call hands over: many render quanta at any
+/// channel count the client accepts.
 const SCRATCH_SAMPLES: usize = 8192;
 
 /// Channels the client plays. The destination mixes only 1, 2, 4 and 6 to
@@ -180,7 +180,7 @@ impl Session {
             hint: Hint::new(),
             make_mss: Box::new(move || Ok(mss(source))),
         };
-        buffer::run_decode(
+        let skipped = buffer::run_decode(
             entry,
             producer,
             &self.stop,
@@ -190,6 +190,9 @@ impl Session {
             None,
             &Processing::default(),
         );
+        if skipped > 0 {
+            return Err(JsError::new("koan could not decode this file"));
+        }
         Ok(())
     }
 }
