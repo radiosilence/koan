@@ -59,6 +59,7 @@ final class EngineMirror: Observable {
     private var _patched: [Int] = []
     private var _queueVersion: UInt64 = 0
     private var _queueStamp: UInt64 = 0
+    private var _queueRowsStamp: UInt64 = 0
     private var _queuedByTrack: [Int64: QueueItem] = [:]
     private var _queuedByPlaylistEntry: [Int64: QueueItem] = [:]
     private var _lock: QueueLock?
@@ -223,6 +224,14 @@ final class EngineMirror: Observable {
         return _queueVersion
     }
 
+    /// Moves whenever `queueRows` does: each time the queue is sent whole,
+    /// whichever device it is from. `queueVersion` is each source's own
+    /// count, so two sources can send the same one. Observed as `queueRows`.
+    var queueRowsStamp: UInt64 {
+        access(\.queueRows)
+        return _queueRowsStamp
+    }
+
     /// Moves whenever `queue` does, patches included: what a view keys work
     /// derived from the queue on, rather than the queue itself. Observed as
     /// `queue`.
@@ -364,6 +373,7 @@ final class EngineMirror: Observable {
                     _queue = items
                     _queueVersion = version
                     _queueStamp &+= 1
+                    _queueRowsStamp &+= 1
                     _patched = []
                     _queueAt = Dictionary(
                         items.enumerated().map { ($1.queueItemId, $0) },

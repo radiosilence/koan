@@ -131,6 +131,12 @@ struct RootView: View {
         // it is sampled and a page switch does not redraw it.
         .koanToolbar(glass: graphics.usesWindowGlass)
         .onSubmit(of: .search) { search.submit() }
+        // A notification rather than `scenePhase`: reading that re-runs
+        // whatever reads it — here the whole Scene — each time the app loses
+        // focus.
+        .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
+            Task { await player.saveIfChanged() }
+        }
         // On the window rather than inside the detail column, padded clear of
         // both columns: glass floating on glass reads as neither, and over the
         // lyrics it hides the last lines of the song. The page makes its own

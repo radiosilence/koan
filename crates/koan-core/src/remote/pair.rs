@@ -125,7 +125,7 @@ impl Cancel {
 /// it among the account's devices once it is signed in.
 pub fn start(url: &str, device: &str) -> Result<Pending, PairError> {
     let server = url.trim().trim_end_matches('/').to_owned();
-    let id = crate::remote::link::LinkIdentity::this_device(None).device_id;
+    let id = crate::remote::link::this_device_id();
     let socket_url = pair_url(&server, device, &id)?;
     let (mut socket, _) = tungstenite::connect(socket_url.as_str()).map_err(|e| match e {
         // Any answer but an upgrade is a server without pairing, except a

@@ -729,6 +729,32 @@ final class PlayerModel {
     func saveSession() async {
         try? await engine.saveSession()
         savedQueueVersion = queueVersion
+        saved = Saved(self)
+    }
+
+    /// What the session was when last written: the queue, the entry under
+    /// the cursor and the playhead.
+    @ObservationIgnored private var saved: Saved?
+
+    private struct Saved: Equatable {
+        let queue: UInt64
+        let current: String?
+        let positionMs: UInt64
+
+        @MainActor init(_ player: PlayerModel) {
+            queue = player.queueVersion
+            current = player.currentItemId
+            positionMs = player.mirror.playhead.positionMs
+        }
+    }
+
+    /// The Mac losing focus: written here only if it moved since last
+    /// written, a seek while paused say, so a Mac that quits without asking
+    /// (automatic termination, a force quit) loses nothing. Never the server:
+    /// that is for quitting.
+    func saveIfChanged() async {
+        guard saved != Saved(self) else { return }
+        await saveSession()
     }
 
     /// The app is leaving: an iPhone going to the background, a Mac quitting.
@@ -778,6 +804,7 @@ final class PlayerModel {
             await saveSession()
         } else if currentEntry != nil {
             try? await engine.savePosition()
+            saved = Saved(self)
         }
     }
 

@@ -192,10 +192,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// Quitting is when the Mac leaves: losing focus is not. The session and
-    /// the server's queue are saved first, for at most two seconds, so a
-    /// server out of reach does not hold the quit up. Edits, track changes
-    /// and pauses are saved as they happen; this keeps the playhead.
+    /// Quitting is when the Mac leaves: losing focus is not, and saves only
+    /// the local session, if it moved (`saveIfChanged`). The session and the
+    /// server's queue are saved first, for at most two seconds, so a server
+    /// out of reach does not hold the quit up. Edits, track changes and
+    /// pauses are saved as they happen; this keeps the playhead.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let player = state?.player else { return .terminateNow }
         Task {

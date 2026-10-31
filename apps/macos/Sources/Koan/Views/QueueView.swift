@@ -113,7 +113,7 @@ struct QueueView: View {
         #if os(macOS)
         mirror.queueStamp
         #else
-        mirror.queueVersion
+        mirror.queueRowsStamp
         #endif
     }
 
