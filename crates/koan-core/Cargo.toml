@@ -89,6 +89,9 @@ quick-xml = "0.42.0"
 # SSDP announcements arrive on port 1900, which other processes hold too:
 # sharing it takes SO_REUSEADDR/SO_REUSEPORT before the bind.
 socket2 = { version = "0.6.5", features = ["all"] }
+# Renderers declare the charset of what they send; decoded as reqwest's
+# `text()` would.
+encoding_rs = "0.8.44"
 flacenc = "0.5"
 
 [target.'cfg(unix)'.dependencies]
