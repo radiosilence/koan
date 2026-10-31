@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.ShelfSummary
+import cc.blit.koan.ui.StaleNotice
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.shown
@@ -54,6 +55,7 @@ fun ShelfPage(shelf: Shelf) {
         PageBar(shelf.title, summary?.counts(), appText = shelf !is Shelf.Search) {
             if (!empty) SelectButton(selection)
         }
+        read.StaleNotice("this shelf", model.summary::retry)
         val held = read.shown("this shelf", model.summary::retry) ?: return@Column
         if (empty) {
             val (title, detail) = shelf.empty

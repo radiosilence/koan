@@ -41,6 +41,22 @@ class AlbumModelTest {
     }
 
     @Test
+    fun aFailedReadAgainKeepsWhatWasReadAndSaysWhy() = runTest(dispatcher) {
+        var failing = false
+        val model = AlbumModel({ if (failing) error("database is locked") else gone }, library)
+        backgroundScope.launch { model.page.state.collect {} }
+        advanceUntilIdle()
+        failing = true
+        library.value = 1
+        advanceUntilIdle()
+        assertEquals(Read.Done(gone, stale = "database is locked"), model.page.state.value)
+        failing = false
+        model.page.retry()
+        advanceUntilIdle()
+        assertEquals(Read.Done(gone), model.page.state.value)
+    }
+
+    @Test
     fun theLibraryMovingReadsAgain() = runTest(dispatcher) {
         var reads = 0
         val model = AlbumModel({ reads++; gone }, library)

@@ -1,5 +1,7 @@
 package cc.blit.koan.ui.playlists
 
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +35,7 @@ import cc.blit.koan.art.Art
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ffi.PlaylistEntry
+import cc.blit.koan.ui.StaleNotice
 import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
@@ -135,6 +138,7 @@ fun PlaylistPage(playlistId: Long) {
                 }
             }
 
+            read.StaleNotice("this playlist", model.contents::retry)
             Box(Modifier.weight(1f)) {
                 when {
                     contents == null -> read.shown("this playlist", model.contents::retry)
@@ -209,11 +213,12 @@ private fun PlaylistList(
     // The move is applied to the entries as they are now, not as they were
     // when the drag began: the dragged row goes after the row it was dropped
     // below, so anything added, removed or moved meanwhile is kept.
-    fun drop() {
+    fun drop(commit: Boolean) {
         val moved = dragging ?: return
         val shown = order
         dragging = null
         order = latest
+        if (!commit) return
         val at = shown.indexOfFirst { it.entryId == moved }
         val entry = latest.firstOrNull { it.entryId == moved } ?: return
         val above = shown.take(at.coerceAtLeast(0)).lastOrNull { prior -> latest.any { it.entryId == prior.entryId } }
@@ -225,6 +230,19 @@ private fun PlaylistList(
         order = arranged
         // A failed write brings no new entries, so nothing else would undo the move shown.
         edits.reorder(playlist.id, arranged.map { it.entryId }) { if (dragging == null) order = latest }
+    }
+
+    // Told apart by the handle's interactions, as `onDragStopped` is called for
+    // both: a drag let go is applied, one the system cancelled goes back.
+    val drags = remember { MutableInteractionSource() }
+    val ended by rememberUpdatedState(::drop)
+    LaunchedEffect(drags) {
+        drags.interactions.collect {
+            when (it) {
+                is DragInteraction.Stop -> ended(true)
+                is DragInteraction.Cancel -> ended(false)
+            }
+        }
     }
 
     val rows = if (editing) order.map(PlaylistRow::Entry) else playlistRows(entries, grouped)
@@ -256,7 +274,7 @@ private fun PlaylistList(
                         selection = selection,
                         edits = edits,
                         onAdd = onAdd,
-                        handle = Modifier.draggableHandle(onDragStarted = { dragging = id }, onDragStopped = ::drop),
+                        handle = Modifier.draggableHandle(interactionSource = drags, onDragStarted = { dragging = id }),
                     )
                 }
             }

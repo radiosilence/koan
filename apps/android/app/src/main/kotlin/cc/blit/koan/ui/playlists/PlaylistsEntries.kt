@@ -1,5 +1,7 @@
 package cc.blit.koan.ui.playlists
 
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -25,6 +27,7 @@ import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.Playlist
+import cc.blit.koan.ui.StaleNotice
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -79,6 +82,7 @@ private fun PlaylistsPage() {
             }
             KoanButton("New Playlist", { naming = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.add)
         }
+        read.StaleNotice("your playlists", model.playlists::retry)
         val shown = read.shown("your playlists", model.playlists::retry)
         when {
             shown == null -> Unit
@@ -114,6 +118,26 @@ private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: 
         }
     }
 
+    // Told apart by the handle's interactions, as `onDragStopped` is called for
+    // both: a drag let go is written, one the system cancelled goes back.
+    val drags = remember { MutableInteractionSource() }
+    val ended by rememberUpdatedState { commit: Boolean ->
+        dragging = false
+        if (!commit) {
+            order = latest
+        } else if (order.map { it.id } != latest.map { it.id }) {
+            edits.arrange(order.map { it.id })
+        }
+    }
+    LaunchedEffect(drags) {
+        drags.interactions.collect {
+            when (it) {
+                is DragInteraction.Stop -> ended(true)
+                is DragInteraction.Cancel -> ended(false)
+            }
+        }
+    }
+
     LazyColumn(state = listState) {
         items(order, key = { it.id }) { playlist ->
             ReorderableItem(reorder, key = playlist.id) {
@@ -121,13 +145,7 @@ private fun PlaylistsColumn(playlists: List<Playlist>, editing: Boolean, edits: 
                     playlist,
                     edits,
                     editing = editing,
-                    handle = Modifier.draggableHandle(
-                        onDragStarted = { dragging = true },
-                        onDragStopped = {
-                            dragging = false
-                            if (order.map { it.id } != latest.map { it.id }) edits.arrange(order.map { it.id })
-                        },
-                    ),
+                    handle = Modifier.draggableHandle(interactionSource = drags, onDragStarted = { dragging = true }),
                 ) { open(playlist.id) }
             }
         }

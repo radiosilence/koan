@@ -27,6 +27,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.AlbumSort
 import cc.blit.koan.ffi.PlayState
+import cc.blit.koan.ui.StaleNotice
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.shown
@@ -91,6 +92,7 @@ fun AlbumsPage(shelf: Shelf?) {
             if (!albums.isNullOrEmpty()) SelectButton(selection)
         }
         FilterField(query.search, "Filter albums", model::search)
+        read.StaleNotice("the albums", model.albums::retry)
         Box(Modifier.weight(1f)) {
             val shown = read.shown("the albums", model.albums::retry) ?: return@Box
             when {
@@ -148,6 +150,7 @@ fun ArtistsPage(shelf: Shelf?) {
             if (!artists.isNullOrEmpty()) SelectButton(selection)
         }
         FilterField(query.search, "Filter artists", model::search)
+        read.StaleNotice("the artists", model.artists::retry)
         Box(Modifier.weight(1f)) {
             val shown = read.shown("the artists", model.artists::retry) ?: return@Box
             if (shown.isEmpty()) {
@@ -197,6 +200,7 @@ fun TracksPage(shelf: Shelf) {
             if (!page?.tracks.isNullOrEmpty()) SelectButton(selection)
         }
         FilterField(query.search, "Filter tracks", model::search)
+        read.StaleNotice("the tracks", model.page::retry)
         Box(Modifier.weight(1f)) {
             val shown = read.shown("the tracks", model.page::retry) ?: return@Box
             if (shown.tracks.isEmpty()) {

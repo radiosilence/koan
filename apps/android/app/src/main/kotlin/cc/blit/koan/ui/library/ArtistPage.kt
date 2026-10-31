@@ -38,6 +38,7 @@ import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.ArtistInfo
 import cc.blit.koan.ffi.ReleaseSection
 import cc.blit.koan.ffi.releaseSectionTitle
+import cc.blit.koan.ui.StaleNotice
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.shown
@@ -79,6 +80,7 @@ fun ArtistPage(artistId: Long) {
         PageBar(if (scrolled) held?.artist?.name.orEmpty() else "", appText = false) {
             if (held != null && (held.albums.isNotEmpty() || held.features.isNotEmpty() || held.appearances.isNotEmpty())) SelectButton(selection)
         }
+        read.StaleNotice("this artist", model.record::retry)
         Box(Modifier.weight(1f)) {
             if (held == null) {
                 read.shown("this artist", model.record::retry)

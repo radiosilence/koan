@@ -35,6 +35,7 @@ import cc.blit.koan.art.Art
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.PlayHistoryEntry
 import cc.blit.koan.ui.Listing
+import cc.blit.koan.ui.StaleNotice
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.FilterField
 import cc.blit.koan.ui.library.Named
@@ -131,6 +132,7 @@ private fun HistoryPage() {
             KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty() && query.isBlank())
         }
         FilterField(query, "Filter history", { model.query.value = it })
+        read.StaleNotice("your history", model.entries::retry)
         val shown = read.shown("your history", model.entries::retry)
         when {
             shown == null -> Unit

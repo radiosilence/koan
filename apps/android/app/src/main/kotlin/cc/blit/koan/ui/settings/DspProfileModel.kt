@@ -94,25 +94,22 @@ class DspProfileModel(
         val t = async { dsp.targets(name) }
         val o = async { target?.let { dsp.overviewFor(it) } }
         val now = snapshot.await()
-        val edits = dsp.edits(name)
-        val before = _state.value.before.takeUnless { it == null || editsAtBefore == edits } ?: now.also { editsAtBefore = edits }
         val detail = d.await()
         val tuning = detail?.role == DspRole.TUNING
         val s = async { if (tuning) dsp.suggestMadeAgainst(name) else null }
         val p = async { if (tuning) dsp.madeAgainstPreviews(name) else emptyMap() }
-        _state.update {
-            it.copy(
-                name = name,
-                detail = detail,
-                response = r.await(),
-                targets = t.await(),
-                targetOverview = o.await(),
-                suggestion = s.await(),
-                previews = p.await(),
-                before = before,
-                now = now,
-            )
-        }
+        val read = DspProfileView(name, detail, r.await(), t.await(), o.await(), suggestion = s.await(), previews = p.await(), now = now)
+        // Decided as the read lands, not as it starts: a Save as copy or a
+        // reset while it was out has cleared `before` for this read to take.
+        val edits = dsp.edits(name)
+        val current = _state.value
+        val keep = current.before != null && editsAtBefore != edits
+        if (!keep) editsAtBefore = edits
+        _state.value = read.copy(
+            madeForChoices = current.madeForChoices,
+            notice = current.notice,
+            before = if (keep) current.before else now,
+        )
     }
 
     /** Rename the profile; `then` hears whether it took. */
