@@ -52,7 +52,7 @@ const MAX_BODY: u64 = 1 << 20;
 /// A response's body as text, refused past `MAX_BODY`.
 pub fn read_body(response: reqwest::blocking::Response) -> Result<String, String> {
     use std::io::Read;
-    let latin1 = response
+    let encoding = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -60,13 +60,9 @@ pub fn read_body(response: reqwest::blocking::Response) -> Result<String, String
             v.split(';')
                 .filter_map(|p| p.trim().split_once('='))
                 .find(|(k, _)| k.trim().eq_ignore_ascii_case("charset"))
-                .map(|(_, v)| v.trim().trim_matches('"').to_ascii_lowercase())
-        })
-        .is_some_and(|c| {
-            matches!(
-                c.as_str(),
-                "iso-8859-1" | "latin1" | "latin-1" | "windows-1252"
-            )
+                .and_then(|(_, v)| {
+                    encoding_rs::Encoding::for_label(v.trim().trim_matches('"').as_bytes())
+                })
         });
     let mut body = Vec::new();
     response
@@ -76,13 +72,13 @@ pub fn read_body(response: reqwest::blocking::Response) -> Result<String, String
     if body.len() as u64 > MAX_BODY {
         return Err(format!("body larger than {MAX_BODY} bytes"));
     }
-    // A declared Latin-1 body is read as one: each byte is its code point.
-    // Otherwise UTF-8, where a stray byte is not a reason to lose the whole
-    // document, as cheap renderers send Latin-1 without saying so.
-    if latin1 {
-        return Ok(body.iter().map(|&b| b as char).collect());
-    }
-    Ok(String::from_utf8_lossy(&body).into_owned())
+    // In the charset the response declares; otherwise UTF-8, where a stray
+    // byte is not a reason to lose the whole document, as cheap renderers
+    // send Latin-1 without saying so.
+    Ok(match encoding {
+        Some(encoding) => encoding.decode(&body).0.into_owned(),
+        None => String::from_utf8_lossy(&body).into_owned(),
+    })
 }
 
 pub fn envelope(service_type: &str, action: &str, args: &[(&str, &str)]) -> String {

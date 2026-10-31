@@ -2048,18 +2048,24 @@ impl SharedPlayerState {
     pub fn reorder_to(&self, order: &[QueueItemId]) {
         let mut pl = self.playlist.write();
         let mut taken: Vec<Option<PlaylistItem>> = pl.items.drain(..).map(Some).collect();
-        // Each id's rows in queue order: a repeated id takes them in turn.
-        let mut at: HashMap<QueueItemId, std::collections::VecDeque<usize>> = HashMap::new();
-        for (i, item) in taken.iter().enumerate() {
-            if let Some(item) = item {
-                at.entry(item.id).or_default().push_back(i);
-            }
-        }
+        let at: HashMap<QueueItemId, usize> = taken
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| Some((item.as_ref()?.id, i)))
+            .collect();
+        let unique = at.len() == taken.len();
         let mut sorted = Vec::with_capacity(taken.len());
         for id in order {
-            if let Some(i) = at.get_mut(id).and_then(|rows| rows.pop_front())
-                && let Some(item) = taken[i].take()
-            {
+            // A queue whose ids are not unique, which the map cannot
+            // describe: each id takes its first row left, as it always did.
+            let slot = if unique {
+                at.get(id).map(|&i| &mut taken[i])
+            } else {
+                taken
+                    .iter_mut()
+                    .find(|i| i.as_ref().is_some_and(|i| i.id == *id))
+            };
+            if let Some(item) = slot.and_then(Option::take) {
                 sorted.push(item);
             }
         }
