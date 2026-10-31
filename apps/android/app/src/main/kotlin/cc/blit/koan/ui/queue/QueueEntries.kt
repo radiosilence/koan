@@ -104,9 +104,7 @@ import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -226,15 +224,13 @@ private fun QueuePage() {
             dragged = null
             return
         }
-        val sent = queue.version
         mirror.launch {
             // A move comes back as the queue whole under a new version, which
-            // ends the drag. One refused, or taken as no change, sends nothing:
-            // then the rows go back to the engine's order here, on the main thread.
-            val failure = attempt { moveInQueue(row.itemIds, target.first, target.second) }.exceptionOrNull()
-            if (failure == null) withTimeoutOrNull(2_000) { mirror.queue.first { it.version != sent } }
+            // ends the drag. One refused sends nothing: then the rows go back
+            // to the engine's order here, on the main thread.
+            val failure = attempt { moveInQueue(row.itemIds, target.first, target.second) }.exceptionOrNull() ?: return@launch
             withContext(Dispatchers.Main) { if (dragged === drawn) dragged = null }
-            (failure as? Exception)?.let { throw it }
+            throw failure
         }
     }
 
