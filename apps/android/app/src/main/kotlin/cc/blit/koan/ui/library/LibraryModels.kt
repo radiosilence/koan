@@ -187,7 +187,15 @@ class ArtistsModel(private val mirror: EngineMirror, shelf: Shelf?) : ViewModel(
     fun search(text: String) = query.update { it.copy(search = text) }
 }
 
-data class TrackPage(val tracks: List<Track>, val total: Long, val query: BrowseQuery<TrackBrowseSort>)
+data class TrackPage(val tracks: List<Track>, val total: Long, val query: BrowseQuery<TrackBrowseSort>, val version: String = "") {
+    /**
+     * Where a read of the first `n` tracks of `query` at library `version`
+     * starts, holding this page: after its tracks when it is the same listing
+     * and short of `n`, else from the top.
+     */
+    fun readFrom(query: BrowseQuery<TrackBrowseSort>, version: String, n: Int) =
+        if (query == this.query && version == this.version && tracks.size < n) tracks.size else 0
+}
 
 /**
  * The track browser, read a page at a time: a shelf can hold tens of
@@ -200,9 +208,15 @@ class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() 
     val query = MutableStateFlow(shelf.trackQuery())
     private val wanted = MutableStateFlow(PAGE)
 
-    val page = listing(combine(mirror.versions(query.map { it.filter.recent }), query, wanted) { _, q, n -> q to n }) { (q, n) ->
-        val listing = mirror.engine().trackListing(q.sort, q.search.ifBlank { null }, q.filter, n.toUInt(), 0u)
-        TrackPage(listing.tracks, listing.total.toLong(), q)
+    /** The tracks read so far, which the next page is read after. Written only by the listing's reads, which run one at a time. */
+    private var held: TrackPage? = null
+
+    val page = listing(combine(mirror.versions(query.map { it.filter.recent }), query, wanted) { v, q, n -> Triple(v, q, n) }) { (v, q, n) ->
+        val prior = held
+        val from = prior?.readFrom(q, v, n) ?: 0
+        val listing = mirror.engine().trackListing(q.sort, q.search.ifBlank { null }, q.filter, (n - from).toUInt(), from.toUInt())
+        val tracks = if (from > 0 && prior != null) prior.tracks + listing.tracks else listing.tracks
+        TrackPage(tracks, listing.total.toLong(), q, v).also { held = it }
     }
 
     /** Read the next page, once the rows read so far are nearly all on screen. */
