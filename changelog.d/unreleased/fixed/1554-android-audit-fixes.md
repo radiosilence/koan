@@ -1,1 +1,0 @@
-- **Android: playing to a speaker ignores the phone's own audio events.** With a UPnP renderer as the output, the app no longer takes audio focus or pauses when headphones are unplugged; a queue drag is no longer dropped when a download finishes mid-drag; and a library page that cannot be read says so, with Try Again, instead of looking empty.
