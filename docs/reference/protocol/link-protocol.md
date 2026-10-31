@@ -107,7 +107,7 @@ A device commands another with a `command` report. The `ack`, when there is one,
 
 A command for a device that is not linked is kept and delivered when it links. An iOS device that gave a push handle is woken, if the server has push on. A command to play becomes a notification carrying only a claim: tapping it sends `claim` up the link, and the command runs then. `watchLevels` and `refreshOutputs` are only worth saying to a device that is there, so they are never kept or pushed.
 
-`/rest/koanCommand?to=<device id>&command=<command JSON>` sends one command in a single request, for a device whose own link is down, such as an iPhone acting from its lock screen. `ack` optionally names the command's id.
+`/rest/koanCommand?to=<device id>&command=<command JSON>` sends one command in a single request, for a device whose own link is down, such as an iPhone acting from its lock screen. It needs an account that may write, as GraphQL's `controlClient` does: a `readonly` one gets error 50. `ack` optionally names the command's id.
 
 ## Apple TV pairing
 

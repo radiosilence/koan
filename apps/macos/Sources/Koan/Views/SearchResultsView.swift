@@ -115,8 +115,11 @@ struct SearchResultsView: View {
                         open: { nav.open(album: $0) },
                         openArtist: { nav.open(artist: $0) },
                         play: { id in
-                            guard mirror.queue.isEmpty else { replacing.wrappedValue = id; return }
-                            await ReplaceQueueDialog.play(id, player: player, library: library, nav: nav)
+                            guard mirror.queue.isEmpty else {
+                                replacing.wrappedValue = id
+                                return nil
+                            }
+                            return ReplaceQueueDialog.play(id, player: player, nav: nav)
                         },
                         toggleFavourite: { library.toggleFavourite(album: $0) }
                     ),

@@ -1,0 +1,1 @@
+- **Limits on what strangers can make the server hold.** Sign-in reads a bounded body before taking a slot, the nearby listener caps connections, unproven peers and message sizes, DSP zip imports cap the archive total, the `config` query needs an admin and `koanCommand` a writing role.

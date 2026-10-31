@@ -1,7 +1,5 @@
-use async_graphql::connection::Edge;
-use koan_core::db::connection::Database;
-
 use super::types::Conn;
+use async_graphql::connection::Edge;
 
 // ---------------------------------------------------------------------------
 // Pagination — uses usize as cursor (async-graphql has built-in impl)
@@ -64,13 +62,4 @@ pub(super) fn paginate_window<T: async_graphql::OutputType>(
         conn.edges.push(Edge::new(offset + i, item));
     }
     conn
-}
-
-// ---------------------------------------------------------------------------
-// Favourite sync
-// ---------------------------------------------------------------------------
-
-/// Push a favourite to the remote server.
-pub(super) fn sync_favourite_to_remote(db: &Database, track_id: i64, star: bool) {
-    koan_core::helpers::sync_favourite_to_remote(db, track_id, star);
 }

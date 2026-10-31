@@ -189,40 +189,25 @@ struct PickerSheet: View {
             : picked
         guard !rows.isEmpty else { return }
 
+        let sources = rows.compactMap { row in
+            let kind: PlayableTransfer.Kind = switch row.kind {
+            case .track: .track
+            case .album: .album
+            case .artist: .artist
+            }
+            return TrackSet(kind, id: row.id)
+        }
+        let placement: Placement = switch action {
+        case .append: .append
+        // Plays the first thing just added rather than the queue head.
+        case .appendAndPlay: .appendAndPlay
+        case .replace: .replace(startAt: 0, shuffled: false)
+        }
         resolving = true
-        let engine = library.engine
+        let done = player.queue(sources, placement)
         Task {
-            var trackIds: [Int64] = []
-            for row in rows {
-                switch row.kind {
-                case .track:
-                    trackIds.append(row.id)
-                case .album:
-                    trackIds += (try? await engine.trackIds(albumId: row.id, artistId: nil)) ?? []
-                case .artist:
-                    trackIds += (try? await engine.trackIds(albumId: nil, artistId: row.id)) ?? []
-                }
-            }
-
+            await done.value
             resolving = false
-            guard !trackIds.isEmpty else { return }
-
-            switch action {
-            case .append:
-                player.enqueue(trackIds: trackIds)
-            case .appendAndPlay:
-                let existing = player.queue.count
-                player.enqueue(trackIds: trackIds)
-                // Jump to the first thing just added rather than the queue head.
-                if existing > 0 {
-                    await player.settle(within: .milliseconds(500)) { player.queue.count > existing }
-                    if player.queue.indices.contains(existing) {
-                        player.play(itemId: player.queue[existing].queueItemId)
-                    }
-                }
-            case .replace:
-                player.playNow(trackIds: trackIds)
-            }
             isPresented = false
         }
     }
@@ -248,7 +233,7 @@ struct PickerSheet: View {
             let found: [PickerRow] =
                 switch kind {
                 case .track:
-                    ((try? await engine.search(query: text, limit: 60)) ?? []).map {
+                    ((try? await offMain { try await engine.search(query: text, limit: 60) }) ?? []).map {
                         PickerRow(
                             id: $0.id,
                             kind: .track,
@@ -258,7 +243,7 @@ struct PickerSheet: View {
                         )
                     }
                 case .album, .artist:
-                    ((try? await engine.fuzzySearch(query: text, kind: kind, limit: 40)) ?? []).map {
+                    ((try? await offMain { try await engine.fuzzySearch(query: text, kind: kind, limit: 40) }) ?? []).map {
                         PickerRow(id: $0.id, kind: kind, title: $0.name, subtitle: nil, durationMs: nil)
                     }
                 }
