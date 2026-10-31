@@ -70,7 +70,7 @@ extension AppState {
                 if approve {
                     let device = try await engine.approvePairing(pair: request.pair)
                     player.lastNotice = "\(device) is signed in as \(request.username)."
-                    if let id = request.deviceId { ui.signedInHere = SignedInHere(id: id, at: .now) }
+                    ui.signedInHere = SignedInHere(id: request.deviceId, name: device, at: .now)
                 } else {
                     try await engine.declinePairing(pair: request.pair)
                 }

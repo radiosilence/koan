@@ -309,8 +309,6 @@ struct QueueRow: View {
     }
 }
 
-/// How a list numbers its rows: the records that number by disc and track,
-/// and the widest place among them (`QueueRowContent.placeTemplate`).
 /// Whether a record numbers its tracks by disc: one of its tracks, as
 /// listed or queued, carries a disc past the first. Read from the tracks,
 /// since a record's own disc total is often missing; past the first rather
@@ -320,6 +318,8 @@ func numbersByDisc<N: BinaryInteger>(_ discs: some Sequence<N?>) -> Bool {
     discs.contains { ($0 ?? 0) > 1 }
 }
 
+/// How a list numbers its rows: the records that number by disc and track,
+/// and the widest place among them (`QueueRowContent.placeTemplate`).
 struct Numbering {
     var discs: Set<Int64> = []
     var widest = "00"

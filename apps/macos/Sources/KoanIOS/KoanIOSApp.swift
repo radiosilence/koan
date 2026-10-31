@@ -145,10 +145,14 @@ struct KoanIOSApp: App {
                     session.onInterruptionEnded = { [weak built] shouldResume in
                         guard let built else { return }
                         let engine = built.player.engine
-                        let resume = shouldResume && interruptedPlaying
+                        let resume = shouldResume && interruptedPlaying && built.player.playsHere
                         engine.logNote(message: "interruption over: resume=\(resume) (system says \(shouldResume), was playing \(interruptedPlaying))")
                         interruptedPlaying = false
-                        guard built.player.playsHere else { return }
+                        // The unit iOS stopped does not start again, so it is
+                        // made afresh whenever the phone's own output is the
+                        // output, playing here or not. A renderer's session is
+                        // not the phone's to restart.
+                        guard built.player.renderer == nil else { return }
                         Task {
                             try? await engine.restartOutput()
                             if resume { try? await engine.resume() }

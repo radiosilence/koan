@@ -23,20 +23,22 @@ const NAVIDROME_PLACEHOLDERS: [&str; 3] = [
 ];
 
 /// Whether a `getCoverArt` answer is the server's stand-in for missing art
-/// rather than the record's own: koan's header, Navidrome's `no-store` (from
-/// 0.64, which never lets a placeholder be cached), or Navidrome's placeholder
-/// bytes.
-fn is_placeholder(headers: &reqwest::header::HeaderMap, body: &[u8]) -> bool {
+/// rather than the record's own: koan's header, Navidrome's placeholder bytes,
+/// or from a Navidrome (`navidrome`) its `no-store`, which from 0.64 it sends
+/// on placeholders only. `no-store` from anything else says nothing: a proxy
+/// may add it to every answer.
+fn is_placeholder(headers: &reqwest::header::HeaderMap, body: &[u8], navidrome: bool) -> bool {
     use sha2::{Digest, Sha256};
     if headers.contains_key(PLACEHOLDER_HEADER) {
         return true;
     }
-    let no_store = headers
-        .get_all(reqwest::header::CACHE_CONTROL)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .any(|d| d.trim().eq_ignore_ascii_case("no-store"));
+    let no_store = navidrome
+        && headers
+            .get_all(reqwest::header::CACHE_CONTROL)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .any(|d| d.trim().eq_ignore_ascii_case("no-store"));
     no_store || NAVIDROME_PLACEHOLDERS.contains(&hex::encode(Sha256::digest(body)).as_str())
 }
 
@@ -354,7 +356,10 @@ impl SubsonicClient {
         Self::reject_error_body(&resp)?;
         let headers = resp.headers().clone();
         let body = resp.bytes()?;
-        if is_placeholder(&headers, &body) {
+        let navidrome = crate::remote::profile::current()
+            .and_then(|p| p.kind)
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("navidrome"));
+        if is_placeholder(&headers, &body, navidrome) {
             return Ok(Vec::new());
         }
         Ok(body.to_vec())
@@ -1971,19 +1976,21 @@ mod tests {
     fn placeholders_are_told_by_header_or_by_navidromes_bytes() {
         use reqwest::header::{CACHE_CONTROL, HeaderMap, HeaderValue};
         let art = b"\x89PNG real sleeve";
-        assert!(!super::is_placeholder(&HeaderMap::new(), art));
+        assert!(!super::is_placeholder(&HeaderMap::new(), art, true));
 
         let mut cached = HeaderMap::new();
         cached.insert(CACHE_CONTROL, HeaderValue::from_static("public, no-cache"));
-        assert!(!super::is_placeholder(&cached, art));
+        assert!(!super::is_placeholder(&cached, art, true));
 
-        let mut navidrome = HeaderMap::new();
-        navidrome.insert(CACHE_CONTROL, HeaderValue::from_static("No-Store"));
-        assert!(super::is_placeholder(&navidrome, art));
+        let mut no_store = HeaderMap::new();
+        no_store.insert(CACHE_CONTROL, HeaderValue::from_static("No-Store"));
+        assert!(super::is_placeholder(&no_store, art, true));
+        // From anything but Navidrome, a proxy's header on real art.
+        assert!(!super::is_placeholder(&no_store, art, false));
 
         let mut koan = HeaderMap::new();
         koan.insert(super::PLACEHOLDER_HEADER, HeaderValue::from_static("1"));
-        assert!(super::is_placeholder(&koan, art));
+        assert!(super::is_placeholder(&koan, art, false));
 
         for digest in super::NAVIDROME_PLACEHOLDERS {
             assert_eq!(digest.len(), 64);
