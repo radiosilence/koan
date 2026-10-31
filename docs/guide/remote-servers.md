@@ -38,7 +38,7 @@ Every sync walks the whole library, which is what lets it notice a track the ser
 koan remote sync          # sync now
 ```
 
-Signing out stops a sync from that server where it is, including one waiting for another to finish. What it wrote stays, and nothing is recorded as synced, so the next sync from that server walks the library again.
+Signing out stops a sync from that server where it is, including one waiting for another to finish, and any that starts before this device signs in to it again. What it wrote stays, and nothing is recorded as synced, so the next sync from that server walks the library again.
 
 ## Changing servers
 

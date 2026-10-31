@@ -11,15 +11,15 @@ struct ActivityList: View {
     @Environment(ActivityModel.self) private var activity
 
     var body: some View {
-        if !activity.tasks.isEmpty {
+        if !activity.shown.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(activity.tasks) { task in
+                ForEach(activity.shown) { task in
                     ActivityRow(task: task) { activity.cancel(task.id) }
                 }
             }
             .padding(.bottom, 4)
             .transition(.opacity)
-            .animation(.easeOut(duration: 0.15), value: activity.tasks.count)
+            .animation(.easeOut(duration: 0.15), value: activity.shown.count)
         }
     }
 }

@@ -70,6 +70,16 @@ final class ActivityModel {
 
     private(set) var tasks: [Task] = []
 
+    /// The rows to draw. One sync runs at a time and every sync row reads the
+    /// same progress, so while a sync someone asked for has a row, the row
+    /// mirroring the automatic one is left out: signing in starts both, and
+    /// one waits on the other.
+    var shown: [Task] {
+        let automatic = Set(mirrored.values)
+        guard tasks.contains(where: { $0.followsSync && !automatic.contains($0.id) }) else { return tasks }
+        return tasks.filter { !($0.followsSync && automatic.contains($0.id)) }
+    }
+
     /// Everything the running tasks between them have hold of.
     ///
     /// Stored rather than derived from `tasks`. `.commands` is part of the Scene

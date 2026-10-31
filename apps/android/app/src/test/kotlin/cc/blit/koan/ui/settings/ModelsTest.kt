@@ -56,7 +56,7 @@ class ModelsTest {
         assertNull(model.state.value.pendingInvite)
         assertEquals(1, fake.called("joinInvite").size)
         assertEquals(true, model.state.value.signedIn)
-        assertEquals(1, fake.called("syncRemote").size)
+        assertEquals(1, fake.called("loadRemoteLibrary").size)
     }
 
     @Test fun anInviteForAnotherAccountAsksFirst() = runTest(dispatcher) {

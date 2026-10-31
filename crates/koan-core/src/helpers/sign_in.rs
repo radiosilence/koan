@@ -40,7 +40,7 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
     let cfg = Config::load()?;
     retire_push(&cfg);
     crate::remote::devices::forget_shares();
-    leave(&cfg, |cfg| {
+    leave(&cfg, None, |cfg| {
         cfg.remote.enabled = false;
         cfg.remote.password = String::new();
         cfg.remote.api_key = String::new();
@@ -55,16 +55,46 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
     Ok(())
 }
 
-/// Stop the syncs of the server `old` is signed in to, write `change`, then
+/// What a front end that owns a player does when this device leaves a server:
+/// let go of the queue and transfers that were that server's.
+type OnLeave = Arc<dyn Fn() + Send + Sync>;
+static ON_LEAVE: parking_lot::RwLock<Option<OnLeave>> = parking_lot::RwLock::new(None);
+
+/// Run `hook` each time this device leaves a server, by signing out or by
+/// signing in as another account: once the change is kept and before the
+/// server's library is forgotten, which on a large library takes seconds the
+/// queue should not be on screen for. Set by the front end that owns the
+/// player; `None` removes it. It runs with every sync held off, so it must not
+/// block for long.
+pub fn on_leaving_server(hook: Option<OnLeave>) {
+    *ON_LEAVE.write() = hook;
+}
+
+/// Stop the syncs of the account `old` is signed in to, write `change`, then
 /// forget that server's library. Forgotten only once the change is kept, so
 /// a write that fails leaves the server and its library as they were; the
 /// syncs are held off throughout, so none writes under the forgetting.
-fn leave(old: &Config, change: impl FnOnce(&mut Config)) -> Result<(), crate::config::ConfigError> {
+/// `joining` is the account signed in to instead, whose syncs may run again
+/// from before the write: the write is what wakes the automatic one. Which
+/// accounts are left goes back as it was if the write fails.
+fn leave(
+    old: &Config,
+    joining: Option<(&str, &str)>,
+    change: impl FnOnce(&mut Config),
+) -> Result<(), crate::config::ConfigError> {
+    let left = crate::remote::sync::left_now();
     if !old.remote.url.is_empty() {
-        crate::remote::sync::cancel(&old.remote.url);
+        crate::remote::sync::cancel(&old.remote.url, &old.remote.username);
+    }
+    if let Some((url, username)) = joining {
+        crate::remote::sync::resume(url, username);
     }
     let _syncs = crate::helpers::hold_syncs();
-    Config::persist(change)?;
+    Config::persist(change).inspect_err(|_| crate::remote::sync::restore_left(left))?;
+    let hook = ON_LEAVE.read().clone();
+    if let Some(hook) = hook {
+        hook();
+    }
     let forgotten = crate::db::pool::shared()
         .get()
         .and_then(|db| crate::helpers::forget_server(&db, old));
@@ -233,10 +263,14 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
         };
     };
     if same_account(&before.remote, url, username) {
-        Config::persist(keep)?;
+        // Signed out of earlier: its syncs may run again, from before the
+        // write that wakes the automatic one, unless the write fails.
+        let left = crate::remote::sync::left_now();
+        crate::remote::sync::resume(url, username);
+        Config::persist(keep).inspect_err(|_| crate::remote::sync::restore_left(left))?;
     } else {
         retire_push(&before);
-        leave(&before, keep)?;
+        leave(&before, Some((url, username)), keep)?;
     }
     // Whatever account was here before, its devices are not this one's, and
     // the link it had open closes, to open again as this one.
@@ -674,6 +708,122 @@ mod refusal_tests {
         assert!(cfg.remote.api_key.is_empty());
         assert_eq!(remote_credential(&cfg).map(|_| ()), None);
         assert!(!crate::remote::offline::manual());
+    }
+
+    /// The front end hears that the server is left once the config says so,
+    /// and not at all when that write fails.
+    #[test]
+    fn leaving_tells_the_front_end_once_the_change_is_kept() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        struct Unhook;
+        impl Drop for Unhook {
+            fn drop(&mut self) {
+                on_leaving_server(None);
+            }
+        }
+        let _unhook = Unhook;
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        let signed_in = |c: &mut Config| {
+            c.remote.enabled = true;
+            c.remote.url = "https://music.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.api_key = "key".into();
+        };
+        Config::persist(signed_in).unwrap();
+        // Whether the config still had the server enabled when it was heard.
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let told = heard.clone();
+        on_leaving_server(Some(Arc::new(move || {
+            told.lock()
+                .unwrap()
+                .push(Config::load().unwrap().remote.enabled);
+        })));
+
+        sign_out().unwrap();
+        assert_eq!(*heard.lock().unwrap(), [false], "once, after the write");
+
+        use std::os::unix::fs::PermissionsExt;
+        Config::persist(signed_in).unwrap();
+        crate::remote::sync::resume("https://music.example.com", "mate");
+        heard.lock().unwrap().clear();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = sign_out();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(failed.is_err(), "the write was refused");
+        assert!(
+            heard.lock().unwrap().is_empty(),
+            "not heard when nothing was left"
+        );
+        assert!(
+            !crate::remote::sync::Running::enter("https://music.example.com", "mate")
+                .cancel
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "still signed in, so still syncing"
+        );
+    }
+
+    /// Signing in to an account left earlier lets its syncs run from before
+    /// the config write, which is what wakes the automatic sync: whether
+    /// another account was signed in or this one was signed out of.
+    #[test]
+    fn an_account_signed_back_in_to_syncs_from_the_write() {
+        use crate::remote::sync::{Running, cancel};
+        use std::sync::atomic::Ordering;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        struct Unhook;
+        impl Drop for Unhook {
+            fn drop(&mut self) {
+                on_leaving_server(None);
+            }
+        }
+        let _unhook = Unhook;
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = "https://one.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.password = "secret".into();
+        })
+        .unwrap();
+        let password = || Credential::Password("secret".into());
+
+        let joining = "https://two.example.com";
+        cancel(joining, "other");
+        let cancelled_then = Arc::new(Mutex::new(Vec::new()));
+        let told = cancelled_then.clone();
+        on_leaving_server(Some(Arc::new(move || {
+            let entered = Running::enter(joining, "other");
+            told.lock()
+                .unwrap()
+                .push(entered.cancel.load(Ordering::Relaxed));
+        })));
+        remember_remote(joining, "Other", password()).unwrap();
+        assert_eq!(
+            *cancelled_then.lock().unwrap(),
+            [false],
+            "resumed before the write, across a switch of account"
+        );
+
+        on_leaving_server(None);
+        sign_out().unwrap();
+        assert!(
+            Running::enter(joining, "other")
+                .cancel
+                .load(Ordering::Relaxed)
+        );
+        remember_remote(joining, "other", password()).unwrap();
+        assert!(
+            !Running::enter(joining, "other")
+                .cancel
+                .load(Ordering::Relaxed),
+            "resumed when signing back in as the account signed out of"
+        );
     }
 
     #[test]

@@ -4555,9 +4555,6 @@ impl KoanEngine {
             koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
-            // This device's own queue, never a controlled device's. A player
-            // that has stopped has nothing left to clear.
-            let _ = self.send_local(PlayerCommand::SignedOut);
             self.bump_library();
             Ok(())
         })
@@ -4672,52 +4669,16 @@ impl KoanEngine {
     /// reconcile favourites and playlists. Long and network-bound. What the
     /// Sync button does — koan's own syncs go by `Walk::IfChanged`.
     pub async fn sync_remote(self: Arc<Self>) -> Result<SyncSummary, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            let cfg = Config::cached();
-            let client = koan_core::helpers::subsonic_client(&cfg).ok_or_else(|| {
-                KoanError::BadArgument {
-                    message: "no remote server configured".into(),
-                }
-            })?;
+        offload::offload(move || self.sync_blocking(koan_core::helpers::Walk::Always)).await
+    }
 
-            let meter = &self.sync_progress;
-            let synced = koan_core::helpers::sync_remote(
-                &db,
-                &client,
-                koan_core::helpers::Walk::Always,
-                &cfg.remote.url,
-                &cfg.remote.username,
-                &|p| meter.set(p),
-            );
-            meter.clear();
-            let synced = match synced {
-                Ok(synced) => synced,
-                // Signed out, or in elsewhere, mid-sync: nothing failed.
-                Err(koan_core::remote::sync::SyncError::Cancelled) => {
-                    koan_core::helpers::Synced::default()
-                }
-                Err(e) => {
-                    return Err(KoanError::Database {
-                        message: e.to_string(),
-                    });
-                }
-            };
-
-            self.bump_library();
-            Ok(SyncSummary {
-                artists: synced.library.artists_synced as u32,
-                albums: synced.library.albums_synced as u32,
-                tracks: synced.library.tracks_synced as u32,
-                albums_failed: synced.library.albums_failed as u32,
-                pages_failed: synced.library.pages_failed as u32,
-                favourites_pushed: synced.favourites.pushed as u32,
-                favourites_imported: synced.favourites.imported as u32,
-                playlists_pulled: synced.playlists.pulled as u32,
-                playlists_pushed: synced.playlists.pushed as u32,
-            })
-        })
-        .await
+    /// The library of a server just signed in to. Walked only if the server's
+    /// has moved since the last complete walk, which on a first sign-in it
+    /// has: signing in also starts koan's own sync, and when that one has
+    /// walked it first and recorded the server's version, this one waits for
+    /// it and does not walk it again.
+    pub async fn load_remote_library(self: Arc<Self>) -> Result<SyncSummary, KoanError> {
+        offload::offload(move || self.sync_blocking(koan_core::helpers::Walk::IfChanged)).await
     }
 
     /// Create a public share link for these tracks, on the remote server when
@@ -5768,6 +5729,53 @@ impl KoanEngine {
         koan_core::signal::engine_changed().bump();
     }
 
+    /// `sync_remote` and `load_remote_library`, on the calling thread.
+    fn sync_blocking(&self, walk: koan_core::helpers::Walk) -> Result<SyncSummary, KoanError> {
+        let db = self.db()?;
+
+        let cfg = Config::cached();
+        let client =
+            koan_core::helpers::subsonic_client(&cfg).ok_or_else(|| KoanError::BadArgument {
+                message: "no remote server configured".into(),
+            })?;
+
+        let meter = &self.sync_progress;
+        let synced = koan_core::helpers::sync_remote(
+            &db,
+            &client,
+            walk,
+            &cfg.remote.url,
+            &cfg.remote.username,
+            &|p| meter.set(p),
+        );
+        meter.clear();
+        let synced = match synced {
+            Ok(synced) => synced,
+            // Signed out, or in elsewhere, mid-sync: nothing failed.
+            Err(koan_core::remote::sync::SyncError::Cancelled) => {
+                koan_core::helpers::Synced::default()
+            }
+            Err(e) => {
+                return Err(KoanError::Database {
+                    message: e.to_string(),
+                });
+            }
+        };
+
+        self.bump_library();
+        Ok(SyncSummary {
+            artists: synced.library.artists_synced as u32,
+            albums: synced.library.albums_synced as u32,
+            tracks: synced.library.tracks_synced as u32,
+            albums_failed: synced.library.albums_failed as u32,
+            pages_failed: synced.library.pages_failed as u32,
+            favourites_pushed: synced.favourites.pushed as u32,
+            favourites_imported: synced.favourites.imported as u32,
+            playlists_pulled: synced.playlists.pulled as u32,
+            playlists_pushed: synced.playlists.pushed as u32,
+        })
+    }
+
     fn scan_blocking(
         &self,
         force: bool,
@@ -5946,6 +5954,30 @@ impl KoanEngine {
         });
         engine.spawn_watcher();
         engine.spawn_figures();
+        // This device's own queue and transfers go with the server it leaves,
+        // before its library is forgotten.
+        let leaving = Arc::downgrade(&engine);
+        koan_core::helpers::on_leaving_server(Some(Arc::new(move || {
+            let Some(engine) = leaving.upgrade() else {
+                return;
+            };
+            // Cleared before the library under it is forgotten, and never
+            // waited on for long: every sync is held off meanwhile.
+            let wait = std::time::Duration::from_secs(1);
+            let (reply, done) = crossbeam_channel::bounded(1);
+            let cleared = engine
+                .tx
+                .send_timeout(PlayerCommand::SignedOut, wait)
+                .is_ok()
+                && engine
+                    .tx
+                    .send_timeout(PlayerCommand::Barrier(reply), wait)
+                    .is_ok()
+                && done.recv_timeout(wait).is_ok();
+            if !cleared {
+                log::warn!("the player did not take the sign-out in time");
+            }
+        })));
         // A koan server this app syncs from can then tell it what to play, and
         // so can this person's other devices and anyone's on the network.
         let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
@@ -6167,13 +6199,12 @@ impl KoanEngine {
     }
 
     /// Run a sign-in. One that replaced the library with another server's
-    /// (`helpers::forget_server`) lets go of the queue and transfers from the
-    /// last server, as signing out does.
+    /// (`helpers::forget_server`) has the library asked again; the queue and
+    /// transfers from the last server went as it left (`on_leaving_server`).
     fn signing_in<E>(&self, sign_in: impl FnOnce() -> Result<(), E>) -> Result<(), E> {
         let replaced = koan_core::helpers::libraries_replaced();
         sign_in()?;
         if koan_core::helpers::libraries_replaced() != replaced {
-            let _ = self.send_local(PlayerCommand::SignedOut);
             self.bump_library();
         }
         Ok(())

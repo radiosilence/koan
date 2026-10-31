@@ -370,6 +370,23 @@ pub fn run_tui(
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
     let mut next_frame = Instant::now();
 
+    // The local player's queue and transfers go with the server this device
+    // leaves, before its library is forgotten.
+    let leaving = tx.clone();
+    koan_core::helpers::on_leaving_server(Some(Arc::new(move || {
+        let sent = leaving.send_timeout(PlayerCommand::SignedOut, Duration::from_secs(1));
+        if sent.is_err() {
+            log::warn!("the player did not take the sign-out; the queue stays");
+        }
+    })));
+    // Removed however the loop ends: it holds the player's channel open.
+    struct Unhook;
+    impl Drop for Unhook {
+        fn drop(&mut self) {
+            koan_core::helpers::on_leaving_server(None);
+        }
+    }
+    let _unhook = Unhook;
     let mut app = app::App::new(state, viz_snapshot, tx, target_fps);
     // Before anything reads the keyboard: the terminal answers on stdin.
     app.art.gfx = crate::cover_art::Gfx::detect(cfg.playback.art_graphics);

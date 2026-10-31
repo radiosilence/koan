@@ -205,7 +205,7 @@ final class SettingsModel {
             let synced = await activity.run(
                 "Loading the library", uses: [.remoteTracks], followsSync: true
             ) {
-                try await engine.syncRemote()
+                try await engine.loadRemoteLibrary()
             }
             if case .failure(let e) = synced {
                 lastError = "Signed in, but the library did not load: \(Self.describe(e))"
@@ -337,4 +337,7 @@ extension Notification.Name {
     /// Posted once a sign-out has gone through: what a television, whose
     /// signed-out state is a page of its own, waits on to show it.
     static let koanSignedOut = Notification.Name("koanSignedOut")
+    /// Posted once a sign-in from outside Settings has gone through, an invite
+    /// opened by a link or a code: Settings shows the account it now holds.
+    static let koanSignedIn = Notification.Name("koanSignedIn")
 }
