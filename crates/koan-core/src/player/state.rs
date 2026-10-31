@@ -2101,10 +2101,21 @@ impl SharedPlayerState {
         if pl.items.len() - start < 2 {
             return None;
         }
-        let was = (start..pl.items.len())
+        let was: Vec<_> = (start..pl.items.len())
             .map(|i| (pl.items[i].id, i.checked_sub(1).map(|p| pl.items[p].id)))
             .collect();
-        crate::helpers::shuffle(&mut pl.items[start..]);
+        // A press always moves something: drawn again while the order comes
+        // back as it was, which for two rows is every other draw.
+        let unchanged = |items: &[PlaylistItem]| items.iter().zip(&was).all(|(i, w)| i.id == w.0);
+        for _ in 0..8 {
+            crate::helpers::shuffle(&mut pl.items[start..]);
+            if !unchanged(&pl.items[start..]) {
+                break;
+            }
+        }
+        if unchanged(&pl.items[start..]) {
+            return None;
+        }
         drop(pl);
         self.bump_content();
         Some(was)
