@@ -113,6 +113,10 @@ extension Navigator {
 /// An artist credit as it reads, each credited artist's name a `LinkText` of
 /// its own and the text joining them ("×", " feat. ") plain. A credit naming
 /// one artist is a single link.
+///
+/// A credit too long for its space keeps as many whole names as fit and ends
+/// in "…", rather than cutting every name down to its first letters. When not
+/// even the first name fits, it alone is cut short.
 struct CreditLinks: View {
     let parts: [CreditPart]
     var font: Font?
@@ -122,24 +126,44 @@ struct CreditLinks: View {
         if parts.count == 1, let part = parts.first {
             LinkText(text: part.text, target: part.artistId.map { .artist($0) }, font: font, dimmed: dimmed)
         } else {
-            HStack(spacing: 0) {
-                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
-                    if let id = part.artistId {
-                        LinkText(text: part.text, target: .artist(id), font: font, dimmed: dimmed)
-                    } else {
-                        // The names give way first: a joiner cut short reads
-                        // as nothing at all.
-                        Text(part.text)
-                            .font(font ?? .role(.control, system: .callout))
-                            .foregroundStyle(
-                                dimmed ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary)
-                            )
-                            .lineLimit(1)
-                            .fixedSize()
-                    }
+            let names = parts.indices.filter { parts[$0].artistId != nil }
+            ViewThatFits(in: .horizontal) {
+                row(parts.indices, more: false)
+                ForEach(names.dropLast().reversed(), id: \.self) { last in
+                    let next = last + 1
+                    let joiner = parts[next].artistId == nil ? next : last
+                    row(0...joiner, more: true)
+                }
+                if let first = names.first {
+                    row(0...first, more: false)
                 }
             }
         }
+    }
+
+    private func row(_ shown: some Sequence<Int>, more: Bool) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(shown), id: \.self) { i in
+                let part = parts[i]
+                if let id = part.artistId {
+                    LinkText(text: part.text, target: .artist(id), font: font, dimmed: dimmed)
+                } else {
+                    plain(part.text)
+                }
+            }
+            if more { plain("…") }
+        }
+    }
+
+    /// The names give way first: a joiner cut short reads as nothing at all.
+    private func plain(_ text: String) -> some View {
+        Text(text)
+            .font(font ?? .role(.control, system: .callout))
+            .foregroundStyle(
+                dimmed ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary)
+            )
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
