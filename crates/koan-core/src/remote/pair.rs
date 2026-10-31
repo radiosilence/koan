@@ -294,8 +294,7 @@ impl PairLink {
 }
 
 fn client() -> Result<std::sync::Arc<crate::remote::client::SubsonicClient>, PairError> {
-    crate::helpers::subsonic_client(&Config::load().unwrap_or_default())
-        .ok_or(PairError::NotSignedIn)
+    crate::helpers::subsonic_client(&Config::cached()).ok_or(PairError::NotSignedIn)
 }
 
 /// The device waiting on `pair` (an id or a code) on the signed-in server,

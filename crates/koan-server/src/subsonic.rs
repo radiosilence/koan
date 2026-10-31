@@ -111,12 +111,11 @@ struct AppState {
 /// When the library last changed, as far as this process has seen.
 #[derive(Clone, Copy)]
 struct LibraryModified {
-    fingerprint: u64,
-    /// The five-minute window `newest_file` was read in.
-    window: u64,
+    /// The library as `newest_file` was read from it.
+    stamp: queries::LibraryStamp,
     /// The newest track file's mtime, in milliseconds.
     newest_file: i64,
-    /// When the fingerprint was last seen to change, in milliseconds. The
+    /// When the stamp's rows were last seen to change, in milliseconds. The
     /// first reading in a process counts as a change, since what changed while
     /// it was down cannot be known: a restart has clients walk once.
     changed: i64,
@@ -136,20 +135,13 @@ impl AppState {
     /// deletion too, which no file's mtime records.
     ///
     /// `MAX(mtime)` reads every track, and clients poll `getIndexes`. Read
-    /// again when the library's rows change, and every five minutes for a file
-    /// rescanned in place, which changes no row count.
+    /// again when the library's stamp moves (`queries::library_stamp`).
     fn last_modified(&self, db: &Database) -> Result<i64, SubsonicError> {
-        let internal =
-            |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let window = now.as_secs() / 300;
-        let fingerprint = queries::library_fingerprint(&db.conn).map_err(internal)?;
+        let stamp =
+            queries::library_stamp(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
         let held = *self.last_modified.lock();
         if let Some(h) = held
-            && h.fingerprint == fingerprint
-            && h.window == window
+            && h.stamp == stamp
         {
             return Ok(h.newest_file.max(h.changed));
         }
@@ -162,12 +154,11 @@ impl AppState {
             )
             .map_err(|e| SubsonicError::internal(e.to_string()))?;
         let changed = match held {
-            Some(h) if h.fingerprint == fingerprint => h.changed,
-            _ => now.as_millis() as i64,
+            Some(h) if h.stamp.rows == stamp.rows => h.changed,
+            _ => koan_core::clock::unix_ms(),
         };
         *self.last_modified.lock() = Some(LibraryModified {
-            fingerprint,
-            window,
+            stamp,
             newest_file,
             changed,
         });
@@ -1590,13 +1581,6 @@ fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
 // Read once per response for every entity in it, not once per entity: an album
 // list is up to 500 albums.
 
-/// `rows` in the order of `ids`, for rows read back by id in whatever order
-/// the database chose.
-fn in_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
-    let mut by_id: HashMap<i64, T> = rows.into_iter().map(|r| (id(&r), r)).collect();
-    ids.iter().filter_map(|i| by_id.remove(i)).collect()
-}
-
 /// Ids as one JSON array, for `IN (SELECT value FROM json_each(?1))` — a
 /// single bound parameter however long the list.
 fn json_ids(ids: impl IntoIterator<Item = i64>) -> String {
@@ -2892,54 +2876,49 @@ async fn search3(
                 };
                 (artists, albums, songs)
             } else {
+                // The search page's own listings: names for artists and
+                // records, the full-text index for songs, closest first, and
+                // the closest fuzzy matches when nothing holds the query.
+                use koan_core::shelves::{self, Shelf};
+                let shelf = Shelf::Search(query);
+                let now = shelves::now();
+                let artists = if artist_count == 0 {
+                    Vec::new()
+                } else {
+                    queries::list_artists(
+                        &db.conn,
+                        &queries::ArtistQuery {
+                            limit: Some(artist_count),
+                            offset: artist_offset,
+                            without_track_counts: true,
+                            ..shelf.artists(user, now)
+                        },
+                    )
+                    .map_err(internal)?
+                    .into_iter()
+                    .map(|a| (a.id, a.name))
+                    .collect()
+                };
+                let albums = if album_count == 0 {
+                    Vec::new()
+                } else {
+                    queries::list_albums(
+                        &db.conn,
+                        &queries::AlbumQuery {
+                            limit: Some(album_count),
+                            offset: album_offset,
+                            ..shelf.albums(user, now)
+                        },
+                    )
+                    .map_err(internal)?
+                };
                 let songs = if song_count == 0 {
                     Vec::new()
                 } else {
-                    queries::search_tracks_paged(&db.conn, query, song_count, song_offset)
+                    shelf
+                        .tracks(user, now)
+                        .page(&db.conn, song_count, song_offset)
                         .map_err(internal)?
-                };
-                // Artists and albums are the distinct ones among the matching
-                // tracks, read from enough of them to cover the page asked for.
-                let reach = (artist_offset + artist_count)
-                    .max(album_offset + album_count)
-                    .saturating_mul(5)
-                    .clamp(100, 5 * SEARCH_PAGE_MAX);
-                let pool = if artist_count == 0 && album_count == 0 {
-                    Vec::new()
-                } else {
-                    queries::search_tracks_paged(&db.conn, query, reach, 0).map_err(internal)?
-                };
-                let artists = {
-                    let mut seen = std::collections::HashSet::new();
-                    pool.iter()
-                        .filter_map(|t| Some((t.artist_id?, t.artist_name.clone())))
-                        .filter(|(id, _)| seen.insert(*id))
-                        .skip(artist_offset as usize)
-                        .take(artist_count as usize)
-                        .collect()
-                };
-                let albums = {
-                    let mut seen = std::collections::HashSet::new();
-                    let ids: Vec<i64> = pool
-                        .iter()
-                        .filter_map(|t| t.album_id)
-                        .filter(|id| seen.insert(*id))
-                        .skip(album_offset as usize)
-                        .take(album_count as usize)
-                        .collect();
-                    let rows = if ids.is_empty() {
-                        Vec::new()
-                    } else {
-                        queries::list_albums(
-                            &db.conn,
-                            &queries::AlbumQuery {
-                                ids: Some(&ids),
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(internal)?
-                    };
-                    in_order(&ids, rows, |a| a.id)
                 };
                 (artists, albums, songs)
             };
@@ -3663,10 +3642,7 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
 
             // `time` is when the client played it, which can be well in the past
             // after an offline session.
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
+            let now = koan_core::clock::unix_secs();
             let times: Vec<Option<i64>> = params.all("time").map(|t| t.parse().ok()).collect();
             let plays: Vec<(i64, i64)> = track_ids
                 .iter()
@@ -4974,8 +4950,7 @@ fn share_node(
 /// Where share links point; sharing is refused without it rather than
 /// handing out an address that may not be reachable.
 fn share_base() -> Result<String, SubsonicError> {
-    Config::load()
-        .unwrap_or_default()
+    Config::cached()
         .server_url()
         .ok_or_else(|| SubsonicError::internal("server.url is not set on this server"))
 }
@@ -6695,7 +6670,7 @@ pub fn subsonic_router(
     covers: Arc<crate::covers::Covers>,
     users: Arc<PasswordVerifier>,
 ) -> Option<axum::Router> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
 
     if !cfg.subsonic.enabled {
         return None;
@@ -9943,6 +9918,18 @@ mod tests {
         assert!(first.iter().all(|id| !next.contains(id)));
     }
 
+    /// A misspelt query finds the artist, the record and its songs, as the
+    /// apps' search does.
+    #[tokio::test]
+    async fn test_search3_typo_falls_back_to_fuzzy_matches() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let r = search3_json(&state, "query=Tst%20Artst").await;
+        assert_eq!(r["artist"][0]["name"], "Test Artist", "{r}");
+        assert_eq!(r["album"].as_array().map(Vec::len), Some(1), "{r}");
+        assert!(r["song"][0]["title"].is_string(), "{r}");
+    }
+
     #[tokio::test]
     async fn test_search3_song_count_is_capped() {
         let (state, _dir) = test_state();
@@ -11402,7 +11389,7 @@ mod tests {
         // A lone search hit is still a one-element array.
         let r = json_of(
             app(),
-            &format!("/rest/search3?{}&query=Song", auth_query("f=json")),
+            &format!("/rest/search3?{}&query=Record", auth_query("f=json")),
         )
         .await;
         let found = &r["searchResult3"];

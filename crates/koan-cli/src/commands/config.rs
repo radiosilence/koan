@@ -46,7 +46,7 @@ pub fn cmd_config() {
     println!();
 
     println!("{}", "resolved".bold());
-    let mut cfg = config::Config::load().unwrap_or_default();
+    let mut cfg = config::Config::load_or_default();
     for secret in [
         &mut cfg.remote.password,
         &mut cfg.remote.api_key,

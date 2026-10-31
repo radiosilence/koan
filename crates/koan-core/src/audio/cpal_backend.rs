@@ -1,11 +1,10 @@
-use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
-use super::fade::{FadeControl, Fader};
+use super::fade::{FadeControl, Fader, render_from_ring};
 
 /// Temporarily redirect stderr to /dev/null while running a closure.
 /// ALSA/JACK/PipeWire C libraries spam stderr when probing unavailable
@@ -205,37 +204,7 @@ impl AudioBackend for CpalBackend {
                         return;
                     }
 
-                    let total_samples = data.len();
-                    let available = consumer.slots();
-                    let to_read = available.min(fader.readable(total_samples, channels));
-
-                    if to_read > 0
-                        && let Ok(chunk) = consumer.read_chunk(to_read)
-                    {
-                        let (first, second) = chunk.as_slices();
-                        let ring_total = first.len() + second.len();
-                        let copy_total = ring_total.min(total_samples);
-                        let first_copy = first.len().min(copy_total);
-                        let second_copy = copy_total.saturating_sub(first_copy).min(second.len());
-                        unsafe {
-                            ptr::copy_nonoverlapping(first.as_ptr(), data.as_mut_ptr(), first_copy);
-                            if second_copy > 0 {
-                                ptr::copy_nonoverlapping(
-                                    second.as_ptr(),
-                                    data.as_mut_ptr().add(first_copy),
-                                    second_copy,
-                                );
-                            }
-                        }
-                        chunk.commit_all();
-                        samples_played.fetch_add(copy_total as u64, Ordering::AcqRel);
-                        fader.apply(&mut data[..copy_total], channels);
-                    }
-
-                    // Zero-pad remainder on underrun — silence > glitches.
-                    if to_read < total_samples {
-                        data[to_read..].fill(0.0);
-                    }
+                    render_from_ring(data, &mut consumer, &mut fader, channels, &samples_played);
                 },
                 |err| {
                     log::error!("cpal audio stream error: {}", err);
@@ -325,11 +294,6 @@ impl AudioEngineHandle for CpalEngineHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cpal_backend_constructs() {
-        let _backend = CpalBackend::new();
-    }
 
     #[test]
     fn cpal_list_devices_no_panic() {

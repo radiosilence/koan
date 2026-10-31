@@ -358,6 +358,48 @@ export class Player<T extends Track> {
   }
 }
 
+// m:ss, as both pages print a position and a length.
+export const fmt = (s: number) => {
+  s = Math.max(0, Math.floor(s || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+// How far a slider's accent runs; see styles/controls.css.
+export const fill = (el: HTMLInputElement) =>
+  el.style.setProperty("--fill", `${Number(el.max) > 0 ? (Number(el.value) / Number(el.max)) * 100 : 0}%`);
+
+// The seek range (one matching `selector`) being dragged, which the clock must
+// not move under the finger. Focus is no guide: a clicked range keeps it long
+// after the drag ends.
+export function dragged(selector: string) {
+  let held: EventTarget | null = null;
+  for (const type of ["pointerdown", "touchstart"]) {
+    document.addEventListener(type, (e) => {
+      if (e.target instanceof Element && e.target.matches(selector)) held = e.target;
+    }, { passive: true });
+  }
+  for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "focusout"]) {
+    document.addEventListener(type, () => { held = null; }, { passive: true });
+  }
+  return () => held;
+}
+
+// Calls `draw` four times a second while the music plays and the page is in
+// view, and not at all otherwise: a paused or hidden page schedules nothing.
+// The returned function is told whether the player is playing, from its
+// onChange.
+export function clock(draw: () => void) {
+  let playing = false;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const update = () => {
+    const run = playing && !document.hidden;
+    if (run && timer === undefined) timer = setInterval(draw, 250);
+    if (!run && timer !== undefined) { clearInterval(timer); timer = undefined; }
+  };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) draw(); update(); });
+  return (now: boolean) => { playing = now; update(); };
+}
+
 // Text cut short by an ellipsis has the whole of it as its tooltip, on every
 // page, with nothing in the markup asking for it. Decided as the pointer
 // arrives, so it follows the width the text has now, and never put over a

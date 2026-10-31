@@ -23,7 +23,7 @@ What a connection can do:
 redirect_hosts = ["claude.ai", "claude.com"]
 ```
 
-A connection lasts as long as its refresh token is used within `auth.refresh_token_ttl` (30 days by default). To end every connection at once, rotate the server's keys with `koan auth regenerate-keys`; clients then register and sign in again. Resetting an account's password ends that account's.
+A connection lasts as long as its refresh token is used within `graphql.refresh_token_ttl` (30 days by default). To end every connection at once, rotate the server's keys with `koan auth regenerate-keys`; clients then register and sign in again. Resetting an account's password ends that account's.
 
 ## Running locally (stdio)
 

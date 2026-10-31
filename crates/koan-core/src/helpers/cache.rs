@@ -403,8 +403,9 @@ pub fn adopt_cached_files(db: &Database, cache_dir: &Path) -> Result<usize, DbEr
     let mut adopted = 0;
     for track in &tracks {
         let date = extras.get(&track.id).and_then(|e| e.album_date.as_deref());
-        let dest = cache_path_for_track(cache_dir, track, date);
-        if orphans.contains(&dest) && is_cached_audio(&dest) {
+        let found = cache_paths_for_track(cache_dir, track, date)
+            .find(|dest| orphans.contains(dest) && is_cached_audio(dest));
+        if let Some(dest) = found {
             queries::set_cached_path(&tx, track.id, &dest.to_string_lossy())?;
             adopted += 1;
         }
@@ -441,7 +442,35 @@ pub fn cache_path_for_track(
     track: &queries::TrackRow,
     album_date: Option<&str>,
 ) -> PathBuf {
-    let artist_dir = sanitise_filename(&track.artist_name);
+    let artist = if track.album_artist_name.trim().is_empty() {
+        &track.artist_name
+    } else {
+        &track.album_artist_name
+    };
+    cache_path_under(cache_dir, artist, track, album_date)
+}
+
+/// Every place a download of `track` may be: where one goes now first, then
+/// under the track artist, where downloads made before the album artist
+/// filed them still lie. A copy at either is the same download.
+pub fn cache_paths_for_track<'a>(
+    cache_dir: &'a Path,
+    track: &'a queries::TrackRow,
+    album_date: Option<&'a str>,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    let current = cache_path_for_track(cache_dir, track, album_date);
+    let by_track_artist = cache_path_under(cache_dir, &track.artist_name, track, album_date);
+    let older = (by_track_artist != current).then_some(by_track_artist);
+    std::iter::once(current).chain(older)
+}
+
+fn cache_path_under(
+    cache_dir: &Path,
+    artist: &str,
+    track: &queries::TrackRow,
+    album_date: Option<&str>,
+) -> PathBuf {
+    let artist_dir = sanitise_filename(artist);
 
     let year = album_date
         .and_then(year_of)
@@ -508,6 +537,17 @@ mod cache_path_tests {
             remote_id: Some("r1".into()),
             cached_path: None,
         }
+    }
+
+    #[test]
+    fn a_compilation_is_filed_under_its_album_artist() {
+        let mut t = track("Track Artist", "Album", "flac");
+        t.album_artist_name = "Various Artists".into();
+        let path = cache_path_for_track(Path::new("/c"), &t, Some("2001"));
+        assert_eq!(
+            path,
+            Path::new("/c/Various Artists/(2001) Album [flac]/01. Track Artist - Song.flac")
+        );
     }
 
     #[test]

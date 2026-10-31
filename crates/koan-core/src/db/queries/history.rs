@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{Connection, params};
 
 use crate::db::connection::DbError;
@@ -96,7 +94,14 @@ pub fn record_play(
     track_id: i64,
     listened_ms: Option<i64>,
 ) -> Result<i64, DbError> {
-    record_play_at(conn, user, track_id, now_secs(), listened_ms, SOURCE_LOCAL)
+    record_play_at(
+        conn,
+        user,
+        track_id,
+        crate::clock::unix_secs(),
+        listened_ms,
+        SOURCE_LOCAL,
+    )
 }
 
 /// Fill in how long an entry was listened to, once that is known.
@@ -709,13 +714,6 @@ pub fn set_history_cursor(
         params![url, username, cursor.to_string()],
     )?;
     Ok(())
-}
-
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
 }
 
 #[cfg(test)]

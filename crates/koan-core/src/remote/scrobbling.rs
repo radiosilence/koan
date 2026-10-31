@@ -16,8 +16,7 @@ pub enum ScrobblingError {
 }
 
 fn client() -> Result<std::sync::Arc<SubsonicClient>, ScrobblingError> {
-    crate::helpers::subsonic_client(&Config::load().unwrap_or_default())
-        .ok_or(ScrobblingError::NotSignedIn)
+    crate::helpers::subsonic_client(&Config::cached()).ok_or(ScrobblingError::NotSignedIn)
 }
 
 fn listenbrainz(services: Vec<KoanScrobbleService>) -> Option<KoanScrobbleService> {

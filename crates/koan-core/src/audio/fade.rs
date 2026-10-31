@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// How long pause takes to fall silent, and resume to come back.
 ///
@@ -269,6 +269,63 @@ impl Fader {
     }
 }
 
+/// Whether a render callback of `frames` plays lead-in silence in place of
+/// the ring: the device hears silence before the music, nothing is read and
+/// nothing counts as played, so the playhead waits with it. Taken with a
+/// compare-exchange, so a `fade_in` clearing it in between is not
+/// overwritten with what was left.
+#[inline]
+pub fn take_lead_in(lead_in: &AtomicU64, fader: &mut Fader, frames: u64) -> bool {
+    let mut left = lead_in.load(Ordering::Relaxed);
+    while left > 0 {
+        match lead_in.compare_exchange_weak(
+            left,
+            left.saturating_sub(frames),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => {
+                fader.hold();
+                return true;
+            }
+            Err(now) => left = now,
+        }
+    }
+    false
+}
+
+/// One render callback's worth of samples: as many whole frames as the ring
+/// holds and the fader allows, through the fader, then silence to the end of
+/// `out` — an underrun or a fade's end. Counts what it read into `played`.
+///
+/// Runs on the audio thread, so it allocates nothing and takes no lock.
+#[inline]
+pub fn render_from_ring(
+    out: &mut [f32],
+    ring: &mut rtrb::Consumer<f32>,
+    fader: &mut Fader,
+    channels: usize,
+    played: &AtomicU64,
+) -> usize {
+    let channels = channels.max(1);
+    let take = ring.slots().min(fader.readable(out.len(), channels));
+    let take = take - take % channels;
+    let mut got = 0;
+    if take > 0
+        && let Ok(chunk) = ring.read_chunk(take)
+    {
+        let (first, second) = chunk.as_slices();
+        out[..first.len()].copy_from_slice(first);
+        out[first.len()..take].copy_from_slice(second);
+        chunk.commit_all();
+        played.fetch_add(take as u64, Ordering::AcqRel);
+        fader.apply(&mut out[..take], channels);
+        got = take;
+    }
+    out[got..].fill(0.0);
+    got
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +354,26 @@ mod tests {
             0,
             "nothing of the track plays after the pause"
         );
+    }
+
+    #[test]
+    fn a_render_short_of_samples_ends_in_silence() {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(64);
+        for i in 0..11 {
+            tx.push(i as f32 + 1.0).unwrap();
+        }
+        let mut fader = Fader::new(FadeControl::new(), RATE);
+        let played = AtomicU64::new(0);
+        let mut out = [9.0f32; 16];
+        let got = render_from_ring(&mut out, &mut rx, &mut fader, 2, &played);
+        assert_eq!(got, 10, "whole frames only");
+        assert_eq!(played.load(Ordering::Relaxed), 10);
+        assert_eq!(
+            &out[..10],
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+        );
+        assert!(out[10..].iter().all(|s| *s == 0.0));
+        assert_eq!(rx.slots(), 1, "the odd sample waits for its frame");
     }
 
     #[test]

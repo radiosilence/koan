@@ -601,9 +601,7 @@ final class LibraryModel {
                 // with albums has their tracks one tap away on each.
                 let appearances =
                     owned.isEmpty
-                    ? (try? await engine.tracks(
-                        albumId: nil, artistId: id, sort: .album, limit: 500, offset: 0
-                    )) ?? []
+                    ? (try? await engine.tracks(albumId: nil, artistId: id)) ?? []
                     : []
                 return ArtistRecord(
                     artistId: id,
