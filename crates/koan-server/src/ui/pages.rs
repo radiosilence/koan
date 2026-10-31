@@ -285,7 +285,7 @@ pub(super) type Options = Arc<(Vec<String>, Vec<String>)>;
 fn filter_options(s: &UiState) -> Option<Options> {
     let db = open(&s.pool)?;
     let stamp = match queries::library_stamp(&db.conn) {
-        Ok(stamp) => stamp,
+        Ok(stamp) => stamp.key(),
         Err(e) => {
             log::warn!("library stamp: {e}");
             return Some(Options::default());

@@ -71,9 +71,11 @@ pub enum ArtistOrder {
     /// `search::match_rank`), then by name. Without a search, in the order of
     /// `ArtistQuery::ids`; without either, `Name`.
     Relevance,
-    /// Most tracks first. Counts tracks, so not with
-    /// `ArtistQuery::without_track_counts`; with it, `AlbumCount`.
-    TrackCount,
+    /// Fewest albums first, then by name.
+    FewestAlbums,
+    /// Fewest tracks first, then by name. Counts tracks, so not with
+    /// `ArtistQuery::without_track_counts`; with it, `FewestAlbums`.
+    FewestTracks,
 }
 
 impl ArtistOrder {
@@ -84,7 +86,8 @@ impl ArtistOrder {
             Self::RecentlyAdded => "COALESCE(MAX(al.added_at), '') DESC, a.name COLLATE LIBRARY",
             Self::Id => "a.id",
             Self::LastPlayed => "MAX(p.last) DESC, MAX(p.last_id) DESC",
-            Self::TrackCount => "COUNT(t.id) DESC, a.name COLLATE LIBRARY",
+            Self::FewestAlbums => "COUNT(DISTINCT al.id), a.name COLLATE LIBRARY",
+            Self::FewestTracks => "COUNT(t.id), a.name COLLATE LIBRARY",
         }
     }
 }
@@ -137,7 +140,7 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
     let (body, mut params) = artist_body(conn, q)?;
     let order = match q.order {
         ArtistOrder::LastPlayed if q.played.is_none() => ArtistOrder::Name,
-        ArtistOrder::TrackCount if q.without_track_counts => ArtistOrder::AlbumCount,
+        ArtistOrder::FewestTracks if q.without_track_counts => ArtistOrder::FewestAlbums,
         order => order,
     };
     let order_by = match (order, q.search, q.ids) {

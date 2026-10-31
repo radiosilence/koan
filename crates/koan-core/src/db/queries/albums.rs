@@ -245,8 +245,8 @@ pub enum AlbumOrder {
     /// (see `search::match_rank`), then as `ArtistThenDate`. Without a search,
     /// in the order of `AlbumQuery::ids`; without either, `RecentlyAdded`.
     Relevance,
-    /// Most tracks first, then by title.
-    TrackCount,
+    /// Fewest tracks first, then by title.
+    FewestTracks,
 }
 
 impl AlbumOrder {
@@ -274,8 +274,8 @@ impl AlbumOrder {
             Self::Downloaded => {
                 "have = total DESC, CAST(have AS REAL) / total DESC, fetched DESC, al.id"
             }
-            Self::TrackCount => {
-                "(SELECT COUNT(*) FROM tracks c WHERE c.album_id = al.id) DESC, \
+            Self::FewestTracks => {
+                "(SELECT COUNT(*) FROM tracks c WHERE c.album_id = al.id), \
                  al.title COLLATE LIBRARY"
             }
         }
@@ -887,16 +887,21 @@ mod tests {
     }
 
     #[test]
-    fn track_count_orders_the_fullest_record_first() {
+    fn fewest_tracks_breaks_ties_by_title() {
         let db = filter_library();
         let mut meta = crate::db::queries::sample_meta("B2", "Band", "Middle");
         meta.track_number = Some(2);
         crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
         let q = AlbumQuery {
-            order: AlbumOrder::TrackCount,
+            order: AlbumOrder::FewestTracks,
             ..Default::default()
         };
-        assert_eq!(listed(&db, &q)[0], "Middle");
+        assert_eq!(listed(&db, &q), ["Early", "Late", "Middle"]);
+        let back = AlbumQuery {
+            descending: true,
+            ..q
+        };
+        assert_eq!(listed(&db, &back), ["Middle", "Late", "Early"]);
     }
 
     /// The typed narrowings hold their text anywhere, in any ASCII case.

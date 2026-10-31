@@ -617,10 +617,6 @@ pub struct KoanEngine {
     /// one per task, because only one runs at a time — they all contend for the
     /// same single database writer.
     cancel_library_task: Arc<std::sync::atomic::AtomicBool>,
-    /// Bumped by anything that writes library rows. The watcher turns a change
-    /// here into a `Library` slice, so a background scan finishing looks the
-    /// same to a client as one it asked for itself.
-    library_version: Arc<std::sync::atomic::AtomicU64>,
     /// The queue's `content_version` as last saved, so a save rewrites the
     /// queue only when its contents moved and otherwise saves the position.
     saved_content: std::sync::atomic::AtomicU64,
@@ -5419,9 +5415,7 @@ impl KoanEngine {
                         engine.bump_library();
                     }
 
-                    let library = engine
-                        .library_version
-                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let library = queries::library_version();
                     out.publish(StateSlice::Library { version: library });
                     out.publish(StateSlice::History {
                         version: koan_core::player::history::version(),
@@ -5822,8 +5816,7 @@ impl KoanEngine {
     /// one has the same problem a page showing a record has — a second signal
     /// for them would be a second thing to remember to send.
     fn bump_library(&self) {
-        self.library_version
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        queries::library_written();
         koan_core::signal::engine_changed().bump();
     }
 
@@ -5941,15 +5934,12 @@ impl KoanEngine {
 
         // Bumped by the background tasks below as well as by everything the UI
         // asks for, so a sync nobody asked for reaches a client the same way.
-        let library_version = Arc::new(std::sync::atomic::AtomicU64::new(0));
-
         // Finishing is the interesting edge: rows landed while it ran, and the
         // moment it stops is the moment they are all there.
         let finished = {
-            let version = library_version.clone();
             move |flag: &std::sync::atomic::AtomicBool, running: bool| {
                 if !running && flag.swap(running, std::sync::atomic::Ordering::Relaxed) {
-                    version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    queries::library_written();
                 } else {
                     flag.store(running, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -5999,7 +5989,6 @@ impl KoanEngine {
             auto_scanning,
             sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            library_version: library_version.clone(),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             playlist_history: Default::default(),
             pairing: Default::default(),
@@ -6074,9 +6063,7 @@ impl KoanEngine {
         &self,
         item: &PlaylistItem,
     ) -> (queries::Place, koan_core::helpers::RowCredits) {
-        let library = self
-            .library_version
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let library = queries::library_version();
         let key = (
             item.db_id,
             item.artist.clone(),
@@ -6365,8 +6352,7 @@ impl KoanEngine {
     /// Rows arrived by some route the UI did not start; have its pages read
     /// them.
     fn library_changed(&self) {
-        self.library_version
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        queries::library_written();
         koan_core::signal::engine_changed().bump();
     }
 

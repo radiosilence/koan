@@ -134,7 +134,7 @@ fn corpus_stamp(conn: &Connection) -> Result<Option<u64>, DbError> {
         return Ok(None);
     };
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (path, super::library_stamp(conn)?).hash(&mut hasher);
+    (path, super::library_stamp(conn)?.key()).hash(&mut hasher);
     Ok(Some(hasher.finish()))
 }
 

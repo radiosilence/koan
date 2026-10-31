@@ -111,12 +111,11 @@ struct AppState {
 /// When the library last changed, as far as this process has seen.
 #[derive(Clone, Copy)]
 struct LibraryModified {
-    fingerprint: u64,
-    /// The five-minute window `newest_file` was read in.
-    window: u64,
+    /// The library as `newest_file` was read from it.
+    stamp: queries::LibraryStamp,
     /// The newest track file's mtime, in milliseconds.
     newest_file: i64,
-    /// When the fingerprint was last seen to change, in milliseconds. The
+    /// When the stamp's rows were last seen to change, in milliseconds. The
     /// first reading in a process counts as a change, since what changed while
     /// it was down cannot be known: a restart has clients walk once.
     changed: i64,
@@ -136,17 +135,13 @@ impl AppState {
     /// deletion too, which no file's mtime records.
     ///
     /// `MAX(mtime)` reads every track, and clients poll `getIndexes`. Read
-    /// again when the library's rows change, and every five minutes for a file
-    /// rescanned in place, which changes no row count.
+    /// again when the library's stamp moves (`queries::library_stamp`).
     fn last_modified(&self, db: &Database) -> Result<i64, SubsonicError> {
-        let internal =
-            |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
-        let window = koan_core::clock::unix_secs() as u64 / 300;
-        let fingerprint = queries::library_fingerprint(&db.conn).map_err(internal)?;
+        let stamp =
+            queries::library_stamp(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
         let held = *self.last_modified.lock();
         if let Some(h) = held
-            && h.fingerprint == fingerprint
-            && h.window == window
+            && h.stamp == stamp
         {
             return Ok(h.newest_file.max(h.changed));
         }
@@ -159,12 +154,11 @@ impl AppState {
             )
             .map_err(|e| SubsonicError::internal(e.to_string()))?;
         let changed = match held {
-            Some(h) if h.fingerprint == fingerprint => h.changed,
-            _ => now.as_millis() as i64,
+            Some(h) if h.stamp.rows == stamp.rows => h.changed,
+            _ => koan_core::clock::unix_ms(),
         };
         *self.last_modified.lock() = Some(LibraryModified {
-            fingerprint,
-            window,
+            stamp,
             newest_file,
             changed,
         });

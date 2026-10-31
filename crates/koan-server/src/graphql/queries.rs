@@ -39,12 +39,10 @@ impl QueryRoot {
         let user = super::user_id(ctx);
         let offset = page_offset(after.as_deref());
         let limit = page_size(first);
-        // Each field ascending as the schema names it; core's counts read
-        // most first.
-        let (order, most_first) = match sort_by {
-            ArtistSortField::Name => (queries::ArtistOrder::Name, false),
-            ArtistSortField::AlbumCount => (queries::ArtistOrder::AlbumCount, true),
-            ArtistSortField::TrackCount => (queries::ArtistOrder::TrackCount, true),
+        let order = match sort_by {
+            ArtistSortField::Name => queries::ArtistOrder::Name,
+            ArtistSortField::AlbumCount => queries::ArtistOrder::FewestAlbums,
+            ArtistSortField::TrackCount => queries::ArtistOrder::FewestTracks,
         };
         let rows = with_db(ctx, move |db| {
             queries::list_artists(
@@ -58,7 +56,7 @@ impl QueryRoot {
                         ..Default::default()
                     },
                     order,
-                    descending: (sort_dir == SortDirection::Desc) != most_first,
+                    descending: sort_dir == SortDirection::Desc,
                     // One row past the page says whether another follows.
                     limit: Some(limit as u32 + 1),
                     offset: offset as u32,
@@ -107,11 +105,11 @@ impl QueryRoot {
         let user = super::user_id(ctx);
         let offset = page_offset(after.as_deref());
         let limit = page_size(first);
-        let (order, most_first) = match sort_by {
-            AlbumSortField::Title => (queries::AlbumOrder::Title, false),
-            AlbumSortField::Date => (queries::AlbumOrder::Date, false),
-            AlbumSortField::ArtistThenDate => (queries::AlbumOrder::ArtistThenDate, false),
-            AlbumSortField::TrackCount => (queries::AlbumOrder::TrackCount, true),
+        let order = match sort_by {
+            AlbumSortField::Title => queries::AlbumOrder::Title,
+            AlbumSortField::Date => queries::AlbumOrder::Date,
+            AlbumSortField::ArtistThenDate => queries::AlbumOrder::ArtistThenDate,
+            AlbumSortField::TrackCount => queries::AlbumOrder::FewestTracks,
         };
         let rows = with_db(ctx, move |db| {
             queries::list_albums(
@@ -131,7 +129,7 @@ impl QueryRoot {
                         ..Default::default()
                     },
                     order,
-                    descending: (sort_dir == SortDirection::Desc) != most_first,
+                    descending: sort_dir == SortDirection::Desc,
                     limit: Some(limit as u32 + 1),
                     offset: offset as u32,
                     ..Default::default()
