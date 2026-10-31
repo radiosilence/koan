@@ -228,13 +228,21 @@ extension KoanIOSApp {
         let play = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.contains { $0.name == "play" } == true
         Task {
-            guard let id = try? await state.engine.albumForUid(uid: uid) else {
+            let found: Int64?
+            do {
+                found = try await state.engine.albumForUid(uid: uid)
+            } catch {
+                state.player.lastError = SettingsModel.describe(error)
+                return
+            }
+            guard let id = found else {
                 state.player.lastNotice = "That record is no longer in the library."
                 return
             }
             if play {
                 do {
                     _ = try await state.playRecord(id, named: "That record")
+                    state.ui.nowPlayingAsked += 1
                 } catch let error as IntentError {
                     state.player.lastError = String(localized: error.localizedStringResource)
                 } catch {

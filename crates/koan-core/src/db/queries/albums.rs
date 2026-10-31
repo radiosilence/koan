@@ -235,6 +235,9 @@ pub enum AlbumOrder {
     /// Most recently played first. Only with `AlbumQuery::played`, which is
     /// what knows when; without it, `RecentlyAdded`.
     LastPlayed,
+    /// Most recently favourited first. Only with `AlbumQuery::favourites_of`,
+    /// which is what knows when; without it, `RecentlyAdded`.
+    Favourited,
     /// Insertion order. The one order a new album cannot land in the middle
     /// of, which is what makes an offset walk over the whole list exact.
     Id,
@@ -270,6 +273,7 @@ impl AlbumOrder {
             }
             Self::Random(_) => "koan_shuffle(al.id, ?)",
             Self::LastPlayed => "p.last DESC, p.last_id DESC",
+            Self::Favourited => "f.created_at DESC, al.id DESC",
             Self::Id => "al.id",
             Self::Downloaded => {
                 "have = total DESC, CAST(have AS REAL) / total DESC, fetched DESC, al.id"
@@ -459,6 +463,7 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
     );
     let order = match q.order {
         AlbumOrder::LastPlayed if q.played.is_none() => AlbumOrder::RecentlyAdded,
+        AlbumOrder::Favourited if q.favourites_of.is_none() => AlbumOrder::RecentlyAdded,
         order => order,
     };
     // An artist's records come grouped as their page draws them, so a pick
@@ -1525,6 +1530,45 @@ mod tests {
             rows.iter().map(|a| a.title.as_str()).collect::<Vec<_>>(),
             ["Horse Rotorvator"]
         );
+    }
+
+    #[test]
+    fn favourited_lists_the_latest_heart_first() {
+        use crate::db::queries::{LOCAL_USER, toggle_favourite_album};
+        let db = stocked_db();
+        let ids: Vec<i64> = list_albums(&db.conn, &AlbumQuery::default())
+            .unwrap()
+            .into_iter()
+            .map(|a| a.id)
+            .take(3)
+            .collect();
+        // Hearted in the listing's order, so the latest is its last.
+        for (i, id) in ids.iter().enumerate() {
+            let age = ids.len() - 1 - i;
+            toggle_favourite_album(&db.conn, LOCAL_USER, *id).unwrap();
+            db.conn
+                .execute(
+                    "UPDATE favourite_albums SET created_at = datetime('now', ?1) WHERE album_id = ?2",
+                    rusqlite::params![format!("-{age} days"), id],
+                )
+                .unwrap();
+        }
+        let order = |order| {
+            list_albums(
+                &db.conn,
+                &AlbumQuery {
+                    favourites_of: Some(LOCAL_USER),
+                    order,
+                    limit: Some(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .into_iter()
+            .map(|a| a.id)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(order(AlbumOrder::Favourited), [ids[2], ids[1]]);
     }
 
     #[test]

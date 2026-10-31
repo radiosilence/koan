@@ -1782,8 +1782,8 @@ impl KoanEngine {
         .await
     }
 
-    /// The Apple TV's Top Shelf: the first `TOP_SHELF_LIMIT` records of the
-    /// Recently played and Favourites shelves. Not narrowed to what this device
+    /// The Apple TV's Top Shelf: the first `TOP_SHELF_LIMIT` records played
+    /// lately and the latest favourited. Not narrowed to what this device
     /// holds while offline: the system shows the shelf when koan is not
     /// running, by which time the connection may be back.
     pub async fn top_shelf(self: Arc<Self>) -> Result<TopShelf, KoanError> {
@@ -1791,12 +1791,12 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let (user, now) = (queries::LOCAL_USER, shelves::now());
-            let records = |shelf: Shelf| -> Result<Vec<TopShelfRecord>, KoanError> {
+            let records = |query: queries::AlbumQuery| -> Result<Vec<TopShelfRecord>, KoanError> {
                 let rows = queries::list_albums(
                     &db.conn,
                     &queries::AlbumQuery {
                         limit: Some(TOP_SHELF_LIMIT),
-                        ..shelf.albums(user, now)
+                        ..query
                     },
                 )
                 .map_err(db_err)?;
@@ -1812,8 +1812,13 @@ impl KoanEngine {
                     .collect())
             };
             Ok(TopShelf {
-                recent: records(Shelf::Recent)?,
-                favourites: records(Shelf::Favourites)?,
+                recent: records(Shelf::Recent.albums(user, now))?,
+                // The newest first: in the Favourites page's order, a dozen
+                // would only ever be the first few artists.
+                favourites: records(queries::AlbumQuery {
+                    order: queries::AlbumOrder::Favourited,
+                    ..Shelf::Favourites.albums(user, now)
+                })?,
             })
         })
         .await

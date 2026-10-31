@@ -221,6 +221,7 @@ struct TabShell: View {
         .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
             Task { await checkSignedIn() }
         }
+        .onChange(of: app.ui.nowPlayingAsked) { selection = .nowPlaying }
         #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the

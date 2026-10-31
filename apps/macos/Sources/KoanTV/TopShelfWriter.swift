@@ -53,7 +53,12 @@ final class TopShelfWriter {
     }
 
     private func write() async {
-        guard let state, let directory = TopShelfSnapshot.directory else { return }
+        guard let state else { return }
+        // Without the group entitlement, as in an unsigned build.
+        guard let directory = TopShelfSnapshot.directory else {
+            state.engine.logNote(message: "top shelf: no app group container")
+            return
+        }
         let shelf: TopShelf
         do {
             shelf = try await state.engine.topShelf()
@@ -102,28 +107,28 @@ final class TopShelfWriter {
             }
             TVTopShelfContentProvider.topShelfContentDidChange()
         }
-        // Only once the snapshot naming them is gone: the extension may be
-        // reading the old one.
-        let listed = Set(snapshot.sections.flatMap(\.items).map(\.image))
+        // The previous snapshot's too: the system may still be drawing it
+        // until it has asked the extension again.
+        let listed = Set([snapshot, previous].compactMap(\.self).flatMap(\.sections).flatMap(\.items).map(\.image))
         let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         for file in files where file != TopShelfSnapshot.file && !listed.contains(file) {
             try? FileManager.default.removeItem(at: directory.appending(path: file))
         }
     }
 
-    /// The record's sleeve as a JPEG at the shelf's size, named by its
-    /// content: new art is a new name, so neither this nor the system's own
-    /// cache of the shelf keeps showing the old one.
+    /// The record's sleeve as a JPEG at the shelf's size, named by the art it
+    /// was made from: new art is a new name, so neither this nor the system's
+    /// own cache of the shelf keeps showing the old one, and art already
+    /// written is not made again on every pass.
     private func image(of record: TopShelfRecord, in directory: URL, state: AppState) async -> String? {
         guard let data = await state.art.bytes(for: .album(record.album.id)) else { return nil }
         return await Task.detached(priority: .utility) {
-            guard let jpeg = Self.thumbnail(data) else { return nil }
-            let digest = SHA256.hash(data: jpeg).prefix(12).map { String(format: "%02x", $0) }.joined()
+            let digest = SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
             let name = "\(digest).jpg"
             let file = directory.appending(path: name)
-            if !FileManager.default.fileExists(atPath: file.path) {
-                guard (try? jpeg.write(to: file, options: .atomic)) != nil else { return nil }
-            }
+            if FileManager.default.fileExists(atPath: file.path) { return name }
+            guard let jpeg = Self.thumbnail(data), (try? jpeg.write(to: file, options: .atomic)) != nil
+            else { return nil }
             return name
         }.value
     }

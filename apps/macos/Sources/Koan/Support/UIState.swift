@@ -19,6 +19,11 @@ final class UIState {
     /// Settings → Server, asked for by the server banner's Sign In, which the
     /// Settings tab pushes.
     var showingServerSettings = false
+    #if os(tvOS)
+    /// Moves when something played from outside the app, as the Top Shelf's
+    /// Play does, should bring Now Playing forward.
+    var nowPlayingAsked = 0
+    #endif
     /// An invite that would replace the account already signed in, waiting
     /// for a yes.
     var pendingInvite: Invite?
