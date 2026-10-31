@@ -5,7 +5,13 @@ import AppKit
 /// hit-testing: the kōan glyph in the theme, the SF Symbol otherwise.
 @MainActor
 enum Symbol {
-    private static var cache: [String: CGImage] = [:]
+    /// Bounded: every record's accent is a colour of its own, so browsing
+    /// draws new keys without end.
+    private static let cache: NSCache<NSString, CGImage> = {
+        let cache = NSCache<NSString, CGImage>()
+        cache.countLimit = 512
+        return cache
+    }()
 
     /// Drawn in `appearance`, which dynamic colours such as
     /// `tertiaryLabelColor` resolve against.
@@ -13,11 +19,11 @@ enum Symbol {
         _ name: String, size: CGFloat, weight: NSFont.Weight = .regular, colours: [NSColor],
         appearance: NSAppearance = .currentDrawing()
     ) -> CGImage? {
-        let key = "\(name) \(size) \(weight.rawValue) \(colours.map(\.description)) \(appearance.name.rawValue)"
-        if let held = cache[key] { return held }
+        let key = "\(name) \(size) \(weight.rawValue) \(resolved(colours, in: appearance)) \(appearance.name.rawValue)" as NSString
+        if let held = cache.object(forKey: key) { return held }
         if KoanTheme.isOn, let glyph = KoanGlyph.forSymbol(name) {
             let image = glyphImage(glyph, size: size, colours: colours, appearance: appearance)
-            cache[key] = image
+            if let image { cache.setObject(image, forKey: key) }
             return image
         }
         // One colour is the symbol in that colour, as SwiftUI's foreground
@@ -49,8 +55,27 @@ enum Symbol {
             }
         }
         NSGraphicsContext.restoreGraphicsState()
-        cache[key] = bitmap.cgImage
+        if let image = bitmap.cgImage { cache.setObject(image, forKey: key) }
         return bitmap.cgImage
+    }
+
+    /// The colours as drawn in `appearance`: a dynamic colour's description
+    /// names the colour, not what it resolves to, and two of them can share
+    /// one.
+    private static func resolved(_ colours: [NSColor], in appearance: NSAppearance) -> String {
+        var parts: [String] = []
+        appearance.performAsCurrentDrawingAppearance {
+            for colour in colours {
+                guard let rgb = colour.usingColorSpace(.sRGB) else {
+                    parts.append(colour.description)
+                    continue
+                }
+                parts.append(
+                    String(format: "%.4f %.4f %.4f %.4f", rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent)
+                )
+            }
+        }
+        return parts.joined(separator: ",")
     }
 
     /// The kōan glyph standing in for a symbol: the first colour for its
