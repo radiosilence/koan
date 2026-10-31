@@ -228,8 +228,9 @@ pub fn funnel(port: u16) -> Result<String, FunnelError> {
 /// to the tailnet stays, for local `port` too: `tailscale serve` set up by
 /// hand is not Funnel's to take down.
 pub fn funnel_off(port: u16) -> Result<(), FunnelError> {
-    // Not installed, or not running: nothing is published through it.
-    if status().is_none() {
+    // Not installed: nothing is published through it. Installed but stopped
+    // is refused below: a Funnel kept in its preferences comes back with it.
+    if cli().is_none() {
         return Ok(());
     }
     for on in served()?
