@@ -1,0 +1,1 @@
+- **App fixes from the audit.** Headphone unplugs and calls leave a UPnP renderer playing on iOS and Android, real covers shared by editions are no longer hidden, Android queue drags survive downloads landing, and failed library reads say so.

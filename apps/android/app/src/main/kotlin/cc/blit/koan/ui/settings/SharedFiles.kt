@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.IntentCompat
+import cc.blit.koan.engine.attempt
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +35,7 @@ internal suspend fun copyIn(context: Context, uris: List<Uri>): List<String> = w
     uris.mapIndexedNotNull { i, uri ->
         val name = displayName(context, uri)?.let(::safeName) ?: "file-$i"
         val file = File(dir, name)
-        runCatching {
+        attempt {
             context.contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { input.copyTo(it) } }
                 ?: return@mapIndexedNotNull null
             file.path

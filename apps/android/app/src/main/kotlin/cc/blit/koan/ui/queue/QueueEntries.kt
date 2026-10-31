@@ -57,6 +57,7 @@ import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.R
 import cc.blit.koan.art.ArtSize
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.ffi.EntryStatus
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
@@ -102,7 +103,9 @@ import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -134,10 +137,10 @@ private fun QueuePage() {
     val built = remember(queue, grouped) { QueueRow.build(queue.items, grouped) }
 
     // The rows as a drag has them, from its start until the engine sends the
-    // queue back moved. A heading carries its run, whose rows leave the list
-    // while it moves.
+    // queue back moved: a new version, not a patch to a row's status. A heading
+    // carries its run, whose rows leave the list while it moves.
     var dragged by remember { mutableStateOf<List<QueueRow>?>(null) }
-    LaunchedEffect(queue) { dragged = null }
+    LaunchedEffect(queue.version) { dragged = null }
     val rows = dragged ?: built
     fun lifted(row: QueueRow): List<QueueRow> {
         if (row !is QueueRow.Album) return built
@@ -222,7 +225,14 @@ private fun QueuePage() {
             dragged = null
             return
         }
-        mirror.launch { moveInQueue(row.itemIds, target.first, target.second) }
+        mirror.launch {
+            // A move comes back as the queue whole under a new version, which
+            // ends the drag. One refused sends nothing: then the rows go back
+            // to the engine's order here, on the main thread.
+            val failure = attempt { moveInQueue(row.itemIds, target.first, target.second) }.exceptionOrNull() ?: return@launch
+            withContext(Dispatchers.Main) { if (dragged === drawn) dragged = null }
+            throw failure
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -397,7 +407,7 @@ private fun AlbumHeading(group: QueueGroup, linked: Boolean) {
         Spacer(Modifier.width(KoanSpace.m))
         Column {
             val first = group.items.first()
-            NameLine(listOf(albumName(group.title, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
+            NameLine(listOf(albumName(group.album, first.albumId)), role = KoanType.Body, tone = KoanTone.Strong, linked = linked, maxLines = 2)
             NameLine(listOf(artistCredit(first.albumArtistCredit)), linked = linked)
             KoanText(group.detail, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
         }
@@ -628,7 +638,6 @@ private fun QueueMenu(row: QueueRow, onDismiss: () -> Unit, remove: () -> Unit, 
 @Composable
 private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) -> Unit, addToPlaylist: (List<Long>) -> Unit) {
     val app = koanApp()
-    val context = LocalContext.current
     val signedIn = app.mirror.connection.collectAsStateWithLifecycle().value != null
     val store = favourites()
     val hearted by store.tracks.collectAsStateWithLifecycle()
@@ -654,8 +663,8 @@ private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) ->
         }
     }
     if (signedIn) {
-        val (title, name) = if (heading) "Share Album" to (row as QueueRow.Album).group.title else "Share" to first.title
-        KoanMenuItem(title, KoanIcons.share) { act { app.share(context, name) { trackIds } } }
+        val (title, name) = if (heading) "Share Album" to (row as QueueRow.Album).group.album else "Share" to first.title
+        KoanMenuItem(title, KoanIcons.share) { act { app.share(name) { trackIds } } }
     }
     // A track knows whether its file is here; a run is usually part of the way there, and both apply.
     if (trackId != null) {

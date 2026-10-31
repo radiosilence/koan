@@ -23,6 +23,7 @@ import cc.blit.koan.net.WifiMulticast
 import cc.blit.koan.playback.AudioRoute
 import cc.blit.koan.playback.BitPerfectHost
 import java.io.File
+import kotlinx.coroutines.flow.combine
 
 class KoanApp : Application(), SingletonImageLoader.Factory {
     lateinit var mirror: EngineMirror
@@ -55,6 +56,11 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         val multicast = WifiMulticast(this)
         NetworkWatch(this, mirror)
         AudioRoute(this, mirror)
+        // The engine's own syncs and scans, followed from its state for as
+        // long as the process lives: a sync outlasts any one page.
+        mirror.launch {
+            combine(mirror.tasks, mirror.sync, ::Pair).collect { (tasks, sync) -> activity.follow(tasks, sync) }
+        }
         mirror.launch {
             setNearbyHost(nearby)
             setMulticastHost(multicast)

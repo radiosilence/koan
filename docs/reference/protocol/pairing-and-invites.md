@@ -29,7 +29,7 @@ For a device with no keyboard, such as a television, that knows only the server'
 
 ### The device
 
-The device opens a WebSocket at `/rest/koanPair?name=<device name>` with no credentials. The server refuses one carrying an `Origin` header, which every browser sends and no app does, so a web page on the network cannot open a pairing and read the key it is sent. Opening is rate-limited per address, with at most three pairings waiting per address (or IPv6 /64) and 256 in all.
+The device opens a WebSocket at `/rest/koanPair?name=<device name>&device=<device id>` with no credentials. `device` is the id the device links with, optional, and kept only if it is at most 64 letters, digits and hyphens; it lets the approver find the device among the account's devices once it is signed in, which a name, chosen freely and often shared by two televisions, cannot. The server refuses one carrying an `Origin` header, which every browser sends and no app does, so a web page on the network cannot open a pairing and read the key it is sent. Opening is rate-limited per address, with at most three pairings waiting per address (or IPv6 /64) and 256 in all.
 
 The server sends JSON text frames tagged by `type`:
 
@@ -55,7 +55,7 @@ The device shows the code and this link, usually as a QR code. As with invites t
 
 Someone signed in to the same server, on a phone, a Mac or the web UI's `/pair` page:
 
-1. `/rest/koanPairInfo?pair=<id or code>` answers `pair` with `device` (the name the device gave), `from` (the address it asked from) and `local` (whether that address is on a private network), for the app to show before asking.
+1. `/rest/koanPairInfo?pair=<id or code>` answers `pair` with `device` (the name the device gave), `deviceId` (the id it gave, when it gave one), `from` (the address it asked from) and `local` (whether that address is on a private network), for the app to show before asking.
 2. `/rest/koanPairApprove?pair=<id or code>` makes an API key on the approver's account and sends it down the waiting socket. The answer is the same `pair` element. With `decline=true` the device is turned away instead.
 
 Approving needs the account's own password or an API key, since it mints a key; an app password or the shared secret is refused. Looking a pairing up and declining it need the same, since only someone who could approve it has reason to. An account that looks up ten ids or codes that are not waiting is refused every lookup by code, right or wrong, until a minute has passed since its first miss; a pairing's id, which cannot be guessed, is still found, so a link works after a few mistyped codes. The web UI's `/pair` counts against the same limit. A device is signed in with no more than the approver's account may do. Approving does not go through an invite: an invite token signs in any number of devices for a week, where an approval hands one device one key of its own.

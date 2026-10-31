@@ -39,7 +39,8 @@ class KoanPlayer(
     /** `ArtProvider`'s, which names each item's artwork. */
     private val artAuthority: String,
 ) : SimpleBasePlayer(Looper.getMainLooper()) {
-    private var mapped: Pair<List<QueueItem>, List<MediaItemData>> = emptyList<QueueItem>() to emptyList()
+    private var mapped = emptyList<QueueItem>()
+    private var mappedItems = emptyList<MediaItemData>()
 
     init {
         scope.launch {
@@ -79,10 +80,18 @@ class KoanPlayer(
             .build()
     }
 
-    /** The queue as Media3 items, rebuilt only when the queue itself changed. */
+    /**
+     * The queue as Media3 items. A patch replaces only the rows it carries and
+     * keeps every other row the same object in the same place, so only those
+     * rows are mapped again; a queue sent whole is mapped whole.
+     */
     private fun playlist(queue: List<QueueItem>): List<MediaItemData> {
-        if (mapped.first !== queue) mapped = queue to queue.map(::itemData)
-        return mapped.second
+        if (queue === mapped) return mappedItems
+        val previous = mapped
+        val previousItems = mappedItems
+        mappedItems = queue.mapIndexed { i, item -> if (previous.getOrNull(i) === item) previousItems[i] else itemData(item) }
+        mapped = queue
+        return mappedItems
     }
 
     private fun itemData(item: QueueItem) = MediaItemData.Builder(item.queueItemId)

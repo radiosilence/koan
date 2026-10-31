@@ -1527,7 +1527,7 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
     assert_eq!(r.location(), "/auth/resume?next=%2Fpair%2FABCD-EFGH");
 
     let opened = crate::pair::pairings()
-        .open("Living <room> TV", "10.0.0.8".parse().unwrap())
+        .open("Living <room> TV", None, "10.0.0.8".parse().unwrap())
         .unwrap();
     let typed = opened.code.to_lowercase();
     let device = opened.device(true);
@@ -1554,7 +1554,7 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
     assert!(r.body.contains("<strong>alice</strong>"));
     assert!(r.body.contains("Requested from 10.0.0.8, on your network."));
     let far = crate::pair::pairings()
-        .open("Far TV", "2001:db8::7".parse().unwrap())
+        .open("Far TV", None, "2001:db8::7".parse().unwrap())
         .unwrap();
     let r = send(
         &f.app,

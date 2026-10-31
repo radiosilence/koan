@@ -24,6 +24,7 @@ import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Track
+import cc.blit.koan.ui.Read
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.KoanButton
@@ -35,6 +36,7 @@ import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.value
 
 /**
  * A record: its sleeve and what it is, play and shuffle, and its tracks,
@@ -47,24 +49,25 @@ fun AlbumPage(albumId: Long, track: Long? = null) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val model = viewModel { AlbumModel({ app.mirror.engine().albumPage(albumId) }, app.mirror.library) }
-    val read by model.page.collectAsStateWithLifecycle()
-    val album = (read as? AlbumRead.Read)?.page?.album
-    when (val held = read) {
-        AlbumRead.Reading -> PageBar("")
-        is AlbumRead.Read if album != null -> RecordAccent(albumId) { Record(album, held.page.tracks, track, model.selection) }
+    val read by model.page.state.collectAsStateWithLifecycle()
+    val held = read.value
+    val album = held?.album
+    when {
+        read == Read.Reading -> PageBar("")
+        held != null && album != null -> RecordAccent(albumId) { Record(album, held.tracks, track, model.selection) }
         // Never a record page with nothing on it: gone from the library, or
         // the read failed, each said as such. A failed read is worth trying
         // again; a record that has gone comes back, if it does, with the library.
         else -> Column {
             PageBar("")
-            val failed = held == AlbumRead.Failed
+            val failed = read is Read.Failed
             KoanUnavailable(
                 if (failed) "Couldn't read this album" else "This album isn't in the library any more",
                 KoanIcons.unknownAlbum,
-                null,
+                (read as? Read.Failed)?.reason,
             ) {
                 KoanButton("Go Back", { nav.pop() })
-                if (failed) KoanButton("Try Again", model::retry)
+                if (failed) KoanButton("Try Again", model.page::retry)
             }
         }
     }

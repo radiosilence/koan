@@ -30,16 +30,37 @@ final class AppAttest: PushAttester, @unchecked Sendable {
         }
     }
 
-    /// The value a completion handler gives, waited for.
+    /// How long one answer is waited for. Attesting asks Apple's servers,
+    /// and a system that never calls back must not hold the relay's
+    /// registration, and the thread it runs on, for ever.
+    private static let patience: DispatchTimeInterval = .seconds(30)
+
+    /// The value a completion handler gives, waited for; nil past `patience`.
     private func wait<T: Sendable>(_ start: (@escaping @Sendable (T?, Error?) -> Void) -> Void) -> T? {
-        let semaphore = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var result: T?
+        let answer = Answer<T>()
         start { value, error in
             if let error { NSLog("koan: App Attest: \(error.localizedDescription)") }
-            result = value
-            semaphore.signal()
+            answer.set(value)
         }
-        semaphore.wait()
-        return result
+        guard answer.semaphore.wait(timeout: .now() + Self.patience) == .success else {
+            NSLog("koan: App Attest: no answer in \(Self.patience)")
+            return nil
+        }
+        return answer.value
+    }
+}
+
+/// An answer that may arrive after its waiter has given up, so it is held
+/// under a lock rather than in the waiter's frame.
+private final class Answer<T: Sendable>: @unchecked Sendable {
+    let semaphore = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var stored: T?
+
+    var value: T? { lock.withLock { stored } }
+
+    func set(_ value: T?) {
+        lock.withLock { stored = value }
+        semaphore.signal()
     }
 }
