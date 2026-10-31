@@ -1098,33 +1098,6 @@ private struct QueueDiceButton: View {
 }
 #endif
 
-    var body: some View {
-        let refusal = player.queueDiceRefusal
-        #if os(iOS)
-        if presses > 0 {
-            Button {
-                presses -= 1
-                player.undo()
-            } label: {
-                KoanIcon(Icon.undo).touchTarget()
-            }
-            .help("Undo the last shuffle")
-        }
-        #endif
-        Button {
-            #if os(iOS)
-            presses += 1
-            #endif
-            player.shuffleQueue()
-        } label: {
-            KoanIcon(Icon.reshuffle).touchTarget()
-        }
-        .disabled(refusal != nil)
-        .help(refusal ?? "Shuffle the rest of the queue in place")
-    }
-}
-#endif
-
 /// The playing row kept in view while following. Reads what is playing so the
 /// queue's own body does not, which on a long queue would regroup and diff
 /// every row on each change to it.
