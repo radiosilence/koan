@@ -2827,6 +2827,8 @@ mod dial_tests {
             socket.read(),
             Err(tungstenite::Error::Capacity(_))
         ));
+        // Hanging up frees the client from the rest of its write.
+        drop(socket);
         client.join().unwrap();
     }
 
