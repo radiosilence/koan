@@ -2387,6 +2387,7 @@ impl Player {
                 | PlayerCommand::MoveInPlaylist { .. }
                 | PlayerCommand::MoveItemsInPlaylist { .. }
                 | PlayerCommand::ReorderPlaylist(_)
+                | PlayerCommand::ShuffleUpcoming
                 | PlayerCommand::Undo
                 | PlayerCommand::Redo
                 | PlayerCommand::SetShuffle(_)
@@ -2588,6 +2589,11 @@ impl Player {
                 let entries = self.shared_state.items_before(&order);
                 self.shared_state.reorder_to(&order);
                 self.push_undo(UndoEntry::MovedBatch { entries });
+            }
+            PlayerCommand::ShuffleUpcoming => {
+                if let Some(entries) = self.shared_state.shuffle_upcoming() {
+                    self.push_undo(UndoEntry::MovedBatch { entries });
+                }
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::DecodeFinished(session) => self.on_decode_finished(session),
@@ -4568,6 +4574,59 @@ mod tests {
 
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_titles(&player), ["first", "t0", "t1", "t2"]);
+    }
+
+    #[test]
+    fn shuffling_upcoming_moves_only_what_follows_the_cursor_and_undoes_a_press_at_a_time() {
+        let mut player = Player::new();
+        seed(&mut player, 40);
+        let original = playlist_ids(&player);
+        player.shared_state.pick(original[9]);
+
+        player.process_command(PlayerCommand::ShuffleUpcoming);
+        let first = playlist_ids(&player);
+        player.process_command(PlayerCommand::ShuffleUpcoming);
+        let second = playlist_ids(&player);
+        for order in [&first, &second] {
+            assert_eq!(
+                order[..10],
+                original[..10],
+                "played rows and the cursor stay"
+            );
+            let mut tail = order[10..].to_vec();
+            tail.sort_by_key(|id| original.iter().position(|i| i == id));
+            assert_eq!(tail, original[10..]);
+        }
+        assert_ne!(first[10..], original[10..], "thirty rows left as they were");
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_ids(&player), first);
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_ids(&player), original);
+        player.process_command(PlayerCommand::Redo);
+        assert_eq!(playlist_ids(&player), first);
+    }
+
+    #[test]
+    fn shuffling_upcoming_takes_the_whole_queue_with_nothing_playing_and_nothing_with_one_row_left()
+    {
+        let mut player = Player::new();
+        seed(&mut player, 30);
+        let original = playlist_ids(&player);
+        player.process_command(PlayerCommand::ShuffleUpcoming);
+        assert_ne!(playlist_ids(&player), original);
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_ids(&player), original);
+
+        player.shared_state.pick(original[28]);
+        player.process_command(PlayerCommand::ShuffleUpcoming);
+        assert_eq!(playlist_ids(&player), original);
+        assert!(
+            !player.undo_stack.can_undo() || {
+                player.process_command(PlayerCommand::Undo);
+                playlist_ids(&player) == original
+            }
+        );
     }
 
     #[test]

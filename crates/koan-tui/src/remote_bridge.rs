@@ -297,6 +297,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::MoveInPlaylist { .. }
             | PlayerCommand::MoveItemsInPlaylist { .. }
             | PlayerCommand::ReorderPlaylist(_)
+            | PlayerCommand::ShuffleUpcoming
             | PlayerCommand::InsertInPlaylist { .. }
             | PlayerCommand::AddToPlaylist(_)
             | PlayerCommand::AddAndPlay(_)

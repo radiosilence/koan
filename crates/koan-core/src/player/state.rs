@@ -2089,6 +2089,27 @@ impl SharedPlayerState {
         self.bump_content();
     }
 
+    /// Shuffle the rows after the cursor in place, or every row when nothing
+    /// is under it. Returns where each moved row sat before, for undo, or
+    /// `None` when fewer than two rows would move.
+    pub fn shuffle_upcoming(&self) -> Option<Vec<(QueueItemId, Option<QueueItemId>)>> {
+        let mut pl = self.playlist.write();
+        let start = match pl.cursor {
+            Some(cursor) => pl.items.iter().position(|i| i.id == cursor)? + 1,
+            None => 0,
+        };
+        if pl.items.len() - start < 2 {
+            return None;
+        }
+        let was = (start..pl.items.len())
+            .map(|i| (pl.items[i].id, i.checked_sub(1).map(|p| pl.items[p].id)))
+            .collect();
+        crate::helpers::shuffle(&mut pl.items[start..]);
+        drop(pl);
+        self.bump_content();
+        Some(was)
+    }
+
     /// For each ID, the ID of the item before it (or None if first), returned in
     /// playlist order regardless of the order `ids` arrives in.
     ///

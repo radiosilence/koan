@@ -1143,6 +1143,13 @@ impl KoanEngine {
         .await
     }
 
+    /// Shuffle what follows the playing row, or the whole queue when nothing
+    /// is playing, as one undo step. Distinct from shuffle play mode, which
+    /// leaves the queue's order alone.
+    pub async fn shuffle_queue(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::ShuffleUpcoming)).await
+    }
+
     pub async fn clear_queue(self: Arc<Self>) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::ClearPlaylist)).await
     }

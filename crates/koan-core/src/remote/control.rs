@@ -765,6 +765,9 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         PlayerCommand::ClearPlaylist => LinkCommand::Clear,
         PlayerCommand::Undo => LinkCommand::Undo,
         PlayerCommand::Redo => LinkCommand::Redo,
+        PlayerCommand::ShuffleUpcoming => {
+            return Err("shuffling the queue in place works only on this device".into());
+        }
         PlayerCommand::ReorderPlaylist(_)
         | PlayerCommand::BeginUndoBatch
         | PlayerCommand::EndUndoBatch => return Ok(Routed::Dropped),

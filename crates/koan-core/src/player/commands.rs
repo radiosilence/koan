@@ -64,6 +64,11 @@ pub enum PlayerCommand {
     /// new ids and throw away what has played, what is mid-download and where
     /// the cursor is. Ids not named keep their relative order at the end.
     ReorderPlaylist(Vec<QueueItemId>),
+    /// Shuffle the rows after the cursor in place, or the whole queue when
+    /// nothing is under it. The player reads the cursor as it applies the
+    /// command. Unlike shuffle play mode this reorders the queue itself, as
+    /// one undo step.
+    ShuffleUpcoming,
     /// Update file paths for playlist items after an organize operation.
     /// On Unix, rename() doesn't invalidate open FDs so playback continues.
     UpdatePaths(Vec<(QueueItemId, PathBuf)>),
