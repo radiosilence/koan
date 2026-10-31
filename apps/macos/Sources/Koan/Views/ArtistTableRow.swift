@@ -9,7 +9,8 @@ final class ArtistTableRow: TableCell, TableRow {
     struct Context {
         let favourites: Set<Int64>
         let tint: NSColor
-        let play: (Artist) async -> Void
+        /// Sent before it returns; the task ends once it is playing.
+        let play: @MainActor (Artist) -> Task<Void, Never>
         let open: (Int64) -> Void
         let toggleFavourite: (Int64) -> Void
     }
@@ -200,8 +201,9 @@ final class ArtistTableRow: TableCell, TableRow {
         guard let artist, let context, !playing else { return false }
         playing = true
         restyle()
+        let done = context.play(artist)
         Task { [weak self] in
-            await context.play(artist)
+            await done.value
             guard let self, self.artist?.id == artist.id else { return }
             self.playing = false
             self.restyle()

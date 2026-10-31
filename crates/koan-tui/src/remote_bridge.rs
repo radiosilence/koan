@@ -256,6 +256,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::InsertInPlaylist { .. }
             | PlayerCommand::AddToPlaylist(_)
             | PlayerCommand::AddAndPlay(_)
+            | PlayerCommand::PlayNext(_)
             | PlayerCommand::DecodeFinished(_)
             | PlayerCommand::RestorePlayMode(_)
             | PlayerCommand::TrackQueued => {

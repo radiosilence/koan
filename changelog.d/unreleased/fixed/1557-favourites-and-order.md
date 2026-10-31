@@ -1,0 +1,1 @@
+- **Unfavouriting on one device sticks.** Syncing no longer stars again what was unstarred elsewhere, every front end writes favourites one way, and commands and playlist edits land in the order they were made.

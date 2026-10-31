@@ -19,6 +19,7 @@ import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferFigure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -225,12 +226,20 @@ class EngineMirror(deviceName: String) {
     suspend fun engine(): KoanEngine = opened.await()
 
     /**
-     * Run `block` against the engine off the main thread, without waiting for
-     * it. A failure is told to the person, never dropped: a call that may fail
-     * quietly catches its own.
+     * Run `block` against the engine without waiting for it. A failure is told
+     * to the person, never dropped: a call that may fail quietly catches its
+     * own.
+     *
+     * Started on the calling thread: an engine call joins the engine's command
+     * lane on its first poll, which happens here, before `launch` returns, so
+     * commands reach the lane in the order they were made. The block goes on
+     * on Default after its first suspension, so a block that waits on
+     * something before its command (a read, say) loses that place; name what
+     * the command acts on instead (`TrackSet`) and the engine reads it on the
+     * lane.
      */
     fun launch(block: suspend KoanEngine.() -> Unit) {
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 opened.await().block()
             } catch (e: CancellationException) {

@@ -658,8 +658,10 @@ impl QueryRoot {
         Ok(registry.list().into_iter().map(GqlJob::from).collect())
     }
 
-    /// Current configuration.
-    async fn config(&self) -> async_graphql::Result<GqlConfig> {
+    /// Current configuration. Admins only: it names the library's folders
+    /// and the server this one syncs from.
+    async fn config(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlConfig> {
+        super::require_role(ctx, koan_core::auth::Role::Admin)?;
         blocking(move || {
             let cfg = Config::cached();
             Ok(GqlConfig {
