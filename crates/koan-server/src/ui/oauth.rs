@@ -555,7 +555,7 @@ pub(super) async fn token(State(s): State<UiState>, Form(t): Form<TokenRequest>)
                     let pool = s.pool.clone();
                     let _ = tokio::task::spawn_blocking(move || {
                         let db = open(&pool)?;
-                        auth_queries::revoke_grant(&db.conn, &grant).ok()
+                        auth_queries::revoke_grant(&db.conn, &grant).logged()
                     })
                     .await;
                     log::warn!("an OAuth code was presented twice: revoked its grant");

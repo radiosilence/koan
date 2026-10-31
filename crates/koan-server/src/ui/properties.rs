@@ -87,7 +87,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
         .flatten();
     let uid = |kind, id: i64| {
         queries::uids_for(conn, kind, [id])
-            .ok()
+            .logged()
             .map(|mut m| m.remove(&id))
     };
     let track_uid = uid(UidKind::Track, t.id)?;

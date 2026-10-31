@@ -40,14 +40,20 @@ fn resolve_item_path(
             (p, state)
         }
         Some(queries::PlaybackSource::Remote(_)) => {
-            let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
-            if dest.exists() && is_cached_audio(&dest) {
-                if track.cached_path.as_deref() != Some(&*dest.to_string_lossy()) {
-                    found.push((track.id, dest.clone()));
+            let cache_dir = cfg.cache_dir();
+            match cache_paths_for_track(&cache_dir, track, album_date)
+                .find(|dest| dest.exists() && is_cached_audio(dest))
+            {
+                Some(dest) => {
+                    if track.cached_path.as_deref() != Some(&*dest.to_string_lossy()) {
+                        found.push((track.id, dest.clone()));
+                    }
+                    (dest, ItemState::Ready)
                 }
-                (dest, ItemState::Ready)
-            } else {
-                (dest, ItemState::Pending)
+                None => (
+                    cache_path_for_track(&cache_dir, track, album_date),
+                    ItemState::Pending,
+                ),
             }
         }
         _ => {

@@ -186,7 +186,7 @@ fn entry_fields(entry: &QueueEntry) -> Fields {
         None,
         &[],
     );
-    if !entry.album_artist.is_empty() && credits.differ() {
+    if !entry.album_artist.is_empty() && (entry.artist.is_empty() || credits.differ()) {
         out.push(("album artist", entry.album_artist.clone()));
     }
     out.push(("album", entry.album.clone()));

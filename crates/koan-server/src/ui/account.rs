@@ -232,7 +232,7 @@ pub(super) async fn revoke_key(
     let keys = blocking(move || {
         let db = open(&s.pool)?;
         api_keys::revoke_api_key(&db.conn, id, Some(user.user_id)).logged()?;
-        api_keys::list_api_keys(&db.conn, Some(user.user_id)).ok()
+        api_keys::list_api_keys(&db.conn, Some(user.user_id)).logged()
     })
     .await
     .unwrap_or_default();
@@ -294,7 +294,7 @@ pub(super) async fn revoke_app_password(
     let passwords = blocking(move || {
         let db = open(&s.pool)?;
         app_passwords::revoke_app_password(&db.conn, id, user.user_id).logged()?;
-        app_passwords::list_app_passwords(&db.conn, user.user_id).ok()
+        app_passwords::list_app_passwords(&db.conn, user.user_id).logged()
     })
     .await
     .unwrap_or_default();

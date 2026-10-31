@@ -712,7 +712,7 @@ struct ArtistsPage {
 
 fn artist_rows(s: &UiState, user: i64, b: &Browse) -> Option<Vec<queries::ArtistRow>> {
     let db = open(&s.pool)?;
-    queries::list_artists(&db.conn, &b.artists(user, shelves::now())).ok()
+    queries::list_artists(&db.conn, &b.artists(user, shelves::now())).logged()
 }
 
 pub(super) async fn artists(
@@ -873,7 +873,7 @@ pub(super) async fn playlists(
     let st = s.clone();
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        queries::list_playlists(&db.conn, user.user_id).ok()
+        queries::list_playlists(&db.conn, user.user_id).logged()
     })
     .await;
     let Some(lists) = found else {

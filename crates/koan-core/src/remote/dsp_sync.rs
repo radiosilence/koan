@@ -1010,7 +1010,9 @@ fn push(
         // Never synced from here, or synced and then deleted on the server
         // when it was kept here alone: sending it now is the edit.
         let edited_at = match synced.get(uid) {
-            Some(_) => edits.get(uid).map_or_else(now_ms, |e| e.edited_at),
+            Some(_) => edits
+                .get(uid)
+                .map_or_else(crate::clock::unix_ms, |e| e.edited_at),
             None => crate::clock::unix_ms(),
         };
         let saved = match remote.save(uid, edited_at, &local.doc.json()) {

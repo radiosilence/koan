@@ -473,13 +473,25 @@ pub fn hand_off(
     let start_at = kept.iter().position(|(n, _)| *n >= at).unwrap_or(0);
     // Silent here first, and the playhead read where it went silent: anything
     // heard while the command travels would be heard twice. The player answers
-    // once the fade is silent or the output has ended, and drops the reply
-    // only by stopping, so the wait ends either way.
+    // once the fade is silent or the output has ended; an output whose
+    // callback has stopped never reaches silence, so the wait is bounded at
+    // several fades' length rather than left to hold the link's thread.
+    const SILENCE_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
     let paused = state.playback_state() != PlaybackState::Playing;
     let (reply, silent) = crossbeam_channel::bounded(1);
     tx.send(PlayerCommand::PauseAndReport(reply))
         .map_err(|_| "the player has stopped".to_string())?;
-    let position_ms = silent.recv().unwrap_or_else(|_| state.position_ms());
+    let position_ms = match silent.recv_timeout(SILENCE_WAIT) {
+        Ok(at) => at,
+        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+            log::warn!(
+                "hand-off: the output did not fall silent within {SILENCE_WAIT:?}; \
+                 handing over from the playhead as it stands"
+            );
+            state.position_ms()
+        }
+        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => state.position_ms(),
+    };
     let position_ms = if kept.get(start_at).is_some_and(|(n, _)| *n == at) {
         position_ms
     } else {

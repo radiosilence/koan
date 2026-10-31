@@ -403,11 +403,7 @@ pub fn adopt_cached_files(db: &Database, cache_dir: &Path) -> Result<usize, DbEr
     let mut adopted = 0;
     for track in &tracks {
         let date = extras.get(&track.id).and_then(|e| e.album_date.as_deref());
-        // Downloads were once filed under the track artist; a file there is
-        // the same download, and is recorded where it lies.
-        let found = [&track.album_artist_name, &track.artist_name]
-            .into_iter()
-            .map(|artist| cache_path_under(cache_dir, artist, track, date))
+        let found = cache_paths_for_track(cache_dir, track, date)
             .find(|dest| orphans.contains(dest) && is_cached_audio(dest));
         if let Some(dest) = found {
             queries::set_cached_path(&tx, track.id, &dest.to_string_lossy())?;
@@ -452,6 +448,20 @@ pub fn cache_path_for_track(
         &track.album_artist_name
     };
     cache_path_under(cache_dir, artist, track, album_date)
+}
+
+/// Every place a download of `track` may be: where one goes now first, then
+/// under the track artist, where downloads made before the album artist
+/// filed them still lie. A copy at either is the same download.
+pub fn cache_paths_for_track<'a>(
+    cache_dir: &'a Path,
+    track: &'a queries::TrackRow,
+    album_date: Option<&'a str>,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    let current = cache_path_for_track(cache_dir, track, album_date);
+    let by_track_artist = cache_path_under(cache_dir, &track.artist_name, track, album_date);
+    let older = (by_track_artist != current).then_some(by_track_artist);
+    std::iter::once(current).chain(older)
 }
 
 fn cache_path_under(

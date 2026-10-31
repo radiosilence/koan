@@ -233,7 +233,11 @@ pub(crate) fn playlist_items_from_paths(
             }
         })
         .unwrap_or_default();
-    let ids: Vec<i64> = db_cache.values().map(|t| t.id).collect();
+    let ids: Vec<i64> = paths
+        .iter()
+        .filter_map(|p| db_cache.get(p.to_string_lossy().as_ref()))
+        .map(|t| t.id)
+        .collect();
     let extras = db
         .as_ref()
         .and_then(|db| queries::queue_item_extras(&db.conn, &ids).ok())
