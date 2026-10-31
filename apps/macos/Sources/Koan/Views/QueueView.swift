@@ -509,6 +509,10 @@ struct QueueView: View {
 
             JumpToPlayingButton()
 
+            #if !os(tvOS)
+            QueueDiceButton()
+            #endif
+
             KoanIconToggle(icon: Icon.album, label: "Group by album", isOn: $grouped)
 
             // Undo is a keyboard's idea of a control. The buttons exist to show
@@ -1075,6 +1079,51 @@ private struct JumpToPlayingButton: View {
         .accessibilityAddTraits(following ? .isSelected : [])
     }
 }
+
+/// Its own view because what the dice reads, the queue and what is playing,
+/// moves on every edit.
+#if !os(tvOS)
+private struct QueueDiceButton: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        DiceButton(
+            refusal: player.queueDiceRefusal,
+            help: "Shuffle the rest of the queue in place",
+            reset: player.queue.count,
+            shuffle: { player.shuffleQueue() },
+            undo: { player.undo() }
+        )
+    }
+}
+#endif
+
+    var body: some View {
+        let refusal = player.queueDiceRefusal
+        #if os(iOS)
+        if presses > 0 {
+            Button {
+                presses -= 1
+                player.undo()
+            } label: {
+                KoanIcon(Icon.undo).touchTarget()
+            }
+            .help("Undo the last shuffle")
+        }
+        #endif
+        Button {
+            #if os(iOS)
+            presses += 1
+            #endif
+            player.shuffleQueue()
+        } label: {
+            KoanIcon(Icon.reshuffle).touchTarget()
+        }
+        .disabled(refusal != nil)
+        .help(refusal ?? "Shuffle the rest of the queue in place")
+    }
+}
+#endif
 
 /// The playing row kept in view while following. Reads what is playing so the
 /// queue's own body does not, which on a long queue would regroup and diff

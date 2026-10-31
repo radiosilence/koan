@@ -356,13 +356,15 @@ struct PlaylistView: View {
     }
 
     private var shuffleButton: some View {
-        Button {
-            playlists.shuffle(id: playlistId)
-        } label: {
-            Label("Shuffle", koan: Icon.shuffle)
-        }
-        .help("Reorder the playlist itself, for good")
-        .disabled(entries.count < 2)
+        DiceButton(
+            refusal: !playlists.fillable(playlistId) ? "This playlist can't be edited here"
+                : entries.count < 2 ? "Nothing to shuffle" : nil,
+            help: "Shuffle the playlist's order, for good",
+            labelled: true,
+            reset: entries.count,
+            shuffle: { playlists.shuffle(id: playlistId) },
+            undo: { player.undo(playlist: playlistId) }
+        )
         .koanButton(.compact)
     }
 
