@@ -5,7 +5,8 @@ import Foundation
 ///
 /// Each folder is moved into the app's own temporary directory before it is
 /// imported, so a share is taken exactly once, and an import that stops to ask
-/// for a sample rate still has its files when the answer comes.
+/// for a sample rate still has its files when the answer comes. The folder is
+/// deleted once the import is done with it.
 @MainActor
 enum ShareInbox {
     static let group = "group.cc.blit.koan"
@@ -23,8 +24,11 @@ enum ShareInbox {
             guard (try? files.moveItem(at: share, to: taken)) != nil,
                   let contents = try? files.contentsOfDirectory(at: taken, includingPropertiesForKeys: nil),
                   !contents.isEmpty
-            else { continue }
-            dsp.importFiles(contents.sorted { $0.path < $1.path })
+            else {
+                try? files.removeItem(at: taken)
+                continue
+            }
+            dsp.importFiles(contents.sorted { $0.path < $1.path }, copy: taken)
         }
     }
 }
