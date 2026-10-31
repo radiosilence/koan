@@ -444,6 +444,16 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64
 /// this player exists to make. Dropping the watch unsubscribes.
 pub struct RateWatch {
     _guard: ListenerGuard,
+    /// Cleared on drop, under its lock: a call that read the rate before the
+    /// listener went cannot report it after, onto whatever device replaced
+    /// this one.
+    live: std::sync::Arc<parking_lot::Mutex<bool>>,
+}
+
+impl Drop for RateWatch {
+    fn drop(&mut self) {
+        *self.live.lock() = false;
+    }
 }
 
 /// Subscribe to nominal sample rate changes on a device.
@@ -451,13 +461,25 @@ pub fn watch_device_sample_rate(
     device_id: AudioDeviceID,
     on_change: Box<dyn Fn(f64) + Send + Sync>,
 ) -> Result<RateWatch> {
+    let live = std::sync::Arc::new(parking_lot::Mutex::new(true));
     let guard = ListenerGuard::add(
         device_id,
-        std::sync::Arc::new(move || {
-            if let Ok(rate) = get_device_sample_rate(device_id) {
-                on_change(rate);
+        std::sync::Arc::new({
+            let live = live.clone();
+            move || {
+                // Read before the lock: a HAL call is never made holding it.
+                let Ok(rate) = get_device_sample_rate(device_id) else {
+                    return;
+                };
+                let live = live.lock();
+                if *live {
+                    on_change(rate);
+                }
             }
         }),
     )?;
-    Ok(RateWatch { _guard: guard })
+    Ok(RateWatch {
+        _guard: guard,
+        live,
+    })
 }

@@ -351,11 +351,61 @@ fn send_report(db: &Database, report: PlaybackReport) {
     let Some(client) = remote_client() else {
         return;
     };
-    if let Err(e) = client.report_playback(&remote_id, report.state, report.position_ms) {
-        log::warn!(
-            "failed to report playback of track {} to remote: {e}",
-            report.track_id
-        );
+    reporter(Report {
+        client,
+        remote_id,
+        report,
+    });
+}
+
+struct Report {
+    client: std::sync::Arc<crate::remote::client::SubsonicClient>,
+    remote_id: String,
+    report: PlaybackReport,
+}
+
+/// Hand a report to the thread that sends them. The request blocks for as
+/// long as the server takes to answer, or to time out when it is gone, and
+/// the history writer records plays meanwhile. One report waits at most:
+/// a newer one replaces it, as only where playback is now matters.
+fn reporter(report: Report) {
+    static SLOT: std::sync::OnceLock<
+        Option<(
+            crossbeam_channel::Sender<Report>,
+            crossbeam_channel::Receiver<Report>,
+        )>,
+    > = std::sync::OnceLock::new();
+    let Some((tx, rx)) = SLOT.get_or_init(|| {
+        let (tx, rx) = crossbeam_channel::bounded::<Report>(1);
+        let jobs = rx.clone();
+        thread::Builder::new()
+            .name("koan-report".into())
+            .spawn(move || {
+                for Report {
+                    client,
+                    remote_id,
+                    report,
+                } in jobs
+                {
+                    if let Err(e) =
+                        client.report_playback(&remote_id, report.state, report.position_ms)
+                    {
+                        log::warn!(
+                            "failed to report playback of track {} to remote: {e}",
+                            report.track_id
+                        );
+                    }
+                }
+            })
+            .ok()
+            .map(|_| (tx, rx))
+    }) else {
+        return;
+    };
+    let mut report = report;
+    while let Err(crossbeam_channel::TrySendError::Full(back)) = tx.try_send(report) {
+        let _ = rx.try_recv();
+        report = back;
     }
 }
 
