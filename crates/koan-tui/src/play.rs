@@ -370,6 +370,12 @@ pub fn run_tui(
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
     let mut next_frame = Instant::now();
 
+    // The local player's queue and transfers go with the server this device
+    // leaves, before its library is forgotten.
+    let leaving = tx.clone();
+    koan_core::helpers::on_leaving_server(Some(Box::new(move || {
+        let _ = leaving.try_send(PlayerCommand::SignedOut);
+    })));
     let mut app = app::App::new(state, viz_snapshot, tx, target_fps);
     // Before anything reads the keyboard: the terminal answers on stdin.
     app.art.gfx = crate::cover_art::Gfx::detect(cfg.playback.art_graphics);
@@ -482,6 +488,7 @@ pub fn run_tui(
                 let _ = drained.recv_timeout(Duration::from_secs(1));
             }
             app.local_tx.send(PlayerCommand::Stop).ok();
+            koan_core::helpers::on_leaving_server(None);
             app.art.gfx.release_all();
             flush_deletes(&mut app);
             break;

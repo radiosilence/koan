@@ -1770,10 +1770,7 @@ impl App {
                 copy_to_clipboard(&text);
                 self.say("copied");
             }
-            Outcome::SignedOut => {
-                self.local_tx.send(PlayerCommand::SignedOut).ok();
-                self.say("signed out");
-            }
+            Outcome::SignedOut => self.say("signed out"),
         }
     }
 

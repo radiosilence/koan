@@ -55,6 +55,21 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
     Ok(())
 }
 
+/// What a front end that owns a player does when this device leaves a server:
+/// let go of the queue and transfers that were that server's.
+type OnLeave = Box<dyn Fn() + Send + Sync>;
+static ON_LEAVE: parking_lot::RwLock<Option<OnLeave>> = parking_lot::RwLock::new(None);
+
+/// Run `hook` each time this device leaves a server, by signing out or by
+/// signing in as another account: once the change is kept and before the
+/// server's library is forgotten, which on a large library takes seconds the
+/// queue should not be on screen for. Set by the front end that owns the
+/// player; `None` removes it. It runs with every sync held off, so it must not
+/// block.
+pub fn on_leaving_server(hook: Option<OnLeave>) {
+    *ON_LEAVE.write() = hook;
+}
+
 /// Stop the syncs of the server `old` is signed in to, write `change`, then
 /// forget that server's library. Forgotten only once the change is kept, so
 /// a write that fails leaves the server and its library as they were; the
@@ -65,6 +80,9 @@ fn leave(old: &Config, change: impl FnOnce(&mut Config)) -> Result<(), crate::co
     }
     let _syncs = crate::helpers::hold_syncs();
     Config::persist(change)?;
+    if let Some(hook) = ON_LEAVE.read().as_ref() {
+        hook();
+    }
     let forgotten = crate::db::pool::shared()
         .get()
         .and_then(|db| crate::helpers::forget_server(&db, old));
@@ -238,6 +256,8 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
         retire_push(&before);
         leave(&before, keep)?;
     }
+    // Left earlier, by signing out or in elsewhere: its syncs may run again.
+    crate::remote::sync::resume(url);
     // Whatever account was here before, its devices are not this one's, and
     // the link it had open closes, to open again as this one.
     crate::remote::proof::forget();
@@ -674,6 +694,51 @@ mod refusal_tests {
         assert!(cfg.remote.api_key.is_empty());
         assert_eq!(remote_credential(&cfg).map(|_| ()), None);
         assert!(!crate::remote::offline::manual());
+    }
+
+    /// The front end hears that the server is left once the config says so,
+    /// and not at all when that write fails.
+    #[test]
+    fn leaving_tells_the_front_end_once_the_change_is_kept() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        let signed_in = |c: &mut Config| {
+            c.remote.enabled = true;
+            c.remote.url = "https://music.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.api_key = "key".into();
+        };
+        Config::persist(signed_in).unwrap();
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let told = heard.clone();
+        on_leaving_server(Some(Box::new(move || {
+            told.lock()
+                .unwrap()
+                .push(Config::load().unwrap().remote.enabled);
+        })));
+
+        sign_out().unwrap();
+        assert_eq!(
+            *heard.lock().unwrap(),
+            [false],
+            "heard once, after the write"
+        );
+
+        use std::os::unix::fs::PermissionsExt;
+        Config::persist(signed_in).unwrap();
+        heard.lock().unwrap().clear();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = sign_out();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        on_leaving_server(None);
+        assert!(failed.is_err(), "the write was refused");
+        assert!(
+            heard.lock().unwrap().is_empty(),
+            "not heard when nothing was left"
+        );
     }
 
     #[test]

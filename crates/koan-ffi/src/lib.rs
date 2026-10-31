@@ -4555,9 +4555,6 @@ impl KoanEngine {
             koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
-            // This device's own queue, never a controlled device's. A player
-            // that has stopped has nothing left to clear.
-            let _ = self.send_local(PlayerCommand::SignedOut);
             self.bump_library();
             Ok(())
         })
@@ -5946,6 +5943,12 @@ impl KoanEngine {
         });
         engine.spawn_watcher();
         engine.spawn_figures();
+        // This device's own queue and transfers go with the server it leaves,
+        // before its library is forgotten.
+        let leaving = engine.tx.clone();
+        koan_core::helpers::on_leaving_server(Some(Box::new(move || {
+            let _ = leaving.try_send(PlayerCommand::SignedOut);
+        })));
         // A koan server this app syncs from can then tell it what to play, and
         // so can this person's other devices and anyone's on the network.
         let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
@@ -6167,13 +6170,12 @@ impl KoanEngine {
     }
 
     /// Run a sign-in. One that replaced the library with another server's
-    /// (`helpers::forget_server`) lets go of the queue and transfers from the
-    /// last server, as signing out does.
+    /// (`helpers::forget_server`) has the library asked again; the queue and
+    /// transfers from the last server went as it left (`on_leaving_server`).
     fn signing_in<E>(&self, sign_in: impl FnOnce() -> Result<(), E>) -> Result<(), E> {
         let replaced = koan_core::helpers::libraries_replaced();
         sign_in()?;
         if koan_core::helpers::libraries_replaced() != replaced {
-            let _ = self.send_local(PlayerCommand::SignedOut);
             self.bump_library();
         }
         Ok(())
