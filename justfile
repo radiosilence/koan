@@ -61,14 +61,15 @@ js:
 
 # The experimental web client (crates/koan-web) into target/koan-web, for
 # `KOAN_WEB_CLIENT_DIR=target/koan-web koan --headless` to serve at /client/. Its
-# threads share one memory, which needs std rebuilt with atomics: nightly.
+# threads share one memory, which needs std rebuilt with atomics: nightly,
+# pinned because build-std and the TLS link arguments change between them.
 # The memory's maximum is reserved up front, so it stays modest.
 web-client:
     RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
         -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=536870912 \
         -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
         -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base" \
-        cargo +nightly build -p koan-web --release --target wasm32-unknown-unknown \
+        cargo +nightly-2026-10-24 build -p koan-web --release --target wasm32-unknown-unknown \
         -Z build-std=std,panic_abort --target-dir target/koan-web-build
     wasm-bindgen --target web --out-dir target/koan-web \
         target/koan-web-build/wasm32-unknown-unknown/release/koan_web.wasm

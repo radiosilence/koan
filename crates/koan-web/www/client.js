@@ -13,6 +13,7 @@ let state = "idle";
 let prepared = null;
 let ctx = null;
 let decoding = false;
+let gaps = 0;
 
 function set(next, text) {
   state = next;
@@ -68,9 +69,14 @@ async function start(context, channels, resumed) {
     processorOptions: { module, memory, consumer, scratch, scratchLen, channels },
   });
   node.onprocessorerror = () => end("The output failed.");
-  node.port.onmessage = () => {
+  node.port.onmessage = ({ data }) => {
+    if (data.gaps !== undefined) {
+      gaps = data.gaps;
+      return;
+    }
     if (ctx !== context || state !== "starting") return;
     decoding = true;
+    gaps = 0;
     worker.postMessage({ type: "run" });
     set("playing", `Playing ${describe(prepared.format)}`);
   };
@@ -86,7 +92,7 @@ worker.onmessage = ({ data }) => {
       break;
     case "done":
       decoding = false;
-      if (state === "playing") end("Finished.", { drain: true });
+      if (state === "playing") end(`Finished, with ${gaps} gaps in the sound.`, { drain: true });
       else free();
       break;
     case "freed":

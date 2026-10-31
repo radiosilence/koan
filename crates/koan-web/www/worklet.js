@@ -15,6 +15,11 @@ class KoanOutput extends AudioWorkletProcessor {
     this.scratchLen = o.scratchLen;
     this.channels = o.channels;
     this.view = new Float32Array(o.memory.buffer, o.scratch, o.scratchLen);
+    // Gaps: a quantum the ring could not fill, then sound again. The end of
+    // the track runs short too, and is not one.
+    this.started = false;
+    this.short = false;
+    this.gaps = 0;
     this.port.postMessage("ready");
   }
 
@@ -23,6 +28,12 @@ class KoanOutput extends AudioWorkletProcessor {
     const frames = out[0].length;
     const channels = this.channels;
     const got = render(this.consumer, this.scratch, Math.min(frames * channels, this.scratchLen), channels) / channels;
+    if (got > 0 && this.short) {
+      this.gaps++;
+      this.port.postMessage({ gaps: this.gaps });
+    }
+    if (got > 0) this.started = true;
+    this.short = this.started && got < frames;
     const view = this.view;
     for (let c = 0; c < channels; c++) {
       const ch = out[c];

@@ -30,7 +30,8 @@ just hooks
 a koan device (#1454): the decoder in a worker, heard through an AudioWorklet.
 The two share one wasm memory, which needs std rebuilt with atomics, so it
 builds on nightly
-(`rustup toolchain install nightly --component rust-src`):
+(`rustup toolchain install nightly-2026-10-24 --component rust-src`, the one
+`just web-client` names):
 
 ```bash
 just web-client
