@@ -56,7 +56,7 @@ use crate::share::{asset, blocking, not_found};
 static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         "default-src 'none'; script-src 'self' 'unsafe-eval' {}; style-src 'self'; font-src 'self'; \
-         img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; \
+         img-src 'self'; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; \
          frame-ancestors 'none'",
         ASSETS.imports.csp
     )

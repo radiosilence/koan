@@ -125,7 +125,7 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
+The server answers `http://host:4000/` with a browser UI: the library, search, a play queue, playlists and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved. Media keys, headphone buttons and the system's now-playing controls drive it. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
 - **Albums, artists and tracks** sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the apps offer, so a filtered view can be bookmarked or sent.
 - **Playlists** are the account's own and anyone's public ones, played or queued like an album. They are edited from the apps.

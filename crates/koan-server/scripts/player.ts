@@ -8,8 +8,10 @@
 // Decoded audio is scheduled on the AudioContext clock but heard through a
 // media element (a MediaStream destination played by <audio>): iOS mutes Web
 // Audio with the ring/silent switch and stops it in the background, and does
-// neither to a media element. Where MediaStream output is missing, the graph
-// plays to the context's own destination.
+// neither to a media element. Only WebKit gives a MediaStream element a media
+// session, though, and without one media keys and the system's controls never
+// reach the page. Elsewhere the graph plays to the context's own destination
+// and the same element loops near-silence beside it, to hold the session.
 //
 // A track is { src, dur (seconds), title, artist, album, cover }; any other
 // fields ride along untouched.
@@ -34,6 +36,26 @@ const LONG = 900; // seconds
 
 const decodable = (t: Track | undefined) => t && t.dur > 0 && t.dur <= LONG;
 
+// Every iOS browser is WebKit and reports Apple as its vendor.
+const webkit = navigator.vendor === "Apple Computer, Inc.";
+
+// Six seconds, since Chrome treats anything under five as a sound effect
+// rather than media, and a small constant offset rather than zero: Firefox
+// gives an element a media session only once it hears something, and an
+// offset is inaudible, survives resampling and loops without a seam.
+let hushUrl: string | null = null;
+function hush() {
+  if (hushUrl) return hushUrl;
+  const rate = 8000, n = rate * 6, v = new DataView(new ArrayBuffer(44 + n * 2));
+  const ascii = (at: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(at + i, s.charCodeAt(i)); };
+  ascii(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); ascii(8, "WAVEfmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  ascii(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, 8, true);
+  return hushUrl = URL.createObjectURL(new Blob([v.buffer], { type: "audio/wav" }));
+}
+
 export class Player<T extends Track> {
   #changed: (player: Player<T>) => void;
   #renew: (() => Promise<boolean>) | null;
@@ -52,7 +74,7 @@ export class Player<T extends Track> {
   #buffers = new Map<string, Promise<AudioBuffer | null>>(); // by src
   #el = new Audio();        // stream mode
   #dest: MediaStreamAudioDestinationNode | null = null; // MediaStream the graph plays into
-  #out = new Audio();       // what is heard in buffer mode
+  #out = new Audio();       // what is heard in buffer mode, or what holds its media session
   #elUnlocked = false;
 
   constructor({ onChange, renew }: Options<T> = {}) {
@@ -99,12 +121,13 @@ export class Player<T extends Track> {
     if (navigator.audioSession) { try { navigator.audioSession.type = "playback"; } catch {} }
     if (!this.#ctx && window.AudioContext) this.#ctx = new AudioContext();
     const ctx = this.#ctx;
-    if (ctx && !this.#dest && ctx.createMediaStreamDestination) {
+    if (ctx && webkit && !this.#dest && ctx.createMediaStreamDestination) {
       try { this.#dest = ctx.createMediaStreamDestination(); this.#out.srcObject = this.#dest.stream; } catch { this.#dest = null; }
     }
+    if (!this.#dest && !this.#out.src) { this.#out.src = hush(); this.#out.loop = true; }
     if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
     // Started inside the tap, like the context, so iOS lets it run from here on.
-    if (this.#dest && t) this.#out.play().catch(() => {});
+    if (t) this.#hear();
     // The streaming element needs the same blessing: once started in a gesture
     // it may start again later, after a fetch or at a track change.
     if (!this.#elUnlocked && t) {
@@ -114,6 +137,8 @@ export class Player<T extends Track> {
       this.#el.play().then(() => { if (this.#mode !== "stream") this.#el.pause(); }).catch(() => {});
     }
   }
+
+  #hear() { this.#out.play().catch(() => {}); }
 
   #buffer(i: number) {
     const t = this.#queue[i], ctx = this.#ctx;
@@ -221,7 +246,7 @@ export class Player<T extends Track> {
     if (g !== this.#gen) return;
     if (ctx && buf) {
       this.#mode = "buffer";
-      if (this.#dest) this.#out.play().catch(() => {});
+      this.#hear();
       if (ctx.state !== "running") await ctx.resume();
       const at = ctx.currentTime + 0.03;
       const source = this.#startBuffer(ctx, buf, from, at);
@@ -266,7 +291,7 @@ export class Player<T extends Track> {
       if (this.#mode === "buffer") { this.#out.pause(); await this.#ctx?.suspend(); } else this.#el.pause();
     } else {
       this.#playing = true;
-      if (this.#mode === "buffer") { if (this.#dest) this.#out.play().catch(() => {}); await this.#ctx?.resume(); } else await this.#el.play().catch(() => {});
+      if (this.#mode === "buffer") { this.#hear(); await this.#ctx?.resume(); } else { this.#out.pause(); await this.#el.play().catch(() => {}); }
     }
     this.#notify();
   }
@@ -274,6 +299,7 @@ export class Player<T extends Track> {
   // Load a queue without playing it: a restored session, or the share page.
   set(tracks: T[], i = -1, from = 0) {
     this.#stop();
+    this.#out.pause();
     this.#queue = tracks.slice();
     this.#cur = i < this.#queue.length ? i : -1;
     this.#resumeAt = this.#cur >= 0 ? from : 0;
@@ -315,7 +341,7 @@ export class Player<T extends Track> {
     this.#notify();
   }
 
-  clear() { this.#stop(); this.#queue = []; this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); }
+  clear() { this.#stop(); this.#out.pause(); this.#queue = []; this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); }
 
   next() { this.#wake(this.#queue[this.#cur + 1]); if (this.#cur + 1 < this.#queue.length) this.#go(this.#cur + 1, 0); }
 

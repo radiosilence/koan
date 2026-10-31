@@ -1,0 +1,1 @@
+- **Media keys work in the web UI on Chrome and Firefox.** The browser player now holds a media session there, so media keys, headphone buttons and the system's now-playing controls reach it for every track, not only those over 15 minutes.

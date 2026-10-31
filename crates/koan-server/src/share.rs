@@ -34,7 +34,7 @@ use crate::html::{Html, Render};
 static PAGE_CSP: LazyLock<HeaderValue> = LazyLock::new(|| {
     let csp = format!(
         "default-src 'none'; script-src 'self' {}; style-src 'self'; font-src 'self'; img-src 'self'; \
-         media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+         media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         SHARE_IMPORTS.csp
     );
     HeaderValue::from_str(&csp).expect("the CSP is ASCII")
