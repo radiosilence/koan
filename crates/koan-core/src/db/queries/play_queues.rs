@@ -24,13 +24,6 @@ pub struct PlayQueue {
     pub changed_by: String,
 }
 
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
-
 /// Replace `user`'s play queue. `current` indexes `track_ids`; an empty list
 /// clears the queue.
 pub fn save_play_queue(
@@ -70,7 +63,7 @@ pub fn save_play_queue(
         user,
         current.map(|c| c as i64),
         position_ms.max(0),
-        now(),
+        crate::clock::unix_secs(),
         changed_by
     ])?;
     tx.commit()

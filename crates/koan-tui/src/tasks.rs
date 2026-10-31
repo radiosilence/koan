@@ -220,7 +220,7 @@ pub fn clear_cache(state: &koan_core::player::state::SharedPlayerState) -> Strin
     let Ok(db) = pool::shared().get() else {
         return "the library could not be opened".into();
     };
-    let cleared = helpers::clear_download_cache(&db, &Config::load().unwrap_or_default());
+    let cleared = helpers::clear_download_cache(&db, &Config::cached());
     helpers::requeue_cleared_downloads(state);
     format!(
         "freed {} MB across {} files",

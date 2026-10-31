@@ -2139,14 +2139,9 @@ impl Player {
         self.sleep = timer.map(|timer| match timer {
             SleepTimer::After { minutes } => {
                 let after = std::time::Duration::from_secs(u64::from(minutes) * 60);
-                let unix_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    + after;
+                let unix_ms = crate::clock::unix_ms() as u64 + after.as_millis() as u64;
                 SleepSet {
-                    sleep: Sleep::At {
-                        unix_ms: unix_ms.as_millis() as u64,
-                    },
+                    sleep: Sleep::At { unix_ms },
                     at: Some(std::time::Instant::now() + after),
                     fade: Some(sleep::fade_length(minutes)),
                 }
@@ -4047,10 +4042,7 @@ mod tests {
         let Some(Sleep::At { unix_ms }) = player.shared_state.sleep() else {
             panic!("published as a time");
         };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::clock::unix_ms() as u64;
         assert!(unix_ms.abs_diff(now + 30 * 60_000) < 5_000);
         let at = player.sleep.and_then(|s| s.at).unwrap();
         assert!(player.next_wake().is_some_and(|w| w <= at), "woken for it");

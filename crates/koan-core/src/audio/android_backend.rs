@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 
 use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
 use super::bit_perfect::{self, Encoding, MixerFormat};
-use super::fade::{FadeControl, Fader};
+use super::fade::{FadeControl, Fader, render_from_ring, take_lead_in};
 
 /// The rate Android's mixer usually runs at, for when no app has said.
 const USUAL_MIXER_RATE: u32 = 48000;
@@ -471,7 +471,9 @@ unsafe extern "C" fn render(
         Ordering::Relaxed,
     );
 
-    if !cb.running.load(Ordering::Acquire) || cb.leading_in(frames.max(0) as u64) {
+    if !cb.running.load(Ordering::Acquire)
+        || take_lead_in(&cb.lead_in, &mut cb.fader, frames.max(0) as u64)
+    {
         // Every encoding's zero is all-zero bytes.
         out.fill(0);
         cb.pace.record(cb.samples_played.load(Ordering::Relaxed), 0);
@@ -485,24 +487,15 @@ unsafe extern "C" fn render(
         if want == 0 {
             break;
         }
-        let take = cb.consumer.slots().min(cb.fader.readable(want, channels));
-        let take = take - take % channels;
         let scratch = &mut cb.scratch[..want];
-        let mut got = 0;
-        if take > 0
-            && let Ok(chunk) = cb.consumer.read_chunk(take)
-        {
-            let (first, second) = chunk.as_slices();
-            scratch[..first.len()].copy_from_slice(first);
-            scratch[first.len()..take].copy_from_slice(second);
-            chunk.commit_all();
-            cb.samples_played.fetch_add(take as u64, Ordering::AcqRel);
-            cb.fader.apply(&mut scratch[..take], channels);
-            got = take;
-            taken += take;
-        }
-        // Silence past what the ring had: an underrun, or a fade's end.
-        scratch[got..].fill(0.0);
+        let got = render_from_ring(
+            scratch,
+            &mut cb.consumer,
+            &mut cb.fader,
+            channels,
+            &cb.samples_played,
+        );
+        taken += got;
         bit_perfect::encode(
             scratch,
             cb.encoding,
@@ -517,31 +510,6 @@ unsafe extern "C" fn render(
     cb.pace
         .record(cb.samples_played.load(Ordering::Relaxed), taken as u64);
     AAUDIO_CALLBACK_RESULT_CONTINUE
-}
-
-impl Callback {
-    /// Whether this callback plays lead-in silence: nothing read from the
-    /// ring and nothing counted as played, so the playhead waits with the
-    /// device. Taken with a compare-exchange, so a `fade_in` clearing it in
-    /// between is not overwritten with what was left.
-    fn leading_in(&mut self, frames: u64) -> bool {
-        let mut left = self.lead_in.load(Ordering::Relaxed);
-        while left > 0 {
-            match self.lead_in.compare_exchange_weak(
-                left,
-                left.saturating_sub(frames),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.fader.hold();
-                    return true;
-                }
-                Err(now) => left = now,
-            }
-        }
-        false
-    }
 }
 
 /// AAudio's stream errors, on a thread of its own rather than the render

@@ -33,11 +33,7 @@ pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
             return Vec::new();
         }
     };
-    let window = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / MAX_AGE_SECS;
+    let window = koan_core::clock::unix_secs() as u64 / MAX_AGE_SECS;
     let offline = koan_core::remote::offline::active();
     let version = (
         queries::library_fingerprint(&db.conn).unwrap_or_default() ^ window,

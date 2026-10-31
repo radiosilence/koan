@@ -24,8 +24,6 @@
 //! A peer that proves nothing, because it is older, signed out, or on another
 //! server, is classed as it always was.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use base64::Engine as _;
 use parking_lot::Mutex;
 use ring::rand::SecureRandom as _;
@@ -367,13 +365,6 @@ fn kept_path() -> std::path::PathBuf {
     crate::config::config_dir().join("device-keys.json")
 }
 
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or_default()
-}
-
 /// Keep the key list the server just sent to the link signed in as
 /// `account`, replacing the last whole: a key revoked is a key no longer
 /// listed. Tagged with the link's account, not whoever is signed in now, so a
@@ -382,7 +373,7 @@ fn now() -> i64 {
 pub fn keep(keys: Vec<LinkDeviceKey>, account: Option<String>) {
     let kept = Kept {
         account,
-        at: now(),
+        at: crate::clock::unix_secs(),
         keys,
     };
     if let Ok(json) = serde_json::to_string(&kept) {
@@ -404,7 +395,7 @@ fn kept() -> Vec<LinkDeviceKey> {
         return Vec::new();
     };
     let account = account_of(&Config::cached());
-    trusted(kept, account.as_deref(), now())
+    trusted(kept, account.as_deref(), crate::clock::unix_secs())
 }
 
 fn trusted(kept: &Kept, account: Option<&str>, now: i64) -> Vec<LinkDeviceKey> {

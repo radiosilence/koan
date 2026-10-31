@@ -2941,8 +2941,7 @@ impl KoanEngine {
     // --- DSP ---------------------------------------------------------------
 
     pub async fn dsp_overview(self: Arc<Self>) -> DspOverview {
-        let device = self.dsp_device();
-        self.dsp_overview_for(device).await
+        self.dsp_overview_for(None).await
     }
 
     /// The profiles, and what `device` plays: the output in use with `None`.
@@ -3619,7 +3618,8 @@ impl KoanEngine {
     /// What the output in use plays: its correction, and the tuning on top
     /// adjusted to the correction's target.
     pub async fn dsp_output_response(self: Arc<Self>, rate: u32) -> Option<DspResponse> {
-        let device = self.dsp_device()?;
+        let engine = self.clone();
+        let device = offload::offload(move || engine.dsp_device()).await?;
         self.dsp_output_response_for(device, rate).await
     }
 
@@ -4097,7 +4097,7 @@ impl KoanEngine {
     /// The whole configuration, as the settings window shows it.
     pub async fn settings(self: Arc<Self>) -> Settings {
         offload::offload(move || {
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             let cache_dir = cfg.cache_dir();
             let cache_bytes = koan_core::helpers::cache_bytes();
 
@@ -4717,7 +4717,7 @@ impl KoanEngine {
     pub async fn clear_download_cache(self: Arc<Self>) -> Result<CacheCleared, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
             koan_core::helpers::requeue_cleared_downloads(&self.state);
             self.bump_library();
@@ -4782,7 +4782,7 @@ impl KoanEngine {
     pub async fn sync_remote(self: Arc<Self>) -> Result<SyncSummary, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             let client = koan_core::helpers::subsonic_client(&cfg).ok_or_else(|| {
                 KoanError::BadArgument {
                     message: "no remote server configured".into(),
@@ -4842,7 +4842,7 @@ impl KoanEngine {
     ) -> Result<Share, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             koan_core::helpers::create_share(
                 &db,
                 queries::LOCAL_USER,
@@ -4906,7 +4906,8 @@ impl KoanEngine {
     /// rather than offering somewhere else to define them.
     pub async fn organize_patterns(self: Arc<Self>) -> Vec<OrganizePattern> {
         offload::offload(move || {
-            let cfg = Config::load().unwrap_or_default().organize;
+            let cfg = Config::cached();
+            let cfg = &cfg.organize;
             let mut patterns: Vec<OrganizePattern> = cfg
                 .patterns
                 .iter()
@@ -4976,7 +4977,7 @@ impl KoanEngine {
 
     /// Whether cover art, cue sheets and logs travel with the music.
     pub async fn organize_moves_ancillary(self: Arc<Self>) -> bool {
-        offload::offload(move || Config::load().unwrap_or_default().organize.move_ancillary).await
+        offload::offload(move || Config::cached().organize.move_ancillary).await
     }
 
     /// Remember the choice. Written to `config.toml`, so the CLI and TUI
@@ -5788,23 +5789,8 @@ impl KoanEngine {
     /// next play. Only the player may mutate it, so this goes through the
     /// command channel like every other queue change.
     fn follow_moved_files(&self, result: &koan_core::organize::OrganizeResult) {
-        let moved: std::collections::HashMap<&Path, &Path> = result
-            .moves()
-            .filter_map(|e| e.to.as_deref().map(|to| (e.from.as_path(), to)))
-            .collect();
-        if moved.is_empty() {
-            return;
-        }
-
         let (items, _) = self.state.snapshot_playlist();
-        let updates: Vec<(QueueItemId, PathBuf)> = items
-            .iter()
-            .filter_map(|item| {
-                moved
-                    .get(item.path.as_path())
-                    .map(|to| (item.id, to.to_path_buf()))
-            })
-            .collect();
+        let updates = result.queue_path_updates(items.iter().map(|i| (i.id, i.path.as_path())));
         if !updates.is_empty() {
             let _ = self.send_local(PlayerCommand::UpdatePaths(updates));
         }
@@ -5847,7 +5833,7 @@ impl KoanEngine {
         reporter: Option<Arc<dyn ProgressReporter>>,
     ) -> Result<ScanSummary, KoanError> {
         let db = self.db()?;
-        let cfg = Config::load().unwrap_or_default();
+        let cfg = Config::cached();
 
         let mut summary = ScanSummary {
             added: 0,
@@ -5919,7 +5905,7 @@ impl KoanEngine {
 
         // Before anything can start a download of its own, so this only ever
         // sees files left by a previous run.
-        let cfg = Config::load().unwrap_or_default();
+        let cfg = Config::cached();
         koan_core::helpers::sweep_partial_downloads(&cfg);
         // Before the session is restored, so the queue finds its downloads.
         if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
@@ -6781,10 +6767,8 @@ fn account_invite(
 }
 
 fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
-    koan_core::helpers::subsonic_client(&Config::load().unwrap_or_default()).ok_or_else(|| {
-        KoanError::BadArgument {
-            message: "no remote server configured".into(),
-        }
+    koan_core::helpers::subsonic_client(&Config::cached()).ok_or_else(|| KoanError::BadArgument {
+        message: "no remote server configured".into(),
     })
 }
 

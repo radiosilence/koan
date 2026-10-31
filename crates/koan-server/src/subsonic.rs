@@ -141,10 +141,7 @@ impl AppState {
     fn last_modified(&self, db: &Database) -> Result<i64, SubsonicError> {
         let internal =
             |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let window = now.as_secs() / 300;
+        let window = koan_core::clock::unix_secs() as u64 / 300;
         let fingerprint = queries::library_fingerprint(&db.conn).map_err(internal)?;
         let held = *self.last_modified.lock();
         if let Some(h) = held
@@ -3651,10 +3648,7 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
 
             // `time` is when the client played it, which can be well in the past
             // after an offline session.
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
+            let now = koan_core::clock::unix_secs();
             let times: Vec<Option<i64>> = params.all("time").map(|t| t.parse().ok()).collect();
             let plays: Vec<(i64, i64)> = track_ids
                 .iter()
@@ -4962,8 +4956,7 @@ fn share_node(
 /// Where share links point; sharing is refused without it rather than
 /// handing out an address that may not be reachable.
 fn share_base() -> Result<String, SubsonicError> {
-    Config::load()
-        .unwrap_or_default()
+    Config::cached()
         .server_url()
         .ok_or_else(|| SubsonicError::internal("server.url is not set on this server"))
 }
@@ -6679,7 +6672,7 @@ pub fn subsonic_router(
     covers: Arc<crate::covers::Covers>,
     users: Arc<PasswordVerifier>,
 ) -> Option<axum::Router> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
 
     if !cfg.subsonic.enabled {
         return None;

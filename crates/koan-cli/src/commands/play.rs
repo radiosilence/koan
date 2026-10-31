@@ -279,7 +279,7 @@ pub fn cmd_play_remote(server_url: &str) {
                 reason
             );
             if !client.has_session() {
-                let cfg = config::Config::load().unwrap_or_default();
+                let cfg = config::Config::cached();
                 if !cfg.auth.server.is_empty() {
                     eprintln!("the stored sign-in is for {}", cfg.auth.server);
                 }

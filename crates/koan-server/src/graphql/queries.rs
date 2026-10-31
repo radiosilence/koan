@@ -388,10 +388,8 @@ impl QueryRoot {
         super::require_role(ctx, koan_core::auth::Role::User)?;
         let owner = super::share_owner(ctx);
         with_db(ctx, move |db| {
-            let cfg = Config::load().unwrap_or_default();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64);
+            let cfg = Config::cached();
+            let now = koan_core::clock::unix_secs();
             let list = queries::shares::list_shares(&db.conn, owner)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(list
@@ -665,7 +663,7 @@ impl QueryRoot {
     /// Current configuration.
     async fn config(&self) -> async_graphql::Result<GqlConfig> {
         blocking(move || {
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             Ok(GqlConfig {
                 library_folders: cfg
                     .library

@@ -67,13 +67,13 @@ impl GraphQLClient {
     /// server. Rotated refresh tokens are written back through `Config::persist`.
     pub fn from_config(server_url: &str) -> Self {
         let client = Self::new(server_url);
-        let cfg = Config::load().unwrap_or_default();
+        let cfg = Config::cached();
         if cfg.auth.refresh_token.is_empty()
             || cfg.auth.server.trim_end_matches('/') != client.server_url()
         {
             return client;
         }
-        client.with_session(cfg.auth.refresh_token, |token| {
+        client.with_session(cfg.auth.refresh_token.clone(), |token| {
             if let Err(e) = Config::persist(|cfg| cfg.auth.refresh_token = token.to_owned()) {
                 log::warn!("could not store the rotated refresh token: {e}");
             }

@@ -456,14 +456,16 @@ mod write_transaction_tests {
         drop(tx);
 
         let path_for_writer = path.clone();
+        let (holding, held) = std::sync::mpsc::channel();
         let writer = std::thread::spawn(move || {
             let conn = open(&path_for_writer);
             conn.execute_batch("BEGIN IMMEDIATE; INSERT INTO t VALUES (3)")
                 .unwrap();
+            holding.send(()).unwrap();
             std::thread::sleep(Duration::from_millis(200));
             conn.execute_batch("COMMIT").unwrap();
         });
-        std::thread::sleep(Duration::from_millis(50));
+        held.recv().unwrap();
         let conn = open(&path);
         let tx = super::write_transaction(&conn).unwrap();
         let _: i64 = tx
