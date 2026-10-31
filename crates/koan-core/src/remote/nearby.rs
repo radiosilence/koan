@@ -1537,9 +1537,12 @@ fn connect(addr: &str) -> Result<tungstenite::WebSocket<TcpStream>, String> {
                     .set_read_timeout(Some(Duration::from_secs(10)))
                     .map_err(|e| e.to_string())?;
                 let url = format!("ws://{host_port}/");
-                let (socket, _) =
-                    tungstenite::client_with_config(url.as_str(), stream, Some(socket_config()))
-                        .map_err(|e| e.to_string())?;
+                let (socket, _) = tungstenite::client::client_with_config(
+                    url.as_str(),
+                    stream,
+                    Some(socket_config()),
+                )
+                .map_err(|e| e.to_string())?;
                 socket
                     .get_ref()
                     .set_nonblocking(true)
@@ -3007,6 +3010,9 @@ mod tests {
             reports: None,
             pending: Vec::new(),
             listed: None,
+            since: Instant::now(),
+            stranger: None,
+            crowded: false,
         }
     }
 
