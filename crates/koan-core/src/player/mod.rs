@@ -136,6 +136,11 @@ fn lengthless_mode_for(path: &Path) -> streaming::ProbeMode {
 /// The player controller. Owns the audio pipeline and processes commands.
 pub struct Player {
     shared_state: Arc<SharedPlayerState>,
+    /// The download the latest stream probe reads from. A probe parked at
+    /// its write head notices the cursor has moved on only when woken, so the
+    /// next probe wakes it, rather than each skip leaving one waiting out
+    /// the stall limit.
+    probing: parking_lot::Mutex<Option<Arc<crate::remote::downloads::ByteFeed>>>,
     commands: CommandChannel,
     /// What the player is doing with the track under the cursor.
     transport: Transport,
@@ -406,6 +411,7 @@ impl Player {
             viz_snapshot,
             _viz_analyzer: viz_analyzer,
             undo_stack: UndoStack::new(),
+            probing: Default::default(),
             batch_buffer: None,
             output_device_name: cfg.playback.output_device.clone(),
             backend: crate::audio::platform_backend(),
@@ -1253,6 +1259,9 @@ impl Player {
         bytes_written: Arc<crate::remote::downloads::ByteFeed>,
         total: u64,
     ) {
+        if let Some(previous) = self.probing.lock().replace(bytes_written.clone()) {
+            previous.done();
+        }
         let path = path.to_path_buf();
         let tx = self.commands.tx.clone();
         let hint = hint_for(&path);
