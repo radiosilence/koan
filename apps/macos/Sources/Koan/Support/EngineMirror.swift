@@ -64,6 +64,7 @@ final class EngineMirror: Observable {
     private var _queuedByPlaylistEntry: [Int64: QueueItem] = [:]
     private var _lock: QueueLock?
     private var _transfers: [Transfer] = []
+    private var _arrivingByAlbum: [Int64: [Int64]] = [:]
     private var _figures: [Int64: TransferFigure] = [:]
     private var _libraryVersion: UInt64 = 0
     private var _historyVersion: UInt64 = 0
@@ -275,6 +276,14 @@ final class EngineMirror: Observable {
         return _transfers
     }
 
+    /// The tracks still to settle in the download store, by record. Grouped
+    /// once as the transfers arrive, not once per tile that asks. Observed as
+    /// `transfers`.
+    var arrivingByAlbum: [Int64: [Int64]] {
+        access(\.transfers)
+        return _arrivingByAlbum
+    }
+
     /// Bumped whenever the library's rows change — a scan, a sync, an import,
     /// an organize, a playlist edit, a download landing.
     ///
@@ -419,7 +428,14 @@ final class EngineMirror: Observable {
         case .lock(let lock):
             mutate(\.lock) { _lock = lock }
         case .transfers(let transfers):
-            mutate(\.transfers) { _transfers = transfers }
+            mutate(\.transfers) {
+                _transfers = transfers
+                var arriving: [Int64: [Int64]] = [:]
+                for transfer in transfers where !transfer.state.isSettled {
+                    if let album = transfer.albumId { arriving[album, default: []].append(transfer.trackId) }
+                }
+                _arrivingByAlbum = arriving
+            }
         case .figures(let figures):
             mutate(\.figures) {
                 _figures = Dictionary(
