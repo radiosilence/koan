@@ -65,7 +65,7 @@ static ON_LEAVE: parking_lot::RwLock<Option<OnLeave>> = parking_lot::RwLock::new
 /// server's library is forgotten, which on a large library takes seconds the
 /// queue should not be on screen for. Set by the front end that owns the
 /// player; `None` removes it. It runs with every sync held off, so it must not
-/// block.
+/// block for long.
 pub fn on_leaving_server(hook: Option<OnLeave>) {
     *ON_LEAVE.write() = hook;
 }
