@@ -5958,14 +5958,24 @@ impl KoanEngine {
         // before its library is forgotten.
         let leaving = Arc::downgrade(&engine);
         koan_core::helpers::on_leaving_server(Some(Arc::new(move || {
-            if let Some(engine) = leaving.upgrade() {
-                let sent = engine
+            let Some(engine) = leaving.upgrade() else {
+                return;
+            };
+            // Cleared before the library under it is forgotten, and never
+            // waited on for long: every sync is held off meanwhile.
+            let wait = std::time::Duration::from_secs(1);
+            let (reply, done) = crossbeam_channel::bounded(1);
+            let cleared = engine
+                .tx
+                .send_timeout(PlayerCommand::SignedOut, wait)
+                .is_ok()
+                && engine
                     .tx
-                    .send_timeout(PlayerCommand::SignedOut, std::time::Duration::from_secs(1));
-                // Cleared before the library under it is forgotten.
-                if sent.is_err() || !engine.applied(std::time::Duration::from_secs(1)) {
-                    log::warn!("the player did not take the sign-out in time");
-                }
+                    .send_timeout(PlayerCommand::Barrier(reply), wait)
+                    .is_ok()
+                && done.recv_timeout(wait).is_ok();
+            if !cleared {
+                log::warn!("the player did not take the sign-out in time");
             }
         })));
         // A koan server this app syncs from can then tell it what to play, and
