@@ -20,7 +20,7 @@ use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via,
 /// The `organize*` mutations physically move files, so admin alone is not the
 /// bar — the deployment has to have opted in.
 fn require_organize() -> async_graphql::Result<()> {
-    if Config::load().unwrap_or_default().graphql.allow_organize {
+    if Config::cached().graphql.allow_organize {
         Ok(())
     } else {
         Err(async_graphql::Error::new(
@@ -1254,7 +1254,7 @@ impl MutationRoot {
     async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
         spawn_job(ctx, "remoteSync", |db, job| {
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             let client = koan_core::helpers::subsonic_client(&cfg)
                 .ok_or_else(|| "remote not configured".to_string())?;
             crate::clients::changed_if_library_moved(&db.conn);
@@ -1371,7 +1371,7 @@ impl MutationRoot {
         };
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            let cfg = Config::load().unwrap_or_default();
+            let cfg = Config::cached();
             // Native, as Subsonic createShare and the web UI make it: a link
             // made on an upstream would be neither listed nor revocable here.
             let outcome = koan_core::helpers::create_native_share(
@@ -1659,6 +1659,6 @@ fn invite_server(server: Option<String>) -> async_graphql::Result<String> {
     server
         .map(|s| s.trim().trim_end_matches('/').to_owned())
         .filter(|s| !s.is_empty())
-        .or_else(|| Config::load().ok()?.server_url())
+        .or_else(|| Config::cached().server_url())
         .ok_or_else(|| "pass `server` or set server.url: this server has no address".into())
 }

@@ -142,6 +142,7 @@ pub fn link_queue(state: &SharedPlayerState) -> Vec<LinkQueueEntry> {
 fn remote_ids(db: &Database, items: &[PlaylistItem]) -> HashMap<i64, String> {
     let ids: Vec<i64> = items.iter().filter_map(|i| i.db_id).collect();
     queries::tracks_by_ids(&db.conn, &ids)
+        .inspect_err(|e| log::warn!("link: reading the queue's tracks: {e}"))
         .unwrap_or_default()
         .into_iter()
         .filter_map(|t| t.remote_id.map(|r| (t.id, r)))
@@ -189,13 +190,13 @@ pub fn apply(
         found
     };
     let items_of = |db: &Database, ids: &[i64]| {
-        let rows = queries::tracks_by_ids(&db.conn, ids).unwrap_or_default();
-        crate::helpers::playlist_items_for_tracks(db, &rows)
+        let rows = queries::tracks_by_ids(&db.conn, ids).map_err(|e| format!("library: {e}"))?;
+        Ok::<_, String>(crate::helpers::playlist_items_for_tracks(db, &rows))
     };
     let items = |track_ids: &[String]| -> Result<Vec<PlaylistItem>, String> {
         let db = db()?;
         let ids: Vec<i64> = resolve(&db, track_ids).into_iter().flatten().collect();
-        Ok(items_of(&db, &ids))
+        items_of(&db, &ids)
     };
     match cmd {
         LinkCommand::Play {
@@ -216,7 +217,7 @@ pub fn apply(
             let found = resolve(&db, &track_ids);
             let (start, position_ms) = start_among(&found, start_at as usize, position_ms);
             let ids: Vec<i64> = found.into_iter().flatten().collect();
-            let items = items_of(&db, &ids);
+            let items = items_of(&db, &ids)?;
             if items.is_empty() {
                 return Err(format!(
                     "none of {} tracks are in the library",
@@ -273,7 +274,7 @@ pub fn apply(
             if let Some(item) = queued.iter().find(|i| i.db_id == Some(local)) {
                 return send(PlayerCommand::Play(item.id));
             }
-            let Some(item) = items_of(&db, &[local]).pop() else {
+            let Some(item) = items_of(&db, &[local])?.pop() else {
                 return Err(format!("track {track_id} is not in the library"));
             };
             let id = item.id;
@@ -364,7 +365,8 @@ pub fn apply(
         LinkCommand::Evict { track_ids } => {
             let db = db()?;
             let ids: Vec<i64> = resolve(&db, &track_ids).into_iter().flatten().collect();
-            let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap_or_default();
+            let rows =
+                queries::tracks_by_ids(&db.conn, &ids).map_err(|e| format!("library: {e}"))?;
             for path in rows.iter().filter_map(|t| t.cached_path.as_deref()) {
                 let _ = std::fs::remove_file(path);
             }
@@ -472,14 +474,26 @@ pub fn hand_off(
     }
     let start_at = kept.iter().position(|(n, _)| *n >= at).unwrap_or(0);
     // Silent here first, and the playhead read where it went silent: anything
-    // heard while the command travels would be heard twice.
+    // heard while the command travels would be heard twice. The player answers
+    // once the fade is silent or the output has ended; an output whose
+    // callback has stopped never reaches silence, so the wait is bounded at
+    // several fades' length rather than left to hold the link's thread.
+    const SILENCE_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
     let paused = state.playback_state() != PlaybackState::Playing;
     let (reply, silent) = crossbeam_channel::bounded(1);
     tx.send(PlayerCommand::PauseAndReport(reply))
         .map_err(|_| "the player has stopped".to_string())?;
-    let position_ms = silent
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .unwrap_or_else(|_| state.position_ms());
+    let position_ms = match silent.recv_timeout(SILENCE_WAIT) {
+        Ok(at) => at,
+        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+            log::warn!(
+                "hand-off: the output did not fall silent within {SILENCE_WAIT:?}; \
+                 handing over from the playhead as it stands"
+            );
+            state.position_ms()
+        }
+        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => state.position_ms(),
+    };
     let position_ms = if kept.get(start_at).is_some_and(|(n, _)| *n == at) {
         position_ms
     } else {

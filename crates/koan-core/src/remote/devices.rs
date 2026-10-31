@@ -548,15 +548,20 @@ pub fn local() -> Option<&'static Local> {
 /// and the app shows it as out of reach until it is back or another is.
 pub fn set_linked(linked: bool) {
     crate::remote::offline::link_changed(linked);
-    changed(|s| {
-        if linked != s.linked {
+    let flipped = changed(|s| {
+        let flipped = linked != s.linked;
+        if flipped {
             s.linked_at = linked.then(|| chrono::Utc::now().timestamp());
         }
         s.linked = linked;
         if !linked {
             s.fresh = false;
         }
+        flipped
     });
+    if flipped {
+        crate::signal::link_changed().bump();
+    }
 }
 
 /// When the link that is up came up, in Unix seconds.
@@ -1313,7 +1318,7 @@ pub fn list() -> Vec<Device> {
 
 /// `list` as of `now`, Unix seconds.
 fn list_at(now: i64) -> Vec<Device> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     list_from(now, link::library_fingerprint(&cfg))
 }
 
@@ -2377,7 +2382,7 @@ fn ask_server(
     cmd: &LinkCommand,
     ack: Option<u64>,
 ) -> Result<Option<acks::AckOutcome>, Missed> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     // No server and not on this network: nothing could carry it.
     let client = crate::helpers::subsonic_client(&cfg)
         .ok_or_else(|| Missed::OutOfReach(out_of_reach(id)))?;

@@ -245,6 +245,8 @@ pub enum AlbumOrder {
     /// (see `search::match_rank`), then as `ArtistThenDate`. Without a search,
     /// in the order of `AlbumQuery::ids`; without either, `RecentlyAdded`.
     Relevance,
+    /// Fewest tracks first, then by title.
+    FewestTracks,
 }
 
 impl AlbumOrder {
@@ -271,6 +273,10 @@ impl AlbumOrder {
             Self::Id => "al.id",
             Self::Downloaded => {
                 "have = total DESC, CAST(have AS REAL) / total DESC, fetched DESC, al.id"
+            }
+            Self::FewestTracks => {
+                "(SELECT COUNT(*) FROM tracks c WHERE c.album_id = al.id), \
+                 al.title COLLATE LIBRARY"
             }
         }
     }
@@ -309,6 +315,14 @@ pub struct AlbumFilter<'a> {
     pub year_to: Option<i32>,
     /// Records with at least one track tagged with this genre.
     pub genre: Option<&'a str>,
+    /// Records with at least one track whose genre holds this, ignoring ASCII
+    /// case: "rock" finds "Psychedelic Rock". For a person typing; `genre`
+    /// is for a genre picked from the list.
+    pub genre_contains: Option<&'a str>,
+    /// Case-insensitive substring over the album title alone.
+    pub title: Option<&'a str>,
+    /// Case-insensitive substring over the label.
+    pub label: Option<&'a str>,
     /// Records with at least one track that can play here: downloaded, or a
     /// file in the library. What offline narrows to.
     pub on_device: bool,
@@ -359,7 +373,29 @@ impl AlbumFilter<'_> {
             );
             params.push(Box::new(genre.to_owned()));
         }
+        if let Some(genre) = self.genre_contains {
+            wheres.push(
+                "EXISTS (SELECT 1 FROM tracks g WHERE g.album_id = al.id
+                         AND g.genre LIKE ? ESCAPE '\\')"
+                    .into(),
+            );
+            params.push(Box::new(contains(genre)));
+        }
+        if let Some(title) = self.title {
+            wheres.push("al.title LIKE ? ESCAPE '\\'".into());
+            params.push(Box::new(contains(title)));
+        }
+        if let Some(label) = self.label {
+            wheres.push("al.label LIKE ? ESCAPE '\\'".into());
+            params.push(Box::new(contains(label)));
+        }
     }
+}
+
+/// A LIKE pattern for `s` anywhere, its wildcards escaped. LIKE folds ASCII
+/// case by default.
+fn contains(s: &str) -> String {
+    format!("%{}%", super::artists::escape_like(s))
 }
 
 /// What to list. Everything optional, so one query answers the browser, the
@@ -370,6 +406,8 @@ pub struct AlbumQuery<'a> {
     pub ids: Option<&'a [i64]>,
     /// Only this artist's own records: those they are the album artist of.
     pub artist_id: Option<i64>,
+    /// Only records any of these artists are the album artist of.
+    pub artist_ids: Option<&'a [i64]>,
     /// Only the records this artist features on: a track is credited to them
     /// and the album artist is someone else. Never one of their own, however
     /// many guests it has.
@@ -384,6 +422,8 @@ pub struct AlbumQuery<'a> {
     /// Only records with a track played since then.
     pub played: Option<super::history::PlayedSince>,
     pub filter: AlbumFilter<'a>,
+    /// `order` read backwards, from its last row to its first.
+    pub descending: bool,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
     pub offset: u32,
@@ -423,13 +463,14 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
     };
     // An artist's records come grouped as their page draws them, so a pick
     // across the grid and the page's order agree.
+    let mut order_by = String::new();
     if q.artist_id.is_some() && !matches!(order, AlbumOrder::Random(_)) {
-        sql.push_str("koan_release_section(al.release_types), ");
+        order_by.push_str("koan_release_section(al.release_types), ");
     }
     match (order, q.search, q.ids) {
         (AlbumOrder::Random(seed), ..) => {
             params.push(Box::new(seed));
-            sql.push_str(order.clause());
+            order_by.push_str(order.clause());
         }
         (AlbumOrder::Relevance, Some(query), _) => {
             let binds = super::search::match_rank_binds(query);
@@ -439,16 +480,17 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
                     .chain(&binds)
                     .map(|b| Box::new(b.clone()) as Box<dyn rusqlite::ToSql>),
             );
-            sql.push_str(&format!(
+            order_by.push_str(&format!(
                 "min({}, {}), {}",
                 super::search::match_rank("al.title"),
                 super::search::match_rank("a.name"),
                 AlbumOrder::ArtistThenDate.clause()
             ));
         }
-        (AlbumOrder::Relevance, None, Some(_)) => sql.push_str("r.key"),
-        _ => sql.push_str(order.clause()),
+        (AlbumOrder::Relevance, None, Some(_)) => order_by.push_str("r.key"),
+        _ => order_by.push_str(order.clause()),
     }
+    sql.push_str(&super::reversed(&order_by, q.descending));
 
     if let Some(limit) = q.limit {
         params.push(Box::new(limit as i64));
@@ -559,6 +601,14 @@ fn album_body(
         params.push(Box::new(id));
         wheres
             .push("al.id IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?)".into());
+    }
+    if let Some(ids) = q.artist_ids {
+        params.push(Box::new(super::json_list(ids)));
+        wheres.push(
+            "al.id IN (SELECT album_id FROM album_artist_links
+                        WHERE artist_id IN (SELECT value FROM json_each(?)))"
+                .into(),
+        );
     }
     if let Some(id) = q.features_of {
         params.push(Box::new(id));
@@ -803,6 +853,102 @@ mod tests {
             crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
         }
         db
+    }
+
+    fn listed(db: &Database, q: &AlbumQuery) -> Vec<String> {
+        list_albums(&db.conn, q)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.title)
+            .collect()
+    }
+
+    /// Descending reads the whole order backwards, ties and all, and pages
+    /// from the far end.
+    #[test]
+    fn descending_reverses_the_order_before_paging() {
+        let db = filter_library();
+        let q = AlbumQuery {
+            order: AlbumOrder::Date,
+            ..Default::default()
+        };
+        assert_eq!(listed(&db, &q), ["Early", "Middle", "Late"]);
+        let back = AlbumQuery {
+            descending: true,
+            ..q
+        };
+        assert_eq!(listed(&db, &back), ["Late", "Middle", "Early"]);
+        let page = AlbumQuery {
+            limit: Some(1),
+            offset: 1,
+            ..back
+        };
+        assert_eq!(listed(&db, &page), ["Middle"]);
+    }
+
+    #[test]
+    fn fewest_tracks_breaks_ties_by_title() {
+        let db = filter_library();
+        let mut meta = crate::db::queries::sample_meta("B2", "Band", "Middle");
+        meta.track_number = Some(2);
+        crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
+        let q = AlbumQuery {
+            order: AlbumOrder::FewestTracks,
+            ..Default::default()
+        };
+        assert_eq!(listed(&db, &q), ["Early", "Late", "Middle"]);
+        let back = AlbumQuery {
+            descending: true,
+            ..q
+        };
+        assert_eq!(listed(&db, &back), ["Middle", "Late", "Early"]);
+    }
+
+    /// The typed narrowings hold their text anywhere, in any ASCII case.
+    #[test]
+    fn genre_title_and_label_match_substrings() {
+        let db = filter_library();
+        let only = |filter| titles(&db, filter);
+        assert_eq!(
+            only(AlbumFilter {
+                genre_contains: Some("ECHN"),
+                ..Default::default()
+            }),
+            ["Early", "Late"]
+        );
+        assert_eq!(
+            only(AlbumFilter {
+                title: Some("idd"),
+                ..Default::default()
+            }),
+            ["Middle"]
+        );
+        assert!(
+            only(AlbumFilter {
+                label: Some("x"),
+                ..Default::default()
+            })
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn artist_ids_list_each_artists_own_records() {
+        let db = filter_library();
+        let rrose = get_or_create_artist(&db.conn, "Rrose", None).unwrap();
+        let band = get_or_create_artist(&db.conn, "Band", None).unwrap();
+        let q = |ids: &[i64]| {
+            listed(
+                &db,
+                &AlbumQuery {
+                    artist_ids: Some(ids),
+                    order: AlbumOrder::Date,
+                    ..Default::default()
+                },
+            )
+        };
+        assert_eq!(q(&[rrose]), ["Early", "Late"]);
+        assert_eq!(q(&[rrose, band]), ["Early", "Middle", "Late"]);
     }
 
     /// Oldest first runs by full date within a year, with undated records

@@ -4,10 +4,6 @@ use koan_core::db::queries;
 
 use crate::picker::{PickerItem, PickerKind, PickerPartKind};
 
-/// How long a kind's items are kept while the library holds the same rows. Its
-/// fingerprint sees rows added and removed, not rows edited in place.
-const MAX_AGE_SECS: u64 = 300;
-
 /// A kind's items, the library they were read from, and whether offline
 /// narrowed them.
 type Cached = (PickerKind, (u64, bool), Arc<Vec<PickerItem>>);
@@ -33,14 +29,11 @@ pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
             return Vec::new();
         }
     };
-    let window = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / MAX_AGE_SECS;
     let offline = koan_core::remote::offline::active();
     let version = (
-        queries::library_fingerprint(&db.conn).unwrap_or_default() ^ window,
+        queries::library_stamp(&db.conn)
+            .map(queries::LibraryStamp::key)
+            .unwrap_or_default(),
         offline,
     );
     if let Some((_, _, items)) = CACHE

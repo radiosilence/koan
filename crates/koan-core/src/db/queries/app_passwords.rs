@@ -69,7 +69,7 @@ pub fn create_app_password(
             user_id,
             name,
             sealed,
-            auth::now_unix() as i64,
+            crate::clock::unix_secs(),
             MAX_APP_PASSWORDS
         ],
     )?;
@@ -186,7 +186,7 @@ pub fn authenticate_app_password(
     };
 
     // A busy lock skips the stamp rather than holding up the request.
-    let now = auth::now_unix() as i64;
+    let now = crate::clock::unix_secs();
     if last_used.is_none_or(|t| t <= now - TOUCH_INTERVAL_SECS)
         && let Err(e) = crate::db::connection::without_waiting(conn, |conn| {
             conn.execute(
