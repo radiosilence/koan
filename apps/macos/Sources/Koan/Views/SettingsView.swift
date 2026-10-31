@@ -516,12 +516,18 @@ private struct RemoteSettings: View {
     @State private var mode: ServerMode
     #endif
 
+    #if os(macOS)
+    /// `mode` opens a side other than the one this Mac is on, for the
+    /// evidence renderer.
+    init(model: SettingsModel, mode: ServerMode? = nil) {
+        _model = Bindable(model)
+        _mode = State(initialValue: mode ?? (model.settings.shareEnabled ? .share : .connect))
+    }
+    #else
     init(model: SettingsModel) {
         _model = Bindable(model)
-        #if os(macOS)
-        _mode = State(initialValue: model.settings.shareEnabled ? .share : .connect)
-        #endif
     }
+    #endif
 
     private func join(_ text: String) {
         guard let invite = state.engine.parseInvite(link: text) else {
@@ -2056,6 +2062,7 @@ private struct SettingsTitlebar: NSViewRepresentable {
 enum SettingsEvidence {
     static func pages(_ state: AppState) async -> [(name: String, size: CGSize, view: AnyView)] {
         let model = await SettingsModel(engine: state.library.engine, activity: state.activity, art: state.art)
+        model.sharing = state.sharing
         let people = PeopleModel(engine: state.library.engine)
         await people.load()
         // What the Settings scene injects, so a pane renders as it does there.
@@ -2074,7 +2081,8 @@ enum SettingsEvidence {
         let size = CGSize(width: 820, height: 780)
         return [
             ("settings-library", size, page(LibrarySettings(model: model))),
-            ("settings-server", size, page(RemoteSettings(model: model))),
+            ("settings-server", size, page(RemoteSettings(model: model, mode: .connect))),
+            ("settings-server-share", size, page(RemoteSettings(model: model, mode: .share))),
             ("settings-account", size, page(AccountSettings(model: model))),
             ("settings-people", size, page(PeoplePane(model: model, people: people))),
             ("settings-server-capabilities", size, page(ServerCapabilitiesSettings())),

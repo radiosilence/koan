@@ -39,7 +39,7 @@ struct ServerModeLabel: View {
     var body: some View {
         let sharing = app.sharing
         if let running = sharing.sharing {
-            KoanLabel("Sharing at \(running.lanUrl ?? "port \(running.port)")", icon: Icon.server)
+            KoanLabel("Sharing on port \(running.port)", icon: Icon.server)
         } else if let failure = sharing.failure {
             KoanLabel("Not sharing: \(failure)", icon: Icon.warning)
                 .foregroundStyle(KoanTheme.style(.bad, system: .orange))
@@ -72,6 +72,7 @@ struct ShareSettings: View {
 
     var body: some View {
         let sharing = app.sharing
+        Group {
         if model.settings.remoteSignedIn {
             Section {
                 Text("This Mac is signed in to \(ServerModeLabel.host(model.settings.remoteUrl)). Sign out of it under Connects to a server, then share this Mac's own library here.")
@@ -82,6 +83,9 @@ struct ShareSettings: View {
         } else {
             createAccount
         }
+        }
+        // Settings is re-read as the window comes forward; so is the address.
+        .task { await sharing.refresh() }
     }
 
     // MARK: First account
@@ -215,6 +219,9 @@ struct ShareSettings: View {
         Task {
             if on {
                 await app.sharing.start(port: port, publicAddress: address)
+                // Left on, the switch would read as sharing beside the reason
+                // it is not. Launch still retries a setting left on.
+                if app.sharing.failure != nil { model.edit { $0.shareEnabled = false } }
             } else {
                 await app.sharing.stop()
             }

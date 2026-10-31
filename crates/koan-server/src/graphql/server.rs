@@ -244,7 +244,12 @@ impl ApiServer {
         // any local process with nothing on screen to say so.
         let setup_wizard = cfg.graphql.setup_wizard && profile == Profile::Headless;
         let bind = bind.unwrap_or(cfg.graphql.bind);
-        let subsonic_port = subsonic_port.or(cfg.subsonic.port);
+        // An app's server has one port, the one it was given.
+        let subsonic_port = if embedded {
+            None
+        } else {
+            subsonic_port.or(cfg.subsonic.port)
+        };
         let subsonic_enabled = embedded || cfg.subsonic.enabled;
         let playground_enabled = !embedded && (playground || cfg.graphql.playground);
         let auth_enabled = cfg.graphql.auth_enabled;
@@ -439,6 +444,13 @@ impl ApiServer {
 
         let mut allowed_hosts = cfg.graphql.allowed_hosts.clone();
         allowed_hosts.extend(hosts);
+        // On a home network every device has a private address; only a tunnel
+        // client on this machine forwards for anyone.
+        let forwarded_from = if embedded {
+            crate::auth::routes::ForwardedFrom::Loopback
+        } else {
+            crate::auth::routes::ForwardedFrom::Private
+        };
         let browser_policy = Arc::new(BrowserPolicy {
             origins: cfg.graphql.cors_origins.clone(),
             hosts: allowed_hosts,
@@ -587,10 +599,13 @@ impl ApiServer {
                     // Outermost: a request whose `Host` we do not recognise is refused
                     // before anything else looks at it. Without this a DNS-rebinding page
                     // reaches the API as same-origin and CORS stops mattering.
-                    let app = app.layer(cors).layer(axum::middleware::from_fn_with_state(
-                        browser_policy.clone(),
-                        host_guard,
-                    ));
+                    let app = app
+                        .layer(cors)
+                        .layer(axum::middleware::from_fn_with_state(
+                            browser_policy.clone(),
+                            host_guard,
+                        ))
+                        .layer(axum::Extension(forwarded_from));
 
                     log::info!("GraphQL API on http://{addr}/graphql");
                     if subsonic_enabled {

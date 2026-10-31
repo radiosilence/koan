@@ -167,6 +167,16 @@ impl KoanEngine {
         .await
     }
 
+    /// Where the library is served, while it is, with the network address
+    /// worked out afresh: it moves when the Mac changes network.
+    pub async fn server_sharing(self: Arc<Self>) -> Option<Sharing> {
+        offload::offload(move || {
+            let port = SERVING.read().as_ref()?.port;
+            Some(sharing(port))
+        })
+        .await
+    }
+
     /// The account the library is shared under, its first admin: the one
     /// this device administers the server as. `None` until one is made, and
     /// sharing starts only once there is one, since nobody could sign in.

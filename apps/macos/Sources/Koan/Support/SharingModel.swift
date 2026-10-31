@@ -63,6 +63,12 @@ final class SharingModel {
         }
     }
 
+    /// Read the network address again, after a change of network.
+    func refresh() async {
+        guard sharing != nil else { return }
+        sharing = await engine.serverSharing()
+    }
+
     func stop() async {
         busy = true
         defer { busy = false }

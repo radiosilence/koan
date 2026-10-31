@@ -25,7 +25,7 @@ The connection is plain HTTP: sign-ins and music cross your network unencrypted,
 
 kōan does not run a relay or a tunnel of its own. These give the Mac an address reachable from anywhere, and the first two encrypt the connection:
 
-- **Tailscale** (recommended). Install Tailscale on the Mac and the phone and sign both in to the same tailnet. The phone reaches the Mac at its tailnet address, encrypted end to end, and nothing is published to the internet. To reach the Mac from a device without Tailscale, `tailscale funnel 4000` publishes it at `https://<mac>.<tailnet>.ts.net` with a certificate Tailscale provides.
+- **Tailscale** (recommended). Install Tailscale on the Mac and the phone and sign both in to the same tailnet. The phone reaches the Mac at its tailnet address, such as `http://100.101.102.103:4000`, encrypted end to end, and nothing is published to the internet. To use its MagicDNS name (`mac.tailnet.ts.net`) instead, put that name under **Public address**: the Mac answers only to names it has been told, so a web page elsewhere cannot reach it by pointing a name of its own at the Mac. To reach the Mac from a device without Tailscale, `tailscale funnel 4000` publishes it at `https://<mac>.<tailnet>.ts.net` with a certificate Tailscale provides.
 - **Cloudflare Tunnel.** Free, with HTTPS at Cloudflare's edge, but needs a domain on Cloudflare. Cloudflare's terms restrict serving large media through tunnels on the free plan; personal use is common, but it is a risk to weigh.
 - **Not recommended:** ngrok's free plan, which transfers 1 GB a month; Cloudflare quick tunnels, whose address changes on every start and signs every phone out; and forwarding a router port to the Mac, which publishes plain HTTP to the internet.
 
