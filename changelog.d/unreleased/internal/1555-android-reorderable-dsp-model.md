@@ -1,0 +1,1 @@
+- **Android: one reorderable list for every drag.** Playlist and playlist-entry drags use the same library as the queue rather than their own gesture and edge-scroll loops, and an EQ profile page's state lives in a view model.
