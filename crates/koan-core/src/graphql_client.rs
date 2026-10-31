@@ -302,7 +302,8 @@ impl GraphQLClient {
 
     /// Follow `queries`, each a GraphQL subscription, over `/graphql/ws` in the
     /// `graphql-transport-ws` protocol, handing every message's `data` to
-    /// `on_next` with the index of the query it answers.
+    /// `on_next` with the index of the query it answers. `on_next` breaking
+    /// closes the connection, and the error returned says it was stopped.
     ///
     /// Blocks while the connection lasts and sleeps between messages, pinging
     /// only after a long silence so a dead connection is noticed. Returns why
@@ -312,7 +313,7 @@ impl GraphQLClient {
     pub fn subscribe(
         &self,
         queries: &[String],
-        on_next: impl FnMut(usize, &Value),
+        on_next: impl FnMut(usize, &Value) -> std::ops::ControlFlow<()>,
     ) -> GraphQLError {
         let (mut socket, fd) = match self.open_socket() {
             Ok(opened) => opened,
@@ -493,8 +494,7 @@ fn reason(resp: reqwest::blocking::Response) -> String {
     }
 }
 
-const QUEUE_FIELDS: &str =
-    "queueItemId trackId title artist album codec trackNumber disc durationMs isCurrent";
+const QUEUE_FIELDS: &str = "queueItemId trackId title artist album codec trackNumber disc durationMs isCurrent status failureReason";
 
 type WsSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
 
@@ -615,7 +615,9 @@ struct Subscriptions<'a, F> {
     ended: Option<GraphQLError>,
 }
 
-impl<F: FnMut(usize, &Value)> crate::remote::wire::Session for Subscriptions<'_, F> {
+impl<F: FnMut(usize, &Value) -> std::ops::ControlFlow<()>> crate::remote::wire::Session
+    for Subscriptions<'_, F>
+{
     fn outgoing(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         match self.stage {
@@ -661,8 +663,10 @@ impl<F: FnMut(usize, &Value)> crate::remote::wire::Session for Subscriptions<'_,
                 let payload = &message["payload"];
                 if payload["errors"].as_array().is_some_and(|e| !e.is_empty()) {
                     self.ended = Some(GraphQLError::Query(first_error(&payload["errors"])));
-                } else if let Some(id) = message["id"].as_str().and_then(|id| id.parse().ok()) {
-                    (self.on_next)(id, &payload["data"]);
+                } else if let Some(id) = message["id"].as_str().and_then(|id| id.parse().ok())
+                    && (self.on_next)(id, &payload["data"]).is_break()
+                {
+                    self.ended = Some(GraphQLError::Http("stopped".into()));
                 }
             }
             Some("error") => {
@@ -768,6 +772,10 @@ pub struct QueueEntry {
     pub disc: Option<i64>,
     pub duration_ms: Option<u64>,
     pub is_current: bool,
+    /// The server's `QueueEntryStatus`, as its GraphQL name: `PLAYED`,
+    /// `FAILED` and so on.
+    pub status: String,
+    pub failure_reason: Option<String>,
 }
 
 impl QueueEntry {
@@ -789,6 +797,8 @@ impl QueueEntry {
                 disc: e["disc"].as_i64(),
                 duration_ms: e["durationMs"].as_u64(),
                 is_current: e["isCurrent"].as_bool().unwrap_or(false),
+                status: e["status"].as_str().unwrap_or("").to_string(),
+                failure_reason: e["failureReason"].as_str().map(String::from),
             })
             .collect()
     }
@@ -811,7 +821,10 @@ mod tests {
         let mut seen = Vec::new();
         let mut session = Subscriptions {
             queries: &queries,
-            on_next: |id: usize, data: &Value| seen.push((id, data.clone())),
+            on_next: |id: usize, data: &Value| {
+                seen.push((id, data.clone()));
+                std::ops::ControlFlow::Continue(())
+            },
             stage: Stage::Init,
             pongs: 0,
             ended: None,
