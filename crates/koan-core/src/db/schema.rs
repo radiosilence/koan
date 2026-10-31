@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 29;
+pub const SCHEMA_VERSION: i64 = 30;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -264,7 +264,19 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             -- Moved on by every change to the item, so clearing a change that
             -- was sent never clears a newer one made while it was in flight.
             seq        INTEGER NOT NULL DEFAULT 0,
+            -- Taken by the server when it was made, so a sync need not send
+            -- it again, and must not: the item may have changed elsewhere since.
+            sent       INTEGER NOT NULL DEFAULT 0,
             UNIQUE(kind, remote_id)
+        );
+
+        -- What the server had starred when a sync last read it. A favourite
+        -- here that the server has stopped starring was unstarred elsewhere;
+        -- one it never starred has yet to reach it.
+        CREATE TABLE IF NOT EXISTS favourite_server_stars (
+            kind       TEXT NOT NULL,
+            remote_id  TEXT NOT NULL,
+            PRIMARY KEY (kind, remote_id)
         );
 
         CREATE TABLE IF NOT EXISTS link_outbox (
@@ -760,6 +772,8 @@ const CREDIT_TABLES: &str = "
 /// `organize_log.size_bytes`/`mtime` are checked against the file before undo
 /// moves it back, so a file replaced since the organize is left alone.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    // Whether a favourite change was taken by the server when it was made.
+    ("favourite_outbox", "sent", "INTEGER NOT NULL DEFAULT 0"),
     // Each artist a source's credits name, as JSON (`queries::Credits`), and
     // on the track, the credits its links were derived from.
     ("local_files", "credits", "TEXT"),

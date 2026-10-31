@@ -3424,15 +3424,7 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
             for (kind, id) in targets {
                 set_star(db, user, kind, id, star)?;
             }
-            if songs {
-                crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
-            }
-            // The caller's other apps show hearts too: a track favourited on
-            // a phone while it plays on the Mac should light up there.
-            crate::clients::registry().broadcast(
-                Some(&caller.username),
-                koan_core::remote::link::LinkCommand::Sync { full: false },
-            );
+            favourited(db, user, &caller.username, songs);
             Ok(b)
         })
     })
@@ -3451,11 +3443,22 @@ pub(crate) fn favourite(
     star: bool,
 ) -> Result<(), String> {
     set_star(db, user, kind, id, star).map_err(|e| e.message)?;
+    favourited(db, user, username, kind == EntityKind::Song);
+    Ok(())
+}
+
+/// What follows `user` changing their favourites, through any front end:
+/// their smart playlists that read favourite tracks are evaluated again, and
+/// their other apps sync, so a track favourited on a phone while it plays on
+/// the Mac lights up there.
+pub(crate) fn favourited(db: &Database, user: i64, username: &str, tracks: bool) {
+    if tracks {
+        crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
+    }
     crate::clients::registry().broadcast(
         Some(username),
         koan_core::remote::link::LinkCommand::Sync { full: false },
     );
-    Ok(())
 }
 
 fn set_star(
@@ -3465,36 +3468,15 @@ fn set_star(
     id: i64,
     star: bool,
 ) -> Result<(), SubsonicError> {
-    let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-    match kind {
-        EntityKind::Song => {
-            queries::get_track_row(&db.conn, id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-                .ok_or_else(|| SubsonicError::not_found("Track"))?;
-            let op = if star {
-                queries::add_favourite
-            } else {
-                queries::remove_favourite
-            };
-            op(&db.conn, user, id).map_err(internal)?;
-            // The upstream server has one account, and it is the local user's.
-            if queries::auth::is_local_user(&db.conn, user).map_err(internal)? {
-                koan_core::helpers::sync_favourite_to_remote(db, id, star);
-            }
-        }
-        EntityKind::Album => {
-            queries::get_album(&db.conn, id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-                .ok_or_else(|| SubsonicError::not_found("Album"))?;
-            queries::set_favourite_album(&db.conn, user, id, star).map_err(internal)?;
-        }
-        EntityKind::Artist => {
-            queries::get_artist(&db.conn, id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-                .ok_or_else(|| SubsonicError::not_found("Artist"))?;
-            queries::set_favourite_artist(&db.conn, user, id, star).map_err(internal)?;
-        }
-    }
+    use koan_core::helpers::FavouriteKind;
+    let (favourite, name) = match kind {
+        EntityKind::Song => (FavouriteKind::Track, "Track"),
+        EntityKind::Album => (FavouriteKind::Album, "Album"),
+        EntityKind::Artist => (FavouriteKind::Artist, "Artist"),
+    };
+    koan_core::helpers::set_favourite(db, user, favourite, id, Some(star))
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .ok_or_else(|| SubsonicError::not_found(name))?;
     Ok(())
 }
 
@@ -5973,6 +5955,7 @@ async fn koan_command(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
         respond(&state, &auth, |caller, b| {
+            require_write(caller.role)?;
             let to = params
                 .get("to")
                 .ok_or_else(|| SubsonicError::missing_param("to"))?;
@@ -7145,7 +7128,7 @@ mod tests {
         let (_, body) = get_response(
             build_test_router(state),
             &format!(
-                "/rest/koanCommand?u=mate&p=hunter22&v=1.16.1&c=test&f=json&to=dev-b&command={command}"
+                "/rest/koanCommand?u=owner&p=sesame&v=1.16.1&c=test&f=json&to=dev-b&command={command}"
             ),
         )
         .await;
@@ -7620,6 +7603,13 @@ mod tests {
         let (_, body) = get_response(
             build_test_router(state.clone()),
             "/rest/star?id=mf-1&u=mate&p=hunter22&v=1.16.1&c=test",
+        )
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        // Controlling a device is a write, as GraphQL's `controlClient` is.
+        let (_, body) = get_response(
+            build_test_router(state.clone()),
+            "/rest/koanCommand?to=dev-b&command=%7B%22type%22%3A%22pause%22%7D&u=mate&p=hunter22&v=1.16.1&c=test",
         )
         .await;
         assert!(body.contains("code=\"50\""), "{body}");

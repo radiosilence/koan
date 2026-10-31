@@ -543,10 +543,20 @@ impl Scratch {
     }
 
     fn unzip(&self, path: &Path) -> Result<PathBuf, String> {
+        self.unzip_within(path, MAX_UNZIPPED)
+    }
+
+    /// Unpack `path`, writing at most `budget` bytes in all. Each entry is
+    /// counted as it is written, not by the size it declares.
+    fn unzip_within(&self, path: &Path, budget: u64) -> Result<PathBuf, String> {
         let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
         let file = std::fs::File::open(path).map_err(|e| fail(&e))?;
         let mut archive = zip::ZipArchive::new(file).map_err(|e| fail(&e))?;
+        if archive.len() > MAX_ENTRIES {
+            return Err(fail(&TOO_LARGE));
+        }
         let dir = self.0.join(uuid::Uuid::now_v7().to_string());
+        let mut left = budget;
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i).map_err(|e| fail(&e))?;
             // `enclosed_name` refuses `..` and absolute paths.
@@ -558,20 +568,32 @@ impl Scratch {
                 std::fs::create_dir_all(&dest).map_err(|e| fail(&e))?;
                 continue;
             }
-            // A filter is a few megabytes; anything near this is not one.
-            if entry.size() > 512 << 20 {
-                return Err(fail(&"an entry is too large to be a filter"));
+            if entry.size() > left {
+                return Err(fail(&TOO_LARGE));
             }
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| fail(&e))?;
             }
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes).map_err(|e| fail(&e))?;
-            std::fs::write(&dest, bytes).map_err(|e| fail(&e))?;
+            let mut out = std::fs::File::create(&dest).map_err(|e| fail(&e))?;
+            let written =
+                std::io::copy(&mut (&mut entry).take(left + 1), &mut out).map_err(|e| fail(&e))?;
+            if written > left {
+                return Err(fail(&TOO_LARGE));
+            }
+            left -= written;
         }
         Ok(dir)
     }
 }
+
+/// The most a zip may unpack to. Filters are a few megabytes each; a zip of
+/// them that comes near this is not one.
+const MAX_UNZIPPED: u64 = 1 << 30;
+
+/// The most entries a zip may hold. A set of filters is tens of files.
+const MAX_ENTRIES: usize = 4096;
+
+const TOO_LARGE: &str = "too large to be a set of filters";
 
 impl Drop for Scratch {
     fn drop(&mut self) {
@@ -792,6 +814,33 @@ mod tests {
         for ir in &imported.impulses {
             assert_eq!(ir.as_channels().unwrap(), vec![&[0.5][..], &[0.25][..]]);
         }
+    }
+
+    #[test]
+    fn a_zip_unpacks_within_its_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("big.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        for name in ["a.wav", "b.wav", "c.wav"] {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(&[0; 1000]).unwrap();
+        }
+        zip.finish().unwrap();
+
+        let scratch = Scratch::new().unwrap();
+        assert!(scratch.unzip_within(&zip_path, 3000).is_ok());
+        let err = scratch.unzip_within(&zip_path, 2999).unwrap_err();
+        assert!(err.contains(TOO_LARGE), "{err}");
+
+        let many = dir.path().join("many.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&many).unwrap());
+        for i in 0..=MAX_ENTRIES {
+            zip.start_file(format!("{i}.txt"), opts).unwrap();
+        }
+        zip.finish().unwrap();
+        let err = scratch.unzip_within(&many, MAX_UNZIPPED).unwrap_err();
+        assert!(err.contains(TOO_LARGE), "{err}");
     }
 
     #[test]

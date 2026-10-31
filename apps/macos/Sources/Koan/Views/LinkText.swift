@@ -211,19 +211,16 @@ struct PlayableArtwork: View {
             .help("Play album")
     }
 
-    /// Resolving the tracks is the slow half, so it happens off the main actor
-    /// and the queue command follows once they're in hand. The move to the
-    /// record doesn't wait on it — the click should land immediately.
+    /// The engine reads the record's tracks on its command lane; the spinner
+    /// shows until it has. The move to the record doesn't wait on it — the
+    /// click should land immediately.
     private func play() {
         guard !loading else { return }
         loading = true
-        let engine = library.engine
-        let albumId = self.albumId
-        nav.open(album: albumId)
+        let done = ReplaceQueueDialog.play(albumId, player: player, nav: nav)
         Task {
-            let ids = (try? await engine.trackIds(albumId: albumId, artistId: nil)) ?? []
+            await done.value
             loading = false
-            player.playNow(trackIds: ids)
         }
     }
 }

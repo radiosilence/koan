@@ -39,6 +39,10 @@ pub enum PlayerCommand {
     /// on to a controlled device it stays one, where an add and a `Play`
     /// would name an entry that device never had.
     AddAndPlay(Vec<PlaylistItem>),
+    /// Insert these items after the cursor, or append them when there is
+    /// none. The player reads the cursor as it applies the command, so a
+    /// track change on the way does not put them after the wrong one.
+    PlayNext(Vec<PlaylistItem>),
     RemoveFromPlaylist(QueueItemId),
     /// Batch remove: delete multiple items as a single undoable operation.
     RemoveFromPlaylistBatch(Vec<QueueItemId>),
