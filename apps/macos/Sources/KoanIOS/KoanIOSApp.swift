@@ -203,15 +203,17 @@ struct KoanIOSApp: App {
 
 extension KoanIOSApp {
     private func open(_ url: URL, in state: AppState) {
+        #if os(tvOS)
+        if url.scheme == "koan", url.host == "album" {
+            openRecord(url, in: state)
+            return
+        }
+        #endif
         if url.isFileURL {
             // A copy iOS made in the app's Inbox for it, not opened in place.
             state.dsp.importFiles([url], copy: url)
         } else if url.scheme == "koan", url.host == "dsp-inbox" {
             ShareInbox.collect(into: state.dsp)
-        #if os(tvOS)
-        } else if url.scheme == "koan", url.host == "album" {
-            openRecord(url, in: state)
-        #endif
         } else {
             state.open(url: url)
         }
