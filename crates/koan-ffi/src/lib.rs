@@ -5953,7 +5953,6 @@ impl KoanEngine {
         let sync_progress = SyncMeter::default();
         {
             let flag = auto_syncing.clone();
-            let finished = finished.clone();
             let (meter, reading) = (sync_progress.clone(), sync_progress.clone());
             koan_core::helpers::spawn_auto_sync(
                 db_path.clone(),

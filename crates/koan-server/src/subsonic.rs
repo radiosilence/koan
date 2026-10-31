@@ -11383,7 +11383,7 @@ mod tests {
         // A lone search hit is still a one-element array.
         let r = json_of(
             app(),
-            &format!("/rest/search3?{}&query=Song", auth_query("f=json")),
+            &format!("/rest/search3?{}&query=Record", auth_query("f=json")),
         )
         .await;
         let found = &r["searchResult3"];

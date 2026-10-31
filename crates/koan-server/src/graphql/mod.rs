@@ -828,7 +828,7 @@ mod tests {
         let resp = schema
             .execute(
                 r#"{ artists(search: "Aphx Twn") { edges { node { name } } }
-                     albums(search: "Drukqz") { edges { node { title } } } }"#,
+                     albums(search: "Drkqs") { edges { node { title } } } }"#,
             )
             .await;
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
@@ -850,7 +850,7 @@ mod tests {
         let (schema, _rx, tmp) = test_schema();
         let db_path = tmp.path().join("test.db");
         for album in ["Alpha", "Bravo", "Charlie"] {
-            insert_test_track(&db_path, "Song", "Artist", album);
+            insert_test_track(&db_path, &format!("{album} song"), "Artist", album);
         }
         let resp = schema
             .execute(
