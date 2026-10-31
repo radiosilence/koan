@@ -157,6 +157,7 @@ class AccountModelsTest {
     }
 
     private fun connection(extensions: List<String>, offline: Boolean) = ConnectionInfo(
+        signedInTo = "https://music.example.com",
         serverKind = "koan", serverVersion = "0.61.13", openSubsonic = true,
         extensions = extensions.map { ServerExtension(it, listOf(1)) },
         devices = true, linked = true, listeningPort = null, localNetworkBlocked = false, thisDevice = "phone",
