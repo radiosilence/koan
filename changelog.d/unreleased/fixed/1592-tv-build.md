@@ -1,0 +1,1 @@
+- **Apple TV builds again.** The TV app failed to compile after 0.69.0, so its TestFlight build for 0.69.1 was not made.

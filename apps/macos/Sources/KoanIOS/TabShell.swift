@@ -556,14 +556,13 @@ struct TabShell: View {
     }
     #endif
 
-    #if os(iOS)
-    /// Settings, opened at Server, from wherever the banner was tapped.
+    /// Settings, opened at Server, from wherever the banner was tapped. The
+    /// TV's stacks take it too, though only the phone draws a banner there.
     private func openServerSettings() {
         paths[.settings] = []
         tab.wrappedValue = .settings
         app.ui.showingServerSettings = true
     }
-    #endif
 
     private var tab: Binding<TabID> {
         Binding(
