@@ -89,6 +89,7 @@ struct QueueView: View {
     /// changes nothing.
     @State private var layout = Layout()
 
+    @MainActor
     private final class Layout {
         private var key: (stamp: UInt64, grouped: Bool)?
         private(set) var rows: [Row] = []
