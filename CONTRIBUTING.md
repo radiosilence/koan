@@ -26,9 +26,10 @@ just hooks
 
 ### The web client
 
-`crates/koan-web` is an experiment: koan-core's decoder running in the browser
-as a koan device would (#1454). It shares one wasm memory between a worker and
-an AudioWorklet, which needs std rebuilt with atomics, so it builds on nightly
+`crates/koan-web` is the first step towards koan-core running in the browser as
+a koan device (#1454): the decoder in a worker, heard through an AudioWorklet.
+The two share one wasm memory, which needs std rebuilt with atomics, so it
+builds on nightly
 (`rustup toolchain install nightly --component rust-src`):
 
 ```bash

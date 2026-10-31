@@ -198,7 +198,9 @@ impl Drop for Session {
     fn drop(&mut self) {
         // SAFETY: both came from `Box::into_raw` and are freed only here; the
         // page frees a session only after its audio context has closed, so
-        // the worklet no longer reads them.
+        // the worklet no longer reads them. wasm-bindgen also drops a session
+        // whose JS object is collected, so the worker must hold that object
+        // until it is freed.
         unsafe {
             drop(Box::from_raw(self.consumer));
             drop(Box::from_raw(self.scratch));

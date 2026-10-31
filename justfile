@@ -64,7 +64,10 @@ js:
 # threads share one memory, which needs std rebuilt with atomics: nightly.
 # The memory's maximum is reserved up front, so it stays modest.
 web-client:
-    RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--max-memory=536870912" \
+    RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
+        -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=536870912 \
+        -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
+        -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base" \
         cargo +nightly build -p koan-web --release --target wasm32-unknown-unknown \
         -Z build-std=std,panic_abort --target-dir target/koan-web-build
     wasm-bindgen --target web --out-dir target/koan-web \

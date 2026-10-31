@@ -312,7 +312,10 @@ fn web_client(state: &UiState) -> axum::Router<UiState> {
 /// otherwise answer it with the page.
 async fn client_slash(req: Request, next: Next) -> Response {
     if req.uri().path() == "/client" {
-        return see_other("/client/");
+        return match req.uri().query() {
+            Some(q) => see_other(&format!("/client/?{q}")),
+            None => see_other("/client/"),
+        };
     }
     next.run(req).await
 }
