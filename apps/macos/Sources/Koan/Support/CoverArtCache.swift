@@ -76,8 +76,21 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     private let decodes = Flights<PlatformImage?>()
 
     /// Everyone waiting on a record, at any size, and how much it matters to
-    /// each. The image lane reads the most urgent of them each time it picks.
+    /// each. The image lane reads the most urgent of them each time it picks,
+    /// once per job it is choosing between: worked out here as the waiters
+    /// change, so the lane's read is one lookup.
     private var waiters: [String: [UUID: Waiter]] = [:]
+    private var urgency: [String: ImageWork.Priority] = [:]
+
+    /// Call with the lock held, after `record`'s waiters change.
+    private func rank(_ record: String) {
+        var top: ImageWork.Priority?
+        for waiter in waiters[record]?.values ?? Dictionary<UUID, Waiter>().values {
+            if let held = top, held >= waiter.priority { continue }
+            top = waiter.priority
+        }
+        urgency[record] = top
+    }
 
     private struct Waiter {
         var priority: ImageWork.Priority
@@ -221,17 +234,21 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                     waiting[id]?.priority = priority
                 }
                 waiters[record] = waiting
+                rank(record)
             }
         }
     }
 
     private func priority(of record: String) -> ImageWork.Priority {
-        locked { waiters[record]?.values.map(\.priority).max() ?? .ahead(.infinity) }
+        locked { urgency[record] ?? .ahead(.infinity) }
     }
 
     private func wait(on record: String, _ priority: ImageWork.Priority, aimed: Bool = false) -> UUID {
         let id = UUID()
-        locked { waiters[record, default: [:]][id] = Waiter(priority: priority, aimed: aimed) }
+        locked {
+            waiters[record, default: [:]][id] = Waiter(priority: priority, aimed: aimed)
+            rank(record)
+        }
         return id
     }
 
@@ -241,6 +258,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         locked {
             waiters[record]?[id] = nil
             if waiters[record]?.isEmpty == true { waiters[record] = nil }
+            rank(record)
         }
     }
 
