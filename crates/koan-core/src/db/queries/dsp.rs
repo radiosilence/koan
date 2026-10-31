@@ -89,9 +89,7 @@ pub fn save(
         return Ok(Saved { rev, stored: false });
     }
     let rev = next_rev(conn, user)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64);
+    let now = crate::clock::unix_ms();
     conn.execute(
         "INSERT INTO dsp_profiles (user_id, uid, rev, edited_at, doc) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (user_id, uid) DO UPDATE
@@ -390,13 +388,6 @@ mod tests {
         (conn, 1)
     }
 
-    fn now_ms() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64
-    }
-
     /// A deletion tells devices the profile is gone and keeps its last
     /// document, deleted twice included; saving it again clears it, and an
     /// old one is forgotten.
@@ -404,7 +395,7 @@ mod tests {
     fn a_deleted_profile_keeps_its_last_document() {
         let (conn, user) = db();
         let c = &conn;
-        let before = now_ms();
+        let before = crate::clock::unix_ms();
         save(c, user, "a", 100, Some("v1")).unwrap();
         save(c, user, "a", 200, None).unwrap();
         save(c, user, "a", 300, None).unwrap();
@@ -419,7 +410,10 @@ mod tests {
 
         save(c, user, "a", 500, None).unwrap();
         assert_eq!(expire_deleted(c, user, before).unwrap(), 0, "not old yet");
-        assert_eq!(expire_deleted(c, user, now_ms() + 1).unwrap(), 1);
+        assert_eq!(
+            expire_deleted(c, user, crate::clock::unix_ms() + 1).unwrap(),
+            1
+        );
         assert!(deleted_docs(c, user, 0).unwrap().is_empty());
     }
 
@@ -447,7 +441,7 @@ mod tests {
             "another account's"
         );
         assert_eq!(
-            deleted_doc(c, user, "a", now_ms() + 1).unwrap(),
+            deleted_doc(c, user, "a", crate::clock::unix_ms() + 1).unwrap(),
             None,
             "too old"
         );
@@ -459,17 +453,17 @@ mod tests {
     fn a_deletion_is_kept_by_the_servers_clock() {
         let (conn, user) = db();
         let c = &conn;
-        let window = now_ms() - DELETED_KEPT_MS;
+        let window = crate::clock::unix_ms() - DELETED_KEPT_MS;
         save(c, user, "past", 1, Some("p")).unwrap();
         save(c, user, "past", 2, None).unwrap();
-        let future = now_ms() + 10 * DELETED_KEPT_MS;
+        let future = crate::clock::unix_ms() + 10 * DELETED_KEPT_MS;
         save(c, user, "future", future, Some("f")).unwrap();
         save(c, user, "future", future + 1, None).unwrap();
 
         assert_eq!(expire_deleted(c, user, window).unwrap(), 0);
         assert_eq!(deleted_docs(c, user, window).unwrap().len(), 2);
         assert_eq!(
-            expire_deleted(c, user, now_ms() + 1).unwrap(),
+            expire_deleted(c, user, crate::clock::unix_ms() + 1).unwrap(),
             2,
             "a clock ahead keeps nothing forever"
         );

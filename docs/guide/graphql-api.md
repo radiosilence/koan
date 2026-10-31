@@ -113,13 +113,15 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 # `seekableMs` is how far in a seek can land. It equals `durationMs` for
 # anything on disk and falls short of it while a track is still downloading,
 # so a client draws its seek bar against it rather than letting someone scrub
-# into audio that has not arrived.
+# into audio that has not arrived. `moving` is whether the playhead is
+# advancing: false while paused, and while playing but waiting on a download.
 {
   nowPlaying {
     state
     positionMs
     durationMs
     seekableMs
+    moving
     shuffle
     repeat
     track { title, artist, codec, sampleRate, bitDepth }
@@ -210,8 +212,9 @@ mutation { triggerScan { id kind state } }
 kind runs at a time — calling again while one is live returns the running job rather than starting a
 second.
 
-The server also scans the library by itself: at start-up, when the library folders change, every
-fifteen minutes, and when a folder is added. Each of those scans is a job of kind `watch`, listed by
+The server also scans the library by itself: at start-up, when the library folders change, when a
+folder is added or a volume holding one is mounted again, and every fifteen minutes for a folder on a
+network share, where another machine's writes raise no event. Each of those scans is a job of kind `watch`, listed by
 `jobs`, with `reason` saying which it was (`start-up`, `folder change`, `periodic` or `new folder`).
 While a scan runs, `done` counts the files whose tags it has read and `total` the files it has found
 to need reading so far; with the scan cache, that is only the files that changed.

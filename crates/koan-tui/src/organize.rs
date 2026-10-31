@@ -158,16 +158,9 @@ impl OrganizeModalState {
                 if let Ok(mut p) = pending.lock() {
                     match result {
                         Ok(result) => {
-                            // Build path update map: match QueueItemIds to moved files.
-                            let mut path_updates = Vec::new();
-                            for entry in result.moves() {
-                                let Some(to) = entry.to.clone() else { continue };
-                                if let Some((qid, _)) =
-                                    queue_entries.iter().find(|(_, p)| *p == entry.from)
-                                {
-                                    path_updates.push((*qid, to));
-                                }
-                            }
+                            let path_updates = result.queue_path_updates(
+                                queue_entries.iter().map(|(id, p)| (*id, p.as_path())),
+                            );
 
                             let moved_count = result.moved_count();
                             let conflict_count = result.conflicts().count();

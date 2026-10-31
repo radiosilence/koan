@@ -104,12 +104,6 @@ impl PlaylistRow {
         self.user_id == user
     }
 
-    /// Whether `user` (resolved) may change what it holds: their own, unless
-    /// its contents come from rules or the server will not take edits.
-    pub fn contents_editable_by(&self, user: i64) -> bool {
-        self.editable_by(user) && !self.readonly
-    }
-
     /// Whether it has local edits the server has not had.
     pub fn unsynced(&self) -> bool {
         self.synced_revision != Some(self.revision)

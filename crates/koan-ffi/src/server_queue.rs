@@ -43,7 +43,7 @@ fn client_name() -> String {
 }
 
 fn client() -> Option<Arc<SubsonicClient>> {
-    koan_core::helpers::subsonic_client(&Config::load().unwrap_or_default())
+    koan_core::helpers::subsonic_client(&Config::cached())
 }
 
 fn offers(extension: &str) -> bool {

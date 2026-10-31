@@ -308,7 +308,7 @@ pub fn mint_token(
     let user = users::get_user_by_id(conn, user_id)
         .map_err(other)?
         .ok_or_else(|| AccountError::NoSuchUser(user_id.to_string()))?;
-    let now = auth::now_unix();
+    let now = crate::clock::unix_secs() as u64;
     let claims = Claims {
         typ: TOKEN_TYP.into(),
         sub: user.id,

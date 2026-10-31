@@ -61,9 +61,6 @@ const OUTAGE_BACKOFF: [Duration; 3] = [
 /// word of a misconfigured proxy.
 const RETRY_AFTER_CAP: Duration = Duration::from_secs(600);
 
-/// How often a download waiting out an outage checks whether it is still wanted.
-const CANCEL_POLL: Duration = Duration::from_secs(1);
-
 #[derive(Debug, Error)]
 pub enum DownloadError {
     #[error("http error: {0}")]
@@ -209,6 +206,8 @@ impl Outage {
         s.retry_at = Some(Instant::now());
         drop(s);
         self.changed.notify_all();
+        // Downloads waiting in `admit` wait on the engine's signal.
+        crate::signal::engine_changed().bump();
     }
 
     /// Block while the server is down and nobody is due to try it. Returns
@@ -227,25 +226,35 @@ impl Outage {
     /// Wait until this download may try the server: at once when it is up,
     /// otherwise when the next try is due and no other download has taken it.
     /// Returns `false` if `cancelled` says the download stopped being wanted.
+    ///
+    /// Waits on the engine's signal: whatever makes a download unwanted (the
+    /// queue changing, its transfer abandoned) rings it, as do the server
+    /// coming back and a try being brought forward.
     fn admit(&self, cancelled: &dyn Fn() -> bool) -> bool {
-        let mut s = self.state.lock();
+        let wake = crate::signal::engine_changed();
         loop {
-            // Asked outside the lock: it reads the player's state.
-            if parking_lot::MutexGuard::unlocked(&mut s, cancelled) {
+            // Taken before asking, so news landing after the answer is not
+            // slept through.
+            let seen = wake.generation();
+            if cancelled() {
                 return false;
             }
-            let Some(at) = s.retry_at else {
-                return true;
+            let at = {
+                let mut s = self.state.lock();
+                let Some(at) = s.retry_at else {
+                    return true;
+                };
+                let now = Instant::now();
+                if now >= at {
+                    // This one tries; the rest wait for its answer. Pushed out
+                    // rather than flagged, so a try that never reports back
+                    // (it panicked, say) holds the others up for one step only.
+                    s.retry_at = Some(now + outage_backoff(s.failures, None));
+                    return true;
+                }
+                at
             };
-            let now = Instant::now();
-            if now >= at {
-                // This one tries; the rest wait for its answer. Pushed out
-                // rather than flagged, so a try that never reports back
-                // (it panicked, say) holds the others up for one step only.
-                s.retry_at = Some(now + outage_backoff(s.failures, None));
-                return true;
-            }
-            self.changed.wait_for(&mut s, (at - now).min(CANCEL_POLL));
+            wake.wait_until(seen, at.saturating_duration_since(Instant::now()));
         }
     }
 
@@ -386,7 +395,9 @@ pub fn download_with_retries(
             failures + 1,
             attempts
         );
-        std::thread::sleep(backoff);
+        if !wait_unless_cancelled(Instant::now() + backoff, cancelled) {
+            break DownloadError::Cancelled;
+        }
     };
 
     // Only once the download has given up. Between attempts the `.part` stays,
@@ -394,6 +405,24 @@ pub fn download_with_retries(
     // that inode, and picks up again as the retry rewrites the same bytes.
     let _ = std::fs::remove_file(part_path(dest));
     Err(err)
+}
+
+/// Wait until `deadline`, or return `false` as soon as `cancelled` says the
+/// download is no longer wanted. Woken by the engine's signal, which whatever
+/// cancels a download rings.
+fn wait_unless_cancelled(deadline: Instant, cancelled: &dyn Fn() -> bool) -> bool {
+    let wake = crate::signal::engine_changed();
+    loop {
+        let seen = wake.generation();
+        if cancelled() {
+            return false;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return true;
+        }
+        wake.wait_until(seen, deadline - now);
+    }
 }
 
 fn attempt_download(
@@ -851,6 +880,57 @@ mod tests {
             .map_err(DownloadError::from)
             .expect_err("nothing is listening");
         assert!(err.is_unavailable(), "unexpected: {err}");
+    }
+
+    /// A download waiting out an outage stops as soon as it is unwanted and
+    /// the engine says something moved, not at the next try.
+    #[test]
+    fn an_unwanted_download_stops_waiting_out_an_outage_at_once() {
+        let outage = Arc::new(Outage::default());
+        outage.down(Some(Duration::from_secs(600)), "refused".into());
+        let unwanted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel();
+        {
+            let (outage, unwanted) = (outage.clone(), unwanted.clone());
+            std::thread::spawn(move || {
+                let admitted = outage.admit(&|| unwanted.load(Ordering::Relaxed));
+                let _ = tx.send(admitted);
+            });
+        }
+        assert!(
+            rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "it waits"
+        );
+        unwanted.store(true, Ordering::Relaxed);
+        crate::signal::engine_changed().bump();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)), Ok(false));
+    }
+
+    #[test]
+    fn a_retry_backoff_ends_when_the_download_is_unwanted() {
+        let unwanted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel();
+        {
+            let unwanted = unwanted.clone();
+            std::thread::spawn(move || {
+                let waited =
+                    wait_unless_cancelled(Instant::now() + Duration::from_secs(600), &|| {
+                        unwanted.load(Ordering::Relaxed)
+                    });
+                let _ = tx.send(waited);
+            });
+        }
+        assert!(
+            rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "it waits"
+        );
+        unwanted.store(true, Ordering::Relaxed);
+        crate::signal::engine_changed().bump();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)), Ok(false));
+        assert!(
+            wait_unless_cancelled(Instant::now(), &|| false),
+            "a deadline passed returns"
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use koan_core::db::queries::scrobbling::{self, LASTFM, LISTENBRAINZ, ScrobbleSer
 use koan_core::scrobbling::lastfm;
 
 use super::pages::{COPY_ERROR, Failed, respond};
-use super::{UiState, events, open, patch, see_other};
+use super::{Logged, UiState, events, open, patch, see_other};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
 use crate::share::blocking;
@@ -73,7 +73,7 @@ struct ScrobblingPage {
 
 fn connection(s: &UiState, user_id: i64, service: &str) -> Option<Option<ScrobbleService>> {
     let db = open(&s.pool)?;
-    scrobbling::service(&db.conn, user_id, service).ok()
+    scrobbling::service(&db.conn, user_id, service).logged()
 }
 
 pub(super) async fn page(
@@ -182,7 +182,7 @@ pub(super) async fn lastfm_disconnect(
 ) -> Response {
     let done = blocking(move || {
         let db = open(&s.pool)?;
-        scrobbling::disconnect(&db.conn, user.user_id, LASTFM).ok()
+        scrobbling::disconnect(&db.conn, user.user_id, LASTFM).logged()
     })
     .await;
     if done.is_none() {
@@ -267,7 +267,7 @@ pub(super) async fn disconnect(
 ) -> Response {
     let done = blocking(move || {
         let db = open(&s.pool)?;
-        scrobbling::disconnect(&db.conn, user.user_id, LISTENBRAINZ).ok()
+        scrobbling::disconnect(&db.conn, user.user_id, LISTENBRAINZ).logged()
     })
     .await;
     if done.is_none() {

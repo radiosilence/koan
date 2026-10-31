@@ -1,6 +1,5 @@
 use async_graphql::connection::Edge;
 use koan_core::db::connection::Database;
-use koan_core::db::queries;
 
 use super::types::Conn;
 
@@ -65,19 +64,6 @@ pub(super) fn paginate_window<T: async_graphql::OutputType>(
         conn.edges.push(Edge::new(offset + i, item));
     }
     conn
-}
-
-// ---------------------------------------------------------------------------
-// Year extraction from date strings ("2024", "2024-01-15", etc)
-// ---------------------------------------------------------------------------
-
-pub(super) fn extract_year(date: &str) -> Option<i32> {
-    date.get(..4).and_then(|s| s.parse().ok())
-}
-
-/// Get album year from its date field.
-pub(super) fn album_year(album: &queries::AlbumRow) -> Option<i32> {
-    album.date.as_deref().and_then(extract_year)
 }
 
 // ---------------------------------------------------------------------------

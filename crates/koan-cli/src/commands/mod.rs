@@ -218,20 +218,31 @@ pub(crate) fn playlist_items_from_paths(
     progress: Option<&std::sync::atomic::AtomicUsize>,
 ) -> Vec<PlaylistItem> {
     const BULK_THRESHOLD: usize = 1000;
-    let db_cache: std::collections::HashMap<String, queries::TrackRow> =
-        if paths.len() >= BULK_THRESHOLD {
-            open_db_optional()
-                .and_then(|db| queries::all_tracks_by_path(&db.conn).ok())
-                .unwrap_or_default()
-        } else {
-            let path_strings: Vec<String> = paths
-                .iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect();
-            open_db_optional()
-                .and_then(|db| queries::tracks_by_paths(&db.conn, &path_strings).ok())
-                .unwrap_or_default()
-        };
+    let db = open_db_optional();
+    let db_cache: std::collections::HashMap<String, queries::TrackRow> = db
+        .as_ref()
+        .and_then(|db| {
+            if paths.len() >= BULK_THRESHOLD {
+                queries::all_tracks_by_path(&db.conn).ok()
+            } else {
+                let path_strings: Vec<String> = paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                queries::tracks_by_paths(&db.conn, &path_strings).ok()
+            }
+        })
+        .unwrap_or_default();
+    let ids: Vec<i64> = paths
+        .iter()
+        .filter_map(|p| db_cache.get(p.to_string_lossy().as_ref()))
+        .map(|t| t.id)
+        .collect();
+    let extras = db
+        .as_ref()
+        .and_then(|db| queries::queue_item_extras(&db.conn, &ids).ok())
+        .unwrap_or_default();
+    drop(db);
 
     let db_hits = std::sync::atomic::AtomicUsize::new(0);
 
@@ -241,7 +252,13 @@ pub(crate) fn playlist_items_from_paths(
             let path_str = p.to_string_lossy();
             let item = if let Some(track) = db_cache.get(path_str.as_ref()) {
                 db_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                playlist_item_from_track_row(track, p)
+                let date = extras.get(&track.id).and_then(|e| e.album_date.as_deref());
+                koan_core::helpers::playlist_item_from_track(
+                    track,
+                    date,
+                    p.to_path_buf(),
+                    ItemState::Ready,
+                )
             } else {
                 read_metadata_to_item(p)
             };
@@ -269,27 +286,6 @@ pub(crate) fn playlist_items_from_paths(
 /// and opening another checks the schema and checkpoints the WAL.
 fn open_db_optional() -> Option<koan_core::db::pool::Handle<'static>> {
     koan_core::db::pool::shared().get().ok()
-}
-
-fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> PlaylistItem {
-    PlaylistItem {
-        uid: None,
-        playlist_entry_id: None,
-        id: QueueItemId::new(),
-        db_id: Some(track.id),
-        path: path.to_path_buf(),
-        title: track.title.clone(),
-        artist: track.artist_name.clone(),
-        album_artist: track.album_artist_name.clone(),
-        album: track.album_title.clone(),
-        year: None,
-        codec: track.codec.clone(),
-        track_number: track.track_number.map(|n| n as i64),
-        disc: track.disc.map(|n| n as i64),
-        duration_ms: track.duration_ms.map(|d| d as u64),
-        state: ItemState::Ready,
-        played: false,
-    }
 }
 
 fn read_metadata_to_item(p: &Path) -> PlaylistItem {

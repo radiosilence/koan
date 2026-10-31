@@ -1604,6 +1604,10 @@ impl Config {
             return cfg.clone();
         }
 
+        // A failure is kept under its stamp like a success, so a broken file
+        // is parsed and logged once per change to it rather than on every
+        // call. koan's own writes invalidate explicitly, so a write of its own
+        // landing in the same mtime tick is still read.
         let cfg = Arc::new(Self::load().unwrap_or_else(|e| {
             log::warn!("failed to load config, using defaults: {}", e);
             Self::default()
@@ -1628,6 +1632,8 @@ impl Config {
         let mut cache = CONFIG_CACHE.write();
         CONFIG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *cache = None;
+        drop(cache);
+        crate::signal::config_changed().bump();
     }
 
     /// Load from a specific TOML file (no env var overlay).

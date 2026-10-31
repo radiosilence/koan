@@ -724,21 +724,6 @@ impl SubsonicClient {
             .ok_or(SubsonicError::BadResponse)
     }
 
-    /// Get similar songs for a track (Subsonic getSimilarSongs2 endpoint).
-    /// Returns up to `count` similar songs based on the server's algorithm.
-    pub fn get_similar_songs(
-        &self,
-        song_id: &str,
-        count: usize,
-    ) -> Result<Vec<SubsonicSong>, SubsonicError> {
-        let count_str = count.to_string();
-        let resp = self.get_with_params(
-            "getSimilarSongs2",
-            &[("id", song_id), ("count", &count_str)],
-        )?;
-        Ok(resp.similar_songs2.and_then(|s| s.song).unwrap_or_default())
-    }
-
     // --- Playlists ---------------------------------------------------------
 
     /// Every playlist the server will show this user, without their contents.
@@ -1270,7 +1255,6 @@ struct SubsonicResponse {
     search_result3: Option<SubsonicSearchResult>,
     starred2: Option<SubsonicStarred>,
     shares: Option<SubsonicShares>,
-    similar_songs2: Option<SubsonicSimilarSongs>,
     playlists: Option<SubsonicPlaylists>,
     playlist: Option<SubsonicPlaylistFull>,
     scan_status: Option<SubsonicScanStatus>,
@@ -1873,11 +1857,6 @@ pub struct SubsonicStarred {
     pub album: Vec<SubsonicAlbum>,
     #[serde(default)]
     pub artist: Vec<SubsonicArtist>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SubsonicSimilarSongs {
-    pub song: Option<Vec<SubsonicSong>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

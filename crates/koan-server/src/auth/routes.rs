@@ -61,7 +61,7 @@ impl RateLimiter {
     /// Returns false when `ip`'s network (see [`network`]) has spent its
     /// allowance for the current window.
     pub(crate) fn allow(&self, ip: IpAddr) -> bool {
-        let now = auth::now_unix();
+        let now = koan_core::clock::unix_secs() as u64;
         let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
 
         if windows.len() > TRACKED_IPS_MAX {
@@ -503,7 +503,7 @@ fn authenticate_blocking(
             ));
         }
     };
-    let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
+    let refresh_expires = koan_core::clock::unix_secs() + state.refresh_ttl_secs as i64;
     if let Err(e) =
         auth_queries::store_refresh_token(&db.conn, &refresh_token_id, user.id, refresh_expires)
     {
@@ -673,7 +673,7 @@ pub(crate) fn rotate(
             ));
         }
     };
-    let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
+    let refresh_expires = koan_core::clock::unix_secs() + state.refresh_ttl_secs as i64;
     if let Err(e) = auth_queries::store_grant_token(
         &db.conn,
         &new_refresh_id,

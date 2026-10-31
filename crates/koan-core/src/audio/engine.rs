@@ -13,7 +13,7 @@ use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 use super::device;
-use super::fade::{FadeControl, Fader};
+use super::fade::{FadeControl, Fader, render_from_ring, take_lead_in};
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -398,19 +398,12 @@ impl Drop for AudioEngine {
             waited
         );
 
-        // Deliberately no `AudioUnitSetProperty` here.
-        //
-        // Removing the render callback before teardown looks like the safe
-        // move, and it was how this was written — but
-        // `kAudioUnitProperty_SetRenderCallback` may only be set while the unit
-        // is *uninitialized*. Setting it on a live unit makes CoreAudio tear
-        // down and rebuild its internal ExtendedAudioBufferList, and that is
-        // the double free this was meant to prevent: the crash landed inside
-        // `AudioUnitSetProperty` itself, in caulk's deallocator, every time a
-        // queue reached its end (#89, and again at the end of a playlist).
-        //
-        // `AudioUnitUninitialize` releases that buffer list, once, which is all
-        // that is wanted.
+        // The render callback is not removed before teardown:
+        // `kAudioUnitProperty_SetRenderCallback` may only be set while the
+        // unit is uninitialized. On a live unit CoreAudio tears down and
+        // rebuilds its internal ExtendedAudioBufferList, which double-frees
+        // inside caulk's deallocator. `AudioUnitUninitialize` releases that
+        // buffer list once.
 
         // SAFETY: AudioUnit was successfully created in new(). Uninitialize and
         // Dispose are the documented teardown sequence; the unit is not used
@@ -528,111 +521,22 @@ unsafe extern "C" fn render_callback(
 
     let channels = channels as usize;
 
-    // Silence the device has to hear before the music: nothing is read from
-    // the ring and nothing counts as played, so the playhead waits with it.
-    // Taken with a compare-exchange, so a `fade_in` clearing it in between is
-    // not overwritten with what was left.
+    // SAFETY: `total_samples` is clamped to the buffer's own
+    // `mDataByteSize`, so this slice ends exactly at its end.
+    let out = unsafe { std::slice::from_raw_parts_mut(out_ptr, total_samples) };
     let frames = (total_samples / channels.max(1)) as u64;
-    let mut left = data.lead_in.load(Ordering::Relaxed);
-    let mut holding = false;
-    while left > 0 {
-        match data.lead_in.compare_exchange_weak(
-            left,
-            left.saturating_sub(frames),
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => {
-                holding = true;
-                break;
-            }
-            Err(now) => left = now,
-        }
-    }
-    if holding {
-        data.fader.hold();
-        // SAFETY: `total_samples` is clamped to the buffer's own size.
-        unsafe { std::slice::from_raw_parts_mut(out_ptr, total_samples).fill(0.0) };
-        data.in_callback.store(false, Ordering::Release);
-        return 0;
-    }
-    let available = data.consumer.slots();
-    let to_read = available.min(data.fader.readable(total_samples, channels));
-
-    if to_read > 0
-        && let Ok(chunk) = data.consumer.read_chunk(to_read)
-    {
-        let (first, second) = chunk.as_slices();
-        let ring_total = first.len() + second.len();
-        let copy_total = ring_total.min(total_samples);
-        let first_copy = first.len().min(copy_total);
-        let second_copy = copy_total.saturating_sub(first_copy).min(second.len());
-        unsafe {
-            ptr::copy_nonoverlapping(first.as_ptr(), out_ptr, first_copy);
-            if second_copy > 0 {
-                ptr::copy_nonoverlapping(second.as_ptr(), out_ptr.add(first_copy), second_copy);
-            }
-        }
-        chunk.commit_all();
-        data.samples_played
-            .fetch_add(copy_total as u64, Ordering::AcqRel);
-        // SAFETY: the first `copy_total` samples were just written above.
-        let written = unsafe { std::slice::from_raw_parts_mut(out_ptr, copy_total) };
-        data.fader.apply(written, channels);
-    }
-
-    // Zero remaining frames on underrun — silence > glitches.
-    //
-    // `write_bytes` counts in elements of the pointee, not in bytes, so
-    // multiplying by `size_of::<f32>()` here wrote four times the intended
-    // range and ran off the end of CoreAudio's buffer. It corrupted the block's
-    // neighbour rather than faulting, so nothing happened until CoreAudio freed
-    // it — surfacing as a trap inside caulk's deallocator in
-    // `AudioUnitUninitialize`, one track later, looking for all the world like
-    // a double free in the teardown (#89).
-    //
-    // Underrun happens at the end of every track, which is why the end of a
-    // queue was where it showed.
-    if to_read < total_samples {
-        // SAFETY: `total_samples` is clamped to the buffer's own
-        // `mDataByteSize`, so this slice ends exactly at its end.
-        unsafe {
-            std::slice::from_raw_parts_mut(out_ptr.add(to_read), total_samples - to_read).fill(0.0);
-        }
+    if take_lead_in(&data.lead_in, &mut data.fader, frames) {
+        out.fill(0.0);
+    } else {
+        render_from_ring(
+            out,
+            &mut data.consumer,
+            &mut data.fader,
+            channels,
+            &data.samples_played,
+        );
     }
 
     data.in_callback.store(false, Ordering::Release);
     0
-}
-
-#[cfg(test)]
-mod tests {
-    /// The underrun fill wrote `count * size_of::<f32>()` *elements* rather than
-    /// bytes, because `write_bytes` counts in elements of the pointee — four
-    /// times the intended range, straight off the end of CoreAudio's buffer.
-    /// It corrupted the neighbouring block silently, so the damage only
-    /// appeared when CoreAudio freed it, one track later, inside
-    /// `AudioUnitUninitialize`.
-    #[test]
-    fn underrun_fill_stays_inside_the_buffer() {
-        let capacity = 1024usize; // 512 frames x 2 channels
-        let mut buffer = vec![7.0f32; capacity + 64]; // canary tail
-        let out = buffer.as_mut_ptr();
-
-        let total_samples = capacity;
-        let to_read = 300usize;
-
-        unsafe {
-            std::slice::from_raw_parts_mut(out.add(to_read), total_samples - to_read).fill(0.0);
-        }
-
-        assert!(
-            buffer[to_read..capacity].iter().all(|s| *s == 0.0),
-            "the underrun region is silent"
-        );
-        assert!(
-            buffer[capacity..].iter().all(|s| *s == 7.0),
-            "nothing past the buffer was touched"
-        );
-    }
 }

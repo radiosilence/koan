@@ -40,7 +40,7 @@ pub fn create_api_key(
             user_id,
             name,
             auth::sha256_hex(&key),
-            auth::now_unix() as i64
+            crate::clock::unix_secs()
         ],
     )?;
     Ok((conn.last_insert_rowid(), key))
@@ -181,7 +181,7 @@ pub fn authenticate_api_key(
     // Decided here rather than in the UPDATE's WHERE: an UPDATE takes the
     // write lock even when it matches nothing. A busy lock skips the stamp
     // rather than holding up the request.
-    let now = auth::now_unix() as i64;
+    let now = crate::clock::unix_secs();
     if last_used.is_none_or(|t| t <= now - TOUCH_INTERVAL_SECS)
         && let Err(e) = crate::db::connection::without_waiting(conn, |conn| {
             conn.execute(
