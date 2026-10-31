@@ -86,6 +86,11 @@ const save = (from?: number) => {
   const { queue, cur } = player;
   try { localStorage.setItem(STORE, JSON.stringify({ queue, cur, pos: from ?? player.position } satisfies Saved)); } catch {}
 };
+// Every change the player reports saves (a pause and a seek among them), and
+// so does leaving: the clock that saves while playing stops in a hidden tab,
+// so hiding it and closing it save where the music had got to.
+document.addEventListener("visibilitychange", () => { if (document.hidden) save(); });
+window.addEventListener("pagehide", () => save());
 // The queue's tracks as last drawn; see renderQueue.
 let queueKey = "";
 const player = new Player({ onChange: render, renew });

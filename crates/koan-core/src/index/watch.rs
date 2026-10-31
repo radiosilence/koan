@@ -43,6 +43,26 @@ impl WatchedRoot {
     }
 }
 
+/// The nearest existing ancestor of `path`, `path` itself included, as the
+/// kernel spells it, and `path` spelled from there. What to watch for a path
+/// that is not there yet: creating it, or any directory on the way to it, is
+/// an event on that ancestor.
+pub fn nearest_existing(path: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut at = path;
+    loop {
+        if let Ok(real) = at.canonicalize() {
+            let rest = path.strip_prefix(at).unwrap_or(Path::new(""));
+            let spelled = if rest.as_os_str().is_empty() {
+                real.clone()
+            } else {
+                real.join(rest)
+            };
+            return Some((real, spelled));
+        }
+        at = at.parent()?;
+    }
+}
+
 /// Whether every change to the filesystem holding `path` is made through this
 /// machine's kernel, and so heard by FSEvents or inotify. A network share
 /// (NFS, SMB, AFP, 9P, Ceph) is not, and neither is a FUSE mount, which may
@@ -302,6 +322,25 @@ pub(crate) fn is_ignored(name: &std::ffi::OsStr) -> bool {
 mod tests {
     use super::*;
     use notify::event::{AccessKind, DataChange, MetadataKind, RenameMode};
+
+    #[test]
+    fn a_missing_path_is_awaited_from_its_nearest_existing_ancestor() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().canonicalize().unwrap();
+        let wanted = dir.path().join("a").join("b");
+        assert_eq!(
+            nearest_existing(&wanted),
+            Some((real.clone(), real.join("a").join("b")))
+        );
+        std::fs::create_dir(dir.path().join("a")).unwrap();
+        assert_eq!(
+            nearest_existing(&wanted),
+            Some((real.join("a"), real.join("a").join("b")))
+        );
+        std::fs::create_dir(&wanted).unwrap();
+        let here = real.join("a").join("b");
+        assert_eq!(nearest_existing(&wanted), Some((here.clone(), here)));
+    }
 
     #[test]
     fn a_temporary_directory_is_local() {

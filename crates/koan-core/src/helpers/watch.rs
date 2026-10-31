@@ -80,8 +80,11 @@ enum Heard {
 /// halfway through a move is corrected by the scan the rest of the move's
 /// events bring, since a directory scan removes what is no longer under it.
 ///
-/// The folder list is read again whenever koan writes its config, so a folder
-/// added in settings is watched without a restart, and each folder's identity
+/// The folder list is read again whenever the config changes — written by
+/// koan, or edited by hand, which the watch on the config files hears — so a
+/// folder added is watched without a restart. A configured folder that is not
+/// there yet is awaited through its nearest existing ancestor, and watched
+/// once it appears. Each folder's identity
 /// is checked whenever a filesystem is mounted or unmounted, so a volume
 /// unplugged and plugged back in is watched afresh and rescanned. A folder on
 /// a network share is rescanned every quarter of an hour as well, since a
@@ -100,7 +103,7 @@ pub fn spawn_library_watch(
     use notify::{RecursiveMode, Watcher};
 
     use crate::index::scanner::{self, ScanOptions};
-    use crate::index::watch::{WatchedRoot, on_mount_change, scan_target};
+    use crate::index::watch::{WatchedRoot, nearest_existing, on_mount_change, scan_target};
 
     // Copying an album in is a burst of events. Wait for it to stop before
     // scanning, rather than scanning per file.
@@ -193,12 +196,33 @@ pub fn spawn_library_watch(
                 return;
             };
 
+            // The config files, watched themselves, so a hand edit is heard as
+            // koan's own writes are.
+            let config_files = [
+                crate::config::config_file_path(),
+                crate::config::config_local_file_path(),
+            ];
+
             // Brings the watches in line with the configured folders as they
             // are now, returning the ones newly watched — added in settings, or
             // back from being unmounted — whose changes nobody heard.
+            //
+            // Beside the folders it keeps `followed`, watched one level deep:
+            // each config file, and for a file or configured folder that is not
+            // there yet, its nearest existing ancestor. `awaited` is those
+            // paths as the kernel spells them; an event on one, or on a
+            // directory on the way to one, is a reason to look again.
+            // `refresh` watches the followed paths afresh, as a file replaced
+            // by a rename needs on inotify, whose watch was on the old inode.
             let mut roots: Vec<WatchedRoot> = Vec::new();
-            let mut rewatch = |roots: &mut Vec<WatchedRoot>| {
-                let wanted: Vec<WatchedRoot> = folders()
+            let mut followed: Vec<PathBuf> = Vec::new();
+            let mut awaited: Vec<PathBuf> = Vec::new();
+            let mut rewatch = |roots: &mut Vec<WatchedRoot>,
+                               followed: &mut Vec<PathBuf>,
+                               awaited: &mut Vec<PathBuf>,
+                               refresh: bool| {
+                let configured = folders();
+                let wanted: Vec<WatchedRoot> = configured
                     .iter()
                     .filter_map(|f| WatchedRoot::resolve(f))
                     .collect();
@@ -222,16 +246,52 @@ pub fn spawn_library_watch(
                         Err(e) => log::warn!("could not watch {}: {e}", root.path.display()),
                     }
                 }
+
+                awaited.clear();
+                let mut follow = Vec::new();
+                let missing = configured
+                    .iter()
+                    .filter(|f| !roots.iter().any(|r| r.path == **f));
+                for path in config_files.iter().chain(missing) {
+                    let Some((existing, spelled)) = nearest_existing(path) else {
+                        continue;
+                    };
+                    awaited.push(spelled);
+                    // A folder watched whole already hears it.
+                    let inside = roots
+                        .iter()
+                        .any(|r| existing.starts_with(&r.real) || existing.starts_with(&r.path));
+                    if !inside && !follow.contains(&existing) {
+                        follow.push(existing);
+                    }
+                }
+                followed.retain(|p| {
+                    let keep = !refresh && follow.contains(p);
+                    if !keep {
+                        let _ = watcher.unwatch(p);
+                    }
+                    keep
+                });
+                for path in follow {
+                    if followed.contains(&path) {
+                        continue;
+                    }
+                    match watcher.watch(&path, RecursiveMode::NonRecursive) {
+                        Ok(()) => followed.push(path),
+                        Err(e) => log::debug!("could not follow {}: {e}", path.display()),
+                    }
+                }
                 fresh
             };
             // After the first frame and the first track, not competing with them.
             std::thread::sleep(Duration::from_secs(3));
-            rewatch(&mut roots);
+            rewatch(&mut roots, &mut followed, &mut awaited, false);
             scan("start-up", &folders(), None);
 
             let mut dirs = BTreeSet::new();
             let mut everything = false;
             let mut recheck = false;
+            let mut refresh = false;
             let mut settle_at: Option<Instant> = None;
             let mut rescan_at = Instant::now() + RESCAN;
             loop {
@@ -260,9 +320,23 @@ pub fn spawn_library_watch(
                     Ok(Heard::Fs(Ok(event))) => {
                         let mut changed = false;
                         for path in &event.paths {
+                            if config_files
+                                .iter()
+                                .any(|f| path.file_name() == f.file_name())
+                                && awaited.contains(path)
+                            {
+                                // Edited by hand, or written by koan: either
+                                // way whatever acts on a setting looks again.
+                                Config::invalidate_cache();
+                                refresh = true;
+                            }
                             // The folder itself coming or going: unmounted, or
-                            // renamed away. Its identity says which.
-                            if roots.iter().any(|r| *path == r.path || *path == r.real) {
+                            // renamed away. Its identity says which. Or a
+                            // path awaited, or a directory on the way to one,
+                            // appearing.
+                            if roots.iter().any(|r| *path == r.path || *path == r.real)
+                                || awaited.iter().any(|a| a.starts_with(path))
+                            {
                                 recheck = true;
                             } else if let Some(dir) = scan_target(&event.kind, path, &roots) {
                                 dirs.insert(dir);
@@ -279,7 +353,8 @@ pub fn spawn_library_watch(
                 }
 
                 if std::mem::take(&mut recheck) {
-                    let fresh = rewatch(&mut roots);
+                    let refresh = std::mem::take(&mut refresh);
+                    let fresh = rewatch(&mut roots, &mut followed, &mut awaited, refresh);
                     if !fresh.is_empty() {
                         scan("new folder", &fresh, None);
                     }
