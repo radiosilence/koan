@@ -13,6 +13,76 @@ const PLAYBACK_REPORT_EXTENSION: &str = "playbackReport";
 /// Marks a koan server's `getCoverArt` answer as its placeholder for a record
 /// without art, which other Subsonic clients draw and koan's own replace.
 pub const PLACEHOLDER_HEADER: &str = "x-koan-placeholder";
+/// The images Navidrome answers `getCoverArt` with for a record that has no
+/// art, by byte length and SHA-256: `album-placeholder.webp` (0.56 on, and
+/// 0.54–0.55's), `artist-placeholder.webp`, and `placeholder.png` (0.50–0.53).
+/// From 0.50 every release serves them unresized whatever `size` asks:
+/// `GetOrPlaceholder` opens the file and returns it as is, and only playlist
+/// art goes through the resizer. The length is checked first, so real art is
+/// never hashed.
+const NAVIDROME_PLACEHOLDERS: [(usize, [u8; 32]); 4] = [
+    (
+        69228,
+        [
+            0x27, 0x3a, 0x4d, 0xbd, 0x61, 0xdf, 0xbb, 0x0a, 0x12, 0xd5, 0xd8, 0xff, 0xe7, 0x80,
+            0xeb, 0x7a, 0x3d, 0x4d, 0x00, 0x0b, 0xc9, 0x77, 0x1c, 0x54, 0x11, 0xcc, 0x70, 0xae,
+            0x4d, 0xfa, 0x8a, 0x1f,
+        ],
+    ),
+    (
+        17464,
+        [
+            0xb5, 0x02, 0x97, 0x9c, 0x46, 0x4a, 0xb7, 0xa6, 0x1f, 0x79, 0xbf, 0xd8, 0x20, 0xe2,
+            0x3b, 0x8d, 0xc3, 0xee, 0xb3, 0x60, 0x34, 0xb0, 0x72, 0x2f, 0x75, 0x88, 0x97, 0x2f,
+            0xd9, 0xfa, 0x73, 0x92,
+        ],
+    ),
+    (
+        546,
+        [
+            0x52, 0x12, 0x59, 0xc6, 0x52, 0xaf, 0x6d, 0x43, 0xcb, 0x12, 0x48, 0x76, 0x10, 0x62,
+            0x58, 0xd9, 0x3b, 0x6b, 0x6f, 0x7f, 0xbe, 0x7a, 0xd2, 0xc7, 0x3e, 0x83, 0x45, 0x87,
+            0x5a, 0xfe, 0x4d, 0xcf,
+        ],
+    ),
+    (
+        300162,
+        [
+            0x6e, 0xe8, 0xf3, 0xc3, 0x79, 0x05, 0x0e, 0x52, 0xf8, 0xc5, 0xcd, 0xf7, 0xeb, 0x21,
+            0x5f, 0x6d, 0x14, 0xc3, 0x8c, 0xc7, 0xc4, 0xd8, 0xc5, 0x90, 0x00, 0xd6, 0x19, 0xd7,
+            0xa6, 0xa0, 0x78, 0x88,
+        ],
+    ),
+];
+
+/// Whether a `getCoverArt` answer is the server's stand-in for missing art
+/// rather than the record's own: koan's header, Navidrome's placeholder bytes,
+/// or `no-store` from a server that `navidrome` says is Navidrome, which from
+/// 0.64 sends it on placeholders only. `no-store` from anything else says
+/// nothing: a proxy may add it to every answer. `navidrome` is asked only for
+/// an answer carrying `no-store`.
+fn is_placeholder(
+    headers: &reqwest::header::HeaderMap,
+    body: &[u8],
+    navidrome: impl FnOnce() -> bool,
+) -> bool {
+    use sha2::{Digest, Sha256};
+    if headers.contains_key(PLACEHOLDER_HEADER) {
+        return true;
+    }
+    let no_store = headers
+        .get_all(reqwest::header::CACHE_CONTROL)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|d| d.trim().eq_ignore_ascii_case("no-store"));
+    if no_store && navidrome() {
+        return true;
+    }
+    NAVIDROME_PLACEHOLDERS
+        .iter()
+        .any(|(len, digest)| body.len() == *len && Sha256::digest(body).as_slice() == digest)
+}
 
 #[derive(Debug, Error)]
 pub enum SubsonicError {
@@ -343,8 +413,8 @@ impl SubsonicClient {
     /// Returns the raw image rather than a parsed response — `getCoverArt`
     /// answers with image data, not JSON, so it can't go through `get()`.
     /// `size` requests a square thumbnail; omit it for the original. Empty
-    /// when the record has no art: a koan server's placeholder is not passed
-    /// on, so the caller draws its own.
+    /// when the record has no art: the server's placeholder is not passed on
+    /// (see `is_placeholder`), so the caller draws its own.
     pub fn get_cover_art(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
         let url = format!("{}/rest/getCoverArt", self.base_url());
         let mut params = self.auth_params()?;
@@ -356,10 +426,19 @@ impl SubsonicClient {
         let _slot = CoverSlots::take();
         let resp = self.http().get(&url).query(&params).send()?;
         Self::reject_error_body(&resp)?;
-        if resp.headers().contains_key(PLACEHOLDER_HEADER) {
+        let headers = resp.headers().clone();
+        let body = resp.bytes()?;
+        // This client's own server, as last probed: no config read, no
+        // request.
+        let navidrome = || {
+            crate::remote::profile::probed(self.auth())
+                .and_then(|p| p.kind)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("navidrome"))
+        };
+        if is_placeholder(&headers, &body, navidrome) {
             return Ok(Vec::new());
         }
-        Ok(resp.bytes()?.to_vec())
+        Ok(body.to_vec())
     }
 
     /// Ping the server — verify connection and credentials.
@@ -1428,11 +1507,15 @@ pub struct KoanForgotten {
 }
 
 /// A pairing a koan server holds, as `koanPairInfo` and `koanPairApprove`
-/// describe it: the device, the address it asked from, and whether that
-/// address is on a private network.
+/// describe it: the device, the id it links with (from servers that keep
+/// it), the address it asked from, and whether that address is on a private
+/// network.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct KoanPair {
     pub device: String,
+    #[serde(default)]
+    pub device_id: Option<String>,
     #[serde(default)]
     pub from: String,
     #[serde(default)]
@@ -1944,6 +2027,35 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn placeholders_are_told_by_header_or_by_navidromes_bytes() {
+        use reqwest::header::{CACHE_CONTROL, HeaderMap, HeaderValue};
+        let art = b"\x89PNG real sleeve";
+        assert!(!super::is_placeholder(&HeaderMap::new(), art, || true));
+
+        let mut cached = HeaderMap::new();
+        cached.insert(CACHE_CONTROL, HeaderValue::from_static("public, no-cache"));
+        assert!(!super::is_placeholder(&cached, art, || true));
+
+        let mut no_store = HeaderMap::new();
+        no_store.insert(CACHE_CONTROL, HeaderValue::from_static("No-Store"));
+        assert!(super::is_placeholder(&no_store, art, || true));
+        // From anything but Navidrome, a proxy's header on real art.
+        assert!(!super::is_placeholder(&no_store, art, || false));
+
+        let mut koan = HeaderMap::new();
+        koan.insert(super::PLACEHOLDER_HEADER, HeaderValue::from_static("1"));
+        assert!(super::is_placeholder(&koan, art, || false));
+
+        // The length alone is not enough: same size, other bytes.
+        let (len, _) = super::NAVIDROME_PLACEHOLDERS[1];
+        assert!(!super::is_placeholder(
+            &HeaderMap::new(),
+            &vec![0; len],
+            || true
+        ));
+    }
+
     #[test]
     fn a_song_with_null_or_nameless_credits_still_reads() {
         let song: SubsonicSong = serde_json::from_value(serde_json::json!({

@@ -437,19 +437,12 @@ struct PlaylistView: View {
 
     /// Play from an entry, keeping the rest of the playlist behind it — the
     /// same thing clicking track nine of an album does. An entry rather than a
-    /// position: see `playPlaylist`.
+    /// position: see `PlayerModel.play(playlist:from:)`.
     ///
     /// Stays put afterwards: the playing row is lit on this page, so there is
     /// nothing the queue would show that this does not.
     private func start(at entry: Int64) {
-        let engine = playlists.engine
-        Task {
-            _ = try? await engine.playPlaylist(
-                playlistId: playlistId,
-                startEntry: entry,
-                shuffled: false
-            )
-        }
+        player.play(playlist: playlistId, from: entry)
     }
 
     private func play(rowIds: Set<String>) {

@@ -55,7 +55,6 @@ import cc.blit.koan.ui.theme.KoanTabItem
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.koanSurface
 import cc.blit.koan.ui.theme.recordWash
-import kotlinx.coroutines.flow.combine
 
 /**
  * The app's frame: sign-in until a server is signed in to, then the tabs, each
@@ -129,10 +128,6 @@ private fun Signed() {
 @Composable
 private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
     val app = koanApp()
-    // The engine's own syncs and scans, followed from its state.
-    LaunchedEffect(app) {
-        combine(app.mirror.tasks, app.mirror.sync, ::Pair).collect { (tasks, sync) -> app.activity.follow(tasks, sync) }
-    }
     val current = navigator.tab
     val stack = stacks.getValue(current)
     Scaffold(

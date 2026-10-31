@@ -877,6 +877,9 @@ private struct AccountSettings: View {
     @State private var changingPassword = false
     @State private var currentPassword = ""
     @State private var newPassword = ""
+    /// Counts the times this page has been shown, so a section that gave up
+    /// asks again on the next.
+    @State private var visits = 0
 
     /// Whether there is anything here: signed in to a server with either.
     static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
@@ -889,7 +892,7 @@ private struct AccountSettings: View {
         KoanForm {
             #if !os(tvOS)
             if mirror.offers(PeopleModel.extensionName) {
-                LinkDeviceSection(username: model.settings.remoteUsername)
+                LinkDeviceSection(username: model.settings.remoteUsername, visit: visits)
             }
             #endif
             if mirror.offers(PasswordChange.extensionName) {
@@ -930,6 +933,7 @@ private struct AccountSettings: View {
             #endif
         }
         .koanSheet()
+        .onAppear { visits += 1 }
     }
 }
 

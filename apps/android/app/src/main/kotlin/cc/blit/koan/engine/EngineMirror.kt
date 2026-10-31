@@ -32,7 +32,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /**
  * Where the playhead was at `atMs` (`SystemClock.elapsedRealtime`), and
@@ -214,12 +214,13 @@ class EngineMirror(deviceName: String) {
 
     /**
      * Wait, two seconds at most, for appearance changes still being saved: for
-     * when the process may be about to go. Nothing to wait for if the engine
-     * never opened.
+     * when the process may be about to go. Waits on IO, never the caller's
+     * thread. Nothing to wait for if the engine never opened.
      */
-    fun flushSettings() {
-        if (!opened.isCompleted) return
-        runCatching { runBlocking { opened.await() }.flushSettings() }
+    suspend fun flushSettings() {
+        if (!opened.isCompleted || opened.getCompletionExceptionOrNull() != null) return
+        val engine = opened.await()
+        withContext(Dispatchers.IO) { engine.flushSettings() }
     }
 
     /** The engine, once it has opened the library and started the player. */
@@ -316,7 +317,6 @@ class EngineMirror(deviceName: String) {
     }
 }
 
-/** The engine's own words for what went wrong. */
 /** What the app says when the engine would not open. */
 fun failureToStart(e: Exception) = (e as? KoanException)?.describe() ?: e.message ?: e.toString()
 
@@ -327,5 +327,6 @@ fun KoanException.describe() = when (this) {
     is KoanException.NotFound -> detail
     is KoanException.BadArgument -> detail
     is KoanException.Remote -> detail
+    is KoanException.Refused -> detail
     is KoanException.NeedsSampleRate -> detail
 }
