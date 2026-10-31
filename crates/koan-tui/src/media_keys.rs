@@ -80,6 +80,8 @@ fn spawn_cover_thread() -> (Sender<(u64, PathBuf)>, CoverUrls) {
                     break;
                 }
             }
+            // Drop removes it too, but may run while a write is under way.
+            std::fs::remove_file(&tmp).ok();
         })
         .ok();
     (tx, rx)
@@ -167,8 +169,9 @@ impl MediaKeyHandler {
 
     /// Tells Now Playing of the playing track, from the queue and credits
     /// the frame already holds. Its cover follows from the cover thread.
-    /// False, telling it nothing, while the queue the frame holds has not
-    /// caught up with the track.
+    /// False when the queue the frame holds has no row for the track: Now
+    /// Playing is then told only its length, and the caller asks again once
+    /// the queue moves.
     pub(crate) fn update_metadata(
         &mut self,
         state: &SharedPlayerState,
@@ -179,14 +182,14 @@ impl MediaKeyHandler {
         let Some(info) = state.track_info() else {
             return true;
         };
-        let Some(entry) = entries.iter().find(|e| e.id == info.id) else {
-            return false;
-        };
+        let entry = entries.iter().find(|e| e.id == info.id);
         self.shown = Some(Shown {
-            title: entry.title.clone(),
-            artist: facts.credits_of(entry).artist.clone(),
-            album: entry.album.clone(),
-            duration: entry.duration_ms.or(Some(info.duration_ms)),
+            title: entry.map(|e| e.title.clone()).unwrap_or_default(),
+            artist: entry
+                .map(|e| facts.credits_of(e).artist.clone())
+                .unwrap_or_default(),
+            album: entry.map(|e| e.album.clone()).unwrap_or_default(),
+            duration: entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms)),
         });
         // A refresh for the same file keeps a cover it has, rather than
         // dropping it and reading it again; one that has none reads it again,
@@ -197,7 +200,7 @@ impl MediaKeyHandler {
         {
             let url = self.cover_url.clone();
             self.set_metadata(url.as_deref());
-            return true;
+            return entry.is_some();
         }
         self.generation += 1;
         self.cover_path = track_path.cloned();
@@ -206,7 +209,7 @@ impl MediaKeyHandler {
         if let Some(path) = track_path {
             self.covers.send((self.generation, path.clone())).ok();
         }
-        true
+        entry.is_some()
     }
 
     /// Takes in a cover the cover thread has written, for the track still

@@ -219,7 +219,9 @@ impl NowPlaying {
         let state = &app.state;
         mk.poll();
         let track = state.track_info().map(|t| t.path);
-        let version = state.playlist_version();
+        // The version of the queue the lookup reads, which can trail the
+        // state's own within a frame.
+        let version = app.queue.vq_version;
         let retry = self.unfound.is_some_and(|at| at != version);
         let metadata = state.take_metadata_refresh() || track != self.track || retry;
         if metadata {

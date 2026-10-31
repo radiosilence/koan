@@ -14,7 +14,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
-use koan_core::graphql_client::{GraphQLClient, NowPlaying, QueueEntry};
+use koan_core::graphql_client::{GraphQLClient, GraphQLError, NowPlaying, QueueEntry};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     ItemState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
@@ -107,7 +107,7 @@ fn mirror_loop(client: GraphQLClient, state: Weak<SharedPlayerState>) {
             }
             ControlFlow::Continue(())
         });
-        if state.strong_count() == 0 {
+        if matches!(ended, GraphQLError::Stopped) || state.strong_count() == 0 {
             return;
         }
         if client.predates(&ended) {

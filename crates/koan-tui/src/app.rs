@@ -183,6 +183,8 @@ pub struct QueueState {
     /// The `content_version` and library stamp `facts` and `layout` were
     /// built at; `None` until they are built.
     pub(super) facts_version: Option<(u64, u64)>,
+    /// When the library stamp was last read, and `library_version` then.
+    pub(super) stamp_read: Option<(std::time::Instant, u64)>,
     /// The download store's version `facts.sources` was read at.
     pub(super) transfers_version: u64,
     /// The queue's lines, built when it changes or is regrouped.
@@ -3561,17 +3563,31 @@ impl App {
 
         self.queue.vq_cache = self.state.derive_visible_queue();
         self.queue.vq_version = v;
-        // Credits, places and the lock's name depend on which tracks the
-        // queue holds and on what the library says of them, so a bump that
-        // only moved a status or the cursor keeps them. A scan or sync in
+        // Credits, places, sources and the lock's name depend on which tracks
+        // the queue holds and on what the library says of them, so a bump
+        // that only moved a status or the cursor keeps them. A scan or sync in
         // this process re-reads them itself (`reload_library_pages`); the
-        // stamp sees another process add or remove rows.
-        let library = koan_core::db::pool::shared()
-            .get()
-            .ok()
-            .and_then(|db| koan_core::db::queries::library_stamp(&db.conn).ok())
-            .map_or(0, |s| s.rows);
-        let at = Some((self.state.content_version(), library));
+        // library stamp sees another process's writes, and is read again only
+        // when the queue's tracks change, this process says it wrote rows, or
+        // `STAMP_EVERY` has passed: never per bump.
+        let content = self.state.content_version();
+        let written = koan_core::db::queries::library_version();
+        let due = self.queue.facts_version.is_none_or(|(c, _)| c != content)
+            || self
+                .queue
+                .stamp_read
+                .is_none_or(|(at, w)| w != written || at.elapsed() >= queue::STAMP_EVERY);
+        let library = if due {
+            self.queue.stamp_read = Some((std::time::Instant::now(), written));
+            koan_core::db::pool::shared()
+                .get()
+                .ok()
+                .and_then(|db| koan_core::db::queries::library_stamp(&db.conn).ok())
+                .map_or(0, |s| s.key())
+        } else {
+            self.queue.facts_version.map_or(0, |(_, l)| l)
+        };
+        let at = Some((content, library));
         if at != self.queue.facts_version {
             self.queue.facts_version = at;
             self.queue.facts = queue::Facts::read(&self.queue.vq_cache.entries, &self.state);
