@@ -5526,9 +5526,7 @@ impl KoanEngine {
         let none = koan_core::remote::link::LinkState::default();
         let st = device.and_then(|d| d.state.as_ref()).unwrap_or(&none);
         let current = st.queue.iter().position(|e| e.current);
-        let library = self
-            .library_version
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let library = queries::library_version();
         let mut held = self.remote_queue.lock();
         let (version, items) = match held
             .as_ref()
@@ -5552,7 +5550,7 @@ impl KoanEngine {
         let out = &self.out;
         out.publish(StateSlice::Playback {
             now_playing: NowPlaying {
-                state: play_state(&st),
+                state: play_state(st),
                 waiting: false,
                 position_ms: 0,
                 duration_ms: st.duration_ms,
@@ -5586,8 +5584,7 @@ impl KoanEngine {
         let rows = self.rows_for_remote(&ids);
         let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
         let joins = self.queue_joins(&row_ids);
-        let mut items: Vec<QueueItem> = st
-            .queue
+        let mut items: Vec<QueueItem> = queue
             .iter()
             .enumerate()
             .map(|(n, e)| {
