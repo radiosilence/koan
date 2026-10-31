@@ -68,6 +68,25 @@ pub fn library_fingerprint(conn: &Connection) -> Result<u64, DbError> {
     Ok(hasher.finish())
 }
 
+/// How long [`library_stamp`] holds while the fingerprint does.
+const STAMP_MAX_AGE_SECS: u64 = 300;
+
+/// A number that changes when [`library_fingerprint`] does, and every five
+/// minutes besides: what a cache of library rows keys on in a process that
+/// cannot count the library's writes. The window bounds how long a row edited
+/// in place goes unseen.
+pub fn library_stamp(conn: &Connection) -> Result<u64, DbError> {
+    use std::hash::{Hash, Hasher};
+    let window = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / STAMP_MAX_AGE_SECS;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (library_fingerprint(conn)?, window).hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

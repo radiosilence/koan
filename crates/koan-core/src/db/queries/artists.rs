@@ -71,6 +71,9 @@ pub enum ArtistOrder {
     /// `search::match_rank`), then by name. Without a search, in the order of
     /// `ArtistQuery::ids`; without either, `Name`.
     Relevance,
+    /// Most tracks first. Counts tracks, so not with
+    /// `ArtistQuery::without_track_counts`; with it, `AlbumCount`.
+    TrackCount,
 }
 
 impl ArtistOrder {
@@ -81,6 +84,7 @@ impl ArtistOrder {
             Self::RecentlyAdded => "COALESCE(MAX(al.added_at), '') DESC, a.name COLLATE LIBRARY",
             Self::Id => "a.id",
             Self::LastPlayed => "MAX(p.last) DESC, MAX(p.last_id) DESC",
+            Self::TrackCount => "COUNT(t.id) DESC, a.name COLLATE LIBRARY",
         }
     }
 }
@@ -102,6 +106,8 @@ pub struct ArtistQuery<'a> {
     /// counts are of what is left.
     pub filter: super::albums::AlbumFilter<'a>,
     pub order: ArtistOrder,
+    /// `order` read backwards, from its last row to its first.
+    pub descending: bool,
     /// Leave `track_count` at zero rather than read every track in the library
     /// to count them.
     pub without_track_counts: bool,
@@ -131,6 +137,7 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
     let (body, mut params) = artist_body(conn, q)?;
     let order = match q.order {
         ArtistOrder::LastPlayed if q.played.is_none() => ArtistOrder::Name,
+        ArtistOrder::TrackCount if q.without_track_counts => ArtistOrder::AlbumCount,
         order => order,
     };
     let order_by = match (order, q.search, q.ids) {
@@ -147,7 +154,10 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
         (ArtistOrder::Relevance, None, Some(_)) => "MIN(r.key)".into(),
         (order, ..) => order.clause().into(),
     };
-    let mut sql = format!("SELECT {columns} {body} ORDER BY {order_by}");
+    let mut sql = format!(
+        "SELECT {columns} {body} ORDER BY {}",
+        super::reversed(&order_by, q.descending)
+    );
     if let Some(limit) = q.limit {
         params.push(Box::new(limit as i64));
         params.push(Box::new(q.offset as i64));

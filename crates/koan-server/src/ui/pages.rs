@@ -279,24 +279,36 @@ fn cells(
 /// The codecs and genres the filters offer.
 pub(super) type Options = Arc<(Vec<String>, Vec<String>)>;
 
-/// How long the filter options are reused. Counting genres reads every track,
-/// and a library changes far more slowly than people page through it.
-const OPTIONS_TTL: std::time::Duration = std::time::Duration::from_secs(300);
-
+/// The filter options, read again only when the library has moved
+/// (`library_stamp`): counting genres reads every track. Read outside the
+/// lock, and a failed read is shown as no options and not kept.
 fn filter_options(s: &UiState) -> Option<Options> {
-    let mut held = s.options.lock().ok()?;
-    if let Some((at, options)) = held.as_ref()
-        && at.elapsed() < OPTIONS_TTL
+    let db = open(&s.pool)?;
+    let stamp = match queries::library_stamp(&db.conn) {
+        Ok(stamp) => stamp,
+        Err(e) => {
+            log::warn!("library stamp: {e}");
+            return Some(Options::default());
+        }
+    };
+    if let Some((at, options)) = s.options.lock().ok()?.as_ref()
+        && *at == stamp
     {
         return Some(options.clone());
     }
-    let db = open(&s.pool)?;
-    let options = Arc::new((
-        queries::album_codecs(&db.conn).unwrap_or_default(),
-        queries::genres(&db.conn, GENRES_OFFERED).unwrap_or_default(),
-    ));
-    *held = Some((std::time::Instant::now(), options.clone()));
-    Some(options)
+    let read = queries::album_codecs(&db.conn)
+        .and_then(|codecs| Ok((codecs, queries::genres(&db.conn, GENRES_OFFERED)?)));
+    match read {
+        Ok(read) => {
+            let options = Arc::new(read);
+            *s.options.lock().ok()? = Some((stamp, options.clone()));
+            Some(options)
+        }
+        Err(e) => {
+            log::warn!("filter options: {e}");
+            Some(Options::default())
+        }
+    }
 }
 
 #[derive(Template)]

@@ -624,9 +624,6 @@ pub struct KoanEngine {
     /// The queue's `content_version` as last saved, so a save rewrites the
     /// queue only when its contents moved and otherwise saves the position.
     saved_content: std::sync::atomic::AtomicU64,
-    /// What the fuzzy searches match against, kept until `library_version`
-    /// moves.
-    fuzzy: queries::CorpusCache,
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
@@ -1309,18 +1306,15 @@ impl KoanEngine {
         .await
     }
 
-    /// Tracks for an album or artist, or a page of the whole library when
-    /// neither is given.
+    /// An album's tracks, or an artist's, in running order: by release, then
+    /// disc and track. One of the two is required; the track browser is
+    /// `track_listing`.
     pub async fn tracks(
         self: Arc<Self>,
         album_id: Option<i64>,
         artist_id: Option<i64>,
-        sort: TrackSort,
-        limit: u32,
-        offset: u32,
     ) -> Result<Vec<Track>, KoanError> {
-        offload::offload(move || self.tracks_blocking(album_id, artist_id, sort, limit, offset))
-            .await
+        offload::offload(move || self.tracks_blocking(album_id, artist_id)).await
     }
 
     /// A page of the track browser: the library's tracks narrowed by `search`
@@ -1446,7 +1440,8 @@ impl KoanEngine {
         .await
     }
 
-    /// Nucleo fuzzy match — what the command palette wants. Ranked, best first.
+    /// Fuzzy match — what the command palette wants. Ranked, best first, as
+    /// every fuzzy search is (`queries::fuzzy_rank`).
     pub async fn fuzzy_search(
         self: Arc<Self>,
         query: String,
@@ -1454,17 +1449,21 @@ impl KoanEngine {
         limit: u32,
     ) -> Result<Vec<FuzzyMatch>, KoanError> {
         offload::offload(move || {
-            let items = self.corpus(match kind {
-                SearchKind::Track => queries::CorpusKind::Track,
-                SearchKind::Album => queries::CorpusKind::Album,
-                SearchKind::Artist => queries::CorpusKind::Artist,
-            })?;
-            let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
-            Ok(fuzzy_rank(&texts, &query, limit)
+            let corpus = queries::corpus(
+                &self.db()?.conn,
+                match kind {
+                    SearchKind::Track => queries::CorpusKind::Track,
+                    SearchKind::Album => queries::CorpusKind::Album,
+                    SearchKind::Artist => queries::CorpusKind::Artist,
+                },
+            )
+            .map_err(db_err)?;
+            Ok(queries::fuzzy_rank(&corpus, &query)
                 .into_iter()
-                .map(|i| FuzzyMatch {
-                    id: items[i].0,
-                    name: items[i].1.clone(),
+                .take(limit as usize)
+                .map(|(_, i)| FuzzyMatch {
+                    id: corpus[i].0,
+                    name: corpus[i].1.clone(),
                     kind,
                 })
                 .collect())
@@ -1707,23 +1706,10 @@ impl KoanEngine {
                 },
             )
             .map_err(db_err)?;
-            // Narrowed after the cap, as before: a substring over the title,
-            // artist and record, which the full-text index does not answer.
-            let needle = search.map(str::to_lowercase);
             let mut recent = Shelf::Recent.tracks(user, now);
             recent.filter.on_device = offline();
-            let tracks: Vec<_> = recent
-                .page(&db.conn, RECENT_LIMIT, 0)
-                .map_err(db_err)?
-                .into_iter()
-                .filter(|t| {
-                    needle.as_ref().is_none_or(|n| {
-                        [&t.title, &t.artist_name, &t.album_title]
-                            .iter()
-                            .any(|s| s.to_lowercase().contains(n.as_str()))
-                    })
-                })
-                .collect();
+            recent.filter.search = search.map(str::to_owned);
+            let tracks = recent.page(&db.conn, RECENT_LIMIT, 0).map_err(db_err)?;
             Ok(RecentlyPlayed {
                 albums: decorate_albums(&db, albums),
                 artists: artists.into_iter().map(Artist::from).collect(),
@@ -1812,18 +1798,8 @@ impl KoanEngine {
             let mut favourites = koan_core::shelves::Shelf::Favourites
                 .tracks(queries::LOCAL_USER, koan_core::shelves::now());
             favourites.filter.on_device = offline();
+            favourites.filter.search = trimmed(&search).map(str::to_owned);
             let rows = favourites.page(&db.conn, u32::MAX, 0).map_err(db_err)?;
-            let needle = trimmed(&search).map(str::to_lowercase);
-            let rows = rows
-                .into_iter()
-                .filter(|t| {
-                    needle.as_ref().is_none_or(|n| {
-                        [&t.title, &t.artist_name, &t.album_title]
-                            .iter()
-                            .any(|s| s.to_lowercase().contains(n.as_str()))
-                    })
-                })
-                .collect();
             Ok(self.decorate(&db, rows))
         })
         .await
@@ -4895,7 +4871,7 @@ impl KoanEngine {
     ) -> Result<Vec<i64>, KoanError> {
         offload::offload(move || {
             Ok(self
-                .tracks_blocking(album_id, artist_id, TrackSort::Album, 2000, 0)?
+                .tracks_blocking(album_id, artist_id)?
                 .into_iter()
                 .map(|t| t.id)
                 .collect())
@@ -5838,28 +5814,19 @@ impl KoanEngine {
         &self,
         album_id: Option<i64>,
         artist_id: Option<i64>,
-        sort: TrackSort,
-        limit: u32,
-        offset: u32,
     ) -> Result<Vec<Track>, KoanError> {
         let db = self.db()?;
         let rows = match (album_id, artist_id) {
             (Some(aid), _) => queries::tracks_for_album(&db.conn, aid),
             (None, Some(aid)) => queries::tracks_for_artist(&db.conn, aid),
-            (None, None) => queries::all_tracks_paged(&db.conn, limit, offset),
+            (None, None) => {
+                return Err(KoanError::BadArgument {
+                    message: "tracks of what: name an album or an artist".into(),
+                });
+            }
         }
         .map_err(db_err)?;
-        Ok(self.decorate(&db, sort_rows(rows, sort)))
-    }
-
-    /// The fuzzy corpus for `kind`, read once per library version.
-    fn corpus(&self, kind: queries::CorpusKind) -> Result<queries::Corpus, KoanError> {
-        let version = self
-            .library_version
-            .load(std::sync::atomic::Ordering::Relaxed);
-        self.fuzzy
-            .get(&self.db()?.conn, kind, version)
-            .map_err(db_err)
+        Ok(self.decorate(&db, rows))
     }
 
     /// Say that the library's rows changed. The watcher turns this into a
@@ -6048,7 +6015,6 @@ impl KoanEngine {
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             library_version: library_version.clone(),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
-            fuzzy: queries::CorpusCache::default(),
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),
@@ -6557,21 +6523,6 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
         .collect()
 }
 
-fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::TrackRow> {
-    match sort {
-        // Left alone deliberately. Every query already ORDERs BY album date,
-        // title, disc and track — the coherent ordering, and better than
-        // anything reconstructible here since TrackRow carries no release date.
-        // Re-sorting on (disc, track) alone turned an artist's discography into
-        // track 1 of every album, then track 2 of every album.
-        TrackSort::Album => {}
-        TrackSort::Title => rows.sort_by_key(|r| r.title.to_lowercase()),
-        TrackSort::Artist => rows.sort_by_key(|r| r.artist_name.to_lowercase()),
-        TrackSort::Duration => rows.sort_by_key(|r| r.duration_ms.unwrap_or(0)),
-    }
-    rows
-}
-
 /// A track's cover from disk: the image beside its file or the art embedded
 /// in it (see `koan_core::index::folder_art`).
 fn local_cover_art(row: &queries::TrackRow) -> Option<CoverArt> {
@@ -6625,37 +6576,6 @@ fn offline_filter() -> queries::AlbumFilter<'static> {
         on_device: offline(),
         ..Default::default()
     }
-}
-
-/// Rank `texts` against `query`, best first, and return the indices of the top
-/// `limit`. Shared by every fuzzy listing so they rank identically.
-fn fuzzy_rank(texts: &[&str], query: &str, limit: u32) -> Vec<usize> {
-    use nucleo::pattern::{CaseMatching, Normalization};
-    use nucleo::{Config as NucleoConfig, Nucleo};
-
-    let mut nucleo: Nucleo<u32> = Nucleo::new(NucleoConfig::DEFAULT, Arc::new(|| {}), None, 1);
-    let injector = nucleo.injector();
-    for (i, text) in texts.iter().enumerate() {
-        let text = text.to_string();
-        injector.push(i as u32, |_val, cols| {
-            cols[0] = text.into();
-        });
-    }
-
-    // Case-insensitive: a phone keyboard capitalises the first letter, and
-    // smart case would then read "Spfdj" as a request for that exact casing.
-    nucleo
-        .pattern
-        .reparse(0, query, CaseMatching::Ignore, Normalization::Smart, false);
-    // Until the matcher has seen every item. A fixed number of ticks let a
-    // slow device snapshot a partial match.
-    while nucleo.tick(10).running {}
-
-    let snap = nucleo.snapshot();
-    let count = (snap.matched_item_count() as usize).min(limit as usize);
-    (0..count as u32)
-        .filter_map(|i| snap.get_matched_item(i).map(|item| *item.data as usize))
-        .collect()
 }
 
 /// Refuse an edit to the contents of a playlist that takes none.
@@ -6983,29 +6903,6 @@ mod hand_off_tests {
         ));
         assert!(arrived_here(Some(kept), Some((arrived, t.clone())), "t"));
         assert!(arrived_here(None, Some((arrived, t)), "t"));
-    }
-}
-
-#[cfg(test)]
-mod fuzzy_tests {
-    use super::fuzzy_rank;
-
-    #[test]
-    fn fuzzy_rank_ignores_case() {
-        let texts = [
-            "Soulwax — Most of the remixes we've made for other people",
-            "SPFDJ",
-        ];
-        let ranked = fuzzy_rank(&texts, "Spfdj", 10);
-        assert_eq!(ranked.first(), Some(&1));
-    }
-
-    #[test]
-    fn fuzzy_rank_sees_every_item() {
-        let mut texts: Vec<String> = (0..20_000).map(|i| format!("Filler artist {i}")).collect();
-        texts.push("SPFDJ".into());
-        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-        assert_eq!(fuzzy_rank(&texts, "spfdj", 5), vec![20_000]);
     }
 }
 
