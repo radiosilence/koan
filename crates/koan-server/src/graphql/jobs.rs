@@ -252,7 +252,7 @@ pub(crate) fn start_scan(
         // and must not deny one to request-path resolvers.
         move || pool.take().map_err(|e| e.to_string()),
         move |db, progress| {
-            let cfg = koan_core::config::Config::load().unwrap_or_default();
+            let cfg = koan_core::config::Config::cached();
             crate::clients::changed_if_library_moved(&db.conn);
             let on_read = |done, total| progress.read(done, total);
             let result = koan_core::index::scanner::full_scan(

@@ -547,6 +547,37 @@ mod rebuild_tests {
     }
 
     #[test]
+    fn a_download_filed_under_the_track_artist_is_still_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let mut meta = sample_meta("Night Wire", "Technical Itch", "Collected");
+        meta.album_artist = Some("Various Artists".into());
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("collected/night".into());
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+        let track = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        let date = queries::queue_item_extras(&db.conn, &[id]).unwrap()[&id]
+            .album_date
+            .clone();
+        let current = cache_path_for_track(dir.path(), &track, date.as_deref());
+        let legacy = dir.path().join(
+            current
+                .strip_prefix(dir.path().join("Various Artists"))
+                .map(|rest| Path::new("Technical Itch").join(rest))
+                .unwrap(),
+        );
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, vec![0u8; 4096]).unwrap();
+
+        assert_eq!(adopt_cached_files(&db, dir.path()).unwrap(), 1);
+        assert_eq!(
+            queries::cached_paths_for(&db.conn, &[id]).unwrap(),
+            vec![legacy.to_string_lossy().into_owned()]
+        );
+    }
+
+    #[test]
     fn a_file_two_tracks_record_is_counted_and_evicted_once() {
         let dir = tempfile::tempdir().unwrap();
         let db = test_db();

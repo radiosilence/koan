@@ -838,7 +838,7 @@ fn newer(local: &str, remote: Option<&str>) -> bool {
 /// a `rusqlite::Connection` is not `Sync`, and the answer has to be written
 /// back — the new server id — so it needs one of its own.
 pub fn push_to_remote(id: i64) {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     if !cfg.remote.enabled {
         return;
     }
@@ -869,7 +869,7 @@ pub fn push_to_remote(id: i64) {
 
 /// Delete a playlist on the server. Nothing to do for one that never went.
 pub fn delete_on_remote(remote_id: String) {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     if !cfg.remote.enabled {
         return;
     }

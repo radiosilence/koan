@@ -389,6 +389,11 @@ pub(super) struct GqlNowPlaying {
     /// anything on disk, and short of it while a download is still arriving —
     /// the extent a client draws as downloaded and refuses to scrub past.
     pub seekable_ms: Option<u64>,
+    /// Whether the playhead is advancing by itself: false while paused or
+    /// stopped, and while playing but held, waiting on a download or on a
+    /// renderer to start. A client counts on from `positionMs` only while
+    /// this is true.
+    pub moving: bool,
     pub track: Option<GqlNowPlayingTrack>,
     pub queue_item_id: Option<String>,
     /// Shuffle is on: the next track is picked at random from those yet to
@@ -425,10 +430,7 @@ impl GqlSleep {
     pub(super) fn of(s: Sleep, fading: bool) -> Self {
         match s {
             Sleep::At { unix_ms } => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+                let now = koan_core::clock::unix_ms() as u64;
                 Self {
                     ends_at_ms: Some(unix_ms),
                     remaining_ms: Some(unix_ms.saturating_sub(now)),
@@ -558,6 +560,7 @@ impl GqlNowPlaying {
                 position_ms,
                 duration_ms: None,
                 seekable_ms: None,
+                moving: state.playhead_moving(),
                 track: None,
                 queue_item_id: None,
                 shuffle: mode.shuffle,
@@ -573,6 +576,7 @@ impl GqlNowPlaying {
             position_ms,
             duration_ms: Some(state.duration_ms()),
             seekable_ms: Some(state.seekable_ms()),
+            moving: state.playhead_moving(),
             track: Some(GqlNowPlayingTrack {
                 track_id: playlist_item.and_then(|i| i.db_id),
                 title: playlist_item.map(|i| i.title.clone()).unwrap_or_default(),

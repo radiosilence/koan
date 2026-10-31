@@ -15,7 +15,7 @@ use koan_core::db::queries::auth::{self as users, UserRow};
 use koan_core::invite::{self, AccountError, Invite};
 
 use super::pages::respond;
-use super::{UiState, events, open, patch};
+use super::{Logged, UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::html::{Html, NOTHING, Render};
 use crate::share::blocking;
@@ -237,7 +237,7 @@ pub(super) async fn invite(
     };
     let made = blocking(move || {
         let db = open(&s.pool)?;
-        let row = users::get_user_by_id(&db.conn, id).ok()??;
+        let row = users::get_user_by_id(&db.conn, id).logged()??;
         let password = if q.reset {
             match invite::set_password(&db.conn, &row.username, None) {
                 Ok(p) => {
@@ -289,7 +289,7 @@ pub(super) async fn password_form(
     if !usable(&s, &user) {
         return forbidden();
     }
-    let row = blocking(move || users::get_user_by_id(&open(&s.pool)?.conn, id).ok()?).await;
+    let row = blocking(move || users::get_user_by_id(&open(&s.pool)?.conn, id).logged()?).await;
     let Some(row) = row else {
         return events(vec![failure("No such account.")]);
     };
@@ -316,7 +316,7 @@ pub(super) async fn set_password(
         .unwrap_or_default();
     let done = blocking(move || {
         let db = open(&s.pool)?;
-        let row = users::get_user_by_id(&db.conn, id).ok()??;
+        let row = users::get_user_by_id(&db.conn, id).logged()??;
         let done = invite::set_password(&db.conn, &row.username, Some(&password));
         if done.is_ok() {
             crate::clients::registry().disconnect(&row.username);
@@ -357,7 +357,7 @@ pub(super) async fn set_role(
     let me = user.user_id;
     let done = blocking(move || {
         let db = open(&s.pool)?;
-        let row = users::get_user_by_id(&db.conn, id).ok()??;
+        let row = users::get_user_by_id(&db.conn, id).logged()??;
         let done = invite::set_role(&db.conn, &row.username, role);
         Some((done, list(&s)))
     })
@@ -387,7 +387,7 @@ pub(super) async fn delete(
     let me = user.user_id;
     let done = blocking(move || {
         let db = open(&s.pool)?;
-        let row = users::get_user_by_id(&db.conn, id).ok()??;
+        let row = users::get_user_by_id(&db.conn, id).logged()??;
         let done = invite::delete_account(&db.conn, &row.username);
         if done.is_ok() {
             crate::clients::registry().disconnect(&row.username);

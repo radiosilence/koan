@@ -791,7 +791,7 @@ fn main() {
             CacheCommands::Status => commands::cmd_cache_status(),
             CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
             CacheCommands::Evict => {
-                let cfg = config::Config::load().unwrap_or_default();
+                let cfg = config::Config::cached();
                 // Nothing here knows a player's queue, and with no cache
                 // everything unpinned is over the limit, its files included.
                 if cfg.cache_limit_bytes() == Some(0) {

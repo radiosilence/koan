@@ -62,7 +62,7 @@ struct SelectionBar: View {
                     item("Add to Queue", short: "Queue", icon: Icon.queue) { player.queue($0, .append) }
                 }
                 Menu { // theme: raw — its label is the bar's own item, with no bezel
-                    AddToPlaylistItems(sources: { actions.sources }, then: done)
+                    AddToPlaylistItems(sources: { actions.sources }, then: { done() })
                 } label: {
                     BarItem(title: "Add to Playlist", short: "Playlist", icon: Icon.playlist)
                 }

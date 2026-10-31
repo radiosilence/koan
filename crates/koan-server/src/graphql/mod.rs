@@ -402,7 +402,6 @@ fn builder_with(
         .data(handle)
         .data(loader)
         .data(jobs)
-        .data(Arc::new(queries::Fuzzy::default()))
         .data(state)
         .data(cmd_tx);
     if let Some(viz) = viz {
@@ -810,6 +809,65 @@ mod tests {
         assert_eq!(album["title"], "Drukqs");
         let tracks = album["tracks"]["edges"].as_array().unwrap();
         assert_eq!(tracks.len(), 2);
+    }
+
+    /// A misspelt search finds what was meant, as the apps' search does,
+    /// rather than nothing.
+    #[tokio::test]
+    async fn a_typo_search_falls_back_to_fuzzy_matches() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        insert_test_track(&db_path, "Vordhosbn", "Aphex Twin", "Drukqs");
+        insert_test_track(
+            &db_path,
+            "Roygbiv",
+            "Boards of Canada",
+            "Music Has the Right",
+        );
+
+        let resp = schema
+            .execute(
+                r#"{ artists(search: "Aphx Twn") { edges { node { name } } }
+                     albums(search: "Drkqs") { edges { node { title } } } }"#,
+            )
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(
+            data["artists"]["edges"][0]["node"]["name"], "Aphex Twin",
+            "{data}"
+        );
+        assert_eq!(
+            data["albums"]["edges"][0]["node"]["title"], "Drukqs",
+            "{data}"
+        );
+    }
+
+    /// Sorting and paging happen in SQL: a descending page is cut from the
+    /// reversed order, and says whether another follows.
+    #[tokio::test]
+    async fn albums_sort_descending_before_paging() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        for album in ["Alpha", "Bravo", "Charlie"] {
+            insert_test_track(&db_path, &format!("{album} song"), "Artist", album);
+        }
+        let resp = schema
+            .execute(
+                r#"{ albums(sortBy: TITLE, sortDir: DESC, first: 2) {
+                    edges { node { title } } pageInfo { hasNextPage } } }"#,
+            )
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let titles: Vec<_> = data["albums"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["node"]["title"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(titles, ["Charlie", "Bravo"]);
+        assert_eq!(data["albums"]["pageInfo"]["hasNextPage"], true);
     }
 
     #[tokio::test]

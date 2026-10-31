@@ -32,8 +32,7 @@ fn done(apply: impl FnOnce(&mut SettingsPage) -> Option<String> + Send + 'static
 /// The signed-in server's client, when it offers `extension`. `to` names
 /// what was wanted, for the message when it does not.
 fn client_offering(extension: &str, to: &str) -> Result<Arc<SubsonicClient>, String> {
-    let client = helpers::subsonic_client(&Config::load().unwrap_or_default())
-        .ok_or("no server is signed in")?;
+    let client = helpers::subsonic_client(&Config::cached()).ok_or("no server is signed in")?;
     let found = profile::for_auth(client.auth());
     if !found.as_ref().is_some_and(|p| p.offers(extension)) {
         return Err(profile::lacking(found.as_ref(), to));

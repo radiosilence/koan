@@ -15,7 +15,7 @@ use koan_core::db::queries::{self, PlayHistoryRow};
 
 use super::favourite::Hearts;
 use super::pages::{Credits, ERROR, Failed, TrackData, track_versions, unavailable};
-use super::{UiState, events, open, patch};
+use super::{Logged, UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
 use crate::share::blocking;
@@ -106,7 +106,7 @@ fn read(s: &UiState, user: &AuthUser, page: u32) -> Option<Plays> {
         Some(PAGE + 1),
         page * PAGE,
     )
-    .ok()?;
+    .logged()?;
     let more = rows.len() > PAGE as usize;
     rows.truncate(PAGE as usize);
     let tracks: Vec<_> = rows.iter().map(|r| r.track.clone()).collect();
@@ -185,7 +185,7 @@ pub(super) async fn forget(
     let page = paging.page;
     let found = blocking(move || {
         let db = open(&s.pool)?;
-        queries::forget_shared_entries(&db.conn, user.user_id, &ids).ok()?;
+        queries::forget_shared_entries(&db.conn, user.user_id, &ids).logged()?;
         use koan_core::smart::Field;
         crate::clients::smart_activity(&db, user.user_id, &[Field::PlayCount, Field::LastPlayed]);
         drop(db);

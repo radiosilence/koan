@@ -107,6 +107,15 @@ pub(crate) fn download_track(
         adopt_cached(&db.conn, &track, &dest);
         return Some(Ok(dest));
     }
+    // A copy filed under the track artist, as downloads were before the album
+    // artist filed them, is the same download: recorded where it lies.
+    if let Some(older) = cache_paths_for_track(&cache_dir, &track, album_date.as_deref())
+        .skip(1)
+        .find(|p| path_within(&cache_dir, p) && p.exists() && is_cached_audio(p))
+    {
+        adopt_cached(&db.conn, &track, &older);
+        return Some(Ok(older));
+    }
 
     // 3. Download from remote, into the `.part` file the decoder streams from
     // while the bytes land.
