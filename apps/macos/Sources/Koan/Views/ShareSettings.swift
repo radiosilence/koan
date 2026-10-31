@@ -239,7 +239,9 @@ struct ShareSettings: View {
 
     @ViewBuilder
     private func awayFromHome(_ sharing: SharingModel) -> some View {
-        let choice = model.settings.shareInviteTo
+        // From the engine's last reading, with the address beside it, so the
+        // two never show different moments.
+        let choice = sharing.status?.to ?? model.settings.shareInviteTo
         let serving = sharing.sharing != nil
         Section {
             LabeledContent("Tailscale") {
@@ -263,7 +265,7 @@ struct ShareSettings: View {
                 }
             ), options: inviteOptions(sharing, choice: choice, serving: serving))
             .disabled(sharing.busy)
-            if serving, let addresses = sharing.addresses {
+            if serving, let addresses = sharing.status, addresses.current != nil {
                 if choice == .custom {
                     LabeledContent("Address") {
                         TextField("Address", text: Binding(
@@ -291,7 +293,7 @@ struct ShareSettings: View {
             Text(inviteNote(choice))
                 .koanText(.fine, .muted)
         }
-        .task { await sharing.refreshTailscale() }
+        .task { await sharing.refreshStatus() }
         .confirmationDialog(
             "Publish kōan on the internet?",
             isPresented: $confirmingFunnel,
@@ -332,10 +334,10 @@ struct ShareSettings: View {
 
     private func setSharing(_ on: Bool) {
         model.edit { $0.shareEnabled = on }
-        let (port, address) = (model.settings.sharePort, model.settings.serverUrl)
+        let port = model.settings.sharePort
         Task {
             if on {
-                await app.sharing.start(port: port, publicAddress: address)
+                await app.sharing.start(port: port)
                 // Left on, the switch would read as sharing beside the reason
                 // it is not. Launch still retries a setting left on.
                 if app.sharing.failure != nil { model.edit { $0.shareEnabled = false } }
@@ -366,8 +368,9 @@ struct ShareSettings: View {
         guard address != model.settings.serverUrl else { return }
         Task {
             await app.sharing.setInviteTo(.custom, address: address)
-            // The server answers to the names it was started with.
-            restartIfSharing()
+            // The server answers to the names it was started with, the
+            // custom address's among them.
+            if app.sharing.funnelError == nil { restartIfSharing() }
         }
     }
 
@@ -375,9 +378,9 @@ struct ShareSettings: View {
     /// being written.
     private func restartIfSharing() {
         guard model.settings.shareEnabled else { return }
-        let (port, address) = (model.settings.sharePort, model.settings.serverUrl)
+        let port = model.settings.sharePort
         Task {
-            await app.sharing.start(port: port, publicAddress: address)
+            await app.sharing.start(port: port)
             // A start stops the running server first, so a failed one leaves
             // nothing serving: the switch says so, as it does when turned on.
             if app.sharing.failure != nil { model.edit { $0.shareEnabled = false } }

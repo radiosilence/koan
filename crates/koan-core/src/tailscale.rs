@@ -224,11 +224,13 @@ pub fn funnel(port: u16) -> Result<String, FunnelError> {
     Ok(tailscale.url_on(free))
 }
 
-/// Stop publishing local `port`. Whatever else Tailscale serves stays.
+/// Stop publishing local `port` on the internet. What Tailscale serves only
+/// to the tailnet stays, for local `port` too: `tailscale serve` set up by
+/// hand is not Funnel's to take down.
 pub fn funnel_off(port: u16) -> Result<(), FunnelError> {
     for on in served()
         .into_iter()
-        .filter(|s| proxies_to(s.root.as_deref(), port))
+        .filter(|s| s.public && proxies_to(s.root.as_deref(), port))
     {
         match run(&["funnel", &format!("--https={}", on.port), "off"]) {
             Ok(_) => {}

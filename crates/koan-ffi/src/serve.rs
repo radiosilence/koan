@@ -5,8 +5,8 @@
 //! server's host key, through the same Subsonic calls a remote server gets.
 //!
 //! Where invites send phones is `share.invite_to`, and the engine is the only
-//! writer of it and of `server.url`, so Settings never saves an older copy
-//! over a change made here.
+//! writer of it and of `server.url` (Funnel's address, or a custom one), so
+//! Settings never saves an older copy over a change made here.
 
 use std::sync::Arc;
 
@@ -73,10 +73,15 @@ impl From<InviteTo> for Target {
     }
 }
 
-/// The addresses Settings shows, as the engine works them out.
+/// Where invites go and the addresses Settings shows, as the engine works
+/// them out, read together so the page never mixes two moments.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
-pub struct InviteAddresses {
-    /// Where invites send phones now.
+pub struct ShareStatus {
+    pub to: InviteTo,
+    /// Tailscale on this device, while it is running and signed in.
+    pub tailscale: Option<TailscaleStatus>,
+    /// Where invites send phones now. The addresses are `None` while not
+    /// serving.
     pub current: Option<String>,
     /// Where they go with no custom address typed: the tailnet's, else the
     /// network's.
@@ -149,10 +154,19 @@ pub(crate) fn refuse_while_sharing() -> Result<(), KoanError> {
     }
 }
 
-/// The addresses invites can send phones to on `port`.
-fn addresses(port: u16) -> InviteAddresses {
+/// Where invites go, and the addresses for `port` while serving.
+fn status(port: Option<u16>) -> ShareStatus {
     let cfg = Config::cached();
     let tailscale = koan_core::tailscale::status();
+    let Some(port) = port else {
+        return ShareStatus {
+            to: cfg.share.invite_to.into(),
+            tailscale: tailscale.map(Into::into),
+            current: None,
+            fallback: None,
+            funnel: None,
+        };
+    };
     let tailnet = tailscale
         .as_ref()
         .map(|t| format!("http://{}:{port}", t.name));
@@ -170,16 +184,51 @@ fn addresses(port: u16) -> InviteAddresses {
         Target::Custom => cfg.server_url().or_else(|| fallback.clone()),
     }
     .or_else(|| sharing(port).lan_url);
-    InviteAddresses {
+    ShareStatus {
+        to: cfg.share.invite_to.into(),
+        tailscale: tailscale.map(Into::into),
         current,
         fallback,
         funnel,
     }
 }
 
+impl From<koan_core::tailscale::Tailscale> for TailscaleStatus {
+    fn from(t: koan_core::tailscale::Tailscale) -> Self {
+        Self {
+            name: t.name,
+            funnel_allowed: t.funnel_allowed,
+        }
+    }
+}
+
 /// The address invites send phones to while sharing.
 pub(crate) fn invite_base() -> Option<String> {
-    addresses(serving_port()?).current
+    status(Some(serving_port()?)).current
+}
+
+/// The host in `url`, `https://host:port/path` -> `host`.
+fn host_of(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next()?,
+        None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+    };
+    (!host.is_empty()).then(|| host.to_owned())
+}
+
+/// Publish on Funnel for `port` and keep `server.url` on its address, which
+/// share links and the server's own idea of where it is reached are built
+/// on. The address moves with the machine's tailnet name and Funnel's port.
+fn publish(port: u16) -> Result<(), KoanError> {
+    let url = koan_core::tailscale::funnel(port).map_err(funnel_error)?;
+    if Config::cached().server.url.as_deref() != Some(&url) {
+        Config::persist(|cfg| cfg.server.url = Some(url)).map_err(|e| KoanError::BadArgument {
+            message: e.to_string(),
+        })?;
+    }
+    Ok(())
 }
 
 /// Take down whatever Funnel publishes for `port`, when nothing should.
@@ -250,9 +299,11 @@ impl KoanEngine {
             if let Some(running) = server.take() {
                 running.stop();
             }
-            // Phones on the tailnet reach this device by its name there.
+            // Phones on the tailnet reach this device by its name there, and
+            // a tunnel's by the custom address.
             let mut names = names;
             names.extend(koan_core::tailscale::status().map(|t| t.name));
+            names.extend(Config::cached().server_url().as_deref().and_then(host_of));
             let started = ApiServer::start(ApiServerOpts {
                 state: self.state.clone(),
                 cmd_tx: self.tx.clone(),
@@ -283,7 +334,7 @@ impl KoanEngine {
             // A Funnel does not survive Tailscale restarting, and the port
             // may have moved: published again wherever it was chosen.
             if Config::cached().share.invite_to == Target::Funnel
-                && let Err(e) = koan_core::tailscale::funnel(port)
+                && let Err(e) = publish(port)
             {
                 log::warn!("share: Funnel not published: {e}");
             }
@@ -318,22 +369,9 @@ impl KoanEngine {
         offload::offload(move || Some(sharing(serving_port()?))).await
     }
 
-    /// Tailscale on this device, while it is running and signed in.
-    pub async fn tailscale(self: Arc<Self>) -> Option<TailscaleStatus> {
-        offload::offload(move || {
-            let tailscale = koan_core::tailscale::status()?;
-            Some(TailscaleStatus {
-                name: tailscale.name,
-                funnel_allowed: tailscale.funnel_allowed,
-            })
-        })
-        .await
-    }
-
-    /// Where invites send phones, and the addresses Settings shows for it.
-    /// Nothing while not serving.
-    pub async fn invite_addresses(self: Arc<Self>) -> Option<InviteAddresses> {
-        offload::offload(move || Some(addresses(serving_port()?))).await
+    /// Where invites go, Tailscale, and the addresses Settings shows.
+    pub async fn share_status(self: Arc<Self>) -> ShareStatus {
+        offload::offload(move || status(serving_port())).await
     }
 
     /// Where invites send phones (`share.invite_to`). `Funnel` publishes the
@@ -354,7 +392,7 @@ impl KoanEngine {
                     match a.is_empty() || a.starts_with("https://") || a.starts_with("http://") {
                         true => Ok(a),
                         false => Err(KoanError::BadArgument {
-                            message: "an address starts with https://".into(),
+                            message: "an address starts with https:// or http://".into(),
                         }),
                     }
                 })
@@ -364,17 +402,25 @@ impl KoanEngine {
                 let port = port.ok_or_else(|| KoanError::Refused {
                     message: "start sharing first".into(),
                 })?;
-                koan_core::tailscale::funnel(port).map_err(funnel_error)?;
+                publish(port)?;
             } else {
                 // Not serving, as after a failed start, the Funnel to take
-                // down is the one for the port it was told.
-                unpublish(port.unwrap_or(Config::cached().share.port));
+                // down is the one for the port it was told. Leaving Funnel,
+                // a failure is the library left on the internet, so it is
+                // said; otherwise there was most likely nothing to take down.
+                let port = port.unwrap_or(Config::cached().share.port);
+                if Config::cached().share.invite_to == Target::Funnel {
+                    koan_core::tailscale::funnel_off(port).map_err(funnel_error)?;
+                } else {
+                    unpublish(port);
+                }
             }
             Config::persist(move |cfg| {
                 cfg.share.invite_to = to.into();
                 match (to, address) {
                     (InviteTo::Custom, Some(a)) => cfg.server.url = (!a.is_empty()).then_some(a),
-                    (InviteTo::Custom, None) => {}
+                    // Funnel's was written by `publish`; a custom one kept.
+                    (InviteTo::Custom | InviteTo::Funnel, None) => {}
                     _ => cfg.server.url = None,
                 }
             })

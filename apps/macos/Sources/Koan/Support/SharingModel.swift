@@ -21,13 +21,13 @@ final class SharingModel {
     private(set) var account: String?
     /// A start or stop is under way.
     private(set) var busy = false
-    /// Tailscale on this Mac, while it runs; `nil` until asked or when not.
-    private(set) var tailscale: TailscaleStatus?
+    /// Where invites go, Tailscale, and the addresses Settings shows, as the
+    /// engine last worked them out. `nil` until first asked.
+    private(set) var status: ShareStatus?
+    /// Tailscale on this Mac, while it runs.
+    var tailscale: TailscaleStatus? { status?.tailscale }
     /// Tailscale has been looked for, so `nil` means it is not here.
-    private(set) var tailscaleChecked = false
-    /// Where invites go and the addresses Settings shows, as the engine
-    /// works them out; `nil` while not serving.
-    private(set) var addresses: InviteAddresses?
+    var tailscaleChecked: Bool { status != nil }
     /// Why the last Funnel change failed.
     private(set) var funnelError: String?
     /// Moves whenever the engine itself wrote a setting (the public address
@@ -44,7 +44,7 @@ final class SharingModel {
         account = try? await engine.serverAdmin()
         let settings = await engine.settings()
         if settings.shareEnabled, account != nil {
-            await start(port: settings.sharePort, publicAddress: settings.serverUrl)
+            await start(port: settings.sharePort)
         }
     }
 
@@ -60,15 +60,11 @@ final class SharingModel {
         }
     }
 
-    /// `publicAddress` is the tunnel's address, if any: a name the server
-    /// answers to as well as this Mac's own.
-    func start(port: UInt16, publicAddress: String) async {
+    func start(port: UInt16) async {
         busy = true
         defer { busy = false }
-        var names = Self.names
-        if let host = URL(string: publicAddress)?.host() { names.append(host) }
         do {
-            sharing = try await engine.startServer(port: port, names: names)
+            sharing = try await engine.startServer(port: port, names: Self.names)
             failure = nil
         } catch {
             sharing = nil
@@ -77,13 +73,11 @@ final class SharingModel {
         // A start publishes the Funnel again where it was left on, and may
         // move its address.
         revision += 1
-        await refreshTailscale()
+        await refreshStatus()
     }
 
-    func refreshTailscale() async {
-        tailscale = await engine.tailscale()
-        tailscaleChecked = true
-        addresses = await engine.inviteAddresses()
+    func refreshStatus() async {
+        status = await engine.shareStatus()
     }
 
     /// Where invites send phones. `.funnel` publishes through Tailscale
@@ -98,7 +92,7 @@ final class SharingModel {
             funnelError = Self.reason(error)
         }
         revision += 1
-        await refreshTailscale()
+        await refreshStatus()
     }
 
     /// `nil` when changed, else why not.
@@ -111,10 +105,11 @@ final class SharingModel {
         }
     }
 
-    /// Read the network address again, after a change of network.
+    /// Read the addresses again, after a change of network.
     func refresh() async {
         guard sharing != nil else { return }
         sharing = await engine.serverSharing()
+        await refreshStatus()
     }
 
     func stop() async {
