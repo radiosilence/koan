@@ -41,7 +41,7 @@ Under `app/src/main/kotlin/cc/blit/koan/`:
 
 Each `ui/` package owns its routes, pages and view models, and exposes one `EntryProviderScope<NavKey>.…Entries()` function that `AppShell` calls; nothing else in the shell needs to change when a package grows.
 
-State comes from `koanApp().mirror`, collected with `collectAsStateWithLifecycle()`. A listing reloads when `mirror.library` moves (see `LibraryModel`). The playhead is an anchor rather than a ticking value: use `rememberPosition(playhead)` or `Playhead.positionAt()`. Commands go through `koanApp().player`, or `mirror.launch { … }` for engine calls `PlayerModel` lacks.
+State comes from `koanApp().mirror`, collected with `collectAsStateWithLifecycle()`. A listing is a `Listing` (`ui/Listing.kt`): read again when `mirror.library` moves, and held as a `Read`, so a page says when a read failed and offers to try again rather than showing an empty list. Engine calls that may fail quietly go through `attempt`, which keeps the failure but lets cancellation through; `runCatching` would swallow it. The playhead is an anchor rather than a ticking value: use `rememberPosition(playhead)` or `Playhead.positionAt()`. Commands go through `koanApp().player`, or `mirror.launch { … }` for engine calls `PlayerModel` lacks.
 
 ## Adding a page
 

@@ -308,12 +308,7 @@ struct SidebarView: View {
     /// land on the playlist itself and watch it start — and playing something
     /// is not on its own a reason to be moved anywhere.
     private func play(_ playlist: Playlist, shuffled: Bool = false) {
-        let engine = playlists.engine
-        Task {
-            _ = try? await engine.playPlaylist(
-                playlistId: playlist.id, startEntry: nil, shuffled: shuffled
-            )
-        }
+        player.play(playlist: playlist.id, shuffled: shuffled)
     }
 }
 

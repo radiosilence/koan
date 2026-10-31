@@ -2697,31 +2697,6 @@ impl KoanEngine {
         koan_core::upnp::discovery::search();
     }
 
-    /// Play to the renderer `udn` in place of this device's own output, or
-    /// back here with `None`. The music carries on from where it is. A
-    /// renderer is this device's output rather than a device to control, so
-    /// picking one stops controlling another koan.
-    ///
-    /// Not on the ordered lane: opening a session is a few round trips to the
-    /// renderer, and app commands queued behind it would wait them out. The
-    /// player takes the switch in its own order when it arrives.
-    pub async fn play_to_renderer(self: Arc<Self>, udn: Option<String>) -> Result<(), KoanError> {
-        // Taken now, in the order the person picked: see `upnp::choose`.
-        let choice = koan_core::upnp::choose();
-        offload::offload(move || match udn {
-            Some(udn) => {
-                koan_core::remote::devices::set_target(None);
-                koan_core::upnp::connect(&udn, choice, &self.tx)
-                    .map_err(|message| KoanError::Audio { message })
-            }
-            None => {
-                koan_core::upnp::disconnect(&self.tx);
-                Ok(())
-            }
-        })
-        .await
-    }
-
     /// The app is quitting: stop the renderer playing, if one is, waiting at
     /// most a second and a half for it. Blocks, on purpose: termination does
     /// not wait for a task. Call it after the last save, which records the
@@ -2733,17 +2708,12 @@ impl KoanEngine {
         );
     }
 
-    /// Set the volume of the renderer being played to, 0–100.
-    pub async fn set_renderer_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send_local(PlayerCommand::SetRendererVolume(volume))).await
-    }
-
     /// Play the device in view through `output`: this one, or the device
     /// being controlled, which switches as its own menu would. The music
     /// carries on from where it is.
     ///
     /// Not on the ordered lane: opening a renderer session is a few round
-    /// trips, as for `play_to_renderer`.
+    /// trips, and app commands queued behind it would wait them out.
     pub async fn select_output(self: Arc<Self>, output: OutputChoice) -> Result<(), KoanError> {
         // Taken now, in the order the person picked: see `upnp::choose`.
         let choice = koan_core::upnp::choose();
@@ -3530,21 +3500,6 @@ impl KoanEngine {
         .await
     }
 
-    /// Play `tuning` on top of `device`'s correction, or none. Not a
-    /// correction, and not on one with a tuning baked in.
-    pub async fn dsp_set_tuning(
-        self: Arc<Self>,
-        device: String,
-        tuning: Option<String>,
-    ) -> Result<(), KoanError> {
-        offload::sequenced(move || {
-            koan_core::audio::dsp::profiles::set_tuning(&device, tuning.as_deref())
-                .map_err(|message| KoanError::BadArgument { message })?;
-            self.send_local(PlayerCommand::ReloadDsp)
-        })
-        .await
-    }
-
     /// Make `device`'s tuning `tuning`: EQs in the order they play, each on
     /// or off.
     pub async fn dsp_set_tunings(
@@ -4257,6 +4212,7 @@ impl KoanEngine {
             koan_core::remote::pair::info(&pair)
                 .map(|p| PairingInfo {
                     device: p.device,
+                    device_id: p.device_id,
                     from: p.from,
                     local: p.local,
                 })
@@ -4371,8 +4327,27 @@ impl KoanEngine {
         reset: bool,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = client_offering(profile::INVITE, "invite people")?;
-            let made = client.koan_invite(&username, reset).map_err(remote_error)?;
+            // A server that answers no is `Refused`; one that could not be
+            // asked is `Remote`, worth asking again.
+            let client = account_client()?;
+            let to = "invite people";
+            match profile::for_auth(client.auth()) {
+                None => {
+                    return Err(KoanError::Remote {
+                        message: profile::lacking(None, to),
+                    });
+                }
+                Some(p) if !p.offers(profile::INVITE) => {
+                    return Err(KoanError::Refused {
+                        message: profile::lacking(Some(&p), to),
+                    });
+                }
+                Some(_) => {}
+            }
+            let made = client.koan_invite(&username, reset).map_err(|e| match e {
+                SubsonicError::Api { message, .. } => KoanError::Refused { message },
+                e => remote_error(e),
+            })?;
             Ok(account_invite(client.base_url(), made).into())
         })
         .await

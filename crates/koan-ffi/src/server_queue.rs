@@ -3,10 +3,11 @@
 //!
 //! While on, queue edits are saved a moment after they settle, and a change of
 //! track or a pause is saved at once with the playhead; the app saves again
-//! when it goes to the background. Nothing is polled: the saver sleeps on the
-//! engine's change signal. At launch the server's queue replaces this one only
-//! if another client saved it since this device did, which `changedBy` says:
-//! each device saves under a client name of its own.
+//! when it leaves: to the background on a phone, quitting on a Mac. Nothing is
+//! polled: the saver sleeps on the engine's change signal. At launch the
+//! server's queue replaces this one only if another client saved it since this
+//! device did, which `changedBy` says: each device saves under a client name of
+//! its own.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};

@@ -33,6 +33,8 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
     /** Before Android 14, one resolve at a time: the rest wait their turn. */
     private val waiting = ArrayDeque<NsdServiceInfo>()
     private var resolving = false
+    /** Moves on each pause, so a resolve still out when browsing stopped finds nothing. */
+    private var browsing = 0
     private val executor = Executors.newSingleThreadExecutor()
     /** What was found and lost, told to the engine in the order it happened. */
     private val events = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED)
@@ -110,6 +112,7 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
         val (listener, callbacks) = synchronized(lock) {
             val l = discovery
             discovery = null
+            browsing++
             waiting.clear()
             val c = watching.values.toList()
             watching.clear()
@@ -140,6 +143,8 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
             override fun onServiceInfoCallbackRegistrationFailed(error: Int) =
                 log("cannot resolve ${info.serviceName} ($error)")
             override fun onServiceUpdated(updated: NsdServiceInfo) {
+                // A watch ended by a pause can still be called with what it last saw.
+                if (synchronized(lock) { watching[info.serviceName] !== this }) return
                 val host = updated.hostAddresses.firstOrNull { it is Inet4Address } ?: return
                 found(updated, host.hostAddress ?: return)
             }
@@ -154,8 +159,11 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
 
     @Suppress("DEPRECATION")
     private fun resolveNext() {
-        val info = synchronized(lock) {
-            waiting.removeFirstOrNull().also { if (it == null) resolving = false }
+        val (info, started) = synchronized(lock) {
+            waiting.removeFirstOrNull()?.let { it to browsing } ?: run {
+                resolving = false
+                null
+            }
         } ?: return
         val listener = object : NsdManager.ResolveListener {
             override fun onResolveFailed(info: NsdServiceInfo, error: Int) {
@@ -164,7 +172,9 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
             }
             override fun onServiceResolved(resolved: NsdServiceInfo) {
                 try {
-                    (resolved.host as? Inet4Address)?.hostAddress?.let { found(resolved, it) }
+                    if (synchronized(lock) { browsing == started }) {
+                        (resolved.host as? Inet4Address)?.hostAddress?.let { found(resolved, it) }
+                    }
                 } finally {
                     resolveNext()
                 }

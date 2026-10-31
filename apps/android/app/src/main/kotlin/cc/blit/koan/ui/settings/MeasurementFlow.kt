@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
+import cc.blit.koan.engine.attempt
 import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.DspEarKind
 import cc.blit.koan.ffi.DspMeasurementReading
@@ -390,7 +391,7 @@ fun MeasurementPage(initial: String, model: SettingsModel) {
 /** The chosen files' names, and their contents read as one text: a speaker's two planes are read together. `null` where one is not text. */
 internal suspend fun readTexts(context: Context, uris: List<Uri>): Pair<List<String>, String>? = withContext(Dispatchers.IO) {
     val read = uris.mapIndexed { i, uri ->
-        val text = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString(throwOnInvalidSequence = true) } }
+        val text = attempt { context.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString(throwOnInvalidSequence = true) } }
             .getOrNull() ?: return@withContext null
         (displayName(context, uri) ?: "file-$i") to text
     }

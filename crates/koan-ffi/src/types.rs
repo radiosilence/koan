@@ -1371,6 +1371,10 @@ pub enum KoanError {
     /// server that answered and said no — this one is worth retrying.
     #[error("remote: {message}")]
     Remote { message: String },
+    /// The server answered and will not do it: it lacks the feature, or
+    /// refuses this account. Asking again changes nothing.
+    #[error("{message}")]
+    Refused { message: String },
     /// An import of coefficients that say nothing of their rate. Ask, and
     /// import again with one.
     #[error("{message}")]
@@ -2369,6 +2373,10 @@ pub struct ScrobblingConnection {
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct PairingInfo {
     pub device: String,
+    /// The id the device links with, which its entry among the account's
+    /// devices carries once it is signed in. `None` from a server that does
+    /// not keep it.
+    pub device_id: Option<String>,
     /// The address the request came from, as the server sees it.
     pub from: String,
     /// The address is on a private network (RFC 1918, link-local, unique

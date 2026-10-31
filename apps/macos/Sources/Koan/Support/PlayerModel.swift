@@ -360,6 +360,13 @@ final class PlayerModel {
         mutate { _ = try await $0.replaceQueue(trackIds: queued, startAt: UInt32(start), shuffled: false) }
     }
 
+    /// Replace the queue with the playlist `id` and play it, from `entry` or
+    /// its start. An entry rather than a position: see the engine's
+    /// `playPlaylist`.
+    func play(playlist id: Int64, from entry: Int64? = nil, shuffled: Bool = false) {
+        mutate { _ = try await $0.playPlaylist(playlistId: id, startEntry: entry, shuffled: shuffled) }
+    }
+
     /// What `playNow` queues, and where it starts.
     nonisolated static func listing(_ ids: [Int64], from index: Int?) -> ([Int64], Int) {
         guard let index else { return (ids, 0) }
@@ -516,6 +523,11 @@ final class PlayerModel {
     /// The renderer playing this device's music, if one is.
     var renderer: RendererOutput? { mirror.rendererOutput }
 
+    /// This device's own output is what is heard: it controls no other
+    /// device and plays to no renderer. Only then do its audio session's
+    /// events — interruptions, a route lost — concern the music.
+    var playsHere: Bool { !isControllingAnother && renderer == nil }
+
     /// What the device in view plays through: this one, or the one being
     /// controlled.
     var outputs: OutputsInfo? { mirror.outputs }
@@ -560,16 +572,6 @@ final class PlayerModel {
     /// Play `device`, an output of the device in view, through `profile`.
     func setOutputPreset(device: String, profile: String?) {
         attempt { try await self.engine.setOutputPreset(device: device, profile: profile) }
-    }
-
-    /// Play to the renderer `udn` in place of this device's output, or back
-    /// here with `nil`. The music carries on from where it is.
-    func playOn(renderer udn: String?) {
-        attempt { try await self.engine.playToRenderer(udn: udn) }
-    }
-
-    func setRendererVolume(_ volume: UInt8) {
-        attempt { try await self.engine.setRendererVolume(volume: volume) }
     }
 
     /// Look for renderers on the network; they arrive over a second or two.
@@ -729,10 +731,39 @@ final class PlayerModel {
     func saveSession() async {
         try? await engine.saveSession()
         savedQueueVersion = queueVersion
+        saved = Saved(self)
     }
 
-    /// The app is going to the background or quitting: the session here, and
-    /// the queue on the server when this device keeps it there.
+    /// What the session was when last written: the queue, the entry under
+    /// the cursor and the playhead.
+    @ObservationIgnored private var saved: Saved?
+
+    private struct Saved: Equatable {
+        let queue: UInt64
+        let current: String?
+        /// Where the playhead is now, to the second: the anchor alone does
+        /// not move while the music plays on.
+        let second: UInt64
+
+        @MainActor init(_ player: PlayerModel) {
+            queue = player.queueVersion
+            current = player.currentItemId
+            second = player.mirror.playhead.at() / 1000
+        }
+    }
+
+    /// The Mac losing focus: written here only if it moved since last
+    /// written, a seek while paused say, so a Mac that quits without asking
+    /// (automatic termination, a force quit) loses nothing. Never the server:
+    /// that is for quitting.
+    func saveIfChanged() async {
+        guard saved != Saved(self) else { return }
+        await saveSession()
+    }
+
+    /// The app is leaving: an iPhone going to the background, a Mac quitting.
+    /// The session here, and the queue on the server when this device keeps
+    /// it there.
     func saveOnLeaving() async {
         await saveSession()
         await engine.saveServerQueueNow()
@@ -777,6 +808,7 @@ final class PlayerModel {
             await saveSession()
         } else if currentEntry != nil {
             try? await engine.savePosition()
+            saved = Saved(self)
         }
     }
 

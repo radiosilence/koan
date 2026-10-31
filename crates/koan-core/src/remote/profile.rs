@@ -175,6 +175,16 @@ pub fn forget() {
     }
 }
 
+/// The profile last probed for the server `auth` signs in to, without
+/// asking it or reading the config: `None` if it has not been probed.
+pub fn probed(auth: &SubsonicAuth) -> Option<ServerProfile> {
+    PROFILE
+        .lock()
+        .as_ref()
+        .filter(|(held, _, _)| held == auth)
+        .map(|(_, p, _)| p.clone())
+}
+
 /// The configured server's profile as last probed, without asking it.
 pub fn current() -> Option<ServerProfile> {
     let cfg = crate::config::Config::cached();

@@ -192,6 +192,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    /// Quitting is when the Mac leaves: losing focus is not, and saves only
+    /// the local session, if it moved (`saveIfChanged`). The session and the
+    /// server's queue are saved first, for at most two seconds, so a server
+    /// out of reach does not hold the quit up. Edits, track changes and
+    /// pauses are saved as they happen; this keeps the playhead.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let player = state?.player else { return .terminateNow }
+        Task {
+            await player.saveOnLeaving()
+            replyToQuit()
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            replyToQuit()
+        }
+        return .terminateLater
+    }
+
+    @ObservationIgnored private var answeredQuit = false
+
+    private func replyToQuit() {
+        guard !answeredQuit else { return }
+        answeredQuit = true
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
     /// Not before the setting is read: AppKit asks at launch, when state
     /// restoration has opened no window.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
