@@ -2398,6 +2398,8 @@ impl Player {
         if edits_queue {
             self.revoke_stale_lookahead();
         }
+        self.shared_state
+            .set_undo_shuffles(self.undo_stack.shuffles_on_top());
         self.publish();
     }
 
@@ -2592,7 +2594,7 @@ impl Player {
             }
             PlayerCommand::ShuffleUpcoming => {
                 if let Some(entries) = self.shared_state.shuffle_upcoming() {
-                    self.push_undo(UndoEntry::MovedBatch { entries });
+                    self.push_undo(UndoEntry::Shuffled { entries });
                 }
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
@@ -2731,6 +2733,14 @@ impl Player {
                 let current_positions = self.shared_state.items_before(&ids);
                 self.shared_state.move_items_to(&entries);
                 UndoEntry::MovedBatch {
+                    entries: current_positions,
+                }
+            }
+            UndoEntry::Shuffled { entries } => {
+                let ids: Vec<QueueItemId> = entries.iter().map(|(id, _)| *id).collect();
+                let current_positions = self.shared_state.items_before(&ids);
+                self.shared_state.move_items_to(&entries);
+                UndoEntry::Shuffled {
                     entries: current_positions,
                 }
             }
@@ -4599,12 +4609,32 @@ mod tests {
         }
         assert_ne!(first[10..], original[10..], "thirty rows left as they were");
 
+        assert_eq!(player.shared_state.undo_shuffles(), 2);
+
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_ids(&player), first);
+        assert_eq!(player.shared_state.undo_shuffles(), 1);
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_ids(&player), original);
+        assert_eq!(
+            player.shared_state.undo_shuffles(),
+            0,
+            "the add beneath is not a shuffle"
+        );
         player.process_command(PlayerCommand::Redo);
         assert_eq!(playlist_ids(&player), first);
+        assert_eq!(player.shared_state.undo_shuffles(), 1);
+
+        player.process_command(PlayerCommand::MoveInPlaylist {
+            id: original[20],
+            target: original[0],
+            after: false,
+        });
+        assert_eq!(
+            player.shared_state.undo_shuffles(),
+            0,
+            "another edit on top"
+        );
     }
 
     #[test]

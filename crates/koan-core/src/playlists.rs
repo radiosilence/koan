@@ -31,8 +31,15 @@ pub struct PlaylistHistory {
 
 #[derive(Default)]
 struct Steps {
-    undo: Vec<Vec<(i64, i64)>>,
-    redo: Vec<Vec<(i64, i64)>>,
+    undo: Vec<Step>,
+    redo: Vec<Step>,
+}
+
+/// A playlist's entries as they were, and whether the edit was a shuffle,
+/// so the shuffles on top can be counted.
+struct Step {
+    entries: Vec<(i64, i64)>,
+    shuffle: bool,
 }
 
 /// How many edits back a playlist can go, as the queue's history.
@@ -42,6 +49,7 @@ const HISTORY_DEPTH: usize = 100;
 pub struct Before {
     id: i64,
     entries: Vec<(i64, i64)>,
+    shuffle: bool,
 }
 
 impl PlaylistHistory {
@@ -50,6 +58,7 @@ impl PlaylistHistory {
         Ok(Before {
             id,
             entries: queries::entry_snapshot(conn, id)?,
+            shuffle: false,
         })
     }
 
@@ -63,8 +72,22 @@ impl PlaylistHistory {
         id: i64,
         change: impl FnOnce() -> Result<T, E>,
     ) -> Result<T, E> {
+        self.edit_as(conn, id, false, change)
+    }
+
+    /// `edit`, saying whether the change is a shuffle of the playlist's order.
+    pub fn edit_as<T, E: From<DbError> + From<rusqlite::Error>>(
+        &self,
+        conn: &rusqlite::Connection,
+        id: i64,
+        shuffle: bool,
+        change: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, E> {
         let (before, out) = queries::atomically(conn, || {
-            let before = Self::before(conn, id)?;
+            let before = Before {
+                shuffle,
+                ..Self::before(conn, id)?
+            };
             Ok::<_, E>((before, change()?))
         })?;
         self.record(before);
@@ -77,11 +100,22 @@ impl PlaylistHistory {
     pub fn record(&self, before: Before) {
         let mut steps = self.steps.lock();
         let steps = steps.entry(before.id).or_default();
-        steps.undo.push(before.entries);
+        steps.undo.push(Step {
+            entries: before.entries,
+            shuffle: before.shuffle,
+        });
         if steps.undo.len() > HISTORY_DEPTH {
             steps.undo.remove(0);
         }
         steps.redo.clear();
+    }
+
+    /// How many shuffles undo would take back from playlist `id` before
+    /// reaching any other edit.
+    pub fn shuffles_on_top(&self, id: i64) -> u32 {
+        self.steps.lock().get(&id).map_or(0, |steps| {
+            steps.undo.iter().rev().take_while(|s| s.shuffle).count() as u32
+        })
     }
 
     /// Back one edit. Whether there was one.
@@ -107,7 +141,7 @@ impl PlaylistHistory {
         };
         let restored = queries::atomically(conn, || {
             let now = queries::entry_snapshot(conn, id)?;
-            queries::restore_entries(conn, id, &target)?;
+            queries::restore_entries(conn, id, &target.entries)?;
             Ok::<_, DbError>(now)
         });
         let now = match restored {
@@ -121,6 +155,11 @@ impl PlaylistHistory {
                 }
                 return Err(e);
             }
+        };
+        // Undoing a shuffle leaves a shuffle to redo, and back again.
+        let now = Step {
+            entries: now,
+            shuffle: target.shuffle,
         };
         if back {
             steps.redo.push(now)
@@ -164,6 +203,47 @@ mod history_tests {
 
         assert!(history.redo(&conn, id).unwrap());
         assert_eq!(queries::entry_snapshot(&conn, id).unwrap(), full);
+    }
+
+    #[test]
+    fn shuffles_on_top_count_until_another_edit() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let (a, b) = (
+            upsert_track(&conn, &sample_meta("A", "Artist", "X")).unwrap(),
+            upsert_track(&conn, &sample_meta("B", "Artist", "X")).unwrap(),
+        );
+        let id = queries::create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        let history = PlaylistHistory::default();
+        let swap = || -> Result<(), DbError> {
+            let mut order: Vec<i64> = queries::entry_snapshot(&conn, id)?
+                .into_iter()
+                .map(|e| e.0)
+                .collect();
+            order.reverse();
+            queries::reorder_entries(&conn, id, &order)
+        };
+
+        history
+            .edit(&conn, id, || queries::add_tracks(&conn, id, &[a, b]))
+            .unwrap();
+        assert_eq!(history.shuffles_on_top(id), 0);
+        history.edit_as(&conn, id, true, swap).unwrap();
+        history.edit_as(&conn, id, true, swap).unwrap();
+        assert_eq!(history.shuffles_on_top(id), 2);
+
+        history.undo(&conn, id).unwrap();
+        assert_eq!(history.shuffles_on_top(id), 1);
+        history.redo(&conn, id).unwrap();
+        assert_eq!(
+            history.shuffles_on_top(id),
+            2,
+            "a redone shuffle counts again"
+        );
+
+        history.edit(&conn, id, swap).unwrap();
+        assert_eq!(history.shuffles_on_top(id), 0, "another edit on top");
     }
 
     #[test]

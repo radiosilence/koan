@@ -44,6 +44,13 @@ pub enum UndoEntry {
         entries: Vec<(QueueItemId, Option<QueueItemId>)>,
     },
 
+    /// The rows after the cursor were shuffled in place. Undone as
+    /// `MovedBatch` is; kept apart so the shuffles on top of the stack can be
+    /// counted, which is what a phone's Undo beside the dice shows.
+    Shuffled {
+        entries: Vec<(QueueItemId, Option<QueueItemId>)>,
+    },
+
     /// Playlist was cleared / replaced. Undo = restore this snapshot.
     Replaced {
         items: Vec<PlaylistItem>,
@@ -63,7 +70,9 @@ impl UndoEntry {
             }
             UndoEntry::Removed { items } => items.len(),
             UndoEntry::Moved { .. } => 1,
-            UndoEntry::MovedBatch { entries } => entries.len().div_ceil(IDS_PER_ROW),
+            UndoEntry::MovedBatch { entries } | UndoEntry::Shuffled { entries } => {
+                entries.len().div_ceil(IDS_PER_ROW)
+            }
             UndoEntry::Replaced { items, .. } => items.len(),
             UndoEntry::Batch(entries) => entries.iter().map(UndoEntry::rows).sum(),
         }
@@ -132,6 +141,15 @@ impl UndoStack {
 
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    /// How many shuffles undo would take back before reaching anything else.
+    pub fn shuffles_on_top(&self) -> u32 {
+        self.undo
+            .iter()
+            .rev()
+            .take_while(|e| matches!(e, UndoEntry::Shuffled { .. }))
+            .count() as u32
     }
 
     pub fn undo_len(&self) -> usize {

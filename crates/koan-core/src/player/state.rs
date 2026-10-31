@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use uuid::Uuid;
 
@@ -818,6 +818,10 @@ pub struct SharedPlayerState {
     /// Bumped on every playlist mutation so UI can skip redundant redraws.
     playlist_version: AtomicU64,
 
+    /// How many shuffles undo would take back before reaching any other
+    /// edit. Set by the player after each command.
+    undo_shuffles: AtomicU32,
+
     /// Bumped only when what a saved session holds changes: the items and
     /// their metadata, not the cursor or load states. What decides whether
     /// the saved queue has to be written again.
@@ -913,6 +917,7 @@ impl SharedPlayerState {
             playlist: parking_lot::RwLock::new(Playlist::default()),
             playlist_version: AtomicU64::new(0),
             content_version: AtomicU64::new(0),
+            undo_shuffles: AtomicU32::new(0),
             pending_version: AtomicU64::new(0),
             played_version: AtomicU64::new(0),
             downloads: DownloadStore::new(),
@@ -1343,6 +1348,17 @@ impl SharedPlayerState {
     fn bump_version(&self) {
         self.playlist_version.fetch_add(1, Ordering::AcqRel);
         self.changed();
+    }
+
+    /// See the field.
+    pub fn undo_shuffles(&self) -> u32 {
+        self.undo_shuffles.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set_undo_shuffles(&self, n: u32) {
+        if self.undo_shuffles.swap(n, Ordering::AcqRel) != n {
+            self.changed();
+        }
     }
 
     pub fn content_version(&self) -> u64 {
