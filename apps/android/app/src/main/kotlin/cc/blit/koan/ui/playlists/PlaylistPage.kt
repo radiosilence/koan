@@ -36,6 +36,8 @@ import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ffi.PlaylistEntry
 import cc.blit.koan.ui.StaleNotice
+
+import cc.blit.koan.ffi.TrackSet
 import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
@@ -166,7 +168,7 @@ fun PlaylistPage(playlistId: Long) {
         }
     }
 
-    adding?.let { ids -> AddToPlaylistSheet({ ids }) { adding = null } }
+    adding?.let { ids -> AddToPlaylistSheet(listOf(TrackSet.Tracks(ids))) { adding = null } }
     if (renaming && playlist != null) {
         NameDialog("Rename Playlist", "Rename", playlist.name, onDismiss = { renaming = false }) {
             renaming = false

@@ -17,6 +17,9 @@ pub struct FavouriteChange {
     pub remote_id: String,
     pub star: bool,
     pub seq: i64,
+    /// Taken by the server when it was made; waiting only for a sync to read
+    /// the server's stars after it.
+    pub sent: bool,
 }
 
 /// Record a favourite changed here, replacing any earlier change to the same
@@ -26,29 +29,46 @@ pub fn queue_favourite_change(
     kind: &str,
     remote_id: &str,
     star: bool,
+) -> rusqlite::Result<FavouriteChange> {
+    conn.query_row(
+        "INSERT INTO favourite_outbox (kind, remote_id, star) VALUES (?1, ?2, ?3)
+         ON CONFLICT(kind, remote_id) DO UPDATE SET star = excluded.star, seq = seq + 1, sent = 0
+         RETURNING id, kind, remote_id, star, seq, sent",
+        params![kind, remote_id, star],
+        change_row,
+    )
+}
+
+/// The server took `change` as it was made. A newer change to the same item
+/// is left unsent.
+pub fn mark_favourite_change_sent(
+    conn: &Connection,
+    change: &FavouriteChange,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO favourite_outbox (kind, remote_id, star) VALUES (?1, ?2, ?3)
-         ON CONFLICT(kind, remote_id) DO UPDATE SET star = excluded.star, seq = seq + 1",
-        params![kind, remote_id, star],
+        "UPDATE favourite_outbox SET sent = 1 WHERE id = ?1 AND seq = ?2",
+        params![change.id, change.seq],
     )?;
     Ok(())
+}
+
+fn change_row(row: &rusqlite::Row) -> rusqlite::Result<FavouriteChange> {
+    Ok(FavouriteChange {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        remote_id: row.get(2)?,
+        star: row.get(3)?,
+        seq: row.get(4)?,
+        sent: row.get(5)?,
+    })
 }
 
 /// Every favourite change the server is not yet known to have, oldest first.
 pub fn favourite_changes(conn: &Connection) -> rusqlite::Result<Vec<FavouriteChange>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, kind, remote_id, star, seq FROM favourite_outbox ORDER BY id",
+        "SELECT id, kind, remote_id, star, seq, sent FROM favourite_outbox ORDER BY id",
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(FavouriteChange {
-            id: row.get(0)?,
-            kind: row.get(1)?,
-            remote_id: row.get(2)?,
-            star: row.get(3)?,
-            seq: row.get(4)?,
-        })
-    })?;
+    let rows = stmt.query_map([], change_row)?;
     rows.collect()
 }
 
@@ -63,6 +83,30 @@ pub fn forget_favourite_change(
         params![change.id, change.seq],
     )?;
     Ok(())
+}
+
+/// What the server had starred when a sync last read it, as (kind, remote id).
+pub fn server_stars(conn: &Connection) -> rusqlite::Result<HashSet<(String, String)>> {
+    let mut stmt = conn.prepare_cached("SELECT kind, remote_id FROM favourite_server_stars")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Record what the server has starred, replacing what was recorded before.
+pub fn set_server_stars<'a>(
+    conn: &Connection,
+    stars: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> rusqlite::Result<()> {
+    super::atomically(conn, || {
+        conn.execute("DELETE FROM favourite_server_stars", [])?;
+        let mut insert = conn.prepare_cached(
+            "INSERT OR IGNORE INTO favourite_server_stars (kind, remote_id) VALUES (?1, ?2)",
+        )?;
+        for (kind, remote_id) in stars {
+            insert.execute(params![kind, remote_id])?;
+        }
+        Ok(())
+    })
 }
 
 /// `user`'s favourite tracks.

@@ -62,6 +62,7 @@ import cc.blit.koan.ffi.EntryStatus
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.QueueLock
+import cc.blit.koan.ffi.TrackSet
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.BarItem
@@ -149,10 +150,10 @@ private fun QueuePage() {
 
     var selection by rememberSaveable { mutableStateOf(emptySet<String>()) }
     var saving by remember { mutableStateOf(false) }
-    if (saving) AddToPlaylistSheet({ queue.items.mapNotNull { it.trackId } }) { saving = false }
+    if (saving) AddToPlaylistSheet(listOf(TrackSet.Tracks(queue.items.mapNotNull { it.trackId }))) { saving = false }
     // Held here rather than in a row's menu, which is gone once it closes.
     var adding by remember { mutableStateOf<List<Long>?>(null) }
-    adding?.let { ids -> AddToPlaylistSheet({ ids }) { adding = null } }
+    adding?.let { ids -> AddToPlaylistSheet(listOf(TrackSet.Tracks(ids))) { adding = null } }
     var selecting by rememberSaveable { mutableStateOf(false) }
     fun stopSelecting() {
         selecting = false
@@ -594,7 +595,7 @@ private fun SelectionBar(rows: List<QueueRow>, ids: List<String>, done: () -> Un
         BarItem("Favourite", "favourite", KoanIcons.favourite, hearts.isNotEmpty()) { then { favourite(store, hearts) } }
         BarItem("Remove", "remove", KoanIcons.remove, any, destructive = true) { then(remove) }
     }
-    if (adding) AddToPlaylistSheet({ trackIds }, onAdded = done) { adding = false }
+    if (adding) AddToPlaylistSheet(listOf(TrackSet.Tracks(trackIds)), onAdded = done) { adding = false }
 }
 
 /**

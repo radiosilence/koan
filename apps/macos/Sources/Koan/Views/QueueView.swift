@@ -308,7 +308,7 @@ struct QueueView: View {
                         let tracks = mirror.queue.filter { wanted.contains($0.queueItemId) }.compactMap(\.trackId)
                         return SelectionBar.Actions(
                             favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
-                            tracks: { tracks },
+                            sources: [.tracks(ids: tracks)],
                             queues: false,
                             remove: .init(title: "Remove", noun: "track", count: items.count) { player.remove(itemIds: items) }
                         )
@@ -561,7 +561,7 @@ struct QueueView: View {
             Label("Remove Album", koan: Icon.remove)
         }
         Divider()
-        AddToPlaylistMenu { $0(group.items.compactMap(\.trackId)) }
+        AddToPlaylistMenu { [.tracks(ids: group.items.compactMap(\.trackId))] }
         Divider()
         organizeButton(trackIds: group.items.compactMap(\.trackId), title: group.album)
         if let trackId = group.items.compactMap(\.trackId).first {
@@ -612,7 +612,7 @@ struct QueueView: View {
         }
         if let trackId = item.trackId {
             Divider()
-            AddToPlaylistMenu { $0([trackId]) }
+            AddToPlaylistMenu { [.tracks(ids: [trackId])] }
             Divider()
             organizeButton(trackIds: [trackId], title: item.title)
             let favourited = library.isFavourite(track: trackId)
@@ -714,7 +714,7 @@ struct QueueView: View {
                 Label("Remove", koan: Icon.remove)
             }
             Divider()
-            AddToPlaylistMenu { $0(trackIds(in: ids)) }
+            AddToPlaylistMenu { [.tracks(ids: trackIds(in: ids))] }
             Divider()
             organizeButton(trackIds: trackIds(in: ids), title: nil)
             Button { library.downloadToCache(trackIds: trackIds(in: ids)) } label: {
