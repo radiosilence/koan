@@ -27,7 +27,7 @@ The connection is plain HTTP: sign-ins and music cross your network unencrypted,
 
 With [Tailscale](https://tailscale.com/download) running on the Mac, **Away from home** in Settings shows it as detected, with the Mac's name on your tailnet.
 
-- **Phones on your tailnet** reach the Mac from anywhere at `http://<mac>.<tailnet>.ts.net:4000`, encrypted by Tailscale, with nothing published to the internet.
+- **Phones on your tailnet** reach the Mac from anywhere at `http://<mac>.<tailnet>.ts.net:4000`, encrypted by Tailscale, with nothing published to the internet. This is the simplest way to listen away from home: install Tailscale on the phone too. Invites and QR codes go to this address unless **Invite phones to** says **This network**, for a phone without Tailscale.
 - **Publish with Tailscale Funnel** publishes the Mac on the internet at `https://<mac>.<tailnet>.ts.net`, with a certificate Tailscale provides, for phones without Tailscale. It fills in **Public address**, so invites and QR codes send phones there, and kōan publishes it again whenever the Mac starts sharing. **Stop Publishing** takes it down.
 
 Funnel publishes at the Mac's own name on the tailnet; to change the address, rename the Mac in Tailscale. It uses port 443 unless something else on the Mac is already published there, then 8443 or 10000, and leaves what else Tailscale serves alone. Funnel has to be turned on for the tailnet first, in its access controls; Settings says so when it is not.

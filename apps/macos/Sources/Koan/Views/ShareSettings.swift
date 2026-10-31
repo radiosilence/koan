@@ -220,6 +220,14 @@ struct ShareSettings: View {
                     // Inside the tailnet, WireGuard already encrypts it.
                     LabeledContent("On your tailnet", value: "http://\(tailscale.name):\(running.port)")
                 }
+                KoanPicker("Invite phones to", selection: Binding(
+                    get: { model.settings.shareTailnetInvites },
+                    set: { on in
+                        model.edit { $0.shareTailnetInvites = on }
+                        // The code on screen is for the old address.
+                        visits += 1
+                    }
+                ), options: [("Your tailnet", true), ("This network", false)])
                 if let url = tailscale.funnelUrl {
                     LabeledContent("On the internet", value: url)
                     HStack {
@@ -261,7 +269,7 @@ struct ShareSettings: View {
         } footer: {
             Text(sharing.tailscale == nil
                 ? "Tailscale on this Mac and your phone reaches it from anywhere, encrypted, and can publish it on the internet. Otherwise a tunnel's HTTPS address goes under Public address, and invites send phones there."
-                : "Phones signed in to your tailnet reach this Mac from anywhere. Funnel publishes it on the internet, over HTTPS, for phones without Tailscale. Invites send phones to the public address.")
+                : "With Tailscale on your phone too, it reaches this Mac from anywhere, encrypted, and nothing is on the internet. Funnel publishes it on the internet, over HTTPS, for phones without Tailscale. A public address, when set, is where invites go.")
                 .koanText(.fine, .muted)
         }
         .task { await sharing.refreshTailscale() }

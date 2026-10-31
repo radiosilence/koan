@@ -116,12 +116,20 @@ pub(crate) fn refuse_while_sharing() -> Result<(), KoanError> {
     }
 }
 
-/// The address invites send phones to while sharing: `server.url` where a
-/// tunnel publishes this device, otherwise its address on the network.
+/// The address invites send phones to while sharing: `server.url` where
+/// Funnel or a tunnel publishes this device; else its tailnet name, where
+/// Tailscale runs and invites go there; else its address on the network.
 pub(crate) fn invite_base() -> Option<String> {
     let port = SERVING.read().as_ref()?.port;
-    koan_core::config::Config::cached()
-        .server_url()
+    let cfg = koan_core::config::Config::cached();
+    cfg.server_url()
+        .or_else(|| {
+            cfg.share
+                .tailnet_invites
+                .then(koan_core::tailscale::status)
+                .flatten()
+                .map(|t| format!("http://{}:{port}", t.name))
+        })
         .or_else(|| sharing(port).lan_url)
 }
 

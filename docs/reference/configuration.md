@@ -486,9 +486,10 @@ The one address clients and strangers reach the server at (`KOAN_SERVER__URL`). 
 enabled = true
 port = 4000
 funnel = false
+tailnet_invites = true
 ```
 
-The macOS app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface. `funnel` publishes the server on the internet through Tailscale Funnel whenever it serves, and keeps `server.url` on Funnel's address. Separate from `[graphql]`, which is the terminal UI's and the headless server's listener, though its sign-in settings apply here too. `server.url`, when set, is the address invites send phones to.
+The macOS app sharing its own library ([Sharing your Mac](../guide/sharing-your-mac.md)), written by Settings → Server. `enabled` serves whenever the app is open; `port` is where, on every interface. `tailnet_invites` sends invites to the machine's Tailscale name, where Tailscale runs, rather than its address on the local network. `funnel` publishes the server on the internet through Tailscale Funnel whenever it serves, and keeps `server.url` on Funnel's address. Separate from `[graphql]`, which is the terminal UI's and the headless server's listener, though its sign-in settings apply here too. `server.url`, when set, is the address invites send phones to.
 
 ---
 
