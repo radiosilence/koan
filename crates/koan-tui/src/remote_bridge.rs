@@ -14,7 +14,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
-use koan_core::graphql_client::{GraphQLClient, NowPlaying, QueueEntry};
+use koan_core::graphql_client::{GraphQLClient, GraphQLError, NowPlaying, QueueEntry};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     ItemState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
@@ -107,7 +107,7 @@ fn mirror_loop(client: GraphQLClient, state: Weak<SharedPlayerState>) {
             }
             ControlFlow::Continue(())
         });
-        if state.strong_count() == 0 {
+        if matches!(ended, GraphQLError::Stopped) || state.strong_count() == 0 {
             return;
         }
         if client.predates(&ended) {
@@ -179,9 +179,20 @@ fn queue_item_id(id: &str) -> QueueItemId {
     }))
 }
 
-/// The server's queue as this process's playlist: each entry played, failed
-/// or ready as the server says.
+/// The server's queue as this process's playlist: each entry played, failed,
+/// downloading (with the server's progress) or ready as the server says.
 fn mirror_queue(state: &SharedPlayerState, entries: &[QueueEntry]) {
+    let transfers = entries
+        .iter()
+        .filter(|e| matches!(e.status.as_str(), "DOWNLOADING" | "PRIORITY_PENDING"))
+        .map(|e| {
+            (
+                queue_item_id(&e.queue_item_id),
+                e.download_progress.unwrap_or((0, 0)),
+            )
+        })
+        .collect();
+    state.mirror_transfers(transfers);
     let items: Vec<PlaylistItem> = entries
         .iter()
         .map(|e| {
@@ -332,6 +343,7 @@ mod tests {
             is_current: current,
             status: status.into(),
             failure_reason: None,
+            download_progress: None,
         }
     }
 
@@ -356,5 +368,22 @@ mod tests {
         mirror_queue(&state, &entries);
         let again: Vec<_> = state.snapshot_playlist().0.iter().map(|i| i.id).collect();
         assert_eq!(again, first.iter().map(|i| i.id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_track_the_server_is_fetching_shows_its_progress() {
+        use koan_core::player::state::QueueEntryStatus;
+        let mut fetching = entry(&uuid::Uuid::now_v7().to_string(), "DOWNLOADING", false);
+        fetching.download_progress = Some((250, 1000));
+        let entries = [
+            entry(&uuid::Uuid::now_v7().to_string(), "PRIORITY_PENDING", true),
+            fetching,
+        ];
+        let state = SharedPlayerState::new();
+        mirror_queue(&state, &entries);
+        let shown = state.derive_visible_queue().entries;
+        assert_ne!(shown[0].status, QueueEntryStatus::Queued);
+        assert_eq!(shown[1].status, QueueEntryStatus::Downloading);
+        assert_eq!(shown[1].download_progress, Some((250, 1000)));
     }
 }

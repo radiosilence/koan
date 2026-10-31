@@ -203,6 +203,9 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
 #[derive(Default)]
 struct NowPlaying {
     track: Option<PathBuf>,
+    /// The playlist version a track the frame's queue did not hold yet was
+    /// looked for at; looked for again once it moves.
+    unfound: Option<u64>,
     playback: Option<PlaybackState>,
     position_ms: u64,
     at: Option<Instant>,
@@ -216,9 +219,15 @@ impl NowPlaying {
         let state = &app.state;
         mk.poll();
         let track = state.track_info().map(|t| t.path);
-        let metadata = state.take_metadata_refresh() || track != self.track;
+        // The version of the queue the lookup reads, which can trail the
+        // state's own within a frame.
+        let version = app.queue.vq_version;
+        let retry = self.unfound.is_some_and(|at| at != version);
+        let metadata = state.take_metadata_refresh() || track != self.track || retry;
         if metadata {
-            mk.update_metadata(state, app.visible_queue(), &app.queue.facts, track.as_ref());
+            let found =
+                mk.update_metadata(state, app.visible_queue(), &app.queue.facts, track.as_ref());
+            self.unfound = (!found).then_some(version);
             self.track = track;
         }
         let playback = state.playback_state();

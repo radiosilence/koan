@@ -60,15 +60,14 @@ struct Shown {
 }
 
 /// Reads covers and writes them to the one temp file Now Playing is pointed
-/// at, off the frame thread, the latest ask of a burst only. Removes the file
-/// once the handler is gone.
+/// at, off the frame thread, the latest ask of a burst only.
 fn spawn_cover_thread() -> (Sender<(u64, PathBuf)>, CoverUrls) {
     let (tx, asks) = crossbeam_channel::unbounded::<(u64, PathBuf)>();
     let (done, rx) = crossbeam_channel::unbounded();
     std::thread::Builder::new()
         .name("koan-media-cover".into())
         .spawn(move || {
-            let tmp = std::env::temp_dir().join(format!("koan-cover-{}", std::process::id()));
+            let tmp = cover_path();
             while let Ok(mut next) = asks.recv() {
                 while let Ok(newer) = asks.try_recv() {
                     next = newer;
@@ -81,6 +80,7 @@ fn spawn_cover_thread() -> (Sender<(u64, PathBuf)>, CoverUrls) {
                     break;
                 }
             }
+            // Drop removes it too, but may run while a write is under way.
             std::fs::remove_file(&tmp).ok();
         })
         .ok();
@@ -169,33 +169,38 @@ impl MediaKeyHandler {
 
     /// Tells Now Playing of the playing track, from the queue and credits
     /// the frame already holds. Its cover follows from the cover thread.
+    /// False when the queue the frame holds has no row for the track: Now
+    /// Playing is then told only its length, and the caller asks again once
+    /// the queue moves.
     pub(crate) fn update_metadata(
         &mut self,
         state: &SharedPlayerState,
         entries: &[QueueEntry],
         facts: &Facts,
         track_path: Option<&PathBuf>,
-    ) {
+    ) -> bool {
         let Some(info) = state.track_info() else {
-            return;
+            return true;
         };
         let entry = entries.iter().find(|e| e.id == info.id);
-        let artist = entry.map(|e| match facts.credits.get(&e.id) {
-            Some(c) => c.artist.clone(),
-            None => crate::credits::of_names(&e.artist, &e.album_artist).artist,
-        });
         self.shown = Some(Shown {
             title: entry.map(|e| e.title.clone()).unwrap_or_default(),
-            artist: artist.unwrap_or_default(),
+            artist: entry
+                .map(|e| facts.credits_of(e).artist.clone())
+                .unwrap_or_default(),
             album: entry.map(|e| e.album.clone()).unwrap_or_default(),
             duration: entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms)),
         });
-        // A refresh for the same file keeps its cover, rather than dropping
-        // it and reading it again.
-        if track_path.is_some() && track_path == self.cover_path.as_ref() {
+        // A refresh for the same file keeps a cover it has, rather than
+        // dropping it and reading it again; one that has none reads it again,
+        // since a file still arriving may have had none to give.
+        if track_path.is_some()
+            && track_path == self.cover_path.as_ref()
+            && self.cover_url.is_some()
+        {
             let url = self.cover_url.clone();
             self.set_metadata(url.as_deref());
-            return;
+            return entry.is_some();
         }
         self.generation += 1;
         self.cover_path = track_path.cloned();
@@ -204,6 +209,7 @@ impl MediaKeyHandler {
         if let Some(path) = track_path {
             self.covers.send((self.generation, path.clone())).ok();
         }
+        entry.is_some()
     }
 
     /// Takes in a cover the cover thread has written, for the track still
@@ -244,4 +250,17 @@ impl MediaKeyHandler {
         };
         self.controls.set_playback(playback).ok();
     }
+}
+
+impl Drop for MediaKeyHandler {
+    fn drop(&mut self) {
+        // The cover thread stops only once it next wakes, which the process
+        // rarely waits for.
+        std::fs::remove_file(cover_path()).ok();
+    }
+}
+
+/// The temp file Now Playing's cover is written to, one per process.
+fn cover_path() -> PathBuf {
+    std::env::temp_dir().join(format!("koan-cover-{}", std::process::id()))
 }
