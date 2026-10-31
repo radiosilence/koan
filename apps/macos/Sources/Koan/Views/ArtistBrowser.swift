@@ -53,7 +53,7 @@ struct ArtistBrowser: View {
                     favourites: library.favouriteArtistIds,
                     tint: NSColor(tint),
                     play: { artist in
-                        await player.playNow([.artist(id: artist.id)], named: artist.name).value
+                        player.playNow([.artist(id: artist.id)], named: artist.name)
                     },
                     open: { nav.open(artist: $0) },
                     toggleFavourite: { library.toggleFavourite(artist: $0) }

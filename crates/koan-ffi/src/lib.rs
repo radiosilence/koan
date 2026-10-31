@@ -1031,7 +1031,9 @@ impl KoanEngine {
     ///
     /// The sources are resolved here, on the command lane, so a command that
     /// names an artist takes its place in line the moment it is made rather
-    /// than once its tracks have been read.
+    /// than once its tracks have been read. Sources that come to nothing
+    /// playable (a playlist with nothing downloaded while offline, a record a
+    /// rescan removed) leave the queue as it was and fail with `NotFound`.
     pub async fn queue(
         self: Arc<Self>,
         sources: Vec<TrackSet>,
@@ -1040,7 +1042,13 @@ impl KoanEngine {
         offload::sequenced(move || {
             let db = self.db()?;
             let track_ids = self.resolve_sources(&db, &sources)?;
-            self.place(&db, &track_ids, placement)
+            let queued = self.place(&db, &track_ids, placement)?;
+            if queued.is_empty() {
+                return Err(KoanError::NotFound {
+                    message: "nothing there can be played".into(),
+                });
+            }
+            Ok(queued)
         })
         .await
     }
@@ -1069,6 +1077,11 @@ impl KoanEngine {
         shuffled: bool,
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
+            // Asked for by name: replacing the queue with nothing clears it.
+            if track_ids.is_empty() {
+                self.send(PlayerCommand::ClearPlaylist)?;
+                return Ok(Vec::new());
+            }
             self.place(
                 &self.db()?,
                 &track_ids,
@@ -6211,20 +6224,35 @@ impl KoanEngine {
         self.send_local(PlayerCommand::Barrier(reply)).is_ok() && done.recv_timeout(within).is_ok()
     }
 
-    /// The tracks `sources` name, in order: an album's and an artist's as
-    /// `track_ids` lists them, a playlist's as `playlist_tracks` does.
+    /// The track ids `sources` name, in order: an album's and an artist's as
+    /// their pages list them, a playlist's as `playlist_tracks` does. Ids
+    /// only, and a run of albums in one read: this runs on the command lane,
+    /// where a pause pressed just after waits for it.
     fn resolve_sources(&self, db: &Database, sources: &[TrackSet]) -> Result<Vec<i64>, KoanError> {
         let mut ids = Vec::new();
-        for source in sources {
-            match source {
+        let mut rest = sources;
+        while let Some(first) = rest.first() {
+            match first {
+                TrackSet::Album { .. } => {
+                    let run: Vec<i64> = rest
+                        .iter()
+                        .map_while(|s| match s {
+                            TrackSet::Album { id } => Some(*id),
+                            _ => None,
+                        })
+                        .collect();
+                    rest = &rest[run.len()..];
+                    let by_album = queries::tracks_for_albums(&db.conn, &run).map_err(db_err)?;
+                    ids.extend(
+                        run.iter()
+                            .flat_map(|id| by_album.get(id).into_iter().flatten().map(|t| t.id)),
+                    );
+                    continue;
+                }
                 TrackSet::Tracks { ids: tracks } => ids.extend_from_slice(tracks),
-                TrackSet::Album { id } => ids.extend(
-                    self.tracks_blocking(Some(*id), None, TrackSort::Album, 2000, 0)?
-                        .into_iter()
-                        .map(|t| t.id),
-                ),
                 TrackSet::Artist { id } => ids.extend(
-                    self.tracks_blocking(None, Some(*id), TrackSort::Album, 2000, 0)?
+                    queries::tracks_for_artist(&db.conn, *id)
+                        .map_err(db_err)?
                         .into_iter()
                         .map(|t| t.id),
                 ),
@@ -6237,6 +6265,7 @@ impl KoanEngine {
                     ids.extend(entries.into_iter().map(|e| e.track.id));
                 }
             }
+            rest = &rest[1..];
         }
         Ok(ids)
     }
@@ -6254,9 +6283,6 @@ impl KoanEngine {
         };
         let items = self.build_items(db, track_ids);
         if items.is_empty() {
-            if let Placement::Replace { .. } = placement {
-                self.send(PlayerCommand::ClearPlaylist)?;
-            }
             return Ok(Vec::new());
         }
         let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();

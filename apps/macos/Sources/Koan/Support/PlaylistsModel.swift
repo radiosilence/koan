@@ -68,7 +68,7 @@ final class PlaylistsModel {
         // Cancelled on re-entry, so a slower earlier read can't land over a newer one.
         loading?.cancel()
         loading = Task {
-            let fetched = (try? await engine.playlists()) ?? []
+            let fetched = (try? await offMain { try await engine.playlists() }) ?? []
             guard !Task.isCancelled else { return }
             playlists = fetched
             // A playlist whose contents changed has a different mosaic, and a

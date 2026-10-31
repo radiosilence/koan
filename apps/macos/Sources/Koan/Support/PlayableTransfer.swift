@@ -122,15 +122,7 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
     /// What it names, for the engine to resolve on its command lane. A file
     /// has to be indexed first, and a selection is its items.
-    var source: TrackSet? {
-        switch kind {
-        case .track: .tracks(ids: [id])
-        case .album: .album(id: id)
-        case .artist: .artist(id: id)
-        case .playlist: .playlist(id: id)
-        case .file, .selection: nil
-        }
-    }
+    var source: TrackSet? { TrackSet(kind, id: id) }
 
     /// Resolve to track IDs. Off the main actor — this is a database read, and
     /// an artist is a large one.
@@ -152,6 +144,22 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
                 ids += await item.trackIds(using: engine)
             }
             return ids
+        }
+    }
+}
+
+extension TrackSet {
+    /// What a playable of `kind` named by `id` comes to, for the engine to
+    /// read on its command lane. The one place a kind becomes a `TrackSet`.
+    /// None for a file, which has to be indexed first, or a selection, which
+    /// is its items.
+    init?(_ kind: PlayableTransfer.Kind, id: Int64) {
+        switch kind {
+        case .track: self = .tracks(ids: [id])
+        case .album: self = .album(id: id)
+        case .artist: self = .artist(id: id)
+        case .playlist: self = .playlist(id: id)
+        case .file, .selection: return nil
         }
     }
 }

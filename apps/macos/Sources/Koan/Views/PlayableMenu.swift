@@ -49,15 +49,9 @@ enum Playable {
         let id: Int64
     }
 
-    /// What it names, for the engine to resolve on its command lane.
-    var source: TrackSet {
-        switch self {
-        case .track(let t): .tracks(ids: [t.id])
-        case .album(let a): .album(id: a.id)
-        case .artist(let id, _): .artist(id: id)
-        case .playlist(let id, _): .playlist(id: id)
-        }
-    }
+    /// What it names, for the engine to resolve on its command lane. Every
+    /// playable's kind is one the engine can name.
+    var source: TrackSet { TrackSet(key.kind, id: key.id)! }
 
     var key: Key {
         switch self {

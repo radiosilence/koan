@@ -217,9 +217,9 @@ struct PlayableArtwork: View {
     private func play() {
         guard !loading else { return }
         loading = true
-        nav.open(album: albumId)
+        let done = ReplaceQueueDialog.play(albumId, player: player, nav: nav)
         Task {
-            await player.queue([.album(id: albumId)], .replace(startAt: 0, shuffled: false)).value
+            await done.value
             loading = false
         }
     }

@@ -20,7 +20,7 @@ struct ReplaceQueueDialog: ViewModifier {
             presenting: album
         ) { id in
             Button("Play") {
-                Task { await Self.play(id, player: player, library: library, nav: nav) }
+                Self.play(id, player: player, nav: nav)
             }
             Button("Add to Queue") {
                 player.queue([.album(id: id)], .append)
@@ -31,10 +31,12 @@ struct ReplaceQueueDialog: ViewModifier {
         }
     }
 
-    /// Opens the record and plays it in place of the queue.
-    static func play(_ id: Int64, player: PlayerModel, library: LibraryModel, nav: Navigator) async {
+    /// Opens the record and plays it in place of the queue. The task ends
+    /// once it is playing.
+    @discardableResult
+    static func play(_ id: Int64, player: PlayerModel, nav: Navigator) -> Task<Void, Never> {
         nav.open(album: id)
-        await player.queue([.album(id: id)], .replace(startAt: 0, shuffled: false)).value
+        return player.queue([.album(id: id)], .replace(startAt: 0, shuffled: false))
     }
 }
 
