@@ -84,7 +84,8 @@ struct ShareSettings: View {
             createAccount
         }
         }
-        // Settings is re-read as the window comes forward; so is the address.
+        // The address moves with the network, so it is worked out again each
+        // time the page opens.
         .task { await sharing.refresh() }
     }
 
