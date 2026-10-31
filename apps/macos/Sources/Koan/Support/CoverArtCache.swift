@@ -76,8 +76,21 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     private let decodes = Flights<PlatformImage?>()
 
     /// Everyone waiting on a record, at any size, and how much it matters to
-    /// each. The image lane reads the most urgent of them each time it picks.
+    /// each. The image lane reads the most urgent of them each time it picks,
+    /// once per job it is choosing between: worked out here as the waiters
+    /// change, so the lane's read is one lookup.
     private var waiters: [String: [UUID: Waiter]] = [:]
+    private var urgency: [String: ImageWork.Priority] = [:]
+
+    /// Call with the lock held, after `record`'s waiters change.
+    private func rank(_ record: String) {
+        var top: ImageWork.Priority?
+        for waiter in waiters[record]?.values ?? Dictionary<UUID, Waiter>().values {
+            if let held = top, held >= waiter.priority { continue }
+            top = waiter.priority
+        }
+        urgency[record] = top
+    }
 
     private struct Waiter {
         var priority: ImageWork.Priority
@@ -221,17 +234,21 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                     waiting[id]?.priority = priority
                 }
                 waiters[record] = waiting
+                rank(record)
             }
         }
     }
 
     private func priority(of record: String) -> ImageWork.Priority {
-        locked { waiters[record]?.values.map(\.priority).max() ?? .ahead(.infinity) }
+        locked { urgency[record] ?? .ahead(.infinity) }
     }
 
     private func wait(on record: String, _ priority: ImageWork.Priority, aimed: Bool = false) -> UUID {
         let id = UUID()
-        locked { waiters[record, default: [:]][id] = Waiter(priority: priority, aimed: aimed) }
+        locked {
+            waiters[record, default: [:]][id] = Waiter(priority: priority, aimed: aimed)
+            rank(record)
+        }
         return id
     }
 
@@ -241,6 +258,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         locked {
             waiters[record]?[id] = nil
             if waiters[record]?.isEmpty == true { waiters[record] = nil }
+            rank(record)
         }
     }
 
@@ -251,12 +269,12 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// wherever it was asked from.
     func dominantColour(for source: AlbumArtwork.Source) async -> Color? {
         let key = Self.key(source)
-        if let known = locked({ colours[key] }) { return known }
+        if let known = colours.object(forKey: key as NSString) { return known.colour }
         let waiter = wait(on: key, .visible)
         defer { stopWaiting(waiter, on: key) }
         guard let data = await bytes(for: source) else { return nil }
         let colour = await ImageWork.onCPU { Color.dominant(ofEncoded: data) }
-        locked { colours[key] = colour }
+        colours.setObject(HeldColour(colour), forKey: key as NSString)
         return colour
     }
 
@@ -267,12 +285,22 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// inner one a record known to have no art, or art with no colour.
     func cachedColour(for source: AlbumArtwork.Source) -> Color?? {
         let key = Self.key(source)
-        return locked { absent.contains(key) ? .some(nil) : colours[key] }
+        return locked { absent.contains(key) ? .some(nil) : colours.object(forKey: key as NSString).map(\.colour) }
     }
 
     /// Remembered per record: the wash re-asks every time you navigate, and the
-    /// answer cannot change without the artwork changing.
-    private var colours: [String: Color?] = [:]
+    /// answer cannot change without the artwork changing. Bounded, as the
+    /// bitmaps are: a long browse is a colour per record visited.
+    private let colours: NSCache<NSString, HeldColour> = {
+        let cache = NSCache<NSString, HeldColour>()
+        cache.countLimit = 2048
+        return cache
+    }()
+
+    private final class HeldColour {
+        let colour: Color?
+        init(_ colour: Color?) { self.colour = colour }
+    }
 
     // MARK: - Bytes
 
@@ -503,8 +531,17 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// record's artwork before either may hold what is being replaced, and
     /// is neither written to disk nor kept in memory. Both only grow, so
     /// their sum changes whenever either does.
+    ///
+    /// Evictions are counted per bucket of records rather than per record,
+    /// so the count stays the same size however many records are evicted.
+    /// Records sharing a bucket only see an eviction they did not need: work
+    /// in flight for them is dropped and asked for again.
     private var epoch = 0
-    private var evictions: [String: Int] = [:]
+    private var evictions = [Int](repeating: 0, count: 256)
+
+    private func bucket(of record: String) -> Int {
+        Int(UInt(bitPattern: record.hashValue) % UInt(evictions.count))
+    }
 
     /// Changes whenever the record's artwork may have: an eviction or a purge.
     func revision(of source: AlbumArtwork.Source) -> Int {
@@ -513,14 +550,14 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     /// Call with the lock held.
     private func generation(of record: String) -> Int {
-        epoch + evictions[record, default: 0]
+        epoch + evictions[bucket(of: record)]
     }
 
     private func discard(_ record: String, from generation: Int) {
         let marked: Bool = locked {
             guard self.generation(of: record) == generation else { return false }
             absent.insert(record)
-            colours.removeValue(forKey: record)
+            colours.removeObject(forKey: record as NSString)
             return true
         }
         guard marked, let file = directory?.appendingPathComponent(Self.filename(for: record)) else { return }
@@ -551,8 +588,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         }
         locked {
             absent.remove(key)
-            colours.removeValue(forKey: key)
-            evictions[key, default: 0] += 1
+            colours.removeObject(forKey: key as NSString)
+            evictions[bucket(of: key)] += 1
         }
         if let file = directory?.appendingPathComponent(Self.filename(for: key)) {
             writes.sync { _ = try? FileManager.default.removeItem(at: file) }
@@ -565,7 +602,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         memory.removeAllObjects()
         locked {
             absent.removeAll()
-            colours.removeAll()
+            colours.removeAllObjects()
             epoch += 1
         }
         guard let directory else { return }

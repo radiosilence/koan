@@ -1559,24 +1559,32 @@ impl KoanEngine {
     /// Cache, then LRCLIB. Hits the network on a miss; `lyrics()` answers from
     /// the cache alone and returns without one.
     pub async fn fetch_lyrics(self: Arc<Self>, track_id: i64) -> Result<Option<Lyrics>, KoanError> {
+        use koan_core::lyrics::{self, CacheLookup};
         offload::offload(move || {
-            let db = self.db()?;
-            let Some(row) = queries::get_track_row(&db.conn, track_id).map_err(db_err)? else {
-                return Ok(None);
+            // The connection goes back to the pool while LRCLIB answers.
+            let (row, cached) = {
+                let db = self.db()?;
+                let Some(row) = queries::get_track_row(&db.conn, track_id).map_err(db_err)? else {
+                    return Ok(None);
+                };
+                match lyrics::look_up_cached(&db.conn, track_id) {
+                    Ok(CacheLookup::Fresh(l)) => return Ok(Some(l.into())),
+                    Ok(CacheLookup::Stale(cached)) => (row, cached),
+                    // A track with no lyrics anywhere is the normal case, not an error.
+                    Err(_) => return Ok(None),
+                }
             };
             let duration_secs = row.duration_ms.unwrap_or(0).max(0) as u64 / 1000;
-            match koan_core::lyrics::fetch_lyrics(
-                &db.conn,
-                track_id,
+            let fetched = lyrics::fetch_from_lrclib(
                 &row.artist_name,
                 &row.title,
                 &row.album_title,
                 duration_secs,
-            ) {
-                Ok(l) => Ok(Some(l.into())),
-                // A track with no lyrics anywhere is the normal case, not an error.
-                Err(_) => Ok(None),
-            }
+            );
+            let db = self.db()?;
+            Ok(lyrics::settle(&db.conn, track_id, fetched, cached)
+                .ok()
+                .map(Into::into))
         })
         .await
     }
@@ -1605,11 +1613,12 @@ impl KoanEngine {
         artist_id: i64,
     ) -> Result<Option<ArtistInfo>, KoanError> {
         offload::offload(move || {
-            let db = self.db()?;
-            Ok(koan_core::artist_info::fetch(&db.conn, artist_id)
-                .ok()
-                .flatten()
-                .map(ArtistInfo::from))
+            Ok(
+                koan_core::artist_info::fetch(koan_core::db::pool::shared(), artist_id)
+                    .ok()
+                    .flatten()
+                    .map(ArtistInfo::from),
+            )
         })
         .await
     }
@@ -1620,14 +1629,15 @@ impl KoanEngine {
         artist_id: i64,
     ) -> Result<Option<CoverArt>, KoanError> {
         offload::offload(move || {
-            let db = self.db()?;
-            Ok(koan_core::artist_info::image(&db.conn, artist_id)
-                .ok()
-                .flatten()
-                .map(|data| CoverArt {
-                    mime: sniff_mime(&data).to_string(),
-                    data,
-                }))
+            Ok(
+                koan_core::artist_info::image(koan_core::db::pool::shared(), artist_id)
+                    .ok()
+                    .flatten()
+                    .map(|data| CoverArt {
+                        mime: sniff_mime(&data).to_string(),
+                        data,
+                    }),
+            )
         })
         .await
     }
@@ -6110,11 +6120,7 @@ impl KoanEngine {
         let Ok(db) = self.db() else {
             return HashMap::new();
         };
-        queries::tracks_by_ids(&db.conn, ids)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|t| t.remote_id.map(|r| (t.id, r)))
-            .collect()
+        queries::remote_ids_for_tracks(&db.conn, ids).unwrap_or_default()
     }
 
     /// Send to this device's player, whatever the app is controlling.

@@ -136,6 +136,11 @@ fn lengthless_mode_for(path: &Path) -> streaming::ProbeMode {
 /// The player controller. Owns the audio pipeline and processes commands.
 pub struct Player {
     shared_state: Arc<SharedPlayerState>,
+    /// The track the latest stream probe is for, and the download it reads
+    /// from. A probe parked at its write head notices the cursor has moved
+    /// on only when woken, so it is woken once the cursor leaves its track,
+    /// rather than waiting out the stall limit after each skip.
+    probing: parking_lot::Mutex<Option<(QueueItemId, Arc<crate::remote::downloads::ByteFeed>)>>,
     commands: CommandChannel,
     /// What the player is doing with the track under the cursor.
     transport: Transport,
@@ -406,6 +411,7 @@ impl Player {
             viz_snapshot,
             _viz_analyzer: viz_analyzer,
             undo_stack: UndoStack::new(),
+            probing: Default::default(),
             batch_buffer: None,
             output_device_name: cfg.playback.output_device.clone(),
             backend: crate::audio::platform_backend(),
@@ -807,6 +813,16 @@ impl Player {
     /// playback state, the wait or the track.
     fn publish(&self) {
         let state = &self.shared_state;
+        {
+            let mut probing = self.probing.lock();
+            if probing
+                .as_ref()
+                .is_some_and(|(id, _)| !state.is_cursor(*id))
+                && let Some((_, feed)) = probing.take()
+            {
+                feed.done();
+            }
+        }
         let (playback, waiting, track) = match &self.transport {
             Transport::Idle => (PlaybackState::Stopped, false, None),
             Transport::Waiting(waiting) => (
@@ -1253,6 +1269,9 @@ impl Player {
         bytes_written: Arc<crate::remote::downloads::ByteFeed>,
         total: u64,
     ) {
+        if let Some((_, previous)) = self.probing.lock().replace((id, bytes_written.clone())) {
+            previous.done();
+        }
         let path = path.to_path_buf();
         let tx = self.commands.tx.clone();
         let hint = hint_for(&path);
@@ -2465,6 +2484,8 @@ impl Player {
             PlayerCommand::ClearPlaylist => self.clear_playlist(),
             PlayerCommand::SignedOut => {
                 self.clear_playlist();
+                // The previous account's queue is not this one's to bring back.
+                self.undo_stack = UndoStack::new();
                 match &self.downloads {
                     Some(downloads) => downloads.forget(),
                     None => self.shared_state.downloads().forget_all(),

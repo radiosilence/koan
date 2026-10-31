@@ -859,7 +859,13 @@ impl Player {
         let extension = container_of(&path);
         let link = self.renderer.as_ref().expect("checked above");
         let Some(mime) = link.session.mime_for(&extension) else {
-            // Left for the end of this track, where it is skipped with a reason.
+            // Left for the end of this track, where it is skipped with a
+            // reason; until what follows changes, not looked at again.
+            if let Some((_, session)) = self.on_renderer()
+                && let Output::Renderer(play) = &mut session.output
+            {
+                play.next_refused = Some(next_id);
+            }
             return;
         };
         let duration = buffer::probe_file(&path)
@@ -1416,7 +1422,8 @@ impl Player {
         // A hand-over starts the track at its top. The reading that showed it
         // may not: Kodi names the new track with the old one's position.
         play.settle();
-        link.session.retain(&play.tokens());
+        // The renderer may still be reading the end of the track it left.
+        link.session.revoke(&play.tokens());
         if let Some(info) = info {
             session.track = TrackInfo {
                 id,

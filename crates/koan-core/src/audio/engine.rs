@@ -198,78 +198,96 @@ impl AudioEngine {
         let mut audio_unit: AudioUnit = ptr::null_mut();
         check(unsafe { AudioComponentInstanceNew(component, &mut audio_unit) })?;
 
-        // Set the output device. iOS has no device to set: the route is chosen
-        // by the audio session and can change under a running unit.
-        #[cfg(target_os = "macos")]
-        check(unsafe {
-            AudioUnitSetProperty(
-                audio_unit,
-                kAudioOutputUnitProperty_CurrentDevice,
-                kAudioUnitScope_Global,
-                0,
-                &device_id as *const _ as *const c_void,
-                mem::size_of::<u32>() as u32,
-            )
-        })?;
-        #[cfg(not(target_os = "macos"))]
-        let _ = device_id;
+        // A unit that fails to configure is disposed, and its callback's data
+        // freed, rather than leaked with the ring it owns. The unit was never
+        // started, so no render call can be reading the data.
+        let mut callback_data: *mut CallbackData = ptr::null_mut();
+        let configured = (|| -> Result<()> {
+            // Set the output device. iOS has no device to set: the route is chosen
+            // by the audio session and can change under a running unit.
+            #[cfg(target_os = "macos")]
+            check(unsafe {
+                AudioUnitSetProperty(
+                    audio_unit,
+                    kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &device_id as *const _ as *const c_void,
+                    mem::size_of::<u32>() as u32,
+                )
+            })?;
+            #[cfg(not(target_os = "macos"))]
+            let _ = device_id;
 
-        // Set stream format on the input scope of the output element.
-        // This tells the AudioUnit what format we'll provide in the render callback.
-        // On iOS that stays the rate of the samples: RemoteIO converts to the
-        // hardware rate the session granted when the two differ, and does no
-        // conversion when the session was granted this rate.
-        let bytes_per_sample = mem::size_of::<f32>() as u32;
-        let asbd = AudioStreamBasicDescription {
-            mSampleRate: sample_rate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: bytes_per_sample * channels,
-            mFramesPerPacket: 1,
-            mBytesPerFrame: bytes_per_sample * channels,
-            mChannelsPerFrame: channels,
-            mBitsPerChannel: 32,
-            mReserved: 0,
-        };
+            // Set stream format on the input scope of the output element.
+            // This tells the AudioUnit what format we'll provide in the render callback.
+            // On iOS that stays the rate of the samples: RemoteIO converts to the
+            // hardware rate the session granted when the two differ, and does no
+            // conversion when the session was granted this rate.
+            let bytes_per_sample = mem::size_of::<f32>() as u32;
+            let asbd = AudioStreamBasicDescription {
+                mSampleRate: sample_rate,
+                mFormatID: kAudioFormatLinearPCM,
+                mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+                mBytesPerPacket: bytes_per_sample * channels,
+                mFramesPerPacket: 1,
+                mBytesPerFrame: bytes_per_sample * channels,
+                mChannelsPerFrame: channels,
+                mBitsPerChannel: 32,
+                mReserved: 0,
+            };
 
-        check(unsafe {
-            AudioUnitSetProperty(
-                audio_unit,
-                kAudioUnitProperty_StreamFormat,
-                kAudioUnitScope_Input,
-                0,
-                &asbd as *const _ as *const c_void,
-                mem::size_of::<AudioStreamBasicDescription>() as u32,
-            )
-        })?;
+            check(unsafe {
+                AudioUnitSetProperty(
+                    audio_unit,
+                    kAudioUnitProperty_StreamFormat,
+                    kAudioUnitScope_Input,
+                    0,
+                    &asbd as *const _ as *const c_void,
+                    mem::size_of::<AudioStreamBasicDescription>() as u32,
+                )
+            })?;
 
-        // Allocate callback data on the heap — the render callback gets a raw pointer to it.
-        let callback_data = Box::into_raw(Box::new(CallbackData {
-            consumer,
-            running: running.clone(),
-            samples_played,
-            in_callback: in_callback.clone(),
-            fader: Fader::new(fade.clone(), sample_rate),
-            lead_in: lead_in.clone(),
-        }));
+            // Allocate callback data on the heap — the render callback gets a raw pointer to it.
+            callback_data = Box::into_raw(Box::new(CallbackData {
+                consumer,
+                running: running.clone(),
+                samples_played,
+                in_callback: in_callback.clone(),
+                fader: Fader::new(fade.clone(), sample_rate),
+                lead_in: lead_in.clone(),
+            }));
 
-        let render_cb = AURenderCallbackStruct {
-            inputProc: Some(render_callback),
-            inputProcRefCon: callback_data as *mut c_void,
-        };
+            let render_cb = AURenderCallbackStruct {
+                inputProc: Some(render_callback),
+                inputProcRefCon: callback_data as *mut c_void,
+            };
 
-        check(unsafe {
-            AudioUnitSetProperty(
-                audio_unit,
-                kAudioUnitProperty_SetRenderCallback,
-                kAudioUnitScope_Input,
-                0,
-                &render_cb as *const _ as *const c_void,
-                mem::size_of::<AURenderCallbackStruct>() as u32,
-            )
-        })?;
+            check(unsafe {
+                AudioUnitSetProperty(
+                    audio_unit,
+                    kAudioUnitProperty_SetRenderCallback,
+                    kAudioUnitScope_Input,
+                    0,
+                    &render_cb as *const _ as *const c_void,
+                    mem::size_of::<AURenderCallbackStruct>() as u32,
+                )
+            })?;
 
-        check(unsafe { AudioUnitInitialize(audio_unit) })?;
+            check(unsafe { AudioUnitInitialize(audio_unit) })?;
+            Ok(())
+        })();
+        if let Err(e) = configured {
+            // SAFETY: the unit was created above and is not used after this;
+            // `callback_data`, when set, came from Box::into_raw and the unit
+            // that could call it is gone.
+            unsafe {
+                if AudioComponentInstanceDispose(audio_unit) == 0 && !callback_data.is_null() {
+                    drop(Box::from_raw(callback_data));
+                }
+            }
+            return Err(e);
+        }
 
         Ok(Self {
             audio_unit,

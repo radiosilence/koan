@@ -241,11 +241,13 @@ impl VizSnapshot {
 
     /// Write a new frame. Acquires write lock, swaps, releases — <1us.
     /// MUST only be called after all FFT computation is finished (never hold lock during FFT).
-    pub fn write(&self, frame: VizFrame) {
-        *self.inner.write() = frame;
+    /// Returns the frame it replaced, whose buffers the writer can fill next.
+    pub fn write(&self, frame: VizFrame) -> VizFrame {
+        let old = std::mem::replace(&mut *self.inner.write(), frame);
         // After the frame is in place, so a woken subscriber reads the frame
         // it was told about rather than the one before it.
         self.published.bump();
+        old
     }
 
     /// Reduce the latest frame to three bands.

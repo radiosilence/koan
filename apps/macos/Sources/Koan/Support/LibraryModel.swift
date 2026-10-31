@@ -277,6 +277,10 @@ final class LibraryModel {
     /// The track browser's rows so far, and how many it will have. Read a page
     /// at a time — see `continueTracks()`.
     private(set) var visibleTracks: [Track] = []
+    /// Moves when `visibleTracks` is replaced, and not when a page is added
+    /// to its end: what lets the browser add that page's rows to the ones it
+    /// has. Observed through `visibleTracks`.
+    @ObservationIgnored private(set) var tracksRevision = 0
     private(set) var trackTotal: UInt64 = 0
     /// Whether more of the track browser's pages are on their way. A page
     /// that fails to arrive ends the listing short of `trackTotal`.
@@ -424,7 +428,10 @@ final class LibraryModel {
             if rows != visiblePlayHistory { visiblePlayHistory = rows }
         case .tracks(let listing):
             if listing.total != trackTotal { trackTotal = listing.total }
-            if listing.tracks != visibleTracks { visibleTracks = listing.tracks }
+            if listing.tracks != visibleTracks {
+                tracksRevision += 1
+                visibleTracks = listing.tracks
+            }
         }
     }
 

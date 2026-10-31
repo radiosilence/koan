@@ -1,0 +1,1 @@
+- **The `nowPlaying` subscription no longer sends while the playhead runs on time.** It sends on a seek, a stall, a pause, a track change or a drift past one second. A client counts on from `positionMs` while `moving` is true.

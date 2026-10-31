@@ -8,6 +8,7 @@
 //! What was found is cached per artist, so a page draws from the database and
 //! never waits on the network, and refreshed after a month. A miss is not
 //! cached: the id may resolve, or the article appear, by the next visit.
+//! Nothing here holds a database connection across a network call.
 
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -15,6 +16,8 @@ use std::time::{Duration, Instant};
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
+use crate::db::connection::DbError;
+use crate::db::pool::Pool;
 use crate::remote::musicbrainz::{self, MusicBrainzError};
 use crate::remote::wikimedia::{self, WikimediaError};
 
@@ -27,6 +30,8 @@ const IMAGE_WIDTH: u32 = 800;
 pub enum ArtistInfoError {
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),
+    #[error("database error: {0}")]
+    Pool(#[from] DbError),
     #[error("musicbrainz: {0}")]
     MusicBrainz(#[from] MusicBrainzError),
     #[error("wikimedia: {0}")]
@@ -73,23 +78,41 @@ pub fn cached(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Arti
 ///
 /// A network failure is not remembered as a miss — it says nothing about the
 /// artist — so a stale answer is served instead, if there is one.
-pub fn fetch(conn: &Connection, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
+///
+/// Takes the pool rather than a connection: the lookups take seconds, mostly
+/// waiting on MusicBrainz's rate limit, and a connection held through them is
+/// one every other reader goes without.
+pub fn fetch(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
     let now = crate::clock::unix_secs();
-    let held = cached(conn, artist_id)?;
+    let (held, subject) = {
+        let db = pool.get()?;
+        (cached(&db.conn, artist_id)?, subject(&db.conn, artist_id)?)
+    };
     if let Some(held) = &held
         && !held.is_stale(now)
     {
         return Ok(Some(held.clone()));
     }
+    let Some(subject) = subject else {
+        return Ok(held);
+    };
 
-    match look_up(conn, artist_id, now) {
+    let found = look_up(&subject, now);
+    if let Ok((_, Some(mbid))) = &found
+        && subject.mbid.is_none()
+    {
+        pool.get()?.conn.execute(
+            "UPDATE artists SET mbid = COALESCE(mbid, ?1) WHERE id = ?2",
+            params![mbid, artist_id],
+        )?;
+    }
+    match found {
         // Found nothing: not stored, so the next visit asks again.
-        Ok(Some(info)) if info.bio.is_none() && info.image_url.is_none() => Ok(held.or(Some(info))),
-        Ok(Some(info)) => {
-            store(conn, artist_id, &info)?;
+        Ok((info, _)) if info.bio.is_none() && info.image_url.is_none() => Ok(held.or(Some(info))),
+        Ok((info, _)) => {
+            store(&pool.get()?.conn, artist_id, &info)?;
             Ok(Some(info))
         }
-        Ok(None) => Ok(held),
         Err(e) => {
             log::warn!("artist info for {artist_id}: {e}");
             match held {
@@ -101,21 +124,26 @@ pub fn fetch(conn: &Connection, artist_id: i64) -> Result<Option<ArtistInfo>, Ar
 }
 
 /// The photograph's bytes. Network, every time: the front end caches images,
-/// and the database is no place for them.
-pub fn image(conn: &Connection, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoError> {
-    let Some(url) = cached(conn, artist_id)?.and_then(|info| info.image_url) else {
+/// and the database is no place for them. No connection is held while it
+/// downloads.
+pub fn image(pool: &Pool, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoError> {
+    let url = cached(&pool.get()?.conn, artist_id)?.and_then(|info| info.image_url);
+    let Some(url) = url else {
         return Ok(None);
     };
     Ok(Some(wikimedia::download(&wikimedia::client(), &url)?))
 }
 
-/// `None` when the artist is not one this can look up at all; a found-nothing
-/// answer is `Some` with every field empty, and is cached.
-fn look_up(
-    conn: &Connection,
-    artist_id: i64,
-    now: i64,
-) -> Result<Option<ArtistInfo>, ArtistInfoError> {
+/// What a lookup needs from the database, read before it goes to the network.
+struct Subject {
+    name: String,
+    mbid: Option<String>,
+    /// One of the artist's releases, for finding their id through its credits.
+    release: Option<String>,
+}
+
+/// `None` when the artist is not one this can look up at all.
+fn subject(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Subject>> {
     let Some((name, mbid)) = conn
         .query_row(
             "SELECT name, mbid FROM artists WHERE id = ?1",
@@ -131,20 +159,30 @@ fn look_up(
     if is_placeholder_name(&name) {
         return Ok(None);
     }
+    let release = match mbid {
+        Some(_) => None,
+        None => conn
+            .query_row(
+                "SELECT mbid FROM albums WHERE artist_id = ?1 AND mbid IS NOT NULL LIMIT 1",
+                params![artist_id],
+                |row| row.get(0),
+            )
+            .optional()?,
+    };
+    Ok(Some(Subject {
+        name,
+        mbid,
+        release,
+    }))
+}
 
+/// The network half: what was found, with every field empty when nothing
+/// was, and the MusicBrainz id it resolved.
+fn look_up(subject: &Subject, now: i64) -> Result<(ArtistInfo, Option<String>), ArtistInfoError> {
     let mb = musicbrainz::default_client();
-    let mbid = match mbid {
-        Some(mbid) => Some(mbid),
-        None => {
-            let found = resolve_mbid(conn, &mb, artist_id, &name)?;
-            if let Some(found) = &found {
-                conn.execute(
-                    "UPDATE artists SET mbid = COALESCE(mbid, ?1) WHERE id = ?2",
-                    params![found, artist_id],
-                )?;
-            }
-            found
-        }
+    let mbid = match &subject.mbid {
+        Some(mbid) => Some(mbid.clone()),
+        None => resolve_mbid(&mb, subject)?,
     };
 
     let mut info = ArtistInfo {
@@ -152,11 +190,11 @@ fn look_up(
         ..Default::default()
     };
     let Some(mbid) = mbid else {
-        return Ok(Some(info));
+        return Ok((info, None));
     };
     throttle();
     let Some(qid) = musicbrainz::wikidata_id(&mb, &mbid)? else {
-        return Ok(Some(info));
+        return Ok((info, Some(mbid)));
     };
 
     let wm = wikimedia::client();
@@ -177,7 +215,7 @@ fn look_up(
         info.image_url = Some(image.url);
         info.image_credit = image.credit;
     }
-    Ok(Some(info))
+    Ok((info, Some(mbid)))
 }
 
 /// Find the artist's MusicBrainz id without one on the row.
@@ -187,21 +225,13 @@ fn look_up(
 /// so there is nothing to guess. A name search is the last resort, and only an
 /// exact, unique match is taken.
 fn resolve_mbid(
-    conn: &Connection,
     mb: &reqwest::blocking::Client,
-    artist_id: i64,
-    name: &str,
+    subject: &Subject,
 ) -> Result<Option<String>, ArtistInfoError> {
-    let release: Option<String> = conn
-        .query_row(
-            "SELECT mbid FROM albums WHERE artist_id = ?1 AND mbid IS NOT NULL LIMIT 1",
-            params![artist_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(release) = release {
+    let name = &subject.name;
+    if let Some(release) = &subject.release {
         throttle();
-        let credits = musicbrainz::release_artists(mb, &release)?;
+        let credits = musicbrainz::release_artists(mb, release)?;
         if let Some(mbid) = credited(&credits, name) {
             return Ok(Some(mbid));
         }
@@ -304,26 +334,34 @@ mod tests {
         conn
     }
 
+    fn test_pool() -> (tempfile::TempDir, Pool) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = Pool::new(dir.path().join("koan.db"));
+        (dir, pool)
+    }
+
     #[test]
     fn a_fresh_answer_is_served_from_the_cache() {
-        let conn = test_db();
-        let id = get_or_create_artist(&conn, "Glass Candy", None).unwrap();
+        let (_dir, pool) = test_pool();
+        let conn = pool.get().unwrap();
+        let conn = &conn.conn;
+        let id = get_or_create_artist(conn, "Glass Candy", None).unwrap();
         let info = ArtistInfo {
             bio: Some("An American electronic music duo.".into()),
             fetched_at: crate::clock::unix_secs(),
             ..Default::default()
         };
-        store(&conn, id, &info).unwrap();
+        store(conn, id, &info).unwrap();
 
         // No network in a test: a fresh row must be answered without one.
-        assert_eq!(fetch(&conn, id).unwrap(), Some(info));
+        assert_eq!(fetch(&pool, id).unwrap(), Some(info));
     }
 
     #[test]
     fn placeholder_artists_are_never_looked_up() {
-        let conn = test_db();
-        let id = get_or_create_artist(&conn, "Various Artists", None).unwrap();
-        assert_eq!(fetch(&conn, id).unwrap(), None);
+        let (_dir, pool) = test_pool();
+        let id = get_or_create_artist(&pool.get().unwrap().conn, "Various Artists", None).unwrap();
+        assert_eq!(fetch(&pool, id).unwrap(), None);
     }
 
     #[test]

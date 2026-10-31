@@ -115,19 +115,19 @@ const ART_BUDGET: usize = 2600;
 
 /// The cover of `track` (a uid or a row id) small enough to ride in a Live
 /// Activity push, as base64. Worked out once per track: the state it goes in
-/// is reported far more often than the track changes.
+/// is reported far more often than the track changes. The last few are kept,
+/// so devices playing different tracks do not each undo the other's.
 fn activity_art(track: &str) -> Option<String> {
     use base64::Engine as _;
-    static LAST: parking_lot::Mutex<Option<(String, Option<String>)>> =
-        parking_lot::Mutex::new(None);
+    const KEPT: usize = 16;
+    static LAST: parking_lot::Mutex<std::collections::VecDeque<(String, Option<String>)>> =
+        parking_lot::Mutex::new(std::collections::VecDeque::new());
     static COVERS: std::sync::LazyLock<crate::covers::Covers> =
         std::sync::LazyLock::new(crate::covers::Covers::in_config_dir);
     if cfg!(test) {
         return None;
     }
-    if let Some((held, art)) = LAST.lock().as_ref()
-        && held == track
-    {
+    if let Some((_, art)) = LAST.lock().iter().find(|(held, _)| held == track) {
         return art.clone();
     }
     let art = (|| {
@@ -154,7 +154,11 @@ fn activity_art(track: &str) -> Option<String> {
                 (b64.len() <= ART_BUDGET).then_some(b64)
             })
     })();
-    *LAST.lock() = Some((track.to_string(), art.clone()));
+    let mut last = LAST.lock();
+    if last.len() == KEPT {
+        last.pop_front();
+    }
+    last.push_back((track.to_string(), art.clone()));
     art
 }
 

@@ -38,6 +38,63 @@ struct Known {
 struct Store {
     renderers: HashMap<String, Known>,
     describing: HashSet<String>,
+    /// Descriptions not to fetch again yet, by device. Announcements
+    /// repeat, and each would otherwise fetch again.
+    unwanted: HashMap<String, Unwanted>,
+}
+
+/// A description that could not be read, or that was not a renderer's.
+struct Unwanted {
+    location: Url,
+    until: Instant,
+    /// The wait after the next failure; `None` for a device that is not a
+    /// renderer, which a search does not ask again.
+    next_wait: Option<Duration>,
+}
+
+/// Waits after a description cannot be read: doubling from the first to the
+/// last, as a renderer still starting answers soon.
+const FIRST_RETRY: Duration = Duration::from_secs(5);
+const LAST_RETRY: Duration = Duration::from_secs(60);
+/// How long a device that is not a renderer goes undescribed at one location.
+const NOT_A_RENDERER: Duration = Duration::from_secs(30 * 60);
+/// How long a renderer that has stopped announcing itself stays findable by
+/// its udn: a list drawn before it expired can still connect to it.
+const FORGET_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+impl Store {
+    /// Whether an announcement from `udn` at `location` should be described:
+    /// not while a wait set for it there runs. A lapsed wait is kept a while,
+    /// so the next failure there waits twice as long.
+    fn wants_description(&mut self, udn: &str, location: &Url, now: Instant) -> bool {
+        self.unwanted.retain(|_, u| match u.next_wait {
+            Some(_) => now < u.until + LAST_RETRY * 2,
+            None => now < u.until,
+        });
+        !self
+            .unwanted
+            .get(udn)
+            .is_some_and(|u| u.location == *location && now < u.until)
+    }
+
+    /// A description at `location` could not be read: wait before the next
+    /// try, twice as long as the last wait there, up to `LAST_RETRY`.
+    fn describe_failed(&mut self, udn: &str, location: &Url, now: Instant) {
+        let wait = self
+            .unwanted
+            .get(udn)
+            .filter(|u| u.location == *location)
+            .and_then(|u| u.next_wait)
+            .unwrap_or(FIRST_RETRY);
+        self.unwanted.insert(
+            udn.to_owned(),
+            Unwanted {
+                location: location.clone(),
+                until: now + wait,
+                next_wait: Some((wait * 2).min(LAST_RETRY)),
+            },
+        );
+    }
 }
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
@@ -191,6 +248,7 @@ pub fn remember(renderer: Renderer, max_age: Duration) {
         let expires = Instant::now() + max_age;
         let changed = s.renderers.get(&udn).is_none_or(|k| k.renderer != renderer);
         let busy = s.renderers.get(&udn).is_some_and(|k| k.busy);
+        s.unwanted.remove(&udn);
         s.renderers.insert(
             udn,
             Known {
@@ -247,6 +305,9 @@ pub fn search() {
         return;
     };
     *SEARCHED.lock() = Some(Instant::now());
+    // Asked to look now: every device is described again, one whose
+    // description failed or that was not yet a renderer included.
+    with(|s| s.unwanted.clear());
     let network = NETWORK.lock().clone();
     let mut interface = Ipv4Addr::UNSPECIFIED;
     if let Some(network) = &network {
@@ -281,10 +342,18 @@ pub fn search() {
 /// been searched for in `DEFAULT_MAX_AGE`.
 pub fn search_if_stale() {
     let now = Instant::now();
-    let fresh = SEARCHED
-        .lock()
-        .is_some_and(|t| now.duration_since(t) < DEFAULT_MAX_AGE)
-        && with(|s| s.renderers.values().all(|k| k.expires > now));
+    let searched = *SEARCHED.lock();
+    let fresh = searched.is_some_and(|t| now.duration_since(t) < DEFAULT_MAX_AGE)
+        && with(|s| {
+            // A renderer gone without saying goodbye is searched for once
+            // after it expires, not on every call after.
+            let searched = searched.unwrap_or(now);
+            s.renderers
+                .retain(|_, k| now.saturating_duration_since(k.expires) < FORGET_AFTER);
+            s.renderers
+                .values()
+                .all(|k| k.expires > now || searched > k.expires)
+        });
     if !fresh {
         search();
     }
@@ -456,6 +525,9 @@ fn heard(msg: Message) {
                     known.expires = Instant::now() + max_age;
                     return false;
                 }
+                if !s.wants_description(&msg.udn, &location, Instant::now()) {
+                    return false;
+                }
                 s.describing.insert(msg.udn.clone())
             });
             if fresh {
@@ -471,6 +543,18 @@ fn describe(udn: String, location: Url, max_age: Duration) {
         .spawn({
             let udn = udn.clone();
             move || {
+                // Doubling waits for one that failed at the same location.
+                let failed = |s: &mut Store| s.describe_failed(&udn, &location, Instant::now());
+                let not_a_renderer = |s: &mut Store| {
+                    s.unwanted.insert(
+                        udn.clone(),
+                        Unwanted {
+                            location: location.clone(),
+                            until: Instant::now() + NOT_A_RENDERER,
+                            next_wait: None,
+                        },
+                    );
+                };
                 match fetch(&location) {
                     Ok(Some(renderer)) => {
                         log::info!(
@@ -482,8 +566,14 @@ fn describe(udn: String, location: Url, max_age: Duration) {
                         );
                         remember(renderer, max_age);
                     }
-                    Ok(None) => log::debug!("upnp: {location} is not a renderer"),
-                    Err(e) => log::info!("upnp: cannot describe {location}: {e}"),
+                    Ok(None) => {
+                        log::debug!("upnp: {location} is not a renderer");
+                        with(not_a_renderer);
+                    }
+                    Err(e) => {
+                        log::info!("upnp: cannot describe {location}: {e}");
+                        with(failed);
+                    }
                 }
                 with(|s| s.describing.remove(&udn));
             }
@@ -498,11 +588,12 @@ fn describe(udn: String, location: Url, max_age: Duration) {
 pub fn fetch(location: &Url) -> Result<Option<Renderer>, String> {
     let http = super::soap::client();
     let get = |url: &Url| -> Result<String, String> {
-        http.get(url.clone())
+        let response = http
+            .get(url.clone())
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.text())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        super::soap::read_body(response)
     };
     let Some(mut renderer) = description::parse_device(&get(location)?, location)? else {
         return Ok(None);
@@ -517,6 +608,26 @@ pub fn fetch(location: &Url) -> Result<Option<Renderer>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_description_that_keeps_failing_waits_longer_each_time() {
+        let mut store = Store::default();
+        let at: Url = "http://192.0.2.1:49152/desc.xml".parse().unwrap();
+        let mut now = Instant::now();
+        let mut waits = Vec::new();
+        for _ in 0..6 {
+            assert!(store.wants_description("uuid:x", &at, now));
+            store.describe_failed("uuid:x", &at, now);
+            let until = store.unwanted["uuid:x"].until;
+            waits.push((until - now).as_secs());
+            assert!(!store.wants_description("uuid:x", &at, now));
+            now = until;
+        }
+        assert_eq!(waits, [5, 10, 20, 40, 60, 60]);
+        // Somewhere else, it is asked at once.
+        let moved: Url = "http://192.0.2.2:49152/desc.xml".parse().unwrap();
+        assert!(store.wants_description("uuid:x", &moved, now));
+    }
 
     struct Counting {
         holds: Mutex<Vec<bool>>,

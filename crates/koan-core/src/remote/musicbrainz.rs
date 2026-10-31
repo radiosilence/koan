@@ -167,11 +167,17 @@ pub fn release_artists(
 }
 
 /// An HTTP client carrying the User-Agent MusicBrainz requires.
+/// One client for the process, so its connections are reused across lookups;
+/// a clone shares them.
 pub fn default_client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    static CLIENT: std::sync::LazyLock<reqwest::blocking::Client> =
+        std::sync::LazyLock::new(|| {
+            reqwest::blocking::Client::builder()
+                .user_agent(USER_AGENT)
+                .build()
+                .unwrap_or_else(|_| reqwest::blocking::Client::new())
+        });
+    CLIENT.clone()
 }
 
 #[cfg(test)]

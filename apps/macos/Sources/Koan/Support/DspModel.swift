@@ -62,9 +62,15 @@ final class DspModel {
     /// What the last import of several files did.
     var importSummary: String?
     /// Several files planned for import, waiting to be confirmed and named.
-    var pendingImport: PendingImport?
+    var pendingImport: PendingImport? { didSet { tidy() } }
     /// An import waiting on the rate of what it was given.
-    var needsRate: Pending?
+    var needsRate: Pending? { didSet { tidy() } }
+    /// Copies the app made of files handed to it — shared to it, or opened
+    /// in it — each deleted once no import still needs its files: done,
+    /// failed, or turned down at the plan or the rate.
+    @ObservationIgnored private var copies: [(root: URL, urls: Set<URL>)] = []
+    /// The files of imports running now, once per import.
+    @ObservationIgnored private var reading: [URL] = []
     /// AutoEQ's results for the last search.
     private(set) var autoEqResults: [AutoEqEntry] = []
     /// The makers in AutoEQ's index, to browse when nothing is typed.
@@ -110,9 +116,16 @@ final class DspModel {
     /// one profile combine into one. Picked or shared ones are
     /// security-scoped and readable only while held open. Started from a
     /// stage of a device's chain (`into`), what it makes goes into it.
-    func importFiles(_ urls: [URL], name: String? = nil, rate: UInt32? = nil, into: DspPlacement? = nil) {
+    /// `copy` is where the app keeps its own copy of them, deleted when the
+    /// import no longer needs it.
+    func importFiles(
+        _ urls: [URL], name: String? = nil, rate: UInt32? = nil, into: DspPlacement? = nil, copy: URL? = nil
+    ) {
         let engine = self.engine
+        if let copy { copies.append((copy, Set(urls))) }
+        reading += urls
         Task {
+            defer { doneReading(urls) }
             if urls.count > 1, name == nil {
                 let held = urls.filter { $0.startAccessingSecurityScopedResource() }
                 let plan = await engine.dspImportPlan(paths: urls.map(\.path))
@@ -127,8 +140,32 @@ final class DspModel {
     /// Import what `pendingImport` planned, under `name`.
     func confirmImport(name: String) {
         guard let pending = pendingImport else { return }
+        reading += pending.urls
         pendingImport = nil
-        Task { await run(pending.urls, name: name, rate: pending.rate, into: pending.into) }
+        Task {
+            defer { doneReading(pending.urls) }
+            await run(pending.urls, name: name, rate: pending.rate, into: pending.into)
+        }
+    }
+
+    private func doneReading(_ urls: [URL]) {
+        for url in urls {
+            if let index = reading.firstIndex(of: url) { reading.remove(at: index) }
+        }
+        tidy()
+    }
+
+    /// Delete the copies nothing waiting or running still reads.
+    private func tidy() {
+        guard !copies.isEmpty else { return }
+        var needed = Set(reading)
+        if let pendingImport { needed.formUnion(pendingImport.urls) }
+        if case let .files(urls, _, _) = needsRate { needed.formUnion(urls) }
+        copies.removeAll { copy in
+            guard copy.urls.isDisjoint(with: needed) else { return false }
+            try? FileManager.default.removeItem(at: copy.root)
+            return true
+        }
     }
 
     private func run(_ urls: [URL], name: String?, rate: UInt32?, into: DspPlacement?) async {
@@ -191,11 +228,12 @@ final class DspModel {
     /// The import that stopped for a rate, with one.
     func retry(rate: UInt32) {
         guard let pending = needsRate else { return }
-        needsRate = nil
+        // Started before the prompt is cleared, so its files are still read.
         switch pending {
         case let .files(urls, name, into): importFiles(urls, name: name, rate: rate, into: into)
         case let .text(text): importText(text, rate: rate)
         }
+        needsRate = nil
     }
 
     private func finish(_ pending: Pending, _ run: () async throws -> String) async {

@@ -1279,6 +1279,12 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
         ))?
         .execute(params![winner, loser])?;
     }
+    // A remembered miss gives way to the other track's lyrics.
+    conn.prepare_cached(
+        "DELETE FROM lyrics_cache WHERE track_id = ?1 AND source = 'none'
+           AND EXISTS (SELECT 1 FROM lyrics_cache WHERE track_id = ?2 AND source != 'none')",
+    )?
+    .execute(params![winner, loser])?;
     conn.prepare_cached(
         "UPDATE lyrics_cache SET track_id = ?1 WHERE track_id = ?2
            AND NOT EXISTS (SELECT 1 FROM lyrics_cache WHERE track_id = ?1)",
@@ -1416,8 +1422,8 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
     meta
 }
 
-/// Give a file gone from `old` back its track, if it is one of `arrived`:
-/// tracks a scan has just made for files at new paths. The same file moved
+/// Give a file gone from `old` back its track, if it is one of `arrived` (a
+/// JSON list, see `json_list`, built once for every missing file): tracks a scan has just made for files at new paths. The same file moved
 /// is the same MusicBrainz recording on the same release when both name
 /// one, or else the same slot and the same size or length, or failing that
 /// the same size, length and modification time, which a rename keeps and an
@@ -1427,10 +1433,7 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
 /// The old track survives, with its id, uid, history, favourites, ratings,
 /// playlist places and server partner; the arrival's file becomes its source
 /// and the arrival is folded into it.
-pub(crate) fn adopt_moved(conn: &Connection, old: &str, arrived: &[i64]) -> Result<bool, DbError> {
-    if arrived.is_empty() {
-        return Ok(false);
-    }
+pub(crate) fn adopt_moved(conn: &Connection, old: &str, arrived: &str) -> Result<bool, DbError> {
     let Some((track, meta)) = load(conn, Kind::Local, old)? else {
         return Ok(false);
     };
@@ -1446,7 +1449,7 @@ pub(crate) fn adopt_moved(conn: &Connection, old: &str, arrived: &[i64]) -> Resu
         )?
         .query_map(
             params![
-                super::json_list(arrived),
+                arrived,
                 track,
                 nonempty(&meta.mbid),
                 nonempty(&meta.album_mbid),

@@ -81,16 +81,25 @@ pub fn atomically<T, E: From<rusqlite::Error>>(
     };
     conn.execute_batch(begin)?;
     let result = f();
+    let undo = || {
+        if let Err(e) = conn.execute_batch(rollback) {
+            log::warn!("rollback after a failed transaction: {e}");
+        }
+    };
     match &result {
-        Ok(_) => conn.execute_batch(commit)?,
+        // A COMMIT that fails, busy or out of disk, leaves the transaction
+        // open. Rolled back here, or the connection would go on holding the
+        // write lock and every later write on it would be lost with it.
+        Ok(_) => {
+            if let Err(e) = conn.execute_batch(commit) {
+                undo();
+                return Err(e.into());
+            }
+        }
         // The work's own error is what the caller needs. A rollback that
         // fails, as one does after something inside ended the transaction
         // already, is logged rather than put in its place.
-        Err(_) => {
-            if let Err(e) = conn.execute_batch(rollback) {
-                log::warn!("rollback after a failed transaction: {e}");
-            }
-        }
+        Err(_) => undo(),
     }
     result
 }
@@ -479,5 +488,54 @@ mod write_transaction_tests {
             .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 3);
+    }
+}
+
+#[cfg(test)]
+mod atomically_tests {
+    use super::atomically;
+
+    /// A deferred foreign key is checked at COMMIT, which fails and leaves the
+    /// transaction open: the way to make a COMMIT fail on demand.
+    fn conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE parent (id INTEGER PRIMARY KEY);
+             CREATE TABLE child (p INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_failed_commit_is_rolled_back() {
+        let conn = conn();
+        let result = atomically(&conn, || {
+            conn.execute("INSERT INTO child VALUES (7)", [])?;
+            Ok::<_, rusqlite::Error>(())
+        });
+        assert!(result.is_err(), "the commit's error reaches the caller");
+        assert!(conn.is_autocommit(), "no transaction left open");
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM child", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn inside_a_transaction_it_nests() {
+        let conn = conn();
+        conn.execute_batch("BEGIN").unwrap();
+        atomically(&conn, || {
+            conn.execute("INSERT INTO parent VALUES (1)", [])?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .unwrap();
+        assert!(
+            !conn.is_autocommit(),
+            "the caller's transaction is still its own"
+        );
+        conn.execute_batch("COMMIT").unwrap();
     }
 }
