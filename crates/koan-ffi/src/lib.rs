@@ -4456,8 +4456,27 @@ impl KoanEngine {
         reset: bool,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = client_offering(profile::INVITE, "invite people")?;
-            let made = client.koan_invite(&username, reset).map_err(remote_error)?;
+            // A server that answers no is `Refused`; one that could not be
+            // asked is `Remote`, worth asking again.
+            let client = account_client()?;
+            let to = "invite people";
+            match profile::for_auth(client.auth()) {
+                None => {
+                    return Err(KoanError::Remote {
+                        message: profile::lacking(None, to),
+                    });
+                }
+                Some(p) if !p.offers(profile::INVITE) => {
+                    return Err(KoanError::Refused {
+                        message: profile::lacking(Some(&p), to),
+                    });
+                }
+                Some(_) => {}
+            }
+            let made = client.koan_invite(&username, reset).map_err(|e| match e {
+                SubsonicError::Api { message, .. } => KoanError::Refused { message },
+                e => remote_error(e),
+            })?;
             Ok(account_invite(client.base_url(), made).into())
         })
         .await
