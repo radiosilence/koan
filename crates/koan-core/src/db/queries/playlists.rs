@@ -11,6 +11,8 @@
 //! because the same track may appear twice and both copies have to keep their
 //! place.
 
+use std::collections::HashSet;
+
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TrackRow;
@@ -490,15 +492,29 @@ const FLIP_NEGATIVE_POSITIONS: &str = "UPDATE playlist_tracks SET position = -po
 /// Put the entries in this order. Ids are kept, so nothing holding a reference
 /// to an entry loses it because the playlist was rearranged.
 ///
-/// Entries not named are left where they are relative to each other and pushed
-/// to the end — a caller that names all of them, which every caller does, never
-/// meets that case.
+/// Entries not named keep their order relative to each other, after the named
+/// ones: a caller reordering a list that has since grown loses nothing. An id
+/// named twice, or naming no entry of this playlist, is ignored.
 pub fn reorder_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<(), DbError> {
     super::atomically(conn, || {
+        let current: Vec<i64> = conn
+            .prepare_cached(
+                "SELECT id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+            )?
+            .query_map(params![id], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        let present: HashSet<i64> = current.iter().copied().collect();
+        let mut placed = HashSet::new();
+        let mut order: Vec<i64> = entry_ids
+            .iter()
+            .copied()
+            .filter(|e| present.contains(e) && placed.insert(*e))
+            .collect();
+        order.extend(current.into_iter().filter(|e| !placed.contains(e)));
         let mut update = conn.prepare_cached(
             "UPDATE playlist_tracks SET position = ?3 WHERE id = ?1 AND playlist_id = ?2",
         )?;
-        for (position, entry) in entry_ids.iter().enumerate() {
+        for (position, entry) in order.iter().enumerate() {
             update.execute(params![entry, id, -(position as i64) - 1])?;
         }
         conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
@@ -915,6 +931,34 @@ mod tests {
             entries.iter().map(|e| e.position).collect::<Vec<_>>(),
             vec![0, 1],
             "positions are renumbered from zero"
+        );
+    }
+
+    /// A reorder sent against the list as it was before an add landed names
+    /// only the old entries. The new one goes after them rather than colliding
+    /// with the position the reorder gave one of them.
+    #[test]
+    fn a_reorder_of_a_stale_list_keeps_the_entries_it_does_not_name() {
+        let conn = test_conn();
+        let (a, b, c) = (
+            track(&conn, "One", "Album"),
+            track(&conn, "Two", "Album"),
+            track(&conn, "Three", "Album"),
+        );
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        let made = add_tracks(&conn, id, &[a, b]).unwrap();
+        let added = add_tracks(&conn, id, &[c]).unwrap();
+
+        reorder_entries(&conn, id, &[made[1], made[0], made[1], 9999]).unwrap();
+
+        let entries = playlist_entries(&conn, id).unwrap();
+        assert_eq!(
+            entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![made[1], made[0], added[0]],
+        );
+        assert_eq!(
+            entries.iter().map(|e| e.position).collect::<Vec<_>>(),
+            vec![0, 1, 2],
         );
     }
 

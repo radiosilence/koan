@@ -68,7 +68,7 @@ final class PlaylistsModel {
         // Cancelled on re-entry, so a slower earlier read can't land over a newer one.
         loading?.cancel()
         loading = Task {
-            let fetched = (try? await engine.playlists()) ?? []
+            let fetched = (try? await offMain { try await engine.playlists() }) ?? []
             guard !Task.isCancelled else { return }
             playlists = fetched
             // A playlist whose contents changed has a different mosaic, and a
@@ -148,7 +148,13 @@ final class PlaylistsModel {
     /// a sidebar row is over by the time the database answers, and an artist is
     /// thousands of rows.
     func beginNaming(dropped: [PlayableTransfer]) {
-        Task { naming = await resolve(dropped) }
+        dropped.withSources(using: engine) { self.beginNaming(sources: $0) }
+    }
+
+    /// The same, for what a menu names.
+    func beginNaming(sources: [TrackSet]) {
+        let engine = self.engine
+        Task { naming = (try? await engine.trackIdsOf(sources: sources)) ?? [] }
     }
 
     func rename(id: Int64, to name: String) {
@@ -175,24 +181,26 @@ final class PlaylistsModel {
     }
 
     func add(trackIds: [Int64], to id: Int64) {
-        guard !trackIds.isEmpty, fillable(id) else { return }
+        guard !trackIds.isEmpty else { return }
+        add(sources: [.tracks(ids: trackIds)], to: id)
+    }
+
+    /// Append what `sources` name, read by the engine on its command lane.
+    func add(sources: [TrackSet], to id: Int64) {
+        guard !sources.isEmpty, fillable(id) else { return }
         act {
-            _ = try await $0.addToPlaylist(playlistId: id, trackIds: trackIds)
+            _ = try await $0.addToPlaylist(playlistId: id, sources: sources)
         }
     }
 
-    /// Resolve dropped playables and append them. Order is preserved, so
-    /// dropping three albums at once adds them in the order they were dragged.
-    /// The playlist's own rows are left out: dropped back on it, wherever
-    /// they land, they are a drag abandoned rather than copies wanted.
+    /// Append dropped playables. Order is preserved, so dropping three albums
+    /// at once adds them in the order they were dragged. The playlist's own
+    /// rows are left out: dropped back on it, wherever they land, they are a
+    /// drag abandoned rather than copies wanted.
     func add(dropped: [PlayableTransfer], to id: Int64) {
         let dropped = dropped.filter { $0.origin?.playlistId != id }
         guard !dropped.isEmpty else { return }
-        Task {
-            let ids = await resolve(dropped)
-            guard !ids.isEmpty else { return }
-            add(trackIds: ids, to: id)
-        }
+        dropped.withSources(using: engine) { self.add(sources: $0, to: id) }
     }
 
     /// The same, landing where they were dropped rather than at the end. The
@@ -201,12 +209,10 @@ final class PlaylistsModel {
     func insert(dropped: [PlayableTransfer], into id: Int64, at position: Int) {
         let dropped = dropped.filter { $0.origin?.playlistId != id }
         guard !dropped.isEmpty, fillable(id) else { return }
-        Task {
-            let ids = await resolve(dropped)
-            guard !ids.isEmpty else { return }
-            act {
+        dropped.withSources(using: engine) { sources in
+            self.act {
                 _ = try await $0.insertIntoPlaylist(
-                    playlistId: id, trackIds: ids, at: UInt32(position)
+                    playlistId: id, sources: sources, at: UInt32(position)
                 )
             }
         }
@@ -277,8 +283,7 @@ final class PlaylistsModel {
         guard order != playlists.map(\.id) else { return }
         let byId = Dictionary(playlists.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         playlists = order.compactMap { byId[$0] }
-        let engine = self.engine
-        Task { try? await engine.reorderPlaylists(ids: order) }
+        act { try await $0.reorderPlaylists(ids: order) }
     }
 
     /// Remember how this playlist is looked at. Local to this machine — a
@@ -315,21 +320,16 @@ final class PlaylistsModel {
 
     // MARK: - Helpers
 
-    private func resolve(_ dropped: [PlayableTransfer]) async -> [Int64] {
-        var ids: [Int64] = []
-        for item in dropped.inDragOrder {
-            ids += await item.trackIds(using: engine)
-        }
-        return ids
-    }
-
     /// A mutation, with the error reporting every one of them wants.
     ///
     /// Nothing reloads here. Writing playlist rows is a library change like any
     /// other, so the engine says so and whatever is on screen asks again — the
     /// same path a sync from the server takes. A reload written in per mutation
     /// is one that only covers the mutations somebody remembered.
-    private func act(_ body: @escaping (KoanEngine) async throws -> Void) {
+    ///
+    /// `body` runs on the main actor, so the engine call joins the engine's
+    /// command lane in the order the edits were made; see `PlayerModel`.
+    private func act(_ body: @escaping @MainActor (KoanEngine) async throws -> Void) {
         let engine = self.engine
         Task {
             do {

@@ -275,7 +275,7 @@ struct TrackListView: View {
     static func selectionActions(_ ids: [Int64]) -> SelectionBar.Actions {
         SelectionBar.Actions(
             favourites: ids.map { Playable.Key(kind: .track, id: $0) },
-            tracks: { ids }
+            sources: [.tracks(ids: ids)]
         )
     }
     #endif

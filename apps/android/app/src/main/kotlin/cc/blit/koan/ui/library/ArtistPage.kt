@@ -36,7 +36,9 @@ import cc.blit.koan.art.Art
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.ArtistInfo
+import cc.blit.koan.ffi.Placement
 import cc.blit.koan.ffi.ReleaseSection
+import cc.blit.koan.ffi.TrackSet
 import cc.blit.koan.ffi.releaseSectionTitle
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -184,8 +186,8 @@ private fun FeaturesOn(albums: List<Album>, modifier: Modifier) {
     val ids = albums.map { it.id }
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
         KoanText("Features on", Modifier.weight(1f), role = KoanType.Control, appText = true)
-        KoanButton("Play", { app.player.playNow("Features on") { albumTrackIds(ids) } }, kind = KoanButtonKind.Compact, icon = KoanIcons.play)
-        KoanButton("Queue", { app.mirror.launch { addToQueue(albumTrackIds(ids)) } }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue)
+        KoanButton("Play", { app.player.playNow("Features on", ids.map { TrackSet.Album(it) }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.play)
+        KoanButton("Queue", { app.player.queue(ids.map { TrackSet.Album(it) }, Placement.Append) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue)
     }
 }
 

@@ -109,12 +109,7 @@ struct AlbumBrowser: View {
             openArtist: { nav.open(artist: $0) },
             // The record is where the tracks are, so that is where a click on
             // its sleeve leaves you, as `PlayableArtwork` does.
-            play: { id in
-                nav.open(album: id)
-                let engine = library.engine
-                let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
-                player.playNow(trackIds: ids)
-            },
+            play: { id in ReplaceQueueDialog.play(id, player: player, nav: nav) },
             toggleFavourite: { library.toggleFavourite(album: $0) }
         )
     }

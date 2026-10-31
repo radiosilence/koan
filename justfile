@@ -595,7 +595,7 @@ ios-typecheck: macos-ffi
     # before anything that imports it can be checked.
     xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 \
         -package-name koan \
-        -emit-module -module-name KoanFFI -emit-module-path "$mod/KoanFFI.swiftmodule" \
+        -emit-module -module-name KoanFFI -enable-upcoming-feature NonisolatedNonsendingByDefault -emit-module-path "$mod/KoanFFI.swiftmodule" \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
     # SIL, not just a typecheck: Swift 6's data-race checks run on SIL, and
@@ -658,7 +658,7 @@ ios-bundle: macos-ffi ios-ffi
     # compiling its source alongside the app would leave `import KoanFFI`
     # looking for a module that is being compiled into the same one.
     xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 -O \
-        -package-name koan -module-name KoanFFI \
+        -package-name koan -module-name KoanFFI -enable-upcoming-feature NonisolatedNonsendingByDefault \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         -emit-module -emit-module-path "$mod/KoanFFI.swiftmodule" \
         -emit-library -static -o "$mod/libKoanFFI.a" \
@@ -1098,7 +1098,7 @@ tv-typecheck: macos-ffi
     target=arm64-apple-tvos{{tv_deployment_target}}-simulator
     xcrun -sdk appletvsimulator swiftc -target "$target" -swift-version 6 \
         -package-name koan \
-        -emit-module -module-name KoanFFI -emit-module-path "$mod/KoanFFI.swiftmodule" \
+        -emit-module -module-name KoanFFI -enable-upcoming-feature NonisolatedNonsendingByDefault -emit-module-path "$mod/KoanFFI.swiftmodule" \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
     xcrun -sdk appletvsimulator swiftc -target "$target" -swift-version 6 \

@@ -12,8 +12,8 @@
 //! core count queues it behind nothing.
 //!
 //! Beside the pool are three lanes, each one thread running its work in the
-//! order it was handed over: player commands, commands from other devices, and
-//! settings writes.
+//! order it was handed over: player commands and playlist edits, commands from
+//! other devices, and settings writes.
 
 use std::sync::LazyLock;
 use std::time::Duration;

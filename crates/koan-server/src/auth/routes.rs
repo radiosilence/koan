@@ -374,18 +374,29 @@ pub fn auth_router(state: AuthRouteState) -> axum::Router {
         )
         .route("/auth/refresh", post(refresh))
         .route("/auth/logout", post(logout));
-    auth_perimeter(router, AUTH_TIMEOUT).with_state(state)
+    auth_perimeter(router, AUTH_TIMEOUT, AUTH_BODY_TIMEOUT).with_state(state)
 }
 
-/// How long a sign-in, refresh or sign-out may take, reading its body included.
+/// How long a sign-in, refresh or sign-out may take once its body has arrived.
 const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long a client has to send the body of a sign-in, refresh or sign-out.
+const AUTH_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The largest body these routes read. Each is a small JSON object.
+const AUTH_BODY_LIMIT: usize = 16 * 1024;
 
 /// These routes are unauthenticated by definition and the work behind them is
 /// deliberately expensive, so they get their own ceiling rather than sharing
 /// the GraphQL one. It sheds rather than queues, and each request has a
-/// deadline: the permit is held while the body is read, so two clients that
-/// never finish sending one would otherwise hold a route shut.
-fn auth_perimeter<S>(router: axum::Router<S>, timeout: std::time::Duration) -> axum::Router<S>
+/// deadline. The body is read whole, under its own deadline, before a permit
+/// is taken: a client that never finishes sending one holds nothing but its
+/// own connection.
+fn auth_perimeter<S>(
+    router: axum::Router<S>,
+    timeout: std::time::Duration,
+    body_timeout: std::time::Duration,
+) -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -402,6 +413,41 @@ where
                 .load_shed()
                 .concurrency_limit(2),
         )
+        .layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                buffer_body(request, next, body_timeout)
+            },
+        ))
+}
+
+/// Read a request's body into memory within `deadline`, then pass it on.
+async fn buffer_body(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+    deadline: std::time::Duration,
+) -> Response {
+    use futures_util::StreamExt as _;
+    let (parts, body) = request.into_parts();
+    let read = async {
+        let mut stream = body.into_data_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| StatusCode::BAD_REQUEST)?;
+            if bytes.len() + chunk.len() > AUTH_BODY_LIMIT {
+                return Err(StatusCode::PAYLOAD_TOO_LARGE);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    };
+    match tokio::time::timeout(deadline, read).await {
+        Ok(Ok(bytes)) => {
+            next.run(axum::extract::Request::from_parts(parts, bytes.into()))
+                .await
+        }
+        Ok(Err(status)) => status.into_response(),
+        Err(_) => StatusCode::REQUEST_TIMEOUT.into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -841,7 +887,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stalled_bodies_are_shed_then_timed_out() {
+    async fn stalled_bodies_time_out_without_holding_a_permit() {
         use tower::ServiceExt as _;
         async fn read(_: axum::body::Bytes) -> StatusCode {
             StatusCode::OK
@@ -850,6 +896,7 @@ mod tests {
         // route's layers once, rather than per request.
         let app = auth_perimeter(
             axum::Router::new().route("/auth/login", post(read)),
+            std::time::Duration::from_secs(10),
             std::time::Duration::from_millis(200),
         )
         .with_state(());
@@ -860,22 +907,77 @@ mod tests {
                 >()))
                 .unwrap()
         };
-        let held: Vec<_> = (0..2)
+        let held: Vec<_> = (0..4)
             .map(|_| tokio::spawn(app.clone().oneshot(stalled())))
             .collect();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        let shed = app.clone().oneshot(stalled()).await.unwrap();
-        assert_eq!(shed.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // More stalled bodies than permits, and a whole request still gets in.
+        let ok = axum::http::Request::post("/auth/login")
+            .body(axum::body::Body::from("{}"))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(ok).await.unwrap().status(),
+            StatusCode::OK
+        );
         for h in held {
             assert_eq!(
                 h.await.unwrap().unwrap().status(),
                 StatusCode::REQUEST_TIMEOUT
             );
         }
-        let ok = axum::http::Request::post("/auth/login")
-            .body(axum::body::Body::empty())
+        let big = axum::http::Request::post("/auth/login")
+            .body(axum::body::Body::from(vec![b' '; AUTH_BODY_LIMIT + 1]))
             .unwrap();
-        assert_eq!(app.oneshot(ok).await.unwrap().status(), StatusCode::OK);
+        assert_eq!(
+            app.clone().oneshot(big).await.unwrap().status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        let broken = axum::http::Request::post("/auth/login")
+            .body(axum::body::Body::from_stream(tokio_stream::once(Err::<
+                axum::body::Bytes,
+                _,
+            >(
+                std::io::Error::other("reset"),
+            ))))
+            .unwrap();
+        assert_eq!(
+            app.oneshot(broken).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_work_is_shed_beyond_the_permits() {
+        use tower::ServiceExt as _;
+        async fn slow(_: axum::body::Bytes) -> StatusCode {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            StatusCode::OK
+        }
+        let app = auth_perimeter(
+            axum::Router::new().route("/auth/login", post(slow)),
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(5),
+        )
+        .with_state(());
+        let req = || {
+            axum::http::Request::post("/auth/login")
+                .body(axum::body::Body::from("{}"))
+                .unwrap()
+        };
+        let held: Vec<_> = (0..2)
+            .map(|_| tokio::spawn(app.clone().oneshot(req())))
+            .collect();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert_eq!(
+            app.clone().oneshot(req()).await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        for h in held {
+            assert_eq!(
+                h.await.unwrap().unwrap().status(),
+                StatusCode::REQUEST_TIMEOUT
+            );
+        }
     }
 
     #[test]
