@@ -38,13 +38,29 @@ struct Known {
 struct Store {
     renderers: HashMap<String, Known>,
     describing: HashSet<String>,
-    /// Descriptions that could not be read, by device: where, and when.
-    /// Announcements repeat, and each would otherwise fetch again.
-    failed: HashMap<String, (Url, Instant)>,
+    /// Descriptions not to fetch again yet, by device. Announcements
+    /// repeat, and each would otherwise fetch again.
+    unwanted: HashMap<String, Unwanted>,
 }
 
-/// How long a description that could not be read is left before asking again.
-const RETRY_DESCRIBE: Duration = Duration::from_secs(60);
+/// A description that could not be read, or that was not a renderer's.
+struct Unwanted {
+    location: Url,
+    until: Instant,
+    /// The wait after the next failure; `None` for a device that is not a
+    /// renderer, which a search does not ask again.
+    next_wait: Option<Duration>,
+}
+
+/// Waits after a description cannot be read: doubling from the first to the
+/// last, as a renderer still starting answers soon.
+const FIRST_RETRY: Duration = Duration::from_secs(5);
+const LAST_RETRY: Duration = Duration::from_secs(60);
+/// How long a device that is not a renderer goes undescribed at one location.
+const NOT_A_RENDERER: Duration = Duration::from_secs(30 * 60);
+/// How long a renderer that has stopped announcing itself stays findable by
+/// its udn: a list drawn before it expired can still connect to it.
+const FORGET_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static SEARCH: OnceLock<Option<UdpSocket>> = OnceLock::new();
@@ -197,7 +213,7 @@ pub fn remember(renderer: Renderer, max_age: Duration) {
         let expires = Instant::now() + max_age;
         let changed = s.renderers.get(&udn).is_none_or(|k| k.renderer != renderer);
         let busy = s.renderers.get(&udn).is_some_and(|k| k.busy);
-        s.failed.remove(&udn);
+        s.unwanted.remove(&udn);
         s.renderers.insert(
             udn,
             Known {
@@ -254,6 +270,8 @@ pub fn search() {
         return;
     };
     *SEARCHED.lock() = Some(Instant::now());
+    // Asked to look now: a renderer whose description failed is asked again.
+    with(|s| s.unwanted.retain(|_, u| u.next_wait.is_none()));
     let network = NETWORK.lock().clone();
     let mut interface = Ipv4Addr::UNSPECIFIED;
     if let Some(network) = &network {
@@ -288,15 +306,17 @@ pub fn search() {
 /// been searched for in `DEFAULT_MAX_AGE`.
 pub fn search_if_stale() {
     let now = Instant::now();
-    let fresh = SEARCHED
-        .lock()
-        .is_some_and(|t| now.duration_since(t) < DEFAULT_MAX_AGE)
+    let searched = *SEARCHED.lock();
+    let fresh = searched.is_some_and(|t| now.duration_since(t) < DEFAULT_MAX_AGE)
         && with(|s| {
-            let fresh = s.renderers.values().all(|k| k.expires > now);
-            // A renderer gone without saying goodbye is searched for once,
-            // not on every call after.
-            s.renderers.retain(|_, k| k.expires > now);
-            fresh
+            // A renderer gone without saying goodbye is searched for once
+            // after it expires, not on every call after.
+            let searched = searched.unwrap_or(now);
+            s.renderers
+                .retain(|_, k| now.saturating_duration_since(k.expires) < FORGET_AFTER);
+            s.renderers
+                .values()
+                .all(|k| k.expires > now || searched > k.expires)
         });
     if !fresh {
         search();
@@ -470,11 +490,10 @@ fn heard(msg: Message) {
                     return false;
                 }
                 let now = Instant::now();
-                s.failed
-                    .retain(|_, (_, at)| now.duration_since(*at) < RETRY_DESCRIBE);
-                if s.failed
+                s.unwanted.retain(|_, u| u.until > now);
+                if s.unwanted
                     .get(&msg.udn)
-                    .is_some_and(|(url, _)| *url == location)
+                    .is_some_and(|u| u.location == location)
                 {
                     return false;
                 }
@@ -493,9 +512,32 @@ fn describe(udn: String, location: Url, max_age: Duration) {
         .spawn({
             let udn = udn.clone();
             move || {
+                // Doubling waits for one that failed at the same location.
                 let failed = |s: &mut Store| {
-                    s.failed
-                        .insert(udn.clone(), (location.clone(), Instant::now()));
+                    let wait = s
+                        .unwanted
+                        .get(&udn)
+                        .filter(|u| u.location == location)
+                        .and_then(|u| u.next_wait)
+                        .unwrap_or(FIRST_RETRY);
+                    s.unwanted.insert(
+                        udn.clone(),
+                        Unwanted {
+                            location: location.clone(),
+                            until: Instant::now() + wait,
+                            next_wait: Some((wait * 2).min(LAST_RETRY)),
+                        },
+                    );
+                };
+                let not_a_renderer = |s: &mut Store| {
+                    s.unwanted.insert(
+                        udn.clone(),
+                        Unwanted {
+                            location: location.clone(),
+                            until: Instant::now() + NOT_A_RENDERER,
+                            next_wait: None,
+                        },
+                    );
                 };
                 match fetch(&location) {
                     Ok(Some(renderer)) => {
@@ -510,7 +552,7 @@ fn describe(udn: String, location: Url, max_age: Duration) {
                     }
                     Ok(None) => {
                         log::debug!("upnp: {location} is not a renderer");
-                        with(failed);
+                        with(not_a_renderer);
                     }
                     Err(e) => {
                         log::info!("upnp: cannot describe {location}: {e}");

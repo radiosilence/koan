@@ -52,15 +52,17 @@ const MAX_BODY: u64 = 1 << 20;
 /// A response's body as text, refused past `MAX_BODY`.
 pub fn read_body(response: reqwest::blocking::Response) -> Result<String, String> {
     use std::io::Read;
-    let mut body = String::new();
+    let mut body = Vec::new();
     response
         .take(MAX_BODY + 1)
-        .read_to_string(&mut body)
+        .read_to_end(&mut body)
         .map_err(|e| e.to_string())?;
     if body.len() as u64 > MAX_BODY {
         return Err(format!("body larger than {MAX_BODY} bytes"));
     }
-    Ok(body)
+    // Cheap renderers send Latin-1 names: a stray byte is not a reason to
+    // lose the whole document.
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 pub fn envelope(service_type: &str, action: &str, args: &[(&str, &str)]) -> String {
