@@ -870,10 +870,7 @@ pub fn clear_cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<()
 /// Update the cached_path for a track after downloading, recording size and timestamp.
 pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(), DbError> {
     let size_bytes: Option<i64> = std::fs::metadata(path).ok().map(|m| m.len() as i64);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::clock::unix_secs();
     conn.execute(
         "UPDATE tracks SET cached_path = ?1, cache_size_bytes = ?2, cache_download_date = ?3
          WHERE id = ?4",

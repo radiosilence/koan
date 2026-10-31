@@ -451,7 +451,9 @@ fn events(events: Vec<Event>) -> Response {
 }
 
 fn open(pool: &Pool) -> Option<Handle<'_>> {
-    pool.get().logged()
+    pool.get()
+        .inspect_err(|e| log::error!("web UI: cannot open the database: {e}"))
+        .ok()
 }
 
 /// A failed read as the page's empty or not-found state, logged where it
@@ -464,8 +466,10 @@ impl<T, E: std::fmt::Display> Logged<T> for Result<T, E> {
     #[track_caller]
     fn logged(self) -> Option<T> {
         let at = std::panic::Location::caller();
-        self.inspect_err(|e| log::error!("{e} at {}:{}", at.file(), at.line()))
-            .ok()
+        self.inspect_err(|e| {
+            log::error!("web UI: a read failed at {}:{}: {e}", at.file(), at.line())
+        })
+        .ok()
     }
 }
 

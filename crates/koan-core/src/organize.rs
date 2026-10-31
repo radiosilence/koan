@@ -1261,78 +1261,84 @@ fn undo_within(db: &Database, floors: &[PathBuf]) -> Result<UndoResult, Organize
     let mut result = UndoResult::default();
     let mut restored = Vec::new();
 
-    for (log_id, from_path, to_path, size, mtime) in &entries {
-        let to = Path::new(to_path);
-        let from = Path::new(from_path);
+    // What was restored before a failure still moved, so it is followed
+    // whether or not the rest of the batch was.
+    let undone = (|| -> Result<(), OrganizeError> {
+        for (log_id, from_path, to_path, size, mtime) in &entries {
+            let to = Path::new(to_path);
+            let from = Path::new(from_path);
 
-        if !matches!(to.try_exists(), Ok(true)) {
-            // Gone while the place it was moved to is still there: moved back
-            // or deleted by hand, so there is nothing to undo. Anything less
-            // certain — a volume unplugged, a share away, an IO error — keeps
-            // the row for an undo once it is back.
-            if crate::index::known_missing(to) && destination_reachable(to, floors) {
-                db.conn
-                    .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
-            } else {
-                result.errors.push((
-                    to.to_path_buf(),
-                    "cannot be reached; kept for an undo once it is back".into(),
-                ));
+            if !matches!(to.try_exists(), Ok(true)) {
+                // Gone while the place it was moved to is still there: moved back
+                // or deleted by hand, so there is nothing to undo. Anything less
+                // certain — a volume unplugged, a share away, an IO error — keeps
+                // the row for an undo once it is back.
+                if crate::index::known_missing(to) && destination_reachable(to, floors) {
+                    db.conn
+                        .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
+                } else {
+                    result.errors.push((
+                        to.to_path_buf(),
+                        "cannot be reached; kept for an undo once it is back".into(),
+                    ));
+                }
+                continue;
             }
-            continue;
-        }
 
-        if from.exists() && !paths_equal(from, to) {
-            result.errors.push((
-                from.to_path_buf(),
-                format!(
-                    "another file now occupies the original path; {} left in place",
-                    to.display()
-                ),
-            ));
-            continue;
-        }
+            if from.exists() && !paths_equal(from, to) {
+                result.errors.push((
+                    from.to_path_buf(),
+                    format!(
+                        "another file now occupies the original path; {} left in place",
+                        to.display()
+                    ),
+                ));
+                continue;
+            }
 
-        if let Err(msg) = matches_logged_file(to, *size, *mtime) {
-            result.errors.push((to.to_path_buf(), msg));
-            continue;
-        }
+            if let Err(msg) = matches_logged_file(to, *size, *mtime) {
+                result.errors.push((to.to_path_buf(), msg));
+                continue;
+            }
 
-        if let Some(parent) = from.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            result.errors.push((from.to_path_buf(), e.to_string()));
-            continue;
-        }
+            if let Some(parent) = from.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                result.errors.push((from.to_path_buf(), e.to_string()));
+                continue;
+            }
 
-        let tx = crate::db::queries::write_transaction(&db.conn)?;
-        if let Err(e) = rewrite_path_references(&tx, to, from) {
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
-        if let Err(e) = move_file(to, from) {
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
-        if let Err(e) = tx.execute("DELETE FROM organize_log WHERE id = ?1", params![log_id]) {
-            let _ = move_file(from, to);
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
-        if let Err(e) = tx.commit() {
-            let _ = move_file(from, to);
-            result.errors.push((to.to_path_buf(), e.to_string()));
-            continue;
-        }
+            let tx = crate::db::queries::write_transaction(&db.conn)?;
+            if let Err(e) = rewrite_path_references(&tx, to, from) {
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
+            if let Err(e) = move_file(to, from) {
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
+            if let Err(e) = tx.execute("DELETE FROM organize_log WHERE id = ?1", params![log_id]) {
+                let _ = move_file(from, to);
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
+            if let Err(e) = tx.commit() {
+                let _ = move_file(from, to);
+                result.errors.push((to.to_path_buf(), e.to_string()));
+                continue;
+            }
 
-        if let Some(parent) = to.parent() {
-            remove_empty_dirs(parent, floors);
-        }
+            if let Some(parent) = to.parent() {
+                remove_empty_dirs(parent, floors);
+            }
 
-        result.restored += 1;
-        restored.push((to.to_path_buf(), from.to_path_buf()));
-    }
+            result.restored += 1;
+            restored.push((to.to_path_buf(), from.to_path_buf()));
+        }
+        Ok(())
+    })();
     follow_moved(db, &restored);
+    undone?;
 
     Ok(result)
 }

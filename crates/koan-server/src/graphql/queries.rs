@@ -31,11 +31,7 @@ impl Fuzzy {
         conn: &rusqlite::Connection,
         kind: queries::CorpusKind,
     ) -> Result<queries::Corpus, koan_core::db::connection::DbError> {
-        let window = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / Self::MAX_AGE_SECS;
+        let window = koan_core::clock::unix_secs() as u64 / Self::MAX_AGE_SECS;
         let version = queries::library_fingerprint(conn)? ^ window;
         self.0.get(conn, kind, version)
     }

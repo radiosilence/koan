@@ -3642,11 +3642,9 @@ impl KoanEngine {
     /// What the output in use plays: its correction, and the tuning on top
     /// adjusted to the correction's target.
     pub async fn dsp_output_response(self: Arc<Self>, rate: u32) -> Option<DspResponse> {
-        offload::offload(move || {
-            let device = self.dsp_device()?;
-            koan_core::audio::dsp::profiles::output_response(&device, rate).map(Into::into)
-        })
-        .await
+        let engine = self.clone();
+        let device = offload::offload(move || engine.dsp_device()).await?;
+        self.dsp_output_response_for(device, rate).await
     }
 
     /// What `device` plays, whether or not it is the output in use.

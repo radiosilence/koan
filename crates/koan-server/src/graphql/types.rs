@@ -425,10 +425,7 @@ impl GqlSleep {
     pub(super) fn of(s: Sleep, fading: bool) -> Self {
         match s {
             Sleep::At { unix_ms } => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+                let now = koan_core::clock::unix_ms() as u64;
                 Self {
                     ends_at_ms: Some(unix_ms),
                     remaining_ms: Some(unix_ms.saturating_sub(now)),
