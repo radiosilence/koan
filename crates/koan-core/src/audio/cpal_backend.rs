@@ -9,8 +9,14 @@ use super::fade::{FadeControl, Fader, render_from_ring};
 /// Temporarily redirect stderr to /dev/null while running a closure.
 /// ALSA/JACK/PipeWire C libraries spam stderr when probing unavailable
 /// backends. In TUI mode this corrupts the alternate screen display.
+///
+/// fd 2 is the process's: two threads saving and restoring it interleaved
+/// would leave it on /dev/null for good, so one runs at a time. Reentrant,
+/// as a nested call saves /dev/null and puts it back, which is right.
 fn suppress_stderr<F: FnOnce() -> T, T>(f: F) -> T {
     use std::os::fd::AsRawFd;
+    static STDERR: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+    let _one_at_a_time = STDERR.lock();
 
     // dup(2) to save original stderr, dup2(/dev/null, 2) to suppress, restore after.
     let devnull = std::fs::File::open("/dev/null").ok();

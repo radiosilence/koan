@@ -30,13 +30,55 @@ pub enum SoapError {
 /// No idle connections are kept. Renderers' HTTP servers are small and many
 /// close a connection without saying so; a request sent down one of those is
 /// lost, and a SOAP call is rare enough that a fresh connection costs nothing.
+/// The client itself is shared: each one runs a thread of its own.
 pub fn client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .pool_max_idle_per_host(0)
-        .timeout(TIMEOUT)
-        .connect_timeout(Duration::from_secs(2))
-        .build()
-        .expect("reqwest client builds")
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .pool_max_idle_per_host(0)
+                .timeout(TIMEOUT)
+                .connect_timeout(Duration::from_secs(2))
+                .build()
+                .expect("reqwest client builds")
+        })
+        .clone()
+}
+
+/// Larger than any description, SCPD or SOAP reply. A device on the network
+/// can name any URL as its description, so a body is read only this far.
+const MAX_BODY: u64 = 1 << 20;
+
+/// A response's body as text, refused past `MAX_BODY`.
+pub fn read_body(response: reqwest::blocking::Response) -> Result<String, String> {
+    use std::io::Read;
+    let encoding = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.split(';')
+                .filter_map(|p| p.trim().split_once('='))
+                .find(|(k, _)| k.trim().eq_ignore_ascii_case("charset"))
+                .and_then(|(_, v)| {
+                    encoding_rs::Encoding::for_label(v.trim().trim_matches('"').as_bytes())
+                })
+        });
+    let mut body = Vec::new();
+    response
+        .take(MAX_BODY + 1)
+        .read_to_end(&mut body)
+        .map_err(|e| e.to_string())?;
+    if body.len() as u64 > MAX_BODY {
+        return Err(format!("body larger than {MAX_BODY} bytes"));
+    }
+    // In the charset the response declares; otherwise UTF-8, where a stray
+    // byte is not a reason to lose the whole document, as cheap renderers
+    // send Latin-1 without saying so.
+    Ok(match encoding {
+        Some(encoding) => encoding.decode(&body).0.into_owned(),
+        None => String::from_utf8_lossy(&body).into_owned(),
+    })
 }
 
 pub fn envelope(service_type: &str, action: &str, args: &[(&str, &str)]) -> String {
@@ -78,9 +120,7 @@ pub fn call(
             }
         })?;
     let status = response.status();
-    let text = response
-        .text()
-        .map_err(|e| SoapError::Http(e.to_string()))?;
+    let text = read_body(response).map_err(SoapError::Http)?;
     parse_response(action, status.as_u16(), &text)
 }
 

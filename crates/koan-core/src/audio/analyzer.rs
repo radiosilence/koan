@@ -716,6 +716,8 @@ fn analysis_loop(
     let mut state = AnalysisState::new(scale, bar_half_life, peak_half_life, amplitude_scale);
     let mut meter = LoudnessMeter::new();
     let mut snap = RawVizSnapshot::default();
+    // The waveform buffer of the frame last replaced, filled for the next.
+    let mut spare_waveform: Vec<f32> = Vec::new();
     let mut last_reads = u64::MAX;
     let mut last_read_at = Instant::now();
     let mut last_played = u64::MAX;
@@ -782,15 +784,20 @@ fn analysis_loop(
         // oscilloscope and lissajous modes draw.
         let interleaved_len = WAVEFORM_SAMPLES * snap.channels.max(1) as usize;
         let waveform_start = snap.samples.len().saturating_sub(interleaved_len);
-        snapshot.write(VizFrame {
-            spectrum: state.spectrum,
-            peaks: state.peaks,
-            vu_levels: state.vu_levels,
-            beat_energy: state.beat_energy,
-            timestamp: Instant::now(),
-            waveform: snap.samples[waveform_start..].to_vec(),
-            loudness,
-        });
+        let mut waveform = std::mem::take(&mut spare_waveform);
+        waveform.clear();
+        waveform.extend_from_slice(&snap.samples[waveform_start..]);
+        spare_waveform = snapshot
+            .write(VizFrame {
+                spectrum: state.spectrum,
+                peaks: state.peaks,
+                vu_levels: state.vu_levels,
+                beat_energy: state.beat_energy,
+                timestamp: Instant::now(),
+                waveform,
+                loudness,
+            })
+            .waveform;
 
         // ── Sleep for the remainder of the interval ───────────────────────────
         // Read each pass, so a window moving to a 120Hz display is followed on

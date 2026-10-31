@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use lofty::prelude::*;
-use lofty::tag::ItemValue;
 use thiserror::Error;
 
 use crate::config::ReplayGainMode;
@@ -47,8 +46,21 @@ fn parse_peak(s: &str) -> Option<f64> {
 
 /// Read ReplayGain tags from a file using lofty.
 pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
-    let tagged_file =
-        lofty::read_from_path(path).map_err(|e| ReplayGainError::Tag(e.to_string()))?;
+    // Read at every track start: only the tags are wanted. The type is read
+    // from the file, since downloads are cached under extensions that do not
+    // name their format.
+    let tag_error = |e: &dyn std::fmt::Display| ReplayGainError::Tag(e.to_string());
+    let tagged_file = lofty::probe::Probe::open(path)
+        .map_err(|e| tag_error(&e))?
+        .guess_file_type()
+        .map_err(|e| tag_error(&e))?
+        .options(
+            lofty::config::ParseOptions::new()
+                .read_cover_art(false)
+                .read_properties(false),
+        )
+        .read()
+        .map_err(|e| tag_error(&e))?;
 
     let tag = tagged_file
         .primary_tag()
@@ -58,8 +70,6 @@ pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
         return Ok(ReplayGainInfo::default());
     };
 
-    // lofty's get_string handles Vorbis comments, ID3v2 TXXX, and APE items
-    // via ItemKey mapping. We also do a manual fallback for common RG keys.
     let track_gain = find_rg_value(tag, TAG_TRACK_GAIN).and_then(|s| parse_gain(&s));
     let track_peak = find_rg_value(tag, TAG_TRACK_PEAK).and_then(|s| parse_peak(&s));
     let album_gain = find_rg_value(tag, TAG_ALBUM_GAIN).and_then(|s| parse_gain(&s));
@@ -73,38 +83,17 @@ pub fn read_tags(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
     })
 }
 
-/// Search for a ReplayGain tag value by its standard field name.
-/// Tries lofty's built-in ItemKey mapping first, then falls back to
-/// searching by raw key name for formats that use string-keyed items.
+/// A ReplayGain value by its standard field name, through lofty's mapping
+/// of Vorbis comments, ID3v2 TXXX frames and APE items.
 fn find_rg_value(tag: &lofty::tag::Tag, key_name: &str) -> Option<String> {
-    // Map RG field names to lofty's ItemKey variants.
-    let item_key = match key_name {
-        TAG_TRACK_GAIN => Some(ItemKey::ReplayGainTrackGain),
-        TAG_TRACK_PEAK => Some(ItemKey::ReplayGainTrackPeak),
-        TAG_ALBUM_GAIN => Some(ItemKey::ReplayGainAlbumGain),
-        TAG_ALBUM_PEAK => Some(ItemKey::ReplayGainAlbumPeak),
-        _ => None,
+    let key = match key_name {
+        TAG_TRACK_GAIN => ItemKey::ReplayGainTrackGain,
+        TAG_TRACK_PEAK => ItemKey::ReplayGainTrackPeak,
+        TAG_ALBUM_GAIN => ItemKey::ReplayGainAlbumGain,
+        TAG_ALBUM_PEAK => ItemKey::ReplayGainAlbumPeak,
+        _ => return None,
     };
-
-    if let Some(ik) = item_key
-        && let Some(val) = tag.get_string(ik)
-    {
-        return Some(val.to_string());
-    }
-
-    // Fallback: iterate items looking for a text value matching the key name.
-    // Covers edge cases where the tag format uses raw string keys.
-    for item in tag.items() {
-        if let ItemValue::Text(ref text) = *item.value() {
-            // Check if any item's key maps to our key_name via its string repr.
-            let key_str = format!("{:?}", item.key());
-            if key_str.contains(key_name) {
-                return Some(text.clone());
-            }
-        }
-    }
-
-    None
+    tag.get_string(key).map(str::to_owned)
 }
 
 /// Apply ReplayGain to an f32 sample buffer in-place.

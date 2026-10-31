@@ -160,8 +160,9 @@ impl ByteFeed {
         }
     }
 
-    /// The transfer is over, however it ended. Whoever is waiting wants to
-    /// look at the status now rather than at the byte count.
+    /// The transfer is over, however it ended, or what a reader waits for
+    /// may have changed. Whoever is waiting wants to look at the status now
+    /// rather than at the byte count.
     pub fn done(&self) {
         let _at = self.at.lock();
         self.more.notify_all();

@@ -1402,19 +1402,19 @@ impl SharedPlayerState {
             Some(pos) => pos + 1,
             None => pl.items.len(), // fallback: append
         };
-        for (i, item) in items.into_iter().enumerate() {
-            pl.items.insert(insert_at + i, item);
-        }
+        pl.items.splice(insert_at..insert_at, items);
         drop(pl);
         self.bump_content();
     }
 
     /// Update file paths for playlist items (after organize moves files).
     pub fn update_paths(&self, updates: &[(QueueItemId, PathBuf)]) {
+        let updates: HashMap<QueueItemId, &PathBuf> =
+            updates.iter().map(|(id, p)| (*id, p)).collect();
         let mut pl = self.playlist.write();
-        for (id, new_path) in updates {
-            if let Some(item) = pl.items.iter_mut().find(|item| item.id == *id) {
-                item.path = new_path.clone();
+        for item in pl.items.iter_mut() {
+            if let Some(new_path) = updates.get(&item.id) {
+                item.path = (*new_path).clone();
             }
         }
         drop(pl);
@@ -1485,10 +1485,7 @@ impl SharedPlayerState {
             None => remaining.len(),
         };
 
-        // Splice moved items in at the target position.
-        for (i, item) in moved.into_iter().enumerate() {
-            remaining.insert(insert_at + i, item);
-        }
+        remaining.splice(insert_at..insert_at, moved);
 
         pl.items = remaining;
         drop(pl);
@@ -1898,7 +1895,11 @@ impl SharedPlayerState {
             .filter(|item| matches!(item.state, ItemState::Ready))
             .filter_map(|item| Some((item.id, item.db_id?, item.path.clone())))
             .collect();
-        let gone: Vec<_> = ready.into_iter().filter(|(_, _, p)| missing(p)).collect();
+        let gone: HashMap<QueueItemId, (i64, PathBuf)> = ready
+            .into_iter()
+            .filter(|(_, _, p)| missing(p))
+            .map(|(id, db_id, path)| (id, (db_id, path)))
+            .collect();
         if gone.is_empty() {
             return Vec::new();
         }
@@ -1909,9 +1910,8 @@ impl SharedPlayerState {
         let mut reset = Vec::new();
         for item in pl.items.iter_mut() {
             if matches!(item.state, ItemState::Ready)
-                && let Some((_, db_id, _)) = gone
-                    .iter()
-                    .find(|(id, _, path)| *id == item.id && *path == item.path)
+                && let Some((db_id, path)) = gone.get(&item.id)
+                && *path == item.path
             {
                 item.state = ItemState::Pending;
                 reset.push((*db_id, item.id));
@@ -2050,13 +2050,24 @@ impl SharedPlayerState {
     pub fn reorder_to(&self, order: &[QueueItemId]) {
         let mut pl = self.playlist.write();
         let mut taken: Vec<Option<PlaylistItem>> = pl.items.drain(..).map(Some).collect();
+        let at: HashMap<QueueItemId, usize> = taken
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| Some((item.as_ref()?.id, i)))
+            .collect();
+        let unique = at.len() == taken.len();
         let mut sorted = Vec::with_capacity(taken.len());
         for id in order {
-            if let Some(slot) = taken
-                .iter_mut()
-                .find(|i| i.as_ref().is_some_and(|i| i.id == *id))
-                && let Some(item) = slot.take()
-            {
+            // A queue whose ids are not unique, which the map cannot
+            // describe: each id takes its first row left, as it always did.
+            let slot = if unique {
+                at.get(id).map(|&i| &mut taken[i])
+            } else {
+                taken
+                    .iter_mut()
+                    .find(|i| i.as_ref().is_some_and(|i| i.id == *id))
+            };
+            if let Some(item) = slot.and_then(Option::take) {
                 sorted.push(item);
             }
         }
@@ -2138,11 +2149,12 @@ impl SharedPlayerState {
     /// failed for want of its file goes back to waiting when its track
     /// returns, so the download queue takes it up again.
     pub fn relink(&self, links: &[(QueueItemId, Option<i64>)]) {
+        let links: HashMap<QueueItemId, Option<i64>> = links.iter().copied().collect();
         let mut changed = false;
         {
             let mut pl = self.playlist.write();
-            for &(id, db_id) in links {
-                if let Some(item) = pl.items.iter_mut().find(|i| i.id == id)
+            for item in pl.items.iter_mut() {
+                if let Some(&db_id) = links.get(&item.id)
                     && item.db_id != db_id
                 {
                     item.db_id = db_id;
@@ -2190,29 +2202,98 @@ impl SharedPlayerState {
 
     /// Move a single item to after `after` (or to front if None).
     pub fn move_item_to(&self, id: QueueItemId, after: Option<QueueItemId>) {
-        let mut pl = self.playlist.write();
-        let Some(from) = pl.items.iter().position(|item| item.id == id) else {
-            return;
-        };
-        let item = pl.items.remove(from);
-        let insert_at = match after {
-            Some(after_id) => match pl.items.iter().position(|i| i.id == after_id) {
-                Some(pos) => pos + 1,
-                None => pl.items.len(),
-            },
-            None => 0,
-        };
-        pl.items.insert(insert_at, item);
-        drop(pl);
-        self.bump_content();
+        self.move_items_to(&[(id, after)]);
     }
 
-    /// Batch move: reposition each item to after its given predecessor.
-    /// Processes in order so earlier insertions don't corrupt later positions.
+    /// Batch move: reposition each item to after its given predecessor, in
+    /// order, so an entry sees the moves before it. A predecessor that is not
+    /// in the queue (or is the item itself) sends the item to the end.
+    ///
+    /// The moves are made on links between ids and the queue rebuilt once:
+    /// undoing a reorder of the whole queue names every row.
     pub fn move_items_to(&self, entries: &[(QueueItemId, Option<QueueItemId>)]) {
-        for &(id, after) in entries {
-            self.move_item_to(id, after);
+        let mut pl = self.playlist.write();
+        let mut prev: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::new();
+        let mut next: HashMap<QueueItemId, Option<QueueItemId>> = HashMap::new();
+        if entries.len() > 1 {
+            let ids: Vec<QueueItemId> = pl.items.iter().map(|i| i.id).collect();
+            prev.reserve(ids.len());
+            next.reserve(ids.len());
+            for (i, &id) in ids.iter().enumerate() {
+                prev.insert(id, i.checked_sub(1).map(|p| ids[p]));
+                next.insert(id, ids.get(i + 1).copied());
+            }
         }
+        // A single move, or a queue whose ids are not unique, which links
+        // cannot describe: one row at a time.
+        if entries.len() <= 1 || next.len() != pl.items.len() {
+            let mut moved = false;
+            for &(id, after) in entries {
+                let Some(from) = pl.items.iter().position(|item| item.id == id) else {
+                    continue;
+                };
+                let item = pl.items.remove(from);
+                let at = match after {
+                    Some(a) => pl
+                        .items
+                        .iter()
+                        .position(|i| i.id == a)
+                        .map_or(pl.items.len(), |p| p + 1),
+                    None => 0,
+                };
+                pl.items.insert(at, item);
+                moved = true;
+            }
+            drop(pl);
+            if moved {
+                self.bump_content();
+            }
+            return;
+        }
+        let mut head = pl.items.first().map(|i| i.id);
+        let mut tail = pl.items.last().map(|i| i.id);
+        let mut moved = false;
+        for &(id, after) in entries {
+            let (Some(p), Some(n)) = (prev.remove(&id), next.remove(&id)) else {
+                continue;
+            };
+            match p {
+                Some(p) => *next.get_mut(&p).expect("linked") = n,
+                None => head = n,
+            }
+            match n {
+                Some(n) => *prev.get_mut(&n).expect("linked") = p,
+                None => tail = p,
+            }
+            let (p, n) = match after {
+                Some(a) if next.contains_key(&a) => (Some(a), next[&a]),
+                Some(_) => (tail, None),
+                None => (None, head),
+            };
+            match p {
+                Some(p) => *next.get_mut(&p).expect("linked") = Some(id),
+                None => head = Some(id),
+            }
+            match n {
+                Some(n) => *prev.get_mut(&n).expect("linked") = Some(id),
+                None => tail = Some(id),
+            }
+            prev.insert(id, p);
+            next.insert(id, n);
+            moved = true;
+        }
+        if !moved {
+            return;
+        }
+        let mut items: HashMap<QueueItemId, PlaylistItem> =
+            pl.items.drain(..).map(|i| (i.id, i)).collect();
+        let mut at = head;
+        while let Some(id) = at {
+            pl.items.extend(items.remove(&id));
+            at = next[&id];
+        }
+        drop(pl);
+        self.bump_content();
     }
 
     // --- Called from UI thread (read lock) ---
@@ -3719,6 +3800,82 @@ mod tests {
         let (items, _) = state.snapshot_playlist();
         let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, vec!["C", "A", "B"]);
+    }
+
+    /// Batch moves land where moving each row in turn would put it,
+    /// including predecessors that are missing, the item itself, rows not
+    /// yet moved, and ids that are not in the queue.
+    #[test]
+    fn move_items_to_matches_moving_one_at_a_time() {
+        fn one_at_a_time(
+            ids: &mut Vec<QueueItemId>,
+            entries: &[(QueueItemId, Option<QueueItemId>)],
+        ) {
+            for &(id, after) in entries {
+                let Some(from) = ids.iter().position(|i| *i == id) else {
+                    continue;
+                };
+                ids.remove(from);
+                let at = match after {
+                    Some(a) => ids
+                        .iter()
+                        .position(|i| *i == a)
+                        .map_or(ids.len(), |p| p + 1),
+                    None => 0,
+                };
+                ids.insert(at, id);
+            }
+        }
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rand = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        for round in 0..200 {
+            let state = SharedPlayerState::new();
+            let items: Vec<PlaylistItem> = (0..1 + round % 12)
+                .map(|i| ready_item(&i.to_string()))
+                .collect();
+            let mut ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+            let stranger = QueueItemId::new();
+            state.add_items(items);
+            let pick = |r: usize| if r == ids.len() { stranger } else { ids[r] };
+            let entries: Vec<_> = (0..rand(8))
+                .map(|_| {
+                    let id = pick(rand(ids.len() + 1));
+                    let after = match rand(4) {
+                        0 => None,
+                        _ => Some(pick(rand(ids.len() + 1))),
+                    };
+                    (id, after)
+                })
+                .collect();
+            state.move_items_to(&entries);
+            one_at_a_time(&mut ids, &entries);
+            let (got, _) = state.snapshot_playlist();
+            assert_eq!(
+                got.iter().map(|i| i.id).collect::<Vec<_>>(),
+                ids,
+                "{entries:?}"
+            );
+        }
+    }
+
+    /// Undoing a reorder of a large queue is one edit, not one per row.
+    #[test]
+    fn undoing_a_whole_queue_reorder_bumps_once() {
+        let state = SharedPlayerState::new();
+        state.add_items((0..20_000).map(|i| ready_item(&i.to_string())).collect());
+        let (items, _) = state.snapshot_playlist();
+        let before = state.items_before(&items.iter().map(|i| i.id).collect::<Vec<_>>());
+        state.reorder_to(&items.iter().rev().map(|i| i.id).collect::<Vec<_>>());
+        let content = state.content_version();
+        state.move_items_to(&before);
+        assert_eq!(state.content_version(), content + 1);
+        let (restored, _) = state.snapshot_playlist();
+        assert!(restored.iter().map(|i| i.id).eq(items.iter().map(|i| i.id)));
     }
 
     // --- move_items (batch) ---

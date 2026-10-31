@@ -3043,6 +3043,7 @@ dependencies = [
  "crossbeam-channel",
  "dirs",
  "ebur128",
+ "encoding_rs",
  "env_logger",
  "fft-convolver",
  "figment",

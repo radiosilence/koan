@@ -5,6 +5,16 @@ use super::state::{PlaylistItem, QueueItemId};
 /// Maximum number of undo entries retained.
 const MAX_UNDO_DEPTH: usize = 100;
 
+/// Maximum number of queue rows the entries of one stack hold between them,
+/// at roughly half a kilobyte a row. A replaced queue is kept whole, so depth
+/// alone lets a hundred replacements of a large library sit in memory. The
+/// newest entry is always kept.
+const MAX_UNDO_ROWS: usize = 50_000;
+
+/// Ids counted as one row: an entry that names rows by id holds a small
+/// fraction of what one holding the rows does.
+const IDS_PER_ROW: usize = 16;
+
 /// A reversible playlist operation. Stores enough state to undo/redo.
 ///
 /// Each variant describes an action to reverse. `apply_entry` executes the
@@ -44,7 +54,34 @@ pub enum UndoEntry {
     Batch(Vec<UndoEntry>),
 }
 
-/// Standard undo/redo stack with bounded depth.
+impl UndoEntry {
+    /// How many queue rows' worth of memory the entry holds.
+    fn rows(&self) -> usize {
+        match self {
+            UndoEntry::Added { ids } | UndoEntry::Inserted { ids } => {
+                ids.len().div_ceil(IDS_PER_ROW)
+            }
+            UndoEntry::Removed { items } => items.len(),
+            UndoEntry::Moved { .. } => 1,
+            UndoEntry::MovedBatch { entries } => entries.len().div_ceil(IDS_PER_ROW),
+            UndoEntry::Replaced { items, .. } => items.len(),
+            UndoEntry::Batch(entries) => entries.iter().map(UndoEntry::rows).sum(),
+        }
+    }
+}
+
+/// Push onto one side, dropping the oldest entries past the bounds.
+fn bounded_push(stack: &mut VecDeque<UndoEntry>, entry: UndoEntry) {
+    stack.push_back(entry);
+    let mut rows: usize = stack.iter().map(UndoEntry::rows).sum();
+    while stack.len() > MAX_UNDO_DEPTH || (rows > MAX_UNDO_ROWS && stack.len() > 1) {
+        if let Some(dropped) = stack.pop_front() {
+            rows -= dropped.rows();
+        }
+    }
+}
+
+/// Standard undo/redo stack, bounded by depth and by the rows it holds.
 ///
 /// Lives on the Player struct — single-threaded, only the player command loop
 /// touches it. New actions clear the redo stack (standard semantics).
@@ -65,10 +102,7 @@ impl UndoStack {
     /// Push an undo entry. Clears the redo stack.
     pub fn push(&mut self, entry: UndoEntry) {
         self.redo.clear();
-        self.undo.push_back(entry);
-        if self.undo.len() > MAX_UNDO_DEPTH {
-            self.undo.pop_front();
-        }
+        bounded_push(&mut self.undo, entry);
     }
 
     /// Pop the most recent undo entry (for Ctrl+Z).
@@ -83,16 +117,13 @@ impl UndoStack {
 
     /// Push an entry onto the redo stack (called when undoing).
     pub fn push_redo(&mut self, entry: UndoEntry) {
-        self.redo.push_back(entry);
+        bounded_push(&mut self.redo, entry);
     }
 
     /// Push an entry onto the undo stack without clearing redo
     /// (called when redoing).
     pub fn push_undo_keep_redo(&mut self, entry: UndoEntry) {
-        self.undo.push_back(entry);
-        if self.undo.len() > MAX_UNDO_DEPTH {
-            self.undo.pop_front();
-        }
+        bounded_push(&mut self.undo, entry);
     }
 
     pub fn can_undo(&self) -> bool {
@@ -114,6 +145,55 @@ mod tests {
 
     fn dummy_id() -> QueueItemId {
         QueueItemId::new()
+    }
+
+    fn removed(rows: usize) -> UndoEntry {
+        let item = PlaylistItem {
+            uid: None,
+            playlist_entry_id: None,
+            id: dummy_id(),
+            db_id: None,
+            path: "/x.flac".into(),
+            title: String::new(),
+            artist: String::new(),
+            album_artist: String::new(),
+            album: String::new(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            state: super::super::state::ItemState::Ready,
+            played: false,
+        };
+        UndoEntry::Removed {
+            items: (0..rows).map(|_| (Box::new(item.clone()), None)).collect(),
+        }
+    }
+
+    #[test]
+    fn large_entries_are_bounded_by_rows() {
+        let mut stack = UndoStack::new();
+        for _ in 0..10 {
+            stack.push(removed(10_000));
+        }
+        assert_eq!(stack.undo_len(), MAX_UNDO_ROWS / 10_000);
+        stack.push(removed(MAX_UNDO_ROWS * 2));
+        assert_eq!(
+            stack.undo_len(),
+            1,
+            "the newest entry is kept whatever its size"
+        );
+    }
+
+    #[test]
+    fn entries_of_ids_weigh_less_than_entries_of_rows() {
+        let mut stack = UndoStack::new();
+        stack.push(removed(MAX_UNDO_ROWS / 2));
+        stack.push(UndoEntry::Added {
+            ids: (0..MAX_UNDO_ROWS).map(|_| dummy_id()).collect(),
+        });
+        assert_eq!(stack.undo_len(), 2);
     }
 
     #[test]
