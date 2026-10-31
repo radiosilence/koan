@@ -1,0 +1,1 @@
+- **Sign-in, the nearby listener and DSP zip imports hold less for a stranger.** A client that never finishes sending a sign-in body no longer holds sign-in shut for others; the nearby listener serves at most 32 connections and 8 MiB messages; a DSP zip unpacks to at most 1 GiB. GraphQL's `config` query now needs an admin, and `koanCommand` an account that may write.
