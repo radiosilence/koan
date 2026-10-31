@@ -96,15 +96,11 @@ impl ArtistHeader {
                     let held = artist_info::cached(&db.conn, id).ok().flatten();
                     tx.send(Update::Info(held)).ok();
                 }
-                let fetched = pool
-                    .get()
-                    .ok()
-                    .and_then(|db| artist_info::fetch(&db.conn, id).ok().flatten());
+                let fetched = artist_info::fetch(pool, id).ok().flatten();
                 let has_image = fetched.as_ref().is_some_and(|i| i.image_url.is_some());
                 tx.send(Update::Info(fetched)).ok();
                 if has_image
-                    && let Ok(db) = pool.get()
-                    && let Ok(Some(bytes)) = artist_info::image(&db.conn, id)
+                    && let Ok(Some(bytes)) = artist_info::image(pool, id)
                     && let Ok(img) = image::load_from_memory(&bytes)
                 {
                     tx.send(Update::Photo(img.thumbnail(512, 512))).ok();

@@ -3,7 +3,9 @@
 use rusqlite::Connection;
 
 use crate::db::connection::DbError;
-use crate::db::queries::lyrics::{CachedLyrics, cache_lyrics, get_cached_lyrics, touch_lyrics};
+use crate::db::queries::lyrics::{
+    CachedLyrics, MISS, cache_lyrics, get_cached_lyrics, lyrics_missed_at, touch_lyrics,
+};
 use crate::remote::lrclib::{self, LrclibError};
 
 // ---------------------------------------------------------------------------
@@ -161,6 +163,10 @@ pub fn current_line_index(lines: &[LrcLine], position_secs: f64) -> Option<usize
 /// copy held forever would never highlight.
 const PLAIN_RECHECK_SECS: i64 = 30 * 24 * 60 * 60;
 
+/// How long LRCLIB having nothing for a track is believed. Shorter than the
+/// plain recheck: lyrics for a new release often arrive within days.
+const MISS_RECHECK_SECS: i64 = 7 * 24 * 60 * 60;
+
 /// Fetch lyrics for a track: from the DB cache (instant, no network), else from
 /// LRCLIB. A synced cached copy is final; a plain one is re-checked against
 /// LRCLIB once it is older than [`PLAIN_RECHECK_SECS`].
@@ -197,8 +203,14 @@ pub enum CacheLookup {
     Stale(Option<Lyrics>),
 }
 
+/// A recent miss is `NotFound`, without asking LRCLIB again.
 pub fn look_up_cached(conn: &Connection, track_id: i64) -> Result<CacheLookup, LyricsError> {
     let Some(cached) = get_cached_lyrics(conn, track_id)? else {
+        if lyrics_missed_at(conn, track_id)?
+            .is_some_and(|at| crate::shelves::now() - at < MISS_RECHECK_SECS)
+        {
+            return Err(LyricsError::NotFound);
+        }
         return Ok(CacheLookup::Stale(None));
     };
     let stale = !cached.synced && crate::shelves::now() - cached.fetched_at >= PLAIN_RECHECK_SECS;
@@ -237,6 +249,12 @@ pub fn settle(
         (Err(_), Some(cached)) => {
             touch_lyrics(conn, track_id)?;
             Ok(cached)
+        }
+        // Remembered, so the next play does not ask again for a while. An
+        // unreachable LRCLIB says nothing about the track and is not.
+        (Err(LyricsError::NotFound), None) => {
+            cache_lyrics(conn, track_id, MISS, false, "")?;
+            Err(LyricsError::NotFound)
         }
         (Err(e), None) => Err(e),
     }
@@ -307,6 +325,39 @@ mod tests {
             got.source,
             Some(LyricsSource::Lrclib),
             "a cached copy keeps its source"
+        );
+    }
+
+    #[test]
+    fn a_miss_is_remembered_until_it_is_rechecked() {
+        let (conn, id) = db_with_track();
+        assert!(matches!(
+            settle(&conn, id, Err(LyricsError::NotFound), None),
+            Err(LyricsError::NotFound)
+        ));
+        assert!(
+            get_cached_lyrics(&conn, id).unwrap().is_none(),
+            "not lyrics"
+        );
+        assert!(
+            matches!(look_up_cached(&conn, id), Err(LyricsError::NotFound)),
+            "a recent miss does not ask LRCLIB"
+        );
+        conn.execute("UPDATE lyrics_cache SET fetched_at = 0", [])
+            .unwrap();
+        assert!(matches!(
+            look_up_cached(&conn, id),
+            Ok(CacheLookup::Stale(None))
+        ));
+        let found = Lyrics {
+            content: "words".into(),
+            synced: false,
+            source: Some(LyricsSource::Lrclib),
+        };
+        settle(&conn, id, Ok(found), None).unwrap();
+        assert_eq!(
+            get_cached_lyrics(&conn, id).unwrap().unwrap().content,
+            "words"
         );
     }
 

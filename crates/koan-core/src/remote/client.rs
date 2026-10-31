@@ -189,6 +189,35 @@ impl Connections {
     }
 }
 
+/// How many `getCoverArt` requests run at once, across every server. A flick
+/// through a remote album grid asks for every tile it passes; past this the
+/// rest wait their turn rather than each opening a socket.
+const COVER_FETCHES: usize = 8;
+
+/// A slot among [`COVER_FETCHES`], given back when dropped.
+struct CoverSlots;
+
+static COVERS_IN_FLIGHT: parking_lot::Mutex<usize> = parking_lot::Mutex::new(0);
+static COVER_FREED: parking_lot::Condvar = parking_lot::Condvar::new();
+
+impl CoverSlots {
+    fn take() -> Self {
+        let mut busy = COVERS_IN_FLIGHT.lock();
+        while *busy >= COVER_FETCHES {
+            COVER_FREED.wait(&mut busy);
+        }
+        *busy += 1;
+        Self
+    }
+}
+
+impl Drop for CoverSlots {
+    fn drop(&mut self) {
+        *COVERS_IN_FLIGHT.lock() -= 1;
+        COVER_FREED.notify_one();
+    }
+}
+
 impl SubsonicClient {
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
         Self::from_auth(SubsonicAuth::new(base_url, username, password))
@@ -324,6 +353,7 @@ impl SubsonicClient {
             params.insert("size".into(), px.to_string());
         }
 
+        let _slot = CoverSlots::take();
         let resp = self.http().get(&url).query(&params).send()?;
         Self::reject_error_body(&resp)?;
         if resp.headers().contains_key(PLACEHOLDER_HEADER) {
@@ -1960,6 +1990,25 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn cover_fetches_are_bounded() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        std::thread::scope(|s| {
+            for _ in 0..COVER_FETCHES * 3 {
+                s.spawn(|| {
+                    let _slot = CoverSlots::take();
+                    let n = now.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(n, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    now.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        assert!(most.load(Ordering::SeqCst) <= COVER_FETCHES);
+        assert_eq!(*COVERS_IN_FLIGHT.lock(), 0, "every slot given back");
+    }
 
     #[test]
     fn a_network_change_tries_a_server_that_was_not_answering_now() {

@@ -48,12 +48,18 @@ pub struct Image {
     pub credit: Option<String>,
 }
 
+/// One client for the process, so its connections are reused across lookups;
+/// a clone shares them.
 pub fn client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    static CLIENT: std::sync::LazyLock<reqwest::blocking::Client> =
+        std::sync::LazyLock::new(|| {
+            reqwest::blocking::Client::builder()
+                .user_agent(USER_AGENT)
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .unwrap_or_else(|_| reqwest::blocking::Client::new())
+        });
+    CLIENT.clone()
 }
 
 pub fn entity(http: &reqwest::blocking::Client, qid: &str) -> Result<Entity, WikimediaError> {
