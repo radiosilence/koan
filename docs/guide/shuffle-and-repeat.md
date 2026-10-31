@@ -2,7 +2,8 @@
 
 Shuffle and repeat change which track plays next. Neither moves anything in
 the queue: it stays in the order you gave it, and turning either on or off
-never rearranges it.
+never rearranges it. To rearrange the queue or a playlist, use the dice
+(below).
 
 Playing something from its play button — a record, an artist, a playlist, a
 selection, or a track in a list — starts it as asked: Play turns shuffle and
@@ -31,6 +32,25 @@ track. Tracks you skip over by playing one further down are not marked.
 The random order is held in memory. After koan restarts with shuffle on, it
 draws a new order from the tracks not yet played, and Previous starts from the
 track that was playing.
+
+## Shuffling the order itself
+
+On the Mac, iPhone, iPad and Android, a dice in the queue's header and on the
+page of a playlist you can edit rearranges the rows themselves, for when you
+want to see the order and keep it, or deal again until you like it. In the
+queue it shuffles the tracks after the current one, which stays where it is
+with everything above it; with no current track, as in a queue never started,
+it shuffles the whole queue. A queue that has played to its end still has its
+last track as the current one, so there is nothing after it to shuffle. On a
+playlist it shuffles every track, and the change is saved and reaches your
+server as any edit would.
+
+Each press is one step of undo, so undo takes back one shuffle at a time until
+the original order returns. On a Mac that is ⌘Z, or the undo button in the
+queue's header; on a phone, an Undo button appears beside the dice while the
+last edits were shuffles. The queue's dice is off while shuffle is on, since
+shuffle plays in its own order whatever the queue's, and while you control
+another device.
 
 ## Repeat
 

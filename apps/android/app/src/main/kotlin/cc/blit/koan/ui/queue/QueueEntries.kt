@@ -197,6 +197,10 @@ private fun QueuePage() {
     val list = rememberLazyListState()
     var following by remember { mutableStateOf(false) }
     val current = now?.queueItemId
+    val devices by mirror.devices.collectAsStateWithLifecycle()
+    // Never another device's queue, nor one shuffle play is picking its own
+    // way through.
+    val canShuffle = devices.target == null && now?.shuffle != true && now?.queueShufflable == true
     LaunchedEffect(list) {
         list.interactionSource.interactions.collect { if (it is DragInteraction.Start) following = false }
     }
@@ -254,6 +258,10 @@ private fun QueuePage() {
                 select = { if (selecting) stopSelecting() else selecting = true },
                 save = { saving = true },
                 clear = { mirror.launch { clearQueue() } },
+                canShuffle = canShuffle,
+                shuffle = { mirror.launch { shuffleQueue() } },
+                undoShuffles = now?.undoShuffles ?: 0u,
+                undo = { mirror.launch { undo(null) } },
             )
             if (queue.items.isEmpty()) {
                 KoanUnavailable("Queue is empty", KoanIcons.queueSection, "Find something to play from the library.")
@@ -529,6 +537,10 @@ private fun Header(
     select: () -> Unit,
     save: () -> Unit,
     clear: () -> Unit,
+    canShuffle: Boolean,
+    shuffle: () -> Unit,
+    undoShuffles: UInt,
+    undo: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth().padding(start = KoanSpace.l, top = KoanSpace.s, bottom = KoanSpace.xs), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -549,6 +561,8 @@ private fun Header(
                 color = KoanTheme.color(if (following) KoanTone.Accent else KoanTone.Ink),
             )
         }
+        ShuffleUndoButton(undoShuffles, undo)
+        KoanButton("Shuffle the rest of the queue", shuffle, kind = KoanButtonKind.Icon, icon = KoanIcons.reshuffle, enabled = canShuffle)
         KoanIconToggle(KoanIcons.album, "Group by album", grouped, setGrouped)
         KoanButton(if (selecting) "Done" else "Select", select, kind = KoanButtonKind.Icon, icon = if (selecting) KoanIcons.selecting else KoanIcons.select, enabled = items.isNotEmpty())
         var menu by remember { mutableStateOf(false) }
@@ -678,6 +692,28 @@ private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) ->
     } else {
         KoanMenuItem("Download All", KoanIcons.downloads) { act { app.mirror.launch { downloadToCache(trackIds) } } }
         KoanMenuItem("Remove Downloads", KoanIcons.clear) { act { app.mirror.launch { clearDownloads(trackIds) } } }
+    }
+}
+
+/**
+ * Undo beside the dice while the list's last edits are shuffles, taking them
+ * back one at a time. Hidden from a tap until the count answers, so a second
+ * tap cannot reach past the last shuffle to whatever edit came before; back
+ * after a few seconds if it never does.
+ */
+@Composable
+fun ShuffleUndoButton(shuffles: UInt, undo: () -> Unit) {
+    var tappedAt by remember { mutableStateOf<UInt?>(null) }
+    LaunchedEffect(shuffles) { tappedAt = null }
+    // An undo that failed never moves the count: offer it again.
+    LaunchedEffect(tappedAt) {
+        if (tappedAt != null) {
+            delay(3_000)
+            tappedAt = null
+        }
+    }
+    if (shuffles > 0u && tappedAt != shuffles) {
+        KoanButton("Undo shuffle", { tappedAt = shuffles; undo() }, kind = KoanButtonKind.Icon, icon = KoanIcons.undo)
     }
 }
 

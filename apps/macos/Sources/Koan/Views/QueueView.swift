@@ -509,6 +509,10 @@ struct QueueView: View {
 
             JumpToPlayingButton()
 
+            #if !os(tvOS)
+            QueueDiceButton()
+            #endif
+
             KoanIconToggle(icon: Icon.album, label: "Group by album", isOn: $grouped)
 
             // Undo is a keyboard's idea of a control. The buttons exist to show
@@ -1075,6 +1079,69 @@ private struct JumpToPlayingButton: View {
         .accessibilityAddTraits(following ? .isSelected : [])
     }
 }
+
+/// Shuffles the rows after the current one in place, each press one undo
+/// step; shuffle play leaves the rows alone. Its own view because what it
+/// reads, the queue and what is playing, moves on every edit.
+///
+/// A phone has no ⌘Z, so there Undo stands beside the dice while the queue's
+/// last edits are shuffles, and takes them back one at a time.
+#if !os(tvOS)
+private struct QueueDiceButton: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        #if os(iOS)
+        ShuffleUndoButton(shuffles: player.undoShuffles) { player.undo() }
+        #endif
+        let refusal = player.queueDiceRefusal
+        // The reason goes on a wrapper, which disabling the button does not
+        // reach.
+        HStack {
+            Button { player.shuffleQueue() } label: {
+                KoanIcon(Icon.reshuffle).touchTarget()
+            }
+            .disabled(refusal != nil)
+        }
+        .help(refusal ?? "Shuffle the rest of the queue in place")
+    }
+}
+#endif
+
+#if os(iOS)
+/// Undo for the shuffles on top of a list's history, while there are any.
+/// Hidden from a tap until the count answers, so a second tap cannot reach
+/// past the last shuffle to whatever edit came before; back after a few
+/// seconds if it never does.
+struct ShuffleUndoButton: View {
+    let shuffles: UInt32
+    let undo: () -> Void
+    @State private var tappedAt: UInt32?
+
+    var body: some View {
+        // A container that is always there, so the count is watched while
+        // the button is hidden.
+        HStack(spacing: 0) {
+            if shuffles > 0, tappedAt != shuffles {
+                Button {
+                    tappedAt = shuffles
+                    undo()
+                } label: {
+                    KoanIcon(Icon.undo).touchTarget()
+                }
+                .accessibilityLabel("Undo shuffle")
+            }
+        }
+        .onChange(of: shuffles) { tappedAt = nil }
+        // An undo that failed never moves the count: offer it again.
+        .task(id: tappedAt) {
+            guard tappedAt != nil else { return }
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled { tappedAt = nil }
+        }
+    }
+}
+#endif
 
 /// The playing row kept in view while following. Reads what is playing so the
 /// queue's own body does not, which on a long queue would regroup and diff

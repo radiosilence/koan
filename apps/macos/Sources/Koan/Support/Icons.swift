@@ -20,7 +20,8 @@ enum Icon {
     static let shuffle = "shuffle"
     static let repeatQueue = "repeat"
     static let repeatOne = "repeat.1"
-    /// Deal the album grid in a new random order. Playback is `shuffle`.
+    /// Deal a new random order: the album grid, the queue's rows, a
+    /// playlist's. Playback is `shuffle`.
     static let reshuffle = "dice"
     static let next = "forward.fill"
     static let previous = "backward.fill"

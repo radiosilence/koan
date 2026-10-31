@@ -24,6 +24,9 @@ final class PlaylistsModel {
     /// track id names neither a row nor a place. The entry id does.
     private(set) var openId: Int64?
     private(set) var entries: [PlaylistEntry] = []
+    /// How many shuffles undo would take back from the open playlist before
+    /// reaching any other edit.
+    private(set) var undoShuffles: UInt32 = 0
     private(set) var isLoading = false
 
     /// Up to four cover sources per playlist, for its 2×2 tile. Loaded lazily
@@ -105,7 +108,8 @@ final class PlaylistsModel {
         let loaded = await Task.detached(priority: .userInitiated) {
             async let rows = engine.playlistTracks(playlistId: id)
             async let covers = engine.playlistCoverAlbumIds(playlistId: id)
-            return ((try? await rows) ?? [], (try? await covers) ?? [])
+            async let shuffles = engine.playlistUndoShuffles(playlistId: id)
+            return ((try? await rows) ?? [], (try? await covers) ?? [], await shuffles)
         }.value
         guard !Task.isCancelled else {
             isLoading = false
@@ -114,6 +118,7 @@ final class PlaylistsModel {
         openId = id
         openStamp = stamp
         entries = loaded.0
+        undoShuffles = loaded.2
         covers[id] = loaded.1.map { .album($0) }
         isLoading = false
     }
@@ -170,6 +175,7 @@ final class PlaylistsModel {
             openId = nil
             openStamp = nil
             entries = []
+            undoShuffles = 0
         }
         act { _ = try await $0.deletePlaylist(playlistId: id) }
     }

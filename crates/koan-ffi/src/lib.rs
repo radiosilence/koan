@@ -1146,6 +1146,13 @@ impl KoanEngine {
         .await
     }
 
+    /// Shuffle what follows the cursor, or the whole queue when there is
+    /// none, as one undo step. Distinct from shuffle play mode, which
+    /// leaves the queue's order alone.
+    pub async fn shuffle_queue(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::ShuffleUpcoming)).await
+    }
+
     pub async fn clear_queue(self: Arc<Self>) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::ClearPlaylist)).await
     }
@@ -2152,7 +2159,7 @@ impl KoanEngine {
     /// the queue, which leaves the playlist alone.
     pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
         offload::sequenced(move || {
-            self.edit_playlist(playlist_id, |db| {
+            self.edit_playlist_as(playlist_id, true, |db| {
                 let mut entries = queries::playlist_entries(&db.conn, playlist_id)?;
                 koan_core::helpers::shuffle(&mut entries);
                 let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
@@ -2160,6 +2167,14 @@ impl KoanEngine {
             })
         })
         .await
+    }
+
+    /// How many shuffles undo would take back from the playlist before
+    /// reaching any other edit. Moves only with an edit to the playlist, so
+    /// read again whenever the playlist is. Async: an undo holds the history
+    /// while it writes.
+    pub async fn playlist_undo_shuffles(self: Arc<Self>, playlist_id: i64) -> u32 {
+        offload::offload(move || self.playlist_history.shuffles_on_top(playlist_id)).await
     }
 
     /// Where the playlists sit in the sidebar, in the order given. Local only —
@@ -5549,6 +5564,9 @@ impl KoanEngine {
                 playlist_version: 0,
                 shuffle: st.shuffle,
                 repeat_mode: st.repeat.into(),
+                // Shuffling the queue in place is this device's alone.
+                undo_shuffles: 0,
+                queue_shufflable: false,
                 sleep: st.sleep.map(Into::into),
                 sleep_fading: st.sleep_fading,
                 start_failure: None,
@@ -6125,6 +6143,8 @@ impl KoanEngine {
             playlist_version: self.state.playlist_version(),
             shuffle: self.state.play_mode().shuffle,
             repeat_mode: self.state.play_mode().repeat.into(),
+            undo_shuffles: self.state.undo_shuffles(),
+            queue_shufflable: self.state.upcoming_shufflable(),
             sleep: self.state.sleep().map(Into::into),
             sleep_fading: self.state.sleep_fading(),
             start_failure: self.state.start_failure(),
@@ -6354,13 +6374,25 @@ impl KoanEngine {
         playlist_id: i64,
         change: impl FnOnce(&Database) -> Result<T, KoanError>,
     ) -> Result<T, KoanError> {
+        self.edit_playlist_as(playlist_id, false, change)
+    }
+
+    /// `edit_playlist`, saying whether the change is a shuffle of its order.
+    fn edit_playlist_as<T>(
+        &self,
+        playlist_id: i64,
+        shuffle: bool,
+        change: impl FnOnce(&Database) -> Result<T, KoanError>,
+    ) -> Result<T, KoanError> {
         let db = self.db()?;
         let mut locked = false;
-        let out = self.playlist_history.edit(&db.conn, playlist_id, || {
-            fillable(&db, playlist_id)?;
-            locked = self.locked_to(&db, playlist_id);
-            change(&db)
-        })?;
+        let out = self
+            .playlist_history
+            .edit_as(&db.conn, playlist_id, shuffle, || {
+                fillable(&db, playlist_id)?;
+                locked = self.locked_to(&db, playlist_id);
+                change(&db)
+            })?;
         self.follow_playlist(&db, playlist_id, locked);
         self.bump_library();
         koan_core::playlists::push_to_remote(playlist_id);

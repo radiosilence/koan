@@ -405,6 +405,19 @@ final class PlayerModel {
     }
 
     func clearQueue() { attempt { try await self.engine.clearQueue() } }
+    /// How many shuffles undo would take back from the queue before reaching
+    /// any other edit.
+    var undoShuffles: UInt32 { mirror.playback.undoShuffles }
+    /// Shuffle what follows the current row in place, as one undo step.
+    func shuffleQueue() { mutate { try await $0.shuffleQueue() } }
+    /// Why the queue's dice cannot shuffle now, or nil when it can.
+    var queueDiceRefusal: String? {
+        if controlled != nil { return "Can't shuffle another device's queue from here" }
+        if shuffle { return "Shuffle play picks its own order; turn it off to reorder the queue" }
+        if mirror.playback.queueShufflable { return nil }
+        return currentItemId == nil ? "Nothing to shuffle" : "Nothing after the current track to shuffle"
+    }
+
     /// The last edit to a playlist taken back, or to the queue when none is
     /// named.
     func undo(playlist: Int64? = nil) { attempt { try await self.engine.undo(playlistId: playlist) } }

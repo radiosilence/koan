@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use uuid::Uuid;
 
@@ -263,6 +263,19 @@ fn scatter(order: &mut Vec<QueueItemId>, mut fresh: Vec<QueueItemId>) {
             order.extend(fresh.next());
             right -= 1;
         }
+    }
+}
+
+/// Where the rows a shuffle of the queue moves begin: after the cursor, or
+/// at the top with nothing under it. `None` when the cursor names no row, or
+/// under shuffle play, whose order the queue's does not decide.
+fn upcoming_start(pl: &Playlist) -> Option<usize> {
+    if pl.order.is_some() {
+        return None;
+    }
+    match pl.cursor {
+        Some(cursor) => Some(pl.items.iter().position(|i| i.id == cursor)? + 1),
+        None => Some(0),
     }
 }
 
@@ -818,6 +831,10 @@ pub struct SharedPlayerState {
     /// Bumped on every playlist mutation so UI can skip redundant redraws.
     playlist_version: AtomicU64,
 
+    /// How many shuffles undo would take back before reaching any other
+    /// edit. Set by the player after each command.
+    undo_shuffles: AtomicU32,
+
     /// Bumped only when what a saved session holds changes: the items and
     /// their metadata, not the cursor or load states. What decides whether
     /// the saved queue has to be written again.
@@ -913,6 +930,7 @@ impl SharedPlayerState {
             playlist: parking_lot::RwLock::new(Playlist::default()),
             playlist_version: AtomicU64::new(0),
             content_version: AtomicU64::new(0),
+            undo_shuffles: AtomicU32::new(0),
             pending_version: AtomicU64::new(0),
             played_version: AtomicU64::new(0),
             downloads: DownloadStore::new(),
@@ -1343,6 +1361,17 @@ impl SharedPlayerState {
     fn bump_version(&self) {
         self.playlist_version.fetch_add(1, Ordering::AcqRel);
         self.changed();
+    }
+
+    /// See the field.
+    pub fn undo_shuffles(&self) -> u32 {
+        self.undo_shuffles.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set_undo_shuffles(&self, n: u32) {
+        if self.undo_shuffles.swap(n, Ordering::AcqRel) != n {
+            self.changed();
+        }
     }
 
     pub fn content_version(&self) -> u64 {
@@ -2087,6 +2116,35 @@ impl SharedPlayerState {
         pl.items = sorted;
         drop(pl);
         self.bump_content();
+    }
+
+    /// Whether `shuffle_upcoming` has two rows or more to move.
+    pub fn upcoming_shufflable(&self) -> bool {
+        let pl = self.playlist.read();
+        upcoming_start(&pl).is_some_and(|start| pl.items.len() - start >= 2)
+    }
+
+    /// Shuffle the rows after the cursor in place, or every row when nothing
+    /// is under it. Returns where each moved row sat before, for undo, or
+    /// `None` when fewer than two rows would move.
+    pub fn shuffle_upcoming(&self) -> Option<Vec<(QueueItemId, Option<QueueItemId>)>> {
+        let mut pl = self.playlist.write();
+        let start = upcoming_start(&pl)?;
+        if pl.items.len() - start < 2 {
+            return None;
+        }
+        let was: Vec<_> = (start..pl.items.len())
+            .map(|i| (pl.items[i].id, i.checked_sub(1).map(|p| pl.items[p].id)))
+            .collect();
+        crate::helpers::shuffle(&mut pl.items[start..]);
+        // A press always moves something: a draw that comes back as it was,
+        // every other one for two rows, is turned by one instead.
+        if pl.items[start..].iter().zip(&was).all(|(i, w)| i.id == w.0) {
+            pl.items[start..].rotate_left(1);
+        }
+        drop(pl);
+        self.bump_content();
+        Some(was)
     }
 
     /// For each ID, the ID of the item before it (or None if first), returned in
