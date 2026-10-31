@@ -85,18 +85,9 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         let db = self.db()?;
         let ids: Vec<String> = queue.entry.iter().map(|e| e.id.clone()).collect();
-        // Fetches anything the library has not synced yet, then names each
-        // entry on its own so the current place survives one that is missing.
-        koan_core::remote::link::resolve_tracks(&db, &ids, true);
-        let found: Vec<Option<i64>> = ids
-            .iter()
-            .map(|id| {
-                koan_core::remote::link::resolve_tracks(&db, std::slice::from_ref(id), false)
-                    .0
-                    .first()
-                    .copied()
-            })
-            .collect();
+        // Fetches anything the library has not synced yet. One answer per
+        // entry, so the current place survives one that is missing.
+        let (found, _) = koan_core::remote::link::resolve_each(&db, &ids, true);
         let current = queue.current_at().unwrap_or(0);
         let start = found[..current.min(found.len())]
             .iter()

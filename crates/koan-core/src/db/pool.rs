@@ -154,7 +154,21 @@ impl Pool {
         self.opened.load(Ordering::Relaxed)
     }
 
+    /// Return a connection for the next borrower, or close it.
+    ///
+    /// One still inside a transaction — a COMMIT that failed, a panic caught
+    /// by whoever held it — is closed, which rolls it back: pooled, the next
+    /// borrower would inherit its write lock and lose its own writes with it.
+    /// The busy timeout is set again, since `without_waiting` lowers it.
     pub fn put_back(&self, db: Database) {
+        if !db.conn.is_autocommit() {
+            log::warn!("a connection came back inside a transaction; closing it");
+            return;
+        }
+        if let Err(e) = db.conn.busy_timeout(super::connection::BUSY_TIMEOUT) {
+            log::warn!("resetting a pooled connection's busy timeout: {e}");
+            return;
+        }
         let mut idle = self.idle.lock();
         if idle.len() < self.keep {
             idle.push(db);
@@ -249,6 +263,40 @@ mod tests {
         assert_eq!(pool.idle.lock().len(), 0, "all of them are out");
         drop(handles);
         assert_eq!(pool.idle.lock().len(), 2, "the rest closed on return");
+    }
+
+    #[test]
+    fn a_connection_inside_a_transaction_is_not_pooled() {
+        let (_dir, pool) = pool();
+        {
+            let db = pool.get().unwrap();
+            db.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        }
+        assert_eq!(pool.idle.lock().len(), 0, "closed, not kept");
+        // The lock went with it: another connection can write.
+        let db = pool.get().unwrap();
+        db.conn
+            .busy_timeout(std::time::Duration::ZERO)
+            .and_then(|()| db.conn.execute_batch("BEGIN IMMEDIATE; COMMIT"))
+            .expect("the closed connection's write lock was released");
+    }
+
+    #[test]
+    fn a_pooled_connection_waits_for_the_write_lock_again() {
+        let (_dir, pool) = pool();
+        {
+            let db = pool.get().unwrap();
+            db.conn.busy_timeout(std::time::Duration::ZERO).unwrap();
+        }
+        let db = pool.get().unwrap();
+        let ms: i64 = db
+            .conn
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            ms,
+            super::super::connection::BUSY_TIMEOUT.as_millis() as i64
+        );
     }
 
     #[test]

@@ -114,14 +114,19 @@ pub fn queue_relinks(
     ) else {
         return Vec::new();
     };
+    let unlinked: Vec<String> = items
+        .iter()
+        .filter(|(_, _, uid, _)| !rows.contains_key(uid))
+        .map(|(_, _, _, path)| path.to_string_lossy().into_owned())
+        .collect();
+    let by_path = queries::track_ids_by_paths(&db.conn, &unlinked).unwrap_or_default();
     items
         .into_iter()
         .filter_map(|(id, held, uid, path)| {
-            let now = rows.get(&uid).copied().or_else(|| {
-                queries::track_id_by_path(&db.conn, &path.to_string_lossy())
-                    .ok()
-                    .flatten()
-            });
+            let now = rows
+                .get(&uid)
+                .or_else(|| by_path.get(path.to_string_lossy().as_ref()))
+                .copied();
             (now != held).then_some((id, now))
         })
         .collect()
