@@ -21,7 +21,9 @@ use super::*;
 /// change is queued in the outbox in the transaction that writes the
 /// favourite, so a sync importing the server's stars sees both or neither,
 /// and is then sent on a thread of its own. A slow or unreachable server never
-/// holds up the click; the outbox delivers what the send does not.
+/// holds up the click; the outbox delivers what the send does not, and a
+/// change the send delivered is marked so that no sync sends it again over a
+/// newer change made elsewhere.
 pub fn set_favourite(
     db: &Database,
     user: i64,
@@ -32,21 +34,21 @@ pub fn set_favourite(
     let Some((now, queued)) = write_favourite(db, user, kind, id, star)? else {
         return Ok(None);
     };
-    if let Some(remote_id) = queued {
-        send_soon(kind, remote_id, now);
+    if let Some(change) = queued {
+        send_soon(kind, change);
     }
     Ok(Some(now))
 }
 
-/// The write [`set_favourite`] makes, and the server id of the change it
-/// queued, if it queued one.
+/// The write [`set_favourite`] makes, and the change it queued for the
+/// server, if it queued one.
 fn write_favourite(
     db: &Database,
     user: i64,
     kind: FavouriteKind,
     id: i64,
     star: Option<bool>,
-) -> rusqlite::Result<Option<(bool, Option<String>)>> {
+) -> rusqlite::Result<Option<(bool, Option<queries::FavouriteChange>)>> {
     let conn = &db.conn;
     queries::atomically(conn, || {
         let table = match kind {
@@ -94,15 +96,15 @@ fn write_favourite(
             FavouriteKind::Album => queries::album_remote_id(conn, id)?,
             FavouriteKind::Artist => queries::artist_remote_id(conn, id)?,
         };
-        if let Some(remote_id) = &remote_id {
-            queries::queue_favourite_change(conn, kind.as_str(), remote_id, now)?;
-        }
-        Ok(Some((now, remote_id)))
+        let queued = remote_id
+            .map(|remote_id| queries::queue_favourite_change(conn, kind.as_str(), &remote_id, now))
+            .transpose()?;
+        Ok(Some((now, queued)))
     })
 }
 
 /// Send a change already in the outbox now, rather than at the next sync.
-fn send_soon(kind: FavouriteKind, remote_id: String, star: bool) {
+fn send_soon(kind: FavouriteKind, change: queries::FavouriteChange) {
     let cfg = Config::cached();
     if !cfg.remote.enabled {
         return;
@@ -113,13 +115,33 @@ fn send_soon(kind: FavouriteKind, remote_id: String, star: bool) {
     };
     std::thread::Builder::new()
         .name("koan-fav-sync".into())
-        .spawn(
-            move || match send_favourite(&client, kind, &remote_id, star) {
-                Ok(()) => log::info!("synced favourite to remote: {kind:?} {remote_id} = {star}"),
-                Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
-            },
-        )
+        .spawn(move || match crate::db::pool::shared().get() {
+            Ok(db) => deliver(&db, &client, kind, &change),
+            Err(e) => log::warn!("favourite not sent; sent with the next sync: {e}"),
+        })
         .ok();
+}
+
+/// Send one change from the outbox, and mark it sent if the server took it.
+fn deliver(
+    db: &Database,
+    client: &SubsonicClient,
+    kind: FavouriteKind,
+    change: &queries::FavouriteChange,
+) {
+    match send_favourite(client, kind, &change.remote_id, change.star) {
+        Ok(()) => {
+            log::info!(
+                "synced favourite to remote: {kind:?} {} = {}",
+                change.remote_id,
+                change.star
+            );
+            if let Err(e) = queries::mark_favourite_change_sent(&db.conn, change) {
+                log::warn!("could not mark a sent favourite change: {e}");
+            }
+        }
+        Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
+    }
 }
 
 fn send_favourite(
@@ -172,6 +194,7 @@ pub fn reconcile_favourites(
     client: &SubsonicClient,
 ) -> rusqlite::Result<FavouriteSync> {
     let mut out = FavouriteSync::default();
+    let mut before = queries::server_stars(&db.conn)?;
 
     for change in queries::favourite_changes(&db.conn)? {
         let kind = match change.kind.as_str() {
@@ -179,9 +202,29 @@ pub fn reconcile_favourites(
             "artist" => FavouriteKind::Artist,
             _ => FavouriteKind::Track,
         };
+        // What the server held once it took the change, which is what the
+        // stars read below are compared with: a delivered star missing from
+        // them was unstarred elsewhere.
+        let delivered = |before: &mut HashSet<Key>| {
+            let k = (change.kind.clone(), change.remote_id.clone());
+            if change.star {
+                before.insert(k);
+            } else {
+                before.remove(&k);
+            }
+        };
+        // Sent when it was made, before the stars below are read.
+        if change.sent {
+            delivered(&mut before);
+            queries::forget_favourite_change(&db.conn, &change)?;
+            continue;
+        }
         let sent = send_favourite(client, kind, &change.remote_id, change.star);
         match &sent {
-            Ok(()) => out.pushed += 1,
+            Ok(()) => {
+                out.pushed += 1;
+                delivered(&mut before);
+            }
             // Refused for the account: signing in again changes the answer.
             Err(SubsonicError::Api { code: 40..=44, .. }) => {
                 log::warn!("favourite change refused for the account; kept for the next sync");
@@ -220,7 +263,6 @@ pub fn reconcile_favourites(
     .into_iter()
     .flat_map(|(kind, ids)| ids.iter().map(move |id| key(kind, id)))
     .collect();
-    let before = queries::server_stars(&db.conn)?;
     let pending = pending_changes(db)?;
 
     let mut sent: Vec<Key> = Vec::new();
@@ -487,6 +529,45 @@ mod favourite_sync_tests {
         assert!(songs.lock().unwrap().is_empty());
     }
 
+    /// Starred here and taken by the server at once, then unstarred on another
+    /// device: the next sync here neither sends the star again nor keeps it.
+    #[test]
+    fn a_delivered_star_is_not_sent_again_over_an_unstar_elsewhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let track = favourite_track(&db, "Three", "s3");
+        queries::remove_favourite(&db.conn, queries::LOCAL_USER, track).unwrap();
+        let songs = starred(&[]);
+        let stars = Arc::new(Mutex::new(Vec::new()));
+        let url = serve_on(stars.clone(), songs.clone(), Unstar::Taken);
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_favourites(&db, &client).unwrap();
+
+        let (now, queued) = write_favourite(
+            &db,
+            queries::LOCAL_USER,
+            FavouriteKind::Track,
+            track,
+            Some(true),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(now);
+        deliver(&db, &client, FavouriteKind::Track, &queued.unwrap());
+        assert_eq!(*songs.lock().unwrap(), ["s3"]);
+
+        songs.lock().unwrap().clear();
+        let sync = reconcile_favourites(&db, &client).unwrap();
+        assert_eq!(sync.pushed, 0);
+        assert_eq!(*stars.lock().unwrap(), ["s3"], "the star was sent again");
+        assert!(songs.lock().unwrap().is_empty());
+        assert!(
+            !is_favourite(&db, track),
+            "the unstar made elsewhere was lost"
+        );
+        assert!(queries::favourite_changes(&db.conn).unwrap().is_empty());
+    }
+
     /// Unfavourited here while the server was out of reach: the sync that
     /// cannot send it keeps it, and the next one sends it and keeps it off.
     #[test]
@@ -510,7 +591,9 @@ mod favourite_sync_tests {
 
         let written =
             write_favourite(&db, queries::LOCAL_USER, FavouriteKind::Track, track, None).unwrap();
-        assert_eq!(written, Some((false, Some("s1".into()))));
+        let (now, queued) = written.unwrap();
+        assert!(!now);
+        assert_eq!(queued.unwrap().remote_id, "s1");
 
         reconcile_favourites(&db, &unreachable).unwrap();
         assert!(
