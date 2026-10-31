@@ -124,6 +124,7 @@ impl Browse {
             genre: set(&self.genre),
             // The server's library is all on the server.
             on_device: false,
+            ..Default::default()
         }
     }
 

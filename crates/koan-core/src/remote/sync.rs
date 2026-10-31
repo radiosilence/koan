@@ -246,10 +246,7 @@ pub fn sync_library(
     let mut result = SyncResult::default();
     log::info!("syncing the library from {server_url}");
 
-    let sync_start = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let sync_start = crate::clock::unix_secs();
 
     let albums = list_albums(client, progress, cancel)?;
 

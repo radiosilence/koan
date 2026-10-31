@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 use super::{confirm, format_bytes, open_db};
 
 pub fn cmd_cache_status() {
-    let cfg = config::Config::load().unwrap_or_default();
+    let cfg = config::Config::cached();
     let cache_dir = cfg.cache_dir();
 
     println!("{} {}", "path:".cyan(), cache_dir.display());
@@ -58,7 +58,7 @@ pub fn cmd_cache_status() {
 }
 
 pub fn cmd_cache_clear(skip_confirm: bool) {
-    let cfg = config::Config::load().unwrap_or_default();
+    let cfg = config::Config::cached();
     let cache_dir = cfg.cache_dir();
 
     if !cache_dir.exists() {
