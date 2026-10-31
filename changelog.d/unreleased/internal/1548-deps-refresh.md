@@ -1,0 +1,1 @@
+- **Dependencies, tools and CI actions are on their latest releases.** rusqlite 0.41, parking_lot 0.13, souvlaki 0.9 and sift-music 0.10 among them, AGP 9.5 and Gradle 9.8.2 for Android, and Node 26 for the Pulumi package. ratatui-image stays on 11.1 until 12.0 leaves release candidate.
