@@ -2804,8 +2804,8 @@ type Setting = (String, Option<String>, Vec<(String, bool)>, String);
 ///   before this could and a synced preset can, is set from it the same way;
 /// - an output whose correction is a group, of which one member plays, has
 ///   that member; a group in a tuning becomes its member playing;
-/// - with processing switched off, which is no longer a thing, every output
-///   is flat, its correction and tuning kept as a preset to go back to.
+/// - with `dsp.enabled` false, every output is flat, its correction and
+///   tuning kept as a preset to go back to.
 pub fn migrate() -> Result<(), String> {
     migrate_presets()?;
     flatten_off()

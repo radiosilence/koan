@@ -16,7 +16,7 @@ use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
 use super::pages::{Credits, credit_links, link, respond, unavailable};
-use super::{UiState, open};
+use super::{Logged, UiState, open};
 use crate::auth::AuthUser;
 use crate::html::{Html, Render};
 use crate::share::{blocking, duration, not_found};
@@ -76,14 +76,14 @@ pub(super) async fn page(
 fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
     let db = open(&s.pool)?;
     let conn = &db.conn;
-    let Some(t) = queries::tracks_by_ids(conn, &[id]).ok()?.pop() else {
+    let Some(t) = queries::tracks_by_ids(conn, &[id]).logged()?.pop() else {
         return Some(None);
     };
     let album = t
         .album_id
         .map(|a| queries::get_album(conn, a))
         .transpose()
-        .ok()?
+        .logged()?
         .flatten();
     let uid = |kind, id: i64| {
         queries::uids_for(conn, kind, [id])
@@ -95,7 +95,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<Html>> {
         Some(a) => uid(UidKind::Album, a)?,
         None => None,
     };
-    let sources = queries::sources_of_track(conn, id).ok()?;
+    let sources = queries::sources_of_track(conn, id).logged()?;
     let credits = Credits::load(conn, std::slice::from_ref(&t), t.album_id.as_slice());
     let artist = credit_links(&credits.track(&t), false);
     let album_artist = credit_links(

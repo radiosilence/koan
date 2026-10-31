@@ -201,12 +201,11 @@ pub fn remove_vanished_remote(
 
 /// Fold together the rows one file got by being spelled two ways.
 ///
-/// A drop from Finder used to index a file under the precomposed spelling
-/// Foundation hands over, and the next scan stored the same file again under
-/// the directory entry's own, decomposed bytes — the two open the same file on
-/// a Mac, and `tracks.path` is compared bytewise. Paths are resolved against
-/// the directory on the way in now, so only this can bring the pairs it left
-/// back together.
+/// A pair is a file indexed under the precomposed spelling Foundation hands
+/// over and again under the directory entry's own decomposed bytes: the two
+/// open the same file on a Mac, and `tracks.path` is compared bytewise. Paths
+/// are resolved against the directory on the way in, so pairs exist only in
+/// libraries indexed before that, and only this brings them together.
 ///
 /// The older row wins: it carries the play history, and the sync link if a
 /// server has the recording. It takes the decomposed spelling, which is the one

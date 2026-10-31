@@ -417,8 +417,12 @@ impl Store {
             }),
             tv_addrs: self.tv_addrs.clone(),
         };
-        if let Ok(json) = serde_json::to_string(&saved) {
-            let _ = std::fs::write(saved_path(), json);
+        let path = saved_path();
+        let written = serde_json::to_string(&saved)
+            .map_err(std::io::Error::other)
+            .and_then(|json| std::fs::write(&path, json));
+        if let Err(e) = written {
+            log::warn!("devices: saving {}: {e}", path.display());
         }
     }
 }
@@ -1269,7 +1273,7 @@ pub fn list() -> Vec<Device> {
 
 /// `list` as of `now`, Unix seconds.
 fn list_at(now: i64) -> Vec<Device> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     list_from(now, link::library_fingerprint(&cfg))
 }
 
@@ -2333,7 +2337,7 @@ fn ask_server(
     cmd: &LinkCommand,
     ack: Option<u64>,
 ) -> Result<Option<acks::AckOutcome>, Missed> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     // No server and not on this network: nothing could carry it.
     let client = crate::helpers::subsonic_client(&cfg)
         .ok_or_else(|| Missed::OutOfReach(out_of_reach(id)))?;

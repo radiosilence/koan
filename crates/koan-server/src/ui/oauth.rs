@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::{UiState, html, open};
+use super::{Logged, UiState, html, open};
 use crate::auth::AuthUser;
 use crate::html::Render;
 use crate::share::not_found;
@@ -203,7 +203,7 @@ pub(super) async fn register(State(s): State<UiState>, Json(r): Json<Registratio
         typ: CLIENT_TYP.into(),
         redirect_uris: r.redirect_uris,
         client_name,
-        iat: auth::now_unix(),
+        iat: koan_core::clock::unix_secs() as u64,
     };
     let id = EncodingKey::from_ed_pem(&s.auth.private_pem)
         .and_then(|k| jsonwebtoken::encode(&Header::new(Algorithm::EdDSA), &c, &k));
@@ -437,7 +437,7 @@ pub(super) async fn approve(
     let Ok(code) = auth::random_token() else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    let now = auth::now_unix();
+    let now = koan_core::clock::unix_secs() as u64;
     {
         let mut codes = s.codes.lock();
         codes.retain(|_, g| g.expires > now);
@@ -492,7 +492,7 @@ enum Exchange {
 }
 
 fn exchange(s: &UiState, t: &TokenRequest) -> Exchange {
-    let now = auth::now_unix();
+    let now = koan_core::clock::unix_secs() as u64;
     let mut codes = s.codes.lock();
     let Some(code) = codes.get_mut(&t.code).filter(|c| c.expires > now) else {
         return Exchange::Refused;
@@ -566,7 +566,7 @@ pub(super) async fn token(State(s): State<UiState>, Form(t): Form<TokenRequest>)
             let st = s.clone();
             let issued = tokio::task::spawn_blocking(move || {
                 let db = open(&st.pool)?;
-                let user = auth_queries::get_user_by_id(&db.conn, user_id).ok()??;
+                let user = auth_queries::get_user_by_id(&db.conn, user_id).logged()??;
                 let access = auth::mint_scoped_token(
                     &st.auth.private_pem,
                     user.id,
@@ -575,11 +575,11 @@ pub(super) async fn token(State(s): State<UiState>, Form(t): Form<TokenRequest>)
                     st.auth.access_ttl_secs,
                     Some(auth::MCP_SCOPE),
                 )
-                .ok()?;
-                let refresh = auth::random_token().ok()?;
-                let expires = auth::now_unix() as i64 + st.auth.refresh_ttl_secs as i64;
+                .logged()?;
+                let refresh = auth::random_token().logged()?;
+                let expires = koan_core::clock::unix_secs() + st.auth.refresh_ttl_secs as i64;
                 auth_queries::store_grant_token(&db.conn, &refresh, user.id, expires, Some(&grant))
-                    .ok()?;
+                    .logged()?;
                 Some((access, refresh))
             })
             .await

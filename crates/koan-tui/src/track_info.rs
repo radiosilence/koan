@@ -179,7 +179,14 @@ fn entry_fields(entry: &QueueEntry) -> Fields {
         ("title", entry.title.clone()),
         ("artist", entry.artist.clone()),
     ];
-    if !entry.album_artist.is_empty() && entry.album_artist != entry.artist {
+    let credits = koan_core::helpers::RowCredits::new::<&str>(
+        &entry.artist,
+        &entry.album_artist,
+        Default::default(),
+        None,
+        &[],
+    );
+    if !entry.album_artist.is_empty() && credits.differ() {
         out.push(("album artist", entry.album_artist.clone()));
     }
     out.push(("album", entry.album.clone()));

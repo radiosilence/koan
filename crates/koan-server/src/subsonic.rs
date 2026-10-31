@@ -4974,8 +4974,7 @@ fn share_node(
 /// Where share links point; sharing is refused without it rather than
 /// handing out an address that may not be reachable.
 fn share_base() -> Result<String, SubsonicError> {
-    Config::load()
-        .unwrap_or_default()
+    Config::cached()
         .server_url()
         .ok_or_else(|| SubsonicError::internal("server.url is not set on this server"))
 }
@@ -6691,7 +6690,7 @@ pub fn subsonic_router(
     covers: Arc<crate::covers::Covers>,
     users: Arc<PasswordVerifier>,
 ) -> Option<axum::Router> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
 
     if !cfg.subsonic.enabled {
         return None;

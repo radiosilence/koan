@@ -128,7 +128,7 @@ pub fn queue_relinks(
 /// leave out — the stream URL and the album's date — is read for all of them
 /// together.
 pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) -> Vec<PlaylistItem> {
-    playlist_items_with(db, &Config::load().unwrap_or_default(), tracks)
+    playlist_items_with(db, &Config::cached(), tracks)
 }
 
 pub(super) fn playlist_items_with(
