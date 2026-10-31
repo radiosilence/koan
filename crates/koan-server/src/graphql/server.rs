@@ -553,7 +553,10 @@ impl ApiServer {
                     // link names, and nothing else. The Host guard still applies.
                     // An app's own server reads the address as each page is
                     // asked for, since the app changes it as it runs.
-                    let share_url = (!embedded).then(|| cfg.server_url()).flatten();
+                    let share_url = match embedded {
+                        true => crate::ServerUrl::Live,
+                        false => crate::ServerUrl::Fixed(cfg.server_url()),
+                    };
                     let share_routes =
                         crate::share::router(pool.clone(), share_url, covers.clone())
                             .layer(tower_http::catch_panic::CatchPanicLayer::new());

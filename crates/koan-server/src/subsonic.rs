@@ -99,9 +99,9 @@ struct AppState {
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
-    /// Stands in for `server.url` in tests, which share one configuration.
-    #[cfg(test)]
-    test_server_url: Option<String>,
+    /// `server.url`: where an assistant reaches `/mcp`, and what `ping` gives
+    /// clients to know the server by.
+    server_url: crate::ServerUrl,
     /// Whether `[push]` is enabled: the server pushes through the relay, and
     /// the app asks to show notifications only where it does.
     push: bool,
@@ -126,15 +126,8 @@ struct LibraryModified {
 }
 
 impl AppState {
-    /// `server.url`: where an assistant reaches `/mcp`, and what `ping` gives
-    /// clients to know the server by. Read as asked, since an app sharing its
-    /// library changes it as it runs.
     fn server_url(&self) -> Option<String> {
-        #[cfg(test)]
-        if let Some(url) = &self.test_server_url {
-            return Some(url.clone());
-        }
-        Config::cached().server_url()
+        self.server_url.get()
     }
 
     fn open_db(&self) -> Result<Handle<'_>, SubsonicError> {
@@ -6788,8 +6781,10 @@ pub fn subsonic_router(
         last_modified: Default::default(),
         transcoder,
         push: crate::push::pusher().is_some(),
-        #[cfg(test)]
-        test_server_url: None,
+        server_url: match profile {
+            crate::graphql::Profile::Embedded => crate::ServerUrl::Live,
+            _ => crate::ServerUrl::Fixed(cfg.server_url()),
+        },
         stop: stop.clone(),
         host_key,
     });
@@ -6836,7 +6831,7 @@ mod tests {
             last_modified: Default::default(),
             transcoder: None,
             push: false,
-            test_server_url: None,
+            server_url: crate::ServerUrl::Fixed(None),
             stop: Default::default(),
             host_key: None,
         });
@@ -8525,7 +8520,7 @@ mod tests {
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.test_server_url = Some("https://koan.example.com".into());
+        inner.server_url = crate::ServerUrl::Fixed(Some("https://koan.example.com".into()));
         let state = Arc::new(inner);
         assert!(extensions(state.clone()).await.contains("koanMcp"));
         let v = mcp(state.clone(), mate).await;
@@ -11074,7 +11069,7 @@ mod tests {
 
         let (state, _dir) = test_state();
         let mut inner = Arc::try_unwrap(state).ok().unwrap();
-        inner.test_server_url = Some("https://koan.example.com".into());
+        inner.server_url = crate::ServerUrl::Fixed(Some("https://koan.example.com".into()));
         let r = json_of(build_test_router(Arc::new(inner)), &ping).await;
         assert_eq!(r["serverUrl"], "https://koan.example.com", "{r}");
     }

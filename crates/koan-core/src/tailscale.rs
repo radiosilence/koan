@@ -228,6 +228,10 @@ pub fn funnel(port: u16) -> Result<String, FunnelError> {
 /// to the tailnet stays, for local `port` too: `tailscale serve` set up by
 /// hand is not Funnel's to take down.
 pub fn funnel_off(port: u16) -> Result<(), FunnelError> {
+    // Not installed, or not running: nothing is published through it.
+    if status().is_none() {
+        return Ok(());
+    }
     for on in served()?
         .into_iter()
         .filter(|s| s.public && proxies_to(s.root.as_deref(), port))

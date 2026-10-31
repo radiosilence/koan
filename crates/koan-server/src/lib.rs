@@ -18,6 +18,25 @@ pub mod subsonic;
 mod transcode;
 pub mod ui;
 
+/// Where a server's `server.url` comes from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServerUrl {
+    /// Read once, at start: a server whose configuration changes only with a
+    /// restart, and tests, which share one configuration.
+    Fixed(Option<String>),
+    /// Read as asked: an app sharing its library changes it as it runs.
+    Live,
+}
+
+impl ServerUrl {
+    pub fn get(&self) -> Option<String> {
+        match self {
+            Self::Fixed(url) => url.clone(),
+            Self::Live => koan_core::config::Config::cached().server_url(),
+        }
+    }
+}
+
 // Re-exports for downstream convenience.
 pub use auth::AuthUser;
 pub use graphql::{KoanSchema, build_schema};

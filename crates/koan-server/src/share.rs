@@ -150,13 +150,13 @@ pub(crate) fn unstyled_classes(html: &str, css: &str, hooks: &[&str]) -> Vec<Str
 struct ShareState {
     pool: Arc<Pool>,
     /// `server.url`: link previews need absolute addresses.
-    server_url: Option<String>,
+    server_url: crate::ServerUrl,
     covers: std::sync::Arc<crate::covers::Covers>,
 }
 
 pub fn router(
     pool: Arc<Pool>,
-    server_url: Option<String>,
+    server_url: crate::ServerUrl,
     covers: std::sync::Arc<crate::covers::Covers>,
 ) -> axum::Router {
     axum::Router::new()
@@ -591,10 +591,7 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
             &tracks,
             &subject,
             &credits,
-            s.server_url
-                .clone()
-                .or_else(|| koan_core::config::Config::cached().server_url())
-                .as_deref(),
+            s.server_url.get().as_deref(),
         ))
     })
     .await;
@@ -981,7 +978,11 @@ mod tests {
         let covers = test_covers(&dir);
         (
             dir,
-            router(Arc::new(Pool::new(db_path)), None, covers),
+            router(
+                Arc::new(Pool::new(db_path)),
+                crate::ServerUrl::Fixed(None),
+                covers,
+            ),
             share.id,
             b,
         )
@@ -1159,7 +1160,7 @@ mod tests {
         Library {
             app: router(
                 Arc::new(Pool::new(db_path)),
-                Some("https://koan.example/".into()),
+                crate::ServerUrl::Fixed(Some("https://koan.example/".into())),
                 test_covers(&dir),
             ),
             dir,
@@ -1303,7 +1304,7 @@ mod tests {
 
         let bare = router(
             Arc::new(Pool::new(lib.dir.path().join("koan.db"))),
-            None,
+            crate::ServerUrl::Fixed(None),
             test_covers(&lib.dir),
         );
         let (_, _, body) = get(&bare, &format!("/share/{id}"), None).await;
