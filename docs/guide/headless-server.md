@@ -73,6 +73,11 @@ the audio; the TUI is a remote control:
 koan play --server http://host:4000
 ```
 
+It follows the server's `nowPlaying` and `queueUpdated` subscriptions over
+`/graphql/ws`, so it hears of a change when it happens and sends nothing while
+nothing changes. A command the server refuses, and losing or regaining the
+server, show on the status line.
+
 To play its library on the machine you are sitting at, sign in to it as a remote
 server instead (`koan remote login`, or Settings in the apps). Tracks then play
 through the local engine and download into the local cache like any other remote

@@ -99,6 +99,19 @@ pub fn take_library_changed() -> bool {
     LIBRARY_CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
 
+static SAID: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+
+/// A line to show on the status line from a thread that has no `App`: the
+/// remote bridge, saying a command failed or the server went away.
+pub fn say_later(line: impl Into<String>) {
+    SAID.lock().push(line.into());
+}
+
+/// The lines `say_later` was given since this was last asked.
+pub fn take_said() -> Vec<String> {
+    std::mem::take(&mut *SAID.lock())
+}
+
 /// Whether a track has to come from the server to play here.
 pub fn needs_fetch(t: &koan_core::db::queries::TrackRow) -> bool {
     t.remote_id.is_some() && t.path.is_none() && t.cached_path.is_none()

@@ -106,6 +106,15 @@ pub fn engine_changed() -> &'static Wake {
     WAKE.get_or_init(Wake::new)
 }
 
+/// Rung whenever the config may have changed: koan wrote it, or the library
+/// watch saw the files change under it. What a background thread that acts on
+/// a setting waits on, so it neither re-reads the files on a timer nor misses
+/// a change made while it slept.
+pub fn config_changed() -> &'static Wake {
+    static WAKE: OnceLock<Wake> = OnceLock::new();
+    WAKE.get_or_init(Wake::new)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

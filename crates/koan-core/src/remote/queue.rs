@@ -17,9 +17,6 @@ use crate::remote::downloads::{self, DownloadStore};
 /// every extra request competes with it for the same link.
 const PRIORITY_PERMITS: usize = 2;
 
-/// How often a running transfer asks whether it is still wanted.
-const CANCEL_CHECK: Duration = Duration::from_millis(250);
-
 /// Persistent download queue — lives for the app's lifetime.
 ///
 /// Follows the playlist rather than being told about it: whenever the set of
@@ -419,16 +416,20 @@ fn run_download(inner: &Arc<Inner>, db_id: i64) {
         // tracks that can never arrive would otherwise sit saying nothing.
         None => Some(Err(crate::helpers::remote_unavailable(&cfg))),
         Some(client) => {
-            // Asked per chunk, answered from the store at most every
-            // `CANCEL_CHECK`. Replacing the queue is one command and one
-            // playlist change (`SharedPlayerState::replace_playlist`), so the
-            // playlist is never momentarily without a track still wanted.
-            let checked = std::cell::Cell::new(std::time::Instant::now());
+            // Asked per chunk, and answered from the store only once the
+            // engine's signal has rung since the last answer: everything that
+            // abandons a transfer rings it. Replacing the queue is one command
+            // and one playlist change (`SharedPlayerState::replace_playlist`),
+            // so the playlist is never momentarily without a track still
+            // wanted.
+            let wake = crate::signal::engine_changed();
+            let asked = std::cell::Cell::new(None);
             let cancelled = || {
-                if checked.get().elapsed() < CANCEL_CHECK {
+                let now = wake.generation();
+                if asked.get() == Some(now) {
                     return false;
                 }
-                checked.set(std::time::Instant::now());
+                asked.set(Some(now));
                 store.abandoned(db_id)
             };
             std::panic::catch_unwind(AssertUnwindSafe(|| {
