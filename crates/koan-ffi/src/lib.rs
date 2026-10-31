@@ -5957,7 +5957,7 @@ impl KoanEngine {
         // This device's own queue and transfers go with the server it leaves,
         // before its library is forgotten.
         let leaving = Arc::downgrade(&engine);
-        koan_core::helpers::on_leaving_server(Some(Box::new(move || {
+        koan_core::helpers::on_leaving_server(Some(Arc::new(move || {
             if let Some(engine) = leaving.upgrade() {
                 let sent = engine
                     .tx

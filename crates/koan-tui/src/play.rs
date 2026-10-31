@@ -373,7 +373,7 @@ pub fn run_tui(
     // The local player's queue and transfers go with the server this device
     // leaves, before its library is forgotten.
     let leaving = tx.clone();
-    koan_core::helpers::on_leaving_server(Some(Box::new(move || {
+    koan_core::helpers::on_leaving_server(Some(std::sync::Arc::new(move || {
         let sent = leaving.send_timeout(PlayerCommand::SignedOut, Duration::from_secs(1));
         if sent.is_err() {
             log::warn!("the player did not take the sign-out; the queue stays");

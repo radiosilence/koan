@@ -40,7 +40,7 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
     let cfg = Config::load()?;
     retire_push(&cfg);
     crate::remote::devices::forget_shares();
-    leave(&cfg, |cfg| {
+    leave(&cfg, None, |cfg| {
         cfg.remote.enabled = false;
         cfg.remote.password = String::new();
         cfg.remote.api_key = String::new();
@@ -57,7 +57,7 @@ pub fn sign_out() -> Result<(), crate::config::ConfigError> {
 
 /// What a front end that owns a player does when this device leaves a server:
 /// let go of the queue and transfers that were that server's.
-type OnLeave = Box<dyn Fn() + Send + Sync>;
+type OnLeave = Arc<dyn Fn() + Send + Sync>;
 static ON_LEAVE: parking_lot::RwLock<Option<OnLeave>> = parking_lot::RwLock::new(None);
 
 /// Run `hook` each time this device leaves a server, by signing out or by
@@ -70,17 +70,27 @@ pub fn on_leaving_server(hook: Option<OnLeave>) {
     *ON_LEAVE.write() = hook;
 }
 
-/// Stop the syncs of the server `old` is signed in to, write `change`, then
+/// Stop the syncs of the account `old` is signed in to, write `change`, then
 /// forget that server's library. Forgotten only once the change is kept, so
 /// a write that fails leaves the server and its library as they were; the
 /// syncs are held off throughout, so none writes under the forgetting.
-fn leave(old: &Config, change: impl FnOnce(&mut Config)) -> Result<(), crate::config::ConfigError> {
+/// `joining` is the account signed in to instead, whose syncs may run again
+/// from before the write: the write is what wakes the automatic one.
+fn leave(
+    old: &Config,
+    joining: Option<(&str, &str)>,
+    change: impl FnOnce(&mut Config),
+) -> Result<(), crate::config::ConfigError> {
     if !old.remote.url.is_empty() {
-        crate::remote::sync::cancel(&old.remote.url);
+        crate::remote::sync::cancel(&old.remote.url, &old.remote.username);
+    }
+    if let Some((url, username)) = joining {
+        crate::remote::sync::resume(url, username);
     }
     let _syncs = crate::helpers::hold_syncs();
     Config::persist(change)?;
-    if let Some(hook) = ON_LEAVE.read().as_ref() {
+    let hook = ON_LEAVE.read().clone();
+    if let Some(hook) = hook {
         hook();
     }
     let forgotten = crate::db::pool::shared()
@@ -251,13 +261,14 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
         };
     };
     if same_account(&before.remote, url, username) {
+        // Signed out of earlier: its syncs may run again, from before the
+        // write that wakes the automatic one.
+        crate::remote::sync::resume(url, username);
         Config::persist(keep)?;
     } else {
         retire_push(&before);
-        leave(&before, keep)?;
+        leave(&before, Some((url, username)), keep)?;
     }
-    // Left earlier, by signing out or in elsewhere: its syncs may run again.
-    crate::remote::sync::resume(url);
     // Whatever account was here before, its devices are not this one's, and
     // the link it had open closes, to open again as this one.
     crate::remote::proof::forget();
@@ -722,7 +733,7 @@ mod refusal_tests {
         // Whether the config still had the server enabled when it was heard.
         let heard = Arc::new(Mutex::new(Vec::new()));
         let told = heard.clone();
-        on_leaving_server(Some(Box::new(move || {
+        on_leaving_server(Some(Arc::new(move || {
             told.lock()
                 .unwrap()
                 .push(Config::load().unwrap().remote.enabled);

@@ -63,7 +63,7 @@ pub fn sync_remote(
     progress: &(dyn Fn(crate::remote::sync::SyncProgress) + Sync),
 ) -> Result<Synced, crate::remote::sync::SyncError> {
     use crate::remote::sync;
-    let running = sync::Running::enter(url);
+    let running = sync::Running::enter(url, username);
     let cancelled = || {
         if running.cancel.load(std::sync::atomic::Ordering::Relaxed) {
             Err(sync::SyncError::Cancelled)

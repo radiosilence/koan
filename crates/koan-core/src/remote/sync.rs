@@ -24,13 +24,25 @@ pub enum SyncError {
     Cancelled,
 }
 
-/// The syncs running or waiting to run, by the server each is of.
-static RUNNING: parking_lot::Mutex<Vec<(String, Arc<AtomicBool>)>> =
+/// A server and an account on it, as syncs are told apart: by address
+/// without a trailing slash, and by username without case, as servers
+/// compare them.
+type Account = (String, String);
+
+fn account(url: &str, username: &str) -> Account {
+    (
+        url.trim_end_matches('/').to_owned(),
+        username.to_lowercase(),
+    )
+}
+
+/// The syncs running or waiting to run, by the account each is of.
+static RUNNING: parking_lot::Mutex<Vec<(Account, Arc<AtomicBool>)>> =
     parking_lot::Mutex::new(Vec::new());
 
-/// Servers left by [`cancel`] and not signed in to again: a sync of one that
+/// Accounts left by [`cancel`] and not signed in to again: a sync of one that
 /// starts afterwards, from a client made before, stops at once.
-static LEFT: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+static LEFT: parking_lot::Mutex<Vec<Account>> = parking_lot::Mutex::new(Vec::new());
 
 /// A sync's place in [`RUNNING`], held for as long as it runs.
 pub(crate) struct Running {
@@ -38,14 +50,18 @@ pub(crate) struct Running {
 }
 
 impl Running {
-    pub(crate) fn enter(url: &str) -> Self {
-        let url = url.trim_end_matches('/');
-        let left = LEFT.lock().iter().any(|l| l == url);
+    pub(crate) fn enter(url: &str, username: &str) -> Self {
+        let of = account(url, username);
+        let left = LEFT.lock().contains(&of);
         if left {
-            log::warn!("not syncing {url}: this device left it and has not signed in again");
+            log::warn!(
+                "not syncing {} as {}: this device left it and has not signed in again",
+                of.0,
+                of.1
+            );
         }
         let cancel = Arc::new(AtomicBool::new(left));
-        RUNNING.lock().push((url.to_owned(), cancel.clone()));
+        RUNNING.lock().push((of, cancel.clone()));
         Self { cancel }
     }
 }
@@ -58,26 +74,26 @@ impl Drop for Running {
     }
 }
 
-/// Stop every sync of the server at `url`, running or waiting for its turn,
+/// Stop every sync of `username` at `url`, running or waiting for its turn,
 /// and any that starts until [`resume`] is called for it. Each stops at its
 /// next page or step and returns [`SyncError::Cancelled`].
-pub fn cancel(url: &str) {
-    let url = url.trim_end_matches('/');
+pub fn cancel(url: &str, username: &str) {
+    let of = account(url, username);
     {
         let mut left = LEFT.lock();
-        if !left.iter().any(|l| l == url) {
-            left.push(url.to_owned());
+        if !left.contains(&of) {
+            left.push(of.clone());
         }
     }
-    for (_, cancel) in RUNNING.lock().iter().filter(|(of, _)| of == url) {
+    for (_, cancel) in RUNNING.lock().iter().filter(|(running, _)| *running == of) {
         cancel.store(true, Ordering::Relaxed);
     }
 }
 
-/// Let syncs of the server at `url` run again: it has been signed in to.
-pub fn resume(url: &str) {
-    let url = url.trim_end_matches('/');
-    LEFT.lock().retain(|l| l != url);
+/// Let syncs of `username` at `url` run again: it is being signed in to.
+pub fn resume(url: &str, username: &str) {
+    let of = account(url, username);
+    LEFT.lock().retain(|left| *left != of);
 }
 
 /// What a walk reports its progress to, and reads to know it should stop.
@@ -1608,7 +1624,7 @@ mod tests {
 
         let signed_out = format!("{}/", server.url());
         let cancelled = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {
-            cancel(&signed_out)
+            cancel(&signed_out, "U")
         });
         assert!(matches!(cancelled, Err(SyncError::Cancelled)));
         assert_eq!(pages(), 0, "no page asked for after the cancel");
@@ -1621,10 +1637,16 @@ mod tests {
             "a sync started after leaving the server stops too"
         );
         assert_eq!(pages(), 0);
+        assert!(
+            !Running::enter(&server.url(), "another")
+                .cancel
+                .load(Ordering::Relaxed),
+            "another account on the server is not the one left"
+        );
 
-        resume(&server.url());
+        resume(&server.url(), "u");
         let other = sync_remote(&db, &client, Walk::Always, &server.url(), "u", &|_| {
-            cancel("http://elsewhere.invalid")
+            cancel("http://elsewhere.invalid", "u")
         })
         .unwrap();
         assert!(other.library.is_complete());
