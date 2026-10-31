@@ -1,28 +1,48 @@
+#[cfg(feature = "native")]
 pub mod artist_info;
 pub mod audio;
+#[cfg(feature = "native")]
 pub mod auth;
+#[cfg(feature = "native")]
 pub mod browse;
 pub mod clock;
 pub mod config;
+#[cfg(feature = "native")]
 pub mod db;
+#[cfg(feature = "native")]
 pub mod graphql_client;
+#[cfg(feature = "native")]
 pub mod helpers;
+#[cfg(feature = "native")]
 pub mod index;
+#[cfg(feature = "native")]
 pub mod invite;
+#[cfg(feature = "native")]
 pub mod lyrics;
+#[cfg(feature = "native")]
 pub mod organize;
+#[cfg(feature = "native")]
 pub mod player;
+#[cfg(feature = "native")]
 pub mod playlists;
+pub mod queue_id;
+#[cfg(feature = "native")]
 pub mod quiet;
+#[cfg(feature = "native")]
 pub mod remote;
+#[cfg(feature = "native")]
 pub mod scrobbling;
+#[cfg(feature = "native")]
 pub mod shelves;
 pub mod signal;
+#[cfg(feature = "native")]
 pub mod smart;
+#[cfg(feature = "native")]
 pub mod tailscale;
+#[cfg(feature = "native")]
 pub mod upnp;
 
 pub use sift::format;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 pub mod test_utils;

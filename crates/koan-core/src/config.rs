@@ -1904,6 +1904,7 @@ fn write_document(
 
 /// Write `contents` to `path` as the configuration files are written: whole,
 /// readable by this user alone, and on tvOS kept through a purge of Caches.
+#[cfg(feature = "native")]
 pub(crate) fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

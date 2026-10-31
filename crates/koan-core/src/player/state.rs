@@ -6,31 +6,9 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use uuid::Uuid;
 
+pub use crate::audio::buffer::RendererClock;
+pub use crate::queue_id::QueueItemId;
 use crate::remote::downloads::{ByteFeed, DownloadStore};
-
-/// Stable identity for a queue entry. UUIDv7 — time-ordered, unique across duplicates.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct QueueItemId(pub Uuid);
-
-impl QueueItemId {
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-}
-
-impl Default for QueueItemId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Debug for QueueItemId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The tail: a v7's leading hex is its timestamp, shared by a whole batch.
-        let hex = self.0.simple().to_string();
-        write!(f, "QId({})", &hex[hex.len() - 8..])
-    }
-}
 
 /// A step the decoder took through the queue from `after`, to `next`: the
 /// item the play mode says follows it, or the end of the queue. The decoder
@@ -901,20 +879,6 @@ pub struct SharedPlayerState {
     sleep: parking_lot::RwLock<Option<Sleep>>,
     /// The sleep timer is fading playback out.
     sleep_fading: AtomicBool,
-}
-
-/// A renderer's playhead: `position_ms`, plus the time since `running` if it
-/// is playing.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RendererClock {
-    pub position_ms: u64,
-    pub running: Option<std::time::Instant>,
-}
-
-impl RendererClock {
-    pub fn now_ms(&self) -> u64 {
-        self.position_ms + self.running.map_or(0, |at| at.elapsed().as_millis() as u64)
-    }
 }
 
 impl SharedPlayerState {

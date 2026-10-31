@@ -18,7 +18,7 @@ use crate::audio::{
     viz::{VizBuffer, VizSnapshot},
 };
 use crate::remote::client::PlaybackReportState;
-use buffer::PlaybackTimeline;
+use buffer::{PlaybackTimeline, RING_BUFFER_SIZE};
 use commands::{CommandChannel, PlayerCommand};
 use history::{InFlight, PlayEvent, PlayRecorder, PlaybackReport};
 use state::{
@@ -26,9 +26,6 @@ use state::{
     SharedPlayerState, Sleep, SleepTimer, TrackInfo,
 };
 use undo::{UndoEntry, UndoStack};
-
-/// Ring buffer size in samples. ~1s at 192kHz stereo.
-pub(crate) const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
 /// Kept back from the end of a track when seeking, so dragging the thumb all
 /// the way over lands in the last moment of it rather than in the next track.

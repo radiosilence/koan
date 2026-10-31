@@ -24,14 +24,18 @@ pub mod fade;
 pub mod ios_backend;
 pub mod opus;
 pub mod replaygain;
+#[cfg(feature = "native")]
 pub mod streaming;
 #[cfg(target_os = "tvos")]
 mod toolbox;
 pub mod viz;
 
-use backend::{AudioBackend, BackendError, DeviceInfo};
+#[cfg(not(target_family = "wasm"))]
+use backend::AudioBackend;
+use backend::{BackendError, DeviceInfo};
 
 /// Construct the platform-appropriate audio backend.
+#[cfg(not(target_family = "wasm"))]
 pub fn platform_backend() -> Box<dyn AudioBackend> {
     #[cfg(target_os = "macos")]
     {
@@ -54,6 +58,7 @@ pub fn platform_backend() -> Box<dyn AudioBackend> {
 /// Whether output holds the platform's audio session: on iOS and tvOS, since
 /// the engine last started and until the player releases it. Never elsewhere,
 /// where there is no session to hold.
+#[cfg(feature = "native")]
 pub(crate) fn session_held() -> bool {
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     {
@@ -65,6 +70,7 @@ pub(crate) fn session_held() -> bool {
     }
 }
 
+#[cfg(feature = "native")]
 pub(crate) fn release_session() {
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     ios_backend::release_session();
@@ -72,6 +78,7 @@ pub(crate) fn release_session() {
 
 /// The platform's audio route changed: on iOS and tvOS, ask the new one for
 /// the output's rate and report what it runs at.
+#[cfg(feature = "native")]
 pub(crate) fn follow_route() {
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     ios_backend::follow_route();
@@ -79,10 +86,24 @@ pub(crate) fn follow_route() {
 
 /// Cross-platform facade: list output devices via the platform backend.
 pub fn list_output_devices() -> Result<Vec<DeviceInfo>, BackendError> {
-    platform_backend().list_devices()
+    #[cfg(not(target_family = "wasm"))]
+    {
+        platform_backend().list_devices()
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        Err(BackendError::NoDevices)
+    }
 }
 
 /// Cross-platform facade: get the default output device.
 pub fn default_output_device() -> Result<DeviceInfo, BackendError> {
-    platform_backend().default_device()
+    #[cfg(not(target_family = "wasm"))]
+    {
+        platform_backend().default_device()
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        Err(BackendError::NoDevices)
+    }
 }
