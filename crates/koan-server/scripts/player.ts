@@ -180,7 +180,7 @@ export class Player<T extends Track> {
     const t = this.#queue[this.#cur];
     ms.metadata = t ? new MediaMetadata({
       title: t.title || "", artist: t.artist || "", album: t.album || "",
-      artwork: t.cover ? [{ src: new URL(t.cover, location.href).href }] : [],
+      artwork: t.cover ? [{ src: new URL(t.cover, document.baseURI).href }] : [],
     }) : null;
     ms.playbackState = t ? (this.#playing ? "playing" : "paused") : "none";
     if (t && t.dur > 0 && ms.setPositionState) {

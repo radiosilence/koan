@@ -48,12 +48,14 @@ enum View<'a> {
 #[derive(Template)]
 #[template(path = "pages/pair.html")]
 struct PairPage<'a> {
+    base: String,
     title: &'a str,
     view: View<'a>,
 }
 
-fn page(status: StatusCode, view: View<'_>) -> Response {
+fn page(s: &UiState, status: StatusCode, view: View<'_>) -> Response {
     let page = PairPage {
+        base: s.base(),
         title: "Sign in a device",
         view,
     };
@@ -77,18 +79,18 @@ pub(super) async fn form(State(s): State<UiState>, Query(q): Query<CodeQuery>) -
 
 fn code_page(s: &UiState, error: Option<&str>) -> Response {
     if !s.auth_enabled {
-        return without_accounts();
+        return without_accounts(&s);
     }
     let status = if error.is_none() {
         StatusCode::OK
     } else {
         StatusCode::NOT_FOUND
     };
-    page(status, View::Code { error })
+    page(s, status, View::Code { error })
 }
 
-fn without_accounts() -> Response {
-    page(StatusCode::OK, View::NoAccounts)
+fn without_accounts(s: &UiState) -> Response {
+    page(s, StatusCode::OK, View::NoAccounts)
 }
 
 /// "Sign in this device as you?", for the pairing an id or a code names.
@@ -98,7 +100,7 @@ pub(super) async fn confirm(
     Path(pair): Path<String>,
 ) -> Response {
     if !s.auth_enabled {
-        return without_accounts();
+        return without_accounts(&s);
     }
     let info = match crate::pair::pairings().info(&pair, user.user_id) {
         Ok(info) => info,
@@ -117,9 +119,9 @@ pub(super) async fn confirm(
         from: info.from.to_string(),
         local: info.local(),
         user: &user.username,
-        action: format!("/pair/{}", encode(&pair)),
+        action: format!("pair/{}", encode(&pair)),
     };
-    page(StatusCode::OK, view)
+    page(&s, StatusCode::OK, view)
 }
 
 pub(super) async fn approve(
@@ -151,7 +153,7 @@ async fn settle(
         return (StatusCode::FORBIDDEN, "cross-site request refused").into_response();
     }
     if !s.auth_enabled {
-        return without_accounts();
+        return without_accounts(&s);
     }
     let username = user.username.clone();
     let settled = blocking(move || {
@@ -180,5 +182,5 @@ async fn settle(
             text: "The device could not be signed in. Try again.",
         },
     };
-    page(StatusCode::OK, view)
+    page(&s, StatusCode::OK, view)
 }

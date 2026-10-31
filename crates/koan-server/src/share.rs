@@ -35,7 +35,7 @@ use crate::ui::Logged;
 static PAGE_CSP: LazyLock<HeaderValue> = LazyLock::new(|| {
     let csp = format!(
         "default-src 'none'; script-src 'self' {}; style-src 'self'; font-src 'self'; img-src 'self'; \
-         media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+         media-src 'self' blob:; connect-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
         SHARE_IMPORTS.csp
     );
     HeaderValue::from_str(&csp).expect("the CSP is ASCII")
@@ -60,11 +60,11 @@ pub(crate) fn content_hash(body: &str) -> String {
 }
 
 static SHARE_CSS_URL: LazyLock<String> =
-    LazyLock::new(|| versioned("/share/assets/share.css", PAGE_CSS));
+    LazyLock::new(|| versioned("./share/assets/share.css", PAGE_CSS));
 static SHARE_JS_URL: LazyLock<String> =
-    LazyLock::new(|| versioned("/share/assets/share.js", PLAYER_JS));
+    LazyLock::new(|| versioned("./share/assets/share.js", PLAYER_JS));
 static SHARE_ENGINE_URL: LazyLock<String> =
-    LazyLock::new(|| versioned("/share/assets/player.js", ENGINE_JS));
+    LazyLock::new(|| versioned("./share/assets/player.js", ENGINE_JS));
 static SHARE_IMPORTS: LazyLock<ImportMap> = LazyLock::new(|| ImportMap::player(&SHARE_ENGINE_URL));
 
 /// An inline import map naming the player `koan/player` at `url`, its
@@ -371,6 +371,7 @@ struct AlbumSection<'a> {
 #[derive(Template)]
 #[template(path = "share/page.html")]
 struct SharePage<'a> {
+    base: String,
     id: &'a str,
     title: String,
     sub: String,
@@ -555,6 +556,7 @@ fn render(
         out
     });
     SharePage {
+        base: crate::base::href(server_url),
         id,
         title,
         sub: sub.join(" · "),
@@ -1030,7 +1032,7 @@ mod tests {
         assert_eq!(bytes, b"0123456789");
 
         let html = String::from_utf8(get(&app, &format!("/share/{id}"), None).await.2).unwrap();
-        assert!(html.contains(&format!("href=\"/share/{id}/download\" download")));
+        assert!(html.contains(&format!("href=\"share/{id}/download\" download")));
         let (status, _, _) = get(&app, &format!("/share/{}/download", "0".repeat(32)), None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
@@ -1044,7 +1046,7 @@ mod tests {
         assert!(html.contains("Wet &#60;Moss&#62; &#38; Stone"));
         assert!(!html.contains("<Moss>"));
         assert!(!html.contains("Unshared"));
-        assert!(html.contains(&format!("data-src=\"/share/{id}/1\"")));
+        assert!(html.contains(&format!("data-src=\"share/{id}/1\"")));
         let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
         assert!(csp.starts_with("default-src 'none'"));
         assert!(
@@ -1263,7 +1265,7 @@ mod tests {
         let first = html.find("Hymn &#60;to&#62;").unwrap();
         assert!(first < html.find(">Later</h2>").unwrap());
         // Each album heading's art is addressed through the share, by position.
-        assert!(html.contains(&format!("src=\"/share/{id}/3/cover\"")));
+        assert!(html.contains(&format!("src=\"share/{id}/3/cover\"")));
         for n in ["3", "4"] {
             let (status, _, _) = get(&lib.app, &format!("/share/{id}/{n}/cover"), None).await;
             assert_eq!(

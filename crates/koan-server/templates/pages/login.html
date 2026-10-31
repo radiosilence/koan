@@ -4,7 +4,7 @@
 {%- if let Some((username, password)) = demo %}
 <p class="mb-4 border border-brand p-3 text-body text-ink">This is kōan's demo server. Sign in as <strong>{{ username }}</strong>, password <strong>{{ password }}</strong>, here or in the apps. Everyone shares the account, and everything resets at midnight UTC.</p>
 {%- endif %}
-<form class="grid gap-3.5" method="post" action="/login"><input type="hidden" name="next" value="{{ next }}">
+<form class="grid gap-3.5" method="post" action="login"><input type="hidden" name="next" value="{{ next }}">
 <label class="{{ label }}">Username<input class="text-input" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus{% if let Some((username, _)) = demo %} value="{{ username }}"{% endif %}></label>
 <label class="{{ label }}">Password<input class="text-input" name="password" type="password" autocomplete="current-password" required{% if let Some((_, password)) = demo %} value="{{ password }}"{% endif %}></label>
 {% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}

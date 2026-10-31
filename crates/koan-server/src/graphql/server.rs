@@ -575,6 +575,10 @@ impl ApiServer {
                         true => crate::ServerUrl::Live,
                         false => crate::ServerUrl::Fixed(cfg.server_url()),
                     };
+                    let edge = axum::middleware::from_fn_with_state(
+                        share_url.clone(),
+                        crate::base::edge,
+                    );
                     let share_routes =
                         crate::share::router(pool.clone(), share_url, covers.clone())
                             .layer(tower_http::catch_panic::CatchPanicLayer::new());
@@ -659,7 +663,9 @@ impl ApiServer {
                     }
                     let gql_server = axum::serve(
                         gql_listener,
-                        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<std::net::SocketAddr>(
+                            tower::Layer::layer(&edge, app),
+                        ),
                     )
                     .with_graceful_shutdown(stop.clone().cancelled_owned());
 
@@ -671,7 +677,9 @@ impl ApiServer {
                         // throttle keys on the client's address.
                         let sub_server = axum::serve(
                             sub_listener,
-                            sub_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                            axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<std::net::SocketAddr>(
+                                tower::Layer::layer(&edge, sub_app),
+                            ),
                         )
                         .with_graceful_shutdown(stop.clone().cancelled_owned());
 

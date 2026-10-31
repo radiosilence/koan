@@ -45,8 +45,8 @@ function renewed() {
 const post = (path: string) =>
   rawFetch(path, { method: "POST", credentials: "same-origin" }).then((r) => r.ok);
 const [first, then] = "proxied" in document.body.dataset
-  ? ["/ui/renew", "/auth/renew"]
-  : ["/auth/renew", "/ui/renew"];
+  ? ["ui/renew", "auth/renew"]
+  : ["auth/renew", "ui/renew"];
 function renew() {
   renewing ??= post(first)
     .then((ok) => ok || post(then))
@@ -62,11 +62,11 @@ const sameOrigin = (input: RequestInfo | URL) =>
 // Responses name the stylesheet their markup was written for. A tab open
 // across an upgrade swaps it in rather than drawing new markup with the old
 // one, and keeps playing.
-const sheet = document.querySelector<HTMLLinkElement>('link[rel=stylesheet][href^="/ui/assets/ui.css"]');
+const sheet = document.querySelector<HTMLLinkElement>('link[rel=stylesheet][href^="./ui/assets/ui.css"]');
 function freshen(r: Response) {
   const v = r.headers.get("X-Koan-Css");
   if (sheet && v && new URL(sheet.href).searchParams.get("v") !== v) {
-    sheet.href = `/ui/assets/ui.css?v=${v}`;
+    sheet.href = `./ui/assets/ui.css?v=${v}`;
   }
 }
 window.fetch = async (input, init) => {
@@ -142,7 +142,7 @@ function trackOf(li: HTMLElement): UiTrack {
   const d = li.dataset;
   const albumId = Number(d.albumId) || 0;
   return {
-    id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
+    id: Number(d.id), src: `ui/stream/${d.id}`, dur: Number(d.dur) || 0,
     title: d.title, artist: d.artist, album: d.album, albumId,
     artistId: Number(d.artistId) || 0, cover: d.cover || null,
     credit: d.credit ? JSON.parse(d.credit) : null,
@@ -160,7 +160,7 @@ function linkNode(path: string, text: string) {
   return a;
 }
 const creditNodes = (t: UiTrack) =>
-  creditOf(t).map(([text, id]) => (id ? linkNode(`/artist/${id}`, text) : document.createTextNode(text)));
+  creditOf(t).map(([text, id]) => (id ? linkNode(`artist/${id}`, text) : document.createTextNode(text)));
 
 function render({ queue, cur, playing, track }: Player<UiTrack>) {
   document.body.classList.toggle("playing", playing);
@@ -169,7 +169,7 @@ function render({ queue, cur, playing, track }: Player<UiTrack>) {
   for (const el of all("[data-np=sep]")) el.hidden = !(track && creditOf(track).length && track.album);
   for (const el of all<HTMLAnchorElement>("a[data-np=album]")) {
     el.textContent = track?.album ?? "";
-    if (track && track.albumId) el.href = `/album/${track.albumId}`;
+    if (track && track.albumId) el.href = `album/${track.albumId}`;
     else el.removeAttribute("href");
   }
   for (const el of all<HTMLImageElement>("img[data-np=cover]")) {
@@ -231,7 +231,7 @@ function renderQueue(queue: UiTrack[], cur: number) {
     small.append(...credit);
     if (t.album) {
       if (credit.length) small.append(" · ");
-      small.append(t.albumId ? linkNode(`/album/${t.albumId}`, t.album) : t.album);
+      small.append(t.albumId ? linkNode(`album/${t.albumId}`, t.album) : t.album);
     }
     title.append(small);
     const d = document.createElement("span");
@@ -350,11 +350,11 @@ function openMenu(li: HTMLElement, x: number, y: number) {
     ? [item("Remove from Queue", () => player.remove(Number(li.dataset.q)))]
     : [];
   const go = [];
-  if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
+  if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`album/${d.albumId}`, true)));
   // Each artist a collaboration credits, by name where there are several.
   const artists = creditOf(t).filter(([, id]) => id);
   for (const [name, id] of artists) {
-    go.push(item(artists.length === 1 ? "Go to Artist" : `Go to ${name}`, () => navigate(`/artist/${id}`, true)));
+    go.push(item(artists.length === 1 ? "Go to Artist" : `Go to ${name}`, () => navigate(`artist/${id}`, true)));
   }
   const about = [item("Properties…", () => showProperties(d.id))];
   const head = document.createElement("p");
@@ -400,7 +400,7 @@ async function showProperties(id: string | undefined) {
   say("Loading…");
   if (!properties.open) properties.showModal();
   try {
-    const r = await fetch(`/track/${id}/properties`, { headers: { "x-koan-partial": "1" } });
+    const r = await fetch(`track/${id}/properties`, { headers: { "x-koan-partial": "1" } });
     const html = r.ok ? await r.text() : null;
     if (mine !== asked) return;
     if (html === null) say(r.status === 404 ? "This track is no longer in the library." : "The server could not say.");
@@ -534,6 +534,10 @@ document.addEventListener("error", (e) => {
 }, true);
 
 // --- Navigation ------------------------------------------------------------
+// Where the UI is served: `/`, or a path such as `/koan/` behind a proxy.
+const BASE = new URL(document.baseURI).pathname;
+// A path in this UI as its routes name it, the base taken off.
+const route = (path: string) => (path.startsWith(BASE) ? `/${path.slice(BASE.length)}` : path);
 const INTERNAL = /^\/(albums|tracks|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent|scrobbling)?$/;
 let navigating = 0;
 
@@ -562,8 +566,8 @@ function settle() {
   const page = main.firstElementChild;
   const title = page instanceof HTMLElement && page.dataset.title;
   document.title = title ? `${title} · koan` : "koan";
-  const section = { "": "albums", album: "albums", artist: "artists", playlist: "playlists" }[location.pathname.split("/")[1]]
-    ?? location.pathname.split("/")[1];
+  const section = { "": "albums", album: "albums", artist: "artists", playlist: "playlists" }[route(location.pathname).split("/")[1]]
+    ?? route(location.pathname).split("/")[1];
   for (const a of all("a[data-nav]")) {
     // A phone's Library tab stands for several of the sidebar's links.
     if (a.dataset.nav?.split(" ").includes(section)) a.setAttribute("aria-current", "page");
@@ -641,7 +645,7 @@ document.addEventListener("click", (e) => {
   const a = e.target.closest<HTMLAnchorElement>("a[href]");
   if (!a || a.target || a.hasAttribute("download")) return;
   const url = new URL(a.href, location.href);
-  if (url.origin !== location.origin || !INTERNAL.test(url.pathname)) return;
+  if (url.origin !== location.origin || !INTERNAL.test(route(url.pathname))) return;
   e.preventDefault();
   if (url.pathname + url.search !== location.pathname + location.search) navigate(url.pathname + url.search, true);
   else if (properties?.open) properties.close();

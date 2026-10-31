@@ -7,7 +7,7 @@
 <script type="module" src="{{ crate::ui::ASSETS.datastar_js }}"></script>
 <h2>Sign in a device</h2>
 <p>Type the code the device shows.</p>
-<form class="grid gap-3.5" method="get" action="/pair">
+<form class="grid gap-3.5" method="get" action="pair">
 <label class="{{ crate::ui::pages::SIGNIN_LABEL }}">Code<input class="text-input" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="20" required autofocus data-on:input="let at = el.value.slice(0, el.selectionStart).replace(/[^0-9a-z]/gi, '').length; el.value = el.value.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/[^0-9A-HJKMNP-TV-Z]/g, '').slice(0, 8).replace(/^.{4}(?=.)/, (m) => m + '-'); at = Math.min(at > 4 ? at + 1 : at, el.value.length); el.setSelectionRange(at, at)"></label>
 {% if let Some(e) = error %}<p class="m-0 {{ crate::ui::pages::ERROR }}" role="alert">{{ e }}</p>{% endif %}
 <button class="primary">Continue</button></form>
@@ -25,7 +25,7 @@
 <p><small>Approve only a device you are setting up yourself, just now. Anyone can give a device any name.</small></p>
 <form class="grid gap-3.5" method="post" action="{{ action }}/approve"><button class="primary">Approve</button></form>
 <form class="grid gap-3.5" method="post" action="{{ action }}/decline"><button class="quiet">Decline</button></form>
-<form class="grid gap-3.5" method="post" action="/auth/signout"><input type="hidden" name="next" value="{{ action }}"><button class="quiet">Not <span class="normal-case">{{ user }}</span>? Sign out</button></form>
+<form class="grid gap-3.5" method="post" action="auth/signout"><input type="hidden" name="next" value="{{ action }}"><button class="quiet">Not <span class="normal-case">{{ user }}</span>? Sign out</button></form>
 {%- when View::Declined { device } %}
 <h2>Declined</h2><p>{{ device }} was not signed in.</p>
 {%- when View::Approved { device, user } %}

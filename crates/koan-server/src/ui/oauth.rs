@@ -252,6 +252,7 @@ fn resource_ok(base: &str, resource: &str) -> bool {
 fn check(s: &UiState, q: &AuthorizeParams) -> Result<(String, Client, String, Url), Box<Response>> {
     let refuse = |why: &str| {
         let page = Refused {
+            base: s.base(),
             title: "Cannot connect",
             why,
         };
@@ -311,6 +312,7 @@ fn request_error(base: &str, q: &AuthorizeParams) -> Option<(&'static str, &'sta
 #[derive(Template)]
 #[template(path = "oauth/refused.html")]
 struct Refused<'a> {
+    base: String,
     title: &'a str,
     why: &'a str,
 }
@@ -320,6 +322,7 @@ struct Refused<'a> {
 #[derive(Template)]
 #[template(path = "oauth/consent.html")]
 struct Consent<'a> {
+    base: String,
     title: &'a str,
     host: &'a str,
     name: &'a str,
@@ -373,6 +376,7 @@ pub(super) async fn authorize(
         ])
     );
     let page = Consent {
+        base: s.base(),
         title: "Connect an app",
         host: to.host_str().unwrap_or_default(),
         name: &c.client_name,

@@ -18,8 +18,8 @@
 </ol>
 {%- if page > 0 || more %}
 <p class="mt-5 flex gap-4">
-{%- if page == 1 %}<a href="/history">Newer</a>{% else if page > 1 %}<a href="/history?page={{ page - 1 }}">Newer</a>{% endif -%}
-{%- if more %}<a href="/history?page={{ page + 1 }}">Earlier</a>{% endif -%}
+{%- if page == 1 %}<a href="history">Newer</a>{% else if page > 1 %}<a href="history?page={{ page - 1 }}">Newer</a>{% endif -%}
+{%- if more %}<a href="history?page={{ page + 1 }}">Earlier</a>{% endif -%}
 </p>
 {%- endif %}
 {%- endif %}

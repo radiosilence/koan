@@ -56,7 +56,7 @@ use crate::share::{asset, blocking, not_found};
 static PAGE_CSP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         "default-src 'none'; script-src 'self' 'unsafe-eval' {}; style-src 'self'; font-src 'self'; \
-         img-src 'self'; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; \
+         img-src 'self'; media-src 'self' blob:; connect-src 'self'; base-uri 'self'; form-action 'self'; \
          frame-ancestors 'none'",
         ASSETS.imports.csp
     )
@@ -86,14 +86,14 @@ pub(super) struct AssetUrls {
 
 pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
     use crate::share::versioned;
-    let player_js = versioned("/ui/assets/player.js", crate::share::ENGINE_JS);
+    let player_js = versioned("./ui/assets/player.js", crate::share::ENGINE_JS);
     AssetUrls {
-        css: versioned("/ui/assets/ui.css", UI_CSS),
+        css: versioned("./ui/assets/ui.css", UI_CSS),
         css_hash: crate::share::content_hash(UI_CSS),
-        ui_js: versioned("/ui/assets/ui.js", UI_JS),
+        ui_js: versioned("./ui/assets/ui.js", UI_JS),
         imports: crate::share::ImportMap::player(&player_js),
         player_js,
-        datastar_js: versioned("/ui/assets/datastar.js", DATASTAR_JS),
+        datastar_js: versioned("./ui/assets/datastar.js", DATASTAR_JS),
     }
 });
 
@@ -118,6 +118,13 @@ pub struct UiState {
     proxy_auth: Option<ProxyAuth>,
     /// GraphQL's background jobs, which a rescan started here joins.
     jobs: crate::graphql::jobs::JobRegistry,
+}
+
+impl UiState {
+    /// What pages name as `<base href>`; see `crate::base`.
+    fn base(&self) -> String {
+        crate::base::href(self.server_url.as_deref())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -145,6 +152,7 @@ pub(crate) fn router(
         proxy_auth,
         jobs,
     };
+    let base = crate::base::path_of(state.server_url.as_deref());
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
         .route("/albums", get(pages::albums))
@@ -283,7 +291,27 @@ pub(crate) fn router(
             "/apple-touch-icon.png",
             get(|| ui_asset(Path("apple-touch-icon.png".into()), RawQuery(None))),
         )
+        .merge(path_inserted_discovery(&base))
         .with_state(state)
+}
+
+/// Under a path, where RFC 8414 and RFC 9728 put the metadata: between the
+/// host and the path (`/.well-known/oauth-authorization-server/koan`), outside
+/// what a proxy forwards for the path. It reaches here when the proxy forwards
+/// that too; see `crate::base`.
+fn path_inserted_discovery(base: &str) -> axum::Router<UiState> {
+    if base.is_empty() {
+        return axum::Router::new();
+    }
+    axum::Router::new()
+        .route(
+            &format!("/.well-known/oauth-authorization-server{base}"),
+            get(oauth::authorization_server),
+        )
+        .route(
+            &format!("/.well-known/oauth-protected-resource{base}/mcp"),
+            get(oauth::protected_resource),
+        )
 }
 
 /// Which stylesheet the markup was written for. A tab open across an upgrade
