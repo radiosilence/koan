@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.68.0
+
+### Security
+
+- **Limits on what strangers can make the server hold.** Sign-in reads a bounded body before taking a slot, the nearby listener caps connections, unproven peers and message sizes, DSP zip imports cap the archive total, the `config` query needs an admin and `koanCommand` a writing role.
+
+### Changed
+
+- **Background work waits for events.** The remote TUI follows server subscriptions, the web UI clock stops when paused, and the library watch and auto-sync sleep until something changes; failures that were swallowed are logged.
+- **The `nowPlaying` subscription no longer sends while the playhead runs on time.** It sends on a seek, a stall, a pause, a track change or a drift past one second. A client counts on from `positionMs` while `moving` is true.
+
+### Fixed
+
+- **Media keys work in the web UI on Chrome and Firefox.** The browser player now holds a media session there, so media keys, headphone buttons and the system's now-playing controls reach it for every track, not only those over 15 minutes.
+- **Unfavouriting on one device sticks.** Syncing no longer stars again what was unstarred elsewhere, every front end writes favourites one way, and commands and playlist edits land in the order they were made.
+- **Misspelt searches find things over GraphQL and Subsonic.** Every front end searches through core, with one fuzzy ranking.
+- **App fixes from the audit.** Headphone unplugs and calls leave a UPnP renderer playing on iOS and Android, real covers shared by editions are no longer hidden, Android queue drags survive downloads landing, and failed library reads say so.
+- **Large queues edit in one pass, and undo no longer holds old queues without limit.** Undoing a reorder, playing next, relinking after a library change and similar edits no longer cost time proportional to the queue multiplied by the rows involved, and undo history is bounded by the rows it holds as well as by depth. Failed audio output setups no longer leak, a sample-rate notification can no longer reach a dropped watch, UPnP discovery refuses oversized or deeply nested descriptions and stops refetching failing ones, and a renderer switched off mid-playback releases its connection.
+- **The TUI and the Android app no longer redo queue work on every frame or patch.** The TUI keeps the library's reading of the queue across status changes, updates download progress without re-deriving the queue, reads each track page from where the last one ended, loads the Now Playing cover off the frame thread, and shows a remote server's played and failed tracks as such. Android rebuilds only the queue rows a patch changes.
+- **A failed write no longer leaves the database locked.** A connection that came back to the pool inside a transaction, after a failed commit or a caught panic, was handed to the next caller still holding the write lock, and that caller's writes were lost with it; it is now closed, and a failed commit is rolled back. Lyrics, artist bios and photos no longer hold a database connection while they wait on the network, a track LRCLIB has no lyrics for is not asked about again for a week, covers from a remote server are fetched at most eight at a time, and organizing onto another drive copies each file before taking the database's write lock rather than while holding it. Server playlist syncs, smart playlist refreshes and queue relinking do work in proportion to what changed, and a long playlist's undo history is bounded by its size.
+- **The Apple apps stay light with a long queue playing.** A change to a few queue rows redraws those rows rather than regrouping and comparing the whole queue on the Mac, the track browser adds each page of a large library to its table instead of reloading it, the playing bars stop the spectrum analyser when their list is closed, EQ files shared to or opened in the iOS app are deleted once imported, and the caches of icons and cover colours are bounded.
+- **The server holds its resources under load.** A linked device that stops reading is dropped within seconds instead of stalling its link and holding a growing queue; a link without a device id leaves nothing behind once it closes; share downloads are capped at four at once and end when the visitor stops reading; the cover cache is held to 1 GiB. Smart playlist changes sync only the devices that can see them, `nowPlaying` no longer re-sends a playhead moving on time, `queueUpdated` sends download progress at most once a second, a full `search3` walk reads each track once, and the web UI redraws its queue only when it changes and holds fewer decoded tracks.
+- **Watching another device's levels no longer rebuilds the link state on every frame.** The state is read again only when the engine changes. Remote queues and track ids resolve in one query rather than one per entry, `devices.json` is written whole, only when it changes and without device states, and a nearby dialer for a device that is not on this network stops after its backoff instead of retrying forever. Fixes for Bonjour callback handling and the device-id race between two processes are included.
+- **The TUI's track list no longer repeats or skips rows when the library changes between pages.** Queue credits follow library changes made by other processes. Now Playing no longer goes blank when it gets ahead of the queue, and the cover is retried after a partial download. A remote server's downloading tracks show their progress.
+
+### Internal
+
+- **Dependencies, tools and CI actions are on their latest releases.** rusqlite 0.41, parking_lot 0.13, souvlaki 0.9 and sift-music 0.10 among them, AGP 9.5 and Gradle 9.8.2 for Android, and Node 26 for the Pulumi package. ratatui-image stays on 11.1 until 12.0 leaves release candidate.
+- **The cover slot tests run one at a time.** Both use every one of the process-wide cover fetch slots, so in parallel one could starve the other and fail.
+
 ## 0.67.8
 
 ### Fixed
