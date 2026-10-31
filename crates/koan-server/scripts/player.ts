@@ -36,7 +36,8 @@ const LONG = 900; // seconds
 
 const decodable = (t: Track | undefined) => t && t.dur > 0 && t.dur <= LONG;
 
-const webkit = !!navigator.audioSession;
+// Every iOS browser is WebKit and reports Apple as its vendor.
+const webkit = navigator.vendor === "Apple Computer, Inc.";
 
 // Six seconds, since Chrome treats anything under five as a sound effect
 // rather than media, and a small constant offset rather than zero: Firefox
@@ -137,7 +138,7 @@ export class Player<T extends Track> {
     }
   }
 
-  #hear() { if (this.#dest || this.#out.src) this.#out.play().catch(() => {}); }
+  #hear() { this.#out.play().catch(() => {}); }
 
   #buffer(i: number) {
     const t = this.#queue[i], ctx = this.#ctx;
@@ -290,7 +291,7 @@ export class Player<T extends Track> {
       if (this.#mode === "buffer") { this.#out.pause(); await this.#ctx?.suspend(); } else this.#el.pause();
     } else {
       this.#playing = true;
-      if (this.#mode === "buffer") { this.#hear(); await this.#ctx?.resume(); } else await this.#el.play().catch(() => {});
+      if (this.#mode === "buffer") { this.#hear(); await this.#ctx?.resume(); } else { this.#out.pause(); await this.#el.play().catch(() => {}); }
     }
     this.#notify();
   }
@@ -298,6 +299,7 @@ export class Player<T extends Track> {
   // Load a queue without playing it: a restored session, or the share page.
   set(tracks: T[], i = -1, from = 0) {
     this.#stop();
+    this.#out.pause();
     this.#queue = tracks.slice();
     this.#cur = i < this.#queue.length ? i : -1;
     this.#resumeAt = this.#cur >= 0 ? from : 0;
@@ -339,7 +341,7 @@ export class Player<T extends Track> {
     this.#notify();
   }
 
-  clear() { this.#stop(); this.#queue = []; this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); }
+  clear() { this.#stop(); this.#out.pause(); this.#queue = []; this.#cur = -1; this.#resumeAt = 0; this.#setPlaying(false); }
 
   next() { this.#wake(this.#queue[this.#cur + 1]); if (this.#cur + 1 < this.#queue.length) this.#go(this.#cur + 1, 0); }
 
