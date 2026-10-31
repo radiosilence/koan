@@ -1604,15 +1604,14 @@ impl Config {
             return cfg.clone();
         }
 
-        let cfg = match Self::load() {
-            Ok(cfg) => Arc::new(cfg),
-            // Not kept: a file caught mid-write would otherwise read as the
-            // defaults until its next change, which can share this stamp.
-            Err(e) => {
-                log::warn!("failed to load config, using defaults: {}", e);
-                return Arc::new(Self::default());
-            }
-        };
+        // A failure is kept under its stamp like a success, so a broken file
+        // is parsed and logged once per change to it rather than on every
+        // call. koan's own writes invalidate explicitly, so a write of its own
+        // landing in the same mtime tick is still read.
+        let cfg = Arc::new(Self::load().unwrap_or_else(|e| {
+            log::warn!("failed to load config, using defaults: {}", e);
+            Self::default()
+        }));
         // Kept only if nothing moved while it was read: a switch of
         // directory or a write between the stamp and the load would keep one
         // directory's config under the other's stamp. Checked under the lock
