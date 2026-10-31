@@ -266,6 +266,15 @@ fn scatter(order: &mut Vec<QueueItemId>, mut fresh: Vec<QueueItemId>) {
     }
 }
 
+/// Where the rows a shuffle of the queue moves begin: after the cursor, or
+/// at the top with nothing under it. `None` when the cursor names no row.
+fn upcoming_start(pl: &Playlist) -> Option<usize> {
+    match pl.cursor {
+        Some(cursor) => Some(pl.items.iter().position(|i| i.id == cursor)? + 1),
+        None => Some(0),
+    }
+}
+
 /// What follows `after` under `repeat`: `Some(None)` at the end of the queue,
 /// `None` when `after` is not in it — a removed item has nothing following it,
 /// whatever the mode, since wrapping from it would replay the queue from a
@@ -2108,14 +2117,7 @@ impl SharedPlayerState {
     /// Whether `shuffle_upcoming` has two rows or more to move.
     pub fn upcoming_shufflable(&self) -> bool {
         let pl = self.playlist.read();
-        let start = match pl.cursor {
-            Some(cursor) => match pl.items.iter().position(|i| i.id == cursor) {
-                Some(at) => at + 1,
-                None => return false,
-            },
-            None => 0,
-        };
-        pl.items.len() - start >= 2
+        upcoming_start(&pl).is_some_and(|start| pl.items.len() - start >= 2)
     }
 
     /// Shuffle the rows after the cursor in place, or every row when nothing
@@ -2123,10 +2125,7 @@ impl SharedPlayerState {
     /// `None` when fewer than two rows would move.
     pub fn shuffle_upcoming(&self) -> Option<Vec<(QueueItemId, Option<QueueItemId>)>> {
         let mut pl = self.playlist.write();
-        let start = match pl.cursor {
-            Some(cursor) => pl.items.iter().position(|i| i.id == cursor)? + 1,
-            None => 0,
-        };
+        let start = upcoming_start(&pl)?;
         if pl.items.len() - start < 2 {
             return None;
         }

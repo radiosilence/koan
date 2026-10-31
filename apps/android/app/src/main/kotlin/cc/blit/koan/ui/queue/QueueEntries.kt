@@ -696,11 +696,6 @@ private fun TrackItems(row: QueueRow, trackIds: List<Long>, act: (() -> Unit) ->
 }
 
 /**
- * One removal, by identity, so a second one restarts the bar's time. It
- * carries when it happened, so a bar drawn again elsewhere (selecting starts
- * or ends) keeps the time it had left.
- */
-/**
  * Undo beside the dice while the list's last edits are shuffles, taking them
  * back one at a time. Hidden from a tap until the count answers, so a second
  * tap cannot reach past the last shuffle to whatever edit came before.
@@ -714,6 +709,11 @@ fun ShuffleUndoButton(shuffles: UInt, undo: () -> Unit) {
     }
 }
 
+/**
+ * One removal, by identity, so a second one restarts the bar's time. It
+ * carries when it happened, so a bar drawn again elsewhere (selecting starts
+ * or ends) keeps the time it had left.
+ */
 class Removal(val what: String, val at: Long = SystemClock.uptimeMillis())
 
 /**

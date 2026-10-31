@@ -311,8 +311,10 @@ private fun PlaylistHeader(
                 KoanButton("Play Next", { app.player.playNext(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.playNext, enabled = any)
                 KoanButton("Add to Queue", { app.player.enqueue(entries.map { it.track.id }) }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue, enabled = any)
                 // The playlist's own order, dealt again; each press is a step of its undo.
-                if (playlist.fillable) ShuffleUndoButton(undoShuffles) { app.mirror.launch { undo(playlist.id) } }
-                if (playlist.fillable) KoanButton("Shuffle Order", { edits.shuffleOrder(playlist.id) }, kind = KoanButtonKind.Icon, icon = KoanIcons.reshuffle, enabled = entries.size > 1)
+                if (playlist.fillable) {
+                    ShuffleUndoButton(undoShuffles) { app.mirror.launch { undo(playlist.id) } }
+                    KoanButton("Shuffle Order", { edits.shuffleOrder(playlist.id) }, kind = KoanButtonKind.Icon, icon = KoanIcons.reshuffle, enabled = entries.size > 1)
+                }
                 Spacer(Modifier.weight(1f))
                 if (showLayout && any) KoanIconToggle(KoanIcons.album, "Group by album", grouped) { edits.setGrouped(playlist.id, it) }
             }
