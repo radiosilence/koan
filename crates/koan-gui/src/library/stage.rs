@@ -7,7 +7,6 @@ use gpui_kit::*;
 use super::Lib;
 use super::albums::AlbumGrid;
 use super::nav::Page;
-use super::tokens::Paint;
 
 pub struct LibraryStage {
     lib: Lib,
@@ -77,7 +76,6 @@ impl LibraryStage {
 
 impl Render for LibraryStage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &Paint::of(window, cx);
         let page = self.page(window, cx);
         let wanted = self.lib.nav.read(cx).info;
         if self.info.as_ref().map(|(id, _)| *id) != wanted {
