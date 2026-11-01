@@ -18,7 +18,7 @@ use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSectio
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve};
 use super::drag::{Playable, PlayableDrag};
-use super::nav::Page;
+use super::nav::{Anchor, Anchored, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::{self, Grid, Part, TileHost, TileState};
@@ -67,8 +67,9 @@ pub struct ArtistPage {
     items: Rc<Vec<Item>>,
     grid: Option<Grid>,
     list: ListState,
-    /// Where to put the scroll back to, once there is content to scroll.
-    restore: Option<Pixels>,
+    /// Where to put the scroll back to the next time the page is cut: on
+    /// arriving, after a library change, after a change of columns.
+    restore: Option<Anchor>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
     starting: HashSet<i64>,
@@ -96,15 +97,16 @@ impl ArtistPage {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                let offset = this.offset();
                 let page = Page::Artist(this.artist_id);
-                this.lib
-                    .nav
-                    .update(cx, |nav, _| nav.remember_offset(page, offset));
+                if let Some(anchor) = this.anchor() {
+                    this.lib
+                        .nav
+                        .update(cx, |nav, _| nav.remember_anchor(page, anchor));
+                }
                 this.lib.covers.update(cx, |c, _| c.release(id));
             }),
         ];
-        let restore = lib.nav.read(cx).offset(Page::Artist(artist_id));
+        let restore = lib.nav.read(cx).anchor(Page::Artist(artist_id));
         let mut this = Self {
             lib,
             artist_id,
@@ -161,6 +163,10 @@ impl ArtistPage {
             this.update(cx, |this, cx| {
                 if this.request != request {
                     return;
+                }
+                // Held before the items change under it.
+                if this.restore.is_none() {
+                    this.restore = this.anchor();
                 }
                 this.record = Some(Rc::new(Record {
                     artist,
@@ -248,6 +254,73 @@ impl ArtistPage {
         })
     }
 
+    /// The item at the top of the screen, by what it shows.
+    fn anchor(&self) -> Option<Anchor> {
+        let record = self.record.as_ref()?;
+        let top = self.list.logical_scroll_top();
+        let item = self.items.get(top.item_ix)?;
+        let at = match item {
+            Item::Header => Anchored::Header,
+            Item::Heading(_) | Item::FeaturesHeading => Anchored::Heading(
+                self.items[..top.item_ix]
+                    .iter()
+                    .filter(|i| matches!(i, Item::Heading(_) | Item::FeaturesHeading))
+                    .count(),
+            ),
+            Item::Tiles { features, range } => {
+                let albums = if *features {
+                    &record.features
+                } else {
+                    &record.albums
+                };
+                Anchored::Album {
+                    id: albums.get(range.start)?.id,
+                    features: *features,
+                }
+            }
+            Item::Track(i) => Anchored::Track(record.appearances.get(*i)?.id),
+        };
+        Some(Anchor {
+            at,
+            offset: top.offset_in_item,
+        })
+    }
+
+    /// The item that shows `anchor` in the items as now cut, or the top.
+    fn find(&self, record: &Record, anchor: Anchor) -> ListOffset {
+        let mut headings = 0;
+        let item_ix = self.items.iter().position(|item| match (item, anchor.at) {
+            (Item::Header, Anchored::Header) => true,
+            (Item::Heading(_) | Item::FeaturesHeading, Anchored::Heading(n)) => {
+                headings += 1;
+                headings == n + 1
+            }
+            (Item::Tiles { features, range }, Anchored::Album { id, features: f })
+                if *features == f =>
+            {
+                let albums = if *features {
+                    &record.features
+                } else {
+                    &record.albums
+                };
+                albums
+                    .get(range.clone())
+                    .is_some_and(|a| a.iter().any(|a| a.id == id))
+            }
+            (Item::Track(i), Anchored::Track(id)) => {
+                record.appearances.get(*i).is_some_and(|t| t.id == id)
+            }
+            _ => false,
+        });
+        match item_ix {
+            Some(item_ix) => ListOffset {
+                item_ix,
+                offset_in_item: anchor.offset,
+            },
+            None => ListOffset::default(),
+        }
+    }
+
     /// How far down the page is scrolled, in points.
     fn offset(&self) -> Pixels {
         let Some(grid) = self.grid else {
@@ -262,7 +335,10 @@ impl ArtistPage {
     }
 
     /// Each item's distance from the screen, ranked as the grid ranks its
-    /// rows: on screen, then nearest first, up to two screens away.
+    /// rows: on screen, then nearest first, up to two screens away. Until the
+    /// header is laid out its height is a guess, but the scroll position and
+    /// every item's place are measured with the same guess, so it cancels
+    /// for everything below the header.
     fn aim(&mut self, grid: Grid, scale: f32, cx: &mut Context<Self>) {
         let Some(record) = self.record.clone() else {
             return;
@@ -297,12 +373,12 @@ impl ArtistPage {
                     } else {
                         &record.albums
                     };
-                    for album in &albums[range.clone()] {
+                    for album in albums.get(range.clone()).unwrap_or_default() {
                         ranked.push((Key::new(Art::Album(album.id), grid.side, scale), priority));
                     }
                 }
                 Item::Track(i) => {
-                    if let Some(album) = record.appearances[*i].album_id {
+                    if let Some(album) = record.appearances.get(*i).and_then(|t| t.album_id) {
                         ranked.push((
                             Key::new(Art::Album(album), px(rows::SLEEVE), scale),
                             priority,
@@ -385,11 +461,16 @@ impl ArtistPage {
                 } else {
                     &record.albums
                 };
-                self.tiles(&albums[range], features, grid, scale, cx)
+                let Some(albums) = albums.get(range) else {
+                    return div().into_any_element();
+                };
+                self.tiles(albums, features, grid, scale, cx)
                     .into_any_element()
             }
             Item::Track(index) => {
-                let track = &record.appearances[index];
+                let Some(track) = record.appearances.get(index) else {
+                    return div().into_any_element();
+                };
                 let item = Playable::Track(track.id);
                 let selected = self.selection.contains(item);
                 let drag = match (selected, self.pick()) {
@@ -761,24 +842,16 @@ impl Render for ArtistPage {
         if let (Some(width), Some(record)) = (self.width.get(), self.record.clone()) {
             let grid = Grid::for_width(width);
             if self.grid != Some(grid) {
+                // A change of columns keeps the place, as a new record does.
+                if self.restore.is_none() {
+                    self.restore = self.anchor();
+                }
                 self.grid = Some(grid);
                 self.items = Rc::new(Self::cut(&record, grid));
                 self.list.reset(self.items.len());
-                if let Some(y) = self.restore.take() {
-                    let mut left = f32::from(y);
-                    let mut ix = 0;
-                    while ix < self.items.len() {
-                        let h = self.height(&self.items[ix], grid);
-                        if left < h {
-                            break;
-                        }
-                        left -= h;
-                        ix += 1;
-                    }
-                    self.list.scroll_to(ListOffset {
-                        item_ix: ix,
-                        offset_in_item: px(left.max(0.0)),
-                    });
+                if let Some(anchor) = self.restore.take() {
+                    let top = self.find(&record, anchor);
+                    self.list.scroll_to(top);
                 }
             }
             self.aim(grid, window.scale_factor(), cx);

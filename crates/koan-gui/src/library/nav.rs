@@ -22,12 +22,35 @@ impl Page {
     }
 }
 
+/// A place on a page that survives the page being laid out again: the item
+/// at the top of the screen, named by what it shows, and how far into it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Anchor {
+    pub at: Anchored,
+    pub offset: Pixels,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Anchored {
+    Header,
+    /// The page's nth heading.
+    Heading(usize),
+    /// The row of records that starts with this one.
+    Album {
+        id: i64,
+        features: bool,
+    },
+    Track(i64),
+}
+
 pub struct Nav {
     history: Vec<Page>,
     cursor: usize,
     /// How far down each page was scrolled when it was left, put back when
     /// it is shown again.
     offsets: HashMap<Page, Pixels>,
+    /// The same, for pages laid out in items of different heights.
+    anchors: HashMap<Page, Anchor>,
     /// Bumped when a tab is chosen while its page is already showing: the
     /// page goes back to its top.
     rewinds: HashMap<Page, u64>,
@@ -41,6 +64,7 @@ impl Default for Nav {
             history: vec![Page::Albums],
             cursor: 0,
             offsets: HashMap::new(),
+            anchors: HashMap::new(),
             rewinds: HashMap::new(),
             info: None,
         }
@@ -96,6 +120,14 @@ impl Nav {
     /// Not a change anyone redraws for, so it does not notify.
     pub fn remember_offset(&mut self, page: Page, offset: Pixels) {
         self.offsets.insert(page, offset);
+    }
+
+    pub fn anchor(&self, page: Page) -> Option<Anchor> {
+        self.anchors.get(&page).copied()
+    }
+
+    pub fn remember_anchor(&mut self, page: Page, anchor: Anchor) {
+        self.anchors.insert(page, anchor);
     }
 
     pub fn rewinds(&self, page: Page) -> u64 {
