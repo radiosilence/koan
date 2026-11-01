@@ -1,16 +1,31 @@
-//! kōan's desktop app. For now a window over the library pages, opened on the
-//! engine as the native apps open it.
-
-mod library;
+//! The kōan GUI app. For now a window over the library pages, opened on the
+//! engine as the native apps open it; `KOAN_GUI_SHEET=1` opens the theme
+//! sheet instead. The app's own shell replaces both as it lands.
 
 use gpui_kit::*;
 use koan_ffi::KoanEngine;
+use koan_gui::{library, sheet::ThemeSheet, theme};
 
 fn main() {
-    gpui_kit::application().run(|cx| {
+    gpui_kit::application().with_assets(theme::icons::Assets).run(|cx| {
         gpui_kit::init(cx);
+        theme::init(cx);
         library::chrome::apply_component_theme(cx);
         library::bind_keys(cx);
+        if std::env::var_os("KOAN_GUI_SHEET").is_some() {
+            let bounds = Bounds::centered(None, size(px(1180.0), px(1000.0)), cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| ThemeSheet::new(window, cx)),
+            )
+            .expect("the theme sheet opens");
+            cx.activate(true);
+            return;
+        }
         cx.spawn(async move |cx| {
             let engine = match KoanEngine::open(None).await {
                 Ok(engine) => engine,
