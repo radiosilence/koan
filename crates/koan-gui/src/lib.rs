@@ -1,17 +1,5 @@
-//! The kōan GUI app, drawn with GPUI.
-
-/// A key with the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.
-/// GPUI's own `secondary-` needs the OS when the binding is parsed, which
-/// `KeyBinding::new` does not pass.
-macro_rules! secondary {
-    ($key:literal) => {
-        if cfg!(target_os = "macos") {
-            concat!("cmd-", $key)
-        } else {
-            concat!("ctrl-", $key)
-        }
-    };
-}
+//! The kōan GUI app, drawn with GPUI over koan-ffi. Desktop builds, macOS
+//! and Linux, for now.
 
 pub mod app;
 pub mod components;
@@ -22,6 +10,7 @@ pub mod measure;
 pub mod mirror;
 pub mod navigator;
 pub mod paint;
+pub mod platform;
 pub mod queue;
 pub mod root;
 pub mod session;

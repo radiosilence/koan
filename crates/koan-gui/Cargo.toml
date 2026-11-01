@@ -4,8 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The kōan GUI app, drawn with GPUI."
+description = "The kōan GUI app, drawn with GPUI over koan-ffi: macOS and Linux for now."
 publish = false
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "koan-gui"
@@ -20,19 +23,26 @@ profiler = ["gpui-kit/profiler"]
 # The engine, linked as a Rust library: the same facade the Swift and Kotlin
 # apps drive through uniffi, without the bindings.
 koan-ffi = { path = "../koan-ffi" }
+chrono = "0.4"
+futures-channel = "0.3"
+futures-lite = "2"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 gpui-kit = "0.8.1"
 # Resizing sleeves for the accent and the wash, and the frames GPUI draws,
 # in the version GPUI itself builds against; PNG for the theme sheet's
 # offscreen render; JPEG, WebP and GIF for the playing record's sleeve.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+koan-core = { workspace = true }
 log = "0.4"
 # Waiting on the first of two events at startup (`select`, `oneshot`).
 futures = "0.3"
 parking_lot = "0.13"
 smallvec = "1"
+souvlaki = "0.9"
 
 [dev-dependencies]
 gpui-kit = { version = "0.8.1", features = ["test-support"] }
+tempfile = "3"
 
 # Reduce Motion and Low Power Mode, which GPUI does not read, and the
 # notifications that say when either changes.

@@ -1,7 +1,9 @@
-//! The app: the engine opened in-process, as the Mac app links it, so the UI
-//! sits on the audio engine with no daemon between; the session restored;
-//! one window.
+//! The app over the engine `main.rs` opened in-process, as the Mac app links
+//! it: its state mirrored, the window opened once the restored session is in
+//! hand, and the session kept from then on. The platform (`platform::init`)
+//! restores the session and saves it on quit.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,41 +17,7 @@ use crate::mirror::{Mirror, Queue};
 use crate::root::WindowRoot;
 use crate::session::Session;
 use crate::shell::Shell;
-use crate::theme;
-use crate::{engine, queue, shell, window_state};
-
-actions!(koan, [Quit]);
-
-/// How long quitting waits for the session to be written. Writing a large
-/// queue takes a moment; a database that never answers must not hold the
-/// app open.
-const SAVE_ON_QUIT: Duration = Duration::from_secs(5);
-
-/// Runs the app: opens the engine, then the window.
-pub fn run() {
-    application().with_assets(theme::icons::Assets).run(|cx| {
-        gpui_kit::init(cx);
-        theme::init(cx);
-        cx.bind_keys(shell::bindings());
-        cx.bind_keys(queue::bindings());
-        cx.bind_keys([KeyBinding::new(secondary!("q"), Quit, None)]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.set_menus([Menu::new("kōan").items([MenuItem::action("quit kōan", Quit)])]);
-
-        cx.spawn(async move |cx| {
-            let engine = match KoanEngine::open(None).await {
-                Ok(engine) => engine,
-                Err(e) => {
-                    log::error!("the engine did not open: {e}");
-                    cx.update(|cx| cx.quit());
-                    return;
-                }
-            };
-            cx.update(|cx| start(engine, cx));
-        })
-        .detach();
-    });
-}
+use crate::{queue, shell, window_state};
 
 /// How long the window waits for the restored queue before opening anyway.
 const RESTORE_WAIT: Duration = Duration::from_millis(500);
@@ -66,32 +34,33 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     Covers::install(cx);
 }
 
-/// Restores the session and opens the window, neither waiting on the other
-/// for long.
+/// Opens the window once the restored session is in the mirror, and keeps
+/// the session from then on.
 ///
-/// `restore_session` answers once the player has the queue to load, and that
-/// can take seconds when the queue is kept on a server. The window opens as
-/// soon as the restored rows are in the mirror, so its first frame is the
-/// queue that was left, and after `RESTORE_WAIT` whatever has happened.
+/// `restored` is `platform::init`'s restore: the number of tracks restored,
+/// or `None` when the session could not be read. It answers once the player
+/// has the queue to load, which can take seconds when the queue is kept on a
+/// server. The window opens as soon as the restored rows are in the mirror,
+/// so its first frame is the queue that was left, and after `RESTORE_WAIT`
+/// whatever has happened.
 ///
-/// The saved session is shared by every koan app on a configuration
-/// directory, so it is written only by a process that read it: saving starts
-/// once the restore has succeeded and its rows have arrived, and never if it
-/// failed.
-fn start(engine: Arc<KoanEngine>, cx: &mut App) {
+/// Saving starts once the restore has succeeded and its rows have arrived,
+/// and never if it failed: this process would otherwise write a session it
+/// never read.
+pub fn start(
+    engine: Arc<KoanEngine>,
+    restored: impl Future<Output = Option<u32>> + 'static,
+    cx: &mut App,
+) {
+    cx.bind_keys(queue::bindings());
     install(&engine, cx);
     let queue = cx.global::<Mirror>().queue.clone();
 
     let (shown, showing) = futures::channel::oneshot::channel::<()>();
-    let restore = engine.clone().restore_session();
     cx.spawn(async move |cx| {
-        let restored = match restore.await {
-            Ok(count) => count,
-            // Dropping `shown` opens the window at once.
-            Err(e) => {
-                log::warn!("session not restored: {e}");
-                return;
-            }
+        // Dropping `shown` opens the window at once.
+        let Some(restored) = restored.await else {
+            return;
         };
         // From when the restore answers, not from launch: a restore that
         // takes seconds must not spend the wait for its rows.
@@ -142,9 +111,8 @@ fn rows_arrived(
 }
 
 fn open(saved: Option<window_state::Saved>, cx: &mut App) {
-    cx.on_app_quit(move |cx| {
-        // Inside the closure, not the future it returns: GPUI gives that
-        // future a fifth of a second, which a large queue can outlast.
+    cx.on_app_quit(|cx| {
+        // Written now: the app is going, and nothing spawned would finish.
         for window in cx.windows() {
             window
                 .update(cx, |_, window, _| {
@@ -152,30 +120,7 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
                 })
                 .ok();
         }
-        let engine = engine::engine(cx);
-        let keeps_session = Session::following(cx);
-        if keeps_session {
-            let executor = cx.foreground_executor().clone();
-            match executor.block_with_timeout(SAVE_ON_QUIT, engine.clone().save_session()) {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => log::warn!("session not saved on quit: {e}"),
-                Err(_) => log::warn!("session not saved on quit: no answer in {SAVE_ON_QUIT:?}"),
-            }
-        }
-        async move {
-            if keeps_session {
-                engine.save_server_queue_now().await;
-            }
-        }
-    })
-    .detach();
-
-    // One window: closing it quits, as Linux would otherwise
-    // keep the process (and the music) running with nothing on screen.
-    cx.on_window_closed(|cx, _| {
-        if cx.windows().is_empty() {
-            cx.quit();
-        }
+        async {}
     })
     .detach();
 

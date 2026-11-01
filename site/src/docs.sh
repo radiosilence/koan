@@ -21,6 +21,7 @@ pages=(
   "Library|docs/format-strings.md"
   "Library|docs/recipes/cache-management.md"
   "Playback|docs/guide/terminal-ui.md"
+  "Playback|docs/guide/desktop.md"
   "Playback|docs/guide/devices.md"
   "Playback|docs/guide/apple-tv.md"
   "Playback|docs/guide/desktop.md"

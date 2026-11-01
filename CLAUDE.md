@@ -2,13 +2,13 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android, and the kōan GUI app in GPUI. Six crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android, and the kōan GUI app (GPUI), built for macOS and Linux so far. Six crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
-- **koan-gui** — binary + library crate (`koan-gui`). The kōan GUI app, in GPUI (gpui-kit): desktop builds for macOS and Linux (Windows once koan-core builds there). Draws only the kōan look: `src/theme/` (tokens, Geist Mono, the icon set, the record accent, the wash) and `src/components/`. Links koan-ffi as a plain Rust library, without uniffi, and drives `KoanEngine` as the native apps do. Not published.
+- **koan-gui** — the kōan GUI app (`koan-gui`), drawn with GPUI (gpui-kit). Desktop builds for macOS and Linux; Windows waits on koan-core (#1600). Links koan-ffi as a plain Rust library and drives `KoanEngine` as the Mac app does. Draws only the kōan look: `src/theme/` (tokens, Geist Mono, the icon set, the record accent, the wash) and `src/components/`. Not published.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
@@ -17,7 +17,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
-Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; only koan-gui depends on koan-ffi, as a Rust library. Native clients import koan-core through koan-ffi.
+Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; koan-gui depends on koan-ffi, as a Rust library, and nothing else depends on it. Native clients import koan-core through koan-ffi. Something a GUI page needs that `KoanEngine` lacks goes into koan-core and koan-ffi, so the Mac app could share it.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -86,7 +86,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 ## Releasing
 
-`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, and the changelog section as notes) and the Homebrew formulae. Its iOS and tvOS TestFlight builds join the public TestFlight group and go to beta review; builds from other pushes stay internal. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The App Store is separate too: once a release's TestFlight builds have processed, `gh workflow run store.yml` pushes `apps/ios/store/listing.toml` and submits iOS and tvOS to App Review. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
+`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, the kōan GUI app's DMG, AppImages and .debs, and the changelog section as notes) and the Homebrew formulae. Its iOS and tvOS TestFlight builds join the public TestFlight group and go to beta review; builds from other pushes stay internal. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The App Store is separate too: once a release's TestFlight builds have processed, `gh workflow run store.yml` pushes `apps/ios/store/listing.toml` and submits iOS and tvOS to App Review. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
 
 ## Docs and site
 
@@ -117,8 +117,6 @@ just release VER    # X.Y.Z or patch/minor/major: branch, bump, changelog, commi
 just theme-leaks    # styling in the apps that bypasses the kōan theme's roles
 just protocol-schema # regenerate docs/reference/protocol/schema/ from the message types
 just cli            # cargo run --release -p koan-cli -- <args>
-just gui-run        # build and run the kōan GUI app against a throwaway config
-just gui-build      # the GUI app's release binary
 just build          # cargo build --release
 just macos-run      # build + launch the macOS app
 just macos-dmg      # package the app for release
@@ -150,6 +148,8 @@ just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bi
 just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
+just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set
+just gui-bundle # package the desktop app for this machine: .app + DMG on macOS, AppImage + .deb on Linux
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -267,7 +267,7 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 
 | Module | What |
 |--------|------|
-| `app.rs` | Opens the engine and installs the globals (`install`), restores the session in the background, opens the window once the restored rows arrive or after half a second; quit saves the session and window bounds. `main.rs` only calls `app::run` |
+| `app.rs` | Installs the globals (`install`) once `main.rs` has opened the engine and started `platform::init`, and opens the window once the restored rows arrive or after half a second; the session is kept only once the restore succeeded. Quit saves the window's bounds; `platform` saves the session |
 | `root.rs` | A window's root: the wash and the content as two cached views; the playing record's sleeve, decoded off the main thread, sets the accent and the wash |
 | `paint.rs` | `Paint::of(window, cx)`: the theme's `Look` with its colours flattened for the views |
 | `mirror.rs` | The engine's state slices, one GPUI entity each, fed by one task on `StateStream::next()`. A queue sent whole is indexed and laid out as rows on the background executor; patches are applied relative to their base |
@@ -289,6 +289,21 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `theme/wash.rs` | The wash: `bake` (Android's `WashBake`, BGRA out) and the `Wash` view, one textured quad drifting only while asked and allowed |
 | `components/` | Buttons, toggles, segmented, form row, slider, stepper, text field, menu panel and rows, tooltip, nav and list rows, badge, chip, empty state |
 | `sheet.rs` | The theme sheet; `examples/theme_sheet.rs` draws it offscreen to a PNG |
+
+`platform/` is where the app meets the operating system. Nothing in it blocks the UI thread: engine calls are awaited from `cx.spawn`, file work runs on the background executor, the log is written by a thread of its own.
+
+| Module | What |
+|--------|------|
+| `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). It restores the desktop app's own saved session before taking launch files, so they land after it, and saves it on quit |
+| `platform/actions.rs` | Every shortcut, from one table: the key bindings, the macOS menu bar's items and the shortcuts sheet. Modifier shortcuts in the `koan` context, so a text field's own keys win; bare keys in `koan && !Input`, never a menu's key equivalent. Engine-only commands handled here; the rest are the shell's and the pages' to handle |
+| `platform/menus.rs` | The macOS menu bar, in the Mac app's order |
+| `platform/shortcuts_sheet.rs` | What `?` and ⌘/ show |
+| `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
+| `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
+| `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
+| `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
+
+`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry.
 
 ### apps/macos (`apps/macos/Sources/`)
 

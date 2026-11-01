@@ -37,6 +37,8 @@ brew install --cask radiosilence/koan/koan-app
 You may have to update brew's trust settings to trust the tap.
 Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release.
 
+Desktop app (macOS and Linux, in development): a DMG, an AppImage and a `.deb` with each release. See [the desktop app](docs/guide/desktop.md).
+
 CLI/TUI:
 
 ```bash
@@ -67,6 +69,8 @@ sudo dnf install alsa-lib-devel dbus-devel
 # Arch
 sudo pacman -S alsa-lib dbus
 ```
+
+Building the whole workspace on Linux, as `just check` does, also builds the kōan GUI app, which needs GPUI's libraries as well (on Debian and Ubuntu: `libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libvulkan-dev`).
 
 The iOS and Apple TV apps are in App Review; until they are released, the [TestFlight beta](https://testflight.apple.com/join/96w2gjFz) installs them on an iPhone, iPad or Apple TV. The iOS app can also be built from source: `just ios-phone` installs it on a plugged-in iPhone, signed with your own (free) Apple developer team. Both need iOS or tvOS 26 and a kōan, Navidrome or other Subsonic server to play from.
 
