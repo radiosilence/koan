@@ -220,6 +220,9 @@ impl Render for Sidebar {
                         .on_drop(cx.listener({
                             let id = playlist.id;
                             move |_, dragged: &PlayableDrag, _, cx| {
+                                if dragged.is_from(id) {
+                                    return;
+                                }
                                 let sets = dragged.sets.to_vec();
                                 command(cx, "add to playlist", move |e| {
                                     e.add_to_playlist(id, sets)

@@ -54,6 +54,16 @@ pub struct PlayableDrag {
     pub items: Arc<[Playable]>,
     /// What the preview says: the one item's name, or how many.
     pub label: SharedString,
+    /// The playlist rows it was dragged out of. Dropped back on that
+    /// playlist it is a move, never copies; on its sidebar row, nothing.
+    pub origin: Option<Origin>,
+}
+
+/// Rows of a playlist, by entry: one track can be several of them.
+#[derive(Clone, Debug)]
+pub struct Origin {
+    pub playlist: i64,
+    pub entries: Arc<[i64]>,
 }
 
 impl PlayableDrag {
@@ -62,7 +72,21 @@ impl PlayableDrag {
             sets: sources(items).into(),
             items: items.into(),
             label: label.into(),
+            origin: None,
         }
+    }
+
+    pub fn from_playlist(mut self, playlist: i64, entries: Vec<i64>) -> Self {
+        self.origin = Some(Origin {
+            playlist,
+            entries: entries.into(),
+        });
+        self
+    }
+
+    /// Whether this came out of `playlist`.
+    pub fn is_from(&self, playlist: i64) -> bool {
+        self.origin.as_ref().is_some_and(|o| o.playlist == playlist)
     }
 
     /// The drag preview, centred under the pointer.

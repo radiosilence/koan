@@ -2,6 +2,7 @@
 //! and Linux, for now.
 
 pub mod app;
+pub mod collections;
 pub mod components;
 pub mod covers;
 pub mod dsp;
