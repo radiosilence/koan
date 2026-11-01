@@ -1,0 +1,1 @@
+- **The desktop app's transport has an EQ button.** It chooses the output's preset and opens the EQ window. With no EQ in force it is the plain glyph rather than a label reading "flat", and it takes the accent while a profile plays, with the profile named in its tooltip.

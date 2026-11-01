@@ -42,7 +42,7 @@ A build from `main` can move the library database to a newer schema than the rel
 
 ## The window
 
-The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, and the sleep timer and output menus. The window opens where it was left.
+The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, the sleep timer and output menus, and EQ. The window opens where it was left.
 
 ## The queue
 
@@ -69,4 +69,4 @@ Settings reads the configuration again when its window opens and whenever it com
 
 ## EQ
 
-Playback → EQ… (⌥⌘E, Ctrl+Alt+E on Linux) opens EQ in a window of its own, on the output in use; the device menu at its top picks another. It is the same EQ the other apps have, described in [Equalisation and convolution](dsp.md): the chain a device plays, its preset, the curve of the whole, and each profile's page with its bands. Drag a band's handle on the graph for its frequency and gain, with Option held (Alt on Linux) for its Q; a graphic curve is painted by dragging across the graph away from the handles. Files dropped on the window are imported into the device's filters.
+The transport's EQ button chooses the output's preset, or no EQ, and Edit… opens the EQ window on it. The glyph is plain while the output plays untouched and takes the accent while an EQ is in force, whose name its tooltip gives. Playback → EQ… (⌥⌘E, Ctrl+Alt+E on Linux) opens EQ in a window of its own, on the output in use; the device menu at its top picks another. It is the same EQ the other apps have, described in [Equalisation and convolution](dsp.md): the chain a device plays, its preset, the curve of the whole, and each profile's page with its bands. Drag a band's handle on the graph for its frequency and gain, with Option held (Alt on Linux) for its Q; a graphic curve is painted by dragging across the graph away from the handles. Files dropped on the window are imported into the device's filters.

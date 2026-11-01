@@ -1,18 +1,20 @@
 //! The transport: a full-width bar along the foot of the window.
 //!
 //! Left, the record and track playing; centre, the controls over the seek
-//! slider; right, the format and the sleep and output menus.
+//! slider; right, the format, the sleep and output menus, and EQ.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_ffi::{NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat};
+use koan_ffi::{
+    DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
+};
 
 use crate::components::{Menu as ThemeMenu, MenuEntry};
 use crate::covers::{self, CoversHandle};
-use crate::engine::command;
+use crate::engine::{command, engine};
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
 use crate::paint::Paint;
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
@@ -30,23 +32,97 @@ pub struct Transport {
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: Option<Arc<RenderImage>>,
-    _subscriptions: [Subscription; 4],
+    /// What the output in use plays, for the EQ button; `None` while there
+    /// are no EQ profiles, or while another device is controlled, whose
+    /// presets are chosen under Output there.
+    eq: Option<EqState>,
+    /// The profile the playing stream named when `eq` was read.
+    eq_profile: Option<String>,
+    _eq_load: Option<Task<()>>,
+    _subscriptions: [Subscription; 6],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Menu {
     Sleep,
     Output,
+    Eq,
+}
+
+/// The EQ of the output in use, as its button and menu show it.
+#[derive(Clone, Debug, PartialEq)]
+struct EqState {
+    device: String,
+    /// What to call the device: a renderer is named by its UDN otherwise.
+    name: String,
+    /// The preset it was set from, and whether it was changed since.
+    preset: Option<String>,
+    edited: bool,
+    /// No correction and no tuning: it plays untouched.
+    flat: bool,
+    presets: Vec<String>,
+}
+
+impl EqState {
+    fn of(overview: &DspOverview) -> Option<Self> {
+        if overview.profiles.is_empty() {
+            return None;
+        }
+        let device = overview.device.clone()?;
+        let state = overview.outputs.iter().find(|o| o.device == device);
+        Some(Self {
+            name: overview
+                .names
+                .get(&device)
+                .cloned()
+                .unwrap_or_else(|| device.clone()),
+            preset: state.and_then(|s| s.preset.clone()),
+            edited: state.is_some_and(|s| s.preset_edited),
+            flat: state.is_none_or(|s| s.flat),
+            presets: overview
+                .profiles
+                .iter()
+                .filter(|p| p.preset)
+                .map(|p| p.name.clone())
+                .collect(),
+            device,
+        })
+    }
+
+    /// What the button's tooltip says: the preset in force, never "flat".
+    fn summary(&self) -> String {
+        match &self.preset {
+            Some(preset) if self.edited => format!("EQ: {preset}, edited"),
+            Some(preset) => format!("EQ: {preset}"),
+            None if self.flat => "EQ".into(),
+            None => "EQ: unsaved".into(),
+        }
+    }
 }
 
 impl Transport {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
         let covers = cx.global::<CoversHandle>().0.clone();
-        Self {
+        let mut this = Self {
             seek: cx.new(|cx| Seek::new(window, cx)),
             _subscriptions: [
-                cx.observe(&mirror.playback, |_, _, cx| cx.notify()),
+                cx.observe(&mirror.playback, |this, playback, cx| {
+                    // A new stream naming another profile: the output or its
+                    // EQ moved without the outputs saying so.
+                    let profile = playback
+                        .read(cx)
+                        .0
+                        .format
+                        .as_ref()
+                        .and_then(|f| f.dsp.as_ref())
+                        .map(|d| d.profile.clone());
+                    if profile != this.eq_profile {
+                        this.eq_profile = profile;
+                        this.reload_eq(cx);
+                    }
+                    cx.notify();
+                }),
                 cx.observe(&mirror.outputs, |_, _, cx| cx.notify()),
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
@@ -66,12 +142,38 @@ impl Transport {
                 }),
                 // Shuffle and repeat are underlined in the accent.
                 theme::observe_accent(cx),
+                // What EQ plays follows the output, its presets (published
+                // with the outputs) and the profiles (synced with the library).
+                cx.observe(&mirror.outputs, |this, _, cx| this.reload_eq(cx)),
+                cx.observe(&mirror.library, |this, _, cx| this.reload_eq(cx)),
             ],
             playback: mirror.playback,
             outputs: mirror.outputs,
             menu: None,
             cover: None,
-        }
+            eq: None,
+            eq_profile: None,
+            _eq_load: None,
+        };
+        this.reload_eq(cx);
+        this
+    }
+
+    /// Reads what the output in use plays again; a newer read replaces one
+    /// in flight. Redraws only when the button or its menu would change.
+    fn reload_eq(&mut self, cx: &mut Context<Self>) {
+        let read = engine(cx).dsp_overview();
+        self._eq_load = Some(cx.spawn(async move |this, cx| {
+            let overview = read.await;
+            this.update(cx, |this, cx| {
+                let eq = EqState::of(&overview);
+                if eq != this.eq {
+                    this.eq = eq;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
     }
 
     fn open(&mut self, which: Menu, window: &mut Window, cx: &mut Context<Self>) {
@@ -90,6 +192,12 @@ impl Transport {
                     return;
                 };
                 ThemeMenu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
+            }
+            Menu::Eq => {
+                let Some(eq) = self.eq.clone() else {
+                    return;
+                };
+                ThemeMenu::build(window, cx, move |menu, _, _| eq_menu(menu, &eq))
             }
         };
         let dismissed = cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
@@ -110,32 +218,68 @@ impl Transport {
         p: &Paint,
         cx: &mut Context<Self>,
     ) -> Div {
+        self.menu_anchor(
+            which,
+            text_button(icon, label, p)
+                .id(label)
+                .when(!enabled, |b| b.opacity(0.4))
+                .when(enabled, |b| {
+                    b.on_click(cx.listener(move |this, _, window, cx| this.open(which, window, cx)))
+                }),
+        )
+    }
+
+    /// The EQ button: the glyph in `ink` while the output plays untouched,
+    /// in the accent while an EQ is in force, its name in the tooltip.
+    fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
+        let color = if eq.flat { p.ink } else { p.accent_text };
+        let summary: SharedString = eq.summary().into();
+        let child = if p.look.icons {
+            KoanIcon::new(Icon::Filters)
+                .role(TypeRole::Body)
+                .color(if eq.flat { p.ink } else { p.accent })
+                .into_any_element()
+        } else {
+            div().child("eq").into_any_element()
+        };
+        self.menu_anchor(
+            Menu::Eq,
+            div()
+                .id("eq")
+                .flex()
+                .items_center()
+                .justify_center()
+                .min_w(theme::HIT)
+                .min_h(theme::HIT)
+                .px(p.space(Space::S))
+                .cursor_pointer()
+                .text_role(TypeRole::Meta, &p.look)
+                .text_color(color)
+                .hover(|s| s.opacity(0.8))
+                .child(child)
+                .tooltip(move |window, cx| {
+                    crate::components::Tooltip::view(summary.clone(), window, cx)
+                })
+                .on_click(cx.listener(|this, _, window, cx| this.open(Menu::Eq, window, cx))),
+        )
+    }
+
+    /// `button`, with its menu under it while open.
+    fn menu_anchor(&self, which: Menu, button: impl IntoElement) -> Div {
         let open = self
             .menu
             .as_ref()
             .filter(|(m, ..)| *m == which)
             .map(|(_, menu, _)| menu.clone());
-        div()
-            .relative()
-            .child(
-                text_button(icon, label, p)
-                    .id(label)
-                    .when(!enabled, |b| b.opacity(0.4))
-                    .when(enabled, |b| {
-                        b.on_click(
-                            cx.listener(move |this, _, window, cx| this.open(which, window, cx)),
-                        )
-                    }),
+        div().relative().child(button).children(open.map(|menu| {
+            deferred(
+                anchored()
+                    .anchor(Anchor::BottomRight)
+                    .snap_to_window()
+                    .child(menu),
             )
-            .children(open.map(|menu| {
-                deferred(
-                    anchored()
-                        .anchor(Anchor::BottomRight)
-                        .snap_to_window()
-                        .child(menu),
-                )
-                .with_priority(1)
-            }))
+            .with_priority(1)
+        }))
     }
 }
 
@@ -191,6 +335,53 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
         }
     }
     menu
+}
+
+/// The output's EQ: none, or each preset, the one it was set from ticked. A
+/// preset changed since is listed twice, as edited, ticked, and as saved,
+/// which goes back to it. Edit… opens the EQ window on the device.
+fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
+    let choose = |label: String, chosen: bool, preset: Option<String>| {
+        let device = eq.device.clone();
+        MenuEntry::new(label)
+            .checked(chosen)
+            .on_click(move |_, _, cx| {
+                let (device, preset) = (device.clone(), preset.clone());
+                command(cx, "EQ preset", move |e| e.dsp_apply_preset(device, preset));
+            })
+    };
+    let mut menu = menu
+        .label(eq.name.clone())
+        .item(choose("No EQ".into(), eq.flat, None));
+    if eq.preset.is_none() && !eq.flat {
+        menu = menu.item(MenuEntry::new("Unsaved").checked(true).disabled(true));
+    }
+    for preset in &eq.presets {
+        let current = eq.preset.as_ref() == Some(preset);
+        if current && eq.edited {
+            menu = menu.item(
+                MenuEntry::data(format!("{preset}, edited"))
+                    .checked(true)
+                    .disabled(true),
+            );
+        }
+        menu = menu.item(
+            MenuEntry::data(preset.clone())
+                .checked(current && !eq.edited)
+                .on_click({
+                    let (device, preset) = (eq.device.clone(), preset.clone());
+                    move |_, _, cx| {
+                        let (device, preset) = (device.clone(), Some(preset.clone()));
+                        command(cx, "EQ preset", move |e| e.dsp_apply_preset(device, preset));
+                    }
+                }),
+        );
+    }
+    let device = eq.device.clone();
+    menu.separator().item(
+        MenuEntry::new("Edit…")
+            .on_click(move |_, _, cx| crate::dsp::window::open(Some(device.clone()), cx)),
+    )
 }
 
 /// The theme's text button: the label in `muted`, `ink` under the pointer.
@@ -450,7 +641,20 @@ impl Render for Transport {
                 &p,
                 cx,
             ))
-            .child(self.menu_button(Menu::Output, Icon::Speaker, "output", has_outputs, &p, cx));
+            .child(self.menu_button(Menu::Output, Icon::Speaker, "output", has_outputs, &p, cx))
+            // This device's own output's EQ; another device's is chosen there.
+            .children(
+                self.eq
+                    .clone()
+                    .filter(|_| {
+                        self.outputs
+                            .read(cx)
+                            .0
+                            .as_ref()
+                            .is_none_or(|o| o.owner.is_none())
+                    })
+                    .map(|eq| self.eq_button(&eq, &p, cx)),
+            );
 
         div()
             .h(HEIGHT)
