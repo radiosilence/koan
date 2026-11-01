@@ -51,13 +51,6 @@ fn main() {
             };
             cx.update(|cx| {
                 platform::init(&engine, opening, cx);
-                let engine = engine.clone();
-                cx.spawn(async move |_: &mut AsyncApp| {
-                    if let Err(e) = platform::restore_session(&engine).await {
-                        log::warn!("could not restore the session: {e}");
-                    }
-                })
-                .detach();
                 gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Shell))
                     .expect("failed to open the window");
             });

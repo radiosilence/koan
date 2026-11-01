@@ -10,7 +10,7 @@ Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppIma
 
 On one machine the desktop app, the macOS app and the terminal UI can all run at once on the same library. Each is a device of its own to the server and the network, named for what it is (`studio (desktop)`, `studio (terminal)`), so one can control another and none takes another's place. Only one desktop app runs per configuration directory: opening it again, or opening files with it, brings the running one to the front and hands it the files.
 
-The saved session, the queue and where it had got to, is one per configuration directory, shared by the desktop app and the macOS app. Each picks it up at launch and saves it as it quits, so whichever quits last leaves its own for the next launch of either.
+The saved session, the queue and where it had got to, is one per configuration directory, shared by the desktop app and the macOS app. Run one of them at a time to keep it: each picks it up at launch and saves it as it goes and as it quits, so with both open it is whatever either saved last.
 
 ## Files from outside
 

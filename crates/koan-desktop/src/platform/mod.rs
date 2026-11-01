@@ -28,17 +28,17 @@ const QUIT_SAVE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 static RESTORED: AtomicBool = AtomicBool::new(false);
 
 /// Restore the queue, cursor and position the last session saved, and from
-/// then on save them on quit. What the shell calls at launch, in place of
-/// `KoanEngine::restore_session`.
+/// then on save them on quit.
 ///
 /// On one configuration directory the desktop app shares a single saved
 /// session with the native app, so a process that never read it must not
 /// write it: quitting would leave the other app this one's queue, empty or
 /// not, in place of its own.
-pub async fn restore_session(engine: &Arc<KoanEngine>) -> Result<u32, koan_ffi::KoanError> {
-    let restored = engine.clone().restore_session().await?;
-    RESTORED.store(true, Ordering::Relaxed);
-    Ok(restored)
+async fn restore_session(engine: &Arc<KoanEngine>) {
+    match engine.clone().restore_session().await {
+        Ok(_) => RESTORED.store(true, Ordering::Relaxed),
+        Err(e) => log::warn!("could not restore the session: {e}"),
+    }
 }
 
 /// Links the platform asked the app to open that are not files, such as
@@ -51,14 +51,16 @@ impl Global for Links {}
 
 /// Everything here that runs for the life of the app, started once the
 /// engine is open and before the window is. `opened` carries files and links
-/// from the command line, a later launch and the platform's open requests.
+/// from the command line, a later launch and the platform's open requests;
+/// they are taken once the saved session is restored, so a launch's files
+/// land after the queue it left rather than before it.
 pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx: &mut App) {
     actions::register(engine, cx);
     shortcuts_sheet::bind(cx);
     menus::set(cx);
     media::start(engine.clone(), cx);
     // As the Mac app quits: the session and the server's queue first, if this
-    // process restored them (`restore_session`), for at most two seconds, so a
+    // process restored them, for at most two seconds, so a
     // server out of reach does not hold the quit up;
     // then, after that last save, a UPnP renderer is stopped rather than left
     // to play out from a URL this process serves and stall, settings still
@@ -83,6 +85,7 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
     .detach();
     let engine = engine.clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
+        restore_session(&engine).await;
         while let Some(next) = opened.next().await {
             cx.update(|cx| {
                 to_front(cx);
