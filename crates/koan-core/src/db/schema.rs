@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 30;
+pub const SCHEMA_VERSION: i64 = 31;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -380,26 +380,6 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             PRIMARY KEY (user_id, track_id)
         );
 
-        CREATE TABLE IF NOT EXISTS playback_state (
-            id          INTEGER PRIMARY KEY CHECK (id = 1),
-            queue_json  TEXT NOT NULL DEFAULT '[]',
-            cursor_id   TEXT,
-            position_ms INTEGER NOT NULL DEFAULT 0,
-            updated_at  TEXT DEFAULT (datetime('now'))
-        );
-
-        -- Where the saved queue is up to, written every second while music
-        -- plays. A row of its own because SQLite rewrites a record whenever
-        -- its size changes, and in `playback_state` that record carries the
-        -- whole queue.
-        CREATE TABLE IF NOT EXISTS playback_position (
-            id            INTEGER PRIMARY KEY CHECK (id = 1),
-            cursor_id     TEXT,
-            position_ms   INTEGER NOT NULL DEFAULT 0,
-            was_playing   INTEGER NOT NULL DEFAULT 0,
-            updated_at    TEXT DEFAULT (datetime('now'))
-        );
-
         -- `AUTOINCREMENT` because ids are the cursor devices page a
         -- server's history by: one handed out again would never reach them.
         CREATE TABLE IF NOT EXISTS play_history (
@@ -626,6 +606,7 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     // Before the migrations: rebuilding source rows derives tracks, and
     // deriving writes their credits.
     conn.execute_batch(CREDIT_TABLES)?;
+    conn.execute_batch(SESSION_TABLES)?;
     apply_migrations(conn, found)?;
     // After the migrations: rebuilding `play_history` drops its triggers.
     //
@@ -726,6 +707,31 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
     ))
 }
 
+/// The saved sessions: one queue per device on this config directory, keyed
+/// by the prefix of the files the device keeps there (see
+/// `queries::playback_state`).
+///
+/// Where a queue is up to is a row of its own, written every second while
+/// music plays: SQLite rewrites a record whenever its size changes, and in
+/// `playback_state` that record carries the whole queue. The play mode is
+/// kept with the position rather than the queue so that it outlives one.
+const SESSION_TABLES: &str = "
+    CREATE TABLE IF NOT EXISTS playback_state (
+        device      TEXT NOT NULL PRIMARY KEY,
+        queue_json  TEXT NOT NULL DEFAULT '[]',
+        updated_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS playback_position (
+        device      TEXT NOT NULL PRIMARY KEY,
+        cursor_id   TEXT,
+        position_ms INTEGER NOT NULL DEFAULT 0,
+        was_playing INTEGER NOT NULL DEFAULT 0,
+        shuffle     INTEGER NOT NULL DEFAULT 0,
+        repeat      TEXT NOT NULL DEFAULT 'off',
+        updated_at  TEXT DEFAULT (datetime('now'))
+    );
+";
+
 /// Each artist a track's or an album's credits name, beside its own artist,
 /// which stays the credit as it reads ("A × B"). Derived from the sources by
 /// `sources::derive_credits`, like every other track column.
@@ -808,13 +814,6 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     // recently-added ordering. Remote sync supplies the server's own `created`;
     // a local scan the earliest mtime among the album's files.
     ("albums", "added_at", "TEXT"),
-    // Whether playback was running when the session was saved, so reopening can
-    // pick up where it left off rather than always paused.
-    (
-        "playback_state",
-        "was_playing",
-        "INTEGER NOT NULL DEFAULT 0",
-    ),
     // The play mode, beside the position rather than the queue so that it
     // outlives a queue: it is the player's.
     ("playback_position", "shuffle", "INTEGER NOT NULL DEFAULT 0"),
@@ -1065,16 +1064,7 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     )?;
     crate::db::queries::auth::adopt_local_rows(conn)?;
 
-    // The position moved out of the queue's row; the last one saved comes too.
-    if found < 9 {
-        conn.execute(
-            "INSERT OR IGNORE INTO playback_position
-                 (id, cursor_id, position_ms, was_playing)
-             SELECT 1, cursor_id, position_ms, was_playing
-               FROM playback_state WHERE id = 1",
-            [],
-        )?;
-    }
+    sessions_by_device(conn, found)?;
 
     for table in ["artists", "albums", "tracks", "playlists"] {
         conn.execute_batch(&format!(
@@ -1147,6 +1137,57 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         conn.execute("DROP TABLE IF EXISTS link_push", [])?;
     }
 
+    Ok(())
+}
+
+/// Key the saved session by device. The one session kept before was whichever
+/// of the app and the terminal UI saved last, so each starts with a copy of
+/// it: someone who used only one of them keeps their queue. Keyed on the
+/// columns rather than the version alone: a database from before the position
+/// had a table of its own gets that table in the new shape from
+/// `SESSION_TABLES`.
+fn sessions_by_device(conn: &Connection, found: i64) -> rusqlite::Result<()> {
+    // The app's and the terminal UI's files prefixes, as they were when
+    // sessions were first kept per device.
+    let devices = "(SELECT '' AS device UNION ALL SELECT 'terminal-')";
+    if !column_exists(conn, "playback_position", "device")? {
+        conn.execute_batch("ALTER TABLE playback_position RENAME TO playback_position_by_id;")?;
+        conn.execute_batch(SESSION_TABLES)?;
+        conn.execute_batch(&format!(
+            "INSERT INTO playback_position
+                 (device, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at)
+             SELECT d.device, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at
+               FROM playback_position_by_id, {devices} d WHERE id = 1;
+             DROP TABLE playback_position_by_id;"
+        ))?;
+    }
+    if !column_exists(conn, "playback_state", "device")? {
+        // Before version 9 the position was kept with the queue.
+        if found < 9 {
+            let playing = if column_exists(conn, "playback_state", "was_playing")? {
+                "was_playing"
+            } else {
+                "0"
+            };
+            conn.execute(
+                &format!(
+                    "INSERT OR IGNORE INTO playback_position
+                         (device, cursor_id, position_ms, was_playing)
+                     SELECT d.device, cursor_id, position_ms, {playing}
+                       FROM playback_state, {devices} d WHERE id = 1"
+                ),
+                [],
+            )?;
+        }
+        conn.execute_batch("ALTER TABLE playback_state RENAME TO playback_state_by_id;")?;
+        conn.execute_batch(SESSION_TABLES)?;
+        conn.execute_batch(&format!(
+            "INSERT INTO playback_state (device, queue_json, updated_at)
+             SELECT d.device, queue_json, updated_at FROM playback_state_by_id, {devices} d
+              WHERE id = 1;
+             DROP TABLE playback_state_by_id;"
+        ))?;
+    }
     Ok(())
 }
 
@@ -2315,30 +2356,144 @@ mod tests {
         assert!(conn.is_autocommit());
     }
 
+    /// The session tables as version 30 left them: one row each, `id = 1`.
+    const SESSION_TABLES_BY_ID: &str = "
+        DROP TABLE playback_state;
+        DROP TABLE playback_position;
+        CREATE TABLE playback_state (
+            id          INTEGER PRIMARY KEY CHECK (id = 1),
+            queue_json  TEXT NOT NULL DEFAULT '[]',
+            cursor_id   TEXT,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at  TEXT DEFAULT (datetime('now')),
+            was_playing INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE playback_position (
+            id          INTEGER PRIMARY KEY CHECK (id = 1),
+            cursor_id   TEXT,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            was_playing INTEGER NOT NULL DEFAULT 0,
+            updated_at  TEXT DEFAULT (datetime('now')),
+            shuffle     INTEGER NOT NULL DEFAULT 0,
+            repeat      TEXT NOT NULL DEFAULT 'off'
+        );
+    ";
+
+    /// The session the app and the terminal UI each start with after the
+    /// upgrade, which is the same one.
+    fn the_session_both_keep(conn: &Connection) -> (String, String, i64, bool, bool, String) {
+        let app = session_of(conn, "");
+        assert_eq!(app, session_of(conn, "terminal-"));
+        app
+    }
+
+    fn session_of(conn: &Connection, device: &str) -> (String, String, i64, bool, bool, String) {
+        conn.query_row(
+            "SELECT s.queue_json, p.cursor_id, p.position_ms, p.was_playing, p.shuffle, p.repeat
+               FROM playback_state s JOIN playback_position p ON p.device = s.device
+              WHERE s.device = ?1",
+            [device],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn the_saved_position_moves_to_its_own_table() {
+    fn the_one_saved_session_goes_to_the_app_and_the_terminal() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
-        conn.execute_batch(
-            "DROP TABLE playback_position;
-             INSERT INTO playback_state
-                 (id, queue_json, cursor_id, position_ms, was_playing)
-             VALUES (1, '[]', '/music/a.flac', 61000, 1);
-             PRAGMA user_version = 8;",
-        )
+        conn.execute_batch(&format!(
+            "{SESSION_TABLES_BY_ID}
+             INSERT INTO playback_state (id, queue_json) VALUES (1, '[{{}}]');
+             INSERT INTO playback_position
+                 (id, cursor_id, position_ms, was_playing, shuffle, repeat)
+             VALUES (1, '/music/a.flac', 61000, 1, 1, 'one');
+             PRAGMA user_version = 30;"
+        ))
         .unwrap();
 
         create_tables(&conn).unwrap();
 
-        let moved: (String, i64, bool) = conn
-            .query_row(
-                "SELECT cursor_id, position_ms, was_playing
-                   FROM playback_position WHERE id = 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        assert_eq!(
+            the_session_both_keep(&conn),
+            (
+                "[{}]".into(),
+                "/music/a.flac".into(),
+                61000,
+                true,
+                true,
+                "one".into()
             )
-            .unwrap();
-        assert_eq!(moved, ("/music/a.flac".into(), 61000, true));
+        );
+        for table in ["playback_state", "playback_position"] {
+            let rows: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(rows, 2, "{table}");
+            assert!(!column_exists(&conn, table, "id").unwrap(), "{table}");
+        }
+    }
+
+    #[test]
+    fn a_position_kept_with_the_queue_goes_to_both() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(&format!(
+            "{SESSION_TABLES_BY_ID}
+             DROP TABLE playback_position;
+             INSERT INTO playback_state
+                 (id, queue_json, cursor_id, position_ms, was_playing)
+             VALUES (1, '[{{}}]', '/music/a.flac', 61000, 1);
+             PRAGMA user_version = 8;"
+        ))
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        assert_eq!(
+            the_session_both_keep(&conn),
+            (
+                "[{}]".into(),
+                "/music/a.flac".into(),
+                61000,
+                true,
+                false,
+                "off".into()
+            )
+        );
+        assert!(!column_exists(&conn, "playback_state", "cursor_id").unwrap());
+    }
+
+    #[test]
+    fn a_position_saved_before_was_playing_was_kept_is_paused() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(&format!(
+            "{SESSION_TABLES_BY_ID}
+             DROP TABLE playback_position;
+             ALTER TABLE playback_state DROP COLUMN was_playing;
+             INSERT INTO playback_state (id, queue_json, cursor_id, position_ms)
+             VALUES (1, '[{{}}]', '/music/a.flac', 61000);
+             PRAGMA user_version = 8;"
+        ))
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let (_, cursor, position, playing, _, _) = the_session_both_keep(&conn);
+        assert_eq!(
+            (cursor.as_str(), position, playing),
+            ("/music/a.flac", 61000, false)
+        );
     }
 
     #[test]

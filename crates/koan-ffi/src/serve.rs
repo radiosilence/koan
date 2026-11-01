@@ -367,6 +367,7 @@ impl KoanEngine {
                 viz: Some(self.viz.clone()),
                 profile: Profile::Embedded,
                 hosts: names,
+                session: Some(self.session),
             })
             .map_err(|message| KoanError::Refused { message })?;
             let port = started.addr().port();
