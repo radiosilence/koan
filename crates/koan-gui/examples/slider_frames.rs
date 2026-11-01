@@ -15,6 +15,8 @@ use koan_gui::components::Slider;
 use koan_gui::sheet::ThemeSheet;
 use koan_gui::theme;
 use koan_kit::app::*;
+// A measuring tool outside the app: GPUI's headless harness and input, driven directly.
+use koan_kit::raw::{HeadlessAppContext, PlatformInput, StyleRefinement, point, px, size};
 
 const WIDTH: f32 = 1180.0;
 const HEIGHT: f32 = 1500.0;

@@ -9,8 +9,6 @@ use koan_kit::app::*;
 use koan_kit::raw::component::input::{InputEvent, InputState};
 // gpui-component's popover, the panel koan-kit's menus are built in.
 use koan_kit::raw::component::popover::Popover;
-// GPUI's start-up and headless rendering, which only the app's entry and tools reach.
-use koan_kit::raw::TestAppContext;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 
@@ -619,6 +617,9 @@ pub fn selection_bar<V: Picking>(
 mod tests {
     use super::*;
     use core::prelude::v1::test;
+
+    // GPUI's test harness: a window driven with simulated input.
+    use koan_kit::raw::TestAppContext;
 
     /// Typing in the filter field narrows the browsers: what is typed
     /// reaches the browse model they all listen to.

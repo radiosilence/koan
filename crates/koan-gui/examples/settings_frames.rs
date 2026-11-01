@@ -14,6 +14,11 @@ use koan_ffi::KoanEngine;
 use koan_gui::settings::{SettingsWindow, Tab};
 use koan_gui::{app, theme};
 use koan_kit::app::*;
+// A tool outside the app: GPUI's headless harness and input, driven directly.
+use koan_kit::raw::{
+    HeadlessAppContext, PlatformInput, ScrollDelta, ScrollEvent, ScrollSource, TouchPhase, point,
+    px, size,
+};
 
 const TABS: [Tab; 5] = [
     Tab::Library,
