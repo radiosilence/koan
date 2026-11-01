@@ -6,6 +6,7 @@ pub mod album_page;
 pub mod albums;
 pub mod artist_page;
 pub mod artists;
+pub mod bench;
 pub mod browse;
 pub mod chrome;
 pub mod covers;
@@ -47,11 +48,18 @@ pub struct Lib {
     pub covers: Entity<covers::Covers>,
     pub nav: Entity<nav::Nav>,
     pub browse: Entity<browse::Browse>,
+    /// Set while `KOAN_DESKTOP_BENCH` measures the album grid.
+    pub bench: Option<bench::Shared>,
 }
 
 impl Lib {
     /// `browse` is read from disk by the caller, off the main thread.
-    pub fn new(engine: Arc<KoanEngine>, browse: browse::Browse, cx: &mut App) -> Self {
+    pub fn new(
+        engine: Arc<KoanEngine>,
+        browse: browse::Browse,
+        bench: Option<bench::Shared>,
+        cx: &mut App,
+    ) -> Self {
         let feed = cx.new(|cx| feed::Feed::new(engine.clone(), cx));
         let covers = cx.new(|cx| covers::Covers::new(engine.clone(), cx));
         let nav = cx.new(|_| nav::Nav::default());
@@ -85,6 +93,7 @@ impl Lib {
             covers,
             nav,
             browse,
+            bench,
         }
     }
 }

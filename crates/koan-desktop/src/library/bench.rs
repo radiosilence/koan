@@ -64,8 +64,16 @@ pub type Shared = Rc<RefCell<Recorder>>;
 /// flick, which is a short drag released into momentum that decays.
 #[derive(Clone, Copy)]
 enum Phase {
-    Steady { name: &'static str, speed: f32, secs: f32 },
-    Flicks { name: &'static str, speed: f32, count: u32 },
+    Steady {
+        name: &'static str,
+        speed: f32,
+        secs: f32,
+    },
+    Flicks {
+        name: &'static str,
+        speed: f32,
+        count: u32,
+    },
 }
 
 const PHASES: [Phase; 4] = [
@@ -101,6 +109,7 @@ pub fn run(window: &mut Window, recorder: Shared, cx: &mut App) {
         marks: Vec::new(),
         flick: 0,
         flick_at: None,
+        released: false,
     }));
     // A moment for the listing and the first screen to land.
     let settle = Instant::now() + Duration::from_secs(3);
@@ -116,6 +125,8 @@ struct Driver {
     marks: Vec<(usize, &'static str)>,
     flick: u32,
     flick_at: Option<Instant>,
+    /// The current flick's fingers have lifted.
+    released: bool,
 }
 
 fn scroll(window: &mut Window, cx: &mut App, dy: f32, phase: TouchPhase) {
@@ -139,7 +150,10 @@ fn tick(state: Rc<RefCell<Driver>>, settle: Instant, window: &mut Window, cx: &m
     }
     let mut d = state.borrow_mut();
     d.recorder.borrow_mut().end_frame(now);
-    let dt = d.last.map_or(1.0 / 120.0, |l| (now - l).as_secs_f32()).min(0.05);
+    let dt = d
+        .last
+        .map_or(1.0 / 120.0, |l| (now - l).as_secs_f32())
+        .min(0.05);
     d.last = Some(now);
     let Some(phase) = PHASES.get(d.phase).copied() else {
         drop(d);
@@ -184,12 +198,14 @@ fn tick(state: Rc<RefCell<Driver>>, settle: Instant, window: &mut Window, cx: &m
                 scroll(window, cx, speed * dt, phase);
             } else {
                 let v = speed * (-3.0 * (t - 0.12)).exp();
-                if (t - 0.12) < f32::EPSILON + dt {
+                if !d.released {
+                    d.released = true;
                     scroll(window, cx, 0.0, TouchPhase::Ended);
                 }
                 if v * dt < 1.0 {
                     d.flick += 1;
                     d.flick_at = None;
+                    d.released = false;
                     next = d.flick >= count;
                 } else {
                     scroll(window, cx, v * dt, TouchPhase::Moved);
@@ -231,14 +247,24 @@ fn report(d: &Driver) {
             .map(|w| (w[1].0 - w[0].0).as_secs_f64() * 1000.0)
             .collect();
         intervals.sort_by(f64::total_cmp);
-        let mut rows: Vec<f64> = frames.iter().map(|f| f.1.rows.as_secs_f64() * 1000.0).collect();
+        let mut rows: Vec<f64> = frames
+            .iter()
+            .map(|f| f.1.rows.as_secs_f64() * 1000.0)
+            .collect();
         rows.sort_by(f64::total_cmp);
         let median = percentile(&intervals, 0.5);
         let dropped = intervals.iter().filter(|i| **i > median * 1.5).count();
         let blank_frames = frames.iter().filter(|f| f.1.blank > 0).count();
         let blank_tiles: usize = frames.iter().map(|f| f.1.blank).sum();
-        let upload_frames: Vec<&Frame> = frames.iter().map(|f| &f.1).filter(|f| f.uploads > 0).collect();
-        let mut upload_rows: Vec<f64> = upload_frames.iter().map(|f| f.rows.as_secs_f64() * 1000.0).collect();
+        let upload_frames: Vec<&Frame> = frames
+            .iter()
+            .map(|f| &f.1)
+            .filter(|f| f.uploads > 0)
+            .collect();
+        let mut upload_rows: Vec<f64> = upload_frames
+            .iter()
+            .map(|f| f.rows.as_secs_f64() * 1000.0)
+            .collect();
         upload_rows.sort_by(f64::total_cmp);
         eprintln!(
             "  {name}: {} frames, interval p50 {:.2} p95 {:.2} p99 {:.2} max {:.2} ms, {} over 1.5x median; \
@@ -259,7 +285,11 @@ fn report(d: &Driver) {
             blank_tiles,
         );
     }
-    let mut blank: Vec<f64> = rec.blank_for.iter().map(|d| d.as_secs_f64() * 1000.0).collect();
+    let mut blank: Vec<f64> = rec
+        .blank_for
+        .iter()
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .collect();
     blank.sort_by(f64::total_cmp);
     eprintln!(
         "  tiles that came on screen blank: {}, blank for p50 {:.1} p95 {:.1} max {:.1} ms",

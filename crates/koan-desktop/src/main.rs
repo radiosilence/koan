@@ -25,17 +25,31 @@ fn main() {
                 .spawn(async { library::browse::Browse::load() })
                 .await;
             cx.update(|cx| {
-                let lib = library::Lib::new(engine, browse, cx);
+                let bench = std::env::var("KOAN_DESKTOP_BENCH")
+                    .is_ok_and(|v| v == "albums")
+                    .then(library::bench::Shared::default);
+                let lib = library::Lib::new(engine, browse, bench.clone(), cx);
                 let bounds = Bounds::centered(None, size(px(1280.0), px(860.0)), cx);
                 let options = WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 };
-                if let Err(e) = gpui_kit::open_window(options, cx, |window, cx| {
+                match gpui_kit::open_window(options, cx, |window, cx| {
                     cx.new(|cx| library::window::LibraryWindow::new(lib, window, cx))
                 }) {
-                    eprintln!("koan: no window: {e}");
-                    cx.quit();
+                    Ok((window, _)) => {
+                        if let Some(recorder) = bench {
+                            window
+                                .update(cx, |_, window, cx| {
+                                    library::bench::run(window, recorder, cx)
+                                })
+                                .ok();
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("koan: no window: {e}");
+                        cx.quit();
+                    }
                 }
                 cx.on_window_closed(|cx, _| {
                     if cx.windows().is_empty() {

@@ -16,7 +16,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Album, AlbumSort, BrowseFilter};
 
-use super::covers::{Art, Covers, Key, Priority};
+use super::covers::{Art, Covers, Key, Priority, Sleeve};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
@@ -356,6 +356,16 @@ impl AlbumGrid {
                 .lib
                 .covers
                 .update(cx, |c: &mut Covers, _| c.sleeve(key));
+            if let Some(bench) = &self.lib.bench {
+                let image = match &sleeve {
+                    Sleeve::Ready(image) => Some(std::sync::Arc::as_ptr(image) as usize),
+                    _ => None,
+                };
+                let drawn = !matches!(sleeve, Sleeve::Waiting);
+                bench
+                    .borrow_mut()
+                    .tile(album.id, drawn, image, Instant::now());
+            }
             tiles.push(tile::tile(album, grid.side, sleeve, state, self, cx));
         }
         div()
@@ -616,8 +626,13 @@ impl Render for AlbumGrid {
                 "albums",
                 grid.rows(count),
                 cx.processor(move |this, range: Range<usize>, window, cx| {
+                    let began = Instant::now();
                     this.aim(range.clone(), window, cx);
-                    range.map(|row| this.row(row, grid, cx)).collect::<Vec<_>>()
+                    let rows = range.map(|row| this.row(row, grid, cx)).collect::<Vec<_>>();
+                    if let Some(bench) = &this.lib.bench {
+                        bench.borrow_mut().frame.rows += began.elapsed();
+                    }
+                    rows
                 }),
             )
             .track_scroll(&self.scroll)
