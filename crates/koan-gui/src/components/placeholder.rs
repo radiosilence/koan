@@ -34,7 +34,7 @@ L322.4 388.6 L314.6 392.1 L306.6 395.1";
 /// The mark as an SVG. Its stroke is lighter than the icon's own, as the
 /// Mac's is: at placeholder size the icon's weight reads as a fat ring
 /// rather than a brush mark.
-pub fn svg() -> String {
+pub fn enso_svg() -> String {
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="{TRACE}" fill="none" stroke="black" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
     )
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn the_mark_is_one_open_stroke() {
-        let svg = svg();
+        let svg = enso_svg();
         assert!(svg.starts_with("<svg"));
         assert_eq!(svg.matches('M').count(), 1);
         assert!(!svg.contains('Z'));

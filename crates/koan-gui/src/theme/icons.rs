@@ -156,7 +156,7 @@ impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
         if path == crate::components::placeholder::ENSO {
             return Ok(Some(Cow::Owned(
-                crate::components::placeholder::svg().into_bytes(),
+                crate::components::placeholder::enso_svg().into_bytes(),
             )));
         }
         let Some(rest) = path.strip_prefix(PREFIX) else {

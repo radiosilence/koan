@@ -3,7 +3,7 @@
 //! (`components::form`); these are the panes' short names for it.
 
 use crate::components::ScrollArea;
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
+use crate::theme::{Icon, KoanStyled, Look, Tone, TypeRole};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
