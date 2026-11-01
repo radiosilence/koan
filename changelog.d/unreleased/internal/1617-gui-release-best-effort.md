@@ -1,1 +1,1 @@
-- **GUI release packages are best effort.** A koan-gui package that fails to build is left off the release without failing the run.
+- **GUI packages never hold up or fail a release.** The release goes out without waiting for the kōan GUI app's packages; whichever built are attached afterwards.
