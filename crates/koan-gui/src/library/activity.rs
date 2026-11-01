@@ -15,11 +15,11 @@ use koan_ffi::{ProgressReporter, SyncPhase};
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
+use crate::components::{NavNote, ProgressRow};
 use crate::engine::engine;
 use crate::mirror::Mirror;
-use crate::paint::Paint;
 use crate::platform::actions::{ForceRescan, RebuildIndex, Rescan, Sync};
-use crate::theme::{Icon, KoanIcon, KoanStyled, KoanTheme, Space, TypeRole, tokens::Motion};
+use crate::theme::Tone;
 
 pub struct ActivityHandle(pub Entity<Activity>);
 
@@ -305,118 +305,35 @@ fn grouped(n: u64) -> String {
     out
 }
 
-/// The bar: the done fraction where the task can say, a sliding segment
-/// where it cannot, the same height either way so a total arriving partway
-/// does not move the row. Two quads; a sliding segment only while motion is
-/// allowed.
-fn bar(row: &Row, p: &Paint, cx: &App) -> AnyElement {
-    let track = div()
-        .w_full()
-        .h(px(2.))
-        .bg(p.rule)
-        .relative()
-        .overflow_hidden();
-    match row.fraction() {
-        Some(fraction) => track
-            .child(div().h_full().w(relative(fraction)).bg(p.accent))
-            .into_any_element(),
-        None if KoanTheme::motion_allowed(cx) => track
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .h_full()
-                    .w(relative(0.3))
-                    .bg(p.accent)
-                    .with_animation(
-                        (row.id, 0u64),
-                        Animation::new(Duration::from_millis(1200)).repeat(),
-                        |segment, t| segment.left(relative(-0.3 + 1.3 * Motion::ease_in_out(t))),
-                    ),
-            )
-            .into_any_element(),
-        None => track
-            .child(div().h_full().w_full().bg(p.accent.opacity(0.4)))
-            .into_any_element(),
-    }
-}
-
 impl Render for Activity {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = Paint::of(window, cx);
         let rows = self.rows(cx);
         if rows.is_empty() && self.problem.is_none() {
             return div().into_any_element();
         }
-        // One line each for the task and its counts, every line truncating
-        // within the sidebar: the counts alone can outrun its width.
-        let line = |text: SharedString, role: TypeRole, color: Hsla| {
-            div()
-                .w_full()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_role(role, &p.look)
-                .text_color(color)
-                .child(text)
-        };
         div()
             .w_full()
             .min_w_0()
-            .overflow_hidden()
             .flex()
             .flex_col()
-            .gap(p.space(Space::S))
-            .px(p.space(Space::L))
-            .pb(p.space(Space::Xs))
             .children(rows.iter().map(|row| {
-                let cancel = row.cancellable.then(|| {
-                    div()
-                        .id((row.id, 1u64))
-                        .flex_none()
-                        .cursor_pointer()
-                        .text_color(p.muted.opacity(0.6))
-                        .hover(|s| s.text_color(p.muted))
-                        .child(
-                            KoanIcon::new(Icon::Deselect)
-                                .role(TypeRole::Fine)
-                                .color(p.muted),
-                        )
-                        .on_click(|_, _, cx| engine(cx).cancel_library_task())
-                });
-                div()
-                    .id(row.id)
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(line(row.label.clone(), TypeRole::Fine, p.muted))
-                    .children(
-                        row.counts()
-                            .map(|c| line(c.into(), TypeRole::Meta, p.muted.opacity(0.7))),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .flex()
-                            .items_center()
-                            .gap(p.space(Space::S))
-                            .child(div().flex_1().min_w_0().child(bar(row, &p, cx)))
-                            .children(cancel),
-                    )
-                    .children(
-                        row.detail
-                            .clone()
-                            .map(|detail| line(detail, TypeRole::Fine, p.muted.opacity(0.7))),
-                    )
+                let mut progress =
+                    ProgressRow::new(row.id, row.label.clone()).fraction(row.fraction());
+                if let Some(counts) = row.counts() {
+                    progress = progress.counts(counts);
+                }
+                if let Some(detail) = row.detail.clone() {
+                    progress = progress.detail(detail);
+                }
+                if row.cancellable {
+                    progress = progress.on_stop(|_, _, cx| engine(cx).cancel_library_task());
+                }
+                progress
             }))
             .children(
                 self.problem
                     .clone()
-                    .map(|problem| line(problem, TypeRole::Fine, p.bad)),
+                    .map(|problem| NavNote::new(problem, Tone::Bad)),
             )
             .into_any_element()
     }

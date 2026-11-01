@@ -13,17 +13,16 @@ use std::rc::Rc;
 
 use koan_ffi::{DspBand, DspPoint};
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::FluentBuilder;
 use koan_kit::raw::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
 use crate::components::sheet::note;
 use crate::components::{Align, Column, DenseRow, DenseTable, TextField};
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
+use crate::theme::{Look, Space, Tone};
 
 /// A figure of a band's row, or of a curve's point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

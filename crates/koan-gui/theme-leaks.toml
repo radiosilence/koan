@@ -4,117 +4,274 @@
 
 ["app.rs"]
 number = 4
+raw = 3
+
+["covers.rs"]
+raw = 2
 
 ["dsp/bands.rs"]
-number = 12
+raw = 5
 
 ["dsp/flows.rs"]
 number = 1
+raw = 5
 
 ["dsp/graph.rs"]
 number = 39
 fixed = 1
+raw = 6
+
+["dsp/manage.rs"]
+raw = 4
 
 ["dsp/menu.rs"]
 number = 1
+raw = 9
+
+["dsp/model.rs"]
+raw = 1
 
 ["dsp/page.rs"]
 number = 20
+raw = 20
 
 ["dsp/profile.rs"]
 number = 6
+raw = 8
+
+["dsp/prompts.rs"]
+raw = 2
 
 ["dsp/sheet.rs"]
-number = 1
-container = 2
+container = 1
+raw = 7
+
+["dsp/stage.rs"]
+raw = 5
 
 ["dsp/window.rs"]
 number = 4
+raw = 3
+
+["engine.rs"]
+raw = 1
 
 ["levels.rs"]
 number = 2
+raw = 1
+
+["library/actions.rs"]
+raw = 1
 
 ["library/activity.rs"]
 number = 2
+raw = 2
+
+["library/album_page.rs"]
+raw = 3
 
 ["library/albums.rs"]
 number = 10
+raw = 3
 
 ["library/artist_page.rs"]
 number = 9
 fixed = 1
+raw = 3
 
 ["library/artists.rs"]
 number = 2
+raw = 3
+
+["library/bench.rs"]
+raw = 1
+
+["library/browse.rs"]
+raw = 1
 
 ["library/chrome.rs"]
 number = 2
 container = 1
+raw = 7
+
+["library/controls.rs"]
+raw = 2
 
 ["library/covers.rs"]
 number = 3
+raw = 1
+
+["library/drag.rs"]
+raw = 2
+
+["library/feed.rs"]
+raw = 1
+
+["library/header.rs"]
+raw = 2
 
 ["library/info.rs"]
 number = 1
+raw = 2
+
+["library/mod.rs"]
+raw = 2
+
+["library/nav.rs"]
+raw = 1
 
 ["library/rows.rs"]
 number = 2
+raw = 2
+
+["library/stage.rs"]
+raw = 2
 
 ["library/tile.rs"]
 number = 30
 fixed = 3
+raw = 2
+
+["library/tokens.rs"]
+raw = 1
 
 ["library/tracks.rs"]
 number = 4
+raw = 3
+
+["links.rs"]
+raw = 2
+
+["main.rs"]
+raw = 3
 
 ["measure.rs"]
 number = 2
+raw = 2
+
+["mirror.rs"]
+raw = 1
 
 ["paint.rs"]
 number = 2
+raw = 1
 
 ["platform/about.rs"]
 number = 2
 container = 1
+raw = 4
+
+["platform/actions.rs"]
+raw = 9
+
+["platform/dock.rs"]
+raw = 2
+
+["platform/drop.rs"]
+raw = 1
+
+["platform/media.rs"]
+raw = 1
+
+["platform/menus.rs"]
+raw = 1
+
+["platform/mod.rs"]
+raw = 2
 
 ["platform/shortcuts_sheet.rs"]
 number = 27
 fixed = 8
+raw = 2
 
 ["queue/mod.rs"]
 number = 1
+raw = 3
+
+["root.rs"]
+raw = 2
+
+["session.rs"]
+raw = 2
+
+["settings/form.rs"]
+raw = 2
 
 ["settings/mod.rs"]
 number = 6
 fixed = 1
 container = 2
+raw = 9
+
+["settings/model.rs"]
+raw = 1
+
+["settings/panes/account.rs"]
+raw = 2
+
+["settings/panes/appearance.rs"]
+raw = 2
 
 ["settings/panes/devices.rs"]
 number = 2
+raw = 3
+
+["settings/panes/eq.rs"]
+raw = 2
+
+["settings/panes/integrations.rs"]
+raw = 3
 
 ["settings/panes/keys.rs"]
 number = 1
+raw = 3
+
+["settings/panes/library.rs"]
+raw = 2
 
 ["settings/panes/link.rs"]
 number = 3
+raw = 2
+
+["settings/panes/mod.rs"]
+raw = 1
 
 ["settings/panes/people.rs"]
 number = 3
+raw = 3
+
+["settings/panes/playback.rs"]
+raw = 2
 
 ["settings/panes/server.rs"]
 number = 1
+raw = 3
 
 ["settings/panes/share.rs"]
 number = 1
+raw = 3
 
 ["settings/qr.rs"]
 number = 2
+raw = 2
+
+["settings/sharing.rs"]
+raw = 1
 
 ["settings/sheet.rs"]
 number = 1
+raw = 4
+
+["shell.rs"]
+raw = 3
+
+["sidebar.rs"]
+raw = 3
 
 ["transport.rs"]
 number = 4
+raw = 2
 
 ["window_state.rs"]
 number = 4
+raw = 1

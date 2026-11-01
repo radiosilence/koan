@@ -20,6 +20,7 @@ pub mod session;
 pub mod settings;
 pub mod shell;
 pub mod sidebar;
+pub mod sidebar_status;
 pub mod time;
 pub mod transport;
 pub mod window_state;

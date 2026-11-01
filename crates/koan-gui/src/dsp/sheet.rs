@@ -7,11 +7,11 @@ use std::rc::Rc;
 use koan_kit::raw::prelude::FluentBuilder;
 use koan_kit::raw::{
     AnyElement, AnyView, App, AppContext, Context, Entity, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::components::{Button, ButtonKind};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
 
 /// The sheet's parts are koan-kit's.
 pub use crate::components::sheet::{body, head, head_data, note, panel};
