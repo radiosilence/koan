@@ -21,8 +21,9 @@ use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
 use super::tile::{self, Grid, Part, TileHost, TileState};
-use super::tokens::{self, Type, Typeset};
+use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::theme::Space;
 
 /// How long typing in the filter field waits for the next keystroke before
 /// asking again: each answer is the whole listing, and asking per keystroke
@@ -106,6 +107,8 @@ impl AlbumGrid {
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
         let subscriptions = vec![
+            // Cached under the window, and draws the accent.
+            crate::theme::observe_accent(cx),
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
             cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
@@ -322,7 +325,7 @@ impl AlbumGrid {
         self.pick.as_ref().map(|(_, drag)| drag.clone())
     }
 
-    fn row(&mut self, row: usize, grid: Grid, cx: &mut Context<Self>) -> AnyElement {
+    fn row(&mut self, p: &Paint, row: usize, grid: Grid, cx: &mut Context<Self>) -> AnyElement {
         let start = row * grid.columns;
         let end = (start + grid.columns).min(self.albums.len());
         let albums = self.albums.clone();
@@ -371,7 +374,7 @@ impl AlbumGrid {
                     .borrow_mut()
                     .tile(album.id, drawn, standin, image, Instant::now());
             }
-            tiles.push(tile::tile(album, grid.side, sleeve, state, cx));
+            tiles.push(tile::tile(p, album, grid.side, sleeve, state, cx));
         }
         div()
             .flex()
@@ -568,6 +571,7 @@ impl TileHost for AlbumGrid {
 
 impl Render for AlbumGrid {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         self.scale.set(window.scale_factor());
         let rewinds = self.lib.nav.read(cx).rewinds(Page::Albums);
         if rewinds != self.rewinds {
@@ -579,7 +583,7 @@ impl Render for AlbumGrid {
                 .set_offset(Point::default());
         }
         if let Some(width) = self.width.get() {
-            let grid = Grid::for_width(width);
+            let grid = Grid::for_width(width, &p.look.scale);
             if Some(grid) != self.grid {
                 self.relayout(grid);
             }
@@ -587,12 +591,13 @@ impl Render for AlbumGrid {
         let count = self.albums.len();
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
+            p,
             "albums",
             chrome::count(count as u64, "album", "albums"),
             div()
                 .flex()
                 .items_center()
-                .gap(tokens::space::s16())
+                .gap(p.space(Space::L))
                 .child(self.search.clone())
                 .child(chrome::filter_button(&self.filters, &self.lib, cx))
                 .child(chrome::album_sort_button(&self.lib, cx))
@@ -625,6 +630,7 @@ impl Render for AlbumGrid {
 
         let body = match self.grid {
             _ if count == 0 && self.loaded.is_some() => chrome::empty_state(
+                crate::theme::Icon::Album,
                 if narrowed {
                     "nothing matches"
                 } else {
@@ -643,7 +649,10 @@ impl Render for AlbumGrid {
                 cx.processor(move |this, range: Range<usize>, window, cx| {
                     let began = Instant::now();
                     this.aim(range.clone(), window, cx);
-                    let rows = range.map(|row| this.row(row, grid, cx)).collect::<Vec<_>>();
+                    let p = Paint::of(window, cx);
+                    let rows = range
+                        .map(|row| this.row(&p, row, grid, cx))
+                        .collect::<Vec<_>>();
                     if let Some(bench) = &this.lib.bench {
                         bench.borrow_mut().frame.rows += began.elapsed();
                     }
@@ -666,8 +675,8 @@ impl Render for AlbumGrid {
             .size_full()
             .flex()
             .flex_col()
-            .bg(tokens::BG)
-            .typeset(Type::Body, tokens::INK)
+            .bg(p.bg)
+            .typeset(p, Type::Body, p.ink)
             .child(header)
             .child(actions::list_menu(
                 div()
@@ -682,6 +691,7 @@ impl Render for AlbumGrid {
             ))
             .when(self.selection.is_active(), |d| {
                 d.child(chrome::selection_bar(
+                    p,
                     &self.lib,
                     &self.selection,
                     cx.entity(),
@@ -695,10 +705,11 @@ impl Render for AlbumGrid {
 mod tests {
     use super::*;
     // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    use crate::theme::tokens::Scale;
     use core::prelude::v1::test;
 
     fn grid() -> Grid {
-        Grid::for_width(px(800.0))
+        Grid::for_width(px(800.0), &Scale::of(100))
     }
 
     fn keys(row: usize) -> Vec<Key> {

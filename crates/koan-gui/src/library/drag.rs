@@ -9,7 +9,8 @@ use std::sync::Arc;
 use gpui_kit::*;
 use koan_ffi::TrackSet;
 
-use super::tokens::{self, Type, Typeset};
+use super::tokens::{Paint, Type, Typeset};
+use crate::theme::Space;
 
 /// One thing a page shows that can be played.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -77,15 +78,16 @@ pub struct DragPreview {
 }
 
 impl Render for DragPreview {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         div().pl(self.at.x).pt(self.at.y).child(
             div()
-                .px(tokens::space::s12())
-                .py(tokens::space::s4())
-                .bg(tokens::BG)
+                .px(p.space(Space::M))
+                .py(p.space(Space::Xs))
+                .bg(p.bg)
                 .border_1()
-                .border_color(tokens::RULE)
-                .typeset(Type::Meta, tokens::INK)
+                .border_color(p.rule)
+                .typeset(p, Type::Meta, p.ink)
                 .whitespace_nowrap()
                 .child(self.label.clone()),
         )

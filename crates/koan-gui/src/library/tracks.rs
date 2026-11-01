@@ -20,8 +20,9 @@ use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
-use super::tokens::{self, Type, Typeset};
+use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::theme::Space;
 
 const PAGE: u32 = 1000;
 const TYPING: Duration = Duration::from_millis(80);
@@ -63,6 +64,8 @@ impl TrackBrowser {
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
         let subscriptions = vec![
+            // Cached under the window, and draws the accent.
+            crate::theme::observe_accent(cx),
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
             cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
@@ -280,6 +283,7 @@ impl TrackBrowser {
 
     fn row(
         &mut self,
+        p: &Paint,
         index: usize,
         scale: f32,
         lead_width: Pixels,
@@ -290,7 +294,7 @@ impl TrackBrowser {
             .get(index)
             .map(|t| (t.id, t.album_id, t.title.clone()))
         else {
-            return div().h(rows::art_height()).into_any_element();
+            return div().h(rows::art_height(p)).into_any_element();
         };
         let item = Playable::Track(id);
         let selected = self.selection.contains(item);
@@ -313,9 +317,9 @@ impl TrackBrowser {
             gathered: true,
             transfer: feed.transfers.get(&id).copied(),
             drag,
-            height: rows::art_height(),
+            height: rows::art_height(p),
         };
-        rows::track_row(&self.tracks[index], index, state, sleeve, None, cx)
+        rows::track_row(p, &self.tracks[index], index, state, sleeve, None, cx)
     }
 
     fn order(&self) -> Vec<Playable> {
@@ -392,6 +396,7 @@ impl TrackList for TrackBrowser {
 
 impl Render for TrackBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         let rewinds = self.lib.nav.read(cx).rewinds(Page::Tracks);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
@@ -403,20 +408,22 @@ impl Render for TrackBrowser {
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
+            p,
             "tracks",
             chrome::count(self.total, "track", "tracks"),
             div()
                 .flex()
                 .items_center()
-                .gap(tokens::space::s16())
+                .gap(p.space(Space::L))
                 .child(self.search.clone())
                 .child(chrome::filter_button(&self.filters, &self.lib, cx))
                 .child(chrome::track_sort_button(&self.lib, cx)),
         );
         let scale = window.scale_factor();
-        let lead_width = rows::lead_width(self.total as usize, window);
+        let lead_width = rows::lead_width(p, self.total as usize, window);
         let body = if self.total == 0 && self.loaded.is_some() {
             chrome::empty_state(
+                crate::theme::Icon::Track,
                 if narrowed {
                     "nothing matches"
                 } else {
@@ -437,8 +444,9 @@ impl Render for TrackBrowser {
                 self.total as usize,
                 cx.processor(move |this, range: Range<usize>, window, cx| {
                     this.aim(range.clone(), window, cx);
+                    let p = Paint::of(window, cx);
                     range
-                        .map(|i| this.row(i, scale, lead_width, cx))
+                        .map(|i| this.row(&p, i, scale, lead_width, cx))
                         .collect::<Vec<_>>()
                 }),
             )
@@ -454,8 +462,8 @@ impl Render for TrackBrowser {
             .size_full()
             .flex()
             .flex_col()
-            .bg(tokens::BG)
-            .typeset(Type::Body, tokens::INK)
+            .bg(p.bg)
+            .typeset(p, Type::Body, p.ink)
             .child(header)
             .child(actions::list_menu(
                 div()

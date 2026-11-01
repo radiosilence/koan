@@ -7,8 +7,9 @@ use gpui_kit::*;
 
 use super::albums::AlbumGrid;
 use super::nav::Page;
-use super::tokens::{self, Type, Typeset, space};
+use super::tokens::{Paint, Type, Typeset};
 use super::{GoBack, GoForward, Lib};
+use crate::theme::Space;
 
 pub struct LibraryWindow {
     lib: Lib,
@@ -60,6 +61,7 @@ impl LibraryWindow {
 
 impl Render for LibraryWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         let page = self.page(window, cx);
         let wanted = self.lib.nav.read(cx).info;
         if self.info.as_ref().map(|(id, _)| *id) != wanted {
@@ -78,12 +80,9 @@ impl Render for LibraryWindow {
                 .id(label)
                 .cursor_pointer()
                 .pb(px(5.0))
-                .typeset(
-                    Type::Control,
-                    if selected { tokens::INK } else { tokens::MUTED },
-                )
-                .when(selected, |d| d.border_b_1().border_color(tokens::ACCENT))
-                .hover(|s| s.text_color(tokens::INK))
+                .typeset(p, Type::Control, if selected { p.ink } else { p.muted })
+                .when(selected, |d| d.border_b_1().border_color(p.accent))
+                .hover(|s| s.text_color(p.ink))
                 .child(label)
                 .on_click(move |_, _, cx| nav.update(cx, |nav, cx| nav.open(target, cx)))
         };
@@ -100,22 +99,26 @@ impl Render for LibraryWindow {
             .size_full()
             .flex()
             .flex_col()
-            .bg(tokens::BG)
-            .font_family(tokens::FONT)
+            .bg(p.bg)
+            .font_family(crate::theme::FONT_FAMILY)
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(18.0))
                     .px(px(super::tile::MARGIN))
-                    .pt(space::s12())
+                    .pt(p.space(Space::M))
                     .child(
                         div()
                             .id("back")
                             .cursor_pointer()
-                            .typeset(Type::Control, tokens::MUTED)
-                            .hover(|s| s.text_color(tokens::INK))
-                            .child("‹")
+                            .typeset(p, Type::Control, p.muted)
+                            .hover(|s| s.text_color(p.ink))
+                            .child(
+                                crate::theme::KoanIcon::new(crate::theme::Icon::Back)
+                                    .role(Type::Control)
+                                    .color(p.muted),
+                            )
                             .on_click({
                                 let nav = nav.clone();
                                 move |_, _, cx| nav.update(cx, |n, cx| n.back(cx))

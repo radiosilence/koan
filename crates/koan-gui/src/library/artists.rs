@@ -14,8 +14,9 @@ use koan_ffi::{Artist, BrowseFilter};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
-use super::tokens::{self, Type, Typeset, space};
+use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
+use crate::theme::{Icon, KoanIcon, Space};
 
 const TYPING: Duration = Duration::from_millis(80);
 
@@ -50,6 +51,8 @@ pub struct ArtistBrowser {
 impl ArtistBrowser {
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![
+            // Cached under the window, and draws the accent.
+            crate::theme::observe_accent(cx),
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
             cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
@@ -181,9 +184,9 @@ impl ArtistBrowser {
         .detach();
     }
 
-    fn row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn row(&mut self, p: &Paint, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(artist) = self.artists.get(index).cloned() else {
-            return div().h(rows::height()).into_any_element();
+            return div().h(rows::height(p)).into_any_element();
         };
         let id = artist.id;
         let item = Playable::Artist(id);
@@ -206,7 +209,7 @@ impl ArtistBrowser {
                 .flex_none()
                 .flex()
                 .justify_end()
-                .typeset(Type::Meta, tokens::MUTED)
+                .typeset(p, Type::Meta, p.muted)
                 .child(chrome::count(n.max(0) as u64, one, many))
         };
         div()
@@ -214,13 +217,11 @@ impl ArtistBrowser {
             .group("row")
             .flex()
             .items_center()
-            .gap(space::s12())
+            .gap(p.space(Space::M))
             .px(px(super::tile::MARGIN))
-            .h(rows::height())
-            .when(selected, |d| d.bg(tokens::SURFACE))
-            .when(!selected, |d| {
-                d.hover(|s| s.bg(tokens::alpha(tokens::HOVER, 0.3)))
-            })
+            .h(rows::height(p))
+            .when(selected, |d| d.bg(p.surface))
+            .when(!selected, |d| d.hover(|s| s.bg(p.row_hover())))
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 let order = &this.order;
@@ -237,8 +238,8 @@ impl ArtistBrowser {
                     .w(px(20.0))
                     .flex_none()
                     .cursor_pointer()
-                    .typeset(Type::Meta, tokens::MUTED)
-                    .hover(|s| s.text_color(tokens::INK))
+                    .typeset(p, Type::Meta, p.muted)
+                    .hover(|s| s.text_color(p.ink))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.play(id, cx);
@@ -249,7 +250,7 @@ impl ArtistBrowser {
                         div()
                             .invisible()
                             .group_hover("row", |s| s.visible())
-                            .child("▶")
+                            .child(KoanIcon::new(Icon::PlayMark).role(Type::Meta).color(p.ink))
                     }),
             )
             .child(
@@ -261,7 +262,7 @@ impl ArtistBrowser {
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .cursor_pointer()
-                    .typeset(Type::Body, tokens::INK)
+                    .typeset(p, Type::Body, p.ink)
                     .hover(|s| s.underline())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -277,14 +278,7 @@ impl ArtistBrowser {
                     .w(px(20.0))
                     .flex_none()
                     .cursor_pointer()
-                    .typeset(
-                        Type::Meta,
-                        if favourite {
-                            tokens::ACCENT
-                        } else {
-                            tokens::MUTED
-                        },
-                    )
+                    .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })
                     .when(!favourite, |d| {
                         d.invisible().group_hover("row", |s| s.visible())
                     })
@@ -294,7 +288,7 @@ impl ArtistBrowser {
                             .feed
                             .update(cx, |f, cx| f.toggle_favourite(item, cx));
                     }))
-                    .child(if favourite { "♥" } else { "♡" }),
+                    .child(super::tile::heart_glyph(p, favourite)),
             )
             .child(count(artist.album_count, "album", "albums"))
             .child(count(artist.track_count, "track", "tracks"))
@@ -331,7 +325,8 @@ impl actions::Menus for ArtistBrowser {
 }
 
 impl Render for ArtistBrowser {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         let rewinds = self.lib.nav.read(cx).rewinds(Page::Artists);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
@@ -343,17 +338,19 @@ impl Render for ArtistBrowser {
         }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
+            p,
             "artists",
             chrome::count(self.artists.len() as u64, "artist", "artists"),
             div()
                 .flex()
                 .items_center()
-                .gap(tokens::space::s16())
+                .gap(p.space(Space::L))
                 .child(self.search.clone())
                 .child(chrome::filter_button(&self.filters, &self.lib, cx)),
         );
         let body = if self.artists.is_empty() && self.loaded.is_some() {
             chrome::empty_state(
+                crate::theme::Icon::Artist,
                 if narrowed {
                     "nothing matches"
                 } else {
@@ -370,8 +367,9 @@ impl Render for ArtistBrowser {
             uniform_list(
                 "artists",
                 self.artists.len(),
-                cx.processor(|this, range: Range<usize>, _, cx| {
-                    range.map(|i| this.row(i, cx)).collect::<Vec<_>>()
+                cx.processor(|this, range: Range<usize>, window, cx| {
+                    let p = Paint::of(window, cx);
+                    range.map(|i| this.row(&p, i, cx)).collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)
@@ -386,8 +384,8 @@ impl Render for ArtistBrowser {
             .size_full()
             .flex()
             .flex_col()
-            .bg(tokens::BG)
-            .typeset(Type::Body, tokens::INK)
+            .bg(p.bg)
+            .typeset(p, Type::Body, p.ink)
             .child(header)
             .child(actions::list_menu(
                 div()

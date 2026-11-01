@@ -16,8 +16,9 @@ use super::nav::Page;
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::Grid;
-use super::tokens::{self, Type, Typeset, space};
+use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::theme::Space;
 
 /// A line of the list: a disc's heading, or a track and the number it shows.
 enum Line {
@@ -93,6 +94,8 @@ impl AlbumPage {
     pub fn new(lib: Lib, album_id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
         let subscriptions = vec![
+            // Cached under the window, and draws the accent.
+            crate::theme::observe_accent(cx),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.load(cx);
                 cx.notify();
@@ -183,16 +186,22 @@ impl AlbumPage {
     }
 
     /// One height for every line: taller when any row names its artists.
-    fn row_height(&self) -> Pixels {
+    fn row_height(&self, p: &Paint) -> Pixels {
         if self.tracks.iter().any(|t| t.credit_differs) {
-            rows::text_height()
+            rows::text_height(p)
         } else {
-            rows::height()
+            rows::height(p)
         }
     }
 
-    fn line(&mut self, i: usize, lead_width: Pixels, cx: &mut Context<Self>) -> AnyElement {
-        let height = self.row_height();
+    fn line(
+        &mut self,
+        p: &Paint,
+        i: usize,
+        lead_width: Pixels,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let height = self.row_height(p);
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
                 return div()
@@ -200,8 +209,8 @@ impl AlbumPage {
                     .flex()
                     .items_end()
                     .px(px(super::tile::MARGIN))
-                    .pb(space::s4())
-                    .typeset(Type::Fine, tokens::INK)
+                    .pb(p.space(Space::Xs))
+                    .typeset(p, Type::Fine, p.ink)
                     .child(title.clone())
                     .into_any_element();
             }
@@ -230,11 +239,12 @@ impl AlbumPage {
             drag,
             height,
         };
-        rows::track_row(&self.tracks[index], index, state, None, None, cx)
+        rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
 
     fn header(
         &mut self,
+        p: &Paint,
         grid: Grid,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -246,7 +256,7 @@ impl AlbumPage {
             c.request(owner, [(key, Priority::Visible)]);
             c.sleeve(key)
         });
-        let mut cover = div().size(grid.side).flex_none().bg(tokens::SURFACE);
+        let mut cover = div().size(grid.side).flex_none().bg(p.surface);
         if let Sleeve::Ready(image) = sleeve {
             cover = cover.child(img(ImageSource::Render(image)).size_full());
         }
@@ -257,10 +267,7 @@ impl AlbumPage {
             .read(cx)
             .is_favourite(Playable::Album(self.album_id));
         let item = Playable::Album(self.album_id);
-        let mut details = div()
-            .flex()
-            .flex_wrap()
-            .typeset(Type::Control, tokens::MUTED);
+        let mut details = div().flex().flex_wrap().typeset(p, Type::Control, p.muted);
         if let Some(album) = &album {
             for (i, part) in album.artist_credit.iter().enumerate() {
                 let span = div().id(("page-credit", i)).child(part.text.clone());
@@ -268,7 +275,7 @@ impl AlbumPage {
                     Some(artist) => {
                         let nav = self.lib.nav.clone();
                         span.cursor_pointer()
-                            .text_color(tokens::INK)
+                            .text_color(p.ink)
                             .hover(|s| s.underline())
                             .on_click(move |_, _, cx| {
                                 nav.update(cx, |n, cx| n.open(Page::Artist(artist), cx))
@@ -301,17 +308,17 @@ impl AlbumPage {
             .gap(grid.gap)
             .px(grid.margin)
             .pt(px(16.0))
-            .pb(space::s16())
+            .pb(p.space(Space::L))
             .child(cover)
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(space::s8())
+                    .gap(p.space(Space::S))
                     .min_w_0()
                     .child(
                         div()
-                            .typeset(Type::Title, tokens::STRONG)
+                            .typeset(p, Type::Title, p.strong)
                             .line_clamp(2)
                             .child(album.as_ref().map(|a| a.title.clone()).unwrap_or_default()),
                     )
@@ -320,23 +327,18 @@ impl AlbumPage {
                         div()
                             .flex()
                             .items_center()
-                            .gap(space::s16())
-                            .pt(space::s8())
+                            .gap(p.space(Space::L))
+                            .pt(p.space(Space::S))
                             .child(
                                 // The page's one prominent action.
-                                div()
-                                    .id("page-play")
-                                    .cursor_pointer()
-                                    .px(px(20.0))
-                                    .py(px(12.0))
-                                    .border_1()
-                                    .border_color(tokens::ACCENT)
-                                    .typeset(Type::Body, tokens::ACCENT)
-                                    .active(|s| s.bg(tokens::HOVER))
-                                    .child("play")
-                                    .on_click(move |_, _, cx| {
-                                        actions::play(&lib, &[item], false, cx).detach()
-                                    }),
+                                crate::components::Button::new(
+                                    "page-play",
+                                    crate::components::ButtonKind::Prominent,
+                                )
+                                .label("play")
+                                .on_click(move |_, _, cx| {
+                                    actions::play(&lib, &[item], false, cx).detach()
+                                }),
                             )
                             .child(chrome::text_button("page-shuffle", "shuffle").on_click(
                                 move |_, _, cx| actions::play(&lib2, &[item], true, cx).detach(),
@@ -352,14 +354,11 @@ impl AlbumPage {
                                     .id("page-heart")
                                     .cursor_pointer()
                                     .typeset(
+                                        p,
                                         Type::Meta,
-                                        if favourite {
-                                            tokens::ACCENT
-                                        } else {
-                                            tokens::MUTED
-                                        },
+                                        if favourite { p.accent } else { p.muted },
                                     )
-                                    .child(if favourite { "♥" } else { "♡" })
+                                    .child(super::tile::heart_glyph(p, favourite))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.lib
                                             .feed
@@ -440,6 +439,7 @@ impl TrackList for AlbumPage {
 
 impl Render for AlbumPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         let width = self.width.clone();
         let entity = cx.entity_id();
         let measure = canvas(
@@ -460,10 +460,10 @@ impl Render for AlbumPage {
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(space::s12())
+                .gap(p.space(Space::M))
                 .child(
                     div()
-                        .typeset(Type::TitleSmall, tokens::MUTED)
+                        .typeset(p, Type::TitleSmall, p.muted)
                         .child(if failed {
                             "couldn't read this album"
                         } else {
@@ -478,21 +478,22 @@ impl Render for AlbumPage {
                 })
                 .into_any_element(),
             (Some(width), None) if self.album.is_some() => {
-                let grid = Grid::for_width(width);
-                let lead_width = rows::lead_width(self.tracks.len(), window);
+                let grid = Grid::for_width(width, &p.look.scale);
+                let lead_width = rows::lead_width(p, self.tracks.len(), window);
                 div()
                     .size_full()
                     .flex()
                     .flex_col()
-                    .child(self.header(grid, window, cx))
+                    .child(self.header(p, grid, window, cx))
                     .child(actions::list_menu(
                         div().id("album-track-list").flex_1().min_h_0().child(
                             uniform_list(
                                 "album-tracks",
                                 self.lines.len(),
-                                cx.processor(move |this, range: Range<usize>, _, cx| {
+                                cx.processor(move |this, range: Range<usize>, window, cx| {
+                                    let p = Paint::of(window, cx);
                                     range
-                                        .map(|i| this.line(i, lead_width, cx))
+                                        .map(|i| this.line(&p, i, lead_width, cx))
                                         .collect::<Vec<_>>()
                                 }),
                             )
@@ -515,8 +516,8 @@ impl Render for AlbumPage {
             .on_action(cx.listener(Self::dismiss))
             .relative()
             .size_full()
-            .bg(tokens::BG)
-            .typeset(Type::Body, tokens::INK)
+            .bg(p.bg)
+            .typeset(p, Type::Body, p.ink)
             .child(measure)
             .child(content)
     }

@@ -22,8 +22,9 @@ use super::nav::{Anchor, Anchored, Heading, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::{self, Grid, Part, TileHost, TileState};
-use super::tokens::{self, Type, Typeset, space};
+use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::theme::Space;
 
 /// A biography longer than this opens clamped, with "more" under it.
 const BIO_CLAMP: usize = 300;
@@ -83,6 +84,8 @@ impl ArtistPage {
     pub fn new(lib: Lib, artist_id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
         let subscriptions = vec![
+            // Cached under the window, and draws the accent.
+            crate::theme::observe_accent(cx),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.load(cx);
                 cx.notify();
@@ -246,7 +249,7 @@ impl ArtistPage {
         px(40.0)
     }
 
-    fn height(&self, item: &Item, grid: Grid) -> f32 {
+    fn height(&self, p: &Paint, item: &Item, grid: Grid) -> f32 {
         f32::from(match item {
             Item::Header => self
                 .list
@@ -254,7 +257,7 @@ impl ArtistPage {
                 .map_or(px(HEADER_GUESS), |b| b.size.height),
             Item::Heading(..) | Item::FeaturesHeading => Self::heading_height(),
             Item::Tiles { .. } => grid.row,
-            Item::Track(_) => rows::art_height(),
+            Item::Track(_) => rows::art_height(p),
         })
     }
 
@@ -325,14 +328,14 @@ impl ArtistPage {
     }
 
     /// How far down the page is scrolled, in points.
-    fn offset(&self) -> Pixels {
+    fn offset(&self, p: &Paint) -> Pixels {
         let Some(grid) = self.grid else {
             return px(0.0);
         };
         let top = self.list.logical_scroll_top();
         let above: f32 = self.items[..top.item_ix.min(self.items.len())]
             .iter()
-            .map(|i| self.height(i, grid))
+            .map(|i| self.height(p, i, grid))
             .sum();
         px(above) + top.offset_in_item
     }
@@ -342,17 +345,17 @@ impl ArtistPage {
     /// header is laid out its height is a guess, but the scroll position and
     /// every item's place are measured with the same guess, so it cancels
     /// for everything below the header.
-    fn aim(&mut self, grid: Grid, scale: f32, cx: &mut Context<Self>) {
+    fn aim(&mut self, p: &Paint, grid: Grid, scale: f32, cx: &mut Context<Self>) {
         let Some(record) = self.record.clone() else {
             return;
         };
         let viewport = f32::from(self.list.viewport_bounds().size.height).max(1.0);
-        let top = f32::from(self.offset());
+        let top = f32::from(self.offset(p));
         let bottom = top + viewport;
         let mut y = 0.0;
         let mut ranked = Vec::new();
         for item in self.items.iter() {
-            let h = self.height(item, grid);
+            let h = self.height(p, item, grid);
             let distance = (y - bottom).max(top - (y + h)).max(0.0);
             y += h;
             if distance > 2.0 * viewport {
@@ -421,6 +424,7 @@ impl ArtistPage {
     }
 
     fn item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = &Paint::of(window, cx);
         let (Some(record), Some(grid), Some(item)) =
             (self.record.clone(), self.grid, self.items.get(ix).cloned())
         else {
@@ -428,8 +432,8 @@ impl ArtistPage {
         };
         let scale = window.scale_factor();
         match item {
-            Item::Header => self.header(&record, grid, scale, cx).into_any_element(),
-            Item::Heading(title, _) => Self::heading(title).into_any_element(),
+            Item::Header => self.header(p, &record, grid, scale, cx).into_any_element(),
+            Item::Heading(title, _) => Self::heading(p, title).into_any_element(),
             Item::FeaturesHeading => {
                 let items: Vec<Playable> = record
                     .features
@@ -440,22 +444,18 @@ impl ArtistPage {
                 div()
                     .flex()
                     .items_end()
-                    .gap(space::s16())
-                    .child(Self::heading("features on"))
-                    .child(
-                        chrome::text_button("features-play", "play")
-                            .pb(space::s8())
-                            .on_click(move |_, _, cx| {
-                                actions::play(&lib, &items, false, cx).detach()
-                            }),
-                    )
-                    .child(
-                        chrome::text_button("features-shuffle", "shuffle")
-                            .pb(space::s8())
-                            .on_click(move |_, _, cx| {
-                                actions::play(&lib2, &items2, true, cx).detach()
-                            }),
-                    )
+                    .gap(p.space(Space::L))
+                    .child(Self::heading(p, "features on"))
+                    .child(div().pb(p.space(Space::S)).child(
+                        chrome::text_button("features-play", "play").on_click(move |_, _, cx| {
+                            actions::play(&lib, &items, false, cx).detach()
+                        }),
+                    ))
+                    .child(div().pb(p.space(Space::S)).child(
+                        chrome::text_button("features-shuffle", "shuffle").on_click(
+                            move |_, _, cx| actions::play(&lib2, &items2, true, cx).detach(),
+                        ),
+                    ))
                     .into_any_element()
             }
             Item::Tiles { features, range } => {
@@ -467,7 +467,7 @@ impl ArtistPage {
                 let Some(albums) = albums.get(range) else {
                     return div().into_any_element();
                 };
-                self.tiles(albums, features, grid, scale, cx)
+                self.tiles(p, albums, features, grid, scale, cx)
                     .into_any_element()
             }
             Item::Track(index) => {
@@ -487,7 +487,7 @@ impl ArtistPage {
                 let feed = self.lib.feed.read(cx);
                 let state = RowState {
                     lead: (index + 1).to_string().into(),
-                    lead_width: rows::lead_width(record.appearances.len(), window),
+                    lead_width: rows::lead_width(p, record.appearances.len(), window),
                     current: feed.playing_track == Some(track.id),
                     playing: feed.playing,
                     favourite: feed.is_favourite(item),
@@ -495,15 +495,16 @@ impl ArtistPage {
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
                     drag,
-                    height: rows::art_height(),
+                    height: rows::art_height(p),
                 };
-                rows::track_row(track, index, state, sleeve, Some(self.artist_id), cx)
+                rows::track_row(p, track, index, state, sleeve, Some(self.artist_id), cx)
             }
         }
     }
 
     fn tiles(
         &mut self,
+        p: &Paint,
         albums: &[Album],
         show_artist: bool,
         grid: Grid,
@@ -543,22 +544,29 @@ impl ArtistPage {
                 .lib
                 .covers
                 .update(cx, |c: &mut Covers, _| c.sleeve(key));
-            tiles.push(tile::tile(album, grid.side, sleeve, state, cx));
+            tiles.push(tile::tile(p, album, grid.side, sleeve, state, cx));
         }
         div().flex().gap(grid.gap).h(grid.row).children(tiles)
     }
 
-    fn heading(title: impl Into<SharedString>) -> Div {
+    fn heading(p: &Paint, title: impl Into<SharedString>) -> Div {
         div()
             .h(Self::heading_height())
             .flex()
             .items_end()
-            .pb(space::s8())
-            .typeset(Type::Fine, tokens::INK)
+            .pb(p.space(Space::S))
+            .typeset(p, Type::Fine, p.ink)
             .child(title.into())
     }
 
-    fn header(&mut self, record: &Record, grid: Grid, scale: f32, cx: &mut Context<Self>) -> Div {
+    fn header(
+        &mut self,
+        p: &Paint,
+        record: &Record,
+        grid: Grid,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let id = self.artist_id;
         let item = Playable::Artist(id);
         let name = record
@@ -566,7 +574,7 @@ impl ArtistPage {
             .as_ref()
             .map(|a| a.name.clone())
             .unwrap_or_default();
-        let mut photo = div().size(grid.side).flex_none().bg(tokens::SURFACE);
+        let mut photo = div().size(grid.side).flex_none().bg(p.surface);
         if self.info.as_ref().is_some_and(|i| i.has_image) {
             let key = Key::new(Art::Artist(id), grid.side, scale);
             if let Sleeve::Ready(image) = self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
@@ -575,69 +583,56 @@ impl ArtistPage {
         }
         let favourite = self.lib.feed.read(cx).is_favourite(item);
         let (lib, lib2) = (self.lib.clone(), self.lib.clone());
-        let mut text =
-            div()
-                .flex()
-                .flex_col()
-                .gap(space::s8())
-                .min_w_0()
-                .flex_1()
-                .child(
-                    div()
-                        .typeset(Type::Title, tokens::STRONG)
-                        .line_clamp(2)
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(space::s16())
-                        .child(
-                            // The page's one prominent action.
-                            div()
-                                .id("artist-play")
-                                .cursor_pointer()
-                                .px(px(20.0))
-                                .py(px(12.0))
-                                .border_1()
-                                .border_color(tokens::ACCENT)
-                                .typeset(Type::Body, tokens::ACCENT)
-                                .active(|s| s.bg(tokens::HOVER))
-                                .child("play")
-                                .on_click(move |_, _, cx| {
-                                    actions::play(&lib, &[item], false, cx).detach()
-                                }),
+        let mut text = div()
+            .flex()
+            .flex_col()
+            .gap(p.space(Space::S))
+            .min_w_0()
+            .flex_1()
+            .child(
+                div()
+                    .typeset(p, Type::Title, p.strong)
+                    .line_clamp(2)
+                    .child(name),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(p.space(Space::L))
+                    .child(
+                        // The page's one prominent action.
+                        crate::components::Button::new(
+                            "artist-play",
+                            crate::components::ButtonKind::Prominent,
                         )
-                        .child(chrome::text_button("artist-shuffle", "shuffle").on_click(
+                        .label("play")
+                        .on_click(move |_, _, cx| actions::play(&lib, &[item], false, cx).detach()),
+                    )
+                    .child(
+                        chrome::text_button("artist-shuffle", "shuffle").on_click(
                             move |_, _, cx| actions::play(&lib2, &[item], true, cx).detach(),
-                        ))
-                        .child(
-                            div()
-                                .id("artist-page-heart")
-                                .cursor_pointer()
-                                .typeset(
-                                    Type::Meta,
-                                    if favourite {
-                                        tokens::ACCENT
-                                    } else {
-                                        tokens::MUTED
-                                    },
-                                )
-                                .child(if favourite { "♥" } else { "♡" })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.lib
-                                        .feed
-                                        .update(cx, |f, cx| f.toggle_favourite(item, cx))
-                                })),
                         ),
-                );
+                    )
+                    .child(
+                        div()
+                            .id("artist-page-heart")
+                            .cursor_pointer()
+                            .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })
+                            .child(super::tile::heart_glyph(p, favourite))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.lib
+                                    .feed
+                                    .update(cx, |f, cx| f.toggle_favourite(item, cx))
+                            })),
+                    ),
+            );
         if let Some(info) = &self.info
             && let Some(bio) = &info.bio
         {
             let long = bio.len() > BIO_CLAMP;
             let mut body = div()
-                .typeset(Type::Control, tokens::INK)
+                .typeset(p, Type::Control, p.ink)
                 .child(bio.replace('\n', "\n\n"));
             if long && !self.expanded {
                 body = body.line_clamp(4);
@@ -645,8 +640,8 @@ impl ArtistPage {
             text = text.child(body).child(
                 div()
                     .flex()
-                    .gap(space::s12())
-                    .typeset(Type::Fine, tokens::MUTED)
+                    .gap(p.space(Space::M))
+                    .typeset(p, Type::Fine, p.muted)
                     .when(long && !self.expanded, |d| {
                         d.child(
                             div()
@@ -681,7 +676,7 @@ impl ArtistPage {
             .items_start()
             .gap(grid.gap)
             .pt(px(16.0))
-            .pb(space::s16())
+            .pb(p.space(Space::L))
             .child(photo)
             .child(text)
     }
@@ -832,6 +827,7 @@ impl chrome::Picking for ArtistPage {
 
 impl Render for ArtistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         let width = self.width.clone();
         let entity = cx.entity_id();
         let measure = canvas(
@@ -849,7 +845,7 @@ impl Render for ArtistPage {
         // Cut again when the record or the columns change; the scroll goes
         // back to where it was left once there is content under it.
         if let (Some(width), Some(record)) = (self.width.get(), self.record.clone()) {
-            let grid = Grid::for_width(width);
+            let grid = Grid::for_width(width, &p.look.scale);
             if self.grid != Some(grid) {
                 // A change of columns keeps the place, as a new record does.
                 if self.restore.is_none() {
@@ -863,7 +859,7 @@ impl Render for ArtistPage {
                     self.list.scroll_to(top);
                 }
             }
-            self.aim(grid, window.scale_factor(), cx);
+            self.aim(p, grid, window.scale_factor(), cx);
         }
 
         let view = cx.weak_entity();
@@ -883,8 +879,8 @@ impl Render for ArtistPage {
             .size_full()
             .flex()
             .flex_col()
-            .bg(tokens::BG)
-            .typeset(Type::Body, tokens::INK)
+            .bg(p.bg)
+            .typeset(p, Type::Body, p.ink)
             .child(measure)
             .child(actions::list_menu(
                 div().id("artist-page-list").flex_1().min_h_0().child(body),
@@ -892,6 +888,7 @@ impl Render for ArtistPage {
             ))
             .when(self.selection.is_active(), |d| {
                 d.child(chrome::selection_bar(
+                    p,
                     &self.lib,
                     &self.selection,
                     cx.entity(),
@@ -904,6 +901,7 @@ impl Render for ArtistPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::tokens::Scale;
     use core::prelude::v1::test;
 
     fn album(id: i64, section: ReleaseSection) -> Album {
@@ -958,7 +956,7 @@ mod tests {
             features: vec![album(9, ReleaseSection::Albums)],
             appearances: Vec::new(),
         };
-        let grid = Grid::for_width(px(560.0));
+        let grid = Grid::for_width(px(560.0), &Scale::of(100));
         assert_eq!(grid.columns, 3);
         let items = ArtistPage::cut(&record, grid);
         let shape: Vec<String> = items

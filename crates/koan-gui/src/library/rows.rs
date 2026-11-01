@@ -17,26 +17,29 @@ use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
 use super::tile::playing_bars;
-use super::tokens::{self, Type, Typeset, space};
+use super::tokens::{Paint, Type, Typeset};
+use crate::theme::Space;
+use crate::theme::{Icon, KoanIcon};
 
-/// The rows' padding above and below, on the spacing scale.
-fn padding() -> Pixels {
-    space::s4()
+/// Row heights follow the text size alone, as the Mac's do; their padding
+/// follows the spacing scale.
+fn rowed(p: &Paint, points: f32) -> Pixels {
+    px(points * p.look.scale.size) + p.space(Space::Xs) * 2.0
 }
 
 /// A row of one line: the title alone.
-pub fn height() -> Pixels {
-    px(24.0) + padding() * 2.0
+pub fn height(p: &Paint) -> Pixels {
+    rowed(p, 24.0)
 }
 
 /// A row with a credit line under its title.
-pub fn text_height() -> Pixels {
-    px(34.0) + padding() * 2.0
+pub fn text_height(p: &Paint) -> Pixels {
+    rowed(p, 34.0)
 }
 
 /// A row that carries its sleeve, with the artist and record under the title.
-pub fn art_height() -> Pixels {
-    px(40.0) + padding() * 2.0
+pub fn art_height(p: &Paint) -> Pixels {
+    rowed(p, 40.0)
 }
 
 pub const SLEEVE: f32 = 32.0;
@@ -81,22 +84,24 @@ pub struct RowState {
 }
 
 /// Where the file is, or how its download is going.
-fn availability(track: &Track, transfer: Option<TransferState>) -> (Option<&'static str>, Rgba) {
-    match transfer {
-        Some(TransferState::Queued) => (Some("↓"), tokens::MUTED),
-        Some(TransferState::Running) => (Some("↓"), tokens::ACCENT),
-        Some(TransferState::Failed) => (Some("!"), tokens::BAD),
+fn availability(p: &Paint, track: &Track, transfer: Option<TransferState>) -> Option<KoanIcon> {
+    let (icon, color) = match transfer {
+        Some(TransferState::Queued) => (Icon::Downloads, p.muted),
+        Some(TransferState::Running) => (Icon::Downloads, p.accent),
+        Some(TransferState::Failed) => (Icon::WarningFilled, p.bad),
         _ => match (track.on_server, track.on_disk) {
-            (true, true) => (Some("◉"), tokens::INK),
-            (true, false) => (Some("○"), tokens::MUTED),
-            (false, true) => (Some("●"), tokens::INK),
-            (false, false) => (None, tokens::MUTED),
+            (true, true) => (Icon::CloudKept, p.ink),
+            (true, false) => (Icon::Cloud, p.muted),
+            (false, true) => (Icon::OnDevice, p.ink),
+            (false, false) => return None,
         },
-    }
+    };
+    Some(KoanIcon::new(icon).role(Type::Fine).color(color))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn track_row<V: TrackList>(
+    p: &Paint,
     track: &Track,
     index: usize,
     state: RowState,
@@ -117,11 +122,7 @@ pub fn track_row<V: TrackList>(
             },
         )
     };
-    let title_tone = if state.current {
-        tokens::ACCENT
-    } else {
-        tokens::INK
-    };
+    let title_tone = if state.current { p.accent } else { p.ink };
 
     let lead = div()
         .w(state.lead_width)
@@ -129,15 +130,12 @@ pub fn track_row<V: TrackList>(
         .flex()
         .justify_end()
         .typeset(
+            p,
             Type::Meta,
-            if state.current {
-                tokens::ACCENT
-            } else {
-                tokens::MUTED
-            },
+            if state.current { p.accent } else { p.muted },
         )
         .child(if state.current && state.playing {
-            playing_bars().into_any_element()
+            playing_bars(p).into_any_element()
         } else {
             div()
                 .child(
@@ -155,7 +153,7 @@ pub fn track_row<V: TrackList>(
         match part.artist_id {
             Some(artist) => span
                 .cursor_pointer()
-                .hover(|s| s.underline().text_color(tokens::INK))
+                .hover(|s| s.underline().text_color(p.ink))
                 .on_click(click(RowPart::Artist(artist)))
                 .into_any_element(),
             None => span.into_any_element(),
@@ -164,11 +162,12 @@ pub fn track_row<V: TrackList>(
     let names_artist = state.gathered
         || track.credit_differs
         || page_artist.is_some_and(|a| track.artist_id != Some(a));
-    let mut detail = div()
-        .flex()
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .typeset(Type::Meta, tokens::MUTED);
+    let mut detail =
+        div()
+            .flex()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .typeset(p, Type::Meta, p.muted);
     if names_artist {
         detail = detail.children(credited);
     }
@@ -179,7 +178,7 @@ pub fn track_row<V: TrackList>(
             div()
                 .id(("row-album", id as u64))
                 .cursor_pointer()
-                .hover(|s| s.underline().text_color(tokens::INK))
+                .hover(|s| s.underline().text_color(p.ink))
                 .on_click(click(RowPart::Album(album)))
                 .child(track.album_title.clone()),
         );
@@ -196,30 +195,27 @@ pub fn track_row<V: TrackList>(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .typeset(Type::Body, title_tone)
+                .typeset(p, Type::Body, title_tone)
                 .child(track.title.clone()),
         )
         .when(state.gathered || names_artist, |d| d.child(detail));
 
-    let (mark, mark_tone) = availability(track, state.transfer);
+    let mark = availability(p, track, state.transfer);
     let heart = div()
         .id(("row-heart", id as u64))
         .w(px(20.0))
         .flex_none()
         .cursor_pointer()
         .typeset(
+            p,
             Type::Meta,
-            if state.favourite {
-                tokens::ACCENT
-            } else {
-                tokens::MUTED
-            },
+            if state.favourite { p.accent } else { p.muted },
         )
         .when(!state.favourite, |d| {
             d.invisible().group_hover("row", |s| s.visible())
         })
         .on_click(click(RowPart::Heart))
-        .child(if state.favourite { "♥" } else { "♡" });
+        .child(super::tile::heart_glyph(p, state.favourite));
 
     let drag = state.drag;
     let target = actions::MenuTarget {
@@ -233,30 +229,22 @@ pub fn track_row<V: TrackList>(
         .group("row")
         .flex()
         .items_center()
-        .gap(space::s12())
+        .gap(p.space(Space::M))
         .px(px(super::tile::MARGIN))
         .h(state.height)
-        .when(state.selected, |d| d.bg(tokens::SURFACE))
-        .when(!state.selected, |d| {
-            d.hover(|s| s.bg(tokens::alpha(tokens::HOVER, 0.3)))
-        })
+        .when(state.selected, |d| d.bg(p.surface))
+        .when(!state.selected, |d| d.hover(|s| s.bg(p.row_hover())))
         .on_click(click(RowPart::Row))
         .child(lead);
     if state.gathered {
-        let mut art = div().size(px(SLEEVE)).flex_none().bg(tokens::SURFACE);
+        let mut art = div().size(px(SLEEVE)).flex_none().bg(p.surface);
         if let Some(Sleeve::Ready(image)) = sleeve {
             art = art.child(img(ImageSource::Render(image)).size_full());
         }
         row = row.child(art);
     }
     row.child(title)
-        .child(
-            div()
-                .w(px(14.0))
-                .flex_none()
-                .typeset(Type::Fine, mark_tone)
-                .children(mark),
-        )
+        .child(div().w(px(14.0)).flex_none().children(mark))
         .child(heart)
         .child(
             div()
@@ -265,7 +253,7 @@ pub fn track_row<V: TrackList>(
                 .flex()
                 .justify_end()
                 .whitespace_nowrap()
-                .typeset(Type::Meta, tokens::MUTED)
+                .typeset(p, Type::Meta, p.muted)
                 .children(format::quality(track)),
         )
         .child(
@@ -274,7 +262,7 @@ pub fn track_row<V: TrackList>(
                 .flex_none()
                 .flex()
                 .justify_end()
-                .typeset(Type::Meta, tokens::MUTED)
+                .typeset(p, Type::Meta, p.muted)
                 .child(format::duration(track.duration_ms)),
         )
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
@@ -284,14 +272,15 @@ pub fn track_row<V: TrackList>(
 
 /// A lead column wide enough for the longest number in a list of `count`,
 /// measured in the face the numbers are drawn in.
-pub fn lead_width(count: usize, window: &Window) -> Pixels {
+pub fn lead_width(p: &Paint, count: usize, window: &Window) -> Pixels {
     let digits = count.max(1).to_string().len().max(2) as f32;
     let text = window.text_system();
-    let font = text.resolve_font(&font(tokens::FONT));
+    let font = text.resolve_font(&font(crate::theme::FONT_FAMILY));
+    let size = p.look.font_size(Type::Meta);
     let digit = text
-        .advance(font, Type::Meta.size(), '0')
+        .advance(font, size, '0')
         .map(|size| size.width)
-        .unwrap_or(Type::Meta.size() * 0.6);
+        .unwrap_or(size * 0.6);
     digit * digits + px(4.0)
 }
 

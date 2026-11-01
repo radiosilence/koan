@@ -12,7 +12,9 @@ use koan_ffi::Album;
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::PlayableDrag;
-use super::tokens::{self, Type, Typeset};
+use super::tokens::{Paint, Type, Typeset};
+use crate::theme::tokens::Scale;
+use crate::theme::{Icon, KoanIcon};
 
 /// Columns of at least 150 points sharing the width, up to 210 each, as the
 /// Mac's grid lays them out. Every tile is the same size, so nothing is
@@ -37,7 +39,8 @@ pub const MARGIN: f32 = 20.0;
 const CAPTION_GAP: f32 = 7.0;
 
 impl Grid {
-    pub fn for_width(width: Pixels) -> Self {
+    /// The grid for a list `width` wide, with captions on `scale`.
+    pub fn for_width(width: Pixels, scale: &Scale) -> Self {
         let usable = (f32::from(width) - 2.0 * MARGIN).max(MIN_SIDE);
         let columns = (((usable + MIN_GAP) / (MIN_SIDE + MIN_GAP)).floor() as usize).max(1);
         let side = ((usable - MIN_GAP * (columns as f32 - 1.0)) / columns as f32)
@@ -53,7 +56,7 @@ impl Grid {
             side: px(side),
             gap: px(gap),
             margin: px(MARGIN),
-            row: px(side) + caption_height() + px(LINE_GAP),
+            row: px(side) + caption_height(scale) + px(LINE_GAP),
         }
     }
 
@@ -62,8 +65,9 @@ impl Grid {
     }
 }
 
-pub fn caption_height() -> Pixels {
-    px(CAPTION_GAP) + Type::Meta.line_height() + px(CAPTION_GAP) + Type::Fine.line_height()
+pub fn caption_height(scale: &Scale) -> Pixels {
+    let line = |role: Type| role.points() * scale.text * role.line_height();
+    px(CAPTION_GAP + line(Type::Meta) + CAPTION_GAP + line(Type::Fine))
 }
 
 /// Which part of a tile was clicked.
@@ -104,6 +108,7 @@ pub struct TileState {
 }
 
 pub fn tile<V: TileHost>(
+    p: &Paint,
     album: &Album,
     side: Pixels,
     sleeve: Sleeve,
@@ -128,7 +133,7 @@ pub fn tile<V: TileHost>(
         .relative()
         .size(side)
         .flex_none()
-        .bg(tokens::SURFACE)
+        .bg(p.surface)
         .cursor_pointer()
         .on_click(click(Part::Sleeve));
     if let Sleeve::Ready(image) = sleeve {
@@ -137,10 +142,10 @@ pub fn tile<V: TileHost>(
     if let Some(codec) = &album.codec {
         // The codec only: at tile size a rate is unreadable, and the codec is
         // what says whether this is the good copy.
-        art = art.child(badge(codec.to_uppercase()).top(px(6.0)).right(px(6.0)));
+        art = art.child(badge(p, codec.to_uppercase()).top(px(6.0)).right(px(6.0)));
     }
     if let (Some(release), false) = (&album.release_badge, state.selecting) {
-        art = art.child(badge(release.clone()).top(px(6.0)).left(px(6.0)));
+        art = art.child(badge(p, release.clone()).top(px(6.0)).left(px(6.0)));
     }
     // The dim snaps in and out for now; it takes the theme's 120 ms when the
     // motion tokens land.
@@ -152,18 +157,25 @@ pub fn tile<V: TileHost>(
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(tokens::DIM)
-                .typeset(Type::TitleSmall, tokens::STRONG)
+                .bg(p.dim())
+                .typeset(p, Type::TitleSmall, p.strong)
                 .when(!state.starting, |d| {
                     d.opacity(0.0).group_hover("sleeve", |s| s.opacity(1.0))
                 })
-                .child(if state.starting { "…" } else { "▶" }),
+                .child(if state.starting {
+                    div().child("…").into_any_element()
+                } else {
+                    KoanIcon::new(Icon::PlayMark)
+                        .role(Type::TitleSmall)
+                        .color(p.strong)
+                        .into_any_element()
+                }),
         );
     }
     if state.playing {
-        art = art.child(playing_bars().absolute().left(px(8.0)).bottom(px(8.0)));
+        art = art.child(playing_bars(p).absolute().left(px(8.0)).bottom(px(8.0)));
     }
-    if let Some(bar) = download_bar(album, state.arriving) {
+    if let Some(bar) = download_bar(p, album, state.arriving) {
         art = art.child(bar);
     }
     if !state.selecting {
@@ -176,18 +188,15 @@ pub fn tile<V: TileHost>(
             .flex()
             .items_center()
             .justify_center()
-            .bg(tokens::SURFACE)
+            .bg(p.surface)
             .typeset(
+                p,
                 Type::Meta,
-                if state.favourite {
-                    tokens::ACCENT
-                } else {
-                    tokens::INK
-                },
+                if state.favourite { p.accent } else { p.ink },
             )
             .cursor_pointer()
             .on_click(click(Part::Heart))
-            .child(if state.favourite { "♥" } else { "♡" });
+            .child(heart_glyph(p, state.favourite));
         art = art.child(if state.favourite {
             heart
         } else {
@@ -198,23 +207,20 @@ pub fn tile<V: TileHost>(
         // Over the art rather than a border on it, so ticking a tile neither
         // shrinks its sleeve nor moves it.
         if state.selected {
-            art = art.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .border_3()
-                    .border_color(tokens::ACCENT),
-            );
+            art = art.child(div().absolute().inset_0().border_3().border_color(p.accent));
         }
+        // The 20-point tick: white over a fill, the accent when picked.
+        let tick = if state.selected {
+            KoanIcon::new(Icon::Picked).fill(p.accent)
+        } else {
+            KoanIcon::new(Icon::Unpicked).fill(hsla(0.0, 0.0, 0.0, 0.25))
+        };
         art = art.child(
             div()
                 .absolute()
                 .top(px(7.0))
                 .left(px(7.0))
-                .size(px(20.0))
-                .border_1()
-                .border_color(tokens::STRONG)
-                .when(state.selected, |d| d.bg(tokens::ACCENT)),
+                .child(tick.points(20.0 / 1.2).color(hsla(0.0, 0.0, 1.0, 1.0))),
         );
     }
 
@@ -224,7 +230,7 @@ pub fn tile<V: TileHost>(
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
-        .typeset(Type::Meta, tokens::INK)
+        .typeset(p, Type::Meta, p.ink)
         .cursor_pointer()
         .when(!state.selecting, |d| d.hover(|s| s.underline()))
         .on_click(click(Part::Title))
@@ -235,7 +241,7 @@ pub fn tile<V: TileHost>(
         .w_full()
         .overflow_hidden()
         .whitespace_nowrap()
-        .typeset(Type::Fine, tokens::MUTED);
+        .typeset(p, Type::Fine, p.muted);
     if state.show_artist {
         for (i, part) in album.artist_credit.iter().enumerate() {
             let span = div()
@@ -244,7 +250,7 @@ pub fn tile<V: TileHost>(
             credit = credit.child(match part.artist_id {
                 Some(artist) if !state.selecting => span
                     .cursor_pointer()
-                    .hover(|s| s.underline().text_color(tokens::INK))
+                    .hover(|s| s.underline().text_color(p.ink))
                     .on_click(click(Part::Artist(artist))),
                 _ => span,
             });
@@ -279,30 +285,41 @@ pub fn tile<V: TileHost>(
         .into_any_element()
 }
 
-fn badge(text: impl Into<SharedString>) -> Div {
+/// The heart, filled in the accent for a favourite.
+pub fn heart_glyph(p: &Paint, favourite: bool) -> KoanIcon {
+    if favourite {
+        KoanIcon::new(Icon::Favourited)
+            .role(Type::Meta)
+            .color(p.accent)
+    } else {
+        KoanIcon::new(Icon::Favourite).role(Type::Meta).color(p.ink)
+    }
+}
+
+fn badge(p: &Paint, text: impl Into<SharedString>) -> Div {
     div()
         .absolute()
         .px(px(6.0))
         .py(px(2.0))
-        .bg(tokens::SURFACE)
-        .typeset(Type::Fine, tokens::INK)
+        .bg(p.surface)
+        .typeset(p, Type::Fine, p.ink)
         .child(text.into())
 }
 
 /// Three bars in the accent: the record is the one playing. Still for now;
 /// they move with the music once the analyser's levels are wired.
-pub fn playing_bars() -> Div {
+pub fn playing_bars(p: &Paint) -> Div {
     div()
         .flex()
         .items_end()
         .gap(px(2.0))
         .h(px(12.0))
-        .children([7.0, 12.0, 9.0].map(|h| div().w(px(3.0)).h(px(h)).bg(tokens::ACCENT)))
+        .children([7.0, 12.0, 9.0].map(|h| div().w(px(3.0)).h(px(h)).bg(p.accent)))
 }
 
 /// How much of the record is on this device, where the listing says, and
 /// whether more of it is arriving.
-fn download_bar(album: &Album, arriving: bool) -> Option<Div> {
+fn download_bar(p: &Paint, album: &Album, arriving: bool) -> Option<Div> {
     let fraction = match album.on_device {
         Some(d) if d.total > 0 && (d.have < d.total || arriving) => d.have as f32 / d.total as f32,
         None if arriving => 0.0,
@@ -315,8 +332,8 @@ fn download_bar(album: &Album, arriving: bool) -> Option<Div> {
             .right_0()
             .bottom_0()
             .h(px(3.0))
-            .bg(tokens::RULE)
-            .child(div().h_full().w(relative(fraction)).bg(tokens::ACCENT)),
+            .bg(p.rule)
+            .child(div().h_full().w(relative(fraction)).bg(p.accent)),
     )
 }
 
@@ -328,10 +345,10 @@ mod tests {
 
     #[test]
     fn columns_share_the_width_within_the_tile_bounds() {
-        let narrow = Grid::for_width(px(300.0));
+        let narrow = Grid::for_width(px(300.0), &Scale::of(100));
         assert_eq!(narrow.columns, 1);
         assert!(narrow.side <= px(MAX_SIDE));
-        let wide = Grid::for_width(px(1920.0));
+        let wide = Grid::for_width(px(1920.0), &Scale::of(100));
         assert!(wide.side >= px(MIN_SIDE) && wide.side <= px(MAX_SIDE));
         assert!(wide.gap >= px(MIN_GAP));
         let used = wide.side * wide.columns as f32 + wide.gap * (wide.columns as f32 - 1.0);

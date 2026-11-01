@@ -7,8 +7,9 @@ use gpui_kit::*;
 use koan_ffi::{InfoField, TrackDetails};
 
 use super::format;
-use super::tokens::{self, Type, Typeset, space};
+use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib};
+use crate::theme::Space;
 
 pub struct TrackInfo {
     lib: Lib,
@@ -52,77 +53,82 @@ impl TrackInfo {
     }
 }
 
-fn field(name: impl Into<SharedString>, value: impl Into<SharedString>) -> Div {
+fn field(p: &Paint, name: impl Into<SharedString>, value: impl Into<SharedString>) -> Div {
     div()
         .flex()
         .justify_between()
-        .gap(space::s16())
-        .child(div().typeset(Type::Meta, tokens::MUTED).child(name.into()))
+        .gap(p.space(Space::L))
+        .child(div().typeset(p, Type::Meta, p.muted).child(name.into()))
         .child(
             div()
-                .typeset(Type::Meta, tokens::INK)
+                .typeset(p, Type::Meta, p.ink)
                 .text_right()
                 .child(value.into()),
         )
 }
 
-fn section(title: impl Into<SharedString>, fields: Vec<Div>) -> Div {
+fn section(p: &Paint, title: impl Into<SharedString>, fields: Vec<Div>) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap(space::s4())
-        .pt(space::s16())
-        .child(div().typeset(Type::Fine, tokens::INK).child(title.into()))
+        .gap(p.space(Space::Xs))
+        .pt(p.space(Space::L))
+        .child(div().typeset(p, Type::Fine, p.ink).child(title.into()))
         .children(fields)
 }
 
-fn fields(list: &[InfoField]) -> Vec<Div> {
+fn fields(p: &Paint, list: &[InfoField]) -> Vec<Div> {
     list.iter()
-        .map(|f| field(f.name.clone(), f.value.clone()))
+        .map(|f| field(p, f.name.clone(), f.value.clone()))
         .collect()
 }
 
 impl Render for TrackInfo {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         let body = match &self.details {
             Some(d) => {
                 let t = &d.track;
                 let mut tags = vec![
-                    field("title", t.title.clone()),
-                    field("artist", t.artist_name.clone()),
-                    field("album", t.album_title.clone()),
-                    field("album artist", t.album_artist_name.clone()),
+                    field(p, "title", t.title.clone()),
+                    field(p, "artist", t.artist_name.clone()),
+                    field(p, "album", t.album_title.clone()),
+                    field(p, "album artist", t.album_artist_name.clone()),
                 ];
                 if let Some(n) = t.track_number {
-                    tags.push(field("track", n.to_string()));
+                    tags.push(field(p, "track", n.to_string()));
                 }
                 if let Some(n) = t.disc {
-                    tags.push(field("disc", n.to_string()));
+                    tags.push(field(p, "disc", n.to_string()));
                 }
                 if let Some(g) = &t.genre {
-                    tags.push(field("genre", g.clone()));
+                    tags.push(field(p, "genre", g.clone()));
                 }
-                tags.push(field("length", format::duration(t.duration_ms)));
+                tags.push(field(p, "length", format::duration(t.duration_ms)));
                 if let Some(q) = format::quality(t) {
-                    tags.push(field("format", q));
+                    tags.push(field(p, "format", q));
                 }
                 if let Some(path) = &t.path {
-                    tags.push(field("file", path.clone()));
+                    tags.push(field(p, "file", path.clone()));
                 }
                 if let Some(uid) = &d.uid {
-                    tags.push(field("uid", uid.clone()));
+                    tags.push(field(p, "uid", uid.clone()));
                 }
-                let mut out = div().flex().flex_col().child(section("tags", tags));
+                let mut out = div().flex().flex_col().child(section(p, "tags", tags));
                 for source in &d.sources {
-                    out = out.child(section(source.kind.to_lowercase(), fields(&source.fields)));
+                    out = out.child(section(
+                        p,
+                        source.kind.to_lowercase(),
+                        fields(p, &source.fields),
+                    ));
                 }
                 if !d.replay_gain.is_empty() {
-                    out = out.child(section("replaygain", fields(&d.replay_gain)));
+                    out = out.child(section(p, "replaygain", fields(p, &d.replay_gain)));
                 }
                 out.into_any_element()
             }
             None if self.missing => div()
-                .typeset(Type::Control, tokens::MUTED)
+                .typeset(p, Type::Control, p.muted)
                 .child("this track isn't in the library any more")
                 .into_any_element(),
             None => div().into_any_element(),
@@ -138,7 +144,7 @@ impl Render for TrackInfo {
             .flex()
             .items_center()
             .justify_center()
-            .bg(tokens::DIM)
+            .bg(p.dim())
             .on_click(cx.listener(|this, _, _, cx| {
                 this.lib.nav.update(cx, |nav, cx| nav.close_info(cx));
             }))
@@ -148,14 +154,14 @@ impl Render for TrackInfo {
                     .w(px(480.0))
                     .max_h(relative(0.8))
                     .overflow_y_scroll()
-                    .p(space::s16())
-                    .bg(tokens::BG)
+                    .p(p.space(Space::L))
+                    .bg(p.bg)
                     .border_1()
-                    .border_color(tokens::RULE)
+                    .border_color(p.rule)
                     .on_click(|_, _, cx| cx.stop_propagation())
                     .child(
                         div()
-                            .typeset(Type::TitleSmall, tokens::STRONG)
+                            .typeset(p, Type::TitleSmall, p.strong)
                             .child("track info"),
                     )
                     .child(body),

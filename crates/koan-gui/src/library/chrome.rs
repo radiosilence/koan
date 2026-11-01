@@ -3,9 +3,8 @@
 //! select toggle and the bar a pick acts through. Drawn in the kōan look:
 //! square, flat, lowercase, one hairline where a region needs one.
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::theme::Theme;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::BrowseChoices;
@@ -13,39 +12,12 @@ use koan_ffi::BrowseChoices;
 use super::browse::{self, Browse};
 use super::drag::Playable;
 use super::selection::Selection;
-use super::tokens::{self, Type, Typeset, space};
+use super::tokens::{self, Paint, Type, Typeset};
 use super::{Lib, actions};
-
-/// gpui-component's menus, popovers and fields in the kōan tokens, so the
-/// context menus and text fields the library uses from it match the pages.
-/// The theme module takes this over when it lands.
-pub fn apply_component_theme(cx: &mut App) {
-    let theme = Theme::global_mut(cx);
-    let c = &mut theme.colors;
-    c.background = tokens::BG.into();
-    c.foreground = tokens::INK.into();
-    c.border = tokens::RULE.into();
-    c.popover = tokens::BG.into();
-    c.popover_foreground = tokens::INK.into();
-    c.accent = tokens::SURFACE.into();
-    c.accent_foreground = tokens::STRONG.into();
-    c.muted = tokens::SURFACE.into();
-    c.muted_foreground = tokens::MUTED.into();
-    c.input = tokens::MUTED.into();
-    c.ring = tokens::ACCENT.into();
-    c.caret = tokens::ACCENT.into();
-    c.selection = tokens::alpha(tokens::ACCENT, 0.3).into();
-    c.primary = tokens::ACCENT.into();
-    c.primary_foreground = tokens::BG.into();
-    c.list_hover = tokens::alpha(tokens::HOVER, 0.3).into();
-    c.list_active = tokens::SURFACE.into();
-    c.danger = tokens::BAD.into();
-    theme.radius = px(0.0);
-    theme.radius_lg = px(0.0);
-    theme.shadow = false;
-    theme.font_family = tokens::FONT.into();
-    theme.font_size = Type::Control.size();
-}
+use crate::components::{
+    Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, TextField, Toggle,
+};
+use crate::theme::{Icon, KoanIcon, Space};
 
 /// "1 album", "5,123 albums".
 pub fn count(n: u64, one: &str, many: &str) -> String {
@@ -62,50 +34,48 @@ pub fn count(n: u64, one: &str, many: &str) -> String {
 
 /// A library page's header: its title with the count under it, and its
 /// actions trailing, top-aligned on the grid's margin.
-pub fn page_header(title: &'static str, detail: String, actions: impl IntoElement) -> Div {
+pub fn page_header(
+    p: &Paint,
+    title: &'static str,
+    detail: String,
+    actions: impl IntoElement,
+) -> Div {
     div()
         .flex()
         .items_start()
         .justify_between()
         .px(px(super::tile::MARGIN))
         .pt(px(16.0))
-        .gap(space::s16())
+        .gap(p.space(Space::L))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .child(div().typeset(Type::Title, tokens::STRONG).child(title))
-                .child(div().typeset(Type::Meta, tokens::MUTED).child(detail)),
+                .child(div().typeset(p, Type::Title, p.strong).child(title))
+                .child(div().typeset(p, Type::Meta, p.muted).child(detail)),
         )
         .child(actions)
 }
 
-pub fn empty_state(title: &'static str, detail: &'static str) -> Div {
+/// An empty listing, centred in the page.
+pub fn empty_state(icon: Icon, title: &'static str, detail: &'static str) -> Div {
     div()
         .size_full()
         .flex()
-        .flex_col()
         .items_center()
         .justify_center()
-        .gap(space::s8())
-        .child(div().typeset(Type::TitleSmall, tokens::MUTED).child(title))
-        .child(div().typeset(Type::Control, tokens::MUTED).child(detail))
+        .child(EmptyState::new(icon, title).detail(detail))
 }
 
-/// A text button: the label in `muted`, `ink` under the pointer.
-pub fn text_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
-    div()
-        .id(id)
-        .cursor_pointer()
-        .typeset(Type::Control, tokens::MUTED)
-        .hover(|s| s.text_color(tokens::INK))
-        .child(label.into())
+/// A text button: an app word in `muted`, `ink` under the pointer.
+pub fn text_button(id: impl Into<ElementId>, label: &str) -> Button {
+    Button::new(id, ButtonKind::Text).label(label)
 }
 
 pub fn select_toggle(
     active: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
+) -> Button {
     text_button("select", if active { "done" } else { "select" }).on_click(on_click)
 }
 
@@ -138,15 +108,19 @@ impl SearchField {
 }
 
 impl Render for SearchField {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         div()
             .flex()
             .items_center()
-            .gap(space::s4())
+            .gap(p.space(Space::Xs))
             .w(px(200.0))
-            .typeset(Type::Control, tokens::MUTED)
-            .child("⌕")
-            .child(Input::new(&self.input).appearance(false).cleanable(true))
+            .child(
+                KoanIcon::new(Icon::Search)
+                    .role(Type::Control)
+                    .tone(crate::theme::Tone::Muted),
+            )
+            .child(TextField::new(&self.input).bare())
     }
 }
 
@@ -180,34 +154,31 @@ impl gpui_kit::base::Selectable for Trigger {
 }
 
 impl RenderOnce for Trigger {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         div()
             .id(self.id)
             .cursor_pointer()
-            .typeset(
-                Type::Control,
-                if self.open {
-                    tokens::INK
-                } else {
-                    tokens::MUTED
-                },
-            )
-            .hover(|s| s.text_color(tokens::INK))
+            .typeset(p, Type::Control, if self.open { p.ink } else { p.muted })
+            .hover(|s| s.text_color(p.ink))
             .child(self.label)
     }
 }
 
 /// The square panel a popover opens: `bg`, a hairline `rule`, no arrow.
-fn panel() -> Div {
+fn panel(p: &Paint) -> Div {
     div()
-        .bg(tokens::BG)
+        .bg(p.bg)
         .border_1()
-        .border_color(tokens::RULE)
-        .typeset(Type::Body, tokens::INK)
+        .border_color(p.rule)
+        .typeset(p, Type::Body, p.ink)
 }
 
-/// A row in a menu panel, ticked when it is the choice in force.
+/// A row in a menu panel for a choice that is data (a genre, a codec, a
+/// playlist's name), which keeps its case; the theme's `MenuRow` writes the
+/// app's own words lowercase.
 fn choice_row(
+    p: &Paint,
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     ticked: bool,
@@ -216,15 +187,12 @@ fn choice_row(
         .id(id)
         .flex()
         .items_center()
-        .gap(space::s8())
-        .px(space::s12())
-        .py(space::s4())
+        .gap(p.space(Space::S))
+        .px(p.space(Space::M))
+        .py(p.space(Space::Xs))
         .cursor_pointer()
-        .typeset(
-            Type::Control,
-            if ticked { tokens::ACCENT } else { tokens::INK },
-        )
-        .hover(|s| s.bg(tokens::SURFACE))
+        .typeset(p, Type::Control, if ticked { p.accent } else { p.ink })
+        .hover(|s| s.bg(p.surface))
         .child(div().w(px(12.0)).child(if ticked { "✓" } else { "" }))
         .child(label.into())
 }
@@ -243,16 +211,12 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
             let b = browse.read(cx);
             let current = b.effective_album_sort();
             let sorts = browse::album_sorts(&b.filter, b.search().is_some());
-            panel()
-                .py(space::s4())
-                .children(sorts.into_iter().enumerate().map(|(i, sort)| {
-                    let browse = browse.clone();
-                    choice_row(
-                        ("album-sort", i),
-                        browse::album_sort_label(sort),
-                        sort == current,
-                    )
-                    .on_click(cx.listener(move |state, _, window, cx| {
+            let state = cx.weak_entity();
+            MenuPanel::new().children(sorts.into_iter().enumerate().map(|(i, sort)| {
+                let (browse, state) = (browse.clone(), state.clone());
+                MenuRow::new(("album-sort", i), browse::album_sort_label(sort))
+                    .checked(sort == current)
+                    .on_click(move |_, window, cx| {
                         browse.update(cx, |b, cx| {
                             // Random again is a new shuffle.
                             if sort == koan_ffi::AlbumSort::Random && b.album_sort == sort {
@@ -260,9 +224,9 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
                             }
                             b.update(cx, |b| b.album_sort = sort);
                         });
-                        state.dismiss(window, cx);
-                    }))
-                }))
+                        state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
+                    })
+            }))
         })
 }
 
@@ -280,20 +244,16 @@ pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
             let b = browse.read(cx);
             let current = b.effective_track_sort();
             let sorts = browse::track_sorts(&b.filter, b.search().is_some());
-            panel()
-                .py(space::s4())
-                .children(sorts.into_iter().enumerate().map(|(i, sort)| {
-                    let browse = browse.clone();
-                    choice_row(
-                        ("track-sort", i),
-                        browse::track_sort_label(sort),
-                        sort == current,
-                    )
-                    .on_click(cx.listener(move |state, _, window, cx| {
+            let state = cx.weak_entity();
+            MenuPanel::new().children(sorts.into_iter().enumerate().map(|(i, sort)| {
+                let (browse, state) = (browse.clone(), state.clone());
+                MenuRow::new(("track-sort", i), browse::track_sort_label(sort))
+                    .checked(sort == current)
+                    .on_click(move |_, window, cx| {
                         browse.update(cx, |b, cx| b.update(cx, |b| b.track_sort = sort));
-                        state.dismiss(window, cx);
-                    }))
-                }))
+                        state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
+                    })
+            }))
         })
 }
 
@@ -402,16 +362,10 @@ impl FilterPanel {
         label: &'static str,
         on: bool,
         set: fn(&mut Browse, bool),
-        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let browse = self.lib.browse.clone();
-        form_row(label)
-            .id(id)
-            .cursor_pointer()
-            .child(check_box(on))
-            .on_click(cx.listener(move |_, _, _, cx| {
-                browse.update(cx, |b, cx| b.update(cx, |b| set(b, !on)))
-            }))
+        Toggle::new(id, label, on)
+            .on_change(move |on, _, cx| browse.update(cx, |b, cx| b.update(cx, |b| set(b, *on))))
     }
 
     fn picker(
@@ -423,7 +377,7 @@ impl FilterPanel {
         set: fn(&mut Browse, Option<String>),
     ) -> impl IntoElement {
         let browse = self.lib.browse.clone();
-        form_row(label).child(
+        FormRow::new(label).control(
             Popover::new(id)
                 .appearance(false)
                 .arrow(false)
@@ -431,78 +385,59 @@ impl FilterPanel {
                     SharedString::from(format!("{id}-trigger")),
                     current.clone().unwrap_or_else(|| "any".into()),
                 ))
-                .content(move |_, _, cx| {
+                .content(move |_, window, cx| {
+                    let p = &Paint::of(window, cx);
                     let rows = std::iter::once(None).chain(options.iter().cloned().map(Some));
-                    panel()
-                        .py(space::s4())
-                        .max_h(px(320.0))
-                        .children(rows.enumerate().map(|(i, option)| {
-                            let browse = browse.clone();
-                            let ticked = option == current;
-                            let label = option.clone().unwrap_or_else(|| "any".into());
-                            choice_row((id, i), label, ticked).on_click(cx.listener(
-                                move |state, _, window, cx| {
-                                    let option = option.clone();
-                                    browse.update(cx, |b, cx| b.update(cx, |b| set(b, option)));
-                                    state.dismiss(window, cx);
-                                },
-                            ))
-                        }))
+                    MenuPanel::new().children(rows.enumerate().map(|(i, option)| {
+                        let browse = browse.clone();
+                        let ticked = option == current;
+                        let label = option.clone().unwrap_or_else(|| "any".into());
+                        choice_row(p, (id, i), label, ticked).on_click(cx.listener(
+                            move |state, _, window, cx| {
+                                let option = option.clone();
+                                browse.update(cx, |b, cx| b.update(cx, |b| set(b, option)));
+                                state.dismiss(window, cx);
+                            },
+                        ))
+                    }))
                 }),
         )
     }
 }
 
 impl Render for FilterPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &Paint::of(window, cx);
         let f = self.lib.browse.read(cx).filter.clone();
         let (codecs, genres) = self
             .choices
             .as_ref()
             .map(|c| (c.codecs.clone(), c.genres.clone()))
             .unwrap_or_default();
-        let rule = || {
-            div()
-                .h(tokens::hairline())
-                .bg(tokens::alpha(tokens::INK, 0.12))
-        };
+        let rule = || div().h(tokens::hairline()).bg(p.row_rule());
         let browse = self.lib.browse.clone();
         let (from, to) = (self.year_from.clone(), self.year_to.clone());
-        panel()
+        panel(p)
             .w(px(300.0))
-            .p(space::s12())
+            .p(p.space(Space::M))
             .flex()
             .flex_col()
-            .gap(space::s8())
-            .child(self.toggle(
-                "f-fav",
-                "favourites",
-                f.favourites,
-                |b, on| b.filter.favourites = on,
-                cx,
-            ))
-            .child(self.toggle(
-                "f-recent",
-                "recently played",
-                f.recent,
-                |b, on| b.filter.recent = on,
-                cx,
-            ))
-            .child(self.toggle(
-                "f-down",
-                "downloaded",
-                f.downloaded,
-                |b, on| b.filter.downloaded = on,
-                cx,
-            ))
+            .gap(p.space(Space::S))
+            .child(self.toggle("f-fav", "favourites", f.favourites, |b, on| {
+                b.filter.favourites = on
+            }))
+            .child(
+                self.toggle("f-recent", "recently played", f.recent, |b, on| {
+                    b.filter.recent = on
+                }),
+            )
+            .child(self.toggle("f-down", "downloaded", f.downloaded, |b, on| {
+                b.filter.downloaded = on
+            }))
             .when(self.lossless, |d| {
-                d.child(self.toggle(
-                    "f-lossless",
-                    "lossless",
-                    f.lossless,
-                    |b, on| b.filter.lossless = on,
-                    cx,
-                ))
+                d.child(self.toggle("f-lossless", "lossless", f.lossless, |b, on| {
+                    b.filter.lossless = on
+                }))
             })
             .child(rule())
             .child(
@@ -516,37 +451,19 @@ impl Render for FilterPanel {
                 }),
             )
             .child(
-                form_row("years").child(
+                FormRow::new("years").control(
                     div()
                         .flex()
-                        .gap(space::s8())
-                        .child(
-                            div()
-                                .w(px(64.0))
-                                .bg(tokens::SURFACE)
-                                .child(Input::new(&self.year_from).appearance(false)),
-                        )
-                        .child(
-                            div()
-                                .w(px(64.0))
-                                .bg(tokens::SURFACE)
-                                .child(Input::new(&self.year_to).appearance(false)),
-                        ),
+                        .gap(p.space(Space::S))
+                        .child(div().w(px(64.0)).child(TextField::new(&self.year_from)))
+                        .child(div().w(px(64.0)).child(TextField::new(&self.year_to))),
                 ),
             )
             .child(rule())
             .child(
                 div().flex().justify_end().child(
-                    div()
-                        .id("f-reset")
-                        .cursor_pointer()
-                        .px(space::s12())
-                        .py(px(6.0))
-                        .border_1()
-                        .border_color(tokens::MUTED)
-                        .typeset(Type::Meta, tokens::INK)
-                        .hover(|s| s.bg(tokens::HOVER))
-                        .child("reset")
+                    Button::new("f-reset", ButtonKind::Bordered)
+                        .label("reset")
                         .on_click(move |_, window, cx| {
                             browse.update(cx, |b, cx| {
                                 b.update(cx, |b| b.filter = Default::default())
@@ -559,32 +476,6 @@ impl Render for FilterPanel {
     }
 }
 
-fn form_row(label: &'static str) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .min_h(px(28.0))
-        .child(div().typeset(Type::Body, tokens::INK).child(label))
-}
-
-/// The theme's toggle: a square box, a `muted` outline off, filled `accent`
-/// with a check on.
-fn check_box(on: bool) -> Div {
-    div()
-        .size(px(14.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .border_1()
-        .border_color(if on { tokens::ACCENT } else { tokens::MUTED })
-        .when(on, |d| {
-            d.bg(tokens::ACCENT)
-                .typeset(Type::Fine, tokens::BG)
-                .child("✓")
-        })
-}
-
 /// A page whose items can be picked.
 pub trait Picking: Sized + 'static {
     fn selection_mut(&mut self) -> &mut Selection;
@@ -593,6 +484,7 @@ pub trait Picking: Sized + 'static {
 /// Along the foot of a page while picking: how many, and the verbs. Each verb
 /// ends the mode.
 pub fn selection_bar<V: Picking>(
+    p: &Paint,
     lib: &Lib,
     selection: &Selection,
     page: Entity<V>,
@@ -621,20 +513,20 @@ pub fn selection_bar<V: Picking>(
         .items_center()
         .justify_between()
         .px(px(super::tile::MARGIN))
-        .py(space::s12())
+        .py(p.space(Space::M))
         .border_t_1()
-        .border_color(tokens::RULE)
-        .bg(tokens::BG)
+        .border_color(p.rule)
+        .bg(p.bg)
         .child(
             div()
-                .typeset(Type::Meta, tokens::INK)
+                .typeset(p, Type::Meta, p.ink)
                 .child(count(n as u64, "picked", "picked")),
         )
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(space::s16())
+                .gap(p.space(Space::L))
                 .child(verb("sel-play", "play", |lib, p, cx| {
                     actions::play(lib, p, false, cx).detach()
                 }))
@@ -649,19 +541,20 @@ pub fn selection_bar<V: Picking>(
                         .appearance(false)
                         .arrow(false)
                         .trigger(Trigger::new("sel-playlist-trigger", "add to playlist"))
-                        .content(move |_, _, cx| {
+                        .content(move |_, window, cx| {
+                            let p = &Paint::of(window, cx);
                             if playlists.is_empty() {
-                                return panel()
-                                    .p(space::s12())
-                                    .typeset(Type::Control, tokens::MUTED)
-                                    .child("no playlists");
+                                return panel(p)
+                                    .p(p.space(Space::M))
+                                    .typeset(p, Type::Control, p.muted)
+                                    .child("no playlists")
+                                    .into_any_element();
                             }
-                            panel()
-                                .py(space::s4())
+                            MenuPanel::new()
                                 .children(playlists.iter().enumerate().map(|(i, (id, name))| {
                                     let (lib, picked, page, id) =
                                         (lib2.clone(), picked2.clone(), page2.clone(), *id);
-                                    choice_row(("sel-pl", i), name.clone(), false).on_click(
+                                    choice_row(p, ("sel-pl", i), name.clone(), false).on_click(
                                         cx.listener(move |state, _, window, cx| {
                                             actions::add_to_playlist(&lib, id, &picked, cx);
                                             page.update(cx, |page, cx| {
@@ -672,6 +565,7 @@ pub fn selection_bar<V: Picking>(
                                         }),
                                     )
                                 }))
+                                .into_any_element()
                         }),
                 )
                 .child(verb("sel-fav", "favourite", actions::favourite))
