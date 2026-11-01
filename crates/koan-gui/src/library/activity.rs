@@ -115,7 +115,7 @@ impl Activity {
         cx.spawn(async move |this, cx| {
             while let Some(first) = reports.next().await {
                 let mut batch = vec![first];
-                while let Ok(Some(next)) = reports.try_next() {
+                while let Ok(next) = reports.try_recv() {
                     batch.push(next);
                 }
                 let alive = this.update(cx, |this, cx| {
@@ -214,7 +214,7 @@ impl Activity {
                     "rescanning"
                 }
                 .into(),
-                done: Some(scan.done).filter(|_| scan.total > 0 || scan.done > 0),
+                done: (scan.total > 0 || scan.done > 0).then_some(scan.done),
                 total: Some(scan.total).filter(|t| *t > 0),
                 unit: Some("files"),
                 detail: Some(scan.detail.clone()).filter(|d| !d.is_empty()),
@@ -244,7 +244,7 @@ impl Activity {
             });
         }
         if self.syncing || tasks.syncing {
-            let progress = mirror.sync.read(cx).0.clone();
+            let progress = mirror.sync.read(cx).0;
             let (label, unit) = match progress.as_ref().map(|p| p.phase) {
                 Some(SyncPhase::Albums) => ("syncing albums", Some("albums")),
                 Some(SyncPhase::Tracks) => ("syncing tracks", Some("tracks")),
