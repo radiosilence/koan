@@ -112,12 +112,15 @@ impl Navigator {
 
     /// Drops a route that no longer exists (a deleted playlist): it is not
     /// somewhere Back can return to. What survives behind the cursor keeps
-    /// its order, so the cursor stays on the page it was on, or lands on the
-    /// one before it when that page was the one forgotten.
+    /// its order, so the cursor stays on the page it was on, or, when that
+    /// page was the one forgotten, lands where Back would have taken it.
+    /// Rewind counts are kept: they only ever grow, so a route that comes
+    /// back (a row id reused) never repeats a count a page has seen.
     pub fn forget(&mut self, route: Route) {
         if !self.history.contains(&route) {
             return;
         }
+        let showing = self.current() == route;
         let surviving = self.history[..self.cursor]
             .iter()
             .filter(|r| **r != route)
@@ -126,8 +129,12 @@ impl Navigator {
         if self.history.is_empty() {
             self.history.push(Route::Queue);
         }
-        self.cursor = surviving.min(self.history.len() - 1);
-        self.rewinds.remove(&route);
+        let landing = if showing {
+            surviving.saturating_sub(1)
+        } else {
+            surviving
+        };
+        self.cursor = landing.min(self.history.len() - 1);
     }
 }
 
@@ -209,6 +216,30 @@ mod tests {
         assert_eq!(nav.current(), ALBUMS);
         assert!(nav.back());
         assert_eq!(nav.current(), QUEUE);
+    }
+
+    #[test]
+    fn forgetting_the_page_on_screen_mid_history_lands_where_back_would() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        nav.go(PLAYLIST);
+        nav.go(TRACKS);
+        assert!(nav.back());
+        nav.forget(PLAYLIST);
+        assert_eq!(nav.current(), ALBUMS);
+        assert!(nav.forward());
+        assert_eq!(nav.current(), TRACKS);
+    }
+
+    #[test]
+    fn a_forgotten_route_keeps_its_rewinds() {
+        let mut nav = Navigator::default();
+        nav.go(PLAYLIST);
+        nav.choose(PLAYLIST);
+        nav.forget(PLAYLIST);
+        nav.go(PLAYLIST);
+        nav.choose(PLAYLIST);
+        assert_eq!(nav.rewinds(PLAYLIST), 2);
     }
 
     #[test]

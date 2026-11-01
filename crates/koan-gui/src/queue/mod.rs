@@ -150,6 +150,9 @@ impl QueueView {
                 if rewinds != this.rewinds {
                     this.rewinds = rewinds;
                     this.list.scroll_to(ListOffset::default());
+                    // Held now, not at the next paint: a queue sent whole in
+                    // between must keep the top, not the row left behind.
+                    this.top = None;
                     cx.notify();
                 }
             }),

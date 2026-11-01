@@ -1,6 +1,8 @@
 //! Frame-time measurement, built with the `profiler` feature.
 //!
-//! With `KOAN_GUI_MEASURE=scroll` the app scrolls the queue through its own
+//! With `KOAN_GUI_MEASURE=play` the app starts playback and runs on, for
+//! its CPU use to be read from outside. With `KOAN_GUI_MEASURE=scroll` the
+//! app scrolls the queue through its own
 //! window, with input events delivered to the window and nothing sent to
 //! the screen, then prints GPUI's frame histograms and quits. Run it against
 //! a throwaway `KOAN_CONFIG_DIR` holding a large queue, with
@@ -23,9 +25,22 @@ const STEP: Pixels = px(40.);
 pub static TOP: AtomicUsize = AtomicUsize::new(0);
 
 pub fn start(cx: &mut App) {
-    if std::env::var("KOAN_GUI_MEASURE").as_deref() != Ok("scroll") {
-        return;
+    match std::env::var("KOAN_GUI_MEASURE").as_deref() {
+        Ok("scroll") => scroll(cx),
+        // Starts playback and leaves the app to run, for its CPU use to be
+        // read from outside while it plays with nobody touching it.
+        Ok("play") => crate::engine::command(cx, "play", |e| e.resume()),
+        // The same with the app hidden, which stops the window's frames.
+        Ok("hidden") => cx.hide(),
+        Ok("play-hidden") => {
+            crate::engine::command(cx, "play", |e| e.resume());
+            cx.hide();
+        }
+        _ => {}
     }
+}
+
+fn scroll(cx: &mut App) {
     let background = cx.background_executor().clone();
     cx.spawn(async move |cx| {
         background.timer(Duration::from_secs(3)).await;

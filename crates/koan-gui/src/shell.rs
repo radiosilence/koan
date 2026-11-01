@@ -49,6 +49,10 @@ pub struct Shell {
     transport: Entity<Transport>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
+    /// The route focus was last moved for: the navigator notifies for more
+    /// than moves (a deleted playlist forgotten during a scan), and those
+    /// must not take the keys from wherever they are.
+    arrived_at: Route,
     _arrivals: Subscription,
 }
 
@@ -66,12 +70,19 @@ impl Shell {
             queue,
             transport: cx.new(Transport::new),
             moving_window: false,
+            arrived_at: Route::Queue,
             _arrivals: arrivals,
         }
     }
 
     fn arrived(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nav.read(cx).current() == Route::Queue {
+        let route = self.nav.read(cx).current();
+        if route == self.arrived_at {
+            cx.notify();
+            return;
+        }
+        self.arrived_at = route;
+        if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
         } else {
             window.focus(&self.focus, cx);
