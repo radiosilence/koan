@@ -32,6 +32,8 @@ pub struct WindowRoot {
     /// The sleeve on its way; replacing it drops the one before.
     fetching: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
+    /// The playing bars moved: painted again over the cached content.
+    _levels: Option<Subscription>,
 }
 
 impl WindowRoot {
@@ -54,6 +56,7 @@ impl WindowRoot {
                 }),
                 cx.observe_global::<KoanTheme>(move |this, cx| this.restyle(&followed, cx)),
             ],
+            _levels: crate::levels::feed(cx).map(|feed| cx.observe(&feed, |_, _, cx| cx.notify())),
         };
         root.wash
             .update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
@@ -163,5 +166,6 @@ impl Render for WindowRoot {
                     .size_full()
                     .child(self.content.clone().cached(fill())),
             )
+            .child(crate::levels::paint(cx))
     }
 }
