@@ -448,8 +448,8 @@ impl QueueView {
         });
     }
 
-    /// Queues what was dragged from the library before row `dest`: after
-    /// the last item of the row above, or appended past the last row.
+    /// Queues what was dragged from the library before row `dest`, where
+    /// `rows::place` says.
     fn drop_library(&mut self, dragged: &PlayableDrag, dest: usize, cx: &mut Context<Self>) {
         use koan_ffi::Placement;
         self.drop_at = None;
@@ -457,12 +457,13 @@ impl QueueView {
         let queue = self.queue.read(cx);
         let id = |ix: usize| queue.base.get(ix).map(|item| item.queue_item_id.clone());
         let sets = dragged.sets.to_vec();
-        if dest >= queue.rows.len() {
+        let place = rows::place(&queue.rows, dest);
+        if place == rows::Place::End {
             command(cx, "queue from the library", move |e| {
                 e.queue(sets, Placement::Append)
             });
-        } else if dest > 0 {
-            let Some(after) = id(queue.rows[dest - 1].items().end - 1) else {
+        } else if let rows::Place::After(ix) = place {
+            let Some(after) = id(ix) else {
                 return;
             };
             command(cx, "queue from the library", move |e| {
@@ -475,7 +476,7 @@ impl QueueView {
             });
         } else {
             // Nothing to place after: appended, then moved to the top.
-            let Some(first) = id(queue.rows[0].items().start) else {
+            let Some(first) = id(0) else {
                 return;
             };
             command(cx, "queue from the library", move |e| async move {
