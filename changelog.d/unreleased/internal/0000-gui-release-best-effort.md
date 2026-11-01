@@ -1,0 +1,1 @@
+- **GUI release packages are best effort.** A koan-gui package that fails to build is left off the release without failing the run.

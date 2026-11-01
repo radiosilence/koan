@@ -1058,6 +1058,9 @@ jobs:
     timeout-minutes: 90
     needs: [changes, make-room]
     if: ${{ !cancelled() && needs.make-room.result == 'success' }}
+    # Best effort while the GUI app is new: a package that fails to build is
+    # left off the release, and neither the run nor anything after it fails.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
