@@ -13,6 +13,7 @@ pub mod profile;
 pub mod prompts;
 pub mod sheet;
 pub mod stage;
+pub mod window;
 
 pub use model::Dsp;
 pub use page::EqPage;

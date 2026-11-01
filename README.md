@@ -37,6 +37,8 @@ brew install --cask radiosilence/koan/koan-app
 You may have to update brew's trust settings to trust the tap.
 Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release.
 
+Desktop app (macOS and Linux, in development): a DMG, an AppImage and a `.deb` with each release. See [the desktop app](docs/guide/desktop.md).
+
 CLI/TUI:
 
 ```bash
@@ -67,6 +69,8 @@ sudo dnf install alsa-lib-devel dbus-devel
 # Arch
 sudo pacman -S alsa-lib dbus
 ```
+
+Building the whole workspace on Linux, as `just check` does, also builds the kōan GUI app, which needs GPUI's libraries as well (on Debian and Ubuntu: `libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libvulkan-dev`).
 
 The iOS and Apple TV apps are in App Review; until they are released, the [TestFlight beta](https://testflight.apple.com/join/96w2gjFz) installs them on an iPhone, iPad or Apple TV. The iOS app can also be built from source: `just ios-phone` installs it on a plugged-in iPhone, signed with your own (free) Apple developer team. Both need iOS or tvOS 26 and a kōan, Navidrome or other Subsonic server to play from.
 
@@ -186,7 +190,7 @@ At [koan.rocks/docs](https://koan.rocks/docs/), rendered from [`docs/`](docs). S
 File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback -> DAC
 ```
 
-Six crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), `koan-gui` (the kōan GUI app in GPUI, in progress), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Six crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), `koan-gui` (the kōan GUI app in GPUI, on macOS and Linux, in progress) and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
 The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; it asks iOS for each track's sample rate, so a USB DAC that supports the rate is switched to it and there is no resampling in koan or iOS; on any other route iOS resamples, and the format badge shows the rate the hardware runs at. The Apple TV app is the same again, built around the remote and mostly played to from a phone or a Mac; tvOS keeps app files only in a cache it may empty, so the configuration is mirrored into the app's preferences, which survive. The Android app ([`apps/android`](apps/android)) is Compose over the same core, loading `koan-ffi` through uniffi's Kotlin bindings.
 

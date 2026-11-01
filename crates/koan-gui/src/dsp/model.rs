@@ -13,14 +13,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use futures::StreamExt;
-use futures::channel::mpsc;
-use gpui_kit::{App, AppContext, Context, Entity, SharedString, Task};
+use gpui_kit::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
 use koan_ffi::{
-    AutoEqEntry, AutoEqMaker, AutoEqOffer, DspBand, DspBandBounds, DspEdited, DspImportPlan,
-    DspImportSummary, DspOverview, DspPoint, DspProfileSummary, DspRole, DspTuningEntry,
-    KoanEngine, KoanError, StateSlice,
+    AutoEqEntry, AutoEqMaker, AutoEqOffer, ConnectionInfo, DspBand, DspBandBounds, DspEdited,
+    DspImportPlan, DspImportSummary, DspOverview, DspPoint, DspProfileSummary, DspRole,
+    DspTuningEntry, KoanEngine, KoanError,
 };
+
+use crate::mirror::{Mirror, Slice};
 
 /// What a server lists when it keeps the account's EQs on every device.
 pub const SYNC_EXTENSION: &str = "koanDspProfiles";
@@ -123,19 +123,13 @@ pub struct Dsp {
     /// of reach.
     extensions: Vec<String>,
     pub offline: bool,
-    _observe: Task<()>,
-}
-
-/// What a stand-in for the app's engine mirror tells the model.
-enum Heard {
-    Library(u64),
-    Connection(Vec<String>, bool),
+    _observe: Vec<Subscription>,
 }
 
 impl Dsp {
     pub fn new(engine: Arc<KoanEngine>, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
-            let observe = Self::observe(&engine, cx);
+            let observe = Self::observe(cx);
             let mut dsp = Self {
                 engine,
                 overview: None,
@@ -164,56 +158,51 @@ impl Dsp {
                 offline: false,
                 _observe: observe,
             };
+            let connection = cx.global::<Mirror>().connection.clone();
+            dsp.connection(&connection, cx);
+            dsp.library = cx.global::<Mirror>().library.read(cx).0;
             dsp.reload(cx);
             dsp
         })
     }
 
-    /// Reads the library and connection slices off the main thread and
-    /// hands over only their changes. Until the app's own engine mirror is
-    /// on main this model keeps a cursor of its own on the state stream.
-    fn observe(engine: &Arc<KoanEngine>, cx: &mut Context<Self>) -> Task<()> {
-        let stream = engine.observe();
-        let (tx, mut rx) = mpsc::unbounded();
-        cx.background_spawn(async move {
-            while let Some(batch) = stream.next().await {
-                for slice in batch {
-                    let heard = match slice {
-                        StateSlice::Library { version } => Heard::Library(version),
-                        StateSlice::Connection { connection } => Heard::Connection(
-                            connection.extensions.into_iter().map(|e| e.name).collect(),
-                            connection.offline,
-                        ),
-                        _ => continue,
-                    };
-                    if tx.unbounded_send(heard).is_err() {
-                        return;
-                    }
+    /// Follows the mirror's library and connection: profiles synced from
+    /// another device arrive as a library change, and what the server
+    /// offers decides Sync and Recently deleted.
+    fn observe(cx: &mut Context<Self>) -> Vec<Subscription> {
+        let mirror = cx.global::<Mirror>();
+        let (library, connection) = (mirror.library.clone(), mirror.connection.clone());
+        vec![
+            cx.observe(&library, |dsp: &mut Dsp, library, cx| {
+                let version = library.read(cx).0;
+                if version != dsp.library {
+                    dsp.library = version;
+                    dsp.reload(cx);
                 }
-            }
-        })
-        .detach();
-        cx.spawn(async move |this, cx| {
-            while let Some(heard) = rx.next().await {
-                let alive = this.update(cx, |dsp, cx| match heard {
-                    Heard::Library(version) if version != dsp.library => {
-                        dsp.library = version;
-                        dsp.reload(cx);
-                    }
-                    Heard::Connection(extensions, offline)
-                        if extensions != dsp.extensions || offline != dsp.offline =>
-                    {
-                        dsp.extensions = extensions;
-                        dsp.offline = offline;
-                        cx.notify();
-                    }
-                    _ => {}
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        })
+            }),
+            cx.observe(&connection, |dsp: &mut Dsp, connection, cx| {
+                dsp.connection(&connection, cx)
+            }),
+        ]
+    }
+
+    fn connection(
+        &mut self,
+        connection: &Entity<Slice<Option<ConnectionInfo>>>,
+        cx: &mut Context<Self>,
+    ) {
+        let (extensions, offline) = match &connection.read(cx).0 {
+            Some(c) => (
+                c.extensions.iter().map(|e| e.name.clone()).collect(),
+                c.offline,
+            ),
+            None => (Vec::new(), false),
+        };
+        if extensions != self.extensions || offline != self.offline {
+            self.extensions = extensions;
+            self.offline = offline;
+            cx.notify();
+        }
     }
 
     pub fn engine(&self) -> Arc<KoanEngine> {

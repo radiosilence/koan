@@ -1,10 +1,10 @@
 name: Linux build dependencies
 description: >
-  Installs the ALSA and D-Bus headers koan builds against, and the X11,
-  Wayland, xkbcommon, fontconfig and Vulkan headers GPUI needs for
-  koan-gui. A mirror that
-  trickles bytes never trips apt's own timeout, so each attempt is cut off
-  after three minutes and tried again, rather than holding the job until its
+  Installs the ALSA and D-Bus headers koan builds against, and the libraries
+  koan-gui's GPUI links (xkbcommon, Wayland, fontconfig, FreeType, xcb,
+  Vulkan): every workspace build includes it. A mirror that trickles bytes
+  never trips apt's own timeout, so each attempt is cut off after three
+  minutes and tried again, rather than holding the job until its
   timeout-minutes cancels it.
 
 runs:
@@ -13,10 +13,12 @@ runs:
     - shell: bash
       run: |
         set -uo pipefail
+        packages=(libasound2-dev libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+          libwayland-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev \
+          libvulkan-dev)
         for attempt in 1 2 3; do
           if sudo timeout 180 apt-get -o Acquire::Retries=3 update \
-            && sudo timeout 180 apt-get -o Acquire::Retries=3 install -y libasound2-dev libdbus-1-dev \
-              libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libvulkan-dev; then
+            && sudo timeout 180 apt-get -o Acquire::Retries=3 install -y "${packages[@]}"; then
             exit 0
           fi
           echo "::warning::linux-deps: attempt $attempt failed"

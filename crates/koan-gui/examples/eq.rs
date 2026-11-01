@@ -169,6 +169,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .run(move |cx| {
                 gpui_kit::init(cx);
                 theme::init(cx);
+                koan_gui::app::install(&engine, cx);
                 let dsp = Dsp::new(engine.clone(), cx);
                 let bounds = Bounds::centered(None, size(px(WIDTH), px(HEIGHT)), cx);
                 gpui_kit::open_window(
@@ -196,6 +197,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     cx.update(|cx| {
         gpui_kit::init(cx);
         theme::init(cx);
+        koan_gui::app::install(&engine, cx);
     });
     let dsp = cx.update(|cx| Dsp::new(engine.clone(), cx));
     if measure {

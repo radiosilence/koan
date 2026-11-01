@@ -1,0 +1,1 @@
+- **The desktop app no longer replaces a saved session it could not restore.** Quitting after a restore that failed, or before it finished, left whatever the app held, possibly an empty queue, in place of the saved one.

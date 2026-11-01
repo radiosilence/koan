@@ -453,6 +453,12 @@ pub fn set_config_dir(path: String) {
     config::set_config_dir(path);
 }
 
+/// The directory `set_config_dir` names, or the platform's default: for a
+/// Rust client keeping its own window state beside the configuration.
+pub fn config_dir() -> std::path::PathBuf {
+    config::config_dir()
+}
+
 /// A size as koan reads one in the config ("50GB", "500 MB"), in bytes, or
 /// `None` when it is not one. So the apps read the cache limit as the core
 /// does, without a parser of their own.
@@ -697,9 +703,6 @@ pub struct KoanEngine {
     pairing: parking_lot::Mutex<Option<koan_core::remote::pair::Pending>>,
     /// What ends the wait, by the pairing's id.
     pairing_cancel: parking_lot::Mutex<Option<(String, koan_core::remote::pair::Cancel)>>,
-    /// What the app calls this device — the name the person gave it, where
-    /// the platform says — for the link and for a pairing to ask under.
-    device_name: Option<String>,
     /// The library's reading of the item under the cursor: read once per
     /// track and library version, not on every wake of the state watcher.
     cursor_reading: parking_lot::Mutex<Option<CursorReading>>,
@@ -877,6 +880,33 @@ const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
 /// takes longer, and is reported as not started yet.
 const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 
+/// Constructors for front ends that link the engine as a Rust library and
+/// are not reached through uniffi.
+impl KoanEngine {
+    /// `open`, for the desktop app: a device of its own beside the native app
+    /// and the terminal UI on the same config directory (see
+    /// `LinkIdentity::desktop`). Refused while another desktop app holds that
+    /// device, and when its lock cannot be made in the config directory.
+    pub async fn open_desktop() -> Result<Arc<Self>, KoanError> {
+        offload::offload(|| {
+            init_logging();
+            let identity = koan_core::remote::link::LinkIdentity::desktop().map_err(|e| {
+                let message = if e.kind() == std::io::ErrorKind::WouldBlock {
+                    "another kōan desktop app is running on this configuration".to_string()
+                } else {
+                    format!(
+                        "could not take this device's lock in {}: {e}",
+                        config::config_dir().display()
+                    )
+                };
+                KoanError::Refused { message }
+            })?;
+            Self::build(None, identity)
+        })
+        .await
+    }
+}
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -885,7 +915,13 @@ impl KoanEngine {
     /// has no async primary constructors.
     #[uniffi::constructor]
     pub async fn open(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
-        offload::offload(move || Self::build(device_name)).await
+        offload::offload(move || {
+            // Before the identity, which logs when it cannot keep the id.
+            init_logging();
+            let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
+            Self::build(device_name, identity)
+        })
+        .await
     }
     // --- Transport ---------------------------------------------------------
 
@@ -4431,8 +4467,7 @@ impl KoanEngine {
         self.cancel_pairing();
         offload::offload(move || {
             serve::refuse_while_sharing()?;
-            let device =
-                koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
+            let device = koan_core::remote::link::LinkIdentity::current().name;
             let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
             let code = PairingCode {
                 id: pending.id.clone(),
@@ -6098,11 +6133,13 @@ impl KoanEngine {
         Ok(summary)
     }
 
-    fn build(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+    fn build(
+        device_name: Option<String>,
+        identity: koan_core::remote::link::LinkIdentity,
+    ) -> Result<Arc<Self>, KoanError> {
         let t0 = std::time::Instant::now();
         init_logging();
         raise_open_file_limit();
-        let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
         let db = Database::open_default().map_err(|e| KoanError::Database {
@@ -6210,7 +6247,6 @@ impl KoanEngine {
             cursor_reading: Default::default(),
             remote_queue: Default::default(),
             server: Default::default(),
-            device_name: device_name.clone(),
         });
         engine.spawn_watcher();
         engine.spawn_figures();
