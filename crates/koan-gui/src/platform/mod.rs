@@ -12,6 +12,7 @@ pub mod menus;
 pub mod shortcuts_sheet;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
@@ -90,10 +91,19 @@ pub fn init(
     // (`SHUTDOWN_TIMEOUT`), then exits however far it got. The window is gone
     // by then and nothing waits on the thread. The log's last lines follow in
     // the future.
+    //
+    // Only a session this process restored is saved: one it could not read,
+    // or quit before reading, would be replaced by whatever it held instead.
+    let restored_ok = Arc::new(AtomicBool::new(false));
     cx.on_app_quit({
         let engine = engine.clone();
+        let restored_ok = restored_ok.clone();
         move |cx| {
-            save_on_leaving(&engine);
+            if restored_ok.load(Ordering::Acquire) {
+                save_on_leaving(&engine);
+            } else {
+                log::info!("quit: the session was never restored, so it is left as it was");
+            }
             engine.release_output();
             engine.flush_settings();
             engine.release_funnel();
@@ -105,7 +115,11 @@ pub fn init(
     let engine = engine.clone();
     let (restored, restoring) = futures_channel::oneshot::channel();
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let _ = restored.send(restore_session(&engine).await);
+        let outcome = restore_session(&engine).await;
+        if outcome.is_some() {
+            restored_ok.store(true, Ordering::Release);
+        }
+        let _ = restored.send(outcome);
         while let Some(next) = opened.next().await {
             cx.update(|cx| {
                 to_front(cx);
