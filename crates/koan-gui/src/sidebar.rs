@@ -14,21 +14,25 @@ use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
-use crate::theme::{self, KoanStyled, Space, TypeRole};
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 
 pub const WIDTH: Pixels = px(220.);
 const ROW: Pixels = px(28.);
 const PLAYLIST_ROW: Pixels = px(40.);
 const PLAYLIST_SLEEVE: Pixels = px(24.);
 
-const LIBRARY: [(Route, &str); 7] = [
-    (Route::Albums, "albums"),
-    (Route::Artists, "artists"),
-    (Route::Tracks, "tracks"),
-    (Route::Favourites, "favourites"),
-    (Route::RecentlyPlayed, "recently played"),
-    (Route::History, "history"),
-    (Route::Downloads, "downloads"),
+const LIBRARY: [(Route, &str, Icon); 7] = [
+    (Route::Albums, "albums", Icon::Album),
+    (Route::Artists, "artists", Icon::Artist),
+    (Route::Tracks, "tracks", Icon::Track),
+    (Route::Favourites, "favourites", Icon::Favourite),
+    (
+        Route::RecentlyPlayed,
+        "recently played",
+        Icon::RecentlyPlayed,
+    ),
+    (Route::History, "history", Icon::History),
+    (Route::Downloads, "downloads", Icon::Downloads),
 ];
 
 pub struct Sidebar {
@@ -141,13 +145,16 @@ impl Sidebar {
     }
 }
 
+/// A place in the sidebar: its glyph when icons are on, then its label.
 fn nav_row(
     id: impl Into<ElementId>,
     label: SharedString,
+    icon: Icon,
     selected: bool,
     p: &Paint,
 ) -> Stateful<Div> {
     let ink = p.ink;
+    let colour = if selected { p.accent_text } else { p.muted };
     div()
         .id(id)
         .h(ROW)
@@ -164,8 +171,12 @@ fn nav_row(
         })
         .cursor_pointer()
         .text_role(TypeRole::Body, &p.look)
-        .text_color(if selected { p.accent_text } else { p.muted })
+        .gap(p.space(Space::S))
+        .text_color(colour)
         .when(!selected, move |d| d.hover(move |s| s.text_color(ink)))
+        .when(p.look.icons, |d| {
+            d.child(KoanIcon::new(icon).role(TypeRole::Body).color(colour))
+        })
         .child(div().truncate().child(label))
 }
 
@@ -196,76 +207,85 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let current = Some(self.nav.read(cx).current());
-        let row = |page: Route, id: ElementId, label: SharedString, cx: &mut Context<Self>| {
-            nav_row(id, label, current == Some(page), &p).on_click(go(page, cx))
+        let row = |page: Route,
+                   id: ElementId,
+                   label: SharedString,
+                   icon: Icon,
+                   cx: &mut Context<Self>| {
+            nav_row(id, label, icon, current == Some(page), &p).on_click(go(page, cx))
         };
         let queue = Route::Queue;
         let sleeves = self.sleeves(window, cx);
         // The rows scroll and keep their height when the window is short;
         // the lines at the foot stay put beneath them.
-        let body =
-            div()
-                .id("sidebar-rows")
-                .flex_1()
-                .min_h(px(0.))
-                .flex()
-                .flex_col()
-                .overflow_y_scroll()
-                .pt(p.space(Space::S))
-                .pb(p.space(Space::S))
-                // Files, and what is dragged from the library, dropped on the
-                // queue's row are queued.
-                .child(
-                    row(queue, "nav-queue".into(), "queue".into(), cx)
-                        .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
-                            drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
-                        }))
-                        .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
-                            let sets = dragged.sets.to_vec();
-                            command(cx, "queue from the library", move |e| {
-                                e.queue(sets, koan_ffi::Placement::Append)
-                            });
-                        })),
+        let body = div()
+            .id("sidebar-rows")
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .pt(p.space(Space::S))
+            .pb(p.space(Space::S))
+            // Files, and what is dragged from the library, dropped on the
+            // queue's row are queued.
+            .child(
+                row(
+                    queue,
+                    "nav-queue".into(),
+                    "queue".into(),
+                    Icon::QueueSection,
+                    cx,
                 )
-                .child(heading("library", &p))
-                .children(LIBRARY.map(|(page, label)| {
-                    row(page, ElementId::Name(label.into()), label.into(), cx)
+                .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                    drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
                 }))
-                .when(!self.playlists.is_empty(), |d| {
-                    d.child(heading("playlists", &p))
-                })
-                .children(
-                    self.playlists
-                        .iter()
-                        .zip(sleeves)
-                        .map(|(playlist, sleeve)| {
-                            let page = Route::Playlist(playlist.id);
-                            playlist_row(playlist, sleeve, current == Some(page), &p)
-                                .on_click(go(page, cx))
-                                // Files, and what is dragged from the library, dropped on a
-                                // playlist's row are added to it.
-                                .on_drop(cx.listener({
-                                    let id = playlist.id;
-                                    move |_, paths: &ExternalPaths, _, cx| {
-                                        drop::add_files_to_playlist(
-                                            &engine(cx),
-                                            id,
-                                            paths.paths().to_vec(),
-                                            cx,
-                                        )
-                                    }
-                                }))
-                                .on_drop(cx.listener({
-                                    let id = playlist.id;
-                                    move |_, dragged: &PlayableDrag, _, cx| {
-                                        let sets = dragged.sets.to_vec();
-                                        command(cx, "add to playlist", move |e| {
-                                            e.add_to_playlist(id, sets)
-                                        });
-                                    }
-                                }))
-                        }),
-                );
+                .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
+                    let sets = dragged.sets.to_vec();
+                    command(cx, "queue from the library", move |e| {
+                        e.queue(sets, koan_ffi::Placement::Append)
+                    });
+                })),
+            )
+            .child(heading("library", &p))
+            .children(LIBRARY.map(|(page, label, icon)| {
+                row(page, ElementId::Name(label.into()), label.into(), icon, cx)
+            }))
+            .when(!self.playlists.is_empty(), |d| {
+                d.child(heading("playlists", &p))
+            })
+            .children(
+                self.playlists
+                    .iter()
+                    .zip(sleeves)
+                    .map(|(playlist, sleeve)| {
+                        let page = Route::Playlist(playlist.id);
+                        playlist_row(playlist, sleeve, current == Some(page), &p)
+                            .on_click(go(page, cx))
+                            // Files, and what is dragged from the library, dropped on a
+                            // playlist's row are added to it.
+                            .on_drop(cx.listener({
+                                let id = playlist.id;
+                                move |_, paths: &ExternalPaths, _, cx| {
+                                    drop::add_files_to_playlist(
+                                        &engine(cx),
+                                        id,
+                                        paths.paths().to_vec(),
+                                        cx,
+                                    )
+                                }
+                            }))
+                            .on_drop(cx.listener({
+                                let id = playlist.id;
+                                move |_, dragged: &PlayableDrag, _, cx| {
+                                    let sets = dragged.sets.to_vec();
+                                    command(cx, "add to playlist", move |e| {
+                                        e.add_to_playlist(id, sets)
+                                    });
+                                }
+                            }))
+                    }),
+            );
         div()
             .id("sidebar")
             .size_full()
