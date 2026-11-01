@@ -209,6 +209,7 @@ impl AlbumPage {
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
                 return div()
+                    .w_full()
                     .h(height)
                     .flex()
                     .items_end()
@@ -311,6 +312,7 @@ impl AlbumPage {
         let lib2 = self.lib.clone();
         let lib3 = self.lib.clone();
         div()
+            .w_full()
             .flex()
             .items_start()
             .gap(grid.gap)
@@ -323,6 +325,7 @@ impl AlbumPage {
                     .flex()
                     .flex_col()
                     .gap(p.space(Space::S))
+                    .flex_1()
                     .min_w_0()
                     .child(
                         div()

@@ -227,6 +227,7 @@ pub fn track_row<V: TrackList>(
     let mut row = div()
         .id(("row", id as u64))
         .group("row")
+        .w_full()
         .flex()
         .items_center()
         .gap(p.space(Space::M))

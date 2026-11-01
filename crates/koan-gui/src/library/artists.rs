@@ -215,6 +215,7 @@ impl ArtistBrowser {
         div()
             .id(("artist", id as u64))
             .group("row")
+            .w_full()
             .flex()
             .items_center()
             .gap(p.space(Space::M))
@@ -255,40 +256,47 @@ impl ArtistBrowser {
             )
             .child(
                 div()
-                    .id(("artist-name", id as u64))
                     .flex_1()
                     .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .cursor_pointer()
-                    .typeset(p, Type::Body, p.ink)
-                    .hover(|s| s.underline())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.lib
-                            .nav
-                            .update(cx, |n, cx| n.open(Page::Artist(id), cx));
-                    }))
-                    .child(artist.name.clone()),
-            )
-            .child(
-                div()
-                    .id(("artist-heart", id as u64))
-                    .w(p.sized(20.0))
-                    .flex_none()
-                    .cursor_pointer()
-                    .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })
-                    .when(!favourite, |d| {
-                        d.invisible().group_hover("row", |s| s.visible())
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.lib
-                            .feed
-                            .update(cx, |f, cx| f.toggle_favourite(item, cx));
-                    }))
-                    .child(super::tile::heart_glyph(p, favourite)),
+                    .flex()
+                    .items_center()
+                    .gap(p.space(Space::S))
+                    .child(
+                        div()
+                            .id(("artist-name", id as u64))
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .cursor_pointer()
+                            .typeset(p, Type::Body, p.ink)
+                            .hover(|s| s.underline())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.lib
+                                    .nav
+                                    .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+                            }))
+                            .child(artist.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .id(("artist-heart", id as u64))
+                            .w(p.sized(20.0))
+                            .flex_none()
+                            .cursor_pointer()
+                            .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })
+                            .when(!favourite, |d| {
+                                d.invisible().group_hover("row", |s| s.visible())
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.lib
+                                    .feed
+                                    .update(cx, |f, cx| f.toggle_favourite(item, cx));
+                            }))
+                            .child(super::tile::heart_glyph(p, favourite)),
+                    ),
             )
             .child(count(artist.album_count, "album", "albums"))
             .child(count(artist.track_count, "track", "tracks"))

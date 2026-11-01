@@ -230,6 +230,20 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
         })
 }
 
+/// Shuffle again, under the random order: its own button beside the sort,
+/// since a new deal is something tried until one is liked, and a menu makes
+/// each try two clicks.
+pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<Button> {
+    let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
+    let browse = lib.browse.clone();
+    random.then(|| {
+        Button::new("album-reshuffle", ButtonKind::Text)
+            .icon(crate::theme::Icon::Reshuffle)
+            .label("shuffle again")
+            .on_click(move |_, _, cx| browse.update(cx, |b, cx| b.reshuffle(cx)))
+    })
+}
+
 pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     let current = lib.browse.read(cx).effective_track_sort();
     let browse = lib.browse.clone();
