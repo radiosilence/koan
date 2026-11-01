@@ -13,17 +13,16 @@ use std::rc::Rc;
 
 use koan_ffi::{DspBand, DspPoint};
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::FluentBuilder;
 use koan_kit::raw::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
-use super::sheet::note;
-use crate::components::TextField;
-use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
+use crate::components::sheet::note;
+use crate::components::{Align, Column, DenseRow, DenseTable, TextField};
+use crate::theme::{Look, Space, Tone};
 
 /// A figure of a band's row, or of a curve's point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -198,7 +197,6 @@ impl Fields {
         part: Part,
         band: &DspBand,
         stamp: (u64, u64),
-        width: f32,
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> AnyElement {
@@ -259,9 +257,9 @@ impl Fields {
                 .input
                 .update(cx, |i, cx| i.set_value(text, window, cx));
         }
+        // Its column's width, from the table.
         div()
-            .w(px(width))
-            .flex_none()
+            .w_full()
             .child(TextField::new(&field.input).bare())
             .into_any_element()
     }
@@ -404,44 +402,35 @@ pub fn table<V: 'static>(
         .enumerate()
         .filter(|(_, b)| channel.is_none_or(|c| b.channels.is_empty() || b.channels.contains(&c)))
         .collect();
-    let cell = |text: &str, w: Option<f32>, right: bool| {
-        div()
-            .when_some(w, |d, w| d.w(px(w)).flex_none())
-            .when(w.is_none(), |d| d.flex_1())
-            .when(right, |d| d.flex().justify_end())
-            .child(text.to_owned())
-    };
-    let mut rows: Vec<AnyElement> = Vec::new();
+    let columns = [
+        Column::fixed(NUMBER_W, Align::Start),
+        Column::flex(),
+        Column::fixed(HZ_W, Align::End),
+        Column::fixed(DB_W, Align::End),
+        Column::fixed(Q_W, Align::End),
+    ];
+    let mut table = DenseTable::new(columns);
     if !bands.is_empty() {
-        rows.push(
-            div()
-                .flex()
-                .gap(px(8.0))
-                .text_role(TypeRole::Fine, &look)
-                .text_color(look.text_color(Tone::Muted))
-                .child(cell("#", Some(NUMBER_W), false))
-                .child(cell("Type", None, false))
-                .child(cell("Hz", Some(HZ_W), true))
-                .child(cell("dB", Some(DB_W), true))
-                .child(cell("Q", Some(Q_W), true))
-                .into_any_element(),
-        );
+        table = table.header(["#", "Type", "Hz", "dB", "Q"]);
     }
     for (position, (index, band)) in shown.into_iter().enumerate() {
         let kind = kinds.iter().find(|k| k.id == band.kind);
         let number = div()
-            .w(px(NUMBER_W))
-            .flex_none()
             .text_color(look.text_color(Tone::Muted))
             .child(format!("{}", position + 1));
-        let row = div()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .py(px(2.0))
-            .text_role(TypeRole::Meta, &look)
-            .text_color(look.palette.ink.hsla())
-            .child(number);
+        let summary = || {
+            div()
+                .w_full()
+                .flex()
+                .justify_between()
+                .child(kind_name(band))
+                .child(
+                    div()
+                        .text_color(look.text_color(Tone::Muted))
+                        .child(values(band)),
+                )
+        };
+        let row = DenseRow::new().cell(number);
         let row = match (kind, read_only) {
             (Some(kind), false) => {
                 // A type chosen goes through the row's saves, as a typed
@@ -467,56 +456,29 @@ pub fn table<V: 'static>(
                         })
                     }])
                     .collect();
-                row.child(div().flex_1().child(menu(
+                row.cell(menu(
                     ("band-kind", index),
                     kind.short.clone(),
                     Trigger::Word,
                     items,
                     window,
                     cx,
-                )))
-                .child(fields.field(index, Part::Freq, band, stamp, HZ_W, window, cx))
-                .child(fields.field(index, Part::Gain, band, stamp, DB_W, window, cx))
-                .child(fields.field(
-                    index,
-                    Part::Q,
-                    band,
-                    stamp,
-                    Q_W,
-                    window,
-                    cx,
                 ))
+                .cell(fields.field(index, Part::Freq, band, stamp, window, cx))
+                .cell(fields.field(index, Part::Gain, band, stamp, window, cx))
+                .cell(fields.field(index, Part::Q, band, stamp, window, cx))
             }
             _ if band.kind == "graphic" && !read_only => {
                 let open = open_curve.clone();
-                row.child(
-                    div()
+                row.span(
+                    4,
+                    summary()
                         .id(("band-curve", index))
-                        .flex_1()
-                        .flex()
-                        .justify_between()
                         .cursor_pointer()
-                        .on_click(move |_, window, cx| open(index, window, cx))
-                        .child(kind_name(band))
-                        .child(
-                            div()
-                                .text_color(look.text_color(Tone::Muted))
-                                .child(values(band)),
-                        ),
+                        .on_click(move |_, window, cx| open(index, window, cx)),
                 )
             }
-            _ => row.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .justify_between()
-                    .child(kind_name(band))
-                    .child(
-                        div()
-                            .text_color(look.text_color(Tone::Muted))
-                            .child(values(band)),
-                    ),
-            ),
+            _ => row.span(4, summary()),
         };
         // Delays, mixes and curves are removed from a menu of their own.
         let row = if kind.is_none() && !read_only {
@@ -524,7 +486,7 @@ pub fn table<V: 'static>(
             let items = vec![Item::destructive("Remove", move |window, cx| {
                 remove(index, position, band.clone(), window, cx)
             })];
-            row.child(menu(
+            row.trailing(menu(
                 ("band-options", index),
                 "···",
                 Trigger::Word,
@@ -535,9 +497,9 @@ pub fn table<V: 'static>(
         } else {
             row
         };
-        rows.push(row.into_any_element());
+        table = table.row(row);
     }
-    div().flex().flex_col().children(rows).into_any_element()
+    table.into_any_element()
 }
 
 /// A graphic curve's points, each frequency and gain editable.
@@ -550,43 +512,34 @@ pub fn points<V: 'static>(
     cx: &mut Context<V>,
 ) -> AnyElement {
     let look = Look::of(window, cx);
-    let header = div()
-        .flex()
-        .gap(px(8.0))
-        .text_role(TypeRole::Fine, &look)
-        .text_color(look.text_color(Tone::Muted))
-        .child(div().w(px(32.0)).child("#"))
-        .child(div().flex_1())
-        .child(div().w(px(80.0)).flex().justify_end().child("Hz"))
-        .child(div().w(px(64.0)).flex().justify_end().child("dB"));
-    let rows = band
-        .curve
-        .iter()
-        .enumerate()
-        .map(|(i, _): (usize, &DspPoint)| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .text_role(TypeRole::Meta, &look)
-                .text_color(look.palette.ink.hsla())
-                .child(
-                    div()
-                        .w(px(32.0))
-                        .text_color(look.text_color(Tone::Muted))
-                        .child(format!("{}", i + 1)),
-                )
-                .child(div().flex_1())
-                .child(fields.field(index, Part::PointHz(i), band, stamp, 80.0, window, cx))
-                .child(fields.field(index, Part::PointDb(i), band, stamp, 64.0, window, cx))
-                .into_any_element()
-        });
+    let table = DenseTable::new([
+        Column::fixed(32.0, Align::Start),
+        Column::flex(),
+        Column::fixed(80.0, Align::End),
+        Column::fixed(64.0, Align::End),
+    ])
+    .header(["#", "", "Hz", "dB"])
+    .rows(
+        band.curve
+            .iter()
+            .enumerate()
+            .map(|(i, _): (usize, &DspPoint)| {
+                DenseRow::new()
+                    .cell(
+                        div()
+                            .text_color(look.text_color(Tone::Muted))
+                            .child(format!("{}", i + 1)),
+                    )
+                    .cell(div())
+                    .cell(fields.field(index, Part::PointHz(i), band, stamp, window, cx))
+                    .cell(fields.field(index, Part::PointDb(i), band, stamp, window, cx))
+            }),
+    );
     div()
         .flex()
         .flex_col()
         .gap(look.space(Space::Xs))
-        .child(header)
-        .children(rows.collect::<Vec<_>>())
+        .child(table)
         .child(note(
             "Edits play at once. Frequency and gain are held to 10 Hz–22 kHz and ±30 dB; a point moved past another takes its place in order.",
             Tone::Muted,

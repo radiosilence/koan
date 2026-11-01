@@ -7,11 +7,14 @@ use std::rc::Rc;
 use koan_kit::raw::prelude::FluentBuilder;
 use koan_kit::raw::{
     AnyElement, AnyView, App, AppContext, Context, Entity, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::components::{Button, ButtonKind};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
+
+/// The sheet's parts are koan-kit's.
+pub use crate::components::sheet::{body, head, head_data, note, panel};
 
 /// What a choice or a confirmation does.
 pub type Run = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -118,65 +121,6 @@ impl Sheets {
     }
 }
 
-/// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
-pub fn panel(look: &Look) -> koan_kit::raw::Div {
-    div()
-        .flex()
-        .flex_col()
-        .w(px(560.0))
-        .max_h(koan_kit::raw::relative(0.85))
-        .bg(look.palette.bg.hsla())
-        .border(HAIRLINE)
-        .border_color(look.palette.rule.hsla())
-}
-
-/// A sheet's head: its title in the app's words, and its actions trailing.
-pub fn head(title: impl AsRef<str>, actions: Vec<AnyElement>, look: &Look) -> impl IntoElement {
-    head_data(label(title), actions, look)
-}
-
-/// A sheet's head whose title is data, a profile's name, which keeps its
-/// case.
-pub fn head_data(
-    title: impl Into<SharedString>,
-    actions: Vec<AnyElement>,
-    look: &Look,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(look.space(Space::M))
-        .px(look.space(Space::L))
-        .py(look.space(Space::M))
-        .border_b(HAIRLINE)
-        .border_color(look.palette.rule.hsla())
-        .child(
-            div()
-                .text_role(TypeRole::Title, look)
-                .text_color(look.palette.strong.hsla())
-                .child(title.into()),
-        )
-        .child(div().flex().gap(look.space(Space::M)).children(actions))
-}
-
-/// A sheet's scrolling body.
-pub fn body(
-    id: impl Into<koan_kit::raw::ElementId>,
-    look: &Look,
-) -> koan_kit::raw::Stateful<koan_kit::raw::Div> {
-    div()
-        .id(id.into())
-        .flex()
-        .flex_col()
-        .gap(look.space(Space::S))
-        .px(look.space(Space::L))
-        .pb(look.space(Space::L))
-        // Shrinks below its content inside the panel's height, and scrolls.
-        .min_h_0()
-        .overflow_y_scroll()
-}
-
 fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoElement {
     let cancel = {
         let sheets = sheets.clone();
@@ -232,14 +176,6 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
                         .on_click(go(c.run.clone())),
                 ),
         )
-}
-
-/// A line of `fine` text in a tone, for footers and notes.
-pub fn note(text: impl Into<SharedString>, tone: Tone, look: &Look) -> koan_kit::raw::Div {
-    div()
-        .text_role(TypeRole::Fine, look)
-        .text_color(look.text_color(tone))
-        .child(text.into())
 }
 
 /// A section: its heading, its rows, and a footer saying what it means.

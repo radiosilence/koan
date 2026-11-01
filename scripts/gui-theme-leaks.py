@@ -4,7 +4,8 @@
 Pages build from koan-kit's components and take sizes, colours and type from
 its roles. This counts, in each koan-gui source file, what chooses a look by
 hand: a size or colour written as a number, GPUI's fixed-size styles, a
-toolbar button or page title built from parts, `gpui::` named directly.
+toolbar button or page title built from parts, `gpui::` named directly, and
+each use of `koan_kit::raw`, GPUI reached around the components.
 
 A ratchet: crates/koan-gui/theme-leaks.toml holds each file's counts as the
 pages are now. The check fails when a count grows or a file not listed has
@@ -32,6 +33,10 @@ KINDS = {
     "container": re.compile(r"\b(TypeRole|Type)::Title\b|ButtonKind::Toolbar\b"),
     # GPUI named directly rather than through koan-kit.
     "gpui": re.compile(r"\bgpui(_kit)?::"),
+    # GPUI reached through koan-kit's escape hatch: each is an exception,
+    # kept only with a comment saying why koan-kit cannot cover it, and the
+    # count only falls as pages move onto components.
+    "raw": re.compile(r"\bkoan_kit::raw\b"),
 }
 
 

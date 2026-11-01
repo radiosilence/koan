@@ -33,6 +33,8 @@ const LIBRARY: [(Route, &str, Icon); 7] = [
 
 pub struct Sidebar {
     nav: Entity<Navigator>,
+    /// What this device plays from and how much the library holds.
+    status: Entity<crate::sidebar_status::SidebarStatus>,
     playlists: Vec<Playlist>,
     /// Up to four records per playlist, whose sleeves make its own.
     faces: HashMap<i64, Vec<i64>>,
@@ -50,6 +52,7 @@ impl Sidebar {
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let library = cx.global::<Mirror>().library.clone();
         let mut sidebar = Self {
+            status: cx.new(crate::sidebar_status::SidebarStatus::new),
             nav: nav.clone(),
             playlists: Vec::new(),
             faces: HashMap::new(),
@@ -254,6 +257,7 @@ impl Render for Sidebar {
                     .child(body)
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
             )
+            .child(self.status.clone())
             // Scans, rebuilds and syncs running; nothing while idle.
             .child(
                 cx.global::<crate::library::activity::ActivityHandle>()
