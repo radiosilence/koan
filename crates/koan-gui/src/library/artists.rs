@@ -27,9 +27,7 @@ struct Query {
     filter: BrowseFilter,
 }
 
-/// The browser's columns, in points at 100 %: the glyph, the heart, the
-/// counts.
-const LEAD: f32 = 20.0;
+/// The browser's columns, in points at 100 %: the heart, the counts.
 const HEART: f32 = 20.0;
 const COUNT: f32 = 110.0;
 
@@ -238,8 +236,9 @@ impl ArtistBrowser {
         let play = cx.weak_entity();
         TableRow::new(("artist", id as u64), RowKind::Line)
             .selected(selected)
-            .lead(
-                LEAD,
+            // Exactly the glyph's width, so it starts on the header's edge.
+            .lead_exact(
+                crate::components::RowMetrics::lead_glyph(&p.look),
                 if starting {
                     crate::components::Spinner::new(p.look.font_size(Type::Meta)).into_any_element()
                 } else {

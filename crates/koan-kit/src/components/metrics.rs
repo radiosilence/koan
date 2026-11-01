@@ -89,6 +89,14 @@ impl RowMetrics {
         px((HEADING_SLEEVE * look.scale.size).round())
     }
 
+    /// A row's leading glyph, where it has no number: the glyph's own
+    /// width, so it starts on the page's edge.
+    pub fn lead_glyph(look: &Look) -> Pixels {
+        px(crate::theme::icons::side(
+            look.points(crate::theme::TypeRole::Body),
+        ))
+    }
+
     /// A row's sleeve, square.
     pub fn sleeve(look: &Look) -> Pixels {
         px((32.0 * look.scale.size).round())
