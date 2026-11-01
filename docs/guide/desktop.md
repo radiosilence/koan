@@ -32,3 +32,9 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 | Undo, redo | ⌘Z, ⇧⌘Z |
 
 The queue keeps its place and selection when you visit another page and come back.
+
+## Settings
+
+⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. EQ is not there yet.
+
+Settings reads the configuration again whenever its window comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.

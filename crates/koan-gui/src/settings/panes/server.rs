@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use crate::components::{Button, ButtonKind, Picker, Segmented, Stepper, TextField, Toggle};
-use crate::theme::{Icon, Look, Tone, TypeRole};
+use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -790,25 +790,25 @@ impl ModeLabel {
     pub fn render(&self, look: &Look) -> AnyElement {
         match self {
             ModeLabel::Sharing(port) => note(
-                format!("Sharing on port {port}"),
+                label(format!("Sharing on port {port}")),
                 Icon::Server,
                 Tone::Muted,
                 look,
             ),
             ModeLabel::NotSharing(why) => note(
-                format!("Not sharing: {why}"),
+                format!("{}{why}", label("Not sharing: ")),
                 Icon::Warning,
                 Tone::Bad,
                 look,
             ),
             ModeLabel::Connected(host) => note(
-                format!("Connected to {host}"),
+                format!("{}{host}", label("Connected to ")),
                 Icon::Server,
                 Tone::Muted,
                 look,
             ),
             ModeLabel::Own => note(
-                "Playing this device's own library",
+                label("Playing this device's own library"),
                 Icon::Library,
                 Tone::Muted,
                 look,

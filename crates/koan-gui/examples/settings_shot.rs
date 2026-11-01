@@ -58,24 +58,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     settle(&mut cx);
 
-    let mut shoot =
-        |cx: &mut HeadlessAppContext, tab: Tab, name: &str| -> Result<(), Box<dyn Error>> {
-            let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
-                let view = cx.new(|cx| SettingsWindow::new(tab, window, cx));
-                cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
-            })?;
-            cx.update_window(window.into(), |_, window, cx| {
-                theme::pin_appearance(Some(true), window, cx)
-            })?;
-            settle(cx);
-            cx.update_window(window.into(), |_, window, _| window.refresh())?;
-            cx.run_until_parked();
-            let path = out.join(format!("settings-{name}.png"));
-            cx.capture_screenshot(window.into())?.save(&path)?;
-            println!("{}", path.display());
-            cx.update_window(window.into(), |_, window, _| window.remove_window())?;
-            Ok(())
-        };
+    let shoot = |cx: &mut HeadlessAppContext, tab: Tab, name: &str| -> Result<(), Box<dyn Error>> {
+        let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
+            let view = cx.new(|cx| SettingsWindow::new(tab, window, cx));
+            cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+        })?;
+        cx.update_window(window.into(), |_, window, cx| {
+            theme::pin_appearance(Some(true), window, cx)
+        })?;
+        settle(cx);
+        cx.update_window(window.into(), |_, window, _| window.refresh())?;
+        cx.run_until_parked();
+        let path = out.join(format!("settings-{name}.png"));
+        cx.capture_screenshot(window.into())?.save(&path)?;
+        println!("{}", path.display());
+        cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        Ok(())
+    };
     for (tab, name) in [
         (Tab::Library, "library"),
         (Tab::Server, "server"),
