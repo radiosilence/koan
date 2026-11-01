@@ -90,6 +90,12 @@ Toolbar::new()
 
 `ToolbarMetrics` holds the Mac's unified toolbar, measured at 2x: 52 points tall with the traffic lights centred on it, 8 in from the edges, separate items 8 apart. A page's `ToolbarGroup` declares its groups (`spacer()` between them) and the toolbar spaces them: 2 points between the buttons of a group, a 16-point spacer between groups. `ToolbarButton` is the spec's toolbar button: the glyph in `ink` in a 36-point cell, `surface` under the pointer, `hover` pressed, the focus ring, 40 % disabled; the word in the cell with icons off.
 
+`ToolbarMenu::new(id, button, content)`: a toolbar button that opens a menu panel under it (a page's ⋯, a sort), the panel built each time it opens, its rows given a `Dismiss` to call before they act.
+
+### Drag and drop (Mac: the drag image, the list's drop indicator)
+
+`DragChip::new(label).sleeve(art)` is what a drag shows under the pointer: the first record's sleeve, when the page knows one, and what is carried ("3 tracks", or the one thing's name). `.drop_highlight::<T>(look)` (`DropTarget`) lights a target in the accent while a drag of `T` is over it, and only then, so a drag over something that refuses it shows nothing. Between a list's rows, where a drop lands is the insertion line, `INSERTION` thick, in the accent.
+
 ### FilterField (Mac: `KoanSearchField`, the filter panel's field)
 
 `FilterField::new(&input)`: no box, the search glyph and, 10 points after it, a lowercase prompt in `muted` that names what it narrows ("filter albums"); 167 points from the glyph to the end of the text at 100 %, as the Mac's field. The input takes the rest of the field's width: given only its content's, it is zero wide, shows no prompt and takes no click. The page owns the `InputState` and what typing does.
@@ -109,7 +115,7 @@ TableRow::new(id, RowKind::Art)
     .figure(Column::Length, duration)
 ```
 
-`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. Columns are defined once (`Column::Format`, `Column::Length`, `Column::Codec`, …), each a width and an alignment, so the same figure lines up in every list. Rows are hover `hover` at 30 %, selected `surface`, current in the accent, as the spec's list row. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
+`RowMetrics` gives heights (line 24, text 34, art 40, times the text size, plus 4 above and below), the sleeve (32), the page margin and the gap between columns. Columns are defined once (`Column::Format`, `Column::Length`, `Column::Codec`, …), each a width and an alignment, so the same figure lines up in every list. Rows have no hover fill (the user's call); a picked row is `selection` with its text in `on_selection`, and the current row is in the accent. A table is a `uniform_list` of rows inside `Page`'s body; `RowMetrics::page_margin` is the row's inset, so content lines up under the header.
 
 ### Form, FormSection, FormRow (Mac: `KoanForm`, `KoanSectionHeader`, `KoanLabeledContentStyle`)
 
@@ -195,7 +201,7 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 The spec wins, except where noted for the user's call.
 
-- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes 32 on every side, above the header included.
+- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`), 16 for now by the user's call.
 - **Toggle and form rows: 24 points, a deliberate deviation for the desktop.** The spec gives a 44-point hit area; the Mac draws its toggles 24 tall (`KoanToggleStyle.hit`), and 44-point rows made Settings looser than the Mac. Rows are 24 at desktop density, the whole row's width taking the click. 44 stays the rule for touch platforms, should koan-kit ever reach one.
 - **Form label column.** Swift's is 200; koan-gui had 210. 200.
 

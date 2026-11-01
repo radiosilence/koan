@@ -16,8 +16,9 @@ use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
 use crate::components::{
-    Button, ButtonKind, Cover, CoverArt, EmptyState, KoanContextMenu, Menu, MenuEntry, Page,
-    PageHeader, ProgressRing, RowKind, RowMetrics, TableRow,
+    Button, ButtonKind, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
+    KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, ProgressRing, RowKind,
+    RowMetrics, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -31,7 +32,7 @@ use crate::platform::actions::{
     ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
 };
 use crate::platform::drop;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Tone, TypeRole};
 use crate::window_state;
 use rows::Row;
 
@@ -92,20 +93,21 @@ struct DraggedRows {
     whole: u64,
 }
 
-struct DragPreview(SharedString);
+/// What a drag of queue rows shows: the first row's sleeve and how many.
+struct DragPreview(SharedString, Option<i64>);
 
 impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        div()
-            .px(p.space(Space::M))
-            .py(p.space(Space::Xs))
-            .bg(p.surface)
-            .border_1()
-            .border_color(p.rule)
-            .text_role(TypeRole::Meta, &p.look)
-            .text_color(p.ink)
-            .child(self.0.clone())
+        let side = RowMetrics::nav_art(&p.look);
+        let chip = DragChip::new(self.0.clone());
+        match self.1 {
+            Some(album) => chip.sleeve(match covers::image(Some(album), side, cx) {
+                Some(image) => CoverArt::Image(image),
+                None => CoverArt::Missing,
+            }),
+            None => chip,
+        }
     }
 }
 
@@ -685,8 +687,12 @@ impl QueueView {
         row_frame
             .group(id)
             .selected(selected)
-            .when(line_above, |d| d.border_t_1().border_color(insertion))
-            .when(line_below, |d| d.border_b_1().border_color(insertion))
+            .when(line_above, |d| {
+                d.border_t(INSERTION).border_color(insertion)
+            })
+            .when(line_below, |d| {
+                d.border_b(INSERTION).border_color(insertion)
+            })
             .on_drag_move::<DraggedRows>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
                     if !event.bounds.contains(&event.event.position) {
@@ -709,12 +715,18 @@ impl QueueView {
                 this.click(row, event, cx);
             }))
             .on_drag(dragged, move |dragged, _, _, cx| {
-                let label = view.update(cx, |this, cx| {
+                let (label, album) = view.update(cx, |this, cx| {
                     // A new drag starts from no insertion point.
                     this.drop_at = None;
-                    this.drag_label(dragged.row, cx)
+                    let queue = this.queue.read(cx);
+                    let album = queue
+                        .rows
+                        .get(dragged.row)
+                        .and_then(|row| queue.items.get(row.items().start))
+                        .and_then(|item| item.album_id);
+                    (this.drag_label(dragged.row, cx), album)
                 });
-                cx.new(|_| DragPreview(label))
+                cx.new(|_| DragPreview(label, album))
             })
             .on_drag_move::<PlayableDrag>(cx.listener(
                 move |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
@@ -1150,7 +1162,6 @@ impl QueueView {
         let queue = self.queue.read(cx);
         let count = queue.items.len() as u64;
         let total: u64 = queue.items.iter().filter_map(|item| item.duration_ms).sum();
-        let grouped = queue.grouped;
         let title = match &cx.global::<Mirror>().lock.read(cx).0 {
             Some(QueueLock::Playlist { playlist }) => format!("playing {}", playlist.name),
             Some(QueueLock::Album { album }) => format!("playing {}", album.title),
@@ -1160,39 +1171,145 @@ impl QueueView {
         if total > 0 {
             detail = format!("{detail} · {}", crate::time::clock(total));
         }
-        let verb = |id: &'static str, icon: Icon, label: &'static str| {
-            Button::new(id, ButtonKind::Compact).icon(icon).label(label)
-        };
+        PageHeader::data(title).detail(detail)
+    }
+
+    /// The queue's controls in the window's toolbar, the Mac's: while rows
+    /// are picked, how many and what to do with them; then jump to playing,
+    /// the dice, grouping, undo and redo, and the rest under ⋯.
+    pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = Paint::of(window, cx);
+        let queue = self.queue.read(cx);
+        let count = queue.items.len() as u64;
+        let grouped = queue.grouped;
+        let track_ids: Vec<i64> = queue.items.iter().filter_map(|i| i.track_id).collect();
+        let picked = self.selected.len();
         let view = cx.entity();
-        let regroup = cx.entity();
-        PageHeader::data(title)
-            .detail(detail)
-            .action(
-                verb("queue-jump", Icon::JumpToPlaying, "jump to playing")
+        let mut controls = ToolbarGroup::new();
+        if picked > 0 {
+            let (clear, remove) = (view.clone(), view.clone());
+            controls = controls
+                .child(
+                    div()
+                        .text_role(TypeRole::Meta, &p.look)
+                        .text_color(p.muted)
+                        .child(format!("{picked} selected")),
+                )
+                .child(
+                    Button::new("queue-deselect", ButtonKind::Link)
+                        .label("clear")
+                        .tone(Tone::Accent)
+                        .on_click(move |_, _, cx| {
+                            clear.update(cx, |this, cx| {
+                                this.selected.clear();
+                                cx.notify();
+                            })
+                        }),
+                )
+                .child(
+                    Button::new("queue-remove", ButtonKind::Link)
+                        .label("remove")
+                        .tone(Tone::Accent)
+                        .on_click(move |_, _, cx| {
+                            remove.update(cx, |this, cx| {
+                                let ids = this.selected_ids(cx);
+                                this.remove(ids, cx);
+                            })
+                        }),
+                )
+                .spacer();
+        }
+        let (jump, regroup) = (view.clone(), view.clone());
+        controls
+            .child(
+                ToolbarButton::new("queue-jump", Icon::JumpToPlaying, "jump to playing")
                     .disabled(count == 0)
-                    .on_click(move |_, _, cx| view.update(cx, |this, cx| this.jump_to_playing(cx))),
+                    .on_click(move |_, _, cx| jump.update(cx, |this, cx| this.jump_to_playing(cx))),
             )
-            .action(
-                verb("queue-group", Icon::Album, "group by album")
-                    .selected(grouped)
-                    .on_click(move |_, window, cx| {
-                        regroup.update(cx, |this, cx| this.set_grouped(!grouped, window, cx))
-                    }),
+            .child(
+                ToolbarButton::new(
+                    "queue-dice",
+                    Icon::Reshuffle,
+                    "shuffle the rest of the queue",
+                )
+                .disabled(count < 2)
+                .on_click(|_, _, cx| command(cx, "shuffle queue", |e| e.shuffle_queue())),
             )
-            .action(
-                verb("queue-undo", Icon::Undo, "undo")
+            .child(
+                IconToggle::new("queue-group", Icon::Album, "group by album", grouped).on_change(
+                    move |on, window, cx| {
+                        let on = *on;
+                        regroup.update(cx, |this, cx| this.set_grouped(on, window, cx))
+                    },
+                ),
+            )
+            .child(
+                ToolbarButton::new("queue-undo", Icon::Undo, "undo")
                     .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
             )
-            .action(
-                verb("queue-redo", Icon::Redo, "redo")
+            .child(
+                ToolbarButton::new("queue-redo", Icon::Redo, "redo")
                     .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
             )
-            .action(
-                verb("queue-clear", Icon::Clear, "clear")
-                    .disabled(count == 0)
-                    .on_click(move |_, window, cx| clear(count, window, cx)),
-            )
+            .child(more(count, track_ids))
+            .into_any_element()
     }
+}
+
+/// The queue's ⋯: saving it as a playlist, and clearing it.
+fn more(count: u64, track_ids: Vec<i64>) -> impl IntoElement {
+    ToolbarMenu::new(
+        "queue-more",
+        ToolbarButton::new("queue-more-trigger", Icon::More, "more"),
+        move |dismiss, _, _| {
+            let ids = track_ids.clone();
+            let close = dismiss.clone();
+            MenuPanel::new()
+                .child(
+                    MenuRow::new("queue-save", "save as playlist…")
+                        .disabled(ids.is_empty())
+                        .on_click(move |_, window, cx| {
+                            close(window, cx);
+                            save(ids.clone(), window, cx);
+                        }),
+                )
+                .child(
+                    MenuRow::new("queue-clear", "clear queue…")
+                        .disabled(count == 0)
+                        .on_click(move |_, window, cx| {
+                            dismiss(window, cx);
+                            clear(count, window, cx);
+                        }),
+                )
+        },
+    )
+}
+
+/// Asks for a name, then makes a playlist of the queue's tracks in order.
+fn save(track_ids: Vec<i64>, window: &mut Window, cx: &mut App) {
+    let n = track_ids.len() as u64;
+    crate::components::sheet::name(
+        "save the queue as a playlist",
+        "save",
+        "",
+        move |name| {
+            vec![
+                format!(
+                    "A playlist named “{name}” is made of the queue's {}, in order.",
+                    crate::library::chrome::count(n, "track", "tracks")
+                )
+                .into(),
+            ]
+        },
+        window,
+        cx,
+        move |name, cx| {
+            let ids = track_ids.clone();
+            command(cx, "save the queue as a playlist", move |e| {
+                e.create_playlist(name, ids)
+            });
+        },
+    );
 }
 
 /// Asks before emptying the queue, saying how much goes; undo brings it back.

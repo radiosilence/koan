@@ -80,6 +80,14 @@ impl RowMetrics {
         px((points * look.scale.size).round()) + Self::padding(look) * 2.0
     }
 
+    /// A sidebar row's height, the Mac's sidebar measured at 2x: a place
+    /// (one line) or a playlist (its sleeve beside its name over a detail
+    /// line), the content centred in it.
+    pub fn nav_height(detail: bool, look: &Look) -> Pixels {
+        let points = if detail { 39.0 } else { 34.0 };
+        px((points * look.scale.size).round())
+    }
+
     /// A navigation row's face, square: a playlist's sleeve in the sidebar.
     pub fn nav_art(look: &Look) -> Pixels {
         px((24.0 * look.scale.size).round())
@@ -131,11 +139,11 @@ impl RowMetrics {
         look.space(Space::Xs)
     }
 
-    /// A page's margin at its sides, and what a row's content is inset by so
-    /// it lines up under the page's header. The spec's 32 on the Mac; the
-    /// Swift pages use 16 for lists and 20 for grids, and the spec wins.
+    /// A page's margin on every side, and what a row's content is inset by
+    /// so it lines up under the page's header. One figure, so the page's
+    /// edge is tuned in one place; 16 for now, where the spec gives 32.
     pub fn page_margin(look: &Look) -> Pixels {
-        look.space(Space::Xxl)
+        look.space(Space::L)
     }
 
     /// Above a page's header: the page's margin, as the spec has it on

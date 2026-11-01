@@ -194,7 +194,10 @@ impl AlbumPage {
         if self.pick.as_ref().is_none_or(|(r, _)| *r != revision) {
             let picked = self.selection.picked();
             let label = chrome::count(picked.len() as u64, "track", "tracks");
-            self.pick = Some((revision, PlayableDrag::new(picked, label)));
+            self.pick = Some((
+                revision,
+                PlayableDrag::new(picked, label).with_sleeve(Some(self.album_id)),
+            ));
         }
         self.pick.as_ref().map(|(_, drag)| drag.clone())
     }
@@ -237,7 +240,7 @@ impl AlbumPage {
         let selected = self.selection.contains(item);
         let drag = match (selected, self.pick()) {
             (true, Some(pick)) => pick,
-            _ => PlayableDrag::new(&[item], title),
+            _ => PlayableDrag::new(&[item], title).with_sleeve(Some(self.album_id)),
         };
         let feed = self.lib.feed.read(cx);
         let state = RowState {
