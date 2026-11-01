@@ -51,14 +51,18 @@ pub fn shader_time(at: Instant) -> f32 {
 /// A shader's uniforms, shared between the app and the renderer: written by
 /// the app from any thread, read as each frame is presented.
 ///
-/// While `live` is set the window presents again on every refresh, so the
-/// shader can move with no new frame drawn. Setting it from false needs a
-/// frame to notice: draw one (notify the view that paints the shader) when a
-/// shader starts moving. Clearing it stops the presents within a refresh.
+/// While `live` is set the window keeps its refreshes coming and presents
+/// its last frame again on each one where a live shader's uniforms changed
+/// since the last present, or on every one for a `continuous` shader, which
+/// moves with `time` alone. No new frame is drawn either way. Setting `live`
+/// from false needs a frame to notice: draw one (notify the view that paints
+/// the shader) when a shader starts moving. Clearing it lets the window park.
 #[derive(Debug, Default)]
 pub struct ShaderUniforms {
     values: [AtomicU32; SHADER_UNIFORMS],
     live: AtomicBool,
+    continuous: AtomicBool,
+    changed: AtomicBool,
 }
 
 impl ShaderUniforms {
@@ -67,7 +71,10 @@ impl ShaderUniforms {
     }
 
     pub fn set(&self, index: usize, value: f32) {
-        self.values[index].store(value.to_bits(), Ordering::Relaxed);
+        let bits = value.to_bits();
+        if self.values[index].swap(bits, Ordering::Relaxed) != bits {
+            self.changed.store(true, Ordering::Relaxed);
+        }
     }
 
     pub fn get(&self, index: usize) -> f32 {
@@ -80,6 +87,19 @@ impl ShaderUniforms {
 
     pub fn is_live(&self) -> bool {
         self.live.load(Ordering::Relaxed)
+    }
+
+    /// Presented on every refresh while live, for a shader moved by `time`.
+    pub fn set_continuous(&self, continuous: bool) {
+        self.continuous.store(continuous, Ordering::Relaxed);
+    }
+
+    /// Whether this refresh should present: live, and continuous or changed
+    /// since the last time this was asked.
+    pub fn take_present(&self) -> bool {
+        self.is_live()
+            && (self.continuous.load(Ordering::Relaxed)
+                | self.changed.swap(false, Ordering::Relaxed))
     }
 
     /// Every value, as a renderer copies them into a frame.
@@ -148,6 +168,22 @@ mod tests {
         assert!(!u.is_live());
         u.set_live(true);
         assert!(u.is_live());
+    }
+
+    #[test]
+    fn a_live_shader_presents_once_per_change_unless_continuous() {
+        let u = ShaderUniforms::new();
+        u.set(0, 1.0);
+        assert!(!u.take_present(), "not live");
+        u.set_live(true);
+        u.set(0, 2.0);
+        assert!(u.take_present());
+        assert!(!u.take_present());
+        u.set(0, 2.0);
+        assert!(!u.take_present(), "the same value is no change");
+        u.set_continuous(true);
+        assert!(u.take_present());
+        assert!(u.take_present());
     }
 
     #[test]

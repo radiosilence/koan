@@ -77,6 +77,15 @@ impl Scene {
         self.shaders.iter().any(|shader| shader.uniforms.is_live())
     }
 
+    // KOAN: whether this refresh should present again: a live shader moved
+    // or moves with time (#1641). Asks every shader, so each one's change is
+    // taken once.
+    pub fn take_shader_present(&self) -> bool {
+        self.shaders
+            .iter()
+            .fold(false, |any, shader| shader.uniforms.take_present() | any)
+    }
+
     pub fn len(&self) -> usize {
         self.paint_operations.len()
     }

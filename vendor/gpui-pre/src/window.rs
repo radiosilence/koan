@@ -1914,11 +1914,11 @@ impl Window {
                             .log_err();
                     })
                 } else if needs_present
-                    // KOAN: a live shader is presented again, with its
-                    // uniforms read afresh, on every refresh (#1641).
+                    // KOAN: a live shader that moved is presented again, its
+                    // uniforms read afresh, with no frame drawn (#1641).
                     || handle
                         .update(&mut cx, |_, window, _| {
-                            window.rendered_frame.scene.has_live_shaders()
+                            window.rendered_frame.scene.take_shader_present()
                         })
                         .unwrap_or(false)
                 {
