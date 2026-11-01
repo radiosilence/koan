@@ -46,6 +46,7 @@ pub struct Sidebar {
     /// Dropped files being added, and what the last addition had to say.
     importing: usize,
     import_problem: Option<String>,
+    scroll: ScrollHandle,
     _subscriptions: [Subscription; 4],
 }
 
@@ -60,6 +61,7 @@ impl Sidebar {
             covers: None,
             importing: 0,
             import_problem: None,
+            scroll: ScrollHandle::new(),
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
                 // The selected row follows the page.
@@ -220,11 +222,11 @@ impl Render for Sidebar {
         // the lines at the foot stay put beneath them.
         let body = div()
             .id("sidebar-rows")
-            .flex_1()
-            .min_h(px(0.))
+            .size_full()
             .flex()
             .flex_col()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .pt(p.space(Space::S))
             .pb(p.space(Space::S))
             // Files, and what is dragged from the library, dropped on the
@@ -291,7 +293,14 @@ impl Render for Sidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(body)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(body)
+                    .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
+            )
             .when(self.importing > 0, |d| {
                 d.child(foot_line("adding dropped files", p.muted, &p))
             })

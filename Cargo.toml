@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor"]
 members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-gui", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
 
 [workspace.package]
@@ -31,3 +32,10 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 walkdir = "2.5"
+
+[patch.crates-io]
+# Our copies of GPUI's macOS and Linux backends: an idle window stops waking
+# every refresh, on macOS and X11, as Wayland already does (patches marked
+# KOAN:). #1609; offered upstream.
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }

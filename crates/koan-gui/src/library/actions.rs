@@ -5,7 +5,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::menu::{ContextMenu, ContextMenuExt, PopupMenu, PopupMenuItem};
+use crate::components::{KoanContextMenu, Menu, MenuEntry};
 use gpui_kit::*;
 use koan_ffi::Placement;
 
@@ -116,7 +116,9 @@ pub fn mark<V: Menus>(
 pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'static>(
     element: E,
     view: WeakEntity<V>,
-) -> ContextMenu<E> {
+    window: &mut Window,
+    cx: &mut App,
+) -> E {
     let clear = view.clone();
     element
         .capture_any_mouse_down(super::listen(
@@ -127,7 +129,7 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
                 }
             },
         ))
-        .context_menu(move |m, window, cx| {
+        .koan_context_menu("list-menu", window, cx, move |m, window, cx| {
             let Some(view) = view.upgrade() else { return m };
             let (lib, target) = {
                 let page = view.read(cx);
@@ -143,14 +145,14 @@ pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'sta
 /// The context menu for `items`: one thing, or a whole pick. `album` is the
 /// record a single track belongs to, for "go to album".
 pub fn menu(
-    menu: PopupMenu,
+    menu: Menu,
     lib: &Lib,
     items: Arc<[Playable]>,
     album: Option<i64>,
     after: After,
     window: &mut Window,
-    cx: &mut Context<PopupMenu>,
-) -> PopupMenu {
+    cx: &mut Context<Menu>,
+) -> Menu {
     let single = (items.len() == 1).then(|| items[0]);
     let container =
         items.len() > 1 || matches!(single, Some(Playable::Album(_) | Playable::Artist(_)));
@@ -159,7 +161,7 @@ pub fn menu(
 
     let verb = |label: &'static str, f: fn(&Lib, &[Playable], &mut App)| {
         let (lib, items, after) = (lib.clone(), items.clone(), after.clone());
-        PopupMenuItem::new(label).on_click(move |_, _, cx| {
+        MenuEntry::new(label).on_click(move |_, _, cx| {
             f(&lib, &items, cx);
             if let Some(after) = &after {
                 after(cx);
@@ -192,7 +194,7 @@ pub fn menu(
             for (id, name) in &playlists {
                 let (lib, items, after, id) =
                     (sub_lib.clone(), sub_items.clone(), sub_after.clone(), *id);
-                menu = menu.item(PopupMenuItem::new(name.clone()).on_click(move |_, _, cx| {
+                menu = menu.item(MenuEntry::data(name.clone()).on_click(move |_, _, cx| {
                     add_to_playlist(&lib, id, &items, cx);
                     if let Some(after) = &after {
                         after(cx);
@@ -216,12 +218,12 @@ pub fn menu(
                 let nav = nav.clone();
                 menu = menu
                     .separator()
-                    .item(PopupMenuItem::new("go to album").on_click(move |_, _, cx| {
+                    .item(MenuEntry::new("go to album").on_click(move |_, _, cx| {
                         nav.update(cx, |nav, cx| nav.open(Page::Album(album), cx))
                     }));
             }
             menu = menu.item(
-                PopupMenuItem::new("track info")
+                MenuEntry::new("track info")
                     .on_click(move |_, _, cx| nav.update(cx, |nav, cx| nav.show_info(id, cx))),
             );
         }
@@ -229,7 +231,7 @@ pub fn menu(
             let nav = lib.nav.clone();
             menu =
                 menu.separator()
-                    .item(PopupMenuItem::new("open album").on_click(move |_, _, cx| {
+                    .item(MenuEntry::new("open album").on_click(move |_, _, cx| {
                         nav.update(cx, |nav, cx| nav.open(Page::Album(id), cx))
                     }));
         }

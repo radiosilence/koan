@@ -226,6 +226,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     let palette = Palette::of(dark);
     let accent = accent_state(cx).at(Instant::now()).shade(dark).hsla();
     let size = TypeRole::Control.points() * Scale::of(koan.text_size).text;
+    sync_scrollbar(&palette, cx);
     let current = Theme::global(cx);
     if current.colors.background == palette.bg.hsla()
         && current.colors.caret == accent
@@ -250,6 +251,38 @@ fn sync_components(dark: bool, cx: &mut App) {
     theme.colors.ring = accent;
     theme.colors.caret = accent;
     theme.colors.selection = accent.opacity(0.3);
+}
+
+/// The kōan scrollbar, for gpui-base's `Scrollbar`, which every scrolling
+/// surface lays over itself: shown while it scrolls and while the pointer is
+/// over its edge, thin and square, `muted` at rest and `ink` held, on no
+/// track, taking no width from the page. It fades on the motion tokens.
+fn sync_scrollbar(palette: &Palette, cx: &mut App) {
+    use gpui_kit::base::{ScrollbarMode, ScrollbarMotion, ScrollbarStyles, ScrollbarTheme};
+    let (muted, ink) = (palette.muted.hsla(), palette.ink.hsla());
+    let clear = palette.bg.hsla().opacity(0.);
+    let thumb = |s: gpui_kit::base::ScrollbarThumbStyle, width: f32, color: Hsla| {
+        s.width(px(width))
+            .inset(px(3.))
+            .radius(px(0.))
+            .min_length(px(32.))
+            .bg(color)
+    };
+    let styles = ScrollbarStyles::default()
+        .track(|t| t.bg(clear).border_color(clear))
+        .track_hover(|t| t.bg(clear).border_color(clear))
+        .track_active(|t| t.bg(clear).border_color(clear))
+        .thumb(|s| thumb(s, 3., muted.opacity(0.6)))
+        .thumb_hover(|s| thumb(s, 5., ink.opacity(0.7)))
+        .thumb_active(|s| thumb(s, 5., ink));
+    let motion = ScrollbarMotion::default()
+        .with_enter(Motion::FAST)
+        .with_exit(Motion::NORMAL)
+        .with_expand(Motion::FAST);
+    gpui_kit::base::Theme::global_mut(cx).scrollbar = ScrollbarTheme::new()
+        .with_mode(ScrollbarMode::Hover)
+        .with_motion(motion)
+        .with_styles(styles);
 }
 
 impl KoanTheme {

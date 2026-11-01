@@ -1,0 +1,1 @@
+- **Menus, scrollbars and icons in the GUI app.** Menus are the theme's own, as the Mac app draws them, with the keyboard; every list and page has a thin square scrollbar that shows while it scrolls or with the pointer at its edge; the transport's glyphs are at the Mac's sizes and the output button shows a speaker.

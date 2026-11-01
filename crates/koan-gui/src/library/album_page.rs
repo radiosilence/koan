@@ -499,22 +499,30 @@ impl Render for AlbumPage {
                     .flex_col()
                     .child(self.header(p, grid, window, cx))
                     .child(actions::list_menu(
-                        div().id("album-track-list").flex_1().min_h_0().child(
-                            uniform_list(
-                                "album-tracks",
-                                self.lines.len(),
-                                cx.processor(move |this, range: Range<usize>, window, cx| {
-                                    let p = Paint::of(window, cx);
-                                    range
-                                        .map(|i| this.line(&p, i, lead_width, cx))
-                                        .collect::<Vec<_>>()
-                                }),
+                        div()
+                            .id("album-track-list")
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .child(
+                                uniform_list(
+                                    "album-tracks",
+                                    self.lines.len(),
+                                    cx.processor(move |this, range: Range<usize>, window, cx| {
+                                        let p = Paint::of(window, cx);
+                                        range
+                                            .map(|i| this.line(&p, i, lead_width, cx))
+                                            .collect::<Vec<_>>()
+                                    }),
+                                )
+                                .track_scroll(&self.scroll)
+                                .pb(grid.margin)
+                                .size_full(),
                             )
-                            .track_scroll(&self.scroll)
-                            .pb(grid.margin)
-                            .size_full(),
-                        ),
+                            .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
                         cx.weak_entity(),
+                        window,
+                        cx,
                     ))
                     .into_any_element()
             }

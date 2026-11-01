@@ -44,6 +44,7 @@ impl RenderOnce for MenuPanel {
         div()
             .flex()
             .flex_col()
+            .min_w(look.spaced(180.))
             .py(look.space(Space::Xs))
             .bg(look.palette.bg.hsla())
             .border(HAIRLINE)
@@ -63,6 +64,9 @@ pub struct MenuRow {
     checked: Option<bool>,
     highlighted: bool,
     destructive: bool,
+    disabled: bool,
+    /// A row that opens a submenu: the chevron at its end.
+    opens: bool,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -75,6 +79,8 @@ impl MenuRow {
             checked: None,
             highlighted: false,
             destructive: false,
+            disabled: false,
+            opens: false,
             on_click: None,
         }
     }
@@ -112,6 +118,18 @@ impl MenuRow {
         self
     }
 
+    /// Not a choice now: `muted`, and nothing under the pointer.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Opens a submenu: a chevron at the row's end.
+    pub fn opens(mut self, opens: bool) -> Self {
+        self.opens = opens;
+        self
+    }
+
     pub fn destructive(mut self, destructive: bool) -> Self {
         self.destructive = destructive;
         self
@@ -129,11 +147,14 @@ impl MenuRow {
 impl RenderOnce for MenuRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let color = look.color(if self.destructive {
+        let color = look.color(if self.disabled {
+            Tone::Muted
+        } else if self.destructive {
             Tone::Bad
         } else {
             Tone::Ink
         });
+        let surface = look.palette.surface.hsla();
         let tick = look.points(TypeRole::Control);
         let on_click = self.on_click;
         let row = div()
@@ -147,27 +168,55 @@ impl RenderOnce for MenuRow {
             .text_role(TypeRole::Control, &look)
             .text_color(color)
             .whitespace_nowrap()
-            .when(self.highlighted, |row| row.bg(look.palette.surface.hsla()))
-            .hover(|row| row.bg(look.palette.surface.hsla()))
-            .children(self.checked.map(|checked| {
-                div()
-                    .relative()
-                    .flex_none()
-                    .size(gpui_kit::px(crate::theme::icons::side(tick)))
-                    .when(checked, |cell| {
-                        cell.child(KoanIcon::new(Icon::Check).points(tick).color(color))
-                    })
-            }))
+            .when(self.highlighted && !self.disabled, |row| row.bg(surface))
+            .when(!self.disabled, |row| row.hover(move |row| row.bg(surface)))
             .children(self.icon.filter(|_| look.icons).map(|icon| {
                 div()
                     .relative()
                     .child(KoanIcon::new(icon).role(TypeRole::Control).color(color))
             }))
-            .child(div().relative().child(self.label));
+            .child(div().relative().flex_1().child(self.label))
+            // The tick at the row's end, after `m`, as the Mac's menus put
+            // it; its room is kept on every row of a set of choices.
+            .children(self.checked.map(|checked| {
+                div()
+                    .relative()
+                    .flex_none()
+                    .ml(look.space(Space::M))
+                    .size(gpui_kit::px(crate::theme::icons::side(tick)))
+                    .when(checked, |cell| {
+                        cell.child(KoanIcon::new(Icon::Check).points(tick).color(color))
+                    })
+            }))
+            .when(self.opens, |row| {
+                row.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .ml(look.space(Space::M))
+                        .child(KoanIcon::new(Icon::Disclosure).points(tick).color(color)),
+                )
+            });
+        let on_click = on_click.filter(|_| !self.disabled);
         row.when_some(on_click, |row, on_click| {
             row.cursor_pointer()
                 .on_click(move |event, window, cx| on_click(event, window, cx))
         })
+    }
+}
+
+/// The rule between a menu's groups: a hairline of `rule` across the panel,
+/// `xs` above and below.
+#[derive(IntoElement)]
+pub struct MenuSeparator;
+
+impl RenderOnce for MenuSeparator {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .h(HAIRLINE)
+            .my(look.space(Space::Xs))
+            .bg(look.palette.rule.hsla())
     }
 }
 

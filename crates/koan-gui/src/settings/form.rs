@@ -1,18 +1,20 @@
 //! The pieces every pane is laid out from: the Mac's `KoanForm` sections in
 //! the theme, square and stacked with no cards.
 
+use crate::components::ScrollArea;
 use crate::components::SectionHeader;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 /// A pane's page: sections down a column that scrolls, across the window.
-pub fn page(id: &'static str, look: &Look, sections: Vec<AnyElement>) -> Stateful<Div> {
-    div().id(id).size_full().overflow_y_scroll().child(
+pub fn page(id: &'static str, look: &Look, sections: Vec<AnyElement>) -> ScrollArea {
+    ScrollArea::new(
+        id,
         div()
             .flex()
             .flex_col()
-            .gap(look.space(Space::M))
+            .gap(look.space(Space::L))
             .w_full()
             .px(look.space(Space::Xl))
             .pb(look.space(Space::Xl))

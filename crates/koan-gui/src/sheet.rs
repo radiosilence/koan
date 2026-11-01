@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Window, div, px,
+    AnyElement, AppContext, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement,
+    Styled, Subscription, Window, div, px,
 };
 
 use crate::components::{
@@ -496,19 +496,16 @@ impl Render for SheetContent {
                 .into_any_element(),
         ]);
 
-        div()
-            .id("sheet")
-            .size_full()
-            .overflow_y_scroll()
-            .font_family(theme::FONT_FAMILY)
-            .child(
-                div()
-                    .flex()
-                    .gap(look.space(Space::Xxl))
-                    .p(look.space(Space::Xxl))
-                    .child(left)
-                    .child(right),
-            )
+        crate::components::ScrollArea::new(
+            "sheet",
+            div()
+                .font_family(theme::FONT_FAMILY)
+                .flex()
+                .gap(look.space(Space::Xxl))
+                .p(look.space(Space::Xxl))
+                .child(left)
+                .child(right),
+        )
     }
 }
 

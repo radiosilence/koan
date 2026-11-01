@@ -3,7 +3,9 @@
 //!
 //! macOS and Linux. Windows waits on koan-core building there (#1600).
 
+pub mod about;
 pub mod actions;
+pub mod dock;
 pub mod drop;
 pub mod instance;
 pub mod logging;
@@ -79,6 +81,7 @@ pub fn init(
     // GPUI's default on macOS keeps the process with nothing to bring back.
     cx.set_quit_mode(gpui_kit::QuitMode::LastWindowClosed);
     actions::register(engine, cx);
+    about::init(cx);
     shortcuts_sheet::bind(cx);
     menus::set(cx);
     media::start(engine.clone(), cx);

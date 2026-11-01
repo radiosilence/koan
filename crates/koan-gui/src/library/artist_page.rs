@@ -916,8 +916,16 @@ impl Render for ArtistPage {
             .typeset(p, Type::Body, p.ink)
             .child(measure)
             .child(actions::list_menu(
-                div().id("artist-page-list").flex_1().min_h_0().child(body),
+                div()
+                    .id("artist-page-list")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(body)
+                    .child(gpui_kit::base::Scrollbar::vertical(&self.list)),
                 cx.weak_entity(),
+                window,
+                cx,
             ))
             .when(self.selection.is_active(), |d| {
                 d.child(chrome::selection_bar(

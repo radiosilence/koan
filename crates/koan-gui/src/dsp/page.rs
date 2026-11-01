@@ -474,7 +474,8 @@ impl Render for EqBody {
             _ => div().into_any_element(),
         };
         let foot = self.foot(window, cx);
-        div().id("eq-scroll").size_full().overflow_y_scroll().child(
+        crate::components::ScrollArea::new(
+            "eq-scroll",
             div()
                 .flex()
                 .flex_col()

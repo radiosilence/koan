@@ -6,11 +6,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat};
 
+use crate::components::{Menu as ThemeMenu, MenuEntry};
 use crate::covers::{self, CoversHandle};
 use crate::engine::command;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
@@ -26,7 +26,7 @@ pub struct Transport {
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
     seek: Entity<Seek>,
-    menu: Option<(Menu, Entity<PopupMenu>, Subscription)>,
+    menu: Option<(Menu, Entity<ThemeMenu>, Subscription)>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: Option<Arc<RenderImage>>,
@@ -83,13 +83,13 @@ impl Transport {
         let menu = match which {
             Menu::Sleep => {
                 let sleeping = self.playback.read(cx).0.sleep.is_some();
-                PopupMenu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
+                ThemeMenu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
             }
             Menu::Output => {
                 let Some(outputs) = self.outputs.read(cx).0.clone() else {
                     return;
                 };
-                PopupMenu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
+                ThemeMenu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
             }
         };
         let dismissed = cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
@@ -139,9 +139,9 @@ impl Transport {
     }
 }
 
-fn sleep_menu(menu: PopupMenu, sleeping: bool) -> PopupMenu {
+fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
     let timer = |label: &'static str, timer: SleepTimer| {
-        PopupMenuItem::new(label).on_click(move |_, _, cx| {
+        MenuEntry::new(label).on_click(move |_, _, cx| {
             command(cx, "sleep timer", move |e| e.set_sleep_timer(timer));
         })
     };
@@ -153,7 +153,7 @@ fn sleep_menu(menu: PopupMenu, sleeping: bool) -> PopupMenu {
         .item(timer("at the end of the record", SleepTimer::EndOfRecord));
     if sleeping {
         menu.separator().item(
-            PopupMenuItem::new("cancel")
+            MenuEntry::new("cancel")
                 .on_click(|_, _, cx| command(cx, "cancel sleep timer", |e| e.cancel_sleep_timer())),
         )
     } else {
@@ -161,9 +161,9 @@ fn sleep_menu(menu: PopupMenu, sleeping: bool) -> PopupMenu {
     }
 }
 
-fn output_menu(menu: PopupMenu, outputs: &koan_ffi::OutputsInfo) -> PopupMenu {
+fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
     let choice = |label: String, chosen: bool, choice: OutputChoice| {
-        PopupMenuItem::new(label)
+        MenuEntry::new(label)
             .checked(chosen)
             .on_click(move |_, _, cx| {
                 let choice = choice.clone();
@@ -217,15 +217,33 @@ fn glyph_or_label(
 /// under the pointer.
 fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     let ink = p.ink;
+    let child = if p.look.icons {
+        // A glyph button: the transport's glyph size, on the spec's target.
+        KoanIcon::new(icon)
+            .role(TypeRole::Body)
+            .color(p.muted)
+            .hover_color(TEXT_BUTTON, ink)
+            .into_any_element()
+    } else {
+        div().child(label).into_any_element()
+    };
     div()
+        .group(TEXT_BUTTON)
+        .flex()
+        .items_center()
+        .justify_center()
+        .min_w(theme::HIT)
+        .min_h(theme::HIT)
         .px(p.space(Space::S))
-        .py(p.space(Space::Xs))
         .cursor_pointer()
         .text_role(TypeRole::Meta, &p.look)
         .text_color(p.muted)
         .hover(move |s| s.text_color(ink))
-        .child(glyph_or_label(icon, label, TypeRole::Meta, p.muted, p))
+        .child(child)
 }
+
+/// The group a text button's glyph follows the pointer by.
+const TEXT_BUTTON: &str = "transport-text-button";
 
 /// A transport control: `on` for the two that toggle, underlined in the
 /// accent while on and `muted` while off, as an icon toggle is.
@@ -243,8 +261,8 @@ fn control(
     };
     div()
         .id(id)
-        .min_w(px(44.))
-        .h(px(28.))
+        .min_w(theme::HIT)
+        .h(theme::HIT)
         .flex()
         .items_center()
         .justify_center()
@@ -255,7 +273,7 @@ fn control(
         .child(
             div()
                 .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
-                .child(glyph_or_label(icon, label, TypeRole::Control, color, p)),
+                .child(glyph_or_label(icon, label, TypeRole::Body, color, p)),
         )
 }
 
@@ -345,9 +363,9 @@ impl Render for Transport {
             .text_color(p.ink)
             .hover(|s| s.bg(p.hover))
             .child(if playing {
-                glyph_or_label(Icon::Pause, "pause", TypeRole::Control, p.ink, &p)
+                glyph_or_label(Icon::Pause, "pause", TypeRole::Body, p.ink, &p)
             } else {
-                glyph_or_label(Icon::Play, "play", TypeRole::Control, p.ink, &p)
+                glyph_or_label(Icon::Play, "play", TypeRole::Body, p.ink, &p)
             })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
@@ -432,7 +450,7 @@ impl Render for Transport {
                 &p,
                 cx,
             ))
-            .child(self.menu_button(Menu::Output, Icon::Output, "output", has_outputs, &p, cx));
+            .child(self.menu_button(Menu::Output, Icon::Speaker, "output", has_outputs, &p, cx));
 
         div()
             .h(HEIGHT)

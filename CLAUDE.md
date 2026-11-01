@@ -315,6 +315,8 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 
 | Module | What |
 |--------|------|
+| `platform/about.rs` | About kōan (the standard panel on macOS, a window elsewhere), and the name and icon a build outside a bundle gives itself on macOS. The build is the commit, from `build.rs`, or `KOAN_BUILD` |
+| `platform/dock.rs` | The Dock's menu on macOS, rebuilt from the Playback and Devices slices only when what it shows changes |
 | `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). It restores the desktop app's own saved session before taking launch files, so they land after it, and saves it on quit only when it restored it |
 | `platform/actions.rs` | Every shortcut, from one table: the key bindings, the macOS menu bar's items and the shortcuts sheet. Modifier shortcuts in the `koan` context, so a text field's own keys win; bare keys in `koan && !Input`, never a menu's key equivalent. Engine-only commands handled here; the rest are the shell's and the pages' to handle |
 | `platform/menus.rs` | The macOS menu bar, in the Mac app's order |
@@ -323,6 +325,8 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
 | `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
 | `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
+
+`vendor/` holds patched copies of GPUI's macOS and Linux backends, so an idle window stops waking at every display refresh (#1609); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
 
 `LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry.
 
