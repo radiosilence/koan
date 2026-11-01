@@ -1,0 +1,1 @@
+- **The kōan theme in GPUI.** koan-desktop, the GPUI desktop app, gains the theme: tokens, Geist Mono, the icon set, the record accent, the drifting wash, the components and a theme sheet that draws offscreen to a PNG.

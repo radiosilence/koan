@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, AnyView, App, AppContext, ClickEvent, Context, ElementId, FluentBuilder,
-    InteractiveElement, IntoElement, ParentElement, Render, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div,
+    AnyElement, AnyView, App, AppContext, ClickEvent, Context, ElementId, InteractiveElement,
+    IntoElement, ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement,
+    Styled, Window, div,
 };
 
 use super::{Handler, child, fade, fill, pointer, track};
