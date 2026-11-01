@@ -11,6 +11,7 @@ use koan_ffi::{AlbumSort, BrowseFilter, TrackBrowseSort};
 use serde::{Deserialize, Serialize};
 
 pub struct Browse {
+    writer: Writer,
     pub filter: BrowseFilter,
     pub search: String,
     pub album_sort: AlbumSort,
@@ -21,12 +22,14 @@ pub struct Browse {
 }
 
 impl Browse {
+    /// Reads the stored file. Blocking: call it off the main thread.
     pub fn load() -> Self {
         let stored: Stored = std::fs::read(path())
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         Self {
+            writer: Writer::spawn(),
             filter: BrowseFilter {
                 favourites: stored.favourites,
                 recent: stored.recent,
@@ -118,11 +121,9 @@ impl Browse {
         cx.notify();
     }
 
-    /// Written at once: a few hundred bytes, and two writes in flight
-    /// together could land out of order.
     fn save(&self) {
         let f = &self.filter;
-        let stored = Stored {
+        self.writer.write(Stored {
             favourites: f.favourites,
             recent: f.recent,
             downloaded: f.downloaded,
@@ -133,15 +134,55 @@ impl Browse {
             genre: f.genre.clone(),
             album_sort: Some(album_sort_key(self.album_sort).into()),
             track_sort: Some(track_sort_key(self.track_sort).into()),
-        };
-        let Ok(bytes) = serde_json::to_vec_pretty(&stored) else {
-            return;
-        };
-        let path = path();
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
-            std::fs::remove_file(&tmp).ok();
-        }
+        });
+    }
+}
+
+/// Writes the stored file on a thread of its own, the latest state only: two
+/// changes in quick succession are one write, and never land out of order.
+struct Writer {
+    latest: std::sync::Arc<(parking_lot::Mutex<Option<Stored>>, parking_lot::Condvar)>,
+}
+
+impl Writer {
+    /// The thread lives as long as the app, as the browse state does.
+    fn spawn() -> Self {
+        let latest =
+            std::sync::Arc::new((parking_lot::Mutex::new(None), parking_lot::Condvar::new()));
+        let shared = latest.clone();
+        std::thread::Builder::new()
+            .name("koan-desktop-ui-state".into())
+            .spawn(move || {
+                let (slot, ready) = &*shared;
+                loop {
+                    let stored: Stored = {
+                        let mut slot = slot.lock();
+                        loop {
+                            if let Some(stored) = slot.take() {
+                                break stored;
+                            }
+                            ready.wait(&mut slot);
+                        }
+                    };
+                    let Ok(bytes) = serde_json::to_vec_pretty(&stored) else {
+                        continue;
+                    };
+                    let path = path();
+                    let tmp = path.with_extension("json.tmp");
+                    if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &path).is_err()
+                    {
+                        std::fs::remove_file(&tmp).ok();
+                    }
+                }
+            })
+            .expect("spawn ui state writer");
+        Self { latest }
+    }
+
+    fn write(&self, stored: Stored) {
+        let (slot, ready) = &*self.latest;
+        *slot.lock() = Some(stored);
+        ready.notify_one();
     }
 }
 
@@ -270,6 +311,7 @@ mod tests {
     #[test]
     fn a_sort_offered_only_with_a_filter_falls_back_without_it() {
         let mut browse = Browse {
+            writer: Writer::spawn(),
             filter: BrowseFilter::default(),
             search: String::new(),
             album_sort: AlbumSort::LastPlayed,

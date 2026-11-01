@@ -106,7 +106,7 @@ struct Held {
 }
 
 /// What both lanes and the main thread share, behind one lock that is held
-/// only across map reads and writes, and the unlinks of an eviction.
+/// only across map reads and writes.
 #[derive(Default)]
 struct Queue {
     /// Every request, by key, at the most urgent priority anyone asked for.
@@ -122,6 +122,9 @@ struct Queue {
     /// again until the connection changes or the record is asked for afresh.
     failed: HashSet<Art>,
     generation: HashMap<Art, u64>,
+    /// Evicted, with the file still being unlinked: not fetched, and its file
+    /// not trusted, until that is done.
+    evicting: HashSet<Art>,
     /// The first eviction sweep has been tried, so fetches may start.
     fetches_allowed: bool,
     /// The first eviction sweep has landed, so a file found on disk belongs to
@@ -142,10 +145,13 @@ impl Queue {
             && !self.fetching.contains(&key.art)
             && !self.absent.contains(&key.art)
             && !self.failed.contains(&key.art)
+            && !self.evicting.contains(&key.art)
     }
 
     fn decodable(&self, key: &Key) -> bool {
-        self.on_disk.contains(&key.art) && !self.decoding.contains(key) && !self.decoded.contains(key)
+        self.on_disk.contains(&key.art)
+            && !self.decoding.contains(key)
+            && !self.decoded.contains(key)
     }
 
     fn most_urgent(&self, ok: impl Fn(&Key) -> bool) -> Option<Key> {
@@ -225,10 +231,6 @@ pub struct Covers {
 impl Covers {
     pub fn new(engine: Arc<KoanEngine>, cx: &mut Context<Self>) -> Self {
         let dir = directory();
-        let evictions_seq = std::fs::read_to_string(dir.join("evictions-seq"))
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::default()),
             fetch_ready: Condvar::new(),
@@ -263,7 +265,22 @@ impl Covers {
                 }
             }
         });
-        let mut covers = Self {
+        // The directory is made, and the last sweep's mark read, off the main
+        // thread; nothing is fetched until the first sweep after it.
+        let prepare = dir.clone();
+        cx.spawn(async move |this, cx| {
+            let seq = cx
+                .background_executor()
+                .spawn(async move { prepare_directory(&prepare) })
+                .await;
+            this.update(cx, |covers, cx| {
+                covers.evictions_seq = seq;
+                covers.sweep(cx);
+            })
+            .ok();
+        })
+        .detach();
+        Self {
             engine,
             dir,
             shared,
@@ -271,11 +288,9 @@ impl Covers {
             sizes: HashMap::new(),
             memory_bytes: 0,
             requests: HashMap::new(),
-            evictions_seq,
+            evictions_seq: 0,
             _results: results,
-        };
-        covers.sweep(cx);
-        covers
+        }
     }
 
     /// What to draw for `key` now, without starting anything. Another size of
@@ -402,7 +417,8 @@ impl Covers {
                     // Made for the record that held this id before. Not
                     // marked decoded, so the new record's is made.
                     queue.decoded.remove(&key);
-                    let decodes = usize::from(queue.wanted.contains_key(&key) && queue.decodable(&key));
+                    let decodes =
+                        usize::from(queue.wanted.contains_key(&key) && queue.decodable(&key));
                     drop(queue);
                     self.shared.wake(0, decodes);
                     cx.drop_image(image, None);
@@ -538,25 +554,39 @@ impl Covers {
             Vec::new()
         };
         {
-            // The files go under the lock, so the fetch lane cannot find one
-            // between the generation moving and the file going.
+            // Held back from the fetch lane until their files are gone, so it
+            // cannot find one between the generation moving and the unlink.
             let mut queue = self.shared.queue.lock();
             for art in &arts {
                 *queue.generation.entry(*art).or_default() += 1;
                 queue.on_disk.remove(art);
                 queue.absent.remove(art);
                 queue.failed.remove(art);
+                queue.evicting.insert(*art);
                 queue.decoded.retain(|k| k.art != *art);
-                std::fs::remove_file(self.dir.join(art.filename())).ok();
             }
-            // What is on screen under those ids is the new record's, to fetch.
-            let fetches = queue
-                .wanted
-                .keys()
-                .filter(|k| arts.contains(&k.art) && queue.fetchable(k))
-                .count();
-            drop(queue);
-            self.shared.wake(fetches, 0);
+        }
+        if !arts.is_empty() {
+            let (dir, shared, arts) = (self.dir.clone(), self.shared.clone(), arts.clone());
+            cx.background_executor()
+                .spawn(async move {
+                    for art in &arts {
+                        std::fs::remove_file(dir.join(art.filename())).ok();
+                    }
+                    let mut queue = shared.queue.lock();
+                    for art in &arts {
+                        queue.evicting.remove(art);
+                    }
+                    // What is on screen under those ids is the new record's.
+                    let fetches = queue
+                        .wanted
+                        .keys()
+                        .filter(|k| arts.contains(&k.art) && queue.fetchable(k))
+                        .count();
+                    drop(queue);
+                    shared.wake(fetches, 0);
+                })
+                .detach();
         }
         let drop: Vec<Key> = self
             .memory
@@ -598,7 +628,8 @@ impl Drop for Covers {
 /// `$KOAN_CONFIG_DIR/artwork` for an instance on a configuration of its own
 /// (a test library), since files are named by row id and another library's
 /// ids would show its covers; the platform's cache directory otherwise, and
-/// the temporary directory where there is none.
+/// the temporary directory where there is none. Names it only: see
+/// `prepare_directory`.
 fn directory() -> PathBuf {
     let root = match std::env::var_os("KOAN_CONFIG_DIR") {
         Some(dir) => PathBuf::from(dir).join("artwork"),
@@ -607,20 +638,29 @@ fn directory() -> PathBuf {
             .join("koan-desktop")
             .join("artwork"),
     };
-    let dir = root.join(SCHEME);
-    if std::fs::create_dir_all(&dir).is_err() {
-        let fallback = std::env::temp_dir().join("koan-desktop-artwork").join(SCHEME);
-        std::fs::create_dir_all(&fallback).ok();
-        return fallback;
+    root.join(SCHEME)
+}
+
+/// Makes the directory, deletes any other scheme's beside it, and reads the
+/// eviction mark kept there. Off the main thread.
+fn prepare_directory(dir: &Path) -> i64 {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        log::warn!("artwork directory {}: {e}", dir.display());
+        return 0;
     }
     // Nothing here is authoritative, so an older scheme is deleted rather
     // than migrated; it refills as pages are drawn.
-    for entry in std::fs::read_dir(&root).into_iter().flatten().flatten() {
-        if entry.file_name() != SCHEME {
-            std::fs::remove_dir_all(entry.path()).ok();
+    if let Some(root) = dir.parent() {
+        for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+            if entry.file_name() != SCHEME {
+                std::fs::remove_dir_all(entry.path()).ok();
+            }
         }
     }
-    dir
+    std::fs::read_to_string(dir.join("evictions-seq"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -654,7 +694,11 @@ fn fetch_lane(
         let file = dir.join(art.filename());
         // Checked under the lock: an eviction unlinks under it too.
         let mut queue = shared.queue.lock();
-        if queue.disk_trusted && queue.generation(art) == generation && file.exists() {
+        if queue.disk_trusted
+            && !queue.evicting.contains(&art)
+            && queue.generation(art) == generation
+            && file.exists()
+        {
             queue.fetching.remove(&art);
             queue.on_disk.insert(art);
             let decodes = queue.wanted.keys().filter(|k| k.art == art).count();
@@ -665,7 +709,12 @@ fn fetch_lane(
         drop(queue);
         let fetched = futures::executor::block_on(async {
             match art {
-                Art::Album(id) => engine.clone().album_cover_art(id, Some(SOURCE_PIXELS)).await,
+                Art::Album(id) => {
+                    engine
+                        .clone()
+                        .album_cover_art(id, Some(SOURCE_PIXELS))
+                        .await
+                }
                 Art::Artist(id) => engine.clone().artist_image(id).await,
             }
         });
@@ -712,7 +761,11 @@ fn fetch_lane(
             .filter(|k| k.art == art && queue.decodable(k))
             .count();
         // Overtaken by an eviction: the record now holding the id is fetched.
-        let refetch = !current && queue.wanted.keys().any(|k| k.art == art && queue.fetchable(k));
+        let refetch = !current
+            && queue
+                .wanted
+                .keys()
+                .any(|k| k.art == art && queue.fetchable(k));
         drop(queue);
         shared.wake(usize::from(refetch), decodes);
         if absent && tx.unbounded_send(Done::Absent).is_err() {
@@ -844,7 +897,10 @@ mod tests {
     fn decode_fills_the_square_and_swaps_to_bgra() {
         let mut data = Vec::new();
         image::RgbImage::from_pixel(400, 200, image::Rgb([255, 0, 0]))
-            .write_to(&mut std::io::Cursor::new(&mut data), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut data),
+                image::ImageFormat::Png,
+            )
             .unwrap();
         let image = decode(&data, 100).unwrap();
         let size = image.size(0);
@@ -857,7 +913,8 @@ mod tests {
     fn nothing_is_fetched_before_the_first_sweep_and_failures_wait() {
         let mut q = Queue::default();
         let (a, b) = (Art::Album(1), Art::Album(2));
-        q.wanted.insert(Key { art: a, px: 64 }, Priority::Ahead(5.0));
+        q.wanted
+            .insert(Key { art: a, px: 64 }, Priority::Ahead(5.0));
         q.wanted.insert(Key { art: b, px: 64 }, Priority::Visible);
         assert_eq!(q.next_fetch(), None);
         q.fetches_allowed = true;

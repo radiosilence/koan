@@ -31,6 +31,8 @@ pub struct Nav {
     /// Bumped when a tab is chosen while its page is already showing: the
     /// page goes back to its top.
     rewinds: HashMap<Page, u64>,
+    /// The track whose details are open over the page.
+    pub info: Option<i64>,
 }
 
 impl Default for Nav {
@@ -40,6 +42,7 @@ impl Default for Nav {
             cursor: 0,
             offsets: HashMap::new(),
             rewinds: HashMap::new(),
+            info: None,
         }
     }
 }
@@ -98,5 +101,15 @@ impl Nav {
     pub fn rewinds(&self, page: Page) -> u64 {
         self.rewinds.get(&page).copied().unwrap_or(0)
     }
-}
 
+    pub fn show_info(&mut self, track: i64, cx: &mut Context<Self>) {
+        self.info = Some(track);
+        cx.notify();
+    }
+
+    pub fn close_info(&mut self, cx: &mut Context<Self>) {
+        if self.info.take().is_some() {
+            cx.notify();
+        }
+    }
+}
