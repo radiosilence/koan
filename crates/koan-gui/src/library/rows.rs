@@ -238,8 +238,12 @@ pub fn track_row<V: TrackList>(
         .child(lead);
     if state.gathered {
         let mut art = div().size(px(SLEEVE)).flex_none().bg(p.surface);
-        if let Some(Sleeve::Ready(image)) = sleeve {
-            art = art.child(img(ImageSource::Render(image)).size_full());
+        match sleeve {
+            Some(Sleeve::Ready(image)) => {
+                art = art.child(img(ImageSource::Render(image)).size_full())
+            }
+            Some(Sleeve::Colour(colour)) => art = art.bg(colour),
+            _ => {}
         }
         row = row.child(art);
     }

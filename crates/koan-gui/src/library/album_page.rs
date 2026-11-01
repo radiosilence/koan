@@ -257,8 +257,12 @@ impl AlbumPage {
             c.sleeve(key)
         });
         let mut cover = div().size(grid.side).flex_none().bg(p.surface);
-        if let Sleeve::Ready(image) = sleeve {
-            cover = cover.child(img(ImageSource::Render(image)).size_full());
+        match sleeve {
+            Sleeve::Ready(image) => {
+                cover = cover.child(img(ImageSource::Render(image)).size_full())
+            }
+            Sleeve::Colour(colour) => cover = cover.bg(colour),
+            Sleeve::Waiting | Sleeve::None => {}
         }
         let total: i64 = self.tracks.iter().filter_map(|t| t.duration_ms).sum();
         let favourite = self
@@ -440,6 +444,13 @@ impl TrackList for AlbumPage {
 impl Render for AlbumPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
+        if self
+            .lib
+            .covers
+            .update(cx, |c, cx| c.admit(super::covers::UPLOADS_PER_FRAME, cx))
+        {
+            window.request_animation_frame();
+        }
         let width = self.width.clone();
         let entity = cx.entity_id();
         let measure = canvas(

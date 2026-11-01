@@ -42,6 +42,12 @@ const MEMORY_BUDGET: usize = 256 * 1024 * 1024;
 /// does not decode every tile again at each pixel.
 const BUCKET: u32 = 32;
 
+/// How many new sleeves a frame takes into the GPU's atlas. Each is an upload
+/// on the main thread inside that frame's paint (about 700 KB for a tile at
+/// 2×), so a flick that lands forty at once spreads them over frames, each
+/// tile showing its sleeve's colour until its turn.
+pub const UPLOADS_PER_FRAME: usize = 6;
+
 /// Bumped when what a cache file means changes; any other scheme's directory
 /// is deleted.
 const SCHEME: &str = "v1";
@@ -89,14 +95,30 @@ pub enum Priority {
 }
 
 /// What a page draws for a record.
+#[derive(Clone)]
 pub enum Sleeve {
     /// The bitmap at its size, or the nearest other size of the same record
     /// while that decodes.
     Ready(Arc<RenderImage>),
+    /// Decoded and waiting its turn for the atlas, or decoded once and since
+    /// evicted: drawn as a flat field of the sleeve's colour.
+    Colour(Hsla),
     /// Not here yet.
     Waiting,
     /// The record has no art.
     None,
+}
+
+impl Sleeve {
+    /// The same thing to draw: the same bitmap, colour or absence.
+    pub fn same(&self, other: &Sleeve) -> bool {
+        match (self, other) {
+            (Sleeve::Ready(a), Sleeve::Ready(b)) => Arc::ptr_eq(a, b),
+            (Sleeve::Colour(a), Sleeve::Colour(b)) => a == b,
+            (Sleeve::Waiting, Sleeve::Waiting) | (Sleeve::None, Sleeve::None) => true,
+            _ => false,
+        }
+    }
 }
 
 struct Held {
@@ -199,6 +221,7 @@ enum Done {
         key: Key,
         generation: u64,
         image: Arc<RenderImage>,
+        colour: Hsla,
     },
     /// A record turned out to have no art.
     Absent,
@@ -222,6 +245,11 @@ pub struct Covers {
     /// walk of every bitmap.
     sizes: HashMap<Art, SmallVec<[u32; 4]>>,
     memory_bytes: usize,
+    /// Decoded, not yet in memory: admitted a few a frame (`admit`).
+    staged: HashMap<Key, (Arc<RenderImage>, u64)>,
+    /// Each record's colour, kept once known: what its tile shows while its
+    /// sleeve waits for the atlas, or after it is evicted. A few bytes each.
+    colours: HashMap<Art, Hsla>,
     /// Each list's and page's requests, replaced whole as it draws.
     requests: HashMap<EntityId, HashMap<Key, Priority>>,
     evictions_seq: i64,
@@ -287,6 +315,8 @@ impl Covers {
             memory: HashMap::new(),
             sizes: HashMap::new(),
             memory_bytes: 0,
+            staged: HashMap::new(),
+            colours: HashMap::new(),
             requests: HashMap::new(),
             evictions_seq: 0,
             _results: results,
@@ -310,6 +340,9 @@ impl Covers {
         if let Some(held) = px.and_then(|px| self.memory.get_mut(&Key { art: key.art, px })) {
             held.used = now;
             return Sleeve::Ready(held.image.clone());
+        }
+        if let Some(colour) = self.colours.get(&key.art) {
+            return Sleeve::Colour(*colour);
         }
         if self.shared.queue.lock().absent.contains(&key.art) {
             Sleeve::None
@@ -401,9 +434,12 @@ impl Covers {
             }
         }
         let mut queue = self.shared.queue.lock();
-        // A bitmap decoded and since evicted from memory is wanted again.
-        let memory = &self.memory;
-        queue.decoded.retain(|k| memory.contains_key(k));
+        // A bitmap decoded and since evicted from memory is wanted again;
+        // one staged for the atlas is not.
+        let (memory, staged) = (&self.memory, &self.staged);
+        queue
+            .decoded
+            .retain(|k| memory.contains_key(k) || staged.contains_key(k));
         let fetches = wanted
             .keys()
             .filter(|k| !queue.wanted.contains_key(k) && queue.fetchable(k))
@@ -423,6 +459,7 @@ impl Covers {
                 key,
                 generation,
                 image,
+                colour,
             } => {
                 let mut queue = self.shared.queue.lock();
                 if queue.generation(key.art) != generation {
@@ -433,29 +470,64 @@ impl Covers {
                         usize::from(queue.wanted.contains_key(&key) && queue.decodable(&key));
                     drop(queue);
                     self.shared.wake(0, decodes);
-                    cx.drop_image(image, None);
                     return;
                 }
                 drop(queue);
-                let size = image.size(0);
-                let bytes = (i32::from(size.width) * i32::from(size.height) * 4) as usize;
-                let held = Held {
-                    image,
-                    bytes,
-                    used: Instant::now(),
-                };
-                if let Some(old) = self.memory.insert(key, held) {
-                    self.memory_bytes -= old.bytes;
-                    cx.drop_image(old.image, None);
-                } else {
-                    self.sizes.entry(key.art).or_default().push(key.px);
-                }
-                self.memory_bytes += bytes;
-                self.trim(cx);
+                self.colours.insert(key.art, colour);
+                self.staged.insert(key, (image, generation));
             }
             Done::Absent => {}
         }
         cx.notify();
+    }
+
+    /// Take up to `budget` staged sleeves into memory, and so into the
+    /// atlas at this frame's paint: the most urgent first, by what the
+    /// lists on screen asked for. Returns whether more are staged, in which
+    /// case the caller asks for another frame. Never notifies, so a list can
+    /// call it from its own layout.
+    pub fn admit(&mut self, budget: usize, cx: &mut Context<Self>) -> bool {
+        if self.staged.is_empty() {
+            return false;
+        }
+        let queue = self.shared.queue.lock();
+        let mut ranked: Vec<(Key, Option<Priority>)> = self
+            .staged
+            .keys()
+            .map(|k| (*k, queue.wanted.get(k).copied()))
+            .collect();
+        drop(queue);
+        ranked.sort_by(|a, b| match (a.1, b.1) {
+            (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        let generations = self.shared.queue.lock().generation.clone();
+        for (key, _) in ranked.into_iter().take(budget) {
+            let Some((image, generation)) = self.staged.remove(&key) else {
+                continue;
+            };
+            if generations.get(&key.art).copied().unwrap_or(0) != generation {
+                continue;
+            }
+            let size = image.size(0);
+            let bytes = (i32::from(size.width) * i32::from(size.height) * 4) as usize;
+            let held = Held {
+                image,
+                bytes,
+                used: Instant::now(),
+            };
+            if let Some(old) = self.memory.insert(key, held) {
+                self.memory_bytes -= old.bytes;
+                cx.drop_image(old.image, None);
+            } else {
+                self.sizes.entry(key.art).or_default().push(key.px);
+            }
+            self.memory_bytes += bytes;
+        }
+        self.trim(cx);
+        !self.staged.is_empty()
     }
 
     fn forget(&mut self, key: Key, cx: &mut Context<Self>) {
@@ -599,6 +671,10 @@ impl Covers {
                     shared.wake(fetches, 0);
                 })
                 .detach();
+        }
+        self.staged.retain(|k, _| !arts.contains(&k.art));
+        for art in &arts {
+            self.colours.remove(art);
         }
         let drop: Vec<Key> = self
             .memory
@@ -820,10 +896,12 @@ fn decode_lane(shared: Arc<Shared>, dir: PathBuf, tx: mpsc::UnboundedSender<Done
                 if !current {
                     continue;
                 }
+                let (image, colour) = image;
                 let done = Done::Decoded {
                     key,
                     generation,
                     image: Arc::new(image),
+                    colour,
                 };
                 if tx.unbounded_send(done).is_err() {
                     return;
@@ -858,8 +936,9 @@ enum Failure {
     Broken,
 }
 
-/// The sleeve filling a square `px` on a side, centred, as BGRA.
-fn decode(data: &[u8], px: u32) -> Option<RenderImage> {
+/// The sleeve filling a square `px` on a side, centred, as BGRA, and its
+/// average colour for the field drawn while it waits for the atlas.
+fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
     let image = image::load_from_memory(data).ok()?;
     let (w, h) = (image.width(), image.height());
     if w == 0 || h == 0 {
@@ -881,10 +960,25 @@ fn decode(data: &[u8], px: u32) -> Option<RenderImage> {
     let mut rgba = scaled
         .crop_imm((sw - side) / 2, (sh - side) / 2, side, side)
         .into_rgba8();
+    let (mut sum, mut n) = ([0u64; 3], 0u64);
+    for pixel in rgba.pixels().step_by(7) {
+        for (c, v) in sum.iter_mut().zip(pixel.0) {
+            *c += u64::from(v);
+        }
+        n += 1;
+    }
+    let mean = |c: u64| c as f32 / n.max(1) as f32 / 255.0;
+    let colour: Hsla = Rgba {
+        r: mean(sum[0]),
+        g: mean(sum[1]),
+        b: mean(sum[2]),
+        a: 1.0,
+    }
+    .into();
     for pixel in rgba.pixels_mut() {
         pixel.0.swap(0, 2);
     }
-    Some(RenderImage::new(smallvec![image::Frame::new(rgba)]))
+    Some((RenderImage::new(smallvec![image::Frame::new(rgba)]), colour))
 }
 
 #[cfg(test)]
@@ -916,7 +1010,8 @@ mod tests {
                 image::ImageFormat::Png,
             )
             .unwrap();
-        let image = decode(&data, 100).unwrap();
+        let (image, colour) = decode(&data, 100).unwrap();
+        assert!((colour.h - 0.0).abs() < 0.01 && colour.s > 0.9);
         let size = image.size(0);
         assert_eq!((i32::from(size.width), i32::from(size.height)), (100, 100));
         assert_eq!(&image.as_bytes(0).unwrap()[..4], &[0, 0, 255, 255]);

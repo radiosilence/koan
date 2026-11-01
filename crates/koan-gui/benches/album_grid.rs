@@ -28,7 +28,8 @@ fn engine() -> Arc<KoanEngine> {
         .clone()
 }
 
-fn scroll_at(points_per_second: f32, cx: &mut BenchAppContext) {
+/// The grid on a library, ready to scroll, with its tile counter.
+fn grid(cx: &mut BenchAppContext) -> (gpui::Entity<AlbumGrid>, Rc<RefCell<Recorder>>) {
     assert!(
         std::env::var_os("KOAN_CONFIG_DIR").is_some(),
         "point KOAN_CONFIG_DIR at a test library's config: never the real one"
@@ -48,7 +49,11 @@ fn scroll_at(points_per_second: f32, cx: &mut BenchAppContext) {
         cx.read(|cx| grid.read(cx).ready_on_screen(cx))
             .then_some(())
     });
+    (grid, recorder)
+}
 
+fn scroll_at(points_per_second: f32, cx: &mut BenchAppContext) {
+    let (grid, recorder) = grid(cx);
     let mut last = Instant::now();
     cx.bench_renderer(grid, move |grid, _, cx| {
         let now = Instant::now();
@@ -75,5 +80,24 @@ fn album_grid_8000(cx: &mut BenchAppContext) {
     scroll_at(8000.0, cx);
 }
 
-gpui::bench_group!(benches, album_grid_1000, album_grid_3000, album_grid_8000);
+/// A jump from the top to the end and back, a frame each: every row new,
+/// every sleeve far from anything ranked ahead.
+#[gpui::bench]
+fn album_grid_jump(cx: &mut BenchAppContext) {
+    let (grid, recorder) = grid(cx);
+    let mut to_end = false;
+    cx.bench_renderer(grid, move |grid, _, cx| {
+        to_end = !to_end;
+        grid.jump(to_end, cx);
+    });
+    eprintln!("album_grid jump: {}", recorder.borrow().summary());
+}
+
+gpui::bench_group!(
+    benches,
+    album_grid_1000,
+    album_grid_3000,
+    album_grid_8000,
+    album_grid_jump
+);
 gpui::bench_main!(benches);

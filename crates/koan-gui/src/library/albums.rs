@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_ffi::{Album, AlbumSort, BrowseFilter};
+use koan_ffi::{AlbumSort, BrowseFilter};
 
-use super::covers::{Art, Covers, Key, Priority, Sleeve};
+use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOADS_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
-use super::tile::{self, Grid, Part, TileHost, TileState};
+use super::tile::{self, Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::theme::Space;
@@ -48,6 +48,18 @@ impl Query {
     }
 }
 
+/// What the cover ranking depends on, coarsely: the rows on screen, the pace
+/// in steps of 200 pt/s, the row a flick lands on, the listing's length and
+/// the draw size. Unchanged, the ranking would be too.
+#[derive(PartialEq)]
+struct Aimed {
+    visible: Range<usize>,
+    pace: i32,
+    landing: Option<i32>,
+    items: usize,
+    px: u32,
+}
+
 /// Where the scroll is, how fast it is going, and, in a flick's momentum,
 /// how quickly it is slowing.
 #[derive(Default)]
@@ -72,7 +84,12 @@ struct Heading {
 
 pub struct AlbumGrid {
     lib: Lib,
-    albums: Rc<Vec<Album>>,
+    /// The listing, as its tiles draw it.
+    records: Rc<Vec<Rc<Record>>>,
+    tiles: Tiles<AlbumGrid>,
+    /// What the cover cache was last asked for, so it is asked again only
+    /// when the rows on screen or the scroll's pace change.
+    aimed: Option<Aimed>,
     /// The page in its order, for ⇧ ranges and ⌘A.
     order: Vec<Playable>,
     loaded: Option<(Query, u64)>,
@@ -136,7 +153,9 @@ impl AlbumGrid {
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
         let mut this = Self {
             lib,
-            albums: Rc::new(Vec::new()),
+            records: Rc::new(Vec::new()),
+            tiles: Tiles::default(),
+            aimed: None,
             order: Vec::new(),
             loaded: None,
             loading: None,
@@ -204,15 +223,23 @@ impl AlbumGrid {
             let albums = engine
                 .albums(None, q.sort, q.seed, q.search, q.filter)
                 .await;
+            // Strings made once per listing, off the main thread.
+            let albums = match albums {
+                Ok(albums) => Ok(cx
+                    .background_executor()
+                    .spawn(async move { albums.iter().map(Record::of).collect::<Vec<_>>() })
+                    .await),
+                Err(e) => Err(e),
+            };
             this.update(cx, |this, cx| {
                 if this.request != request {
                     return;
                 }
                 this.loading = None;
                 match albums {
-                    Ok(albums) => {
-                        this.order = albums.iter().map(|a| Playable::Album(a.id)).collect();
-                        this.albums = Rc::new(albums);
+                    Ok(records) => {
+                        this.order = records.iter().map(|r| Playable::Album(r.id)).collect();
+                        this.records = Rc::new(records.into_iter().map(Rc::new).collect());
                         this.loaded = Some(wanted);
                         if let Some(y) = this.restore.take() {
                             this.scroll
@@ -294,15 +321,30 @@ impl AlbumGrid {
     fn send_aim(&mut self, cx: &mut Context<Self>) {
         let Some(grid) = self.grid else { return };
         let scale = self.scale.get();
-        let albums = self.albums.clone();
-        let ranked = rank(&self.heading.borrow(), &grid, albums.len(), |row| {
+        let records = self.records.clone();
+        let shape = {
+            let h = self.heading.borrow();
+            let row = f32::from(grid.row).max(1.0);
+            Aimed {
+                visible: h.visible.clone(),
+                pace: (h.velocity / 200.0) as i32,
+                landing: h.decay.map(|d| ((h.offset + h.velocity / d) / row) as i32),
+                items: records.len(),
+                px: Key::new(Art::Album(0), grid.side, scale).px,
+            }
+        };
+        if self.aimed.as_ref() == Some(&shape) {
+            return;
+        }
+        self.aimed = Some(shape);
+        let ranked = rank(&self.heading.borrow(), &grid, records.len(), |row| {
             let start = row * grid.columns;
-            let end = (start + grid.columns).min(albums.len());
-            albums
+            let end = (start + grid.columns).min(records.len());
+            records
                 .get(start..end)
                 .unwrap_or_default()
                 .iter()
-                .map(|a| Key::new(Art::Album(a.id), grid.side, scale))
+                .map(|r| Key::new(Art::Album(r.id), grid.side, scale))
                 .collect()
         });
         let owner = cx.entity_id();
@@ -325,12 +367,13 @@ impl AlbumGrid {
         self.pick.as_ref().map(|(_, drag)| drag.clone())
     }
 
-    fn row(&mut self, p: &Paint, row: usize, grid: Grid, cx: &mut Context<Self>) -> AnyElement {
+    fn row(&mut self, row: usize, grid: Grid, cx: &mut Context<Self>) -> AnyElement {
         let start = row * grid.columns;
-        let end = (start + grid.columns).min(self.albums.len());
-        let albums = self.albums.clone();
+        let end = (start + grid.columns).min(self.records.len());
+        let records = self.records.clone();
         let scale = self.scale.get();
         let pick = self.pick();
+        let revision = self.selection.revision();
         let entity = cx.entity();
         let after: actions::After = Some(std::rc::Rc::new(move |cx: &mut App| {
             entity.update(cx, |this, cx| {
@@ -338,27 +381,16 @@ impl AlbumGrid {
                 cx.notify();
             })
         }));
+        let height = grid.row - px(tile::LINE_GAP);
         let mut tiles = Vec::with_capacity(end.saturating_sub(start));
-        for album in albums.get(start..end).unwrap_or_default() {
-            let item = Playable::Album(album.id);
+        for record in records.get(start..end).unwrap_or_default() {
+            let item = Playable::Album(record.id);
             let selected = self.selection.contains(item);
-            let (drag, after) = match (&pick, selected) {
-                (Some(pick), true) => (pick.clone(), after.clone()),
-                _ => (PlayableDrag::new(&[item], album.title.clone()), None),
+            let (drag, pick, after) = match (&pick, selected) {
+                (Some(pick), true) => (pick.clone(), Some(revision), after.clone()),
+                _ => (PlayableDrag::new(&[item], record.title.clone()), None, None),
             };
-            let feed = self.lib.feed.read(cx);
-            let state = TileState {
-                favourite: feed.is_favourite(item),
-                playing: feed.playing_album == Some(album.id),
-                arriving: feed.arriving.contains_key(&album.id),
-                selecting: self.selection.is_active(),
-                selected,
-                starting: self.starting.contains(&album.id),
-                show_artist: true,
-                drag,
-                after,
-            };
-            let key = Key::new(Art::Album(album.id), grid.side, scale);
+            let key = Key::new(Art::Album(record.id), grid.side, scale);
             let sleeve = self
                 .lib
                 .covers
@@ -368,13 +400,27 @@ impl AlbumGrid {
                     Sleeve::Ready(image) => Some(image.id),
                     _ => None,
                 };
-                let drawn = !matches!(sleeve, Sleeve::Waiting);
                 let standin = image.is_some() && !self.lib.covers.read(cx).has(key);
                 bench
                     .borrow_mut()
-                    .tile(album.id, drawn, standin, image, Instant::now());
+                    .tile(record.id, &sleeve, standin, image, Instant::now());
             }
-            tiles.push(tile::tile(p, album, grid.side, sleeve, state, cx));
+            let feed = self.lib.feed.read(cx);
+            let state = TileState {
+                favourite: feed.is_favourite(item),
+                playing: feed.playing_album == Some(record.id),
+                arriving: feed.arriving.contains_key(&record.id),
+                selecting: self.selection.is_active(),
+                selected,
+                starting: self.starting.contains(&record.id),
+                show_artist: true,
+                side: grid.side,
+                sleeve,
+                drag,
+                pick,
+                after,
+            };
+            tiles.push(self.tiles.tile(record, state, height, cx));
         }
         div()
             .flex()
@@ -511,11 +557,23 @@ impl AlbumGrid {
         let covers = self.lib.covers.read(cx);
         let scale = self.scale.get();
         visible
-            .flat_map(|row| row * grid.columns..((row + 1) * grid.columns).min(self.albums.len()))
+            .flat_map(|row| row * grid.columns..((row + 1) * grid.columns).min(self.records.len()))
             .all(|i| {
-                let key = Key::new(Art::Album(self.albums[i].id), grid.side, scale);
+                let key = Key::new(Art::Album(self.records[i].id), grid.side, scale);
                 covers.has(key) || covers.is_absent(key.art)
             })
+    }
+
+    /// Jumps to the top, or to the end.
+    pub fn jump(&mut self, to_end: bool, cx: &mut Context<Self>) {
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        let y = if to_end {
+            handle.max_offset().y
+        } else {
+            px(0.0)
+        };
+        handle.set_offset(point(px(0.0), -y));
+        cx.notify();
     }
 
     /// Scrolls on by `distance`, back to the top past the end.
@@ -624,7 +682,7 @@ impl Render for AlbumGrid {
                 self.relayout(grid);
             }
         }
-        let count = self.albums.len();
+        let count = self.records.len();
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
             p,
@@ -684,10 +742,17 @@ impl Render for AlbumGrid {
                 grid.rows(count),
                 cx.processor(move |this, range: Range<usize>, window, cx| {
                     this.aim(range.clone(), window, cx);
-                    let p = Paint::of(window, cx);
-                    range
-                        .map(|row| this.row(&p, row, grid, cx))
-                        .collect::<Vec<_>>()
+                    // A few new sleeves into the atlas a frame; while more
+                    // wait, another frame follows to take them.
+                    if this
+                        .lib
+                        .covers
+                        .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, cx))
+                    {
+                        window.request_animation_frame();
+                    }
+                    this.tiles.begin();
+                    range.map(|row| this.row(row, grid, cx)).collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)

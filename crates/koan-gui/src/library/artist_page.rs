@@ -16,12 +16,12 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
 
-use super::covers::{Art, Covers, Key, Priority, Sleeve};
+use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOADS_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::{Anchor, Anchored, Heading, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
-use super::tile::{self, Grid, Part, TileHost, TileState};
+use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::theme::Space;
@@ -73,6 +73,9 @@ pub struct ArtistPage {
     restore: Option<Anchor>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
+    /// Each record's tile strings, made once per load.
+    records: std::collections::HashMap<i64, Rc<TileRecord>>,
+    tiles: Tiles<ArtistPage>,
     /// What the list's context menu acts on: the row last right-clicked.
     menu: Option<actions::MenuTarget>,
     starting: HashSet<i64>,
@@ -129,6 +132,8 @@ impl ArtistPage {
             restore,
             selection: Selection::default(),
             pick: None,
+            records: std::collections::HashMap::new(),
+            tiles: Tiles::default(),
             menu: None,
             starting: HashSet::new(),
             focus: cx.focus_handle(),
@@ -174,6 +179,7 @@ impl ArtistPage {
                 if this.restore.is_none() {
                     this.restore = this.anchor();
                 }
+                this.records.clear();
                 this.record = Some(Rc::new(Record {
                     artist,
                     albums,
@@ -468,7 +474,7 @@ impl ArtistPage {
                 let Some(albums) = albums.get(range) else {
                     return div().into_any_element();
                 };
-                self.tiles(p, albums, features, grid, scale, cx)
+                self.tiles(albums, features, grid, scale, cx)
                     .into_any_element()
             }
             Item::Track(index) => {
@@ -505,7 +511,6 @@ impl ArtistPage {
 
     fn tiles(
         &mut self,
-        p: &Paint,
         albums: &[Album],
         show_artist: bool,
         grid: Grid,
@@ -513,6 +518,7 @@ impl ArtistPage {
         cx: &mut Context<Self>,
     ) -> Div {
         let pick = self.pick();
+        let revision = self.selection.revision();
         let entity = cx.entity();
         let after: actions::After = Some(Rc::new(move |cx: &mut App| {
             entity.update(cx, |this, cx| {
@@ -520,14 +526,25 @@ impl ArtistPage {
                 cx.notify();
             })
         }));
+        let height = grid.row - px(tile::LINE_GAP);
         let mut tiles = Vec::with_capacity(albums.len());
         for album in albums {
+            let record = self
+                .records
+                .entry(album.id)
+                .or_insert_with(|| Rc::new(TileRecord::of(album)))
+                .clone();
             let item = Playable::Album(album.id);
             let selected = self.selection.contains(item);
-            let (drag, after) = match (&pick, selected) {
-                (Some(pick), true) => (pick.clone(), after.clone()),
-                _ => (PlayableDrag::new(&[item], album.title.clone()), None),
+            let (drag, pick, after) = match (&pick, selected) {
+                (Some(pick), true) => (pick.clone(), Some(revision), after.clone()),
+                _ => (PlayableDrag::new(&[item], record.title.clone()), None, None),
             };
+            let key = Key::new(Art::Album(album.id), grid.side, scale);
+            let sleeve = self
+                .lib
+                .covers
+                .update(cx, |c: &mut Covers, _| c.sleeve(key));
             let feed = self.lib.feed.read(cx);
             let state = TileState {
                 favourite: feed.is_favourite(item),
@@ -537,15 +554,13 @@ impl ArtistPage {
                 selected,
                 starting: self.starting.contains(&album.id),
                 show_artist,
+                side: grid.side,
+                sleeve,
                 drag,
+                pick,
                 after,
             };
-            let key = Key::new(Art::Album(album.id), grid.side, scale);
-            let sleeve = self
-                .lib
-                .covers
-                .update(cx, |c: &mut Covers, _| c.sleeve(key));
-            tiles.push(tile::tile(p, album, grid.side, sleeve, state, cx));
+            tiles.push(self.tiles.tile(&record, state, height, cx));
         }
         div().flex().gap(grid.gap).h(grid.row).children(tiles)
     }
@@ -578,8 +593,12 @@ impl ArtistPage {
         let mut photo = div().size(grid.side).flex_none().bg(p.surface);
         if self.info.as_ref().is_some_and(|i| i.has_image) {
             let key = Key::new(Art::Artist(id), grid.side, scale);
-            if let Sleeve::Ready(image) = self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
-                photo = photo.child(img(ImageSource::Render(image)).size_full());
+            match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
+                Sleeve::Ready(image) => {
+                    photo = photo.child(img(ImageSource::Render(image)).size_full())
+                }
+                Sleeve::Colour(colour) => photo = photo.bg(colour),
+                Sleeve::Waiting | Sleeve::None => {}
             }
         }
         let favourite = self.lib.feed.read(cx).is_favourite(item);
@@ -863,6 +882,15 @@ impl Render for ArtistPage {
             self.aim(p, grid, window.scale_factor(), cx);
         }
 
+        // Tiles not drawn last frame go; a few new sleeves into the atlas.
+        self.tiles.begin();
+        if self
+            .lib
+            .covers
+            .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, cx))
+        {
+            window.request_animation_frame();
+        }
         let view = cx.weak_entity();
         let body = list(self.list.clone(), move |ix, window, cx| {
             view.update(cx, |this, cx| this.item(ix, window, cx))

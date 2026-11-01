@@ -397,6 +397,13 @@ impl TrackList for TrackBrowser {
 impl Render for TrackBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
+        if self
+            .lib
+            .covers
+            .update(cx, |c, cx| c.admit(super::covers::UPLOADS_PER_FRAME, cx))
+        {
+            window.request_animation_frame();
+        }
         let rewinds = self.lib.nav.read(cx).rewinds(Page::Tracks);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;

@@ -10,10 +10,14 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::ImageId;
 
+use super::covers::Sleeve;
+
 #[derive(Default)]
 pub struct Recorder {
     tiles: u64,
     blank: u64,
+    /// Tiles drawn as their sleeve's colour, waiting for the atlas.
+    colour: u64,
     standin: u64,
     uploads: u64,
     /// When each tile still blank came on screen.
@@ -31,12 +35,16 @@ impl Recorder {
     pub fn tile(
         &mut self,
         album: i64,
-        drawn: bool,
+        sleeve: &Sleeve,
         standin: bool,
         image: Option<ImageId>,
         now: Instant,
     ) {
         self.tiles += 1;
+        if matches!(sleeve, Sleeve::Colour(_)) {
+            self.colour += 1;
+        }
+        let drawn = !matches!(sleeve, Sleeve::Waiting);
         if standin {
             self.standin += 1;
         }
@@ -69,9 +77,10 @@ impl Recorder {
                 .unwrap_or(0.0)
         };
         format!(
-            "{} tile-frames, {} blank, {} stand-in, {} first draws; {} tiles came on screen blank, blank for p50 {:.1} p95 {:.1} max {:.1} ms",
+            "{} tile-frames, {} blank, {} as colour, {} stand-in, {} first draws; {} tiles came on screen blank, blank for p50 {:.1} p95 {:.1} max {:.1} ms",
             self.tiles,
             self.blank,
+            self.colour,
             self.standin,
             self.uploads,
             blank.len(),
