@@ -1,0 +1,164 @@
+# What each koan-gui file still chooses by hand, counted by
+# scripts/gui-theme-leaks.py. Counts only fall: a file moved onto
+# koan-kit's components drops its entry. See docs/design/koan-kit.md.
+
+["app.rs"]
+number = 4
+
+["dsp/bands.rs"]
+number = 14
+
+["dsp/flows.rs"]
+number = 4
+
+["dsp/graph.rs"]
+number = 43
+fixed = 3
+
+["dsp/manage.rs"]
+number = 3
+fixed = 1
+
+["dsp/menu.rs"]
+number = 7
+fixed = 1
+
+["dsp/page.rs"]
+number = 29
+fixed = 4
+
+["dsp/profile.rs"]
+number = 12
+fixed = 1
+
+["dsp/prompts.rs"]
+number = 3
+fixed = 1
+
+["dsp/sheet.rs"]
+number = 11
+fixed = 4
+container = 2
+
+["dsp/stage.rs"]
+number = 2
+
+["dsp/window.rs"]
+number = 4
+
+["library/activity.rs"]
+number = 3
+fixed = 1
+
+["library/album_page.rs"]
+number = 3
+fixed = 2
+container = 1
+
+["library/albums.rs"]
+number = 11
+fixed = 1
+
+["library/artist_page.rs"]
+number = 11
+fixed = 3
+container = 1
+
+["library/artists.rs"]
+number = 4
+fixed = 3
+
+["library/chrome.rs"]
+number = 7
+container = 1
+
+["library/covers.rs"]
+number = 3
+
+["library/drag.rs"]
+number = 1
+
+["library/info.rs"]
+number = 1
+fixed = 1
+
+["library/rows.rs"]
+number = 7
+fixed = 1
+
+["library/tile.rs"]
+number = 35
+fixed = 8
+
+["library/tracks.rs"]
+number = 4
+fixed = 1
+
+["measure.rs"]
+number = 2
+
+["paint.rs"]
+number = 10
+
+["platform/about.rs"]
+number = 4
+container = 1
+
+["platform/shortcuts_sheet.rs"]
+number = 29
+fixed = 8
+
+["queue/mod.rs"]
+number = 21
+fixed = 1
+
+["settings/form.rs"]
+number = 2
+
+["settings/mod.rs"]
+number = 14
+fixed = 2
+container = 2
+
+["settings/panes/devices.rs"]
+number = 2
+
+["settings/panes/keys.rs"]
+number = 1
+
+["settings/panes/library.rs"]
+number = 1
+fixed = 1
+
+["settings/panes/link.rs"]
+number = 3
+
+["settings/panes/people.rs"]
+number = 3
+
+["settings/panes/server.rs"]
+number = 1
+
+["settings/panes/share.rs"]
+number = 1
+
+["settings/qr.rs"]
+number = 2
+
+["settings/sheet.rs"]
+number = 7
+fixed = 1
+
+["shell.rs"]
+number = 12
+fixed = 1
+
+["sidebar.rs"]
+number = 7
+
+["transport.rs"]
+number = 20
+fixed = 3
+
+["window_state.rs"]
+number = 4
