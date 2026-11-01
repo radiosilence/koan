@@ -25,7 +25,7 @@ use gpui_kit::{
 };
 use smallvec::SmallVec;
 
-use super::{Look, Motion, Palette};
+use super::{KoanTheme, Look, Motion, Palette};
 
 /// The texture's side. Blurred to mush, so drawn small and magnified: the
 /// Apple apps blur 28 points of a 360-point texture, which is 10 pixels of
@@ -199,19 +199,6 @@ fn boxed(line: &[f64], mut set: impl FnMut(usize, f64)) {
     }
 }
 
-/// Whether the system lets the wash move: Reduce Motion off and, on a Mac,
-/// Low Power Mode off. The caller adds the rest of the rule (something
-/// playing, the graphics setting) through `Wash::drift`; the wash reads this
-/// itself as it draws, and every window redraws when it comes forward, so a
-/// change of either setting in System Settings lands when koan is back.
-pub fn motion_allowed(cx: &App) -> bool {
-    #[cfg(target_os = "macos")]
-    let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
-    #[cfg(not(target_os = "macos"))]
-    let low_power = false;
-    !cx.reduce_motion() && !low_power
-}
-
 /// A value easing between two others over `EASE`, from wherever it stood.
 #[derive(Clone, Copy)]
 struct Ramp {
@@ -329,7 +316,8 @@ impl Wash {
 
     /// Whether the wash should drift: something playing, and the graphics
     /// setting allowing it. Reduce Motion and Low Power Mode are read as it
-    /// draws (`motion_allowed`). Starting and stopping ease over two seconds
+    /// draws (`KoanTheme::motion_allowed`), and come back from the system
+    /// whenever a window comes forward. Starting and stopping ease over two seconds
     /// from wherever the drift stands.
     pub fn drift(&mut self, wanted: bool, cx: &mut Context<Self>) {
         if self.wanted != wanted {
@@ -507,7 +495,7 @@ impl Render for Wash {
         }
 
         let shown = self.current.is_some() || self.previous.is_some();
-        let target = if self.wanted && shown && motion_allowed(cx) {
+        let target = if self.wanted && shown && KoanTheme::motion_allowed(cx) {
             1.0
         } else {
             0.0

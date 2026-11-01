@@ -48,6 +48,8 @@ pub struct KoanTheme {
     pub text_size: u32,
     /// "Show icons": glyphs beside the labels that carry them.
     pub icons: bool,
+    /// Low Power Mode, as last read.
+    low_power: bool,
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
     pinned: HashMap<WindowId, bool>,
@@ -60,6 +62,7 @@ impl Default for KoanTheme {
         Self {
             text_size: 100,
             icons: true,
+            low_power: false,
             pinned: HashMap::new(),
         }
     }
@@ -83,7 +86,7 @@ pub fn init(cx: &mut App) {
         state: AccentState::default(),
     });
     cx.set_global(AccentHandle(feed));
-    read_reduce_motion(cx);
+    read_motion_settings(cx);
     sync_components(is_dark(cx.window_appearance()), cx);
 }
 
@@ -105,10 +108,7 @@ pub fn follow_appearance<V: 'static>(
         }),
         cx.observe_window_activation(window, |_, window, cx| {
             if window.is_window_active() {
-                read_reduce_motion(cx);
-                // A wash at rest draws no frames, so it would not otherwise
-                // see Low Power Mode or Reduce Motion lifted.
-                window.refresh();
+                read_motion_settings(cx);
             }
         }),
     ]
@@ -121,14 +121,22 @@ fn is_dark(appearance: WindowAppearance) -> bool {
     )
 }
 
-/// Reduce Motion, from the system: GPUI holds the flag but no platform sets
-/// it. Linux has no setting to read, and keeps motion on.
-fn read_reduce_motion(cx: &mut App) {
+/// Reduce Motion and Low Power Mode, from the system: GPUI holds the first
+/// but no platform sets it, and has no word for the second. Linux has
+/// neither to read, and keeps motion on. A change redraws every window, as
+/// `set_reduce_motion` does for its own, so a wash at rest, which draws no
+/// frames, sees it.
+fn read_motion_settings(cx: &mut App) {
     #[cfg(target_os = "macos")]
     {
         let reduce =
             objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
         cx.set_reduce_motion(reduce);
+        let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
+        if cx.global::<KoanTheme>().low_power != low_power {
+            cx.global_mut::<KoanTheme>().low_power = low_power;
+            cx.refresh_windows();
+        }
     }
     #[cfg(not(target_os = "macos"))]
     let _ = cx;
@@ -184,6 +192,12 @@ fn sync_components(dark: bool, cx: &mut App) {
 }
 
 impl KoanTheme {
+    /// Whether the system lets things move for their own sake: Reduce
+    /// Motion and Low Power Mode off.
+    pub fn motion_allowed(cx: &App) -> bool {
+        !cx.reduce_motion() && !cx.global::<KoanTheme>().low_power
+    }
+
     /// Moves the accent to a record's. `ease` is false for a colour already
     /// known when the record arrived, which lands with it; with Reduce Motion
     /// every change lands.
