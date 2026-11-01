@@ -11,12 +11,13 @@ pub mod rows;
 
 use std::collections::{HashMap, HashSet};
 
-use koan_ffi::{CreditPart, EntryStatus, QueueItem};
+use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
 use crate::components::{
-    Cover, CoverArt, KoanContextMenu, Menu, MenuEntry, ProgressRing, RowKind, RowMetrics, TableRow,
+    Button, ButtonKind, Cover, CoverArt, EmptyState, KoanContextMenu, Menu, MenuEntry, Page,
+    PageHeader, ProgressRing, RowKind, RowMetrics, TableRow,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -138,14 +139,17 @@ pub struct QueueView {
     /// The running transfers' progress, read once a frame and only by a frame
     /// that draws a transferring row.
     readings: Option<HashMap<i64, Option<f64>>>,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: [Subscription; 5],
 }
 
 impl QueueView {
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
+        let lock = cx.global::<Mirror>().lock.clone();
         let subscriptions = [
+            // What the queue follows names the header.
+            cx.observe(&lock, |_, _, cx| cx.notify()),
             cx.observe(&queue, |this, queue, cx| {
                 if queue.read(cx).whole != this.whole {
                     this.lay_out(cx);
@@ -1138,6 +1142,81 @@ impl QueueView {
     }
 }
 
+impl QueueView {
+    /// The page's header, the Mac's: what the queue is (a playlist or a
+    /// record it follows, or the queue), how many tracks and how long, and
+    /// what can be done to it as a whole.
+    fn header(&self, cx: &mut Context<Self>) -> PageHeader {
+        let queue = self.queue.read(cx);
+        let count = queue.items.len() as u64;
+        let total: u64 = queue.items.iter().filter_map(|item| item.duration_ms).sum();
+        let grouped = queue.grouped;
+        let title = match &cx.global::<Mirror>().lock.read(cx).0 {
+            Some(QueueLock::Playlist { playlist }) => format!("playing {}", playlist.name),
+            Some(QueueLock::Album { album }) => format!("playing {}", album.title),
+            None => "queue".into(),
+        };
+        let mut detail = crate::library::chrome::count(count, "track", "tracks");
+        if total > 0 {
+            detail = format!("{detail} · {}", crate::time::clock(total));
+        }
+        let verb = |id: &'static str, icon: Icon, label: &'static str| {
+            Button::new(id, ButtonKind::Compact).icon(icon).label(label)
+        };
+        let view = cx.entity();
+        let regroup = cx.entity();
+        PageHeader::data(title)
+            .detail(detail)
+            .action(
+                verb("queue-jump", Icon::JumpToPlaying, "jump to playing")
+                    .disabled(count == 0)
+                    .on_click(move |_, _, cx| view.update(cx, |this, cx| this.jump_to_playing(cx))),
+            )
+            .action(
+                verb("queue-group", Icon::Album, "group by album")
+                    .selected(grouped)
+                    .on_click(move |_, window, cx| {
+                        regroup.update(cx, |this, cx| this.set_grouped(!grouped, window, cx))
+                    }),
+            )
+            .action(
+                verb("queue-undo", Icon::Undo, "undo")
+                    .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
+            )
+            .action(
+                verb("queue-redo", Icon::Redo, "redo")
+                    .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
+            )
+            .action(
+                verb("queue-clear", Icon::Clear, "clear")
+                    .disabled(count == 0)
+                    .on_click(move |_, window, cx| clear(count, window, cx)),
+            )
+    }
+}
+
+/// Asks before emptying the queue, saying how much goes; undo brings it back.
+fn clear(count: u64, window: &mut Window, cx: &mut App) {
+    crate::components::sheet::confirm(
+        crate::components::sheet::Confirm {
+            title: "clear the queue".into(),
+            verb: "clear".into(),
+            destructive: true,
+            lines: vec![
+                format!(
+                    "{} leave the queue, and playback stops.",
+                    crate::library::chrome::count(count, "track", "tracks")
+                )
+                .into(),
+            ],
+            note: Some("Undo puts them back.".into()),
+        },
+        window,
+        cx,
+        |cx| command(cx, "clear queue", |e| e.clear_queue()),
+    );
+}
+
 impl Render for QueueView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
@@ -1210,32 +1289,23 @@ impl Render for QueueView {
                 let dest = this.drop_at.unwrap_or(count);
                 this.drop_library(dragged, dest, cx);
             }))
-            .when(count == 0, |d| {
-                d.child(
-                    div().flex_1().flex().items_center().justify_center().child(
-                        div()
-                            .text_role(TypeRole::Body, &p.look)
-                            .text_color(p.muted)
-                            .child("the queue is empty"),
-                    ),
-                )
-            })
-            .when(count > 0, |d| {
+            .child(Page::new(self.header(cx)).body(if count == 0 {
+                EmptyState::new(Icon::QueueSection, "queue is empty")
+                    .detail("Find something to play from albums or artists.")
+                    .into_any_element()
+            } else {
                 let view = view.clone();
-                d.child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .child(
-                            list(self.list.clone(), move |row, window, cx| {
-                                view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
-                            })
-                            .size_full(),
-                        )
-                        .child(koan_kit::raw::base::Scrollbar::vertical(&self.list)),
-                )
-            })
+                div()
+                    .size_full()
+                    .child(
+                        list(self.list.clone(), move |row, window, cx| {
+                            view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
+                        })
+                        .size_full(),
+                    )
+                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.list))
+                    .into_any_element()
+            }))
             .koan_context_menu("queue-menu", window, cx, {
                 let view = view.clone();
                 move |menu, _, cx| row_menu(menu, &view, cx)
