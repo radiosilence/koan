@@ -36,6 +36,8 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     crate::platform::dock::follow(engine, cx);
     settings::install(engine.clone(), cx);
     crate::dsp::window::init(cx);
+    // Reads the mirror set up above.
+    crate::library::activity::init(cx);
 }
 
 /// Opens the window once the restored session is in the mirror, and keeps
@@ -60,8 +62,6 @@ pub fn start(
     cx.bind_keys(queue::bindings());
     crate::library::bind_keys(cx);
     install(&engine, cx);
-    // Reads the mirror `install` sets up.
-    crate::library::activity::init(cx);
     settings::resume(cx);
     cx.on_action(|_: &crate::platform::actions::Settings, cx| settings::open(cx));
     let queue = cx.global::<Mirror>().queue.clone();
