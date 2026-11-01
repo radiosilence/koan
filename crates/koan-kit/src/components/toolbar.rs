@@ -6,7 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind};
-use crate::theme::{HAIRLINE, Icon, KoanTheme, Look};
+use crate::theme::{HAIRLINE, Icon, KoanStyled, KoanTheme, Look};
 
 /// The toolbar's figures, the Mac's unified toolbar measured at 2x: 52
 /// tall, its buttons 36-point cells. Gaps are fixed points, as AppKit's.
@@ -288,5 +288,60 @@ impl RenderOnce for ToolbarMenu {
                 });
                 content(dismiss, window, cx)
             })
+    }
+}
+
+/// What a toolbar says while things are picked, the Mac's selection bar: how
+/// many, in `muted`, then what can be done to them as text buttons in the
+/// accent, the toolbar's group spacing between each.
+#[derive(IntoElement)]
+pub struct ToolbarSelection {
+    count: SharedString,
+    actions: Vec<AnyElement>,
+}
+
+impl ToolbarSelection {
+    /// `count` says how many: "3 selected".
+    pub fn new(count: impl Into<SharedString>) -> Self {
+        Self {
+            count: count.into(),
+            actions: Vec::new(),
+        }
+    }
+
+    /// `label` is lowercased with the theme's other labels.
+    pub fn action(
+        mut self,
+        id: impl Into<ElementId>,
+        label: impl AsRef<str>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.actions.push(
+            Button::new(id, ButtonKind::Text)
+                .label(label)
+                .tone(crate::theme::Tone::Accent)
+                .on_click(on_click)
+                .into_any_element(),
+        );
+        self
+    }
+}
+
+impl RenderOnce for ToolbarSelection {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(ToolbarMetrics::SPACER)
+            .child(
+                div()
+                    .text_role(crate::theme::TypeRole::Control, &look)
+                    .text_color(look.palette.muted.hsla())
+                    .whitespace_nowrap()
+                    .child(self.count),
+            )
+            .children(self.actions)
     }
 }
