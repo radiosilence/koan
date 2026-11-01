@@ -128,8 +128,10 @@ macos-icon:
     iconutil -c icns "$set" -o {{app_dir}}/Resources/AppIcon.icns
     echo "built {{app_dir}}/Resources/AppIcon.icns"
 
-# Regenerate the desktop app's AppIcon.icns from its AppIcon.svg: kōan's
-# icon with a stand beneath the circle, so it is told apart from the Mac app.
+# Regenerate the desktop app's AppIcon.icns from its AppIcon.svg (kōan's
+# icon with a spindle at the circle's centre, so it is told apart from the Mac
+# app), and AppIcon-launch.png, the same icon on the macOS icon grid, which a
+# build outside a bundle sets at launch.
 gui-icon:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -144,7 +146,8 @@ gui-icon:
     done
     iconutil -c icns "$set" -o "$dir/AppIcon.icns"
     rm -rf "$set"
-    echo "built $dir/AppIcon.icns"
+    rsvg-convert -w 1024 -h 1024 "$dir/AppIcon-launch.svg" -o "$dir/AppIcon-launch.png"
+    echo "built $dir/AppIcon.icns and $dir/AppIcon-launch.png"
 
 # Build the FFI static library and regenerate the Swift bindings.
 #

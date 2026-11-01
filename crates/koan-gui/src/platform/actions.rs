@@ -84,6 +84,7 @@ actions!(
         Rescan,
         ForceRescan,
         Sync,
+        RebuildIndex,
         ClearArtworkCache,
         ClearDownloadedFiles,
         SaveSession,

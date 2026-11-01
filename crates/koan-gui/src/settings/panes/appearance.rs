@@ -79,6 +79,7 @@ impl Render for AppearancePane {
         let text_size = self.text_size.unwrap_or(theme.text_size);
         let wash_tint = self.wash_tint.unwrap_or(theme.wash_tint);
         let record_colours = theme.record_colours;
+        let wash_window = theme.wash_window;
         let entity = cx.entity();
 
         let size_slider = Slider::new("text-size", fraction(text_size, low, high))
@@ -129,6 +130,19 @@ impl Render for AppearancePane {
                 .into_any_element(),
         ];
         if record_colours {
+            colour_rows.push(
+                Toggle::new("wash-window", "Wash the whole window", wash_window)
+                    .on_change({
+                        let engine = engine.clone();
+                        let entity = entity.clone();
+                        move |on, _, cx| {
+                            KoanTheme::set_wash_window(*on, cx);
+                            engine.set_wash_window(*on);
+                            entity.update(cx, |_, cx| cx.notify());
+                        }
+                    })
+                    .into_any_element(),
+            );
             colour_rows.push(
                 Row::new(format!("Theme tint {wash_tint}%"))
                     .control(
