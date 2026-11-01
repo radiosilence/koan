@@ -42,11 +42,12 @@ const MEMORY_BUDGET: usize = 256 * 1024 * 1024;
 /// does not decode every tile again at each pixel.
 const BUCKET: u32 = 32;
 
-/// How many new sleeves a frame takes into the GPU's atlas. Each is an upload
-/// on the main thread inside that frame's paint (about 700 KB for a tile at
-/// 2×), so a flick that lands forty at once spreads them over frames, each
-/// tile showing its sleeve's colour until its turn.
-pub const UPLOADS_PER_FRAME: usize = 6;
+/// How many bytes of new sleeves a frame takes into the GPU's atlas: about
+/// three tiles at 2×. Each is copied into a texture on the main thread inside
+/// that frame's paint, so a flick that lands forty at once spreads them over
+/// frames, each tile showing its sleeve's colour until its turn. At least one
+/// is taken a frame, whatever its size.
+pub const UPLOAD_BYTES_PER_FRAME: usize = 2 * 1024 * 1024;
 
 /// Bumped when what a cache file means changes; any other scheme's directory
 /// is deleted.
@@ -481,7 +482,7 @@ impl Covers {
         cx.notify();
     }
 
-    /// Take up to `budget` staged sleeves into memory, and so into the
+    /// Take staged sleeves into memory up to `budget` bytes, and so into the
     /// atlas at this frame's paint: the most urgent first, by what the
     /// lists on screen asked for. Returns whether more are staged, in which
     /// case the caller asks for another frame. Never notifies, so a list can
@@ -512,7 +513,11 @@ impl Covers {
             (None, None) => std::cmp::Ordering::Equal,
         });
         let generations = self.shared.queue.lock().generation.clone();
-        for (key, _) in ranked.into_iter().take(budget) {
+        let mut spent = 0;
+        for (key, _) in ranked {
+            if spent > 0 && spent >= budget {
+                break;
+            }
             let Some((image, generation)) = self.staged.remove(&key) else {
                 continue;
             };
@@ -521,6 +526,7 @@ impl Covers {
             }
             let size = image.size(0);
             let bytes = (i32::from(size.width) * i32::from(size.height) * 4) as usize;
+            spent += bytes;
             let held = Held {
                 image,
                 bytes,

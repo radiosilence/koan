@@ -16,7 +16,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
 
-use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOADS_PER_FRAME};
+use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::{Anchor, Anchored, Heading, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
@@ -884,11 +884,9 @@ impl Render for ArtistPage {
 
         // Tiles not drawn last frame go; a few new sleeves into the atlas.
         self.tiles.begin();
-        if self
-            .lib
-            .covers
-            .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, Some(window), cx))
-        {
+        if self.lib.covers.update(cx, |c, cx| {
+            c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
+        }) {
             window.request_animation_frame();
         }
         let view = cx.weak_entity();

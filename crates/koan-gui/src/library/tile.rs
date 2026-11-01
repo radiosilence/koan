@@ -2,8 +2,8 @@
 //! they behave alike: the sleeve plays the record, the title opens it, each
 //! credited artist links to their page. While picking, the whole tile ticks.
 //!
-//! Hover is drawn by GPUI's group styles rather than tracked state, so the
-//! pointer moving over a grid redraws nothing but the tile under it.
+//! Each tile is a cached view of its own: the pointer moving over a grid
+//! redraws the tile it enters and the one it leaves, and nothing else.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -173,6 +173,9 @@ pub struct TileView<V: TileHost> {
     host: WeakEntity<V>,
     record: Rc<Record>,
     state: TileState,
+    /// Under the pointer: the play mark, the dim and the heart are made only
+    /// then, so the tiles on screen carry no hidden overlays.
+    hovered: bool,
     _accent: Subscription,
 }
 
@@ -187,6 +190,7 @@ impl<V: TileHost> TileView<V> {
             host,
             record,
             state,
+            hovered: false,
             _accent: crate::theme::observe_accent(cx),
         }
     }
@@ -245,7 +249,7 @@ impl<V: TileHost> Render for TileView<V> {
         }
         // The dim snaps in and out for now; it takes the theme's 120 ms when
         // the motion tokens land.
-        if state.starting || !state.selecting {
+        if state.starting || (self.hovered && !state.selecting) {
             art = art.child(
                 div()
                     .absolute()
@@ -274,7 +278,7 @@ impl<V: TileHost> Render for TileView<V> {
         if let Some(bar) = download_bar(p, record.on_device, state.arriving) {
             art = art.child(bar);
         }
-        if !state.selecting {
+        if !state.selecting && (self.hovered || state.favourite) {
             let heart = div()
                 .id(("heart", id as u64))
                 .absolute()
@@ -288,11 +292,7 @@ impl<V: TileHost> Render for TileView<V> {
                 .cursor_pointer()
                 .on_click(click(Part::Heart))
                 .child(heart_glyph(p, state.favourite));
-            art = art.child(if state.favourite {
-                heart
-            } else {
-                heart.opacity(0.0).group_hover("tile", |s| s.opacity(1.0))
-            });
+            art = art.child(heart);
         }
         if state.selecting {
             // Over the art rather than a border on it, so ticking a tile
@@ -359,11 +359,16 @@ impl<V: TileHost> Render for TileView<V> {
         };
         div()
             .id(("tile", id as u64))
-            .group("tile")
             .flex()
             .flex_col()
             .w(side)
             .gap(px(CAPTION_GAP))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if this.hovered != *hovered {
+                    this.hovered = *hovered;
+                    cx.notify();
+                }
+            }))
             .child(art)
             .child(title)
             .child(credit)

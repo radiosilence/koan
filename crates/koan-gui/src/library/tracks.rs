@@ -404,7 +404,7 @@ impl Render for TrackBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
         if self.lib.covers.update(cx, |c, cx| {
-            c.admit(super::covers::UPLOADS_PER_FRAME, Some(window), cx)
+            c.admit(super::covers::UPLOAD_BYTES_PER_FRAME, Some(window), cx)
         }) {
             window.request_animation_frame();
         }

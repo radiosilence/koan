@@ -16,7 +16,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{AlbumSort, BrowseFilter};
 
-use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOADS_PER_FRAME};
+use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
@@ -357,11 +357,9 @@ impl AlbumGrid {
         let last = (((top + viewport) / row).ceil() as usize).min(rows);
         let first = ((top / row).floor() as usize).min(last);
         self.aim(first..last, window, cx);
-        if self
-            .lib
-            .covers
-            .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, Some(window), cx))
-        {
+        if self.lib.covers.update(cx, |c, cx| {
+            c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
+        }) {
             window.request_animation_frame();
         }
         self.tiles.begin();
@@ -444,7 +442,13 @@ impl AlbumGrid {
                 .lib
                 .covers
                 .update(cx, |c: &mut Covers, _| c.sleeve(key));
-            if let Some(bench) = &self.lib.bench {
+            // Only rows on screen: uniform_list also builds a row to measure.
+            if let Some(bench) = self
+                .lib
+                .bench
+                .as_ref()
+                .filter(|_| self.heading.borrow().visible.contains(&row))
+            {
                 let image = match &sleeve {
                     Sleeve::Ready(image) => Some(image.id),
                     _ => None,
