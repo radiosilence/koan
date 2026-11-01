@@ -1,0 +1,1 @@
+- **Crates publish without rebuilding, and the GitHub release does not wait for them.** A release goes out faster and is not held up by crates.io.
