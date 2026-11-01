@@ -92,9 +92,6 @@ impl RenderOnce for Slider {
         // Whether a drag that began on this slider is under way. Set and
         // cleared without a notify: nothing is drawn from it.
         let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| false);
-        if self.disabled {
-            dragging.update(cx, |d, _| *d = false);
-        }
         let measure = track_bounds.clone();
         let rail_id = child(&self.id, "rail");
         let drag_moves = (!self.disabled)
@@ -120,24 +117,30 @@ impl RenderOnce for Slider {
                         };
                         let (moving, ending, starting) =
                             (dragging.clone(), dragging.clone(), dragging);
-                        // Any press starts afresh, before the rail's own
+                        // A left press starts afresh, before the rail's own
                         // handler sees it: a release the window never heard
                         // (let go outside it, on some platforms) must not
                         // leave the next drag elsewhere moving this slider.
-                        window.on_mouse_event(move |_: &MouseDownEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Capture {
+                        window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Capture && event.button == MouseButton::Left
+                            {
                                 starting.update(cx, |d, _| *d = false);
                             }
                         });
-                        // In the capture phase, which nothing painted over
-                        // the slider can stop: the drag holds across a
-                        // client-side window border, say.
+                        // In the capture phase, which runs in paint order:
+                        // what is painted over the slider, such as a
+                        // client-side window border, cannot stop it. A move
+                        // that leaves the value where it was (past either
+                        // end) is not passed on.
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture
                                 && event.pressed_button == Some(MouseButton::Left)
                                 && *moving.read(cx)
                             {
-                                on_change(&at(bounds, event.position), window, cx);
+                                let to = at(bounds, event.position);
+                                if to != value {
+                                    on_change(&to, window, cx);
+                                }
                             }
                         });
                         window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
@@ -234,8 +237,8 @@ mod tests {
     use std::rc::Rc;
 
     use gpui_kit::{
-        AppContext, Context, Entity, Modifiers, MouseDownEvent, PlatformInput, Render,
-        StyleRefinement, TestAppContext, point,
+        AnyWindowHandle, AppContext, Context, Entity, Modifiers, MouseDownEvent, PlatformInput,
+        Render, StyleRefinement, TestAppContext, point,
     };
 
     use super::*;
@@ -303,9 +306,47 @@ mod tests {
         }
     }
 
+    fn down(x: f32, y: f32) -> PlatformInput {
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(x), px(y)),
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        })
+    }
+
+    fn held(x: f32, y: f32) -> PlatformInput {
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(x), px(y)),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        })
+    }
+
+    fn up(x: f32, y: f32) -> PlatformInput {
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: point(px(x), px(y)),
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        })
+    }
+
+    /// Dispatches each event and draws after it, as the window would.
+    fn send(cx: &mut TestAppContext, window: AnyWindowHandle, events: Vec<PlatformInput>) {
+        cx.update_window(window, |_, window, cx| {
+            for event in events {
+                window.dispatch_event(event, cx);
+                window.draw(cx).clear(cx);
+            }
+        })
+        .unwrap();
+    }
+
     /// A drag moves the slider and redraws its owner alone: the page around
-    /// it replays. GPUI's drag and drop redraws the whole window past its
-    /// caches at every move, which is what a slider must not use.
+    /// it replays. It ends when the button is let go, or, where the release
+    /// never reached the window, at the next press.
     #[gpui_kit::test]
     fn a_drag_redraws_only_the_slider(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -314,90 +355,65 @@ mod tests {
         });
         let renders = Rc::new(Cell::new(0));
         let counted = renders.clone();
-        let owner = Rc::new(Cell::new(None));
-        let held = owner.clone();
-        let window = cx.add_window(move |_, cx| {
+        let made = Rc::new(Cell::new(None));
+        let held_owner = made.clone();
+        let handle = cx.add_window(move |_, cx| {
             let slider = cx.new(|_| Owner { value: 0.1 });
-            held.set(Some(slider.clone()));
+            held_owner.set(Some(slider.clone()));
             Page {
                 owner: slider,
                 neighbour: cx.new(|_| Neighbour(counted)),
             }
         });
-        let at = |x: f32| point(px(x), px(30.));
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
-            window.dispatch_event(
+        let window: AnyWindowHandle = handle.into();
+        let owner = made.take().unwrap();
+        let value = |cx: &mut TestAppContext| cx.update(|cx| owner.read(cx).value);
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        send(
+            cx,
+            window,
+            vec![
                 PlatformInput::MouseMove(MouseMoveEvent {
-                    position: at(40.),
+                    position: point(px(40.), px(30.)),
                     pressed_button: None,
                     modifiers: Modifiers::default(),
                 }),
-                cx,
-            );
-            window.draw(cx).clear(cx);
-            window.dispatch_event(
-                PlatformInput::MouseDown(MouseDownEvent {
-                    button: MouseButton::Left,
-                    position: at(40.),
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                    first_mouse: false,
-                }),
-                cx,
-            );
-            window.draw(cx).clear(cx);
-        })
-        .unwrap();
+                down(40., 30.),
+            ],
+        );
+
         renders.set(0);
-        for step in 1..=20 {
-            cx.update_window(window.into(), |_, window, cx| {
-                window.dispatch_event(
-                    PlatformInput::MouseMove(MouseMoveEvent {
-                        position: at(40. + step as f32 * 30.),
-                        pressed_button: Some(MouseButton::Left),
-                        modifiers: Modifiers::default(),
-                    }),
-                    cx,
-                );
-                window.draw(cx).clear(cx);
-            })
-            .unwrap();
-        }
-        let owner = owner.take().unwrap();
-        let value = cx.update(|cx| owner.read(cx).value);
-        assert!(value > 0.3, "the drag moved the slider, to {value}");
+        send(
+            cx,
+            window,
+            (1..=20)
+                .map(|step| held(40. + step as f32 * 30., 30.))
+                .collect(),
+        );
+        let dragged = value(cx);
+        assert!(dragged > 0.3, "the drag moved the slider, to {dragged}");
         assert_eq!(
             renders.get(),
             0,
             "the page beside the slider redrew during the drag"
         );
 
-        // The release never reached the window; the next press and drag
-        // are elsewhere, and leave the slider where it was.
-        cx.update_window(window.into(), |_, window, cx| {
-            window.dispatch_event(
-                PlatformInput::MouseDown(MouseDownEvent {
-                    button: MouseButton::Left,
-                    position: point(px(300.), px(300.)),
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                    first_mouse: false,
-                }),
-                cx,
-            );
-            window.draw(cx).clear(cx);
-            window.dispatch_event(
-                PlatformInput::MouseMove(MouseMoveEvent {
-                    position: point(px(40.), px(320.)),
-                    pressed_button: Some(MouseButton::Left),
-                    modifiers: Modifiers::default(),
-                }),
-                cx,
-            );
-            window.draw(cx).clear(cx);
-        })
-        .unwrap();
-        assert_eq!(cx.update(|cx| owner.read(cx).value), value);
+        // The release never reached the window; the next press is elsewhere,
+        // and a drag from it leaves the slider where it was.
+        send(cx, window, vec![down(300., 300.), held(100., 320.)]);
+        assert_eq!(value(cx), dragged);
+
+        // A drag on the slider, let go: a move with the button held again,
+        // from a press the window did not see, leaves it where it was.
+        send(
+            cx,
+            window,
+            vec![down(100., 30.), held(200., 30.), up(200., 30.)],
+        );
+        let released = value(cx);
+        assert!(released < dragged, "the second drag moved the slider back");
+        send(cx, window, vec![held(500., 30.)]);
+        assert_eq!(value(cx), released);
     }
 }
