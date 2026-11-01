@@ -1,0 +1,1 @@
+- **Covers fade in on the desktop app.** A record's sleeve arriving where there was none fades in over its colour, as the other apps' do; one already in memory, or replacing a smaller copy, is shown at once. With Reduce Motion it appears.

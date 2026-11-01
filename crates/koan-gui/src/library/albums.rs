@@ -454,7 +454,7 @@ impl AlbumGrid {
                 .filter(|_| self.heading.borrow().visible.contains(&row))
             {
                 let image = match &sleeve {
-                    Sleeve::Ready(image) => Some(image.id),
+                    Sleeve::Ready(image, _) => Some(image.id),
                     _ => None,
                 };
                 let standin = image.is_some() && !self.lib.covers.read(cx).has(key);

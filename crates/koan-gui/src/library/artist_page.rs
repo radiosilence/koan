@@ -677,7 +677,7 @@ impl ArtistPage {
         }
         let key = Key::new(Art::Artist(self.artist_id), side, scale);
         match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
-            Sleeve::Ready(image) => Some(CoverArt::Image(image)),
+            Sleeve::Ready(image, _) => Some(CoverArt::Image(image)),
             Sleeve::Colour(colour) => Some(CoverArt::Colour(colour)),
             Sleeve::Waiting | Sleeve::None => None,
         }

@@ -103,8 +103,9 @@ pub enum Priority {
 #[derive(Clone)]
 pub enum Sleeve {
     /// The bitmap at its size, or the nearest other size of the same record
-    /// while that decodes.
-    Ready(Arc<RenderImage>),
+    /// while that decodes, and when it entered memory: a tile that had
+    /// nothing to show fades it in from then.
+    Ready(Arc<RenderImage>, Instant),
     /// Decoded and waiting its turn for the atlas, or decoded once and since
     /// evicted: drawn as a flat field of the sleeve's colour.
     Colour(Hsla),
@@ -118,7 +119,7 @@ impl From<Sleeve> for crate::components::CoverArt {
     fn from(sleeve: Sleeve) -> Self {
         use crate::components::CoverArt;
         match sleeve {
-            Sleeve::Ready(image) => CoverArt::Image(image),
+            Sleeve::Ready(image, _) => CoverArt::Image(image),
             Sleeve::Colour(colour) => CoverArt::Colour(colour),
             Sleeve::Waiting | Sleeve::None => CoverArt::Missing,
         }
@@ -129,7 +130,7 @@ impl Sleeve {
     /// The same thing to draw: the same bitmap, colour or absence.
     pub fn same(&self, other: &Sleeve) -> bool {
         match (self, other) {
-            (Sleeve::Ready(a), Sleeve::Ready(b)) => Arc::ptr_eq(a, b),
+            (Sleeve::Ready(a, _), Sleeve::Ready(b, _)) => Arc::ptr_eq(a, b),
             (Sleeve::Colour(a), Sleeve::Colour(b)) => a == b,
             (Sleeve::Waiting, Sleeve::Waiting) | (Sleeve::None, Sleeve::None) => true,
             _ => false,
@@ -141,6 +142,8 @@ struct Held {
     image: Arc<RenderImage>,
     bytes: usize,
     used: Instant,
+    /// When it entered memory.
+    arrived: Instant,
 }
 
 /// What both lanes and the main thread share, behind one lock that is held
@@ -396,7 +399,7 @@ impl Covers {
         });
         if let Some(held) = px.and_then(|px| self.memory.get_mut(&Key { art: key.art, px })) {
             held.used = now;
-            return Sleeve::Ready(held.image.clone());
+            return Sleeve::Ready(held.image.clone(), held.arrived);
         }
         if let Some(colour) = self.colours.get(&key.art) {
             return Sleeve::Colour(*colour);
@@ -625,10 +628,12 @@ impl Covers {
             let size = image.size(0);
             let bytes = (i32::from(size.width) * i32::from(size.height) * 4) as usize;
             spent += bytes;
+            let now = Instant::now();
             let held = Held {
                 image,
                 bytes,
-                used: Instant::now(),
+                used: now,
+                arrived: now,
             };
             if let Some(old) = self.memory.insert(key, held) {
                 self.memory_bytes -= old.bytes;
