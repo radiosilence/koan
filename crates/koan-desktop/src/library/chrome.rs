@@ -6,6 +6,7 @@
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::theme::Theme;
+use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::BrowseChoices;
 
@@ -73,8 +74,8 @@ pub fn page_header(title: &'static str, detail: String, actions: impl IntoElemen
             div()
                 .flex()
                 .flex_col()
-                .child(div().role(Type::Title, tokens::STRONG).child(title))
-                .child(div().role(Type::Meta, tokens::MUTED).child(detail)),
+                .child(div().typeset(Type::Title, tokens::STRONG).child(title))
+                .child(div().typeset(Type::Meta, tokens::MUTED).child(detail)),
         )
         .child(actions)
 }
@@ -87,8 +88,8 @@ pub fn empty_state(title: &'static str, detail: &'static str) -> Div {
         .items_center()
         .justify_center()
         .gap(space::s8())
-        .child(div().role(Type::TitleSmall, tokens::MUTED).child(title))
-        .child(div().role(Type::Control, tokens::MUTED).child(detail))
+        .child(div().typeset(Type::TitleSmall, tokens::MUTED).child(title))
+        .child(div().typeset(Type::Control, tokens::MUTED).child(detail))
 }
 
 /// A text button: the label in `muted`, `ink` under the pointer.
@@ -96,7 +97,7 @@ pub fn text_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> 
     div()
         .id(id)
         .cursor_pointer()
-        .role(Type::Control, tokens::MUTED)
+        .typeset(Type::Control, tokens::MUTED)
         .hover(|s| s.text_color(tokens::INK))
         .child(label.into())
 }
@@ -143,7 +144,7 @@ impl Render for SearchField {
             .items_center()
             .gap(space::s4())
             .w(px(200.0))
-            .role(Type::Control, tokens::MUTED)
+            .typeset(Type::Control, tokens::MUTED)
             .child("⌕")
             .child(Input::new(&self.input).appearance(false).cleanable(true))
     }
@@ -183,7 +184,7 @@ impl RenderOnce for Trigger {
         div()
             .id(self.id)
             .cursor_pointer()
-            .role(
+            .typeset(
                 Type::Control,
                 if self.open {
                     tokens::INK
@@ -202,7 +203,7 @@ fn panel() -> Div {
         .bg(tokens::BG)
         .border_1()
         .border_color(tokens::RULE)
-        .role(Type::Body, tokens::INK)
+        .typeset(Type::Body, tokens::INK)
 }
 
 /// A row in a menu panel, ticked when it is the choice in force.
@@ -219,7 +220,7 @@ fn choice_row(
         .px(space::s12())
         .py(space::s4())
         .cursor_pointer()
-        .role(
+        .typeset(
             Type::Control,
             if ticked { tokens::ACCENT } else { tokens::INK },
         )
@@ -232,6 +233,7 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     let current = lib.browse.read(cx).effective_album_sort();
     let browse = lib.browse.clone();
     Popover::new("album-sort")
+        .appearance(false)
         .arrow(false)
         .trigger(Trigger::new(
             "album-sort-trigger",
@@ -268,6 +270,7 @@ pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     let current = lib.browse.read(cx).effective_track_sort();
     let browse = lib.browse.clone();
     Popover::new("track-sort")
+        .appearance(false)
         .arrow(false)
         .trigger(Trigger::new(
             "track-sort-trigger",
@@ -298,6 +301,7 @@ pub fn filter_button(panel: &Entity<FilterPanel>, lib: &Lib, cx: &App) -> impl I
     let active = lib.browse.read(cx).active_filters();
     let panel = panel.clone();
     Popover::new("filters")
+        .appearance(false)
         .arrow(false)
         .trigger(Trigger::new(
             "filters-trigger",
@@ -421,6 +425,7 @@ impl FilterPanel {
         let browse = self.lib.browse.clone();
         form_row(label).child(
             Popover::new(id)
+                .appearance(false)
                 .arrow(false)
                 .trigger(Trigger::new(
                     SharedString::from(format!("{id}-trigger")),
@@ -539,7 +544,7 @@ impl Render for FilterPanel {
                         .py(px(6.0))
                         .border_1()
                         .border_color(tokens::MUTED)
-                        .role(Type::Meta, tokens::INK)
+                        .typeset(Type::Meta, tokens::INK)
                         .hover(|s| s.bg(tokens::HOVER))
                         .child("reset")
                         .on_click(move |_, window, cx| {
@@ -560,7 +565,7 @@ fn form_row(label: &'static str) -> Div {
         .items_center()
         .justify_between()
         .min_h(px(28.0))
-        .child(div().role(Type::Body, tokens::INK).child(label))
+        .child(div().typeset(Type::Body, tokens::INK).child(label))
 }
 
 /// The theme's toggle: a square box, a `muted` outline off, filled `accent`
@@ -574,7 +579,9 @@ fn check_box(on: bool) -> Div {
         .border_1()
         .border_color(if on { tokens::ACCENT } else { tokens::MUTED })
         .when(on, |d| {
-            d.bg(tokens::ACCENT).role(Type::Fine, tokens::BG).child("✓")
+            d.bg(tokens::ACCENT)
+                .typeset(Type::Fine, tokens::BG)
+                .child("✓")
         })
 }
 
@@ -620,7 +627,7 @@ pub fn selection_bar<V: Picking>(
         .bg(tokens::BG)
         .child(
             div()
-                .role(Type::Meta, tokens::INK)
+                .typeset(Type::Meta, tokens::INK)
                 .child(count(n as u64, "picked", "picked")),
         )
         .child(
@@ -639,13 +646,14 @@ pub fn selection_bar<V: Picking>(
                 }))
                 .child(
                     Popover::new("sel-playlist")
+                        .appearance(false)
                         .arrow(false)
                         .trigger(Trigger::new("sel-playlist-trigger", "add to playlist"))
                         .content(move |_, _, cx| {
                             if playlists.is_empty() {
                                 return panel()
                                     .p(space::s12())
-                                    .role(Type::Control, tokens::MUTED)
+                                    .typeset(Type::Control, tokens::MUTED)
                                     .child("no playlists");
                             }
                             panel()

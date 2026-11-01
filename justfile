@@ -8,6 +8,18 @@ build:
 cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
+# A large throwaway library for the desktop app: ALBUMS records of TRACKS
+# near-silent FLACs each, five records an artist, a distinct cover.jpg per
+# record, scanned into DIR/config. Run the app on it with
+# `KOAN_CONFIG_DIR=DIR/config cargo run --release -p koan-desktop`.
+desktop-library dir albums="5000" tracks="10":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo run --release -p koan-desktop --example gen_library -- "{{dir}}/music" {{albums}} {{tracks}}
+    mkdir -p "{{dir}}/config"
+    printf '[library]\nfolders = ["%s"]\n' "$(cd "{{dir}}/music" && pwd)" > "{{dir}}/config/config.toml"
+    KOAN_CONFIG_DIR="{{dir}}/config" cargo run --release -p koan-cli -- scan
+
 # Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
 # `isolate_config_for_tests` would otherwise open the real library and run the

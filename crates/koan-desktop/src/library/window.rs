@@ -2,6 +2,7 @@
 //! the navigator is on below them. A stand-in for the app's shell, which
 //! hosts these pages when it lands.
 
+use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::albums::AlbumGrid;
@@ -14,6 +15,7 @@ pub struct LibraryWindow {
     /// The page on screen, built when the navigator arrives at it. Pages are
     /// rebuilt on each visit and put their scroll back from the navigator.
     page: Option<(Page, AnyView)>,
+    info: Option<(i64, Entity<super::info::TrackInfo>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -23,6 +25,7 @@ impl LibraryWindow {
         Self {
             lib,
             page: None,
+            info: None,
             _subscriptions: subscriptions,
         }
     }
@@ -37,31 +40,37 @@ impl LibraryWindow {
         let lib = self.lib.clone();
         let view: AnyView = match current {
             Page::Albums => cx.new(|cx| AlbumGrid::new(lib, window, cx)).into(),
-            other => cx.new(|_| Unbuilt(other)).into(),
+            Page::Artists => cx
+                .new(|cx| super::artists::ArtistBrowser::new(lib, window, cx))
+                .into(),
+            Page::Album(id) => cx
+                .new(|cx| super::album_page::AlbumPage::new(lib, id, window, cx))
+                .into(),
+            Page::Artist(id) => cx
+                .new(|cx| super::artist_page::ArtistPage::new(lib, id, window, cx))
+                .into(),
+            Page::Tracks => cx
+                .new(|cx| super::tracks::TrackBrowser::new(lib, window, cx))
+                .into(),
         };
         self.page = Some((current, view.clone()));
         view
     }
 }
 
-/// A page this branch does not draw yet.
-struct Unbuilt(Page);
-
-impl Render for Unbuilt {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .role(Type::Control, tokens::MUTED)
-            .child(format!("{:?}", self.0))
-    }
-}
-
 impl Render for LibraryWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let page = self.page(window, cx);
+        let wanted = self.lib.nav.read(cx).info;
+        if self.info.as_ref().map(|(id, _)| *id) != wanted {
+            let lib = self.lib.clone();
+            self.info = wanted.map(|id| {
+                (
+                    id,
+                    cx.new(|cx| super::info::TrackInfo::new(lib, id, window, cx)),
+                )
+            });
+        }
         let current = self.lib.nav.read(cx).current();
         let tab = |label: &'static str, target: Page, nav: Entity<super::nav::Nav>| {
             let selected = current == target;
@@ -69,7 +78,7 @@ impl Render for LibraryWindow {
                 .id(label)
                 .cursor_pointer()
                 .pb(px(5.0))
-                .role(
+                .typeset(
                     Type::Control,
                     if selected { tokens::INK } else { tokens::MUTED },
                 )
@@ -87,6 +96,7 @@ impl Render for LibraryWindow {
             .on_action(cx.listener(|this, _: &GoForward, _, cx| {
                 this.lib.nav.update(cx, |n, cx| n.forward(cx))
             }))
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -103,7 +113,7 @@ impl Render for LibraryWindow {
                         div()
                             .id("back")
                             .cursor_pointer()
-                            .role(Type::Control, tokens::MUTED)
+                            .typeset(Type::Control, tokens::MUTED)
                             .hover(|s| s.text_color(tokens::INK))
                             .child("‹")
                             .on_click({
@@ -116,5 +126,6 @@ impl Render for LibraryWindow {
                     .child(tab("tracks", Page::Tracks, nav.clone())),
             )
             .child(div().flex_1().min_h_0().child(page))
+            .when_some(self.info.as_ref(), |d, (_, info)| d.child(info.clone()))
     }
 }

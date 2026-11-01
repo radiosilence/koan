@@ -40,12 +40,12 @@ pub const DIM: Rgba = Rgba {
 pub const FONT: &str = "Geist Mono";
 
 /// The Mac draws the type scale at 0.86 of its points, where Geist Mono's
-/// x-height meets the system face's 13-point body.
+/// x-height meets the system face's 13-point body. Linux and Windows take the
+/// same until their own faces are measured against it.
 const SCALE: f32 = 0.86;
 
 #[derive(Clone, Copy)]
 pub enum Type {
-    Display,
     Title,
     TitleSmall,
     Body,
@@ -58,7 +58,6 @@ impl Type {
     pub fn size(self) -> Pixels {
         px(SCALE
             * match self {
-                Type::Display => 34.0,
                 Type::Title => 26.0,
                 Type::TitleSmall => 22.0,
                 Type::Body => 15.0,
@@ -70,7 +69,6 @@ impl Type {
 
     pub fn weight(self) -> FontWeight {
         match self {
-            Type::Display => FontWeight(200.0),
             Type::Title | Type::TitleSmall => FontWeight::LIGHT,
             _ => FontWeight::NORMAL,
         }
@@ -79,7 +77,6 @@ impl Type {
     pub fn line_height(self) -> Pixels {
         self.size()
             * match self {
-                Type::Display => 1.1,
                 Type::Title | Type::TitleSmall => 1.2,
                 Type::Body => 1.45,
                 Type::Control => 1.3,
@@ -90,7 +87,7 @@ impl Type {
 
 /// Text in a role and tone.
 pub trait Typeset: Styled + Sized {
-    fn role(self, role: Type, tone: Rgba) -> Self {
+    fn typeset(self, role: Type, tone: Rgba) -> Self {
         self.font_family(FONT)
             .text_size(role.size())
             .font_weight(role.weight())
@@ -101,8 +98,8 @@ pub trait Typeset: Styled + Sized {
 
 impl<T: Styled> Typeset for T {}
 
-/// The spacing scale: 4, 8, 12, 16, 22, 32, at half the type's scale on the
-/// Mac (0.93 at 100 %).
+/// The steps of the spacing scale the library uses, at half the type's scale
+/// on the Mac (0.93 at 100 %).
 pub mod space {
     use gpui_kit::{Pixels, px};
     const S: f32 = 0.93;
@@ -118,19 +115,6 @@ pub mod space {
     pub fn s16() -> Pixels {
         px(16.0 * S)
     }
-    pub fn s22() -> Pixels {
-        px(22.0 * S)
-    }
-    pub fn s32() -> Pixels {
-        px(32.0 * S)
-    }
-}
-
-/// Motion: states 80 ms, markers 120 ms, the accent 250 ms.
-pub mod motion {
-    use std::time::Duration;
-    pub const FAST: Duration = Duration::from_millis(80);
-    pub const NORMAL: Duration = Duration::from_millis(120);
 }
 
 pub fn hairline() -> Pixels {

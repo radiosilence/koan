@@ -318,17 +318,20 @@ impl Covers {
         }
     }
 
-    pub fn has(&self, key: Key) -> bool {
-        self.memory.contains_key(&key)
-    }
-
     /// `owner`'s requests, replacing its last ones: a list's visible and
     /// upcoming sleeves ranked as it scrolls, or a page's few. What it no
     /// longer asks for is not started on its account. A record that comes on
     /// screen after a failed fetch is tried again. Never notifies, so it can
     /// be called while drawing.
     pub fn request(&mut self, owner: EntityId, ranked: impl IntoIterator<Item = (Key, Priority)>) {
-        let wanted: HashMap<Key, Priority> = ranked.into_iter().collect();
+        // A key ranked twice keeps its most urgent ranking.
+        let mut wanted: HashMap<Key, Priority> = HashMap::new();
+        for (key, priority) in ranked {
+            let held = wanted.entry(key).or_insert(priority);
+            if priority < *held {
+                *held = priority;
+            }
+        }
         let previous = self.requests.get(&owner);
         if previous == Some(&wanted) {
             return;
@@ -878,6 +881,8 @@ fn decode(data: &[u8], px: u32) -> Option<RenderImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    use core::prelude::v1::test;
 
     #[test]
     fn keys_round_up_to_a_bucket() {

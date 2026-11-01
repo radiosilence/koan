@@ -2,7 +2,10 @@
 //! menu, the selection bar's verbs, a click on a sleeve. Every one is an
 //! engine call awaited off the main thread.
 
-use gpui_kit::component::menu::PopupMenu;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 use koan_ffi::Placement;
 
@@ -34,6 +37,22 @@ pub fn play(lib: &Lib, items: &[Playable], shuffled: bool, cx: &mut App) -> Task
     )
 }
 
+/// Play a list from one of its rows, keeping the rest behind it: a double
+/// click in a track list. Where showing the queue once it plays belongs, when
+/// the shell has one to show.
+pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
+    let engine = lib.engine.clone();
+    cx.spawn(async move |_| {
+        if let Err(e) = engine
+            .replace_queue(track_ids, Some(index as u32), false)
+            .await
+        {
+            log::warn!("play: {e}");
+        }
+    })
+    .detach();
+}
+
 pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut App) {
     let engine = lib.engine.clone();
     let sets = sources(items);
@@ -42,7 +61,7 @@ pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut Ap
         if let Err(e) = engine.add_to_playlist(playlist, sets).await {
             log::warn!("add to playlist {playlist}: {e}");
         }
-        feed.update(cx, |feed, cx| feed.reload_playlists(cx)).ok();
+        feed.update(cx, |feed, cx| feed.reload_playlists(cx));
     })
     .detach();
 }
@@ -60,13 +79,18 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
     });
 }
 
+/// Run after a menu's verb: ends the pick the menu was opened over, as each
+/// of the selection bar's verbs does.
+pub type After = Option<Rc<dyn Fn(&mut App)>>;
+
 /// The context menu for `items`: one thing, or a whole pick. `album` is the
 /// record a single track belongs to, for "go to album".
 pub fn menu(
     menu: PopupMenu,
     lib: &Lib,
-    items: Vec<Playable>,
+    items: Arc<[Playable]>,
     album: Option<i64>,
+    after: After,
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
@@ -76,29 +100,32 @@ pub fn menu(
     let favourited = items.iter().all(|i| lib.feed.read(cx).is_favourite(*i));
     let playlists = lib.feed.read(cx).playlists.clone();
 
-    let item =
-        |label: &'static str, lib: &Lib, items: &[Playable], f: fn(&Lib, &[Playable], &mut App)| {
-            let (lib, items) = (lib.clone(), items.to_vec());
-            gpui_kit::component::menu::PopupMenuItem::new(label)
-                .on_click(move |_, _, cx| f(&lib, &items, cx))
-        };
+    let verb = |label: &'static str, f: fn(&Lib, &[Playable], &mut App)| {
+        let (lib, items, after) = (lib.clone(), items.clone(), after.clone());
+        PopupMenuItem::new(label).on_click(move |_, _, cx| {
+            f(&lib, &items, cx);
+            if let Some(after) = &after {
+                after(cx);
+            }
+        })
+    };
 
     let mut menu = menu
-        .item(item("play", lib, &items, |lib, items, cx| {
+        .item(verb("play", |lib, items, cx| {
             play(lib, items, false, cx).detach()
         }))
-        .item(item("play next", lib, &items, |lib, items, cx| {
+        .item(verb("play next", |lib, items, cx| {
             queue(lib, items, Placement::Next, cx).detach()
         }))
-        .item(item("add to queue", lib, &items, |lib, items, cx| {
+        .item(verb("add to queue", |lib, items, cx| {
             queue(lib, items, Placement::Append, cx).detach()
         }));
     if container {
-        menu = menu.item(item("shuffle", lib, &items, |lib, items, cx| {
+        menu = menu.item(verb("shuffle", |lib, items, cx| {
             play(lib, items, true, cx).detach()
         }));
     }
-    let (sub_lib, sub_items) = (lib.clone(), items.clone());
+    let (sub_lib, sub_items, sub_after) = (lib.clone(), items.clone(), after.clone());
     menu = menu
         .separator()
         .submenu("add to playlist", window, cx, move |mut menu, _, _| {
@@ -106,22 +133,23 @@ pub fn menu(
                 return menu.label("no playlists");
             }
             for (id, name) in &playlists {
-                let (lib, items, id) = (sub_lib.clone(), sub_items.clone(), *id);
-                menu = menu.item(
-                    gpui_kit::component::menu::PopupMenuItem::new(name.clone())
-                        .on_click(move |_, _, cx| add_to_playlist(&lib, id, &items, cx)),
-                );
+                let (lib, items, after, id) =
+                    (sub_lib.clone(), sub_items.clone(), sub_after.clone(), *id);
+                menu = menu.item(PopupMenuItem::new(name.clone()).on_click(move |_, _, cx| {
+                    add_to_playlist(&lib, id, &items, cx);
+                    if let Some(after) = &after {
+                        after(cx);
+                    }
+                }));
             }
             menu
         });
-    menu = menu.item(item(
+    menu = menu.item(verb(
         if favourited {
             "unfavourite"
         } else {
             "favourite"
         },
-        lib,
-        &items,
         favourite,
     ));
     match single {
@@ -129,24 +157,24 @@ pub fn menu(
             let nav = lib.nav.clone();
             if let Some(album) = album {
                 let nav = nav.clone();
-                menu = menu.separator().item(
-                    gpui_kit::component::menu::PopupMenuItem::new("go to album").on_click(
-                        move |_, _, cx| nav.update(cx, |nav, cx| nav.open(Page::Album(album), cx)),
-                    ),
-                );
+                menu = menu
+                    .separator()
+                    .item(PopupMenuItem::new("go to album").on_click(move |_, _, cx| {
+                        nav.update(cx, |nav, cx| nav.open(Page::Album(album), cx))
+                    }));
             }
             menu = menu.item(
-                gpui_kit::component::menu::PopupMenuItem::new("track info")
+                PopupMenuItem::new("track info")
                     .on_click(move |_, _, cx| nav.update(cx, |nav, cx| nav.show_info(id, cx))),
             );
         }
         Some(Playable::Album(id)) => {
             let nav = lib.nav.clone();
-            menu = menu.separator().item(
-                gpui_kit::component::menu::PopupMenuItem::new("open album").on_click(
-                    move |_, _, cx| nav.update(cx, |nav, cx| nav.open(Page::Album(id), cx)),
-                ),
-            );
+            menu =
+                menu.separator()
+                    .item(PopupMenuItem::new("open album").on_click(move |_, _, cx| {
+                        nav.update(cx, |nav, cx| nav.open(Page::Album(id), cx))
+                    }));
         }
         _ => {}
     }

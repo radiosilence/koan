@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::*;
-use koan_ffi::{KoanEngine, StateSlice, TransferState};
+use koan_ffi::{KoanEngine, PlayState, StateSlice, TransferState};
 
 use super::drag::Playable;
 
@@ -18,8 +18,12 @@ pub struct Feed {
     pub library_version: Option<u64>,
     pub playing_album: Option<i64>,
     pub playing_track: Option<i64>,
+    /// The track under the cursor is playing rather than paused or waiting.
+    pub playing: bool,
     /// The tracks still arriving, by record, for a tile's download bar.
     pub arriving: HashMap<i64, Vec<i64>>,
+    /// Each track with a transfer, and where it is: a row's availability.
+    pub transfers: HashMap<i64, TransferState>,
     /// Bumped whenever the connection to the server changes: artwork that
     /// failed to arrive is worth asking for again.
     pub connection_epoch: u64,
@@ -55,7 +59,9 @@ impl Feed {
             library_version: None,
             playing_album: None,
             playing_track: None,
+            playing: false,
             arriving: HashMap::new(),
+            transfers: HashMap::new(),
             connection_epoch: 0,
             reach: None,
             playlists: Vec::new(),
@@ -83,14 +89,24 @@ impl Feed {
                     let entry = now_playing.entry.as_ref();
                     let album = entry.and_then(|e| e.album_id);
                     let track = entry.and_then(|e| e.track_id);
-                    if (album, track) != (self.playing_album, self.playing_track) {
+                    let playing = now_playing.state == PlayState::Playing && !now_playing.waiting;
+                    if (album, track, playing)
+                        != (self.playing_album, self.playing_track, self.playing)
+                    {
                         self.playing_album = album;
                         self.playing_track = track;
+                        self.playing = playing;
                         changed = true;
                     }
                 }
                 StateSlice::Transfers { transfers } => {
                     let mut arriving: HashMap<i64, Vec<i64>> = HashMap::new();
+                    let by_track: HashMap<i64, TransferState> =
+                        transfers.iter().map(|t| (t.track_id, t.state)).collect();
+                    if by_track != self.transfers {
+                        self.transfers = by_track;
+                        changed = true;
+                    }
                     for t in transfers {
                         if matches!(t.state, TransferState::Queued | TransferState::Running)
                             && let Some(album) = t.album_id

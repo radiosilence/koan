@@ -2,16 +2,23 @@
 //! record and an artist.
 
 pub mod actions;
+pub mod album_page;
 pub mod albums;
+pub mod artist_page;
+pub mod artists;
 pub mod browse;
 pub mod chrome;
 pub mod covers;
 pub mod drag;
 pub mod feed;
+pub mod format;
+pub mod info;
 pub mod nav;
+pub mod rows;
 pub mod selection;
 pub mod tile;
 pub mod tokens;
+pub mod tracks;
 pub mod window;
 
 use std::cell::Cell;
@@ -20,6 +27,17 @@ use std::sync::Arc;
 
 use gpui_kit::*;
 use koan_ffi::KoanEngine;
+
+/// A listener on `view` that outlives the borrow of its context: what
+/// `cx.listener` gives, for a handler made inside a closure over that context.
+pub fn listen<V: 'static, E: ?Sized + 'static>(
+    view: WeakEntity<V>,
+    f: impl Fn(&mut V, &E, &mut Window, &mut Context<V>) + 'static,
+) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+    move |event, window, cx| {
+        view.update(cx, |v, cx| f(v, event, window, cx)).ok();
+    }
+}
 
 /// What every library page reads and acts through.
 #[derive(Clone)]

@@ -5,18 +5,16 @@
 //! Hover is drawn by GPUI's group styles rather than tracked state, so the
 //! pointer moving over a grid redraws nothing but the tile under it.
 
-use std::sync::Arc;
-
 use gpui_kit::component::menu::ContextMenuExt;
+use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::Album;
 
 use super::Lib;
 use super::actions;
 use super::covers::Sleeve;
-use super::drag::{Playable, PlayableDrag};
-use super::selection::Selection;
-use super::tokens::{self, Type, Typeset, space};
+use super::drag::PlayableDrag;
+use super::tokens::{self, Type, Typeset};
 
 /// Columns of at least 150 points sharing the width, up to 210 each, as the
 /// Mac's grid lays them out. Every tile is the same size, so nothing is
@@ -82,9 +80,6 @@ pub enum Part {
 /// What a page holding tiles does with them.
 pub trait TileHost: Sized + 'static {
     fn lib(&self) -> &Lib;
-    fn selection(&self) -> &Selection;
-    /// The record was just played and is not playing yet.
-    fn starting(&self, album: i64) -> bool;
     fn clicked(
         &mut self,
         album: i64,
@@ -103,6 +98,12 @@ pub struct TileState {
     pub selected: bool,
     pub starting: bool,
     pub show_artist: bool,
+    /// What dragging the tile carries, and what its menu acts on: the page's
+    /// pick when the tile is in it, built once for the pick; itself
+    /// otherwise.
+    pub drag: PlayableDrag,
+    /// Run after a menu verb: ends the pick when the menu acted on one.
+    pub after: actions::After,
 }
 
 pub fn tile<V: TileHost>(
@@ -115,11 +116,15 @@ pub fn tile<V: TileHost>(
 ) -> AnyElement {
     let id = album.id;
     let lib = host.lib().clone();
-    let click = |part: Part, cx: &mut Context<V>| {
-        cx.listener(move |this: &mut V, e: &ClickEvent, window, cx| {
-            cx.stop_propagation();
-            this.clicked(id, part, e.modifiers(), window, cx)
-        })
+    let view = cx.weak_entity();
+    let click = |part: Part| {
+        super::listen(
+            view.clone(),
+            move |this: &mut V, e: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                this.clicked(id, part, e.modifiers(), window, cx)
+            },
+        )
     };
 
     let mut art = div()
@@ -130,7 +135,7 @@ pub fn tile<V: TileHost>(
         .flex_none()
         .bg(tokens::SURFACE)
         .cursor_pointer()
-        .on_click(click(Part::Sleeve, cx));
+        .on_click(click(Part::Sleeve));
     if let Sleeve::Ready(image) = sleeve {
         art = art.child(img(ImageSource::Render(image)).size_full());
     }
@@ -142,6 +147,8 @@ pub fn tile<V: TileHost>(
     if let (Some(release), false) = (&album.release_badge, state.selecting) {
         art = art.child(badge(release.clone()).top(px(6.0)).left(px(6.0)));
     }
+    // The dim snaps in and out for now; it takes the theme's 120 ms when the
+    // motion tokens land.
     if state.starting || !state.selecting {
         art = art.child(
             div()
@@ -151,7 +158,7 @@ pub fn tile<V: TileHost>(
                 .items_center()
                 .justify_center()
                 .bg(tokens::DIM)
-                .role(Type::TitleSmall, tokens::STRONG)
+                .typeset(Type::TitleSmall, tokens::STRONG)
                 .when(!state.starting, |d| {
                     d.opacity(0.0).group_hover("sleeve", |s| s.opacity(1.0))
                 })
@@ -170,12 +177,12 @@ pub fn tile<V: TileHost>(
             .absolute()
             .right(px(7.0))
             .bottom(px(7.0))
-            .size(px(26.0))
+            .size(px(30.0))
             .flex()
             .items_center()
             .justify_center()
             .bg(tokens::SURFACE)
-            .role(
+            .typeset(
                 Type::Meta,
                 if state.favourite {
                     tokens::ACCENT
@@ -184,7 +191,7 @@ pub fn tile<V: TileHost>(
                 },
             )
             .cursor_pointer()
-            .on_click(click(Part::Heart, cx))
+            .on_click(click(Part::Heart))
             .child(if state.favourite { "♥" } else { "♡" });
         art = art.child(if state.favourite {
             heart
@@ -193,20 +200,27 @@ pub fn tile<V: TileHost>(
         });
     }
     if state.selecting {
-        art = art
-            .when(state.selected, |d| {
-                d.border_3().border_color(tokens::ACCENT)
-            })
-            .child(
+        // Over the art rather than a border on it, so ticking a tile neither
+        // shrinks its sleeve nor moves it.
+        if state.selected {
+            art = art.child(
                 div()
                     .absolute()
-                    .top(px(7.0))
-                    .left(px(7.0))
-                    .size(px(18.0))
-                    .border_1()
-                    .border_color(tokens::STRONG)
-                    .when(state.selected, |d| d.bg(tokens::ACCENT)),
+                    .inset_0()
+                    .border_3()
+                    .border_color(tokens::ACCENT),
             );
+        }
+        art = art.child(
+            div()
+                .absolute()
+                .top(px(7.0))
+                .left(px(7.0))
+                .size(px(20.0))
+                .border_1()
+                .border_color(tokens::STRONG)
+                .when(state.selected, |d| d.bg(tokens::ACCENT)),
+        );
     }
 
     let title = div()
@@ -215,10 +229,10 @@ pub fn tile<V: TileHost>(
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
-        .role(Type::Meta, tokens::INK)
+        .typeset(Type::Meta, tokens::INK)
         .cursor_pointer()
         .when(!state.selecting, |d| d.hover(|s| s.underline()))
-        .on_click(click(Part::Title, cx))
+        .on_click(click(Part::Title))
         .child(album.title.clone());
 
     let mut credit = div()
@@ -226,7 +240,7 @@ pub fn tile<V: TileHost>(
         .w_full()
         .overflow_hidden()
         .whitespace_nowrap()
-        .role(Type::Fine, tokens::MUTED);
+        .typeset(Type::Fine, tokens::MUTED);
     if state.show_artist {
         for (i, part) in album.artist_credit.iter().enumerate() {
             let span = div()
@@ -236,7 +250,7 @@ pub fn tile<V: TileHost>(
                 Some(artist) if !state.selecting => span
                     .cursor_pointer()
                     .hover(|s| s.underline().text_color(tokens::INK))
-                    .on_click(click(Part::Artist(artist), cx)),
+                    .on_click(click(Part::Artist(artist))),
                 _ => span,
             });
         }
@@ -249,19 +263,8 @@ pub fn tile<V: TileHost>(
         });
     }
 
-    let selection = host.selection();
-    let items = if selection.is_active() {
-        selection.dragging(Playable::Album(id))
-    } else {
-        vec![Playable::Album(id)]
-    };
-    let label: SharedString = if items.len() > 1 {
-        format!("{} items", items.len()).into()
-    } else {
-        album.title.clone().into()
-    };
-    let drag = PlayableDrag::new(&items, label);
-
+    let drag = state.drag;
+    let (items, after) = (drag.items.clone(), state.after);
     div()
         .id(("tile", id as u64))
         .group("tile")
@@ -274,7 +277,7 @@ pub fn tile<V: TileHost>(
         .child(credit)
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
         .context_menu(move |menu, window, cx| {
-            actions::menu(menu, &lib, items.clone(), None, window, cx)
+            actions::menu(menu, &lib, items.clone(), None, after.clone(), window, cx)
         })
         .into_any_element()
 }
@@ -282,10 +285,10 @@ pub fn tile<V: TileHost>(
 fn badge(text: impl Into<SharedString>) -> Div {
     div()
         .absolute()
-        .px(space::s4() * 1.5)
-        .py(px(3.0))
+        .px(px(6.0))
+        .py(px(2.0))
         .bg(tokens::SURFACE)
-        .role(Type::Fine, tokens::INK)
+        .typeset(Type::Fine, tokens::INK)
         .child(text.into())
 }
 
@@ -320,18 +323,11 @@ fn download_bar(album: &Album, arriving: bool) -> Option<Div> {
     )
 }
 
-/// The sleeve's image, if `sleeve` has one: for the pages that draw a cover
-/// of their own.
-pub fn sleeve_image(sleeve: Sleeve) -> Option<Arc<RenderImage>> {
-    match sleeve {
-        Sleeve::Ready(image) => Some(image),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    use core::prelude::v1::test;
 
     #[test]
     fn columns_share_the_width_within_the_tile_bounds() {

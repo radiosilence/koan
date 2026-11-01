@@ -12,16 +12,22 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Album, AlbumSort, BrowseFilter};
 
 use super::covers::{Art, Covers, Key, Priority};
-use super::drag::Playable;
+use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::selection::Selection;
 use super::tile::{self, Grid, Part, TileHost, TileState};
 use super::tokens::{self, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+
+/// How long typing in the filter field waits for the next keystroke before
+/// asking again: each answer is the whole listing, and asking per keystroke
+/// queues listings nobody will see.
+const TYPING: Duration = Duration::from_millis(80);
 
 #[derive(Clone, PartialEq)]
 struct Query {
@@ -31,22 +37,36 @@ struct Query {
     seed: i64,
 }
 
+impl Query {
+    /// Only the search differs: a keystroke.
+    fn typed(&self, other: &Query) -> bool {
+        self.search != other.search
+            && self.filter == other.filter
+            && self.sort == other.sort
+            && self.seed == other.seed
+    }
+}
+
 /// Where the scroll is, how fast it is going, and, in a flick's momentum,
 /// how quickly it is slowing.
 #[derive(Default)]
 struct Heading {
+    /// Distance scrolled from the top of the content, the list's top margin
+    /// included.
     offset: f32,
     at: Option<Instant>,
     /// Points per second, positive downwards.
     velocity: f32,
     /// The velocity falls as e^(-decay·t), so a flick comes to rest
     /// `velocity / decay` points on. Only known where the platform reports a
-    /// gesture's end before its momentum (macOS); never set elsewhere.
+    /// gesture's end before its momentum (macOS); never set elsewhere, and
+    /// nothing depends on it being set.
     decay: Option<f32>,
     /// The fingers lifted and the scroll goes on: momentum.
     lifted: bool,
     coasting: bool,
     visible: Range<usize>,
+    viewport: f32,
 }
 
 pub struct AlbumGrid {
@@ -54,19 +74,22 @@ pub struct AlbumGrid {
     albums: Rc<Vec<Album>>,
     /// The page in its order, for ⇧ ranges and ⌘A.
     order: Vec<Playable>,
-    loaded: Option<(Query, Option<u64>)>,
-    loading: Option<(Query, Option<u64>)>,
+    loaded: Option<(Query, u64)>,
+    loading: Option<(Query, u64)>,
     request: u64,
     _load: Option<Task<()>>,
     scroll: UniformListScrollHandle,
-    width: Rc<Cell<Pixels>>,
+    /// The list's width as last laid out; nothing is drawn in it until known.
+    width: Rc<Cell<Option<Pixels>>>,
     /// The window's scale factor as of the last frame, for the device size
     /// sleeves are decoded at.
     scale: Cell<f32>,
-    grid: Grid,
+    grid: Option<Grid>,
     heading: Rc<RefCell<Heading>>,
     stopped: Option<Task<()>>,
     selection: Selection,
+    /// The pick's drag payload, and the selection revision it was built for.
+    pick: Option<(u64, PlayableDrag)>,
     starting: HashSet<i64>,
     /// Where to put the scroll back to once the records are in.
     restore: Option<Pixels>,
@@ -93,7 +116,13 @@ impl AlbumGrid {
                     .retain(|p| !matches!(p, Playable::Album(id) if albums.contains(&id)));
                 cx.notify();
             }),
-            cx.on_release(move |this, cx| this.lib.covers.update(cx, |c, _| c.release(id))),
+            cx.on_release(move |this, cx| {
+                let offset = px(this.heading.borrow().offset);
+                this.lib
+                    .nav
+                    .update(cx, |nav, _| nav.remember_offset(Page::Albums, offset));
+                this.lib.covers.update(cx, |c, _| c.release(id));
+            }),
         ];
         let rewinds = lib.nav.read(cx).rewinds(Page::Albums);
         let restore = lib.nav.read(cx).offset(Page::Albums);
@@ -108,12 +137,13 @@ impl AlbumGrid {
             request: 0,
             _load: None,
             scroll: UniformListScrollHandle::new(),
-            width: Rc::new(Cell::new(window.viewport_size().width)),
+            width: Rc::new(Cell::new(None)),
             scale: Cell::new(window.scale_factor()),
-            grid: Grid::for_width(window.viewport_size().width),
+            grid: None,
             heading: Rc::default(),
             stopped: None,
             selection: Selection::default(),
+            pick: None,
             starting: HashSet::new(),
             restore,
             rewinds,
@@ -138,19 +168,32 @@ impl AlbumGrid {
 
     /// Ask for the listing again when what it answers to has moved: the
     /// query, or the library under it. What is on screen stays until the new
-    /// listing lands, so the scroll and the pick are not lost meanwhile.
+    /// listing lands, so the scroll and the pick are not lost meanwhile. A
+    /// keystroke waits a moment for the next one.
     fn reload(&mut self, cx: &mut Context<Self>) {
-        let version = self.lib.feed.read(cx).library_version;
+        // The engine's first report comes within a frame or two; loading
+        // before it would load twice.
+        let Some(version) = self.lib.feed.read(cx).library_version else {
+            return;
+        };
         let wanted = (self.query(cx), version);
         if self.loaded.as_ref() == Some(&wanted) || self.loading.as_ref() == Some(&wanted) {
             return;
         }
+        let typed = self
+            .loading
+            .as_ref()
+            .or(self.loaded.as_ref())
+            .is_some_and(|(q, v)| *v == version && wanted.0.typed(q));
         self.request += 1;
         let request = self.request;
         self.loading = Some(wanted.clone());
         let engine = self.lib.engine.clone();
         let q = wanted.0.clone();
         self._load = Some(cx.spawn(async move |this, cx| {
+            if typed {
+                cx.background_executor().timer(TYPING).await;
+            }
             let albums = engine
                 .albums(None, q.sort, q.seed, q.search, q.filter)
                 .await;
@@ -180,18 +223,19 @@ impl AlbumGrid {
         }));
     }
 
-    /// Rank what the cache should work on, from the rows on screen and the
-    /// scroll's heading. Called from the list's layout every painted frame,
-    /// and once more when the scroll stops; never notifies.
+    /// Note where the scroll is from the list's layout, every painted frame,
+    /// and aim the cache from it. Never notifies.
     fn aim(&mut self, visible: Range<usize>, window: &mut Window, cx: &mut Context<Self>) {
         let state = self.scroll.0.borrow();
         let offset = -f32::from(state.base_handle.offset().y);
         let viewport = f32::from(state.base_handle.bounds().size.height);
         drop(state);
+        self.scale.set(window.scale_factor());
         let now = Instant::now();
         let moved = {
             let mut h = self.heading.borrow_mut();
-            h.visible = visible.clone();
+            h.visible = visible;
+            h.viewport = viewport;
             let moved = h.at.is_none() || (offset - h.offset).abs() > 0.5;
             if moved {
                 let elapsed = h.at.map_or(0.0, |at| now.duration_since(at).as_secs_f32());
@@ -219,9 +263,6 @@ impl AlbumGrid {
             moved
         };
         if moved {
-            self.lib
-                .nav
-                .update(cx, |nav, _| nav.remember_offset(Page::Albums, px(offset)));
             // The scroll has stopped when nothing has moved it for a moment:
             // the heading goes still and the cache is re-aimed three rows
             // either way.
@@ -235,68 +276,93 @@ impl AlbumGrid {
                         h.velocity = 0.0;
                         h.decay = None;
                     }
-                    this.send_aim(viewport, cx);
+                    this.send_aim(cx);
                 })
                 .ok();
             }));
         }
-        self.scale.set(window.scale_factor());
-        self.send_aim(viewport, cx);
+        self.send_aim(cx);
     }
 
-    fn send_aim(&mut self, viewport: f32, cx: &mut Context<Self>) {
+    fn send_aim(&mut self, cx: &mut Context<Self>) {
+        let Some(grid) = self.grid else { return };
         let scale = self.scale.get();
-        let ranked = rank(
-            &self.heading.borrow(),
-            &self.grid,
-            viewport,
-            self.albums.len(),
-            |row| {
-                let start = row * self.grid.columns;
-                self.albums[start..(start + self.grid.columns).min(self.albums.len())]
-                    .iter()
-                    .map(|a| Key::new(Art::Album(a.id), self.grid.side, scale))
-                    .collect()
-            },
-        );
+        let albums = self.albums.clone();
+        let ranked = rank(&self.heading.borrow(), &grid, albums.len(), |row| {
+            let start = row * grid.columns;
+            let end = (start + grid.columns).min(albums.len());
+            albums
+                .get(start..end)
+                .unwrap_or_default()
+                .iter()
+                .map(|a| Key::new(Art::Album(a.id), grid.side, scale))
+                .collect()
+        });
         let owner = cx.entity_id();
         self.lib
             .covers
             .update(cx, |covers, _| covers.request(owner, ranked));
     }
 
-    fn row(&mut self, row: usize, cx: &mut Context<Self>) -> AnyElement {
-        let start = row * self.grid.columns;
-        let end = (start + self.grid.columns).min(self.albums.len());
+    /// The pick's drag payload, built once per change to the pick.
+    fn pick(&mut self) -> Option<PlayableDrag> {
+        if !self.selection.is_active() || self.selection.picked().is_empty() {
+            return None;
+        }
+        let revision = self.selection.revision();
+        if self.pick.as_ref().is_none_or(|(r, _)| *r != revision) {
+            let picked = self.selection.picked();
+            let label = chrome::count(picked.len() as u64, "item", "items");
+            self.pick = Some((revision, PlayableDrag::new(picked, label)));
+        }
+        self.pick.as_ref().map(|(_, drag)| drag.clone())
+    }
+
+    fn row(&mut self, row: usize, grid: Grid, cx: &mut Context<Self>) -> AnyElement {
+        let start = row * grid.columns;
+        let end = (start + grid.columns).min(self.albums.len());
         let albums = self.albums.clone();
         let scale = self.scale.get();
-        let feed = self.lib.feed.read(cx);
-        let states: Vec<TileState> = albums[start..end]
-            .iter()
-            .map(|a| TileState {
-                favourite: feed.is_favourite(Playable::Album(a.id)),
-                playing: feed.playing_album == Some(a.id),
-                arriving: feed.arriving.contains_key(&a.id),
-                selecting: self.selection.is_active(),
-                selected: self.selection.contains(Playable::Album(a.id)),
-                starting: self.starting.contains(&a.id),
-                show_artist: true,
+        let pick = self.pick();
+        let entity = cx.entity();
+        let after: actions::After = Some(std::rc::Rc::new(move |cx: &mut App| {
+            entity.update(cx, |this, cx| {
+                this.selection.end();
+                cx.notify();
             })
-            .collect();
-        let mut tiles = Vec::with_capacity(end - start);
-        for (album, state) in albums[start..end].iter().zip(states) {
-            let key = Key::new(Art::Album(album.id), self.grid.side, scale);
+        }));
+        let mut tiles = Vec::with_capacity(end.saturating_sub(start));
+        for album in albums.get(start..end).unwrap_or_default() {
+            let item = Playable::Album(album.id);
+            let selected = self.selection.contains(item);
+            let (drag, after) = match (&pick, selected) {
+                (Some(pick), true) => (pick.clone(), after.clone()),
+                _ => (PlayableDrag::new(&[item], album.title.clone()), None),
+            };
+            let feed = self.lib.feed.read(cx);
+            let state = TileState {
+                favourite: feed.is_favourite(item),
+                playing: feed.playing_album == Some(album.id),
+                arriving: feed.arriving.contains_key(&album.id),
+                selecting: self.selection.is_active(),
+                selected,
+                starting: self.starting.contains(&album.id),
+                show_artist: true,
+                drag,
+                after,
+            };
+            let key = Key::new(Art::Album(album.id), grid.side, scale);
             let sleeve = self
                 .lib
                 .covers
                 .update(cx, |c: &mut Covers, _| c.sleeve(key));
-            tiles.push(tile::tile(album, self.grid.side, sleeve, state, self, cx));
+            tiles.push(tile::tile(album, grid.side, sleeve, state, self, cx));
         }
         div()
             .flex()
-            .gap(self.grid.gap)
-            .px(self.grid.margin)
-            .h(self.grid.row)
+            .gap(grid.gap)
+            .px(grid.margin)
+            .h(grid.row)
             .children(tiles)
             .into_any_element()
     }
@@ -324,26 +390,45 @@ impl AlbumGrid {
             _ => h.coasting = h.lifted,
         }
     }
+
+    /// A new column count keeps the record at the top of the screen at the
+    /// top, rather than the pixel offset, which would land in another band
+    /// of records.
+    fn relayout(&mut self, grid: Grid) {
+        if let Some(old) = self.grid {
+            let top = (self.heading.borrow().offset - f32::from(old.margin)).max(0.0);
+            let first = (top / f32::from(old.row)) as usize * old.columns;
+            let y = (first / grid.columns) as f32 * f32::from(grid.row);
+            self.scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(point(px(0.0), -px(y)));
+        }
+        self.grid = Some(grid);
+    }
 }
 
 /// Every key worth working on and how much it matters: the rows on screen,
 /// then the screenful where a flick will come to rest, then the rows in the
 /// direction of travel as far as the scroll reaches in the next few hundred
 /// milliseconds, and a few past them, with rows behind; at rest, three rows
-/// either way. Ported from the Mac grid's `aim`.
+/// either way. Ported from the Mac grid's `aim`. Rows are laid out below the
+/// grid's top margin.
 fn rank(
     heading: &Heading,
     grid: &Grid,
-    viewport: f32,
     items: usize,
     keys_of_row: impl Fn(usize) -> Vec<Key>,
 ) -> Vec<(Key, Priority)> {
     let rows = grid.rows(items);
     let row = f32::from(grid.row);
+    let viewport = heading.viewport;
     if rows == 0 || row <= 0.0 || viewport <= 0.0 {
         return Vec::new();
     }
-    let (top, bottom) = (heading.offset, heading.offset + viewport);
+    let top = heading.offset - f32::from(grid.margin);
+    let bottom = top + viewport;
     let speed = heading.velocity.abs();
     let still = speed < 60.0;
     let reach = if still {
@@ -362,37 +447,32 @@ fn rank(
         .decay
         .map(|decay| (top + heading.velocity / decay).clamp(0.0, end));
 
-    let row_of = |y: f32| ((y / row).floor().max(0.0) as usize).min(rows - 1);
+    let row_of = |y: f32| ((y.max(0.0) / row).floor() as usize).min(rows - 1);
     let distance = |r: usize, top: f32, bottom: f32| {
         let (rt, rb) = (r as f32 * row, (r + 1) as f32 * row);
         (rt - bottom).max(top - rb).max(0.0)
     };
+    // Last frame's rows, which a listing that has shrunk since may no
+    // longer have.
+    let visible = heading.visible.start.min(rows)..heading.visible.end.min(rows);
     let mut ranked: Vec<(Key, Priority)> = Vec::new();
-    let mut push = |r: usize, p: Priority, ranked: &mut Vec<(Key, Priority)>| {
+    let mut push = |r: usize, p: Priority| {
         for key in keys_of_row(r) {
             ranked.push((key, p));
         }
     };
-    for r in row_of(from.max(0.0))..=row_of(to.max(0.0)) {
-        let d = distance(r, top, bottom);
-        let p = if d == 0.0 && heading.visible.contains(&r) {
-            Priority::Visible
-        } else {
-            Priority::Ahead(d)
-        };
-        push(r, p, &mut ranked);
-    }
-    if let Some(y) = rest {
-        for r in row_of((y - row).max(0.0))..=row_of(y + viewport + row) {
-            push(
-                r,
-                Priority::Landing(distance(r, y, y + viewport)),
-                &mut ranked,
-            );
+    for r in row_of(from)..=row_of(to) {
+        if !visible.contains(&r) {
+            push(r, Priority::Ahead(distance(r, top, bottom)));
         }
     }
-    for r in heading.visible.clone() {
-        push(r, Priority::Visible, &mut ranked);
+    if let Some(y) = rest {
+        for r in row_of(y - row)..=row_of(y + viewport + row) {
+            push(r, Priority::Landing(distance(r, y, y + viewport)));
+        }
+    }
+    for r in visible {
+        push(r, Priority::Visible);
     }
     ranked
 }
@@ -408,14 +488,6 @@ impl TileHost for AlbumGrid {
         &self.lib
     }
 
-    fn selection(&self) -> &Selection {
-        &self.selection
-    }
-
-    fn starting(&self, album: i64) -> bool {
-        self.starting.contains(&album)
-    }
-
     fn clicked(
         &mut self,
         album: i64,
@@ -428,7 +500,7 @@ impl TileHost for AlbumGrid {
         let item = Playable::Album(album);
         if self
             .selection
-            .take(item, modifiers.shift, modifiers.secondary(), &self.order)
+            .take(item, modifiers.shift, modifiers.secondary(cx), &self.order)
         {
             cx.notify();
             return;
@@ -481,9 +553,11 @@ impl Render for AlbumGrid {
                 .base_handle
                 .set_offset(Point::default());
         }
-        let grid = Grid::for_width(self.width.get());
-        if grid != self.grid {
-            self.grid = grid;
+        if let Some(width) = self.width.get() {
+            let grid = Grid::for_width(width);
+            if Some(grid) != self.grid {
+                self.relayout(grid);
+            }
         }
         let count = self.albums.len();
         let narrowed = self.lib.browse.read(cx).is_narrowed();
@@ -514,8 +588,8 @@ impl Render for AlbumGrid {
         let entity = cx.entity_id();
         let measure = canvas(
             move |bounds, _, cx| {
-                if width.get() != bounds.size.width {
-                    width.set(bounds.size.width);
+                if width.get() != Some(bounds.size.width) {
+                    width.set(Some(bounds.size.width));
                     cx.notify(entity);
                 }
             },
@@ -524,8 +598,8 @@ impl Render for AlbumGrid {
         .absolute()
         .size_full();
 
-        let body = if count == 0 && self.loaded.is_some() {
-            chrome::empty_state(
+        let body = match self.grid {
+            _ if count == 0 && self.loaded.is_some() => chrome::empty_state(
                 if narrowed {
                     "nothing matches"
                 } else {
@@ -537,20 +611,21 @@ impl Render for AlbumGrid {
                     "add a music folder in settings, or sign in to a server."
                 },
             )
-            .into_any_element()
-        } else {
-            uniform_list(
+            .into_any_element(),
+            Some(grid) => uniform_list(
                 "albums",
-                self.grid.rows(count),
-                cx.processor(|this, range: Range<usize>, window, cx| {
+                grid.rows(count),
+                cx.processor(move |this, range: Range<usize>, window, cx| {
                     this.aim(range.clone(), window, cx);
-                    range.map(|row| this.row(row, cx)).collect::<Vec<_>>()
+                    range.map(|row| this.row(row, grid, cx)).collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)
-            .pt(self.grid.margin)
+            .pt(grid.margin)
+            .pb(grid.margin)
             .size_full()
-            .into_any_element()
+            .into_any_element(),
+            None => div().into_any_element(),
         };
 
         div()
@@ -562,7 +637,7 @@ impl Render for AlbumGrid {
             .flex()
             .flex_col()
             .bg(tokens::BG)
-            .role(Type::Body, tokens::INK)
+            .typeset(Type::Body, tokens::INK)
             .child(header)
             .child(
                 div()
@@ -588,6 +663,8 @@ impl Render for AlbumGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    use core::prelude::v1::test;
 
     fn grid() -> Grid {
         Grid::for_width(px(800.0))
@@ -608,18 +685,23 @@ mod tests {
             .reduce(|a, b| if b < a { b } else { a })
     }
 
+    fn at(g: &Grid, row: f32) -> f32 {
+        row * f32::from(g.row) + f32::from(g.margin)
+    }
+
     #[test]
     fn at_rest_three_rows_either_way_and_the_screen_first() {
         let g = grid();
         let row = f32::from(g.row);
         let heading = Heading {
-            offset: 10.0 * row,
+            offset: at(&g, 10.0),
             visible: 10..13,
+            viewport: 3.0 * row,
             ..Heading::default()
         };
-        let ranked = rank(&heading, &g, 3.0 * row, 1000 * g.columns, keys);
+        let ranked = rank(&heading, &g, 1000 * g.columns, keys);
         assert_eq!(priority(&ranked, 11), Some(Priority::Visible));
-        assert!(matches!(priority(&ranked, 7), Some(Priority::Ahead(_))));
+        assert_eq!(priority(&ranked, 7), Some(Priority::Ahead(2.0 * row)));
         assert!(matches!(priority(&ranked, 15), Some(Priority::Ahead(_))));
         assert_eq!(priority(&ranked, 5), None);
         assert_eq!(priority(&ranked, 17), None);
@@ -630,13 +712,14 @@ mod tests {
         let g = grid();
         let row = f32::from(g.row);
         let heading = Heading {
-            offset: 10.0 * row,
+            offset: at(&g, 10.0),
             velocity: 4000.0,
             decay: Some(2.0),
             visible: 10..13,
+            viewport: 3.0 * row,
             ..Heading::default()
         };
-        let ranked = rank(&heading, &g, 3.0 * row, 1000 * g.columns, keys);
+        let ranked = rank(&heading, &g, 1000 * g.columns, keys);
         assert!(matches!(priority(&ranked, 20), Some(Priority::Ahead(_))));
         assert_eq!(priority(&ranked, 6), None);
         // 2000 points on, where the flick comes to rest.
@@ -648,7 +731,30 @@ mod tests {
     }
 
     #[test]
+    fn rows_a_shrunk_listing_no_longer_has_are_not_ranked() {
+        let g = grid();
+        let row = f32::from(g.row);
+        let heading = Heading {
+            offset: at(&g, 40.0),
+            visible: 40..43,
+            viewport: 3.0 * row,
+            ..Heading::default()
+        };
+        let items = 5 * g.columns;
+        let ranked = rank(&heading, &g, items, keys);
+        assert!(
+            ranked
+                .iter()
+                .all(|(k, _)| matches!(k.art, Art::Album(r) if (r as usize) < 5))
+        );
+    }
+
+    #[test]
     fn an_empty_grid_ranks_nothing() {
-        assert!(rank(&Heading::default(), &grid(), 600.0, 0, keys).is_empty());
+        let heading = Heading {
+            viewport: 600.0,
+            ..Heading::default()
+        };
+        assert!(rank(&heading, &grid(), 0, keys).is_empty());
     }
 }

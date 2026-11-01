@@ -1,0 +1,375 @@
+//! The artist browser: every artist in the library, narrowed by the shared
+//! filter and search, as the Mac's artist list draws them: a play mark under
+//! the pointer, the name, which opens the artist, the heart, and how many
+//! records and tracks.
+
+use std::collections::HashSet;
+use std::ops::Range;
+use std::time::Duration;
+
+use gpui_kit::component::menu::ContextMenuExt;
+use gpui_kit::prelude::*;
+use gpui_kit::*;
+use koan_ffi::{Artist, BrowseFilter};
+
+use super::drag::{Playable, PlayableDrag};
+use super::nav::Page;
+use super::selection::Selection;
+use super::tokens::{self, Type, Typeset, space};
+use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
+
+const TYPING: Duration = Duration::from_millis(80);
+
+#[derive(Clone, PartialEq)]
+struct Query {
+    search: Option<String>,
+    filter: BrowseFilter,
+}
+
+pub struct ArtistBrowser {
+    lib: Lib,
+    artists: Vec<Artist>,
+    order: Vec<Playable>,
+    loaded: Option<(Query, u64)>,
+    loading: Option<(Query, u64)>,
+    request: u64,
+    _load: Option<Task<()>>,
+    scroll: UniformListScrollHandle,
+    selection: Selection,
+    pick: Option<(u64, PlayableDrag)>,
+    starting: HashSet<i64>,
+    restore: Option<Pixels>,
+    rewinds: u64,
+    focus: FocusHandle,
+    search: Entity<chrome::SearchField>,
+    filters: Entity<chrome::FilterPanel>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl ArtistBrowser {
+    pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let subscriptions = vec![
+            cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            cx.observe(&lib.feed, |this, _, cx| {
+                this.reload(cx);
+                cx.notify();
+            }),
+            cx.subscribe(&lib.covers, |this, _, gone: &super::covers::Evicted, cx| {
+                let artists: HashSet<i64> = gone.artists.iter().copied().collect();
+                this.selection
+                    .retain(|p| !matches!(p, Playable::Artist(id) if artists.contains(&id)));
+                cx.notify();
+            }),
+            cx.on_release(|this, cx| {
+                let offset = -this.scroll.0.borrow().base_handle.offset().y;
+                this.lib
+                    .nav
+                    .update(cx, |nav, _| nav.remember_offset(Page::Artists, offset));
+            }),
+        ];
+        let rewinds = lib.nav.read(cx).rewinds(Page::Artists);
+        let restore = lib.nav.read(cx).offset(Page::Artists);
+        let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
+        let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
+        let mut this = Self {
+            lib,
+            artists: Vec::new(),
+            order: Vec::new(),
+            loaded: None,
+            loading: None,
+            request: 0,
+            _load: None,
+            scroll: UniformListScrollHandle::new(),
+            selection: Selection::default(),
+            pick: None,
+            starting: HashSet::new(),
+            restore,
+            rewinds,
+            focus: cx.focus_handle(),
+            search,
+            filters,
+            _subscriptions: subscriptions,
+        };
+        this.reload(cx);
+        this
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        let Some(version) = self.lib.feed.read(cx).library_version else {
+            return;
+        };
+        let browse = self.lib.browse.read(cx);
+        let wanted = (
+            Query {
+                search: browse.search(),
+                filter: browse.filter.clone(),
+            },
+            version,
+        );
+        if self.loaded.as_ref() == Some(&wanted) || self.loading.as_ref() == Some(&wanted) {
+            return;
+        }
+        let typed = self
+            .loading
+            .as_ref()
+            .or(self.loaded.as_ref())
+            .is_some_and(|(q, v)| *v == version && q.filter == wanted.0.filter);
+        self.request += 1;
+        let request = self.request;
+        self.loading = Some(wanted.clone());
+        let engine = self.lib.engine.clone();
+        self._load = Some(cx.spawn(async move |this, cx| {
+            if typed {
+                cx.background_executor().timer(TYPING).await;
+            }
+            let q = wanted.0.clone();
+            let artists = engine.artists(q.search, q.filter).await;
+            this.update(cx, |this, cx| {
+                if this.request != request {
+                    return;
+                }
+                this.loading = None;
+                match artists {
+                    Ok(artists) => {
+                        this.order = artists.iter().map(|a| Playable::Artist(a.id)).collect();
+                        this.artists = artists;
+                        this.loaded = Some(wanted);
+                        if let Some(y) = this.restore.take() {
+                            this.scroll
+                                .0
+                                .borrow()
+                                .base_handle
+                                .set_offset(point(px(0.0), -y));
+                        }
+                    }
+                    Err(e) => log::warn!("artists: {e}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn pick(&mut self) -> Option<PlayableDrag> {
+        if self.selection.picked().is_empty() {
+            return None;
+        }
+        let revision = self.selection.revision();
+        if self.pick.as_ref().is_none_or(|(r, _)| *r != revision) {
+            let picked = self.selection.picked();
+            let label = chrome::count(picked.len() as u64, "artist", "artists");
+            self.pick = Some((revision, PlayableDrag::new(picked, label)));
+        }
+        self.pick.as_ref().map(|(_, drag)| drag.clone())
+    }
+
+    fn play(&mut self, artist: i64, cx: &mut Context<Self>) {
+        self.starting.insert(artist);
+        cx.notify();
+        let started = actions::play(&self.lib, &[Playable::Artist(artist)], false, cx);
+        cx.spawn(async move |this, cx| {
+            started.await;
+            this.update(cx, |this, cx| {
+                this.starting.remove(&artist);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(artist) = self.artists.get(index).cloned() else {
+            return div().h(rows::height()).into_any_element();
+        };
+        let id = artist.id;
+        let item = Playable::Artist(id);
+        let selected = self.selection.contains(item);
+        let drag = match (selected, self.pick()) {
+            (true, Some(pick)) => pick,
+            _ => PlayableDrag::new(&[item], artist.name.clone()),
+        };
+        let favourite = self.lib.feed.read(cx).is_favourite(item);
+        let starting = self.starting.contains(&id);
+        let items = drag.items.clone();
+        let lib = self.lib.clone();
+        let count = |n: i64, one: &str, many: &str| {
+            div()
+                .w(px(110.0))
+                .flex_none()
+                .flex()
+                .justify_end()
+                .typeset(Type::Meta, tokens::MUTED)
+                .child(chrome::count(n.max(0) as u64, one, many))
+        };
+        div()
+            .id(("artist", id as u64))
+            .group("row")
+            .flex()
+            .items_center()
+            .gap(space::s12())
+            .px(px(super::tile::MARGIN))
+            .h(rows::height())
+            .when(selected, |d| d.bg(tokens::SURFACE))
+            .when(!selected, |d| {
+                d.hover(|s| s.bg(tokens::alpha(tokens::HOVER, 0.3)))
+            })
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                window.focus(&this.focus, cx);
+                let order = &this.order;
+                if rows::select(&mut this.selection, item, e, || order.clone(), cx) {
+                    this.lib
+                        .nav
+                        .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+                }
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .id(("artist-play", id as u64))
+                    .w(px(20.0))
+                    .flex_none()
+                    .cursor_pointer()
+                    .typeset(Type::Meta, tokens::MUTED)
+                    .hover(|s| s.text_color(tokens::INK))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.play(id, cx);
+                    }))
+                    .child(if starting {
+                        div().child("…")
+                    } else {
+                        div()
+                            .invisible()
+                            .group_hover("row", |s| s.visible())
+                            .child("▶")
+                    }),
+            )
+            .child(
+                div()
+                    .id(("artist-name", id as u64))
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .cursor_pointer()
+                    .typeset(Type::Body, tokens::INK)
+                    .hover(|s| s.underline())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.lib
+                            .nav
+                            .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+                    }))
+                    .child(artist.name.clone()),
+            )
+            .child(
+                div()
+                    .id(("artist-heart", id as u64))
+                    .w(px(20.0))
+                    .flex_none()
+                    .cursor_pointer()
+                    .typeset(
+                        Type::Meta,
+                        if favourite {
+                            tokens::ACCENT
+                        } else {
+                            tokens::MUTED
+                        },
+                    )
+                    .when(!favourite, |d| {
+                        d.invisible().group_hover("row", |s| s.visible())
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.lib
+                            .feed
+                            .update(cx, |f, cx| f.toggle_favourite(item, cx));
+                    }))
+                    .child(if favourite { "♥" } else { "♡" }),
+            )
+            .child(count(artist.album_count, "album", "albums"))
+            .child(count(artist.track_count, "track", "tracks"))
+            .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
+            .context_menu(move |menu, window, cx| {
+                actions::menu(menu, &lib, items.clone(), None, None, window, cx)
+            })
+            .into_any_element()
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.selection.select_all(&self.order);
+        cx.notify();
+    }
+
+    fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selection.is_active() {
+            self.selection.end();
+            cx.notify();
+        }
+    }
+}
+
+impl Render for ArtistBrowser {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rewinds = self.lib.nav.read(cx).rewinds(Page::Artists);
+        if rewinds != self.rewinds {
+            self.rewinds = rewinds;
+            self.scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(Point::default());
+        }
+        let narrowed = self.lib.browse.read(cx).is_narrowed();
+        let header = chrome::page_header(
+            "artists",
+            chrome::count(self.artists.len() as u64, "artist", "artists"),
+            div()
+                .flex()
+                .items_center()
+                .gap(tokens::space::s16())
+                .child(self.search.clone())
+                .child(chrome::filter_button(&self.filters, &self.lib, cx)),
+        );
+        let body = if self.artists.is_empty() && self.loaded.is_some() {
+            chrome::empty_state(
+                if narrowed {
+                    "nothing matches"
+                } else {
+                    "no artists yet"
+                },
+                if narrowed {
+                    "try a different filter."
+                } else {
+                    "add a music folder in settings, or sign in to a server."
+                },
+            )
+            .into_any_element()
+        } else {
+            uniform_list(
+                "artists",
+                self.artists.len(),
+                cx.processor(|this, range: Range<usize>, _, cx| {
+                    range.map(|i| this.row(i, cx)).collect::<Vec<_>>()
+                }),
+            )
+            .track_scroll(&self.scroll)
+            .size_full()
+            .into_any_element()
+        };
+        div()
+            .key_context("Library")
+            .track_focus(&self.focus)
+            .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::dismiss))
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(tokens::BG)
+            .typeset(Type::Body, tokens::INK)
+            .child(header)
+            .child(div().flex_1().min_h_0().pt(px(10.0)).child(body))
+    }
+}

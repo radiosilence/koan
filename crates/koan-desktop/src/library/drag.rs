@@ -3,6 +3,9 @@
 //! it to the engine as `TrackSet`s, which resolve to tracks on the engine's
 //! command lane, so a drop never waits on reading a record's tracks first.
 
+use gpui_kit::prelude::*;
+use std::sync::Arc;
+
 use gpui_kit::*;
 use koan_ffi::TrackSet;
 
@@ -41,10 +44,13 @@ pub fn sources(items: &[Playable]) -> Vec<TrackSet> {
 }
 
 /// The payload of every drag out of a library page. A queue or playlist that
-/// accepts it hands `sets` to the engine as they are.
+/// accepts it hands `sets` to the engine as they are. Shared, so a pick of
+/// thousands is built once and every tile in it hands out the same one.
 #[derive(Clone, Debug)]
 pub struct PlayableDrag {
-    pub sets: Vec<TrackSet>,
+    pub sets: Arc<[TrackSet]>,
+    /// What was picked, in order: what a context menu over the drag acts on.
+    pub items: Arc<[Playable]>,
     /// What the preview says: the one item's name, or how many.
     pub label: SharedString,
 }
@@ -52,7 +58,8 @@ pub struct PlayableDrag {
 impl PlayableDrag {
     pub fn new(items: &[Playable], label: impl Into<SharedString>) -> Self {
         Self {
-            sets: sources(items),
+            sets: sources(items).into(),
+            items: items.into(),
             label: label.into(),
         }
     }
@@ -78,7 +85,7 @@ impl Render for DragPreview {
                 .bg(tokens::BG)
                 .border_1()
                 .border_color(tokens::RULE)
-                .role(Type::Meta, tokens::INK)
+                .typeset(Type::Meta, tokens::INK)
                 .whitespace_nowrap()
                 .child(self.label.clone()),
         )
@@ -88,6 +95,8 @@ impl Render for DragPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    use core::prelude::v1::test;
 
     #[test]
     fn neighbouring_tracks_merge_into_one_source() {
@@ -100,7 +109,7 @@ mod tests {
             ],
             "4 items",
         );
-        let sources = drag.sets;
+        let sources = drag.sets.to_vec();
         assert_eq!(sources.len(), 3);
         assert!(matches!(&sources[0], TrackSet::Tracks { ids } if ids == &[1, 2]));
         assert!(matches!(&sources[1], TrackSet::Album { id: 9 }));

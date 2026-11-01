@@ -21,11 +21,18 @@ pub struct Selection {
     members: HashSet<Playable>,
     /// Where a ⇧-click range starts: the last item clicked without ⇧.
     anchor: Option<Playable>,
+    /// Moves with every change, so what is built from the pick (its drag
+    /// payload) is built once per change rather than once per frame.
+    revision: u64,
 }
 
 impl Selection {
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn picked(&self) -> &[Playable] {
@@ -38,13 +45,24 @@ impl Selection {
 
     pub fn begin(&mut self, with: Option<Playable>) {
         self.active = true;
+        self.revision += 1;
         if let Some(item) = with {
             self.toggle(item);
         }
     }
 
     pub fn end(&mut self) {
-        *self = Self::default();
+        let revision = self.revision + 1;
+        *self = Self {
+            revision,
+            ..Self::default()
+        };
+    }
+
+    /// A list's plain click: this one alone.
+    pub fn only(&mut self, item: Playable) {
+        self.end();
+        self.begin(Some(item));
     }
 
     /// A click on an item while selecting: ⇧ extends from the last one
@@ -83,6 +101,7 @@ impl Selection {
     /// the library no longer has go. Ticks made under another filter stay,
     /// since `exists` answers for the library, not the page.
     pub fn retain(&mut self, exists: impl Fn(Playable) -> bool) {
+        self.revision += 1;
         self.picked.retain(|p| exists(*p));
         self.members.retain(|p| exists(*p));
         if self.anchor.is_some_and(|a| !exists(a)) {
@@ -101,6 +120,7 @@ impl Selection {
     }
 
     fn take_together(&mut self, items: &[Playable]) {
+        self.revision += 1;
         let keys: HashSet<Playable> = items.iter().copied().collect();
         self.picked.retain(|p| !keys.contains(p));
         self.members.retain(|p| !keys.contains(p));
@@ -112,6 +132,7 @@ impl Selection {
     }
 
     fn toggle(&mut self, item: Playable) {
+        self.revision += 1;
         self.anchor = Some(item);
         if self.members.remove(&item) {
             self.picked.retain(|p| *p != item);
