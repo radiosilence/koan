@@ -95,11 +95,13 @@ pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
         .open(config.join("gui-instance.lock"))?;
     match lock.try_lock() {
         Ok(()) => {
+            // An earlier holder's socket path goes first, so a launch reading
+            // the lock while this one binds waits rather than follows it.
+            lock.set_len(0)?;
             let dir = runtime_dir();
             std::fs::create_dir_all(&dir)?;
             let socket = dir.join(format!("{name}.sock"));
             let listener = bind_private(&socket)?;
-            lock.set_len(0)?;
             lock.write_all(socket.as_os_str().as_encoded_bytes())?;
             Ok(Launch::First(Server {
                 _lock: lock,

@@ -2,7 +2,7 @@
 
 # Build release binary
 build:
-    cargo build --release
+    cargo build --release -p koan-cli
 
 # Build + run CLI in release mode
 cli *ARGS:
@@ -77,7 +77,7 @@ icons-sheet: icons
 
 # Install dev build to ~/.local/bin/koan-dev
 install-dev:
-    cargo build --release
+    cargo build --release -p koan-cli
     mkdir -p ~/.local/bin
     cp "${CARGO_TARGET_DIR:-target}/release/koan" ~/.local/bin/koan-dev
     @echo "Installed to ~/.local/bin/koan-dev"

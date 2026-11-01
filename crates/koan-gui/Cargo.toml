@@ -19,7 +19,6 @@ chrono = "0.4"
 futures-channel = "0.3"
 futures-lite = "2"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-getrandom = "0.4"
 gpui-kit = "0.8.1"
 koan-core = { workspace = true }
 koan-ffi = { path = "../koan-ffi" }

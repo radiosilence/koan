@@ -78,6 +78,16 @@ fn playback_of(state: PlayState, anchor: Option<Anchor>, now: Instant) -> MediaP
     }
 }
 
+/// How far a playhead heard again may differ from the one held before it is
+/// news: the engine itself republishes past 32 ms.
+const PLAYHEAD_TOLERANCE_MS: u64 = 250;
+
+/// Whether a playhead heard at `now` says something the one held does not:
+/// a seek, a pause, a stall, rather than the same reckoning sent again.
+fn moved(held: Option<Anchor>, position_ms: u64, playing: bool, now: Instant) -> bool {
+    held.is_none_or(|a| a.stale(position_ms, playing, now, PLAYHEAD_TOLERANCE_MS))
+}
+
 /// What a media control event asks for, given where the playhead is now.
 fn command_of(event: MediaControlEvent, position_ms: u64) -> Option<Command> {
     let step = |direction: SeekDirection, by: u64| match direction {
@@ -362,13 +372,19 @@ fn apply(
             playing,
             ..
         } => {
+            let now = Instant::now();
+            let mut m = media.borrow_mut();
+            // The slice is published again as a download extends how far the
+            // track can be dragged, with the playhead where it was reckoned.
+            if !moved(m.anchor, position_ms, playing, now) {
+                return;
+            }
             let anchor = Anchor {
                 position_ms,
                 playing,
-                at: Instant::now(),
+                at: now,
             };
             cx.update(|cx| cx.set_global(Playhead(Some(anchor))));
-            let mut m = media.borrow_mut();
             m.anchor = Some(anchor);
             m.tell_playback();
         }
@@ -536,6 +552,24 @@ mod tests {
             playback_of(PlayState::Paused, None, later),
             MediaPlayback::Paused { progress: None }
         );
+    }
+
+    #[test]
+    fn a_playhead_sent_again_as_it_was_is_not_news() {
+        let at = Instant::now();
+        let held = Anchor {
+            position_ms: 10_000,
+            playing: true,
+            at,
+        };
+        let later = at + Duration::from_millis(2_000);
+        assert!(
+            !moved(Some(held), 12_000, true, later),
+            "the same reckoning"
+        );
+        assert!(moved(Some(held), 40_000, true, later), "a seek");
+        assert!(moved(Some(held), 12_000, false, later), "a pause");
+        assert!(moved(None, 0, false, later), "the first");
     }
 
     #[test]

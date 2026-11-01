@@ -63,6 +63,7 @@ jobs:
       package: ${{ steps.filter.outputs.package }}
       apple: ${{ steps.filter.outputs.apple }}
       apple_apps: ${{ steps.filter.outputs.apple_apps }}
+      gui_mac: ${{ steps.filter.outputs.gui_mac }}
       android: ${{ steps.filter.outputs.android }}
       release: ${{ steps.filter.outputs.release }}
       version: ${{ steps.filter.outputs.version }}
@@ -92,7 +93,7 @@ jobs:
         # command rather than an answer, so every question is asked in a
         # condition.
         run: |
-          rust=true web=true deps=true docker=true package=true apple=true apple_apps=true android=true release=false
+          rust=true web=true deps=true docker=true package=true apple=true apple_apps=true gui_mac=true android=true release=false
           version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
           # A pull request merged or closed as its run was created: the
           # cancelling workflow can look before this run is listed, and the
@@ -152,7 +153,7 @@ jobs:
           touches() { printf '%s\n' "$files" | grep -E "$1" | grep -qvE '\.md$'; }
           if [ "$state" != "OPEN" ]; then
             echo "pull request #$PR is no longer open -- skipping everything"
-            rust=false web=false deps=false docker=false package=false apple=false apple_apps=false android=false release=false
+            rust=false web=false deps=false docker=false package=false apple=false apple_apps=false gui_mac=false android=false release=false
           elif [ "$EVENT" != "workflow_dispatch" ] && [ -n "$base" ] && files=$(git diff --name-only "$base" HEAD); then
             echo "changes since $(git rev-parse --short "$base"):"
             printf '%s\n' "$files" | sed 's/^/  /'
@@ -208,6 +209,19 @@ jobs:
               apple=true
             fi
 
+            # The kōan GUI app on macOS: its Now Playing backend, menus and ⌘
+            # bindings build there alone. A pull request holds a macOS runner
+            # for it when the app or the engine surface it links changed; main
+            # checks it for any Rust, as it does the Apple apps.
+            gui_mac=false
+            if [ "$release" = true ] \
+              || touches '^crates/(koan-gui|koan-ffi)/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/'; then
+              gui_mac=true
+            fi
+            if [ "$EVENT" != "pull_request" ] && [ "$rust" = true ]; then
+              gui_mac=true
+            fi
+
             # The Android app links koan-core and koan-server through koan-ffi
             # and nothing else of the workspace, so the TUI and CLI cannot
             # break it, nor can the Apple apps or the site.
@@ -225,6 +239,7 @@ jobs:
             echo "package=$package"
             echo "apple=$apple"
             echo "apple_apps=$apple_apps"
+            echo "gui_mac=$gui_mac"
             echo "android=$android"
             echo "release=$release"
             echo "version=$version"
@@ -408,6 +423,33 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: gui
+          cache-on-failure: true
+      - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        run: cargo test -p koan-gui --all-targets
+
+  # koan-gui on macOS, which the job above cannot see.
+  gui-mac:
+    name: GUI (macOS)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.gui_mac == 'true'
+    timeout-minutes: 60
+    concurrency:
+      group: gui-mac-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - id: cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: gui-mac
           cache-on-failure: true
       - run: cargo clippy -p koan-gui --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
@@ -760,7 +802,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, audit, pulumi-package, linux-build, container, apple, android]
     if: always()
     steps:
       - env:

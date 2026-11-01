@@ -136,6 +136,13 @@ is not.
 page, and the account it is signed in to. It cannot be woken from elsewhere:
 it is reachable while it is running.
 
+### The desktop app
+
+The kōan GUI app on macOS and Linux is a device of its own too, named after
+the machine with "(desktop)" after it, beside the macOS app and the terminal
+UI on the same machine; see [The desktop app](desktop.md). One runs per
+configuration directory.
+
 ### Who is connected
 
 Settings → Devices → **Connected now** lists who is connected to this device
