@@ -5,6 +5,7 @@
 //! Each tile is a cached view of its own: the pointer moving over a grid
 //! redraws the tile it enters and the one it leaves, and nothing else.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -173,9 +174,17 @@ pub struct TileView<V: TileHost> {
     host: WeakEntity<V>,
     record: Rc<Record>,
     state: TileState,
-    /// Under the pointer: the play mark, the dim and the heart are made only
+    /// The part under the pointer: the play mark and dim (over the sleeve),
+    /// the heart (anywhere on the tile) and the underlines are made only
     /// then, so the tiles on screen carry no hidden overlays.
-    hovered: bool,
+    hovered: Option<Part>,
+    /// Where the tile was laid out, for telling the parts apart by position:
+    /// the tile has one interactive element, not one per part, since a
+    /// scrolling grid lays out and hit-tests every tile every frame.
+    origin: Rc<Cell<Point<Pixels>>>,
+    /// The credit's names' widths, shaped at the size they were drawn at
+    /// when the pointer first needed them.
+    credit_widths: Option<(Pixels, Vec<Pixels>)>,
     _accent: Subscription,
 }
 
@@ -190,13 +199,87 @@ impl<V: TileHost> TileView<V> {
             host,
             record,
             state,
-            hovered: false,
+            hovered: None,
+            origin: Rc::new(Cell::new(Point::default())),
+            credit_widths: None,
             _accent: crate::theme::observe_accent(cx),
         }
     }
 
+    /// The part of the tile at `position`, in window coordinates.
+    fn part_at(&mut self, position: Point<Pixels>, window: &Window, cx: &App) -> Option<Part> {
+        let local = position - self.origin.get();
+        let (x, y) = (f32::from(local.x), f32::from(local.y));
+        let side = f32::from(self.state.side);
+        if x < 0.0 || y < 0.0 || x > side {
+            return None;
+        }
+        if y < side {
+            // The heart's 30-point disc, 7 in from the corner.
+            let heart = side - 7.0 - 30.0..side - 7.0;
+            let shown = !self.state.selecting;
+            return Some(if shown && heart.contains(&x) && heart.contains(&y) {
+                Part::Heart
+            } else {
+                Part::Sleeve
+            });
+        }
+        let look = crate::theme::Look::of(window, cx);
+        let title = f32::from(look.line_height(Type::Meta));
+        let credit = f32::from(look.line_height(Type::Fine));
+        let title_top = side + CAPTION_GAP;
+        let credit_top = title_top + title + CAPTION_GAP;
+        if (title_top..title_top + title).contains(&y) {
+            return Some(Part::Title);
+        }
+        if !self.state.show_artist || !(credit_top..credit_top + credit).contains(&y) {
+            return None;
+        }
+        let size = look.font_size(Type::Fine);
+        if self
+            .credit_widths
+            .as_ref()
+            .is_none_or(|(at, _)| *at != size)
+        {
+            let font = font(crate::theme::FONT_FAMILY);
+            let widths = self
+                .record
+                .credit
+                .iter()
+                .map(|(text, _)| {
+                    let run = TextRun {
+                        len: text.len(),
+                        font: font.clone(),
+                        color: Hsla::default(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+                    window
+                        .text_system()
+                        .shape_line(text.clone(), size, &[run], None)
+                        .width
+                })
+                .collect();
+            self.credit_widths = Some((size, widths));
+        }
+        let widths = &self.credit_widths.as_ref()?.1;
+        let mut left = 0.0;
+        for ((_, artist), width) in self.record.credit.iter().zip(widths) {
+            let right = left + f32::from(*width);
+            if (left..right).contains(&x) {
+                return artist.map(Part::Artist);
+            }
+            left = right;
+        }
+        None
+    }
+
     /// Shows `record` in `state`, redrawing only if either moved.
     pub fn show(&mut self, record: &Rc<Record>, state: TileState, cx: &mut Context<Self>) {
+        if !Rc::ptr_eq(&self.record, record) {
+            self.credit_widths = None;
+        }
         let moved = !Rc::ptr_eq(&self.record, record) || !self.state.same(&state);
         self.record = record.clone();
         self.state = state;
@@ -212,26 +295,11 @@ impl<V: TileHost> Render for TileView<V> {
         let (record, state) = (&self.record, &self.state);
         let id = record.id;
         let side = state.side;
-        let host = self.host.clone();
-        let click = |part: Part| {
-            super::listen(
-                host.clone(),
-                move |this: &mut V, e: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.clicked(id, part, e.modifiers(), window, cx)
-                },
-            )
-        };
+        let hovered = self.hovered;
 
-        let mut art = div()
-            .id(("sleeve", id as u64))
-            .group("sleeve")
-            .relative()
-            .size(side)
-            .flex_none()
-            .bg(p.surface)
-            .cursor_pointer()
-            .on_click(click(Part::Sleeve));
+        // Nothing below takes the pointer; the tile's root does, for all of
+        // it (see `origin`).
+        let mut art = div().relative().size(side).flex_none().bg(p.surface);
         match &state.sleeve {
             Sleeve::Ready(image) => {
                 art = art.child(img(ImageSource::Render(image.clone())).size_full())
@@ -249,7 +317,8 @@ impl<V: TileHost> Render for TileView<V> {
         }
         // The dim snaps in and out for now; it takes the theme's 120 ms when
         // the motion tokens land.
-        if state.starting || (self.hovered && !state.selecting) {
+        let over_sleeve = matches!(hovered, Some(Part::Sleeve | Part::Heart));
+        if state.starting || (over_sleeve && !state.selecting) {
             art = art.child(
                 div()
                     .absolute()
@@ -258,12 +327,11 @@ impl<V: TileHost> Render for TileView<V> {
                     .items_center()
                     .justify_center()
                     .bg(p.dim())
-                    .typeset(p, Type::TitleSmall, p.strong)
-                    .when(!state.starting, |d| {
-                        d.opacity(0.0).group_hover("sleeve", |s| s.opacity(1.0))
-                    })
                     .child(if state.starting {
-                        div().child("…").into_any_element()
+                        div()
+                            .typeset(p, Type::TitleSmall, p.strong)
+                            .child("…")
+                            .into_any_element()
                     } else {
                         KoanIcon::new(Icon::PlayMark)
                             .role(Type::TitleSmall)
@@ -278,21 +346,23 @@ impl<V: TileHost> Render for TileView<V> {
         if let Some(bar) = download_bar(p, record.on_device, state.arriving) {
             art = art.child(bar);
         }
-        if !state.selecting && (self.hovered || state.favourite) {
-            let heart = div()
-                .id(("heart", id as u64))
-                .absolute()
-                .right(px(7.0))
-                .bottom(px(7.0))
-                .size(px(30.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(p.surface)
-                .cursor_pointer()
-                .on_click(click(Part::Heart))
-                .child(heart_glyph(p, state.favourite));
-            art = art.child(heart);
+        if !state.selecting && (hovered.is_some() || state.favourite) {
+            art = art.child(
+                div()
+                    .absolute()
+                    .right(px(7.0))
+                    .bottom(px(7.0))
+                    .size(px(30.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(if hovered == Some(Part::Heart) {
+                        p.hover
+                    } else {
+                        p.surface
+                    })
+                    .child(heart_glyph(p, state.favourite)),
+            );
         }
         if state.selecting {
             // Over the art rather than a border on it, so ticking a tile
@@ -316,15 +386,14 @@ impl<V: TileHost> Render for TileView<V> {
         }
 
         let title = div()
-            .id(("title", id as u64))
             .w_full()
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
             .typeset(p, Type::Meta, p.ink)
-            .cursor_pointer()
-            .when(!state.selecting, |d| d.hover(|s| s.underline()))
-            .on_click(click(Part::Title))
+            .when(hovered == Some(Part::Title) && !state.selecting, |d| {
+                d.underline()
+            })
             .child(record.title.clone());
 
         let mut credit = div()
@@ -334,23 +403,22 @@ impl<V: TileHost> Render for TileView<V> {
             .whitespace_nowrap()
             .typeset(p, Type::Fine, p.muted);
         if state.show_artist {
-            for (i, (text, artist)) in record.credit.iter().enumerate() {
-                let span = div()
-                    .id(("credit", (id as u64) << 8 | i as u64))
-                    .child(text.clone());
-                credit = credit.child(match artist {
-                    Some(artist) if !state.selecting => span
-                        .cursor_pointer()
-                        .hover(|s| s.underline().text_color(p.ink))
-                        .on_click(click(Part::Artist(*artist))),
-                    _ => span,
-                });
+            for (text, artist) in &record.credit {
+                let lit =
+                    !state.selecting && artist.is_some() && hovered == artist.map(Part::Artist);
+                credit = credit.child(
+                    div()
+                        .when(lit, |d| d.underline().text_color(p.ink))
+                        .child(text.clone()),
+                );
             }
             credit = credit.children(record.year_after.clone());
         } else {
             credit = credit.children(record.year.clone());
         }
 
+        let origin = self.origin.clone();
+        let host = self.host.clone();
         let drag = state.drag.clone();
         let target = actions::MenuTarget {
             items: drag.items.clone(),
@@ -359,15 +427,43 @@ impl<V: TileHost> Render for TileView<V> {
         };
         div()
             .id(("tile", id as u64))
+            .relative()
             .flex()
             .flex_col()
             .w(side)
             .gap(px(CAPTION_GAP))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                if this.hovered != *hovered {
-                    this.hovered = *hovered;
+            .cursor_pointer()
+            .child(
+                canvas(
+                    move |bounds, _, _| origin.set(bounds.origin),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
+                let part = this.part_at(e.position, window, cx);
+                if part != this.hovered {
+                    this.hovered = part;
                     cx.notify();
                 }
+            }))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered && this.hovered.is_some() {
+                    this.hovered = None;
+                    cx.notify();
+                }
+            }))
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                // While picking, any part ticks the tile: the host takes it.
+                let part = this
+                    .part_at(e.position(), window, cx)
+                    .or(this.state.selecting.then_some(Part::Sleeve));
+                let Some(part) = part else { return };
+                cx.stop_propagation();
+                let modifiers = e.modifiers();
+                host.update(cx, |host, cx| host.clicked(id, part, modifiers, window, cx))
+                    .ok();
             }))
             .child(art)
             .child(title)
