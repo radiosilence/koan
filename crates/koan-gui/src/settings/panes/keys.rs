@@ -124,6 +124,7 @@ impl Keys {
         }
         let (engine, kind) = (self.engine.clone(), self.kind);
         let sheets = self.ctx.sheets.clone();
+        let model = self.ctx.model.clone();
         let handle = window.window_handle();
         cx.spawn(async move |this, cx| {
             let made = match kind {
@@ -133,28 +134,33 @@ impl Keys {
                     .await
                     .map(|p| (p.name, p.password)),
             };
-            let made = this.update(cx, |keys, cx| {
+            this.update(cx, |keys, cx| {
                 match &made {
                     Ok(_) => keys.error = None,
                     Err(e) => keys.error = Some(describe(e)),
                 }
                 keys.load(cx);
-                made.ok()
-            });
-            let Ok(Some((name, secret))) = made else {
-                return;
-            };
-            handle
-                .update(cx, |_, window, cx| {
-                    this.update(cx, |keys, cx| {
-                        keys.name.update(cx, |s, cx| s.set_value("", window, cx))
-                    })
-                    .ok();
-                    sheets.update(cx, |s, cx| {
-                        s.show(shown_once(kind, name, secret), window, cx)
-                    });
+            })
+            .ok();
+            let Ok((name, secret)) = made else { return };
+            // Shown this once, so it must reach someone: the window it was
+            // made in, or, when that has closed, the next Settings window.
+            let sheet = shown_once(kind, name, secret);
+            let mut sheet = Some(sheet);
+            let shown = handle.update(cx, |_, window, cx| {
+                this.update(cx, |keys, cx| {
+                    keys.name.update(cx, |s, cx| s.set_value("", window, cx))
                 })
                 .ok();
+                if let Some(sheet) = sheet.take() {
+                    sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+                }
+            });
+            if shown.is_err()
+                && let Some(sheet) = sheet
+            {
+                model.update(cx, |m, _| m.unseen = Some(sheet));
+            }
         })
         .detach();
     }

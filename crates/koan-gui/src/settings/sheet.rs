@@ -8,13 +8,14 @@ use std::rc::Rc;
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
 use gpui_kit::base::FocusTrapElement as _;
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;
 type Ready = Rc<dyn Fn(&[String]) -> bool>;
+type Dismissed = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// A sheet's action. It closes the sheet, then runs with what the fields
 /// hold.
@@ -53,9 +54,12 @@ pub struct Sheet {
     fields: Vec<(SharedString, Entity<InputState>)>,
     content: Option<Content>,
     actions: Vec<Action>,
-    /// The way out that does nothing: "cancel", or "done" for a sheet that
-    /// only shows something.
+    /// The way out: "cancel", or "done" for a sheet that only shows
+    /// something.
     dismiss: SharedString,
+    /// What the way out does, for a sheet whose question someone else is
+    /// waiting on the answer to. Nothing, otherwise.
+    dismissed: Option<Dismissed>,
 }
 
 impl Sheet {
@@ -67,7 +71,20 @@ impl Sheet {
             content: None,
             actions: Vec::new(),
             dismiss: label("Cancel"),
+            dismissed: None,
         }
+    }
+
+    /// The way out answers the question, as Decline does a device waiting
+    /// to sign in: closing the sheet or pressing Escape runs it too.
+    pub fn dismiss_with(
+        mut self,
+        text: &str,
+        run: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.dismiss = label(text);
+        self.dismissed = Some(Rc::new(run));
+        self
     }
 
     pub fn message(mut self, message: impl Into<SharedString>) -> Self {
@@ -120,34 +137,98 @@ pub fn field(
 pub struct Sheets {
     open: Option<Sheet>,
     focus: Option<FocusHandle>,
+    /// Where the keyboard was before the sheet, to go back to.
+    before: Option<FocusHandle>,
     _fields: Vec<Subscription>,
 }
 
 impl Sheets {
     /// Puts a sheet up, replacing any other, with the keyboard in its first
-    /// field or on the sheet.
+    /// field or on the sheet. Return in a field runs the sheet's last action,
+    /// as the default button does.
     pub fn show(&mut self, sheet: Sheet, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open.is_none() {
+            self.before = window.focused(cx);
+        }
         let focus = cx.focus_handle();
         match sheet.fields.first() {
             Some((_, state)) => state.update(cx, |state, cx| state.focus(window, cx)),
             None => window.focus(&focus, cx),
         }
-        // A field's text decides whether an action can run.
+        let this = cx.entity();
         self._fields = sheet
             .fields
             .iter()
-            .map(|(_, state)| cx.observe(state, |_, _, cx| cx.notify()))
+            .flat_map(|(_, state)| {
+                let this = this.clone();
+                [
+                    // A field's text decides whether an action can run.
+                    cx.observe(state, |_, _, cx| cx.notify()),
+                    cx.subscribe_in(
+                        state,
+                        window,
+                        move |_, _, event: &InputEvent, window, cx| {
+                            if matches!(event, InputEvent::PressEnter { .. }) {
+                                let last =
+                                    this.read(cx).open.as_ref().map_or(0, |s| s.actions.len());
+                                if let Some(index) = last.checked_sub(1) {
+                                    Sheets::act(&this, index, window, cx);
+                                }
+                            }
+                        },
+                    ),
+                ]
+            })
             .collect();
         self.open = Some(sheet);
         self.focus = Some(focus);
         cx.notify();
     }
 
-    pub fn close(&mut self, cx: &mut Context<Self>) {
+    /// Takes the sheet down and gives the keyboard back to where it was.
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = None;
         self.focus = None;
         self._fields.clear();
+        if let Some(before) = self.before.take() {
+            window.focus(&before, cx);
+        }
         cx.notify();
+    }
+
+    /// The way out, and what it answers where it does.
+    fn dismiss(this: &Entity<Self>, window: &mut Window, cx: &mut App) {
+        let dismissed = this
+            .read(cx)
+            .open
+            .as_ref()
+            .and_then(|sheet| sheet.dismissed.clone());
+        this.update(cx, |sheets, cx| sheets.close(window, cx));
+        if let Some(dismissed) = dismissed {
+            dismissed(window, cx);
+        }
+    }
+
+    /// Runs an action with what the fields hold now, if it can run with
+    /// that, closing the sheet first.
+    fn act(this: &Entity<Self>, index: usize, window: &mut Window, cx: &mut App) {
+        let Some(sheet) = this.read(cx).open.as_ref() else {
+            return;
+        };
+        let values: Vec<String> = sheet
+            .fields
+            .iter()
+            .map(|(_, state)| state.read(cx).value().to_string())
+            .collect();
+        let Some(action) = sheet.actions.get(index) else {
+            return;
+        };
+        if action.ready.as_ref().is_some_and(|ready| !ready(&values)) {
+            return;
+        }
+        let run = action.run.clone();
+        this.update(cx, |sheets, cx| sheets.close(window, cx));
+        run(&values, window, cx);
     }
 
     pub fn is_open(&self) -> bool {
@@ -171,11 +252,6 @@ impl Sheets {
             .iter()
             .map(|(_, state)| state.read(cx).value().to_string())
             .collect();
-        let close = {
-            let this = this.clone();
-            move |cx: &mut App| this.update(cx, |sheets, cx| sheets.close(cx))
-        };
-        let escape = close.clone();
 
         let mut buttons = div()
             .flex()
@@ -187,8 +263,8 @@ impl Sheets {
                 Button::new("sheet-dismiss", ButtonKind::Compact)
                     .label(sheet.dismiss.as_ref())
                     .on_click({
-                        let close = close.clone();
-                        move |_, _, cx| close(cx)
+                        let this = this.clone();
+                        move |_, window, cx| Sheets::dismiss(&this, window, cx)
                     }),
             );
         let last = sheet.actions.len().saturating_sub(1);
@@ -203,18 +279,13 @@ impl Sheets {
             } else {
                 ButtonKind::Standard
             };
-            let run = action.run.clone();
-            let close = close.clone();
-            let values = values.clone();
+            let this = this.clone();
             buttons = buttons.child(
                 Button::new(("sheet-action", index), kind)
                     .label(action.label.as_ref())
                     .destructive(action.destructive)
                     .disabled(!ready)
-                    .on_click(move |_, window, cx| {
-                        close(cx);
-                        run(&values, window, cx);
-                    }),
+                    .on_click(move |_, window, cx| Sheets::act(&this, index, window, cx)),
             );
         }
 
@@ -222,10 +293,15 @@ impl Sheets {
             .id("sheet")
             .track_focus(&focus)
             .key_context("SettingsSheet")
-            .on_key_down(move |event, _, cx| {
-                if event.keystroke.key == "escape" {
-                    cx.stop_propagation();
-                    escape(cx);
+            // Before a focused field sees it, which may take Escape for its
+            // own.
+            .capture_key_down({
+                let this = this.clone();
+                move |event, window, cx| {
+                    if event.keystroke.key == "escape" {
+                        cx.stop_propagation();
+                        Sheets::dismiss(&this, window, cx);
+                    }
                 }
             })
             .w(px(460.))

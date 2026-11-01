@@ -22,6 +22,8 @@ enum Op {
     Start(u16, Option<Landed>),
     Stop,
     InviteTo(InviteTo, Option<String>, Option<Landed>),
+    /// The addresses read again.
+    Refresh,
 }
 
 pub struct Sharing {
@@ -40,7 +42,6 @@ pub struct Sharing {
     pub funnel_error: Option<SharedString>,
     ops: VecDeque<Op>,
     running: Option<Task<()>>,
-    reading: Option<Task<()>>,
 }
 
 impl Sharing {
@@ -54,7 +55,6 @@ impl Sharing {
             funnel_error: None,
             ops: VecDeque::new(),
             running: None,
-            reading: None,
         }
     }
 
@@ -146,6 +146,13 @@ impl Sharing {
                         cx.update(|cx| started(failed, cx));
                     }
                 }
+                Op::Refresh => {
+                    let serving = this.update(cx, |sharing, _| sharing.serving.is_some());
+                    if serving.unwrap_or(false) {
+                        let now = engine.clone().server_sharing().await;
+                        this.update(cx, |sharing, _| sharing.serving = now).ok();
+                    }
+                }
                 Op::Stop => {
                     engine.clone().stop_server().await;
                     this.update(cx, |sharing, _| {
@@ -180,28 +187,10 @@ impl Sharing {
 
     /// Reads the addresses again: they move with the network, so the page
     /// asks each time it opens.
+    /// In turn with the starts, stops and changes, so it never reads before
+    /// one and lands after it.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let engine = self.engine.clone();
-        let serving = self.serving.is_some();
-        self.reading = Some(cx.spawn(async move |this, cx| {
-            let now = if serving {
-                Some(engine.clone().server_sharing().await)
-            } else {
-                None
-            };
-            let status = engine.share_status().await;
-            this.update(cx, |sharing, cx| {
-                // A stop that landed meanwhile has the last word.
-                if let Some(now) = now
-                    && sharing.serving.is_some()
-                {
-                    sharing.serving = now;
-                }
-                sharing.status = Some(status);
-                cx.notify();
-            })
-            .ok();
-        }));
+        self.push(Op::Refresh, cx);
     }
 
     /// Makes the account the library is shared under. The error is why not.
@@ -235,21 +224,23 @@ impl Sharing {
     }
 }
 
-/// What the server answers to besides IP addresses: this Mac's Bonjour
-/// name, which a phone on the network can reach it by.
-#[cfg(target_os = "macos")]
+/// What the server answers to besides IP addresses: this device's name on
+/// the local network, which a phone there can reach it by. On macOS that is
+/// the Bonjour name (`scutil --get LocalHostName`, what Sharing settings
+/// show); on Linux the host name, which Avahi publishes under `.local`.
+/// Blocking: called off the main thread.
 fn names() -> Vec<String> {
-    let name = objc2_foundation::NSProcessInfo::processInfo()
-        .hostName()
-        .to_string();
-    if name.ends_with(".local") {
-        vec![name]
-    } else {
-        Vec::new()
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn names() -> Vec<String> {
-    Vec::new()
+    #[cfg(target_os = "macos")]
+    let name = std::process::Command::new("/usr/sbin/scutil")
+        .args(["--get", "LocalHostName"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| String::from_utf8(out.stdout).ok());
+    #[cfg(not(target_os = "macos"))]
+    let name = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
+    name.map(|name| name.trim().trim_end_matches(".local").to_owned())
+        .filter(|name| !name.is_empty())
+        .map(|name| vec![format!("{name}.local")])
+        .unwrap_or_default()
 }

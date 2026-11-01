@@ -17,14 +17,18 @@ pub struct AppearancePane {
     /// text size draws every window again, and a new tint bakes the wash.
     text_size: Option<u32>,
     wash_tint: Option<u32>,
+    /// A change from elsewhere: the main window's text size, another
+    /// window's Settings.
+    _theme: Subscription,
 }
 
 impl AppearancePane {
-    pub fn new(ctx: Ctx, _: &mut Context<Self>) -> Self {
+    pub fn new(ctx: Ctx, cx: &mut Context<Self>) -> Self {
         Self {
             ctx,
             text_size: None,
             wash_tint: None,
+            _theme: cx.observe_global::<KoanTheme>(|_, cx| cx.notify()),
         }
     }
 

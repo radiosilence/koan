@@ -39,9 +39,9 @@ const COPIED: Duration = Duration::from_millis(1500);
 
 pub struct ServerPane {
     pub(super) ctx: Ctx,
-    /// Which side is showing. Starts on what this device is doing; only
-    /// choosing changes it.
-    mode: Mode,
+    /// The side the person chose to look at, while it differs from what
+    /// this device is doing; otherwise the pane follows that.
+    chosen: Option<Mode>,
     url: Entity<InputState>,
     username: Entity<InputState>,
     secret: Entity<InputState>,
@@ -89,7 +89,18 @@ impl ServerPane {
         let cache = cx.global::<Mirror>().cache.clone();
         let share = super::share::ShareForm::new(&ctx, window, cx);
         let subscriptions = vec![
-            cx.observe(&ctx.model, |_, _, cx| cx.notify()),
+            // The secret goes once it has signed in, and stays for another
+            // try when it has not.
+            cx.observe_in(&ctx.model, window, |pane, model, window, cx| {
+                let signed_in = model
+                    .read(cx)
+                    .settings()
+                    .is_some_and(|s| s.remote_signed_in);
+                if signed_in && !pane.secret.read(cx).value().is_empty() {
+                    pane.secret.update(cx, |s, cx| s.set_value("", window, cx));
+                }
+                cx.notify();
+            }),
             cx.observe(&ctx.sharing, |_, _, cx| cx.notify()),
             cx.observe(&ctx.connection, |_, _, cx| cx.notify()),
             cx.observe(&cache, |_, _, cx| cx.notify()),
@@ -110,7 +121,7 @@ impl ServerPane {
                 window,
                 |pane, _, event: &InputEvent, window, cx| {
                     if matches!(event, InputEvent::PressEnter { .. }) {
-                        pane.sign_in(window, cx);
+                        pane.sign_in(cx);
                     }
                 },
             ),
@@ -124,14 +135,9 @@ impl ServerPane {
                 },
             ),
         ];
-        let mode = if settings.is_some_and(|s| s.share_enabled) {
-            Mode::Share
-        } else {
-            Mode::Connect
-        };
         Self {
             ctx,
-            mode,
+            chosen: None,
             url,
             username,
             secret,
@@ -160,15 +166,19 @@ impl ServerPane {
         }));
     }
 
-    fn sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn sign_in(&mut self, cx: &mut Context<Self>) {
         let url = self.url.read(cx).value().trim().to_owned();
         let username = self.username.read(cx).value().trim().to_owned();
         let secret = self.secret.read(cx).value().to_string();
-        if url.is_empty() || username.is_empty() || secret.is_empty() {
+        let signing_in = self
+            .ctx
+            .model
+            .read(cx)
+            .running()
+            .any(|label| label.as_ref() == crate::settings::model::SIGNING_IN);
+        if signing_in || url.is_empty() || username.is_empty() || secret.is_empty() {
             return;
         }
-        // Not kept past the attempt, whatever it comes to.
-        self.secret.update(cx, |s, cx| s.set_value("", window, cx));
         let with_key = self.with_key;
         self.ctx
             .model
@@ -414,9 +424,13 @@ impl ServerPane {
             sections.push(section(Some("Signed in"), rows, None, look));
             sections.push(offers(connection, look));
         } else {
-            let ready = [&self.url, &self.username, &self.secret]
-                .iter()
-                .all(|field| !field.read(cx).value().trim().is_empty());
+            let signing_in = model
+                .running()
+                .any(|label| label.as_ref() == crate::settings::model::SIGNING_IN);
+            let ready = !signing_in
+                && [&self.url, &self.username, &self.secret]
+                    .iter()
+                    .all(|field| !field.read(cx).value().trim().is_empty());
             let secret_label = if self.with_key { "API key" } else { "Password" };
             let rows = vec![
                 FormRow::new("Server URL")
@@ -450,9 +464,7 @@ impl ServerPane {
                             .disabled(!ready)
                             .on_click({
                                 let entity = entity.clone();
-                                move |_, window, cx| {
-                                    entity.update(cx, |pane, cx| pane.sign_in(window, cx))
-                                }
+                                move |_, window, cx| entity.update(cx, |pane, cx| pane.sign_in(cx))
                             })
                             .into_any_element(),
                         Button::new("paste-invite", ButtonKind::Standard)
@@ -723,7 +735,12 @@ impl Render for ServerPane {
         let entity = cx.entity();
         let sharing = self.ctx.sharing.read(cx);
         let status = mode_label(sharing, &connection);
-        let mode = self.mode;
+        let doing = if settings.share_enabled || sharing.serving.is_some() {
+            Mode::Share
+        } else {
+            Mode::Connect
+        };
+        let mode = self.chosen.unwrap_or(doing);
         let mut sections = vec![section(
             None,
             vec![
@@ -737,7 +754,7 @@ impl Render for ServerPane {
                         .on_change(move |index, _, cx| {
                             let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
                             entity.update(cx, |pane, cx| {
-                                pane.mode = mode;
+                                pane.chosen = (mode != doing).then_some(mode);
                                 cx.notify();
                             })
                         }),

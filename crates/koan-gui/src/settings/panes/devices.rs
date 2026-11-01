@@ -25,7 +25,9 @@ pub struct DevicesPane {
     address: Entity<InputState>,
     grantee: Entity<InputState>,
     share_error: Option<String>,
-    tasks: Vec<Task<()>>,
+    /// The lookup a click starts, one of each; a new click replaces it.
+    pairing: Option<Task<()>>,
+    queue_lookup: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -76,7 +78,7 @@ impl DevicesPane {
                 |pane, state, event: &InputEvent, window, cx| {
                     if matches!(event, InputEvent::PressEnter { .. }) {
                         let name = state.read(cx).value().trim().to_owned();
-                        pane.share(name, true, window, cx);
+                        pane.grant(name, window, cx);
                     }
                 },
             ),
@@ -87,7 +89,8 @@ impl DevicesPane {
             address,
             grantee,
             share_error: None,
-            tasks: Vec::new(),
+            pairing: None,
+            queue_lookup: None,
             _subscriptions: subscriptions,
         }
     }
@@ -112,7 +115,7 @@ impl DevicesPane {
                 .unwrap_or_default(),
         };
         let sheets = self.ctx.sheets.clone();
-        self.tasks.push(cx.spawn_in(window, async move |_, cx| {
+        self.pairing = Some(cx.spawn_in(window, async move |_, cx| {
             let info = engine.clone().pairing_info(typed.clone()).await;
             cx.update(|window, cx| match info {
                 Err(e) => model.update(cx, |m, cx| m.report(describe(&e), cx)),
@@ -134,10 +137,11 @@ impl DevicesPane {
                         .message(format!(
                             "{origin}\n\nIt will be signed in as {username} on {host_name}. Allow only a device you are setting up yourself: anyone can give a device any name."
                         ))
-                        .action(Action::new("Decline", move |_, _, cx| {
+                        .dismiss_with("Decline", move |_, cx| {
                             let (engine, pair, device) = (deny_engine.clone(), deny_pair.clone(), declined.clone());
                             deny_model.update(cx, |m, cx| {
                                 m.run(
+                                    format!("Declining {device}"),
                                     crate::settings::model::Uses::NONE,
                                     cx,
                                     move |_| engine.decline_pairing(pair),
@@ -148,12 +152,13 @@ impl DevicesPane {
                                     },
                                 )
                             })
-                        }))
+                        })
                         .action(Action::new("Allow", move |_, _, cx| {
                             let (engine, pair, device, who) =
                                 (allow_engine.clone(), allow_pair.clone(), signed.clone(), who.clone());
                             allow_model.update(cx, |m, cx| {
                                 m.run(
+                                    format!("Signing {device} in"),
                                     crate::settings::model::Uses::NONE,
                                     cx,
                                     move |_| engine.approve_pairing(pair),
@@ -181,7 +186,7 @@ impl DevicesPane {
         }
         let engine = model.read(cx).engine().clone();
         let sheets = self.ctx.sheets.clone();
-        self.tasks.push(cx.spawn_in(window, async move |_, cx| {
+        self.queue_lookup = Some(cx.spawn_in(window, async move |_, cx| {
             let saved = engine.server_queue().await;
             cx.update(|window, cx| match saved {
                 Err(e) => model.update(cx, |m, cx| m.report(describe(&e), cx)),
@@ -222,6 +227,26 @@ impl DevicesPane {
                 }
             })
         });
+    }
+
+    /// Lets another account see and control this device, once the person
+    /// has seen what that gives it.
+    fn grant(&mut self, account: String, window: &mut Window, cx: &mut Context<Self>) {
+        if account.is_empty() {
+            return;
+        }
+        let pane = cx.entity();
+        let sheet = Sheet::new(format!("Share this device with {account}?"))
+            .message(format!(
+                "From any network, signed in as themselves, {account} will be able to see and control what this device plays, including the output, preset and volume. Nothing of your library, playlists, history or settings."
+            ))
+            .action(Action::new("Share", move |_, window, cx| {
+                let account = account.clone();
+                pane.update(cx, |p, cx| p.share(account, true, window, cx))
+            }));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn share(&mut self, account: String, allow: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -635,7 +660,7 @@ impl Render for DevicesPane {
                         .on_click(move |_, window, cx| {
                             pane.update(cx, |p, cx| {
                                 let name = p.grantee.read(cx).value().trim().to_owned();
-                                p.share(name, true, window, cx)
+                                p.grant(name, window, cx)
                             })
                         })
                         .into_any_element(),

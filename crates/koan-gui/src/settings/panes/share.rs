@@ -210,6 +210,7 @@ impl ShareForm {
                     model.update(cx, |m, cx| {
                         let engine = engine.clone();
                         m.run(
+                            "Resetting the password",
                             crate::settings::model::Uses::NONE,
                             cx,
                             move |_| engine.reset_server_admin_password(password),
@@ -338,7 +339,23 @@ impl ShareForm {
                 settings.share_enabled,
             )
             .disabled(sharing.busy())
-            .on_change(move |on, _, cx| ShareForm::set_sharing(&ctx, *on, cx))
+            .on_change(move |on, window, cx| {
+                if *on {
+                    ShareForm::set_sharing(&ctx, true, cx);
+                    return;
+                }
+                // Every phone and device on it loses the library at once.
+                let off = ctx.clone();
+                let sheet = Sheet::new("Stop sharing this device's library?")
+                    .message("Your phone and other devices signed in to this device lose its library, and can't play from it, until sharing is on again. Their accounts and keys are kept.")
+                    .action(
+                        Action::new("Stop Sharing", move |_, _, cx| {
+                            ShareForm::set_sharing(&off, false, cx)
+                        })
+                        .destructive(),
+                    );
+                ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+            })
             .into_any_element()
         }];
         if let Some(url) = sharing.serving.as_ref().and_then(|s| s.lan_url.clone()) {

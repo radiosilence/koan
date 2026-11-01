@@ -61,6 +61,9 @@ pub(crate) struct Draft {
     base: Settings,
     writing: Vec<Edit>,
     queued: Vec<Edit>,
+    /// Writes landed so far. A read of the file that began before the last
+    /// of them may have read the file before it, and is not applied.
+    writes: u64,
 }
 
 impl Draft {
@@ -69,7 +72,13 @@ impl Draft {
             base,
             writing: Vec::new(),
             queued: Vec::new(),
+            writes: 0,
         }
+    }
+
+    /// Writes landed so far, for a read to say when it began.
+    pub(crate) fn writes(&self) -> u64 {
+        self.writes
     }
 
     /// What the window shows: the file with every edit not yet in it.
@@ -98,6 +107,7 @@ impl Draft {
     pub(crate) fn wrote(&mut self, written: Settings) -> bool {
         self.base = written;
         self.writing.clear();
+        self.writes += 1;
         !self.queued.is_empty()
     }
 
@@ -108,11 +118,19 @@ impl Draft {
         !self.queued.is_empty()
     }
 
-    /// The file read again: the edits not yet in it still show over it.
-    pub(crate) fn reloaded(&mut self, base: Settings) {
-        self.base = base;
+    /// The file read again, by a read that began after `writes` writes had
+    /// landed: the edits not yet in it still show over it. A read that began
+    /// before a write since landed is dropped; it may hold the file as it
+    /// was before that write.
+    pub(crate) fn reloaded(&mut self, base: Settings, writes: u64) {
+        if writes == self.writes {
+            self.base = base;
+        }
     }
 }
+
+/// What a sign-in is called while it runs, by which the pane knows one is.
+pub const SIGNING_IN: &str = "Signing in";
 
 /// How long the result of an action stays on the status line. An error
 /// stays until the next action.
@@ -128,12 +146,16 @@ pub struct SettingsModel {
     pub last_result: Option<SharedString>,
     dismissal: Option<Task<()>>,
     reading: Option<Task<()>>,
-    /// The tasks Settings started and what each holds.
-    running: Vec<(u64, Uses)>,
+    /// The tasks Settings started: what each holds, and what it is doing,
+    /// for the status line.
+    running: Vec<(u64, Uses, SharedString)>,
     next_task: u64,
     /// What koan is doing on its own (a watched folder's scan, an automatic
     /// sync), from the engine's tasks slice.
     engine_busy: Uses,
+    /// A key or app password made as its window closed, shown by the next
+    /// Settings window: it is shown only once, and must reach someone.
+    pub unseen: Option<crate::settings::sheet::Sheet>,
     _tasks: Subscription,
 }
 
@@ -153,6 +175,7 @@ impl SettingsModel {
             running: Vec::new(),
             next_task: 0,
             engine_busy: Uses::NONE,
+            unseen: None,
             _tasks: cx.observe(&tasks, |model, tasks, cx| {
                 let Slice(tasks) = *tasks.read(cx);
                 let busy = Uses::NONE
@@ -190,8 +213,13 @@ impl SettingsModel {
     pub fn conflicts(&self, wanted: Uses) -> bool {
         self.running
             .iter()
-            .fold(self.engine_busy, |held, (_, uses)| held.with(*uses))
+            .fold(self.engine_busy, |held, (_, uses, _)| held.with(*uses))
             .overlaps(wanted)
+    }
+
+    /// What Settings has under way, as the status line says it.
+    pub fn running(&self) -> impl Iterator<Item = &SharedString> {
+        self.running.iter().map(|(_, _, label)| label)
     }
 
     // --- Reading and writing ---------------------------------------------
@@ -199,11 +227,12 @@ impl SettingsModel {
     /// Reads the file again. Edits not yet written still show over it.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.clone();
+        let writes = self.draft.as_ref().map_or(0, Draft::writes);
         self.reading = Some(cx.spawn(async move |this, cx| {
             let settings = engine.settings().await;
             this.update(cx, |model, cx| {
                 match &mut model.draft {
-                    Some(draft) => draft.reloaded(settings),
+                    Some(draft) => draft.reloaded(settings, writes),
                     None => model.draft = Some(Draft::new(settings)),
                 }
                 model.redraw(cx);
@@ -296,6 +325,7 @@ impl SettingsModel {
     /// work succeeds or fails, so nothing stays disabled.
     pub fn run<T: 'static, F>(
         &mut self,
+        label: impl Into<SharedString>,
         uses: Uses,
         cx: &mut Context<Self>,
         work: impl FnOnce(Arc<KoanEngine>) -> F,
@@ -305,13 +335,13 @@ impl SettingsModel {
     {
         let id = self.next_task;
         self.next_task += 1;
-        self.running.push((id, uses));
+        self.running.push((id, uses, label.into()));
         cx.notify();
         let future = work(self.engine.clone());
         cx.spawn(async move |this, cx| {
             let result = future.await;
             this.update(cx, |model, cx| {
-                model.running.retain(|(task, _)| *task != id);
+                model.running.retain(|(task, _, _)| *task != id);
                 landed(model, result, cx);
                 model.reload(cx);
                 cx.notify();
@@ -323,6 +353,11 @@ impl SettingsModel {
 
     pub fn scan(&mut self, force: bool, cx: &mut Context<Self>) {
         self.run(
+            if force {
+                "Rescanning every file"
+            } else {
+                "Scanning the library"
+            },
             Uses::LOCAL_LIBRARY,
             cx,
             move |engine| engine.scan_reporting(force, None),
@@ -363,7 +398,12 @@ impl SettingsModel {
         if !forget {
             return;
         }
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
         self.run(
+            format!("Forgetting {name}"),
             Uses::LOCAL_TRACKS,
             cx,
             move |engine| engine.forget_folder(path),
@@ -376,17 +416,23 @@ impl SettingsModel {
 
     pub fn rebuild_index(&mut self, cx: &mut Context<Self>) {
         self.run(
+            "Clearing the library index",
             Uses::WHOLE_LIBRARY,
             cx,
             |engine| engine.rebuild_index(),
             |model, result, cx| match result {
-                Ok(s) => model.done(
-                    format!(
-                        "Removed {} tracks — scan or sync to rebuild",
-                        count(s.tracks)
-                    ),
-                    cx,
-                ),
+                Ok(s) => {
+                    // Sleeves are kept by album id, which the rebuilt
+                    // library hands out from 1 again.
+                    crate::covers::Covers::purge(cx);
+                    model.done(
+                        format!(
+                            "Removed {} tracks — scan or sync to rebuild",
+                            count(s.tracks)
+                        ),
+                        cx,
+                    );
+                }
                 Err(e) => model.report(describe(&e), cx),
             },
         );
@@ -403,6 +449,7 @@ impl SettingsModel {
     ) {
         let shown = url.clone();
         self.run(
+            SIGNING_IN,
             Uses::NONE,
             cx,
             move |engine| async move {
@@ -426,6 +473,7 @@ impl SettingsModel {
     pub fn join_invite(&mut self, invite: koan_ffi::Invite, cx: &mut Context<Self>) {
         let host = invite.server.clone();
         self.run(
+            SIGNING_IN,
             Uses::NONE,
             cx,
             move |engine| engine.join_invite(invite),
@@ -443,6 +491,7 @@ impl SettingsModel {
 
     fn load_library(&mut self, cx: &mut Context<Self>) {
         self.run(
+            "Loading the library",
             Uses::REMOTE_TRACKS,
             cx,
             |engine| engine.load_remote_library(),
@@ -462,13 +511,19 @@ impl SettingsModel {
     /// Local files stay.
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         self.run(
+            "Signing out",
             // Local rows too: it takes the server off the rows that were on
             // both, so a scan writing them would be writing the same rows.
             Uses::REMOTE_TRACKS.with(Uses::LOCAL_TRACKS),
             cx,
             |engine| engine.sign_out_remote(),
             |model, result, cx| match result {
-                Ok(()) => model.done("Signed out", cx),
+                Ok(()) => {
+                    // The server's records are gone, and their ids go to
+                    // whatever is synced next.
+                    crate::covers::Covers::purge(cx);
+                    model.done("Signed out", cx);
+                }
                 Err(e) => model.report(describe(&e), cx),
             },
         );
@@ -476,6 +531,7 @@ impl SettingsModel {
 
     pub fn sync(&mut self, cx: &mut Context<Self>) {
         self.run(
+            "Syncing with the server",
             Uses::REMOTE_TRACKS,
             cx,
             |engine| engine.sync_remote(),
@@ -500,6 +556,7 @@ impl SettingsModel {
 
     pub fn clear_cache(&mut self, cx: &mut Context<Self>) {
         self.run(
+            "Clearing downloads",
             Uses::DOWNLOADS,
             cx,
             |engine| engine.clear_download_cache(),
@@ -517,6 +574,11 @@ impl SettingsModel {
     /// replaces this queue with the server's, which the pane asks about first.
     pub fn set_server_queue(&mut self, on: bool, cx: &mut Context<Self>) {
         self.run(
+            if on {
+                "Taking the server's queue"
+            } else {
+                "Keeping the queue here"
+            },
             Uses::NONE,
             cx,
             move |engine| engine.set_server_queue(on),
@@ -534,6 +596,7 @@ impl SettingsModel {
     /// in; the account's others sign in again.
     pub fn change_password(&mut self, current: String, new: String, cx: &mut Context<Self>) {
         self.run(
+            "Changing the password",
             Uses::NONE,
             cx,
             move |engine| engine.change_own_password(current, new),
@@ -714,12 +777,32 @@ mod tests {
     }
 
     #[test]
+    fn a_read_from_before_a_write_does_not_undo_it() {
+        let mut draft = Draft::new(settings(1));
+        // A read of the file begins, before the edit is written.
+        let began = draft.writes();
+        draft.edit(Rc::new(|s| s.share_port = 2));
+        let edits = draft.take();
+        let mut written = settings(1);
+        edits.iter().for_each(|e| e(&mut written));
+        assert!(!draft.wrote(written));
+        // The read lands with the file as it was.
+        draft.reloaded(settings(1), began);
+        assert_eq!(draft.drawn().share_port, 2);
+        // A read begun after the write is applied.
+        let mut later = settings(2);
+        later.fade_on_pause = true;
+        draft.reloaded(later, draft.writes());
+        assert!(draft.drawn().fade_on_pause);
+    }
+
+    #[test]
     fn a_reload_keeps_edits_not_yet_written() {
         let mut draft = Draft::new(settings(1));
         draft.edit(Rc::new(|s| s.fade_on_pause = true));
         let mut file = settings(1);
         file.remote_signed_in = true;
-        draft.reloaded(file);
+        draft.reloaded(file, draft.writes());
         let drawn = draft.drawn();
         assert!(drawn.remote_signed_in);
         assert!(drawn.fade_on_pause);

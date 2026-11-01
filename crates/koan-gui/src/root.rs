@@ -49,13 +49,15 @@ impl WindowRoot {
             fetching: None,
             _subscriptions: [
                 theme::follow_appearance(window, cx),
-                cx.observe(&playback, |this, playback, cx| this.follow(&playback, cx)),
+                cx.observe(&playback, |this, playback, cx| {
+                    this.follow(&playback, false, cx)
+                }),
                 cx.observe_global::<KoanTheme>(move |this, cx| this.restyle(&followed, cx)),
             ],
         };
         root.wash
             .update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
-        root.follow(&playback, cx);
+        root.follow(&playback, false, cx);
         root
     }
 
@@ -70,13 +72,13 @@ impl WindowRoot {
         }
         if record_colours != self.record_colours {
             self.record_colours = record_colours;
-            // Fetched again, or taken off, from scratch.
-            self.album = Some(i64::MIN);
-            self.follow(playback, cx);
+            self.follow(playback, true, cx);
         }
     }
 
-    fn follow(&mut self, playback: &Entity<Playback>, cx: &mut Context<Self>) {
+    /// Follows the record playing; `again` fetches its sleeve even when it
+    /// is the one shown, as after "Colours from the record" is switched.
+    fn follow(&mut self, playback: &Entity<Playback>, again: bool, cx: &mut Context<Self>) {
         let now = &playback.read(cx).0;
         let playing = now.state == PlayState::Playing;
         // Off, there is no wash and the accent is mint, as with no record.
@@ -86,7 +88,7 @@ impl WindowRoot {
             .and_then(|entry| entry.album_id)
             .filter(|_| self.record_colours);
         self.wash.update(cx, |wash, cx| wash.drift(playing, cx));
-        if album == self.album {
+        if album == self.album && !again {
             return;
         }
         self.album = album;

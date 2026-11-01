@@ -47,6 +47,9 @@ pub struct Covers {
     running: usize,
     ready: usize,
     tick: Cell<u64>,
+    /// Moves when every sleeve is dropped, so a fetch begun before lands
+    /// nowhere.
+    generation: u64,
 }
 
 #[derive(Clone)]
@@ -93,6 +96,25 @@ impl Covers {
         None
     }
 
+    /// Drops every sleeve: the library's ids now name other records, as
+    /// after the index is rebuilt, which hands them out from 1 again.
+    pub fn purge(cx: &mut App) {
+        let Some(CoversHandle(covers)) = cx.try_global::<CoversHandle>().cloned() else {
+            return;
+        };
+        covers.update(cx, |covers, cx| {
+            covers.generation += 1;
+            covers.waiting.clear();
+            covers.ready = 0;
+            for (_, held) in covers.held.drain() {
+                if let Held::Ready(image, _) = held {
+                    cx.drop_image(image, None);
+                }
+            }
+            cx.notify();
+        });
+    }
+
     /// Drops the sleeve drawn longest ago, and its texture, once more than
     /// `KEPT` are held.
     fn evict(&mut self, cx: &mut Context<Self>) {
@@ -128,6 +150,7 @@ impl Covers {
             let fetch = engine(cx).album_cover_art(album_id, Some(size));
             let renderer = cx.svg_renderer();
             let background = cx.background_executor().clone();
+            let generation = self.generation;
             cx.spawn(async move |this, cx| {
                 let held = background
                     .spawn(async move {
@@ -151,6 +174,13 @@ impl Covers {
                     .await;
                 this.update(cx, |covers, cx| {
                     covers.running -= 1;
+                    if covers.generation != generation {
+                        if let Held::Ready(image, _) = held {
+                            cx.drop_image(image, None);
+                        }
+                        covers.pump(cx);
+                        return;
+                    }
                     // Only a sleeve that landed changes what is drawn; a miss
                     // leaves the placeholder that was already there.
                     let landed = matches!(held, Held::Ready(..));

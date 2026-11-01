@@ -27,7 +27,9 @@ pub struct IntegrationsPane {
     token: Entity<InputState>,
     busy: bool,
     copied: bool,
-    tasks: Vec<Task<()>>,
+    assistants_task: Option<Task<()>>,
+    status_task: Option<Task<()>>,
+    connecting: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -57,7 +59,9 @@ impl IntegrationsPane {
             token,
             busy: false,
             copied: false,
-            tasks: Vec::new(),
+            assistants_task: None,
+            status_task: None,
+            connecting: None,
         };
         pane.follow(cx);
         pane
@@ -70,7 +74,7 @@ impl IntegrationsPane {
         if offers(&connection, MCP) && !self.asked_assistants {
             self.asked_assistants = true;
             let engine = engine.clone();
-            self.tasks.push(cx.spawn(async move |this, cx| {
+            self.assistants_task = Some(cx.spawn(async move |this, cx| {
                 let asked = engine.assistants().await.map_err(|e| describe(&e));
                 this.update(cx, |pane, cx| {
                     pane.assistants = Some(asked);
@@ -92,7 +96,7 @@ impl IntegrationsPane {
     fn load_scrobbling(&mut self, cx: &mut Context<Self>) {
         let engine = self.ctx.model.read(cx).engine().clone();
         self.scrobbling = None;
-        self.tasks.push(cx.spawn(async move |this, cx| {
+        self.status_task = Some(cx.spawn(async move |this, cx| {
             let status = engine.scrobbling_status().await.map_err(|e| describe(&e));
             this.update(cx, |pane, cx| {
                 pane.scrobbling_error = status.as_ref().err().cloned();
@@ -110,7 +114,7 @@ impl IntegrationsPane {
         }
         self.busy = true;
         let engine = self.ctx.model.read(cx).engine().clone();
-        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
+        self.connecting = Some(cx.spawn_in(window, async move |this, cx| {
             let connected = engine.connect_scrobbling(typed).await;
             this.update_in(cx, |pane, window, cx| {
                 pane.busy = false;
@@ -138,7 +142,7 @@ impl IntegrationsPane {
                     entity.update(cx, |pane, cx| {
                         pane.busy = true;
                         let engine = pane.ctx.model.read(cx).engine().clone();
-                        pane.tasks.push(cx.spawn(async move |this, cx| {
+                        pane.connecting = Some(cx.spawn(async move |this, cx| {
                             let result = engine.disconnect_scrobbling().await;
                             this.update(cx, |pane, cx| {
                                 pane.busy = false;

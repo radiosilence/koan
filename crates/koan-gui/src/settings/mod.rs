@@ -95,7 +95,8 @@ pub fn open(cx: &mut App) {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(600.), px(480.))),
         titlebar: Some(TitlebarOptions {
-            title: None,
+            // Hidden on macOS; what task switchers show elsewhere.
+            title: Some("Settings".into()),
             appears_transparent: true,
             traffic_light_position: None,
         }),
@@ -143,6 +144,10 @@ pub struct SettingsWindow {
     /// account is an admin's, and so whether there is a People tab at all.
     people: Option<Entity<panes::people::People>>,
     people_for: Option<String>,
+    /// Pressed on the strip along the top, to move the window on the next
+    /// move: a click alone is not a drag.
+    moving_window: bool,
+    _people: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -157,9 +162,15 @@ impl SettingsWindow {
         };
         let subscriptions = vec![
             theme::follow_appearance(window, cx),
-            cx.observe(&ctx.model, |this, _, cx| this.follow_account(cx)),
-            cx.observe(&ctx.sharing, |this, _, cx| this.follow_account(cx)),
-            cx.observe(&ctx.connection, |this, _, cx| this.follow_account(cx)),
+            cx.observe_in(&ctx.model, window, |this, _, window, cx| {
+                this.follow_account(window, cx)
+            }),
+            cx.observe_in(&ctx.sharing, window, |this, _, window, cx| {
+                this.follow_account(window, cx)
+            }),
+            cx.observe_in(&ctx.connection, window, |this, _, window, cx| {
+                this.follow_account(window, cx)
+            }),
             cx.observe(&ctx.sheets, |_, _, cx| cx.notify()),
             // The CLI and the TUI write the same file; coming back to this
             // window is the moment to notice they did.
@@ -181,9 +192,16 @@ impl SettingsWindow {
             pane,
             people: None,
             people_for: None,
+            moving_window: false,
+            _people: None,
             _subscriptions: subscriptions,
         };
-        this.follow_account(cx);
+        this.follow_account(window, cx);
+        if let Some(sheet) = this.ctx.model.update(cx, |m, _| m.unseen.take()) {
+            this.ctx
+                .sheets
+                .update(cx, |s, cx| s.show(sheet, window, cx));
+        }
         this
     }
 
@@ -202,7 +220,7 @@ impl SettingsWindow {
 
     /// Asks for the server's accounts again for each account and server
     /// signed in as, where the server has koan's accounts.
-    fn follow_account(&mut self, cx: &mut gpui_kit::Context<Self>) {
+    fn follow_account(&mut self, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
         let offered = offers(&self.ctx.connection.read(cx).0, panes::people::EXTENSION);
         let url = self
             .ctx
@@ -219,10 +237,18 @@ impl SettingsWindow {
             self.people_for = key.clone();
             self.people = key.map(|_| {
                 let engine = self.ctx.model.read(cx).engine().clone();
-                let people = cx.new(|cx| panes::people::People::new(engine, cx));
-                cx.observe(&people, |_, _, cx| cx.notify()).detach();
-                people
+                cx.new(|cx| panes::people::People::new(engine, cx))
             });
+            self._people = self.people.as_ref().map(|people| {
+                cx.observe_in(people, window, |this, _, window, cx| {
+                    this.follow_account(window, cx)
+                })
+            });
+        }
+        // A tab that went away (signed out, an account no longer an admin)
+        // gives way to the server's.
+        if !self.tabs(cx).contains(&self.tab) {
+            self.show(Tab::Server, window, cx);
         }
         cx.notify();
     }
@@ -285,11 +311,6 @@ impl Render for SettingsWindow {
         KoanTheme::drive(window, cx);
         let look = Look::of(window, cx);
         let tabs = self.tabs(cx);
-        // A tab that went away (signed out, an account no longer an admin)
-        // gives way to the server's.
-        if !tabs.contains(&self.tab) {
-            self.show(Tab::Server, window, cx);
-        }
         let entity = cx.entity();
         let row = div()
             .flex()
@@ -318,8 +339,7 @@ impl Render for SettingsWindow {
             .flex()
             .flex_col()
             .bg(look.palette.bg.hsla())
-            // The window's buttons sit above the row, on its ground.
-            .pt(px(if cfg!(target_os = "macos") { 30. } else { 8. }))
+            .child(self.top_strip(window, cx))
             .child(row)
             .child(
                 div()
@@ -329,6 +349,49 @@ impl Render for SettingsWindow {
             )
             .child(status)
             .children(sheet)
+    }
+}
+
+impl SettingsWindow {
+    /// The strip along the top, on the window's ground: the window's own
+    /// buttons sit in it on macOS. It moves the window, and where the
+    /// compositor leaves decorations to the app (GNOME on Wayland), it holds
+    /// a close button.
+    fn top_strip(&self, window: &Window, cx: &mut gpui_kit::Context<Self>) -> Stateful<Div> {
+        let client = matches!(window.window_decorations(), Decorations::Client { .. });
+        let look = Look::of(window, cx);
+        div()
+            .id("settings-top")
+            .flex()
+            .justify_end()
+            .items_center()
+            .h(px(if cfg!(target_os = "macos") { 30. } else { 28. }))
+            .px(look.space(Space::S))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.moving_window = true),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.moving_window = false),
+            )
+            .on_mouse_down_out(cx.listener(|this, _, _, _| this.moving_window = false))
+            .on_mouse_move(cx.listener(|this, _, window, _| {
+                if std::mem::take(&mut this.moving_window) {
+                    window.start_window_move();
+                }
+            }))
+            .when(client, |strip| {
+                strip.child(
+                    crate::components::Button::new(
+                        "settings-close",
+                        crate::components::ButtonKind::Toolbar,
+                    )
+                    .label("Close")
+                    .icon(Icon::Close)
+                    .on_click(|_, window, _| window.remove_window()),
+                )
+            })
     }
 }
 
@@ -370,8 +433,15 @@ fn tab_item(tab: Tab, selected: bool, look: &Look) -> Stateful<Div> {
 /// same place, since an action that reports nothing looks like it did
 /// nothing.
 fn status_line(model: &SettingsModel, look: &Look) -> Div {
+    let running: Vec<&str> = model.running().map(SharedString::as_ref).collect();
     let (text, tone, icon) = match (&model.last_error, &model.last_result) {
         (Some(error), _) => (error.clone(), Tone::Bad, Some(Icon::WarningFilled)),
+        // What is under way, until it says how it went.
+        _ if !running.is_empty() => (
+            format!("{}…", running.join(" · ")).into(),
+            Tone::Muted,
+            Some(Icon::Pending),
+        ),
         (None, Some(result)) => (result.clone(), Tone::Muted, Some(Icon::Success)),
         (None, None) => (SharedString::default(), Tone::Muted, None),
     };
