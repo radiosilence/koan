@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat};
 
-use crate::components::{KoanContextMenu, Menu, MenuEntry};
+use crate::components::{Menu as ThemeMenu, MenuEntry};
 use crate::covers::{self, CoversHandle};
 use crate::engine::command;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
@@ -26,7 +26,7 @@ pub struct Transport {
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
     seek: Entity<Seek>,
-    menu: Option<(Menu, Entity<Menu>, Subscription)>,
+    menu: Option<(Menu, Entity<ThemeMenu>, Subscription)>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: Option<Arc<RenderImage>>,
@@ -83,13 +83,13 @@ impl Transport {
         let menu = match which {
             Menu::Sleep => {
                 let sleeping = self.playback.read(cx).0.sleep.is_some();
-                Menu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
+                ThemeMenu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
             }
             Menu::Output => {
                 let Some(outputs) = self.outputs.read(cx).0.clone() else {
                     return;
                 };
-                Menu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
+                ThemeMenu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
             }
         };
         let dismissed = cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
@@ -139,7 +139,7 @@ impl Transport {
     }
 }
 
-fn sleep_menu(menu: Menu, sleeping: bool) -> Menu {
+fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
     let timer = |label: &'static str, timer: SleepTimer| {
         MenuEntry::new(label).on_click(move |_, _, cx| {
             command(cx, "sleep timer", move |e| e.set_sleep_timer(timer));
@@ -161,7 +161,7 @@ fn sleep_menu(menu: Menu, sleeping: bool) -> Menu {
     }
 }
 
-fn output_menu(menu: Menu, outputs: &koan_ffi::OutputsInfo) -> Menu {
+fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
     let choice = |label: String, chosen: bool, choice: OutputChoice| {
         MenuEntry::new(label)
             .checked(chosen)

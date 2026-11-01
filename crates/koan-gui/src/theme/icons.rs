@@ -16,8 +16,8 @@ use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use gpui_kit::{
-    App, AssetSource, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
-    div, px, svg,
+    App, AssetSource, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, Styled, Window, div, px, svg,
 };
 use parking_lot::Mutex;
 
@@ -259,20 +259,33 @@ impl RenderOnce for KoanIcon {
         };
         let color = resolve(self.tone);
         let side = px(side(points));
-        let hover = self.hover.clone();
         let sprite = |layer: Layer, color: Hsla| {
-            let sprite = svg()
+            svg()
                 .path(path(self.icon, points, layer))
                 .size(side)
-                .text_color(color);
-            match (&hover, layer) {
-                (Some((group, hovered)), Layer::All | Layer::Strokes) => {
-                    let hovered = *hovered;
-                    sprite.group_hover(group.clone(), move |s| s.text_color(hovered))
-                }
-                _ => sprite,
-            }
+                .text_color(color)
         };
+        // A glyph's colour is its own, so following the pointer is two
+        // sprites, the second shown while the group is under it.
+        if let Some((group, hovered)) = self.hover {
+            return div()
+                .relative()
+                .flex_none()
+                .size(side)
+                .child(
+                    div()
+                        .absolute()
+                        .group_hover(group.clone(), |s| s.opacity(0.))
+                        .child(sprite(Layer::All, color)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .opacity(0.)
+                        .group_hover(group, |s| s.opacity(1.))
+                        .child(sprite(Layer::All, hovered)),
+                );
+        }
         match self.fill.map(resolve) {
             Some(fill) if !self.icon.glyph().fills.is_empty() => div()
                 .relative()

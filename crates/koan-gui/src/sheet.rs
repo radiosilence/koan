@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Window, div, px,
+    AnyElement, AppContext, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement,
+    Styled, Subscription, Window, div, px,
 };
 
 use crate::components::{
