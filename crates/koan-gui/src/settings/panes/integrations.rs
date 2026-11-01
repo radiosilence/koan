@@ -6,8 +6,8 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Assistants, ScrobblingConnection};
-use koan_gui::components::{Button, ButtonKind, FormRow, TextField};
-use koan_gui::theme::{Icon, Look, Tone, TypeRole};
+use crate::components::{Button, ButtonKind, FormRow, TextField};
+use crate::theme::{Icon, Look, Tone, TypeRole};
 
 use crate::settings::form::{buttons, copyable, note, page, section, text};
 use crate::settings::model::{count, describe};

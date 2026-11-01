@@ -25,6 +25,7 @@ pub mod paint;
 pub mod queue;
 pub mod root;
 pub mod session;
+pub mod settings;
 pub mod sheet;
 pub mod shell;
 pub mod sidebar;

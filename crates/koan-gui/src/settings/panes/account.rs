@@ -4,8 +4,8 @@
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_gui::components::{Button, ButtonKind, FormRow};
-use koan_gui::theme::Look;
+use crate::components::{Button, ButtonKind, FormRow};
+use crate::theme::Look;
 
 use super::keys::{Keys, Kind};
 use super::link::LinkDevice;

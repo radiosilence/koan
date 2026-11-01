@@ -411,6 +411,23 @@ impl SettingsModel {
         );
     }
 
+    /// Signs in through an invite, then loads the library.
+    pub fn join_invite(&mut self, invite: koan_ffi::Invite, cx: &mut Context<Self>) {
+        let host = invite.server.clone();
+        self.run(
+            Uses::NONE,
+            cx,
+            move |engine| engine.join_invite(invite),
+            move |model, result, cx| match result {
+                Ok(()) => {
+                    model.done(format!("Signed in to {host}"), cx);
+                    model.load_library(cx);
+                }
+                Err(e) => model.report(format!("Could not sign in to {host}: {}", describe(&e)), cx),
+            },
+        );
+    }
+
     fn load_library(&mut self, cx: &mut Context<Self>) {
         self.run(
             Uses::REMOTE_TRACKS,

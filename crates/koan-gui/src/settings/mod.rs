@@ -20,7 +20,7 @@ use gpui_kit::base::Root;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{ConnectionInfo, KoanEngine};
-use koan_gui::theme::{
+use crate::theme::{
     self, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole, label,
 };
 
@@ -40,17 +40,39 @@ pub struct Settings {
 
 impl Global for Settings {}
 
-/// Makes the model and sharing and resumes sharing where it was left on.
-/// Call once the mirror is installed.
+/// Makes the model and sharing, and applies the saved appearance. Call once
+/// the mirror is installed.
 pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
     let model = cx.new(|cx| SettingsModel::new(engine.clone(), cx));
-    let sharing = cx.new(|_| Sharing::new(engine));
-    sharing.update(cx, |sharing, cx| sharing.resume(cx));
+    let sharing = cx.new(|_| Sharing::new(engine.clone()));
     cx.set_global(Settings {
         model,
         sharing,
         window: None,
     });
+    // `appearance` waits for saves still landing, so it is read off the
+    // main thread.
+    let read = cx
+        .background_executor()
+        .spawn(async move { engine.appearance() });
+    cx.spawn(async move |cx| {
+        let saved = read.await;
+        cx.update(|cx| {
+            KoanTheme::set_record_colours(saved.record_colours, cx);
+            KoanTheme::set_wash_tint(u32::from(saved.wash_tint), cx);
+            cx.global_mut::<KoanTheme>().icons = saved.icons;
+            KoanTheme::set_text_size(u32::from(saved.text_size), cx);
+        });
+    })
+    .detach();
+}
+
+/// Serves this device's library again where sharing was left on. What the
+/// app calls as it opens, and nothing else: an offscreen render must not
+/// start a server.
+pub fn resume(cx: &mut App) {
+    let sharing = cx.global::<Settings>().sharing.clone();
+    sharing.update(cx, |sharing, cx| sharing.resume(cx));
 }
 
 /// Opens the Settings window, or brings the open one forward.

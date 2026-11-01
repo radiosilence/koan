@@ -16,9 +16,9 @@ use crate::root::WindowRoot;
 use crate::session::Session;
 use crate::shell::Shell;
 use crate::theme;
-use crate::{engine, queue, shell, window_state};
+use crate::{engine, queue, settings, shell, window_state};
 
-actions!(koan, [Quit]);
+actions!(koan, [Quit, OpenSettings]);
 
 /// How long quitting waits for the session to be written. Writing a large
 /// queue takes a moment; a database that never answers must not hold the
@@ -32,9 +32,17 @@ pub fn run() {
         theme::init(cx);
         cx.bind_keys(shell::bindings());
         cx.bind_keys(queue::bindings());
-        cx.bind_keys([KeyBinding::new(secondary!("q"), Quit, None)]);
+        cx.bind_keys([
+            KeyBinding::new(secondary!("q"), Quit, None),
+            KeyBinding::new(secondary!(","), OpenSettings, None),
+        ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.set_menus([Menu::new("kōan").items([MenuItem::action("quit kōan", Quit)])]);
+        cx.on_action(|_: &OpenSettings, cx| settings::open(cx));
+        cx.set_menus([Menu::new("kōan").items([
+            MenuItem::action("settings…", OpenSettings),
+            MenuItem::separator(),
+            MenuItem::action("quit kōan", Quit),
+        ])]);
 
         cx.spawn(async move |cx| {
             let engine = match KoanEngine::open(None).await {
@@ -64,6 +72,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.set_global(mirror);
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
+    settings::install(engine.clone(), cx);
 }
 
 /// Restores the session and opens the window, neither waiting on the other
@@ -80,6 +89,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
 /// failed.
 fn start(engine: Arc<KoanEngine>, cx: &mut App) {
     install(&engine, cx);
+    settings::resume(cx);
     let queue = cx.global::<Mirror>().queue.clone();
 
     let (shown, showing) = futures::channel::oneshot::channel::<()>();

@@ -2,8 +2,8 @@
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_gui::components::{Button, ButtonKind};
-use koan_gui::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole};
+use crate::components::{Button, ButtonKind};
+use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole};
 
 use crate::settings::form::{buttons, page, section, text};
 use crate::settings::model::{Uses, count};

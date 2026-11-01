@@ -9,8 +9,8 @@ use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_gui::components::{Button, ButtonKind, TextField};
-use koan_gui::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
+use crate::components::{Button, ButtonKind, TextField};
+use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;

@@ -2,8 +2,8 @@
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_gui::components::{FormRow, Picker, Stepper, Toggle};
-use koan_gui::theme::Look;
+use crate::components::{FormRow, Picker, Stepper, Toggle};
+use crate::theme::Look;
 
 use crate::mirror::{Mirror, Outputs};
 use crate::settings::Ctx;

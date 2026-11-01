@@ -11,8 +11,8 @@ use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
-use koan_gui::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
-use koan_gui::theme::{Icon, Look, Space, Tone, TypeRole};
+use crate::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
+use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;

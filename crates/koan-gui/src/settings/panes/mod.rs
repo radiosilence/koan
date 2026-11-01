@@ -4,15 +4,19 @@
 
 pub mod account;
 mod appearance;
+mod cache;
 mod devices;
 pub mod integrations;
+mod keys;
 mod library;
+mod link;
 pub mod people;
 mod playback;
 mod server;
+mod share;
 
 use gpui_kit::*;
-use koan_gui::theme::Icon;
+use crate::theme::Icon;
 
 use super::Ctx;
 

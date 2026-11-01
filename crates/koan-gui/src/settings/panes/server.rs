@@ -8,10 +8,10 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{ConnectionInfo, Settings};
-use koan_gui::components::{
+use crate::components::{
     Button, ButtonKind, FormRow, Picker, Segmented, Stepper, TextField, Toggle,
 };
-use koan_gui::theme::{Icon, Look, Tone, TypeRole};
+use crate::theme::{Icon, Look, Tone, TypeRole};
 
 use super::cache::{self, Keeping};
 use super::link::LinkDevice;

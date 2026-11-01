@@ -4,9 +4,9 @@
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_gui::components::{FormRow, Slider, Toggle};
-use koan_gui::theme::tokens::{TEXT_SIZE_STEP, TEXT_SIZES};
-use koan_gui::theme::{KoanTheme, Look};
+use crate::components::{FormRow, Slider, Toggle};
+use crate::theme::tokens::{TEXT_SIZE_STEP, TEXT_SIZES};
+use crate::theme::{KoanTheme, Look};
 
 use crate::settings::form::{page, section};
 use crate::settings::Ctx;

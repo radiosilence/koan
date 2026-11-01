@@ -5,8 +5,8 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{InviteTo, Settings};
-use koan_gui::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
-use koan_gui::theme::{Icon, Look, Tone, TypeRole};
+use crate::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
+use crate::theme::{Icon, Look, Tone, TypeRole};
 
 use super::link::LinkDevice;
 use super::server::ServerPane;

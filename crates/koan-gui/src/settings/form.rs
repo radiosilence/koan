@@ -3,8 +3,8 @@
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_gui::components::SectionHeader;
-use koan_gui::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
+use crate::components::SectionHeader;
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
 
 /// A pane's page: sections down a column that scrolls, held to a readable
 /// width.
@@ -117,8 +117,8 @@ pub fn copyable(
         .text_color(look.palette.muted.hsla())
         .hover(move |s| s.text_color(ink))
         .truncate()
-        .child(if copied { koan_gui::theme::label("Copied") } else { value.into() })
-        .tooltip(|window, cx| koan_gui::components::Tooltip::view("copy".into(), window, cx))
+        .child(if copied { crate::theme::label("Copied") } else { value.into() })
+        .tooltip(|window, cx| crate::components::Tooltip::view("copy".into(), window, cx))
         .on_click(move |_, _, cx| on_click(cx))
 }
 
