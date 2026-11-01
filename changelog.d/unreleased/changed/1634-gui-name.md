@@ -1,0 +1,1 @@
+- **The desktop app is called kōan.** The menu bar, About and the Finder name it as the Mac app is named; it still installs beside the Mac app, and About shows its icon rather than a folder.

@@ -46,7 +46,7 @@ pub fn name_unbundled() {
         }
         let mutable: bool = msg_send![info, respondsToSelector: sel!(setObject:forKey:)];
         if mutable {
-            let name = NSString::from_str("kōan desktop");
+            let name = NSString::from_str("kōan");
             let key = NSString::from_str("CFBundleName");
             let _: () = msg_send![info, setObject: &*name, forKey: &*key];
         }
@@ -102,13 +102,23 @@ fn show(_cx: &mut App) {
             NSString::from_str("Version"),
         ];
         let values = [
-            NSString::from_str("kōan desktop"),
+            NSString::from_str("kōan"),
             NSString::from_str(VERSION),
             NSString::from_str(BUILD),
         ];
         let options: *mut AnyObject = msg_send![class!(NSMutableDictionary), dictionary];
         for (k, v) in keys.iter().zip(&values) {
             let _: () = msg_send![options, setObject: &**v, forKey: &**k];
+        }
+        // The panel would take the bundle's icon, and a build outside one
+        // has none to give, so the icon is given here, bundled or not.
+        let icon: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: ICON.as_ptr().cast::<std::ffi::c_void>(), length: ICON.len()];
+        let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
+        let image: *mut AnyObject = msg_send![image, initWithData: icon];
+        if !image.is_null() {
+            let key = NSString::from_str("ApplicationIcon");
+            let _: () = msg_send![options, setObject: image, forKey: &*key];
+            let _: () = msg_send![image, release];
         }
         if !text.is_null() {
             let key = NSString::from_str("Credits");
@@ -154,7 +164,7 @@ fn show(cx: &mut App) {
                     div()
                         .text_role(TypeRole::Title, &look)
                         .text_color(look.palette.strong.hsla())
-                        .child("kōan desktop"),
+                        .child("kōan"),
                 )
                 .child(
                     div()

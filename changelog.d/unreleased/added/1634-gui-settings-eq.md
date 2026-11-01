@@ -1,0 +1,1 @@
+- **The desktop app has an EQ tab in Settings.** It shows what the output in use plays and opens the EQ window.
