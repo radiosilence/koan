@@ -95,7 +95,9 @@ impl TableRow {
         self
     }
 
-    /// Picked: on `surface`.
+    /// Picked: on `selection`, its title, lines and figures in
+    /// `on_selection` unless their content says otherwise, which a page
+    /// that colours its cells does by `on_selection` too.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
@@ -249,6 +251,8 @@ impl RenderOnce for TableRow {
         let look = Look::of(window, cx);
         let p = look.palette;
         let scale = look.scale.size;
+        let selected = self.selected;
+        let on = p.on_selection.hsla();
         let cell = |cell: Cell| {
             div()
                 .w(match cell.width {
@@ -270,7 +274,7 @@ impl RenderOnce for TableRow {
             .px(RowMetrics::page_margin(&look))
             .py(RowMetrics::padding(&look))
             .gap(RowMetrics::column_gap(&look))
-            .when(self.selected, |d| d.bg(p.surface.hsla()))
+            .when(self.selected, |d| d.bg(p.selection.hsla()))
             .children(self.leading.into_iter().map(cell))
             .child(
                 div()
@@ -282,18 +286,18 @@ impl RenderOnce for TableRow {
                     .children(self.title.map(|title| {
                         clipped(title)
                             .text_role(TypeRole::Body, &look)
-                            .text_color(p.ink.hsla())
+                            .text_color(if selected { on } else { p.ink.hsla() })
                     }))
                     .children(self.lines.into_iter().map(|line| {
                         clipped(line)
                             .text_role(TypeRole::Meta, &look)
-                            .text_color(p.muted.hsla())
+                            .text_color(if selected { on } else { p.muted.hsla() })
                     })),
             )
             .children(self.trailing.into_iter().map(|figure| {
                 cell(figure)
                     .text_role(TypeRole::Meta, &look)
-                    .text_color(p.muted.hsla())
+                    .text_color(if selected { on } else { p.muted.hsla() })
             }))
     }
 }

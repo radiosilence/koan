@@ -573,6 +573,9 @@ impl QueueView {
             return div().into_any_element();
         }
         let selected = self.is_selected(row, cx);
+        // The insertion line keeps the accent over a picked row.
+        let insertion = p.accent;
+        let p = &p.picked(selected);
         let r = self.rows(cx)[row];
         // The sleeve first: asking for one can start a fetch, which needs the
         // app, and the rows below only borrow the queue.
@@ -622,6 +625,7 @@ impl QueueView {
                     p,
                     nav: &self.nav,
                     row: &id,
+                    picked: selected,
                 };
                 let frame = heading(
                     TableRow::new(ElementId::Name(id.clone()), RowKind::Heading),
@@ -639,6 +643,7 @@ impl QueueView {
                     p,
                     nav: &self.nav,
                     row: &id,
+                    picked: selected,
                 };
                 let item = &queue.items[ix];
                 let numbering = Numbering {
@@ -676,8 +681,8 @@ impl QueueView {
         row_frame
             .group(id)
             .selected(selected)
-            .when(line_above, |d| d.border_t_1().border_color(p.accent))
-            .when(line_below, |d| d.border_b_1().border_color(p.accent))
+            .when(line_above, |d| d.border_t_1().border_color(insertion))
+            .when(line_below, |d| d.border_b_1().border_color(insertion))
             .on_drag_move::<DraggedRows>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
                     if !event.bounds.contains(&event.event.position) {
@@ -851,6 +856,8 @@ struct Look<'a> {
     p: &'a Paint,
     nav: &'a Entity<Navigator>,
     row: &'a SharedString,
+    /// Picked: drawn in `on_selection`, which `p` already is.
+    picked: bool,
 }
 
 impl Look<'_> {
@@ -920,7 +927,7 @@ fn heading(
         .line(names(
             credit(parts, artist, "artist", look),
             TypeRole::Meta,
-            p.ink,
+            p.muted,
             p,
         ))
         .line(line(detail, TypeRole::Fine, p.muted, p))
@@ -973,12 +980,35 @@ fn track(
         }
         Some(parts)
     };
-    // The playing mark's column: the bars' width, or a word's in the plain
-    // look.
+    // What the track is doing, the Mac's status column: the bars while it
+    // plays, moving with the music; a tick once played; the pending square
+    // while it waits; next in line to download, or failed.
+    let quiet = if look.picked { p.on_selection } else { p.rule };
     let mark = div()
         .text_role(TypeRole::Fine, &p.look)
-        // Moving with the music, as the Mac's bars do.
-        .when(playing, |d| d.child(crate::levels::bars(p.accent_text)));
+        .map(|d| match item.status {
+            EntryStatus::Playing => d.child(crate::levels::bars(p.accent_text)),
+            EntryStatus::Played => {
+                d.child(glyph(Icon::Check, "played", TypeRole::Fine, p.muted, p))
+            }
+            EntryStatus::PriorityPending => d.child(glyph(
+                Icon::Downloads,
+                "next",
+                TypeRole::Fine,
+                p.accent_text,
+                p,
+            )),
+            EntryStatus::Failed => d.child(glyph(
+                Icon::WarningFilled,
+                "failed",
+                TypeRole::Fine,
+                p.bad,
+                p,
+            )),
+            EntryStatus::Queued | EntryStatus::Downloading => d.when(p.look.icons, |d| {
+                d.child(glyph(Icon::Pending, "", TypeRole::Fine, quiet, p))
+            }),
+        });
     let row = row.lead(if p.look.icons { MARK } else { MARK_WORD }, mark);
     let row = if grouped {
         row.lead(if numbering.wide { PLACE_WIDE } else { PLACE }, place)

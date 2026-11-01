@@ -197,6 +197,7 @@ impl ArtistBrowser {
         let id = artist.id;
         let item = Playable::Artist(id);
         let selected = self.selection.contains(item);
+        let p = &p.picked(selected);
         let drag = match (selected, self.pick()) {
             (true, Some(pick)) => pick,
             _ => PlayableDrag::new(&[item], artist.name.clone()),

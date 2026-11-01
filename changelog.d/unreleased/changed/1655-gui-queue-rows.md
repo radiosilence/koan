@@ -1,0 +1,1 @@
+- **The desktop app's queue and record pages, as the Mac app's.** A picked row is a dark fill with white text; the queue marks each track played, waiting, next to download or failed; a record page's sleeve and rows are the Mac's size. The EQ button is its glyph alone, in the accent while an EQ is in force.

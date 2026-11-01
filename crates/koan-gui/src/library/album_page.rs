@@ -76,8 +76,6 @@ pub struct AlbumPage {
     album: Option<Album>,
     tracks: Vec<Track>,
     lines: Vec<Line>,
-    /// Whether any row names its artists, which makes every line taller.
-    credited: bool,
     /// Read and found nothing: gone from the library, or the read failed.
     gone: Option<bool>,
     request: u64,
@@ -131,7 +129,6 @@ impl AlbumPage {
             album: None,
             tracks: Vec::new(),
             lines: Vec::new(),
-            credited: false,
             gone: None,
             request: 0,
             loaded_version: None,
@@ -168,7 +165,6 @@ impl AlbumPage {
                 match page {
                     Ok(page) if page.album.is_some() => {
                         this.lines = lines(&page.tracks);
-                        this.credited = page.tracks.iter().any(|t| t.credit_differs);
                         this.album = page.album;
                         this.tracks = page.tracks;
                         this.gone = None;
@@ -203,13 +199,10 @@ impl AlbumPage {
         self.pick.as_ref().map(|(_, drag)| drag.clone())
     }
 
-    /// One height for every line: taller when any row names its artists.
+    /// One height for every line, the Mac's track row's: room for a credit
+    /// under the title whether or not a row names one.
     fn row_kind(&self) -> RowKind {
-        if self.credited {
-            RowKind::Text
-        } else {
-            RowKind::Line
-        }
+        RowKind::Text
     }
 
     fn line(
@@ -286,9 +279,9 @@ impl AlbumPage {
                 details = details.child(match part.artist_id {
                     Some(artist) => {
                         let nav = self.lib.nav.clone();
+                        let ink = p.ink;
                         span.cursor_pointer()
-                            .text_color(p.ink)
-                            .hover(|s| s.underline())
+                            .hover(move |s| s.underline().text_color(ink))
                             .on_click(move |_, _, cx| {
                                 nav.update(cx, |n, cx| n.open(Page::Artist(artist), cx))
                             })
