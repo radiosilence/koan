@@ -755,6 +755,7 @@ impl Render for AlbumGrid {
                 .child(self.search.clone())
                 .child(chrome::filter_button(&self.filters, &self.lib, cx))
                 .child(chrome::album_sort_button(&self.lib, cx))
+                .children(chrome::reshuffle_button(&self.lib, cx))
                 .child(chrome::select_toggle(
                     self.selection.is_active(),
                     cx.listener(|this, _, _, cx| {

@@ -595,7 +595,11 @@ impl ArtistPage {
             let key = Key::new(Art::Artist(id), grid.side, scale);
             match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
                 Sleeve::Ready(image) => {
-                    photo = photo.child(img(ImageSource::Render(image)).size_full())
+                    photo = photo.child(fade_in(
+                        ("artist-photo", id as u64),
+                        img(ImageSource::Render(image)).size_full(),
+                        cx,
+                    ))
                 }
                 Sleeve::Colour(colour) => photo = photo.bg(colour),
                 Sleeve::Waiting | Sleeve::None => {}
@@ -657,41 +661,44 @@ impl ArtistPage {
             if long && !self.expanded {
                 body = body.line_clamp(4);
             }
-            text = text.child(body).child(
-                div()
-                    .flex()
-                    .gap(p.space(Space::M))
-                    .typeset(p, Type::Fine, p.muted)
-                    .when(long && !self.expanded, |d| {
-                        d.child(
-                            div()
-                                .id("bio-more")
-                                .cursor_pointer()
-                                .underline()
-                                .child("more")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.expanded = true;
-                                    this.list.remeasure_items(0..1);
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .when_some(info.bio_url.clone(), |d, url| {
-                        d.child(
-                            div()
-                                .id("bio-source")
-                                .cursor_pointer()
-                                .underline()
-                                .child("wikipedia")
-                                .on_click(move |_, _, cx| cx.open_url(&url)),
-                        )
-                    })
-                    .when_some(info.image_credit.clone(), |d, credit| {
-                        d.child(format!("photo: {credit}"))
-                    }),
-            );
+            text = text
+                .child(fade_in(("artist-bio", id as u64), body, cx))
+                .child(
+                    div()
+                        .flex()
+                        .gap(p.space(Space::M))
+                        .typeset(p, Type::Fine, p.muted)
+                        .when(long && !self.expanded, |d| {
+                            d.child(
+                                div()
+                                    .id("bio-more")
+                                    .cursor_pointer()
+                                    .underline()
+                                    .child("more")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.expanded = true;
+                                        this.list.remeasure_items(0..1);
+                                        cx.notify();
+                                    })),
+                            )
+                        })
+                        .when_some(info.bio_url.clone(), |d, url| {
+                            d.child(
+                                div()
+                                    .id("bio-source")
+                                    .cursor_pointer()
+                                    .underline()
+                                    .child("wikipedia")
+                                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                            )
+                        })
+                        .when_some(info.image_credit.clone(), |d, credit| {
+                            d.child(format!("photo: {credit}"))
+                        }),
+                );
         }
         div()
+            .w_full()
             .flex()
             .items_start()
             .gap(grid.gap)
@@ -713,6 +720,24 @@ impl ArtistPage {
             cx.notify();
         }
     }
+}
+
+/// What arrives after the page, the photograph and the biography, fades in
+/// rather than appearing; with Reduce Motion or Low Power Mode it appears.
+fn fade_in(id: impl Into<ElementId>, element: impl IntoElement, cx: &App) -> AnyElement {
+    use crate::theme::{KoanTheme, tokens::Motion};
+    if !KoanTheme::motion_allowed(cx) {
+        return element.into_any_element();
+    }
+    div()
+        .size_full()
+        .child(element)
+        .with_animation(
+            id,
+            Animation::new(Motion::NORMAL).with_easing(Motion::quick_out),
+            |el, delta| el.opacity(delta),
+        )
+        .into_any_element()
 }
 
 /// The sections of an artist's records, in page order, as (section, start,
@@ -897,12 +922,15 @@ impl Render for ArtistPage {
             window.request_animation_frame();
         }
         let view = cx.weak_entity();
-        let body = list(self.list.clone(), move |ix, window, cx| {
-            view.update(cx, |this, cx| this.item(ix, window, cx))
-                .unwrap_or_else(|_| div().into_any_element())
-        })
-        .size_full()
-        .px(px(tile::MARGIN));
+        // The page's margin is the list's parent's: a list lays its items out
+        // across its own bounds and ignores padding of its own.
+        let body = div().size_full().px(px(tile::MARGIN)).child(
+            list(self.list.clone(), move |ix, window, cx| {
+                view.update(cx, |this, cx| this.item(ix, window, cx))
+                    .unwrap_or_else(|_| div().into_any_element())
+            })
+            .size_full(),
+        );
 
         div()
             .key_context("Library")

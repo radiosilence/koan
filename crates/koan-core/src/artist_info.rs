@@ -97,7 +97,19 @@ pub fn fetch(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistIn
         return Ok(held);
     };
 
-    let found = look_up(&subject, now);
+    // MusicBrainz answers 503 while it is busy, often for seconds at a time;
+    // a page opened then would otherwise show nothing until its next visit.
+    let mut found = look_up(&subject, now);
+    for wait in [2, 4] {
+        if !matches!(
+            found,
+            Err(ArtistInfoError::MusicBrainz(MusicBrainzError::RateLimited))
+        ) {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(wait));
+        found = look_up(&subject, now);
+    }
     if let Ok((_, Some(mbid))) = &found
         && subject.mbid.is_none()
     {

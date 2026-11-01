@@ -83,7 +83,7 @@ pub fn select_toggle(
 /// a lowercase prompt in `muted`. Narrows the listing as it is typed.
 pub struct SearchField {
     input: Entity<InputState>,
-    _subscription: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 impl SearchField {
@@ -100,9 +100,13 @@ impl SearchField {
                 browse.update(cx, |b, cx| b.set_search(value, cx));
             }
         });
+        // The pages are cached views: the field redraws (focus, caret, each
+        // keystroke) only when it is marked dirty, which takes its own view
+        // noticing the input change, not only the input.
+        let redraw = cx.observe(&input, |_, _, cx| cx.notify());
         Self {
             input,
-            _subscription: subscription,
+            _subscriptions: [subscription, redraw],
         }
     }
 }
@@ -230,6 +234,20 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
         })
 }
 
+/// Shuffle again, under the random order: its own button beside the sort,
+/// since a new deal is something tried until one is liked, and a menu makes
+/// each try two clicks.
+pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<Button> {
+    let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
+    let browse = lib.browse.clone();
+    random.then(|| {
+        Button::new("album-reshuffle", ButtonKind::Text)
+            .icon(crate::theme::Icon::Reshuffle)
+            .label("shuffle again")
+            .on_click(move |_, _, cx| browse.update(cx, |b, cx| b.reshuffle(cx)))
+    })
+}
+
 pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     let current = lib.browse.read(cx).effective_track_sort();
     let browse = lib.browse.clone();
@@ -331,6 +349,9 @@ impl FilterPanel {
         let subscriptions = vec![
             watch(&year_from, true, cx),
             watch(&year_to, false, cx),
+            // Redrawn as the fields are, as `SearchField` is.
+            cx.observe(&year_from, |_, _, cx| cx.notify()),
+            cx.observe(&year_to, |_, _, cx| cx.notify()),
             cx.observe(&lib.browse, |_, _, cx| cx.notify()),
         ];
         let engine = lib.engine.clone();
