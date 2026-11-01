@@ -97,7 +97,7 @@ fn at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> f32 {
 impl RenderOnce for Slider {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let rail = if self.compact { COMPACT } else { HIT };
+        let height = if self.compact { COMPACT } else { HIT };
         let handle = focus(&self.id, window, cx);
         let state = pointer(&self.id, window, cx);
         let track_bounds = window.use_keyed_state(child(&self.id, "track"), cx, |_, _| {
@@ -124,7 +124,7 @@ impl RenderOnce for Slider {
             .id(rail_id.clone())
             .relative()
             .flex_1()
-            .h(rail)
+            .h(height)
             .child(
                 canvas(
                     move |bounds, _, cx| measure.update(cx, |b, _| *b = bounds),
@@ -190,7 +190,7 @@ impl RenderOnce for Slider {
                     .absolute()
                     .left_0()
                     .right_0()
-                    .top(px((f32::from(rail) - f32::from(HAIRLINE)) / 2.0))
+                    .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
                     .h(HAIRLINE)
                     .bg(look.palette.rule.hsla()),
             )
@@ -199,7 +199,7 @@ impl RenderOnce for Slider {
                     .absolute()
                     .left_0()
                     .w(gpui_kit::relative(value))
-                    .top(px((f32::from(rail) - FILL) / 2.0))
+                    .top(px((f32::from(height) - FILL) / 2.0))
                     .h(px(FILL))
                     .bg(look.accent.hsla()),
             )
@@ -209,7 +209,7 @@ impl RenderOnce for Slider {
                         .absolute()
                         .left(gpui_kit::relative(value))
                         .ml(px(-THUMB / 2.0))
-                        .top(px((f32::from(rail) - THUMB) / 2.0))
+                        .top(px((f32::from(height) - THUMB) / 2.0))
                         .size(px(THUMB))
                         .bg(look.palette.ink.hsla()),
                 )
