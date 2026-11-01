@@ -8,6 +8,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use koan_ffi::{Album, AlbumOnDevice};
 use koan_kit::app::*;
@@ -26,8 +27,9 @@ use super::actions;
 use super::covers::Sleeve;
 use super::drag::PlayableDrag;
 use super::tokens::{Paint, Type, Typeset};
+use crate::theme::tokens::Motion;
 use crate::theme::tokens::Scale;
-use crate::theme::{Icon, KoanIcon};
+use crate::theme::{Icon, KoanIcon, KoanTheme};
 
 /// Columns of at least 150 points sharing the width, up to 210 each, as the
 /// Mac's grid lays them out. Every tile is the same size, so nothing is
@@ -196,6 +198,11 @@ pub struct TileView<V: TileHost> {
     /// The credit's names' widths, shaped at the size they were drawn at
     /// when the pointer first needed them.
     credit_widths: Option<(Pixels, Vec<Pixels>)>,
+    /// When the sleeve being faded in arrived, while it fades.
+    fade: Option<Instant>,
+    /// The record's colour, last shown before its sleeve: what the sleeve
+    /// fades in over.
+    ground: Option<Hsla>,
     _accent: Subscription,
 }
 
@@ -213,6 +220,8 @@ impl<V: TileHost> TileView<V> {
             hovered: None,
             origin: Rc::new(Cell::new(Point::default())),
             credit_widths: None,
+            fade: None,
+            ground: None,
             _accent: crate::theme::observe_accent(cx),
         }
     }
@@ -292,6 +301,16 @@ impl<V: TileHost> TileView<V> {
             self.credit_widths = None;
         }
         let moved = !Rc::ptr_eq(&self.record, record) || !self.state.same(&state);
+        // A sleeve arriving where there was none fades in; one replacing a
+        // stand-in of another size, or already in memory, is just shown.
+        if let Sleeve::Colour(colour) = &state.sleeve {
+            self.ground = Some(*colour);
+        }
+        self.fade = match (&self.state.sleeve, &state.sleeve) {
+            (Sleeve::Ready(..), Sleeve::Ready(..)) => self.fade,
+            (_, Sleeve::Ready(_, arrived)) if arrived.elapsed() < Motion::NORMAL => Some(*arrived),
+            _ => None,
+        };
         self.record = record.clone();
         self.state = state;
         if moved {
@@ -317,8 +336,31 @@ impl<V: TileHost> Render for TileView<V> {
         // it (see `origin`).
         let mut art = div().relative().size(side).flex_none().bg(p.surface);
         match &state.sleeve {
-            Sleeve::Ready(image) => {
-                art = art.child(img(ImageSource::Render(image.clone())).size_full())
+            Sleeve::Ready(image, _) => {
+                let shown = match self.fade.filter(|_| KoanTheme::motion_allowed(cx)) {
+                    Some(arrived) => {
+                        let t = arrived.elapsed().as_secs_f32() / Motion::NORMAL.as_secs_f32();
+                        if t < 1.0 {
+                            // This tile alone, frame by frame, until it lands.
+                            cx.on_next_frame(window, |_, _, cx| cx.notify());
+                            Motion::quick_out(t)
+                        } else {
+                            self.fade = None;
+                            1.0
+                        }
+                    }
+                    None => 1.0,
+                };
+                if shown < 1.0
+                    && let Some(ground) = self.ground
+                {
+                    art = art.bg(ground);
+                }
+                art = art.child(
+                    img(ImageSource::Render(image.clone()))
+                        .size_full()
+                        .opacity(shown),
+                )
             }
             Sleeve::Colour(colour) => art = art.bg(*colour),
             Sleeve::Waiting | Sleeve::None => {
