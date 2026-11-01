@@ -1,12 +1,35 @@
-//! The kōan GUI app. For now a window over the library pages, opened on the
-//! engine as the native apps open it; `KOAN_GUI_SHEET=1` opens the theme
-//! sheet instead. The app's own shell replaces both as it lands.
+//! The kōan GUI app: a window over the library pages, opened on the engine as
+//! the native apps open it. `KOAN_GUI_SHEET=1` opens the theme sheet instead.
+
+use std::path::PathBuf;
 
 use gpui_kit::*;
 use koan_ffi::KoanEngine;
 use koan_gui::{library, sheet::ThemeSheet, theme};
 
+/// Whether the configuration `KOAN_CONFIG_DIR` names is safe to open. An
+/// unreleased build migrates the library database it opens, after which the
+/// released apps refuse it, so it runs only on a configuration of its own.
+fn throwaway_config() -> Result<PathBuf, &'static str> {
+    let dir = std::env::var_os("KOAN_CONFIG_DIR")
+        .map(PathBuf::from)
+        .ok_or("set KOAN_CONFIG_DIR to a test library's config: never the real one")?;
+    let real = dirs::home_dir().map(|home| home.join(".config").join("koan"));
+    let same = |a: &PathBuf, b: &PathBuf| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    if real.as_ref().is_some_and(|real| same(&dir, real)) {
+        return Err("KOAN_CONFIG_DIR names the real configuration: use a test library's");
+    }
+    Ok(dir)
+}
+
 fn main() {
+    if let Err(problem) = throwaway_config() {
+        eprintln!("koan-gui: {problem}");
+        std::process::exit(2);
+    }
     gpui_kit::application()
         .with_assets(theme::icons::Assets)
         .run(|cx| {

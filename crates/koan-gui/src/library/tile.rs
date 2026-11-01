@@ -320,8 +320,6 @@ impl<V: TileHost> Render for TileView<V> {
         if let (Some(release), false) = (&record.badge, state.selecting) {
             art = art.child(badge(p, release.clone()).top(px(6.0)).left(px(6.0)));
         }
-        // The dim snaps in and out for now; it takes the theme's 120 ms when
-        // the motion tokens land.
         let over_sleeve = matches!(hovered, Some(Part::Sleeve | Part::Heart));
         if state.starting || (over_sleeve && !state.selecting) {
             art = art.child(
@@ -565,8 +563,7 @@ fn badge(p: &Paint, text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// Three bars in the accent: the record is the one playing. Still for now;
-/// they move with the music once the analyser's levels are wired.
+/// Three bars in the accent: the record is the one playing.
 pub fn playing_bars(p: &Paint) -> Div {
     div()
         .flex()

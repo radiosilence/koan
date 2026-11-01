@@ -4,7 +4,8 @@
 //!
 //! KOAN_CONFIG_DIR=DIR/config cargo bench -p koan-gui --bench album_grid
 //!
-//! `just gui-library DIR` makes such a library. Each frame scrolls by the
+//! The window is 4K: 1920 × 1080 points at a scale of 2. `just gui-library DIR`
+//! makes such a library. Each frame scrolls by the
 //! distance the speed covers in the wall time since the last, so the artwork
 //! lanes face the scroll as a person would drive it, however fast the frames
 //! come; blank and stand-in tiles are counted alongside GPUI's frame timings.
@@ -42,6 +43,13 @@ fn grid(cx: &mut BenchAppContext) -> (gpui::Entity<AlbumGrid>, Rc<RefCell<Record
     let recorder = Rc::new(RefCell::new(Recorder::default()));
     let lib = cx.update(|cx| library::Lib::new(engine, Browse::load(), Some(recorder.clone()), cx));
     let mut window = cx.add_empty_window();
+    // 4K: 1920 × 1080 points at the test window's scale of 2, 3840 × 2160
+    // pixels, the size the Mac grid's figures are quoted at.
+    let (viewport, scale) = window.update(|window, _| {
+        window.resize(gpui::size(px(1920.0), px(1080.0)));
+        (window.viewport_size(), window.scale_factor())
+    });
+    eprintln!("album_grid window: {viewport:?} at scale {scale}");
     let grid = window
         .update(|window, cx| window.replace_root(cx, |window, cx| AlbumGrid::new(lib, window, cx)));
     // The listing, then the first screen's sleeves.
