@@ -6,41 +6,40 @@ use koan_ffi::Playlist;
 
 use crate::engine::engine;
 use crate::mirror::Mirror;
-use crate::navigator::Page;
+use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
-use crate::shell::Shell;
 use crate::theme::{self, KoanStyled, Space, TypeRole};
 
 pub const WIDTH: Pixels = px(220.);
 
-const LIBRARY: [(Page, &str); 7] = [
-    (Page::Albums, "albums"),
-    (Page::Artists, "artists"),
-    (Page::Tracks, "tracks"),
-    (Page::Favourites, "favourites"),
-    (Page::RecentlyPlayed, "recently played"),
-    (Page::History, "history"),
-    (Page::Downloads, "downloads"),
+const LIBRARY: [(Route, &str); 7] = [
+    (Route::Albums, "albums"),
+    (Route::Artists, "artists"),
+    (Route::Tracks, "tracks"),
+    (Route::Favourites, "favourites"),
+    (Route::RecentlyPlayed, "recently played"),
+    (Route::History, "history"),
+    (Route::Downloads, "downloads"),
 ];
 
 pub struct Sidebar {
-    shell: WeakEntity<Shell>,
+    nav: Entity<Navigator>,
     playlists: Vec<Playlist>,
     loading: Option<Task<()>>,
     _subscriptions: [Subscription; 3],
 }
 
 impl Sidebar {
-    pub fn new(shell: &Entity<Shell>, cx: &mut Context<Self>) -> Self {
+    pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let library = cx.global::<Mirror>().library.clone();
         let mut sidebar = Self {
-            shell: shell.downgrade(),
+            nav: nav.clone(),
             playlists: Vec::new(),
             loading: None,
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
                 // The selected row follows the page.
-                cx.observe(shell, |_, _, cx| cx.notify()),
+                cx.observe(nav, |_, _, cx| cx.notify()),
                 // The selected row is in the accent, and this view is cached.
                 theme::observe_accent(cx),
             ],
@@ -62,11 +61,13 @@ impl Sidebar {
                         .map(|old| old.id)
                         .collect();
                     this.playlists = playlists;
-                    if let Some(shell) = this.shell.upgrade() {
-                        shell.update(cx, |shell, cx| {
+                    // A deleted playlist is not somewhere Back can return to.
+                    if !gone.is_empty() {
+                        this.nav.update(cx, |nav, cx| {
                             for id in gone {
-                                shell.forget(Page::Playlist(id), cx);
+                                nav.forget(Route::Playlist(id));
                             }
+                            cx.notify();
                         });
                     }
                     cx.notify();
@@ -116,24 +117,25 @@ fn heading(label: &'static str, p: &Paint) -> Div {
 }
 
 fn go(
-    page: Page,
+    page: Route,
     cx: &mut Context<Sidebar>,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    cx.listener(move |this, _: &ClickEvent, window, cx| {
-        if let Some(shell) = this.shell.upgrade() {
-            shell.update(cx, |shell, cx| shell.go(page, window, cx));
-        }
+    cx.listener(move |this, _: &ClickEvent, _, cx| {
+        this.nav.update(cx, |nav, cx| {
+            nav.choose(page);
+            cx.notify();
+        });
     })
 }
 
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        let current = self.shell.upgrade().map(|shell| shell.read(cx).page());
-        let row = |page: Page, id: ElementId, label: SharedString, cx: &mut Context<Self>| {
+        let current = Some(self.nav.read(cx).current());
+        let row = |page: Route, id: ElementId, label: SharedString, cx: &mut Context<Self>| {
             nav_row(id, label, current == Some(page), &p).on_click(go(page, cx))
         };
-        let queue = Page::Queue;
+        let queue = Route::Queue;
         div()
             .id("sidebar")
             .w(WIDTH)
@@ -155,7 +157,7 @@ impl Render for Sidebar {
                 d.child(heading("playlists", &p))
             })
             .children(self.playlists.iter().map(|playlist| {
-                let page = Page::Playlist(playlist.id);
+                let page = Route::Playlist(playlist.id);
                 nav_row(
                     ("nav-playlist", playlist.id as u64),
                     playlist.name.clone().into(),

@@ -419,6 +419,7 @@ jobs:
           shared-key: gui-macos
           cache-on-failure: true
       - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      - run: cargo clippy -p koan-gui --all-targets --features profiler -- -D warnings
       - run: cargo test -p koan-gui
 
   audit:

@@ -82,8 +82,13 @@ impl WindowRoot {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                // A record with no sleeve, or one that will not decode, takes
-                // the wash off and gives mint, as no record does.
+                // A record with no sleeve, or one that will not decode or
+                // could not be fetched, takes the wash off and gives mint, as
+                // no record does; forgetting the record has it asked for again
+                // at the next change to what is playing.
+                if decoded.is_none() {
+                    this.album = None;
+                }
                 let (sleeve, accent) = decoded.unwrap_or((None, Accent::of(None)));
                 this.wash.update(cx, |wash, cx| wash.set_sleeve(sleeve, cx));
                 KoanTheme::set_accent(accent, true, cx);

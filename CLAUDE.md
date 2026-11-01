@@ -267,7 +267,9 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 
 | Module | What |
 |--------|------|
-| `main.rs` | Opens the engine, restores the session, opens the window; quit saves the session and window bounds |
+| `app.rs` | Opens the engine and installs the globals (`install`), restores the session in the background, opens the window once the restored rows arrive or after half a second; quit saves the session and window bounds. `main.rs` only calls `app::run` |
+| `root.rs` | A window's root: the wash and the content as two cached views; the playing record's sleeve, decoded off the main thread, sets the accent and the wash |
+| `paint.rs` | `Paint::of(window, cx)`: the theme's `Look` with its colours flattened for the views |
 | `mirror.rs` | The engine's state slices, one GPUI entity each, fed by one task on `StateStream::next()`. A queue sent whole is indexed and laid out as rows on the background executor; patches are applied relative to their base |
 | `engine.rs` | The `KoanEngine` global and `command`, which runs a command off the main thread and logs failures |
 | `navigator.rs` | Browser-style history: one page, the pages visited, a cursor |
@@ -278,6 +280,8 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `covers.rs` | Sleeves per record and size, decoded off the main thread to the renderer's pixel format |
 | `session.rs` | Saving the session while playing, when playback stops, and on queue edits |
 | `window_state.rs` | The window's bounds across launches, in `<config dir>/desktop-window` |
+| `measure.rs` | With the `profiler` feature and `KOAN_GUI_MEASURE=scroll`, scrolls the queue through the window and prints GPUI's frame histograms |
+| `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
 | `theme/mod.rs` | `KoanTheme` (text size, "show icons"), `AccentFeed` (the accent settling; cached views that draw it call `observe_accent`), `Look::of(window, cx)` (a window's appearance and tokens), `KoanStyled::text_role`, `drive` for a window's root, Reduce Motion read from the system, gpui-component's theme dressed in the tokens for its `Input` |
 | `theme/tokens.rs` | Colours, type roles, spacing, hairline, motion durations and the quick-out curve |
 | `theme/accent.rs` | `Color.dominant` and the OKLCH tone mapping, value for value with Swift and Kotlin; `AccentState` eases a new record's accent over `Motion::SETTLE` |

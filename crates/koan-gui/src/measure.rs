@@ -3,8 +3,14 @@
 //! With `KOAN_GUI_MEASURE=scroll` the app scrolls the queue through its own
 //! window, with input events delivered to the window and nothing sent to
 //! the screen, then prints GPUI's frame histograms and quits. Run it against
-//! a throwaway `KOAN_CONFIG_DIR` holding a large queue.
+//! a throwaway `KOAN_CONFIG_DIR` holding a large queue, with
+//! `KOAN_DEVICES__NEARBY=false KOAN_DEVICES__DISCOVERABLE=false` so the run
+//! neither announces a device nor takes the devices port.
+//!
+//! Each pass prints the queue row at the top of the list as it ends, so the
+//! numbers carry proof that the list moved.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use gpui_kit::*;
@@ -12,6 +18,9 @@ use gpui_kit::*;
 /// Wheel steps per direction, 16 ms apart: about five seconds each way.
 const STEPS: usize = 300;
 const STEP: Pixels = px(40.);
+
+/// The queue row at the top of the list, kept by the queue as it scrolls.
+pub static TOP: AtomicUsize = AtomicUsize::new(0);
 
 pub fn start(cx: &mut App) {
     if std::env::var("KOAN_GUI_MEASURE").as_deref() != Ok("scroll") {
@@ -29,7 +38,7 @@ pub fn start(cx: &mut App) {
                 point(size.width * 0.6, size.height * 0.5)
             })
             .unwrap_or_default();
-        for direction in [-1.0, 1.0] {
+        for (direction, pass) in [(-1.0, "down"), (1.0, "up")] {
             for _ in 0..STEPS {
                 let event = ScrollEvent {
                     position: centre,
@@ -45,6 +54,15 @@ pub fn start(cx: &mut App) {
                     .ok();
                 background.timer(Duration::from_millis(16)).await;
             }
+            let rows = cx.update(|cx| {
+                cx.global::<crate::mirror::Mirror>()
+                    .queue
+                    .read(cx)
+                    .rows
+                    .len()
+            });
+            let top = TOP.load(Ordering::Relaxed);
+            println!("scrolled {pass}: top row {top} of {rows}");
         }
         window
             .update(cx, |_, window, _| {

@@ -27,6 +27,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .unwrap_or_else(|| "target/window.png".into());
 
+    // A screenshot is no reason to announce a device on the network or take
+    // the devices port from a koan already running here.
+    // SAFETY: set before any other thread starts.
+    unsafe {
+        std::env::set_var("KOAN_DEVICES__NEARBY", "false");
+        std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
+    }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
     if let Some(count) = std::env::var("KOAN_SHOT_TRACKS")
         .ok()

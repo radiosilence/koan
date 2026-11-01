@@ -57,6 +57,15 @@ const RESTORE_WAIT: Duration = Duration::from_millis(500);
 /// before it starts saving whatever is there.
 const RESTORE_LIMIT: Duration = Duration::from_secs(10);
 
+/// The engine and what follows it, as globals every view reads: the mirror
+/// of its state and the cover cache.
+pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
+    let mirror = Mirror::follow(engine, cx);
+    cx.set_global(mirror);
+    cx.set_global(Engine(engine.clone()));
+    Covers::install(cx);
+}
+
 /// Restores the session and opens the window, neither waiting on the other
 /// for long.
 ///
@@ -69,15 +78,6 @@ const RESTORE_LIMIT: Duration = Duration::from_secs(10);
 /// directory, so it is written only by a process that read it: saving starts
 /// once the restore has succeeded and its rows have arrived, and never if it
 /// failed.
-/// The engine and what follows it, as globals every view reads: the mirror
-/// of its state and the cover cache.
-pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
-    let mirror = Mirror::follow(engine, cx);
-    cx.set_global(mirror);
-    cx.set_global(Engine(engine.clone()));
-    Covers::install(cx);
-}
-
 fn start(engine: Arc<KoanEngine>, cx: &mut App) {
     install(&engine, cx);
     let queue = cx.global::<Mirror>().queue.clone();
