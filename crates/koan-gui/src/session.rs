@@ -23,13 +23,15 @@ pub struct Session {
     /// The version a whole write is under way for, so the notifications that
     /// arrive meanwhile do not start the same write again.
     writing: Option<u64>,
+    /// Where the playhead was, to the second, when last written.
+    saved_second: Option<u64>,
     playing: bool,
     autosave: Option<Task<()>>,
     _subscriptions: [Subscription; 2],
 }
 
 /// Holds the session's entity for the life of the app.
-struct Kept(#[allow(dead_code)] Entity<Session>);
+struct Kept(Entity<Session>);
 
 impl Global for Kept {}
 
@@ -37,6 +39,29 @@ impl Session {
     /// Whether the session is being kept: only once it was restored.
     pub fn following(cx: &App) -> bool {
         cx.has_global::<Kept>()
+    }
+
+    /// The window lost focus: written now if anything moved since the last
+    /// write (a seek while paused, say), so a koan that is force quit next
+    /// loses nothing.
+    pub fn save_if_changed(cx: &mut App) {
+        let Some(Kept(session)) = cx.try_global::<Kept>() else {
+            return;
+        };
+        session.clone().update(cx, |session, cx| {
+            let version = session.queue.read(cx).version;
+            if session.saved_version != version || session.saved_second != Some(session.second(cx))
+            {
+                session.save(cx);
+            }
+        });
+    }
+
+    fn second(&self, cx: &App) -> u64 {
+        self.playhead
+            .read(cx)
+            .at(std::time::Instant::now(), u64::MAX)
+            / 1000
     }
 
     pub fn follow(cx: &mut App) {
@@ -57,6 +82,7 @@ impl Session {
             queue: mirror.queue,
             saved_version,
             writing: None,
+            saved_second: None,
             playing: false,
             autosave: None,
         });
@@ -101,6 +127,7 @@ impl Session {
         if whole {
             self.writing = Some(version);
         }
+        self.saved_second = Some(self.second(cx));
         let engine = engine(cx);
         cx.spawn(async move |this, cx| {
             let written = if whole {

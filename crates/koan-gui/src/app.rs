@@ -103,10 +103,16 @@ fn start(engine: Arc<KoanEngine>, cx: &mut App) {
     })
     .detach();
 
+    // The window's last bounds are read while the restore runs, off the main
+    // thread.
+    let saved = cx
+        .background_executor()
+        .spawn(async { window_state::read() });
     let timeout = cx.background_executor().timer(RESTORE_WAIT);
     cx.spawn(async move |cx| {
         futures::future::select(showing, timeout).await;
-        cx.update(open);
+        let saved = saved.await;
+        cx.update(|cx| open(saved, cx));
     })
     .detach();
 }
@@ -135,14 +141,14 @@ fn rows_arrived(
     }
 }
 
-fn open(cx: &mut App) {
+fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     cx.on_app_quit(move |cx| {
         // Inside the closure, not the future it returns: GPUI gives that
         // future a fifth of a second, which a large queue can outlast.
         for window in cx.windows() {
             window
                 .update(cx, |_, window, _| {
-                    window_state::save(window.window_bounds())
+                    window_state::write(window.window_bounds())
                 })
                 .ok();
         }
@@ -173,9 +179,10 @@ fn open(cx: &mut App) {
     })
     .detach();
 
-    let bounds = window_state::restore(cx).unwrap_or_else(|| {
-        WindowBounds::Windowed(Bounds::centered(None, size(px(1180.), px(760.)), cx))
-    });
+    let bounds = match saved {
+        Some(saved) => window_state::place(saved, cx),
+        None => WindowBounds::Windowed(Bounds::centered(None, size(px(1180.), px(760.)), cx)),
+    };
     let options = WindowOptions {
         window_bounds: Some(bounds),
         window_min_size: Some(shell::MIN_SIZE),
@@ -186,8 +193,8 @@ fn open(cx: &mut App) {
         ..Default::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
-        window.on_window_should_close(cx, |window, _| {
-            window_state::save(window.window_bounds());
+        window.on_window_should_close(cx, |window, cx| {
+            window_state::save(window.window_bounds(), cx);
             true
         });
         let shell = cx.new(|cx| Shell::new(window, cx));

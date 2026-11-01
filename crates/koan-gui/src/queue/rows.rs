@@ -47,6 +47,13 @@ pub fn build(items: &[QueueItem]) -> Vec<Row> {
     rows
 }
 
+/// Where a drop lands for a pointer over `row`: before it in its upper half,
+/// after it in its lower half. After the last row is `rows.len()`, the end of
+/// the queue.
+pub fn insertion_point(row: usize, lower_half: bool) -> usize {
+    row + usize::from(lower_half)
+}
+
 /// Where a drop before row `dest` puts the moving items: before the first
 /// item of the first row at or after it that is not itself moving, or, when
 /// every row below is moving, after the last item that stays.
@@ -178,6 +185,23 @@ mod tests {
         assert_eq!(
             drop_target(&rows, 1, &moving, &items),
             Some(("s".into(), false))
+        );
+    }
+
+    #[test]
+    fn the_last_rows_lower_half_is_the_end_of_the_queue() {
+        let items = queue();
+        let rows = build(&items);
+        let last = rows.len() - 1;
+        assert_eq!(insertion_point(last, true), rows.len());
+        let moving = vec!["a1".to_string()];
+        assert_eq!(
+            drop_target(&rows, insertion_point(last, true), &moving, &items),
+            Some(("b3".into(), true))
+        );
+        assert_eq!(
+            drop_target(&rows, insertion_point(last, false), &moving, &items),
+            Some(("b3".into(), false))
         );
     }
 

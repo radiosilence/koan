@@ -17,12 +17,12 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{EntryStatus, QueueItem};
 
-use crate::covers::{CoversHandle, sleeve};
+use crate::covers::{self, CoversHandle};
 use crate::engine::command;
 use crate::mirror::{Mirror, Queue};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
-use crate::theme::{self, KoanStyled, Space, TypeRole};
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 use rows::Row;
 
 actions!(
@@ -84,7 +84,6 @@ struct RowRef {
 struct DraggedRows {
     row: usize,
     whole: u64,
-    label: SharedString,
 }
 
 struct DragPreview(SharedString);
@@ -468,43 +467,63 @@ impl QueueView {
         }
     }
 
-    fn render_row(&mut self, row: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        if row >= self.rows(cx).len() {
+    fn render_row(&mut self, row: usize, p: &Paint, cx: &mut Context<Self>) -> AnyElement {
+        let count = self.rows(cx).len();
+        if row >= count {
             return div().into_any_element();
         }
-        let p = Paint::of(window, cx);
         let selected = self.is_selected(row, cx);
-        let (height, line) = match self.rows(cx)[row] {
+        let r = self.rows(cx)[row];
+        // The sleeve first: asking for one can start a fetch, which needs the
+        // app, and the rows below only borrow the queue.
+        let album = match r {
+            Row::Heading { first, .. } => Some(self.queue.read(cx).items[first].album_id),
+            Row::Track { ix, grouped: false } => Some(self.queue.read(cx).items[ix].album_id),
+            Row::Track { grouped: true, .. } => None,
+        };
+        let sleeve = album.map(|album| {
+            let side = if matches!(r, Row::Heading { .. }) {
+                HEADING_SLEEVE
+            } else {
+                SINGLE_SLEEVE
+            };
+            covers::draw(covers::image(album, side, cx), side, p.surface)
+        });
+        let queue = self.queue.read(cx);
+        let (height, line, id) = match r {
             Row::Heading { first, len } => {
-                let queue = self.queue.read(cx);
                 let run = &queue.items[first..first + len];
-                let (item, detail) = (run[0].clone(), detail(run));
-                (HEADING, heading(&item, detail, &p, cx))
+                let line = heading(
+                    &run[0],
+                    detail(run),
+                    sleeve.unwrap_or_else(|| div().into_any_element()),
+                    p,
+                );
+                // Named by what the row is, so hover and drag state stay with
+                // it when the queue moves under the pointer.
+                let id = SharedString::from(format!("h:{}", queue.base[first].queue_item_id));
+                (HEADING, line, id)
             }
             Row::Track { ix, grouped } => {
-                let item = self.queue.read(cx).items[ix].clone();
                 let height = if grouped { TRACK } else { SINGLE };
-                (height, track(&item, grouped, &p, cx))
+                let line = track(&queue.items[ix], grouped, sleeve, p);
+                (
+                    height,
+                    line,
+                    SharedString::from(queue.base[ix].queue_item_id.clone()),
+                )
             }
         };
         let dragged = DraggedRows {
             row,
-            whole: self.queue.read(cx).whole,
-            label: self.drag_label(row, cx),
+            whole: queue.whole,
         };
-        // Named by what the row is, so hover and drag state stay with it when
-        // the queue moves under the pointer.
-        let id = match self.rows(cx)[row] {
-            Row::Heading { first, .. } => SharedString::from(format!(
-                "h:{}",
-                self.queue.read(cx).base[first].queue_item_id
-            )),
-            Row::Track { ix, .. } => {
-                SharedString::from(self.queue.read(cx).base[ix].queue_item_id.clone())
-            }
-        };
-        // The insertion line, while a drag in the queue is over this row.
-        let insert_here = self.drop_at == Some(row) && cx.has_active_drag();
+        // The insertion line, while a drag in the queue is over this row: above
+        // it, or below the last row for the end of the queue.
+        let dragging = cx.has_active_drag();
+        let line_above = dragging && self.drop_at == Some(row);
+        let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
+        let view = cx.entity();
         div()
             .id(ElementId::Name(id))
             .h(height)
@@ -516,11 +535,17 @@ impl QueueView {
             .gap(p.space(Space::M))
             .when(selected, |d| d.bg(p.surface))
             .when(!selected, |d| d.hover(|s| s.bg(p.hover.opacity(0.3))))
-            .when(insert_here, |d| d.border_t_1().border_color(p.accent))
+            .when(line_above, |d| d.border_t_1().border_color(p.accent))
+            .when(line_below, |d| d.border_b_1().border_color(p.accent))
             .on_drag_move::<DraggedRows>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
-                    if event.bounds.contains(&event.event.position) && this.drop_at != Some(row) {
-                        this.drop_at = Some(row);
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let lower = event.event.position.y > event.bounds.center().y;
+                    let at = rows::insertion_point(row, lower);
+                    if this.drop_at != Some(at) {
+                        this.drop_at = Some(at);
                         cx.notify();
                     }
                 },
@@ -533,11 +558,17 @@ impl QueueView {
                 window.focus(&this.focus, cx);
                 this.click(row, event, cx);
             }))
-            .on_drag(dragged, |dragged, _, _, cx| {
-                cx.new(|_| DragPreview(dragged.label.clone()))
+            .on_drag(dragged, move |dragged, _, _, cx| {
+                let label = view.update(cx, |this, cx| {
+                    // A new drag starts from no insertion point.
+                    this.drop_at = None;
+                    this.drag_label(dragged.row, cx)
+                });
+                cx.new(|_| DragPreview(label))
             })
             .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
-                this.drop_rows(dragged, row, cx);
+                let dest = this.drop_at.unwrap_or(row);
+                this.drop_rows(dragged, dest, cx);
             }))
             .child(line)
             .into_any_element()
@@ -608,7 +639,19 @@ fn detail(run: &[QueueItem]) -> String {
     parts.join(" · ")
 }
 
-fn heading(first: &QueueItem, detail: String, p: &Paint, cx: &mut App) -> Div {
+/// The glyph with icons on, its word without.
+fn glyph(icon: Icon, word: &'static str, role: TypeRole, color: Hsla, p: &Paint) -> AnyElement {
+    if p.look.icons {
+        KoanIcon::new(icon)
+            .role(role)
+            .color(color)
+            .into_any_element()
+    } else {
+        div().text_color(color).child(word).into_any_element()
+    }
+}
+
+fn heading(first: &QueueItem, detail: String, sleeve: AnyElement, p: &Paint) -> Div {
     let artist = if first.album_artist.is_empty() {
         &first.artist
     } else {
@@ -620,7 +663,7 @@ fn heading(first: &QueueItem, detail: String, p: &Paint, cx: &mut App) -> Div {
         .min_w(px(0.))
         .items_center()
         .gap(p.space(Space::M))
-        .child(sleeve(first.album_id, HEADING_SLEEVE, p.surface, cx))
+        .child(sleeve)
         .child(
             div()
                 .flex()
@@ -632,7 +675,7 @@ fn heading(first: &QueueItem, detail: String, p: &Paint, cx: &mut App) -> Div {
         )
 }
 
-fn track(item: &QueueItem, grouped: bool, p: &Paint, cx: &mut App) -> Div {
+fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint) -> Div {
     let playing = item.status == EntryStatus::Playing;
     let title_color = match item.status {
         EntryStatus::Playing => p.accent_text,
@@ -640,12 +683,14 @@ fn track(item: &QueueItem, grouped: bool, p: &Paint, cx: &mut App) -> Div {
         EntryStatus::Failed => p.bad,
         EntryStatus::Queued | EntryStatus::Downloading | EntryStatus::PriorityPending => p.ink,
     };
-    let (mark, mark_color) = match item.status {
-        EntryStatus::Playing => ("▶", p.accent_text),
-        EntryStatus::Downloading => ("↓", p.muted),
-        EntryStatus::PriorityPending => ("…", p.muted),
-        EntryStatus::Failed => ("!", p.bad),
-        EntryStatus::Queued | EntryStatus::Played => ("", p.muted),
+    // A state is a glyph, as the theme draws states; the plain variant keeps
+    // a word where a glyph would be.
+    let mark = match item.status {
+        EntryStatus::Playing => Some((Icon::PlayMark, "playing", p.accent_text)),
+        EntryStatus::Downloading => Some((Icon::Downloads, "loading", p.muted)),
+        EntryStatus::PriorityPending => Some((Icon::Pending, "next", p.muted)),
+        EntryStatus::Failed => Some((Icon::Failure, "failed", p.bad)),
+        EntryStatus::Queued | EntryStatus::Played => None,
     };
     let leading = if grouped {
         let number = item.track_number.map(|n| n.to_string()).unwrap_or_default();
@@ -659,7 +704,7 @@ fn track(item: &QueueItem, grouped: bool, p: &Paint, cx: &mut App) -> Div {
             .child(number)
             .into_any_element()
     } else {
-        sleeve(item.album_id, SINGLE_SLEEVE, p.surface, cx)
+        sleeve.unwrap_or_else(|| div().into_any_element())
     };
     // A grouped row names its artists only where they differ from the
     // record's; a row standing alone names its artist and record.
@@ -680,9 +725,12 @@ fn track(item: &QueueItem, grouped: bool, p: &Paint, cx: &mut App) -> Div {
             div()
                 .w(px(14.))
                 .flex_shrink_0()
+                .flex()
+                .justify_center()
                 .text_role(TypeRole::Fine, &p.look)
-                .text_color(mark_color)
-                .child(mark),
+                .children(
+                    mark.map(|(icon, word, color)| glyph(icon, word, TypeRole::Fine, color, p)),
+                ),
         )
         .child(leading)
         .child(
@@ -699,8 +747,7 @@ fn track(item: &QueueItem, grouped: bool, p: &Paint, cx: &mut App) -> Div {
                 div()
                     .flex_shrink_0()
                     .text_role(TypeRole::Fine, &p.look)
-                    .text_color(p.muted)
-                    .child("☁"),
+                    .child(glyph(Icon::Cloud, "server", TypeRole::Fine, p.muted, p)),
             )
         })
         .children(item.codec.clone().map(|codec| {
@@ -709,7 +756,7 @@ fn track(item: &QueueItem, grouped: bool, p: &Paint, cx: &mut App) -> Div {
                 .flex_shrink_0()
                 .text_role(TypeRole::Fine, &p.look)
                 .text_color(p.muted)
-                .child(codec.to_lowercase())
+                .child(codec.to_uppercase())
         }))
         .child(
             div()
@@ -761,7 +808,8 @@ impl Render for QueueView {
             }))
             // Below the last row: the end of the queue.
             .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
-                this.drop_rows(dragged, count, cx);
+                let dest = this.drop_at.unwrap_or(count);
+                this.drop_rows(dragged, dest, cx);
             }))
             .when(count == 0, |d| {
                 d.items_center().justify_center().child(
@@ -774,8 +822,8 @@ impl Render for QueueView {
             .when(count > 0, |d| {
                 let view = view.clone();
                 d.child(
-                    list(self.list.clone(), move |row, window, cx| {
-                        view.update(cx, |this, cx| this.render_row(row, window, cx))
+                    list(self.list.clone(), move |row, _, cx| {
+                        view.update(cx, |this, cx| this.render_row(row, &p, cx))
                     })
                     .flex_1(),
                 )
