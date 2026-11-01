@@ -22,7 +22,6 @@ use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::theme::Space;
 
 const PAGE: u32 = 1000;
 const TYPING: Duration = Duration::from_millis(80);

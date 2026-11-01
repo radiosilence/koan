@@ -23,7 +23,6 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::theme::Space;
 
 /// How long typing in the filter field waits for the next keystroke before
 /// asking again: each answer is the whole listing, and asking per keystroke
