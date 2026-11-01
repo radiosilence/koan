@@ -78,6 +78,9 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
+                let covers = lib.covers.clone();
+                this.sidebar
+                    .update(cx, |sidebar, cx| sidebar.set_covers(covers, cx));
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
             })
@@ -239,7 +242,15 @@ impl Shell {
         div()
             .id("toolbar")
             .h(TOOLBAR)
-            .bg(p.bg)
+            // Washed, the toolbar has no ground and meets the page at a
+            // hairline; otherwise it is on `bg`, flush with the page.
+            .map(|d| {
+                if cx.global::<theme::KoanTheme>().wash_window {
+                    d.border_b(theme::HAIRLINE).border_color(p.rule)
+                } else {
+                    d.bg(p.bg)
+                }
+            })
             .w_full()
             .flex_shrink_0()
             .flex()
@@ -301,6 +312,18 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
+        let washed = cx.global::<theme::KoanTheme>().wash_window;
+        let transport = {
+            let transport = self.transport.clone();
+            move || {
+                transport.clone().cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(transport::HEIGHT)
+                        .flex_shrink_0(),
+                )
+            }
+        };
         let stage = match self.nav.read(cx).current() {
             Route::Queue => self
                 .queue
@@ -361,7 +384,10 @@ impl Render for Shell {
             .text_color(p.ink)
             // The sidebar runs from the window's top edge to the transport,
             // the window's buttons on its ground; the toolbar heads the page
-            // column alone.
+            // column alone. With "wash the whole window" the sidebar and the
+            // toolbar have no ground, the wash runs under them, and the
+            // transport spans the whole window; otherwise they are on `bg`
+            // and the transport spans the page column only.
             .child(
                 div()
                     .flex_1()
@@ -374,7 +400,7 @@ impl Render for Shell {
                             .flex_shrink_0()
                             .flex()
                             .flex_col()
-                            .bg(p.bg)
+                            .when(!washed, |d| d.bg(p.bg))
                             .when(TRAFFIC_LIGHTS > px(0.), |d| {
                                 d.child(
                                     Self::moves_window(div().id("sidebar-drag"), cx)
@@ -396,17 +422,11 @@ impl Render for Shell {
                             .border_l(theme::HAIRLINE)
                             .border_color(p.rule)
                             .child(self.toolbar(&p, window, cx))
-                            .child(div().flex_1().min_h(px(0.)).child(stage)),
+                            .child(div().flex_1().min_h(px(0.)).child(stage))
+                            .when(!washed, |d| d.child(transport())),
                     ),
             )
-            .child(
-                self.transport.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(transport::HEIGHT)
-                        .flex_shrink_0(),
-                ),
-            )
+            .when(washed, |d| d.child(transport()))
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().inset_0().child(sheet.clone())).with_priority(2)
             }))
