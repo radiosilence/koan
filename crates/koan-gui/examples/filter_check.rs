@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     cx.allow_parking();
     let grid = held.borrow().clone().ok_or("the grid opens")?;
-    let mut settle = |cx: &mut HeadlessAppContext| -> Result<usize, Box<dyn Error>> {
+    let settle = |cx: &mut HeadlessAppContext| -> Result<usize, Box<dyn Error>> {
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(2) {
             cx.run_until_parked();
