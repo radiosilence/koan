@@ -9,8 +9,13 @@ use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::engine::command;
 use crate::navigator::{Navigator, Route};
+use crate::platform::actions::{
+    self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
+    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller,
+};
+use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
+
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
@@ -18,19 +23,6 @@ use crate::sidebar::{self, Sidebar};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
-
-actions!(koan, [GoBack, GoForward, TogglePlay]);
-
-pub const CONTEXT: &str = "koan";
-
-pub fn bindings() -> Vec<KeyBinding> {
-    let ctx = Some(CONTEXT);
-    vec![
-        KeyBinding::new("space", TogglePlay, ctx),
-        KeyBinding::new(secondary!("["), GoBack, ctx),
-        KeyBinding::new(secondary!("]"), GoForward, ctx),
-    ]
-}
 
 const TOOLBAR: Pixels = px(38.);
 const TOOLBAR_BUTTON: Pixels = px(36.);
@@ -57,6 +49,8 @@ pub struct Shell {
     _arrivals: Subscription,
     /// Saves the session when the window loses focus.
     _activation: Subscription,
+    /// The keyboard shortcuts, while they are shown.
+    shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
 }
 
 impl Shell {
@@ -81,6 +75,7 @@ impl Shell {
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
+            shortcuts: None,
         }
     }
 
@@ -91,15 +86,10 @@ impl Shell {
             return;
         }
         self.arrived_at = route;
-        if route == Route::Queue {
-            window.focus(&self.queue.focus_handle(cx), cx);
-        } else {
-            window.focus(&self.focus, cx);
-        }
-        cx.notify();
+        self.refocus(window, cx);
     }
 
-    fn back(&mut self, _: &GoBack, _: &mut Window, cx: &mut Context<Self>) {
+    fn back(&mut self, _: &Back, _: &mut Window, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
             if nav.back() {
                 cx.notify();
@@ -107,7 +97,7 @@ impl Shell {
         });
     }
 
-    fn forward(&mut self, _: &GoForward, _: &mut Window, cx: &mut Context<Self>) {
+    fn forward(&mut self, _: &Forward, _: &mut Window, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
             if nav.forward() {
                 cx.notify();
@@ -115,8 +105,46 @@ impl Shell {
         });
     }
 
-    fn toggle_play(&mut self, _: &TogglePlay, _: &mut Window, cx: &mut Context<Self>) {
-        command(cx, "play/pause", |e| e.toggle_play_pause());
+    fn show(&mut self, route: Route, cx: &mut Context<Self>) {
+        self.nav.update(cx, |nav, cx| {
+            if nav.go(route) {
+                cx.notify();
+            }
+        });
+    }
+
+    /// The text size in the theme's steps, within its range.
+    fn step_text_size(by: i32, cx: &mut App) {
+        let now = cx.global::<theme::KoanTheme>().text_size as i32;
+        let step = theme::tokens::TEXT_SIZE_STEP as i32;
+        let range = theme::tokens::TEXT_SIZES;
+        let next = (now + by * step).clamp(*range.start() as i32, *range.end() as i32);
+        theme::KoanTheme::set_text_size(next as u32, cx);
+    }
+
+    fn show_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.shortcuts.is_some() {
+            return;
+        }
+        let sheet = cx.new(ShortcutsSheet::new);
+        let dismissed = cx.subscribe_in(&sheet, window, |this, _, _: &Dismissed, window, cx| {
+            this.shortcuts = None;
+            this.arrived_at = this.nav.read(cx).current();
+            this.refocus(window, cx);
+        });
+        window.focus(&sheet.focus_handle(cx), cx);
+        self.shortcuts = Some((sheet, dismissed));
+        cx.notify();
+    }
+
+    /// The page showing takes the keys again.
+    fn refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.nav.read(cx).current() == Route::Queue {
+            window.focus(&self.queue.focus_handle(cx), cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
     }
 
     fn toolbar(&self, p: &Paint, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -174,11 +202,11 @@ impl Shell {
             .border_color(p.rule)
             .child(
                 button("back", Some(Icon::Back), "back", can_go_back)
-                    .on_click(cx.listener(|this, _, window, cx| this.back(&GoBack, window, cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.back(&Back, window, cx))),
             )
             .child(
                 button("forward", Some(Icon::Forward), "forward", can_go_forward).on_click(
-                    cx.listener(|this, _, window, cx| this.forward(&GoForward, window, cx)),
+                    cx.listener(|this, _, window, cx| this.forward(&Forward, window, cx)),
                 ),
             )
             // The toolbar's bare space moves the window, and its buttons do
@@ -267,19 +295,36 @@ impl Render for Shell {
                 .into_any_element(),
         };
         div()
-            .key_context(CONTEXT)
+            .key_context(actions::CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::back))
             .on_action(cx.listener(Self::forward))
-            .on_action(cx.listener(Self::toggle_play))
+            .on_action(cx.listener(|this, _: &ShowQueue, _, cx| this.show(Route::Queue, cx)))
+            .on_action(cx.listener(|this, _: &ShowAlbums, _, cx| this.show(Route::Albums, cx)))
+            .on_action(cx.listener(|this, _: &ShowArtists, _, cx| this.show(Route::Artists, cx)))
+            .on_action(
+                cx.listener(|this, _: &ShowFavourites, _, cx| this.show(Route::Favourites, cx)),
+            )
+            .on_action(cx.listener(|this, _: &ShowHistory, _, cx| this.show(Route::History, cx)))
+            .on_action(cx.listener(|this, _: &ShowRecentlyPlayed, _, cx| {
+                this.show(Route::RecentlyPlayed, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
+            .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
+            .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))
+            .on_action(|_: &ActualSize, _, cx| theme::KoanTheme::set_text_size(100, cx))
+            .on_action(
+                cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
+            )
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
-                cx.listener(|this, _, window, cx| this.back(&GoBack, window, cx)),
+                cx.listener(|this, _, window, cx| this.back(&Back, window, cx)),
             )
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Forward),
-                cx.listener(|this, _, window, cx| this.forward(&GoForward, window, cx)),
+                cx.listener(|this, _, window, cx| this.forward(&Forward, window, cx)),
             )
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -316,6 +361,9 @@ impl Render for Shell {
                         .flex_shrink_0(),
                 ),
             )
+            .children(self.shortcuts.as_ref().map(|(sheet, _)| {
+                deferred(div().absolute().inset_0().child(sheet.clone())).with_priority(2)
+            }))
     }
 }
 

@@ -407,3 +407,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `⌘/` | Keyboard shortcuts |
 
 Keys the TUI spends on its own panels — the visualizer, the help overlay — have no counterpart: there is no visualizer here.
+
+## Desktop app
+
+The desktop app (macOS and Linux) takes the macOS app's keys, both tables, from one list that also builds its menus and its shortcuts sheet (`?` or `⌘/`). On Linux `Ctrl` stands where the Mac has `⌘`, and there is no menu bar, so the sheet is where the commands are listed. `⌫` deletes the selection outside a text field and is a single key there, as `space` is.

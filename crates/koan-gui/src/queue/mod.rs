@@ -18,25 +18,27 @@ use gpui_kit::*;
 use koan_ffi::{EntryStatus, QueueItem};
 
 use crate::covers::{self, CoversHandle};
-use crate::engine::command;
+use crate::engine::{command, engine};
 use crate::mirror::{Mirror, Queue};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
+use crate::platform::actions::{
+    ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
+};
+use crate::platform::drop;
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 use rows::Row;
 
+// The queue's own keys. Delete, select all, undo and redo are the
+// platform's Edit actions, shared with the menu bar.
 actions!(
     queue,
     [
         PlaySelected,
-        RemoveSelected,
         SelectPrevious,
         SelectNext,
         ExtendPrevious,
         ExtendNext,
-        SelectAll,
-        Undo,
-        Redo,
     ]
 );
 
@@ -46,15 +48,10 @@ pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(CONTEXT);
     vec![
         KeyBinding::new("enter", PlaySelected, ctx),
-        KeyBinding::new("backspace", RemoveSelected, ctx),
-        KeyBinding::new("delete", RemoveSelected, ctx),
         KeyBinding::new("up", SelectPrevious, ctx),
         KeyBinding::new("down", SelectNext, ctx),
         KeyBinding::new("shift-up", ExtendPrevious, ctx),
         KeyBinding::new("shift-down", ExtendNext, ctx),
-        KeyBinding::new(secondary!("a"), SelectAll, ctx),
-        KeyBinding::new(secondary!("z"), Undo, ctx),
-        KeyBinding::new(secondary!("shift-z"), Redo, ctx),
     ]
 }
 
@@ -376,7 +373,7 @@ impl QueueView {
         }
     }
 
-    fn remove_selected(&mut self, _: &RemoveSelected, _: &mut Window, cx: &mut Context<Self>) {
+    fn remove_selected(&mut self, _: &Delete, _: &mut Window, cx: &mut Context<Self>) {
         let ids = self.selected_ids(cx);
         self.remove(ids, cx);
     }
@@ -723,7 +720,8 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
         .gap(p.space(Space::M))
         .child(
             div()
-                .w(px(14.))
+                // A glyph's width, or a word's in the plain look.
+                .w(if p.look.icons { px(14.) } else { px(56.) })
                 .flex_shrink_0()
                 .flex()
                 .justify_center()
@@ -796,6 +794,25 @@ impl Render for QueueView {
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
+            .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
+                this.selected.clear();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &TopOfQueue, _, cx| {
+                this.list.scroll_to(ListOffset::default());
+                this.top = None;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &EndOfQueue, _, cx| {
+                if let Some(last) = this.rows(cx).len().checked_sub(1) {
+                    this.list.scroll_to_reveal_item(last);
+                    cx.notify();
+                }
+            }))
+            // Files from outside: indexed where they lie and appended.
+            .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                drop::queue_files(&engine(cx), paths.paths().to_vec(), cx);
+            }))
             .size_full()
             .flex()
             .flex_col()

@@ -36,11 +36,6 @@ struct Kept(Entity<Session>);
 impl Global for Kept {}
 
 impl Session {
-    /// Whether the session is being kept: only once it was restored.
-    pub fn following(cx: &App) -> bool {
-        cx.has_global::<Kept>()
-    }
-
     /// The window lost focus: written now if anything moved since the last
     /// write (a seek while paused, say), so a koan that is force quit next
     /// loses nothing.

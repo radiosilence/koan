@@ -8,6 +8,7 @@ use crate::engine::engine;
 use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
+use crate::platform::drop::{self, Imports};
 use crate::theme::{self, KoanStyled, Space, TypeRole};
 
 pub const WIDTH: Pixels = px(220.);
@@ -26,7 +27,10 @@ pub struct Sidebar {
     nav: Entity<Navigator>,
     playlists: Vec<Playlist>,
     loading: Option<Task<()>>,
-    _subscriptions: [Subscription; 3],
+    /// Dropped files being added, and what the last addition had to say.
+    importing: usize,
+    import_problem: Option<String>,
+    _subscriptions: [Subscription; 4],
 }
 
 impl Sidebar {
@@ -36,12 +40,26 @@ impl Sidebar {
             nav: nav.clone(),
             playlists: Vec::new(),
             loading: None,
+            importing: 0,
+            import_problem: None,
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
                 // The selected row follows the page.
                 cx.observe(nav, |_, _, cx| cx.notify()),
                 // The selected row is in the accent, and this view is cached.
                 theme::observe_accent(cx),
+                // A global, which a cached view hears of only by observing.
+                cx.observe_global::<Imports>(|this, cx| {
+                    let running = cx.global::<Imports>().running;
+                    if running > 0 && this.importing == 0 {
+                        this.import_problem = None;
+                    }
+                    this.importing = running;
+                    if let Some(problem) = Imports::take_problem(cx) {
+                        this.import_problem = Some(problem);
+                    }
+                    cx.notify();
+                }),
             ],
         };
         sidebar.reload(cx);
@@ -146,7 +164,14 @@ impl Render for Sidebar {
             .flex_col()
             .overflow_y_scroll()
             .pt(p.space(Space::S))
-            .child(row(queue, "nav-queue".into(), "queue".into(), cx))
+            // Files dropped on the queue's row are queued.
+            .child(
+                row(queue, "nav-queue".into(), "queue".into(), cx).on_drop(cx.listener(
+                    |_, paths: &ExternalPaths, _, cx| {
+                        drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
+                    },
+                )),
+            )
             .child(heading("library", &p))
             .children(
                 LIBRARY.map(|(page, label)| {
@@ -165,6 +190,32 @@ impl Render for Sidebar {
                     &p,
                 )
                 .on_click(go(page, cx))
+                // Files dropped on a playlist's row are added to it.
+                .on_drop(cx.listener({
+                    let id = playlist.id;
+                    move |_, paths: &ExternalPaths, _, cx| {
+                        drop::add_files_to_playlist(&engine(cx), id, paths.paths().to_vec(), cx)
+                    }
+                }))
             }))
+            .child(div().flex_1())
+            .when(self.importing > 0, |d| {
+                d.child(foot_line("adding dropped files", p.muted, &p))
+            })
+            .children(
+                self.import_problem
+                    .clone()
+                    .map(|problem| foot_line(problem, p.bad, &p)),
+            )
     }
+}
+
+/// A line at the sidebar's foot: what koan is doing, or what went wrong.
+fn foot_line(text: impl Into<SharedString>, color: Hsla, p: &Paint) -> Div {
+    div()
+        .px(p.space(Space::L))
+        .py(p.space(Space::Xs))
+        .text_role(TypeRole::Fine, &p.look)
+        .text_color(color)
+        .child(text.into())
 }

@@ -145,7 +145,7 @@ pub fn set_remote_credentials(
     // Asked first, without credentials: the password goes as `p=enc:` only to
     // a server that will trade it for a key.
     if offers_unsigned(url, crate::remote::profile::SIGN_IN).unwrap_or(false) {
-        let device = crate::remote::link::LinkIdentity::this_device(None).name;
+        let device = crate::remote::link::LinkIdentity::current().name;
         match koan_sign_in(url, username, password, &device) {
             Ok(joined) => return adopt_api_key(url, &joined.username, &joined.api_key),
             // Error 50: what was typed is a credential of its own, an app
@@ -179,7 +179,7 @@ pub fn set_remote_api_key(url: &str, username: &str, api_key: &str) -> Result<()
 pub fn change_own_password(current: &str, password: &str) -> Result<(), SignInError> {
     let cfg = Config::load()?;
     let client = subsonic_client(&cfg).ok_or(SignInError::Rejected(SubsonicError::BadResponse))?;
-    let device = crate::remote::link::LinkIdentity::this_device(None).name;
+    let device = crate::remote::link::LinkIdentity::current().name;
     let joined = client.koan_change_own_password(current, password, &device)?;
     adopt_api_key(&cfg.remote.url, &joined.username, &joined.api_key)
 }
@@ -199,7 +199,7 @@ pub fn join_with_invite(invite: &crate::invite::Invite) -> Result<(), SignInErro
     let url = invite.server.trim_end_matches('/');
     match (&invite.token, &invite.password) {
         (Some(token), _) => {
-            let device = crate::remote::link::LinkIdentity::this_device(None).name;
+            let device = crate::remote::link::LinkIdentity::current().name;
             let joined = crate::remote::client::redeem_invite(url, token, &device)?;
             adopt_api_key(url, &joined.username, &joined.api_key)
         }
