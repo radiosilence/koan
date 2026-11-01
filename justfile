@@ -128,6 +128,24 @@ macos-icon:
     iconutil -c icns "$set" -o {{app_dir}}/Resources/AppIcon.icns
     echo "built {{app_dir}}/Resources/AppIcon.icns"
 
+# Regenerate the desktop app's AppIcon.icns from its AppIcon.svg: kōan's
+# icon with a stand beneath the circle, so it is told apart from the Mac app.
+gui-icon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir=crates/koan-gui/packaging
+    set="$dir/AppIcon.iconset"
+    rm -rf "$set" && mkdir -p "$set"
+    for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
+                "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
+                "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
+        px="${spec%% *}"; name="${spec##* }"
+        rsvg-convert -w "$px" -h "$px" "$dir/AppIcon.svg" -o "$set/$name.png"
+    done
+    iconutil -c icns "$set" -o "$dir/AppIcon.icns"
+    rm -rf "$set"
+    echo "built $dir/AppIcon.icns"
+
 # Build the FFI static library and regenerate the Swift bindings.
 #
 # One slice, for the machine doing the building: a universal binary is two
@@ -1891,7 +1909,7 @@ _gui-macos:
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "${CARGO_TARGET_DIR:-target}/release/koan-gui" "$app/Contents/MacOS/koan-gui"
-    cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/"
+    cp crates/koan-gui/packaging/AppIcon.icns "$app/Contents/Resources/"
     cat > "$app/Contents/Info.plist" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1933,7 +1951,7 @@ _gui-macos:
     rm -f "$out/koan-gui.dmg"
     "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
         -D app="$app" -D background="$bg/background.tiff" \
-        -D volume_icon={{app_dir}}/Resources/AppIcon.icns \
+        -D volume_icon=crates/koan-gui/packaging/AppIcon.icns \
         "kōan desktop" "$out/koan-gui.dmg"
     case "$id" in
         "Developer ID Application"*) codesign --force --timestamp --sign "$id" "$out/koan-gui.dmg" ;;
@@ -1955,7 +1973,7 @@ _gui-linux:
     mkdir -p "$root/usr/bin" "$root/usr/share/applications" "$root/usr/share/icons/hicolor/scalable/apps"
     install -m 0755 "${CARGO_TARGET_DIR:-target}/release/koan-gui" "$root/usr/bin/koan-gui"
     install -m 0644 crates/koan-gui/packaging/koan-gui.desktop "$root/usr/share/applications/"
-    install -m 0644 {{app_dir}}/Resources/AppIcon.svg "$root/usr/share/icons/hicolor/scalable/apps/koan-gui.svg"
+    install -m 0644 crates/koan-gui/packaging/AppIcon.svg "$root/usr/share/icons/hicolor/scalable/apps/koan-gui.svg"
 
     # The libraries the binary links, glibc's floor among them, as
     # dpkg-shlibdeps reads them off it (it wants a source package's control

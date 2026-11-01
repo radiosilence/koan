@@ -20,6 +20,10 @@ Files and folders dropped on the queue are added to the library where they lie a
 
 The app shows what is playing in the system's controls, cover included, and takes their commands: Now Playing and the media keys on a Mac, MPRIS on Linux, so `playerctl` and the desktop's own media controls work. While it controls another device, the media keys control that device.
 
+## The Dock
+
+On macOS the Dock's menu for kōan desktop shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here. Its icon has a stand beneath the circle, so it is told apart from the Mac app in the Dock and the app switcher.
+
 ## Keys
 
 The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
