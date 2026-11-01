@@ -108,14 +108,18 @@ pub fn suggestions(s: &ShelfSummary) -> Vec<Suggestion> {
         subtitle: Some(credit(&a.artist_credit).into()),
         route: Some(Route::Album(a.id)),
     });
-    let artists = s.artists.iter().take(SUGGESTED_ARTISTS).map(|a| Suggestion {
-        kind: Kind::Artist,
-        id: a.id,
-        album: None,
-        title: a.name.clone().into(),
-        subtitle: None,
-        route: Some(Route::Artist(a.id)),
-    });
+    let artists = s
+        .artists
+        .iter()
+        .take(SUGGESTED_ARTISTS)
+        .map(|a| Suggestion {
+            kind: Kind::Artist,
+            id: a.id,
+            album: None,
+            title: a.name.clone().into(),
+            subtitle: None,
+            route: Some(Route::Artist(a.id)),
+        });
     tracks.chain(albums).chain(artists).collect()
 }
 
@@ -177,7 +181,8 @@ impl Search {
             return;
         }
         self.searching = true;
-        let (engine, generation, query) = (self.engine.clone(), self.generation, self.query.clone());
+        let (engine, generation, query) =
+            (self.engine.clone(), self.generation, self.query.clone());
         self._task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SETTLE).await;
             let shelf = ShelfKind::Search {
@@ -324,7 +329,9 @@ mod tests {
             artist_total: 6,
             albums: Vec::new(),
             album_total: 0,
-            tracks: (1..=8).map(|i| track(i, (i != 2).then_some(40 + i))).collect(),
+            tracks: (1..=8)
+                .map(|i| track(i, (i != 2).then_some(40 + i)))
+                .collect(),
             track_total: 8,
         };
         let s = suggestions(&summary);

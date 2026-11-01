@@ -11,10 +11,14 @@ use gpui_kit::*;
 
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller,
+    self, ActualSize, AddMusic, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites,
+    ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
+use crate::search::Search;
+use crate::search::field::SearchField;
+use crate::search::picker::{self, PickerSheet};
+use crate::search::results::ResultsPage;
 
 use crate::library::{self, stage::LibraryStage};
 use crate::paint::Paint;
@@ -55,6 +59,14 @@ pub struct Shell {
     _activation: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
+    search: Entity<Search>,
+    /// The sidebar's search field, over the sidebar's rows.
+    search_field: Entity<SearchField>,
+    /// What the search found, once the library is open. Held for the life
+    /// of the window, so a pick across results survives a new query.
+    results: Option<Entity<ResultsPage>>,
+    /// The picker (⇧⌘K), while it is open.
+    picker: Option<(Entity<PickerSheet>, Subscription)>,
 }
 
 impl Shell {
@@ -69,6 +81,8 @@ impl Shell {
                 Session::save_if_changed(cx);
             }
         });
+        let search = cx.new(|_| Search::new(crate::engine::engine(cx), nav.clone()));
+        let search_field = cx.new(|cx| SearchField::new(search.clone(), window, cx));
         let navigator = nav.clone();
         cx.spawn_in(window, async move |this, cx| {
             let browse = cx
@@ -78,6 +92,11 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
+                let covers = lib.covers.clone();
+                this.search_field
+                    .update(cx, |field, cx| field.set_covers(covers, cx));
+                let search = this.search.clone();
+                this.results = Some(cx.new(|cx| ResultsPage::new(lib.clone(), search, cx)));
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
             })
@@ -96,12 +115,38 @@ impl Shell {
             _arrivals: arrivals,
             _activation: activation,
             shortcuts: None,
+            search,
+            search_field,
+            results: None,
+            picker: None,
         }
+    }
+
+    fn show_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picker.is_some() {
+            return;
+        }
+        let engine = crate::engine::engine(cx);
+        let sheet = cx.new(|cx| PickerSheet::new(engine, window, cx));
+        let dismissed = cx.subscribe_in(
+            &sheet,
+            window,
+            |this, _, _: &picker::Dismissed, window, cx| {
+                this.picker = None;
+                this.arrived_at = this.nav.read(cx).current();
+                this.refocus(window, cx);
+            },
+        );
+        self.picker = Some((sheet, dismissed));
+        cx.notify();
     }
 
     fn arrived(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let route = self.nav.read(cx).current();
-        if route == self.arrived_at {
+        // The results page arrives as the field is typed in, which keeps
+        // the keys.
+        if route == self.arrived_at || route == Route::Search {
+            self.arrived_at = route;
             cx.notify();
             return;
         }
@@ -308,6 +353,13 @@ impl Render for Shell {
                 .clone()
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
+            Route::Search => match &self.results {
+                Some(results) => results
+                    .clone()
+                    .cached(StyleRefinement::default().size_full())
+                    .into_any_element(),
+                None => div().size_full().into_any_element(),
+            },
             route if LibraryStage::draws(route) => match &self.library {
                 Some(library) => library
                     .clone()
@@ -347,6 +399,11 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &actions::Search, window, cx| {
+                this.search_field
+                    .update(cx, |field, cx| field.focus(window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &AddMusic, window, cx| this.show_picker(window, cx)))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.back(&Back, window, cx)),
@@ -383,6 +440,9 @@ impl Render for Shell {
                                         .flex_shrink_0(),
                                 )
                             })
+                            // Not cached: its suggestions are drawn over the
+                            // sidebar's rows, after them.
+                            .child(self.search_field.clone())
                             .child(self.sidebar.clone().cached(
                                 StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
                             )),
@@ -408,6 +468,9 @@ impl Render for Shell {
                         .flex_shrink_0(),
                 ),
             )
+            .children(self.picker.as_ref().map(|(sheet, _)| {
+                deferred(div().absolute().inset_0().child(sheet.clone())).with_priority(2)
+            }))
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().inset_0().child(sheet.clone())).with_priority(2)
             }))
