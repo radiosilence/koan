@@ -48,7 +48,8 @@ pub struct KoanTheme {
     pub text_size: u32,
     /// "Show icons": glyphs beside the labels that carry them.
     pub icons: bool,
-    /// Low Power Mode, as last read.
+    /// Low Power Mode as last read on activation, so that its being lifted
+    /// while the wash is at rest, drawing no frames, redraws the windows.
     low_power: bool,
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
@@ -132,7 +133,7 @@ fn read_motion_settings(cx: &mut App) {
         let reduce =
             objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
         cx.set_reduce_motion(reduce);
-        let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
+        let low_power = low_power();
         if cx.global::<KoanTheme>().low_power != low_power {
             cx.global_mut::<KoanTheme>().low_power = low_power;
             cx.refresh_windows();
@@ -140,6 +141,13 @@ fn read_motion_settings(cx: &mut App) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = cx;
+}
+
+fn low_power() -> bool {
+    #[cfg(target_os = "macos")]
+    return objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// Holds a window to one appearance whatever the system's, or lets it follow
@@ -193,9 +201,11 @@ fn sync_components(dark: bool, cx: &mut App) {
 
 impl KoanTheme {
     /// Whether the system lets things move for their own sake: Reduce
-    /// Motion and Low Power Mode off.
+    /// Motion and Low Power Mode off. Low Power Mode is read live, since it
+    /// often comes on while koan is in front. The wash asks as it draws, and
+    /// at rest it draws nothing.
     pub fn motion_allowed(cx: &App) -> bool {
-        !cx.reduce_motion() && !cx.global::<KoanTheme>().low_power
+        !cx.reduce_motion() && !low_power()
     }
 
     /// Moves the accent to a record's. `ease` is false for a colour already

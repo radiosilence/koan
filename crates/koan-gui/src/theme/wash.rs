@@ -316,8 +316,8 @@ impl Wash {
 
     /// Whether the wash should drift: something playing, and the graphics
     /// setting allowing it. Reduce Motion and Low Power Mode are read as it
-    /// draws (`KoanTheme::motion_allowed`), and come back from the system
-    /// whenever a window comes forward. Starting and stopping ease over two seconds
+    /// draws (`KoanTheme::motion_allowed`); one lifted while the wash is at
+    /// rest redraws the windows when one comes forward. Starting and stopping ease over two seconds
     /// from wherever the drift stands.
     pub fn drift(&mut self, wanted: bool, cx: &mut Context<Self>) {
         if self.wanted != wanted {
