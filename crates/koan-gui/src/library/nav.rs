@@ -28,19 +28,30 @@ impl Page {
 pub struct Anchor {
     pub at: Anchored,
     pub offset: Pixels,
+    /// Where the item was, for when it is gone: the place nearest it rather
+    /// than the top.
+    pub item_ix: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Anchored {
     Header,
-    /// The page's nth heading.
-    Heading(usize),
+    Heading(Heading),
     /// The row of records that starts with this one.
     Album {
         id: i64,
         features: bool,
     },
     Track(i64),
+}
+
+/// A heading on a page, by what it heads rather than where it falls, since
+/// headings come and go as sections do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heading {
+    Section(koan_ffi::ReleaseSection),
+    Features,
+    Appearances,
 }
 
 pub struct Nav {

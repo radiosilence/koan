@@ -18,7 +18,7 @@ use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSectio
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve};
 use super::drag::{Playable, PlayableDrag};
-use super::nav::{Anchor, Anchored, Page};
+use super::nav::{Anchor, Anchored, Heading, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::{self, Grid, Part, TileHost, TileState};
@@ -41,7 +41,7 @@ struct Record {
 #[derive(Clone)]
 enum Item {
     Header,
-    Heading(SharedString),
+    Heading(SharedString, Heading),
     FeaturesHeading,
     /// A row of tiles: `albums[range]` of the records or the features.
     Tiles {
@@ -223,6 +223,7 @@ impl ArtistPage {
                     koan_ffi::release_section_title(section)
                         .to_lowercase()
                         .into(),
+                    Heading::Section(section),
                 ));
             }
             rows(&mut items, false, start, len);
@@ -232,7 +233,7 @@ impl ArtistPage {
             rows(&mut items, true, 0, record.features.len());
         }
         if !record.appearances.is_empty() {
-            items.push(Item::Heading("appears on".into()));
+            items.push(Item::Heading("appears on".into(), Heading::Appearances));
             items.extend((0..record.appearances.len()).map(Item::Track));
         }
         items
@@ -248,7 +249,7 @@ impl ArtistPage {
                 .list
                 .bounds_for_item(0)
                 .map_or(px(HEADER_GUESS), |b| b.size.height),
-            Item::Heading(_) | Item::FeaturesHeading => Self::heading_height(),
+            Item::Heading(..) | Item::FeaturesHeading => Self::heading_height(),
             Item::Tiles { .. } => grid.row,
             Item::Track(_) => rows::art_height(),
         })
@@ -261,12 +262,8 @@ impl ArtistPage {
         let item = self.items.get(top.item_ix)?;
         let at = match item {
             Item::Header => Anchored::Header,
-            Item::Heading(_) | Item::FeaturesHeading => Anchored::Heading(
-                self.items[..top.item_ix]
-                    .iter()
-                    .filter(|i| matches!(i, Item::Heading(_) | Item::FeaturesHeading))
-                    .count(),
-            ),
+            Item::Heading(_, heading) => Anchored::Heading(*heading),
+            Item::FeaturesHeading => Anchored::Heading(Heading::Features),
             Item::Tiles { features, range } => {
                 let albums = if *features {
                     &record.features
@@ -283,18 +280,16 @@ impl ArtistPage {
         Some(Anchor {
             at,
             offset: top.offset_in_item,
+            item_ix: top.item_ix,
         })
     }
 
-    /// The item that shows `anchor` in the items as now cut, or the top.
+    /// The item that shows `anchor` in the items as now cut.
     fn find(&self, record: &Record, anchor: Anchor) -> ListOffset {
-        let mut headings = 0;
         let item_ix = self.items.iter().position(|item| match (item, anchor.at) {
             (Item::Header, Anchored::Header) => true,
-            (Item::Heading(_) | Item::FeaturesHeading, Anchored::Heading(n)) => {
-                headings += 1;
-                headings == n + 1
-            }
+            (Item::Heading(_, heading), Anchored::Heading(h)) => *heading == h,
+            (Item::FeaturesHeading, Anchored::Heading(Heading::Features)) => true,
             (Item::Tiles { features, range }, Anchored::Album { id, features: f })
                 if *features == f =>
             {
@@ -317,7 +312,12 @@ impl ArtistPage {
                 item_ix,
                 offset_in_item: anchor.offset,
             },
-            None => ListOffset::default(),
+            // Gone from the page (a record the library lost): the place it
+            // was, rather than the top.
+            None => ListOffset {
+                item_ix: anchor.item_ix.min(self.items.len().saturating_sub(1)),
+                offset_in_item: px(0.0),
+            },
         }
     }
 
@@ -426,7 +426,7 @@ impl ArtistPage {
         let scale = window.scale_factor();
         match item {
             Item::Header => self.header(&record, grid, scale, cx).into_any_element(),
-            Item::Heading(title) => Self::heading(title).into_any_element(),
+            Item::Heading(title, _) => Self::heading(title).into_any_element(),
             Item::FeaturesHeading => {
                 let items: Vec<Playable> = record
                     .features
@@ -953,7 +953,7 @@ mod tests {
             .iter()
             .map(|i| match i {
                 Item::Header => "header".into(),
-                Item::Heading(t) => format!("[{t}]"),
+                Item::Heading(t, _) => format!("[{t}]"),
                 Item::FeaturesHeading => "[features]".into(),
                 Item::Tiles { range, .. } => format!("{}..{}", range.start, range.end),
                 Item::Track(i) => format!("track {i}"),
