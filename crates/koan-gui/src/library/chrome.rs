@@ -616,7 +616,32 @@ pub fn selection_bar<V: Picking>(
 
 #[cfg(test)]
 mod tests {
-    use super::count;
+    use super::*;
+    use core::prelude::v1::test;
+
+    /// Typing in the filter field narrows the browsers: what is typed
+    /// reaches the browse model they all listen to.
+    #[koan_kit::raw::test]
+    fn typing_in_the_filter_field_sets_the_search(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            koan_kit::raw::init(cx);
+            crate::theme::init(cx);
+        });
+        let browse = cx.new(|_| Browse::fresh());
+        let watched = browse.clone();
+        let (field, cx) =
+            cx.add_window_view(move |window, cx| SearchField::new(watched.clone(), window, cx));
+        cx.update(|window, cx| {
+            let handle = field.read(cx).input.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.simulate_input("lush");
+        cx.run_until_parked();
+        assert_eq!(
+            browse.read_with(cx, |b, _| b.search()),
+            Some("lush".to_string())
+        );
+    }
 
     #[test]
     fn counts_are_grouped_and_pluralised() {

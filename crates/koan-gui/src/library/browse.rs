@@ -55,6 +55,20 @@ impl Browse {
         }
     }
 
+    /// The defaults, reading nothing from disk: for tests, which must not
+    /// read the person's own configuration.
+    #[cfg(test)]
+    pub fn fresh() -> Self {
+        Self {
+            writer: Writer::spawn(),
+            filter: BrowseFilter::default(),
+            search: String::new(),
+            album_sort: AlbumSort::RecentlyAdded,
+            track_sort: TrackBrowseSort::Artist,
+            seed: seed(),
+        }
+    }
+
     /// The album sort in force, as the menu shows it: one only offered
     /// alongside a filter or a search reads as the engine's fallback when
     /// that is gone.
