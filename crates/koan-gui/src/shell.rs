@@ -5,9 +5,9 @@
 //! slider, a row of the queue) redraws itself and the views that hold it,
 //! and the others are reused as they were.
 
-use gpui_kit::base::InteractiveElementExt as _;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::base::InteractiveElementExt as _;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{

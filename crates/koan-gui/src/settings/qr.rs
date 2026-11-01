@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 /// A code's dark modules, as horizontal runs: (row, first column, length),
 /// on a grid `side` modules square.

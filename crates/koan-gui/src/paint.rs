@@ -2,7 +2,7 @@
 //! colours flattened to the values the views paint with.
 
 use crate::theme::{Look, Space, Tone, tokens};
-use gpui_kit::{App, Hsla, Pixels, Window, hsla, px};
+use koan_kit::raw::{App, Hsla, Pixels, Window, hsla, px};
 
 #[derive(Clone, Copy)]
 pub struct Paint {

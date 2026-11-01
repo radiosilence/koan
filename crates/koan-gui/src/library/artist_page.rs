@@ -12,9 +12,9 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -950,7 +950,7 @@ impl Render for ArtistPage {
                     .flex_1()
                     .min_h_0()
                     .child(body)
-                    .child(gpui_kit::base::Scrollbar::vertical(&self.list)),
+                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.list)),
                 cx.weak_entity(),
                 window,
                 cx,

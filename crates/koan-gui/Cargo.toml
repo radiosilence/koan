@@ -17,7 +17,7 @@ path = "src/main.rs"
 [features]
 # GPUI's frame histograms, and `measure`, which scrolls the queue and prints
 # them (`KOAN_GUI_MEASURE=scroll`).
-profiler = ["gpui-kit/profiler"]
+profiler = ["koan-kit/profiler"]
 
 [dependencies]
 # The engine, linked as a Rust library: the same facade the Swift and Kotlin
@@ -27,7 +27,8 @@ chrono = "0.4"
 futures-channel = "0.3"
 futures-lite = "2"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-gpui-kit = "0.8.1"
+# The design system, and GPUI through it.
+koan-kit = { path = "../koan-kit" }
 # The platform cache directory for artwork.
 dirs = "7"
 # Decoding and resizing sleeves for the library, the accent and the wash, and
@@ -48,7 +49,7 @@ smallvec = "1"
 souvlaki = "0.9"
 
 [dev-dependencies]
-gpui-kit = { version = "0.8.1", features = ["test-support"] }
+koan-kit = { path = "../koan-kit", features = ["test-support"] }
 # The scroll benches (benches/album_grid.rs): GPUI's own harness, drawing
 # through the headless Metal renderer with nothing on screen.
 criterion = "0.8"

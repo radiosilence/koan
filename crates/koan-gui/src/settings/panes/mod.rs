@@ -17,7 +17,7 @@ mod server;
 mod share;
 
 use crate::theme::Icon;
-use gpui_kit::*;
+use koan_kit::raw::*;
 
 use super::Ctx;
 

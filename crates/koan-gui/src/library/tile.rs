@@ -9,9 +9,9 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Album, AlbumOnDevice};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::actions;
 use super::covers::Sleeve;
@@ -596,7 +596,7 @@ fn download_bar(p: &Paint, on_device: Option<AlbumOnDevice>, arriving: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
     use core::prelude::v1::test;
 
     #[test]

@@ -1,0 +1,39 @@
+[package]
+name = "koan-kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kōan's design system for GPUI: the theme and its components. Knows nothing of the engine."
+publish = false
+
+[features]
+profiler = ["gpui-kit/profiler"]
+test-support = ["gpui-kit/test-support"]
+
+[dependencies]
+gpui-kit = "0.8.1"
+# The wash's bake and the accent's sampling, in the version GPUI builds
+# against; PNG for the theme sheet's offscreen render.
+image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+futures = "0.3"
+log = "0.4"
+parking_lot = "0.13"
+smallvec = "1"
+
+[dev-dependencies]
+gpui-kit = { version = "0.8.1", features = ["test-support"] }
+
+# Reduce Motion and Low Power Mode, which GPUI does not read, and the
+# notifications that say when either changes.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", features = ["NSAccessibility", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", features = [
+  "NSNotification",
+  "NSOperation",
+  "NSProcessInfo",
+  "NSString",
+  "block2",
+] }

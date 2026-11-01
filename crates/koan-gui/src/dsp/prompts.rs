@@ -3,12 +3,12 @@
 //! imported EQ is for. Each is the model's, drawn over whichever EQ page is
 //! showing.
 
-use gpui_kit::component::input::InputState;
-use gpui_kit::{
+use koan_ffi::DspRole;
+use koan_kit::raw::component::input::InputState;
+use koan_kit::raw::{
     AnyElement, App, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement,
     SharedString, Styled, Window, div,
 };
-use koan_ffi::DspRole;
 
 use super::model::{Dsp, RATES, RoleAsk, Stage, khz};
 use super::sheet::{body, choice_row, head, note, panel, section};

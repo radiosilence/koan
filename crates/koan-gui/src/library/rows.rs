@@ -7,9 +7,9 @@
 //! Lists select as lists do: a click picks the row, ⌘ adds or removes one,
 //! ⇧ extends, and a double click plays the list from it.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Track, TransferState};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::actions;
 use super::covers::Sleeve;
