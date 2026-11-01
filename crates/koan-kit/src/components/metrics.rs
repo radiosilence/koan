@@ -16,9 +16,16 @@ pub enum RowKind {
     Text,
     /// A sleeve beside the title and its credit.
     Art,
+    /// A record's heading over its run in a queue or playlist: its sleeve
+    /// (`RowMetrics::heading_sleeve`), the record over its artist and a
+    /// line of detail.
+    Heading,
 }
 
 pub struct RowMetrics;
+
+/// A record heading's sleeve at 100 %, the Mac queue's.
+const HEADING_SLEEVE: f32 = 52.0;
 
 impl RowMetrics {
     pub fn height(kind: RowKind, look: &Look) -> Pixels {
@@ -26,6 +33,7 @@ impl RowMetrics {
             RowKind::Line => 24.0,
             RowKind::Text => 34.0,
             RowKind::Art => 40.0,
+            RowKind::Heading => HEADING_SLEEVE + 12.0,
         };
         px((points * look.scale.size).round()) + Self::padding(look) * 2.0
     }
@@ -33,6 +41,11 @@ impl RowMetrics {
     /// A navigation row's face, square: a playlist's sleeve in the sidebar.
     pub fn nav_art(look: &Look) -> Pixels {
         px((24.0 * look.scale.size).round())
+    }
+
+    /// A record heading's sleeve, square.
+    pub fn heading_sleeve(look: &Look) -> Pixels {
+        px((HEADING_SLEEVE * look.scale.size).round())
     }
 
     /// A row's sleeve, square.
