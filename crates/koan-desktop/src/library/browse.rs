@@ -52,15 +52,11 @@ impl Browse {
         }
     }
 
-    /// The album sort in force: one only offered alongside a filter or a
-    /// search falls back when that is gone, as `AlbumSort::offered` says.
+    /// The album sort in force, as the menu shows it: one only offered
+    /// alongside a filter or a search reads as the engine's fallback when
+    /// that is gone.
     pub fn effective_album_sort(&self) -> AlbumSort {
-        let offered = album_sorts(
-            self.filter.recent,
-            self.filter.downloaded,
-            !self.search.is_empty(),
-        );
-        if offered.contains(&self.album_sort) {
+        if album_sorts(&self.filter, self.search().is_some()).contains(&self.album_sort) {
             self.album_sort
         } else {
             AlbumSort::RecentlyAdded
@@ -68,7 +64,7 @@ impl Browse {
     }
 
     pub fn effective_track_sort(&self) -> TrackBrowseSort {
-        if track_sorts(self.filter.recent, !self.search.is_empty()).contains(&self.track_sort) {
+        if track_sorts(&self.filter, self.search().is_some()).contains(&self.track_sort) {
             self.track_sort
         } else {
             TrackBrowseSort::Artist
@@ -105,8 +101,16 @@ impl Browse {
 
     pub fn update(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Self)) {
         change(self);
-        self.save(cx);
+        self.save();
         cx.notify();
+    }
+
+    /// The search is not kept between launches, so typing writes nothing.
+    pub fn set_search(&mut self, search: String, cx: &mut Context<Self>) {
+        if search != self.search {
+            self.search = search;
+            cx.notify();
+        }
     }
 
     pub fn reshuffle(&mut self, cx: &mut Context<Self>) {
@@ -114,7 +118,9 @@ impl Browse {
         cx.notify();
     }
 
-    fn save(&self, cx: &mut Context<Self>) {
+    /// Written at once: a few hundred bytes, and two writes in flight
+    /// together could land out of order.
+    fn save(&self) {
         let f = &self.filter;
         let stored = Stored {
             favourites: f.favourites,
@@ -128,18 +134,14 @@ impl Browse {
             album_sort: Some(album_sort_key(self.album_sort).into()),
             track_sort: Some(track_sort_key(self.track_sort).into()),
         };
-        cx.background_executor()
-            .spawn(async move {
-                let Ok(bytes) = serde_json::to_vec_pretty(&stored) else {
-                    return;
-                };
-                let path = path();
-                let tmp = path.with_extension("json.tmp");
-                if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
-                    std::fs::remove_file(&tmp).ok();
-                }
-            })
-            .detach();
+        let Ok(bytes) = serde_json::to_vec_pretty(&stored) else {
+            return;
+        };
+        let path = path();
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+            std::fs::remove_file(&tmp).ok();
+        }
     }
 }
 
@@ -168,46 +170,22 @@ struct Stored {
     track_sort: Option<String>,
 }
 
-/// The sorts to offer. Last Played only means something while the Recently
-/// Played filter is on, Most Downloaded while the Downloaded one is, and Best
-/// Match while a search narrows the listing.
-pub fn album_sorts(recent: bool, downloaded: bool, searching: bool) -> Vec<AlbumSort> {
-    let mut out = Vec::new();
-    if searching {
-        out.push(AlbumSort::BestMatch);
-    }
-    if recent {
-        out.push(AlbumSort::LastPlayed);
-    }
-    if downloaded {
-        out.push(AlbumSort::Downloaded);
-    }
-    out.extend([
-        AlbumSort::RecentlyAdded,
-        AlbumSort::Title,
-        AlbumSort::Artist,
-        AlbumSort::Year,
-        AlbumSort::YearAsc,
-        AlbumSort::Random,
-    ]);
-    out
+/// The sorts a menu offers under the current filter and search.
+pub fn album_sorts(filter: &BrowseFilter, searching: bool) -> Vec<AlbumSort> {
+    koan_ffi::album_sorts_offered(filter.clone(), searching)
 }
 
-pub fn track_sorts(recent: bool, searching: bool) -> Vec<TrackBrowseSort> {
-    let mut out = Vec::new();
-    if searching {
-        out.push(TrackBrowseSort::BestMatch);
+pub fn track_sorts(filter: &BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
+    koan_ffi::track_sorts_offered(filter.clone(), searching)
+}
+
+/// Every sort, for reading a stored name back.
+fn every_filter() -> BrowseFilter {
+    BrowseFilter {
+        recent: true,
+        downloaded: true,
+        ..BrowseFilter::default()
     }
-    if recent {
-        out.push(TrackBrowseSort::LastPlayed);
-    }
-    out.extend([
-        TrackBrowseSort::Artist,
-        TrackBrowseSort::Title,
-        TrackBrowseSort::Album,
-        TrackBrowseSort::Duration,
-    ]);
-    out
 }
 
 pub fn album_sort_label(sort: AlbumSort) -> &'static str {
@@ -252,7 +230,7 @@ fn album_sort_key(sort: AlbumSort) -> &'static str {
 }
 
 fn album_sort(key: &str) -> Option<AlbumSort> {
-    album_sorts(true, true, true)
+    album_sorts(&every_filter(), true)
         .into_iter()
         .find(|s| album_sort_key(*s) == key)
 }
@@ -269,7 +247,7 @@ fn track_sort_key(sort: TrackBrowseSort) -> &'static str {
 }
 
 fn track_sort(key: &str) -> Option<TrackBrowseSort> {
-    track_sorts(true, true)
+    track_sorts(&every_filter(), true)
         .into_iter()
         .find(|s| track_sort_key(*s) == key)
 }
@@ -280,10 +258,10 @@ mod tests {
 
     #[test]
     fn every_sort_reads_back_from_its_stored_name() {
-        for sort in album_sorts(true, true, true) {
+        for sort in album_sorts(&every_filter(), true) {
             assert_eq!(album_sort(album_sort_key(sort)), Some(sort));
         }
-        for sort in track_sorts(true, true) {
+        for sort in track_sorts(&every_filter(), true) {
             assert_eq!(track_sort(track_sort_key(sort)), Some(sort));
         }
         assert_eq!(album_sort("nonsense"), None);

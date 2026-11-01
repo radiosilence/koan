@@ -122,9 +122,12 @@ struct Queue {
     /// again until the connection changes or the record is asked for afresh.
     failed: HashSet<Art>,
     generation: HashMap<Art, u64>,
+    /// The first eviction sweep has been tried, so fetches may start.
+    fetches_allowed: bool,
     /// The first eviction sweep has landed, so a file found on disk belongs to
-    /// the record now holding its id.
-    swept: bool,
+    /// the record now holding its id. Until then every record is fetched
+    /// afresh, over whatever file it had.
+    disk_trusted: bool,
     closed: bool,
 }
 
@@ -134,7 +137,7 @@ impl Queue {
     }
 
     fn fetchable(&self, key: &Key) -> bool {
-        self.swept
+        self.fetches_allowed
             && !self.on_disk.contains(&key.art)
             && !self.fetching.contains(&key.art)
             && !self.absent.contains(&key.art)
@@ -306,26 +309,29 @@ impl Covers {
 
     /// `owner`'s requests, replacing its last ones: a list's visible and
     /// upcoming sleeves ranked as it scrolls, or a page's few. What it no
-    /// longer asks for is not started on its account. A record asked for
-    /// afresh after a failed fetch is tried again. Never notifies, so it can
+    /// longer asks for is not started on its account. A record that comes on
+    /// screen after a failed fetch is tried again. Never notifies, so it can
     /// be called while drawing.
     pub fn request(&mut self, owner: EntityId, ranked: impl IntoIterator<Item = (Key, Priority)>) {
-        let wanted: HashMap<Key, Priority> = ranked
-            .into_iter()
-            .filter(|(k, _)| !self.memory.contains_key(k))
-            .collect();
+        let wanted: HashMap<Key, Priority> = ranked.into_iter().collect();
         let previous = self.requests.get(&owner);
         if previous == Some(&wanted) {
             return;
         }
-        let fresh: Vec<Art> = wanted
-            .keys()
-            .filter(|k| previous.is_none_or(|p| !p.contains_key(k)))
-            .map(|k| k.art)
+        // Only what has just come on screen: the reach ahead moves with the
+        // scroll's speed, and a key flickering at its edge would otherwise
+        // send each flicker to a server that is not answering.
+        let shown: Vec<Art> = wanted
+            .iter()
+            .filter(|(k, p)| {
+                **p == Priority::Visible
+                    && previous.and_then(|prev| prev.get(k)) != Some(&Priority::Visible)
+            })
+            .map(|(k, _)| k.art)
             .collect();
-        if !fresh.is_empty() {
+        if !shown.is_empty() {
             let mut queue = self.shared.queue.lock();
-            for art in fresh {
+            for art in shown {
                 queue.failed.remove(&art);
             }
         }
@@ -356,7 +362,7 @@ impl Covers {
     fn publish(&mut self) {
         let mut wanted: HashMap<Key, Priority> = HashMap::new();
         for request in self.requests.values() {
-            for (key, priority) in request {
+            for (key, priority) in request.iter().filter(|(k, _)| !self.memory.contains_key(k)) {
                 wanted
                     .entry(*key)
                     .and_modify(|p| {
@@ -449,7 +455,15 @@ impl Covers {
         }
         let target = MEMORY_BUDGET / 10 * 9;
         let recent = Instant::now() - Duration::from_millis(500);
-        let wanted = self.shared.queue.lock().wanted.clone();
+        let mut wanted: HashMap<Key, Priority> = HashMap::new();
+        for request in self.requests.values() {
+            for (key, priority) in request {
+                let p = wanted.entry(*key).or_insert(*priority);
+                if priority < p {
+                    *p = *priority;
+                }
+            }
+        }
         let rank = |key: &Key| match wanted.get(key) {
             None => 0.0,
             Some(Priority::Ahead(d)) => 1.0 / (1.0 + d),
@@ -487,11 +501,12 @@ impl Covers {
             let gone = engine.art_evictions(after).await;
             this.update(cx, |covers, cx| match gone {
                 Ok(gone) => covers.evict(gone, cx),
-                // Not knowing what went is no reason to show nothing: the
-                // next library change sweeps again.
+                // Not knowing what went is no reason to show nothing, but it
+                // is reason not to trust the files: records are fetched
+                // afresh until a sweep lands.
                 Err(e) => {
                     log::warn!("art evictions: {e}");
-                    covers.mark_swept();
+                    covers.allow_fetches(false);
                 }
             })
             .ok();
@@ -499,12 +514,13 @@ impl Covers {
         .detach();
     }
 
-    fn mark_swept(&mut self) {
+    fn allow_fetches(&mut self, trust_disk: bool) {
         let mut queue = self.shared.queue.lock();
-        if queue.swept {
+        queue.disk_trusted |= trust_disk;
+        if queue.fetches_allowed {
             return;
         }
-        queue.swept = true;
+        queue.fetches_allowed = true;
         let fetches = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
         drop(queue);
         self.shared.wake(fetches, 0);
@@ -551,7 +567,7 @@ impl Covers {
         for key in drop {
             self.forget(key, cx);
         }
-        self.mark_swept();
+        self.allow_fetches(true);
         if !fresh {
             return;
         }
@@ -638,7 +654,7 @@ fn fetch_lane(
         let file = dir.join(art.filename());
         // Checked under the lock: an eviction unlinks under it too.
         let mut queue = shared.queue.lock();
-        if queue.generation(art) == generation && file.exists() {
+        if queue.disk_trusted && queue.generation(art) == generation && file.exists() {
             queue.fetching.remove(&art);
             queue.on_disk.insert(art);
             let decodes = queue.wanted.keys().filter(|k| k.art == art).count();
@@ -695,8 +711,10 @@ fn fetch_lane(
             .keys()
             .filter(|k| k.art == art && queue.decodable(k))
             .count();
+        // Overtaken by an eviction: the record now holding the id is fetched.
+        let refetch = !current && queue.wanted.keys().any(|k| k.art == art && queue.fetchable(k));
         drop(queue);
-        shared.wake(0, decodes);
+        shared.wake(usize::from(refetch), decodes);
         if absent && tx.unbounded_send(Done::Absent).is_err() {
             return;
         }
@@ -842,7 +860,7 @@ mod tests {
         q.wanted.insert(Key { art: a, px: 64 }, Priority::Ahead(5.0));
         q.wanted.insert(Key { art: b, px: 64 }, Priority::Visible);
         assert_eq!(q.next_fetch(), None);
-        q.swept = true;
+        q.fetches_allowed = true;
         assert_eq!(q.next_fetch(), Some(b));
         q.absent.insert(b);
         assert_eq!(q.next_fetch(), Some(a));

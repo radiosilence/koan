@@ -1345,6 +1345,37 @@ impl From<TrackBrowseSort> for koan_core::browse::TrackSort {
     }
 }
 
+impl From<koan_core::browse::AlbumSort> for AlbumSort {
+    fn from(sort: koan_core::browse::AlbumSort) -> Self {
+        use koan_core::browse::AlbumSort as S;
+        match sort {
+            S::RecentlyAdded => Self::RecentlyAdded,
+            S::Title => Self::Title,
+            S::Artist => Self::Artist,
+            S::Year => Self::Year,
+            S::YearAsc => Self::YearAsc,
+            S::Random => Self::Random,
+            S::LastPlayed => Self::LastPlayed,
+            S::Downloaded => Self::Downloaded,
+            S::BestMatch => Self::BestMatch,
+        }
+    }
+}
+
+impl From<koan_core::browse::TrackSort> for TrackBrowseSort {
+    fn from(sort: koan_core::browse::TrackSort) -> Self {
+        use koan_core::browse::TrackSort as S;
+        match sort {
+            S::Artist => Self::Artist,
+            S::Title => Self::Title,
+            S::Album => Self::Album,
+            S::Duration => Self::Duration,
+            S::LastPlayed => Self::LastPlayed,
+            S::BestMatch => Self::BestMatch,
+        }
+    }
+}
+
 /// What the codec and genre filters offer: the codecs records are in, most
 /// common first, and the genres most records carry.
 #[derive(uniffi::Record, Debug, Clone)]

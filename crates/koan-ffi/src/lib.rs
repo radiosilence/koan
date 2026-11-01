@@ -461,6 +461,25 @@ pub fn config_dir() -> std::path::PathBuf {
     config::config_dir()
 }
 
+/// The album sorts that mean something under `filter`, and with a search when
+/// `searching`, in the order a menu offers them.
+#[uniffi::export]
+pub fn album_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<AlbumSort> {
+    koan_core::browse::AlbumSort::offered(&filter.into(), searching)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+/// As `album_sorts_offered`, for the track browser.
+#[uniffi::export]
+pub fn track_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
+    koan_core::browse::TrackSort::offered(&filter.into(), searching)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
 /// A size as koan reads one in the config ("50GB", "500 MB"), in bytes, or
 /// `None` when it is not one. So the apps read the cache limit as the core
 /// does, without a parser of their own.

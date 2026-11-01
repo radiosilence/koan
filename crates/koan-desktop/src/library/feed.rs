@@ -23,6 +23,10 @@ pub struct Feed {
     /// Bumped whenever the connection to the server changes: artwork that
     /// failed to arrive is worth asking for again.
     pub connection_epoch: u64,
+    /// Which server, and whether the link to it is up: what the epoch
+    /// follows. The rest of the connection report (sharing, devices) moves
+    /// for reasons artwork does not care about.
+    reach: Option<(Option<String>, bool, Option<String>)>,
     /// The playlists a pick can be added to: every one not read-only.
     pub playlists: Vec<(i64, SharedString)>,
     favourites: HashSet<Playable>,
@@ -53,6 +57,7 @@ impl Feed {
             playing_track: None,
             arriving: HashMap::new(),
             connection_epoch: 0,
+            reach: None,
             playlists: Vec::new(),
             favourites: HashSet::new(),
             favourite_edits: 0,
@@ -98,9 +103,17 @@ impl Feed {
                         changed = true;
                     }
                 }
-                StateSlice::Connection { .. } => {
-                    self.connection_epoch += 1;
-                    changed = true;
+                StateSlice::Connection { connection } => {
+                    let reach = Some((
+                        connection.signed_in_to,
+                        connection.linked,
+                        connection.server_kind,
+                    ));
+                    if reach != self.reach {
+                        self.reach = reach;
+                        self.connection_epoch += 1;
+                        changed = true;
+                    }
                 }
                 _ => {}
             }
@@ -200,8 +213,13 @@ impl Feed {
                 feed.favourites_reading = false;
                 let (tracks, albums, artists) = match read {
                     Ok(read) => read,
+                    // A read asked for meanwhile still runs, once: its
+                    // failing too ends it, since that read clears the flag.
                     Err(e) => {
                         log::warn!("favourites: {e}");
+                        if feed.favourites_stale {
+                            feed.reload_favourites(cx);
+                        }
                         return;
                     }
                 };
