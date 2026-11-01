@@ -22,7 +22,9 @@ crates/
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
 ├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for
-│                  macOS and Linux. Links koan-ffi as a Rust library.
+│                  macOS and Linux: the kōan theme (`theme/`), its components
+│                  (`components/`) and `platform/`. Links koan-ffi as a Rust
+│                  library. Not published.
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
@@ -37,7 +39,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
@@ -340,7 +342,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/favourites.rs` | Favourite/star status by row id (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
 | `queries/smart.rs` | Smart playlists: rules (`crate::smart`) compiled to one parameterised query over tracks, the owner's plays and favourites. The selection is written into the playlist's entries, so every reader sees an ordinary playlist; reads re-evaluate one older than a minute (a random order, a day) and write only when the selection moved, keeping entry ids. A scrobble or favourite on the server re-evaluates at once the owner's playlists whose rules read it, and `clients::changed` has devices pull any that moved. A read never waits for the write lock: behind a scan it serves the last contents, and the refusal is remembered for the minute so each read does not evaluate again |
 | `queries/history.rs` | Play history — one row per play, written when a track starts. On a server, also forgettings (`play_history_forgotten`) and the pages devices read after a cursor of two `AUTOINCREMENT` ids; on a device, the outbox of scrobbles and forgettings waiting for the server |
-| `queries/playback_state.rs` | Queue and playback position persistence across sessions |
+| `queries/playback_state.rs` | The saved session (queue, position, play mode), one per device on the config directory, keyed by the device's `LinkIdentity::files` prefix: the app (`''`) and the terminal UI (`terminal-`) run side by side on one library and each restores its own. A headless server keeps none |
 
 **Indexes and the planner.** Every question the library is asked about a handful of rows is answerable from an index, so a query plan that says `SCAN` is a defect unless the query genuinely means "all of them". Two shapes defeat an index and neither one fails, so both only ever show up as cost: an `OR` spanning different columns or different tables — a track is reachable by `path`, `cached_path` or `remote_url`, and an artist by their own credit or their album's — and a `LIKE` pattern or a collation the index was not built with. The first is written as a union of indexed lookups; the second as a range over the indexed column. `db/schema.rs::tests::hot_queries_do_not_scan` asserts the plans, because a rewrite that quietly loses its index reads the same.
 
@@ -404,6 +406,18 @@ fb2k-compatible template engine, re-exported from [sift](https://github.com/radi
 ## koan-cli modules
 
 Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch, logger setup, and signal handling. Delegates everything to command handlers (some in koan-cli itself, some calling into koan-tui and koan-server).
+
+## koan-gui: the theme in GPUI
+
+`koan-gui` draws only the kōan look (docs/design/koan-theme.md); there is no system theme. `theme::Look::of(window, cx)` is a window's appearance and the tokens and accent for it, read by every component as it renders; `theme::KoanTheme` holds what windows share (text size, "show icons"). The record's accent is an entity, `AccentFeed`: it changes with every record and moves for a quarter second as it settles, so it notifies only the views that draw it, each of which calls `theme::observe_accent` when it is made, rather than redrawing every window past its caches. Appearance and text size, which change rarely, do redraw everything.
+
+**A window's root is two cached views.** The wash (`theme::wash::Wash`) and the content sit side by side under a root whose render only calls `KoanTheme::drive` and places the two cached views. A frame of the drift or of the accent settling then redraws the wash, or refreshes past the caches, without re-laying out the page: `request_animation_frame` dirties the view that asks and every ancestor, so content that is not in its own cached view is redrawn on every frame the wash moves. `sheet::ThemeSheet` is the reference shape.
+
+**Nothing heavy on the main thread.** The accent is worked out and the wash baked on the background executor; the main thread installs the finished texture. The wash is one textured quad per frame (two while a record dissolves into the next), drawn only while it drifts or fades, and released from the sprite atlas after the frame that last drew it. GPUI rasterises an icon's SVG sprite on the main thread the first time each glyph is drawn at a size; it is kept in the atlas after that.
+
+**Icons** are generated by `scripts/icons.py` into `theme/icons/glyphs.rs`, with an `Icon` enum named as `Support/Icons.swift` names them. Each (glyph, stroke width, layer) is an asset path that `theme::icons::Assets` turns into an SVG on first use, since the stroke is set by the type size rather than scaled with the drawing.
+
+**Geist Mono** is bundled as static 200, 300 and 400 faces cut from the variable font the Mac app ships (`scripts/gui-fonts.py`): GPUI chooses among a family's faces by weight and never sets a variable font's `wght` axis.
 
 ## koan-tui modules
 

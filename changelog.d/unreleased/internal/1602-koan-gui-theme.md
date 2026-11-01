@@ -1,0 +1,1 @@
+- **The kōan theme in GPUI.** A new crate, koan-gui, for the kōan GUI app in GPUI, starting with the theme: tokens, Geist Mono, the icon set, the record accent, the drifting wash, the components and a theme sheet that draws offscreen to a PNG.

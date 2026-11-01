@@ -12,7 +12,6 @@ pub mod menus;
 pub mod shortcuts_sheet;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
@@ -24,22 +23,12 @@ use instance::Opened;
 /// How long quitting waits for the session and the server's queue to save.
 const QUIT_SAVE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// This process restored the saved session, and so may write it back.
-static RESTORED: AtomicBool = AtomicBool::new(false);
-
-/// Restore the queue, cursor and position the last session saved, and from
-/// then on save them on quit.
-///
-/// On one configuration directory the desktop app shares a single saved
-/// session with the native app, so a process that never read it must not
-/// write it: quitting would leave the other app this one's queue, empty or
-/// not, in place of its own.
+/// Restore the queue, cursor and position the desktop app last saved. The
+/// session is the desktop app's own: the Mac app and the terminal UI on the
+/// same configuration directory keep theirs.
 async fn restore_session(engine: &Arc<KoanEngine>) -> Option<u32> {
     match engine.clone().restore_session().await {
-        Ok(count) => {
-            RESTORED.store(true, Ordering::Relaxed);
-            Some(count)
-        }
+        Ok(count) => Some(count),
         Err(e) => {
             log::warn!("could not restore the session: {e}");
             None
@@ -78,8 +67,7 @@ impl Links {
 /// It can take seconds (with the queue kept on the server, the restore waits
 /// for the player), so the window should not wait for it.
 /// The shell must not restore the session itself: a second restore appends
-/// the saved queue again. Its own saves of the session (an autosave) are for
-/// `Some` alone, as the save on quit here is.
+/// the saved queue again.
 pub fn init(
     engine: &Arc<KoanEngine>,
     mut opened: UnboundedReceiver<Opened>,
@@ -93,9 +81,8 @@ pub fn init(
     shortcuts_sheet::bind(cx);
     menus::set(cx);
     media::start(engine.clone(), cx);
-    // As the Mac app quits: the session and the server's queue first, if this
-    // process restored them, for at most two seconds, so a
-    // server out of reach does not hold the quit up;
+    // As the Mac app quits: the session and the server's queue first, for at
+    // most two seconds, so a server out of reach does not hold the quit up;
     // then, after that last save, a UPnP renderer is stopped rather than left
     // to play out from a URL this process serves and stall, settings still
     // being written are waited for, and a shared library's Funnel is taken
@@ -106,9 +93,7 @@ pub fn init(
     cx.on_app_quit({
         let engine = engine.clone();
         move |cx| {
-            if RESTORED.load(Ordering::Relaxed) {
-                save_on_leaving(&engine);
-            }
+            save_on_leaving(&engine);
             engine.release_output();
             engine.flush_settings();
             engine.release_funnel();

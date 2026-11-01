@@ -934,6 +934,9 @@ pub struct LinkIdentity {
 }
 
 impl LinkIdentity {
+    /// The terminal UI's `files`.
+    pub const TERMINAL_FILES: &'static str = "terminal-";
+
     /// This machine, named `name` or else by its hostname.
     pub fn this_device(name: Option<String>) -> Self {
         let (platform, label) = if cfg!(target_os = "ios") {
@@ -976,7 +979,7 @@ impl LinkIdentity {
     /// server and the network.
     pub fn terminal() -> Option<Self> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
-        Self::beside_app("terminal-", "terminal", &HELD).ok()
+        Self::beside_app(Self::TERMINAL_FILES, "terminal", &HELD).ok()
     }
 
     /// The desktop app on this machine, kept apart from the native app and

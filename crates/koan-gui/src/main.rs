@@ -1,6 +1,10 @@
+//! The kōan GUI app on the desktop: the engine, one instance per config
+//! directory, and the platform's menus, keys and media controls around a
+//! window.
+
 use futures_channel::mpsc;
 use gpui_kit::*;
-use koan_gui::platform;
+use koan_gui::{platform, theme};
 use platform::instance::{self, Launch, Opened};
 
 struct Shell;
@@ -25,7 +29,7 @@ fn main() {
         let _ = opened.unbounded_send(Opened::Paths(paths));
     }
 
-    let app = gpui_kit::application();
+    let app = gpui_kit::application().with_assets(theme::icons::Assets);
     app.on_open_urls(move |urls| {
         for next in instance::sort_urls(urls) {
             let _ = opened.unbounded_send(next);
@@ -33,6 +37,7 @@ fn main() {
     });
     app.run(|cx| {
         gpui_kit::init(cx);
+        theme::init(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
             let engine = match koan_ffi::KoanEngine::open_desktop().await {
                 Ok(engine) => engine,
