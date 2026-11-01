@@ -453,9 +453,16 @@ impl<V: TileHost> Render for TileView<V> {
                     cx.notify();
                 }
             }))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                if !*hovered && this.hovered.is_some() {
-                    this.hovered = None;
+            // Entering or leaving, by the pointer or by a scroll under a still
+            // one: GPUI checks hover again as it paints.
+            .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
+                let part = if *hovered {
+                    this.part_at(window.mouse_position(), window, cx)
+                } else {
+                    None
+                };
+                if part != this.hovered {
+                    this.hovered = part;
                     cx.notify();
                 }
             }))
