@@ -362,9 +362,19 @@ pub(crate) fn build_schema_sharing(
     pool: Arc<Pool>,
     viz: Option<Arc<VizSnapshot>>,
     jobs: jobs::JobRegistry,
+    session: Option<&'static str>,
 ) -> KoanSchema {
-    builder_with(DbHandle::new(pool), state, cmd_tx, viz, jobs).finish()
+    let builder = builder_with(DbHandle::new(pool), state, cmd_tx, viz, jobs);
+    match session {
+        Some(device) => builder.data(Session(device)),
+        None => builder,
+    }
+    .finish()
 }
+
+/// Whose saved session the playback-state mutations write: see
+/// `ApiServerOpts::session`. A schema without one keeps none.
+pub(crate) struct Session(pub &'static str);
 
 /// `build_schema` with `extension` running on every request.
 pub(crate) fn build_schema_extended(

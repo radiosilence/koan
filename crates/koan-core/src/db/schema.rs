@@ -380,7 +380,6 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             PRIMARY KEY (user_id, track_id)
         );
 
-
         -- `AUTOINCREMENT` because ids are the cursor devices page a
         -- server's history by: one handed out again would never reach them.
         CREATE TABLE IF NOT EXISTS play_history (
@@ -708,16 +707,6 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
     ))
 }
 
-/// Each artist a track's or an album's credits name, beside its own artist,
-/// which stays the credit as it reads ("A × B"). Derived from the sources by
-/// `sources::derive_credits`, like every other track column.
-///
-/// `album_artist_links` is an album's artists either way: its credited
-/// artists, and the artist it is filed under. `listed` marks the ones the
-/// artist browser shows, which leaves out a credit string standing for
-/// artists credited one by one; its page still holds the album.
-///
-/// Run on every upgrade, so the view is redefined whenever the schema moves.
 /// The saved sessions: one queue per device on this config directory, keyed
 /// by the prefix of the files the device keeps there (see
 /// `queries::playback_state`).
@@ -743,6 +732,16 @@ const SESSION_TABLES: &str = "
     );
 ";
 
+/// Each artist a track's or an album's credits name, beside its own artist,
+/// which stays the credit as it reads ("A × B"). Derived from the sources by
+/// `sources::derive_credits`, like every other track column.
+///
+/// `album_artist_links` is an album's artists either way: its credited
+/// artists, and the artist it is filed under. `listed` marks the ones the
+/// artist browser shows, which leaves out a credit string standing for
+/// artists credited one by one; its page still holds the album.
+///
+/// Run on every upgrade, so the view is redefined whenever the schema moves.
 const CREDIT_TABLES: &str = "
     CREATE TABLE IF NOT EXISTS track_credits (
         track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -2458,6 +2457,29 @@ mod tests {
             )
         );
         assert!(!column_exists(&conn, "playback_state", "cursor_id").unwrap());
+    }
+
+    #[test]
+    fn a_position_saved_before_was_playing_was_kept_is_paused() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(&format!(
+            "{SESSION_TABLES_BY_ID}
+             DROP TABLE playback_position;
+             ALTER TABLE playback_state DROP COLUMN was_playing;
+             INSERT INTO playback_state (id, queue_json, cursor_id, position_ms)
+             VALUES (1, '[{{}}]', '/music/a.flac', 61000);
+             PRAGMA user_version = 8;"
+        ))
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let (_, cursor, position, playing, _, _) = the_apps_session(&conn);
+        assert_eq!(
+            (cursor.as_str(), position, playing),
+            ("/music/a.flac", 61000, false)
+        );
     }
 
     #[test]
