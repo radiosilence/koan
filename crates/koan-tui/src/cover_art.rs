@@ -67,9 +67,9 @@ fn seed_id() -> u32 {
     now ^ std::process::id().rotate_left(16)
 }
 
-/// The protocols covers are drawn in. Sixel is left out: the encoder in the
-/// release of `ratatui-image` that builds on the MSRV panics at ordinary
-/// sizes, so a sixel-only terminal gets half blocks.
+/// The protocols covers are drawn in. Sixel is left out: `ratatui-image`'s
+/// sixel encoder has panicked at ordinary sizes, so a sixel-only terminal gets
+/// half blocks.
 fn usable(protocol: ProtocolType) -> bool {
     matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
 }
