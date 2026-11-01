@@ -62,8 +62,8 @@ impl Slider {
     }
 }
 
-/// What a slider's drag carries: which track it began on.
-struct SliderDrag(ElementId);
+/// What a slider's drag carries: which slider it began on.
+struct SliderDrag(u64);
 
 /// A drag that draws nothing under the pointer.
 struct NoPreview;
@@ -103,6 +103,15 @@ impl RenderOnce for Slider {
 
         let measure = track_bounds.clone();
         let rail_id = child(&self.id, "rail");
+        // Drag moves reach every slider's listener, so each slider carries a
+        // number of its own rather than its id, which repeats under other
+        // parents.
+        let drag_id = *window
+            .use_keyed_state(child(&self.id, "drag"), cx, |_, _| {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            })
+            .read(cx);
         let mut rail = div()
             .id(rail_id.clone())
             .relative()
@@ -170,13 +179,13 @@ impl RenderOnce for Slider {
             // A drag follows the pointer past the track and the window
             // until it is let go: GPUI hands drag moves to every listener
             // for the drag's type in the capture phase.
-            let mine = rail_id.clone();
+            let mine = drag_id;
             rail = rail
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     let bounds = *down_bounds.read(cx);
                     down(&at(bounds, event.position), window, cx);
                 })
-                .on_drag(SliderDrag(rail_id), |_, _, _, cx| cx.new(|_| NoPreview))
+                .on_drag(SliderDrag(drag_id), |_, _, _, cx| cx.new(|_| NoPreview))
                 .on_drag_move::<SliderDrag>(move |event, window, cx| {
                     if event.drag(cx).0 == mine {
                         drag(&at(event.bounds, event.event.position), window, cx);

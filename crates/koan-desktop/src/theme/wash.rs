@@ -99,8 +99,12 @@ impl Sleeve {
 /// all the way, to 0, the sleeve's own colour. Returns BGRA pixels, as GPUI's
 /// image sprites take them.
 pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
-    let source = image::RgbaImage::from_raw(sleeve.width, sleeve.height, sleeve.rgba.to_vec())
-        .expect("a sleeve is made with its length checked");
+    let source = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(
+        sleeve.width,
+        sleeve.height,
+        &sleeve.rgba[..],
+    )
+    .expect("a sleeve is made with its length checked");
     let small = image::imageops::resize(&source, SIDE, SIDE, image::imageops::FilterType::Triangle);
     let tone = if dark { Tone::Dark } else { Tone::Light };
     let ground = Palette::of(dark).bg.channels();
@@ -198,7 +202,8 @@ fn boxed(line: &[f64], mut set: impl FnMut(usize, f64)) {
 /// Whether the system lets the wash move: Reduce Motion off and, on a Mac,
 /// Low Power Mode off. The caller adds the rest of the rule (something
 /// playing, the graphics setting) through `Wash::drift`; the wash reads this
-/// itself as it draws, so a change of either setting lands on the next frame.
+/// itself as it draws, and every window redraws when it comes forward, so a
+/// change of either setting in System Settings lands when koan is back.
 pub fn motion_allowed(cx: &App) -> bool {
     #[cfg(target_os = "macos")]
     let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
@@ -212,25 +217,30 @@ pub fn motion_allowed(cx: &App) -> bool {
 struct Ramp {
     from: f32,
     to: f32,
-    started: Instant,
+    /// When it set off; `None` for one standing still.
+    started: Option<Instant>,
 }
 
 impl Ramp {
     fn at(self, now: Instant) -> f32 {
-        let t = now.duration_since(self.started).as_secs_f32() / EASE.as_secs_f32();
+        let Some(started) = self.started else {
+            return self.to;
+        };
+        let t = now.duration_since(started).as_secs_f32() / EASE.as_secs_f32();
         self.from + (self.to - self.from) * Motion::ease_in_out(t)
     }
 
     fn moving(self, now: Instant) -> bool {
-        now.duration_since(self.started) < EASE
+        self.started
+            .is_some_and(|started| now.duration_since(started) < EASE)
     }
 
     /// Standing at `value`, not moving.
-    fn still(value: f32, now: Instant) -> Ramp {
+    fn still(value: f32) -> Ramp {
         Ramp {
             from: value,
             to: value,
-            started: now - EASE,
+            started: None,
         }
     }
 
@@ -238,7 +248,7 @@ impl Ramp {
         Ramp {
             from: self.at(now),
             to,
-            started: now,
+            started: Some(now),
         }
     }
 }
@@ -290,7 +300,7 @@ impl Wash {
             current: None,
             previous: None,
             wanted: false,
-            amplitude: Ramp::still(0.0, now),
+            amplitude: Ramp::still(0.0),
             epoch: now,
             hold: 100,
             released: Vec::new(),
@@ -349,7 +359,7 @@ impl Wash {
                 .extend(self.previous.take().map(|layer| layer.texture));
             self.current = texture.map(|texture| Layer {
                 texture,
-                opacity: Ramp::still(1.0, now),
+                opacity: Ramp::still(1.0),
             });
             return;
         }
@@ -359,9 +369,9 @@ impl Wash {
             // none: a part-faded record held under the next would let the
             // ground show through for the length of a dissolve.
             let opacity = if texture.is_some() {
-                Ramp::still(1.0, now)
+                Ramp::still(1.0)
             } else {
-                Ramp::still(1.0, now).toward(0.0, now)
+                Ramp::still(1.0).toward(0.0, now)
             };
             let held = Layer {
                 texture: outgoing.texture.image,
@@ -373,7 +383,7 @@ impl Wash {
         // With no record on before, `previous` keeps fading as it was.
         self.current = texture.map(|texture| Layer {
             texture,
-            opacity: Ramp::still(0.0, now).toward(1.0, now),
+            opacity: Ramp::still(0.0).toward(1.0, now),
         });
     }
 

@@ -101,6 +101,9 @@ pub fn follow_appearance<V: 'static>(
         cx.observe_window_activation(window, |_, window, cx| {
             if window.is_window_active() {
                 read_reduce_motion(cx);
+                // A wash at rest draws no frames, so it would not otherwise
+                // see Low Power Mode or Reduce Motion lifted.
+                window.refresh();
             }
         }),
     ]

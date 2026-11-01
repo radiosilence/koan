@@ -191,8 +191,5 @@ pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
 
 /// A fill under a control, faded in and out with its state.
 pub(crate) fn fill(color: Hsla, amount: f32) -> Div {
-    div()
-        .absolute()
-        .size_full()
-        .bg(color.opacity(color.a * amount))
+    div().absolute().size_full().bg(color.opacity(amount))
 }

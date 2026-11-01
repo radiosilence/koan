@@ -83,6 +83,7 @@ impl RenderOnce for Stepper {
                 // The row dims itself when disabled; the buttons only stop
                 // taking the pointer and the keyboard.
                 inert: disabled || !allowed,
+                disabled,
                 on_change: self.on_change.clone(),
             }
         };
@@ -129,6 +130,7 @@ struct StepButton {
     to: i64,
     allowed: bool,
     inert: bool,
+    disabled: bool,
     on_change: Option<Handler<i64>>,
 }
 
@@ -155,11 +157,13 @@ impl RenderOnce for StepButton {
                     .color(look.palette.ink.hsla()),
             )
             .tooltip(move |window, cx| super::Tooltip::view(label.clone(), window, cx))
+            // A button keeps the keyboard at its end of the range, so the
+            // person who stepped it there is not left without focus.
+            .when(!self.disabled, |button| button.track_focus(&handle))
             .when_some(
                 self.on_change.filter(|_| !self.inert),
                 |button, on_change| {
                     button
-                        .track_focus(&handle)
                         .cursor_pointer()
                         .on_click(move |_, window, cx| on_change(&to, window, cx))
                 },

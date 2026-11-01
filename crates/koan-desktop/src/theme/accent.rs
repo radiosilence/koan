@@ -170,7 +170,7 @@ fn shade(hue: f64, chroma: f64, band: (f64, f64), dark: bool, tokens: Palette) -
 /// thumbnail is.
 pub fn dominant(rgba: &[u8], width: u32, height: u32) -> Option<[f64; 3]> {
     const SIDE: u32 = 32;
-    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec())?;
+    let image = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(width, height, rgba)?;
     let small = image::imageops::resize(&image, SIDE, SIDE, image::imageops::FilterType::Triangle);
 
     let (mut x, mut y, mut saturation, mut total) = (0.0, 0.0, 0.0, 0.0);
