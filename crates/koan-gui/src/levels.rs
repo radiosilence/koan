@@ -157,9 +157,7 @@ impl Drop for SlotState {
 pub fn bars(color: Hsla) -> impl IntoElement {
     canvas(
         move |bounds, window, cx| {
-            let Some(levels) = cx.try_global::<Levels>().cloned() else {
-                return None;
-            };
+            let levels = cx.try_global::<Levels>().cloned()?;
             let state = window.use_keyed_state("playing-bars", cx, |_, _| {
                 let mut registry = levels.registry.lock();
                 registry.next_id += 1;

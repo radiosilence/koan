@@ -4702,15 +4702,6 @@ impl Window {
         }
     }
 
-    /// Paint one or more quads into the scene for the next frame at the current stacking context.
-    /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-    ///
-    /// This method should only be called as part of the paint phase of element drawing.
-    ///
-    /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
-    /// where the circular arcs meet. This will not display well when combined with dashed borders.
-    /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     // KOAN: shader quads (#1641).
     /// Paints a quad drawn by `program`, reading `uniforms` as each frame is
     /// presented. See [`ShaderUniforms`] for keeping it moving between frames.
@@ -4733,6 +4724,15 @@ impl Window {
         self.next_frame.scene.insert_primitive(shader);
     }
 
+    /// Paint one or more quads into the scene for the next frame at the current stacking context.
+    /// Quads are colored rectangular regions with an optional background, border, and corner radius.
+    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    ///
+    /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
+    /// where the circular arcs meet. This will not display well when combined with dashed borders.
+    /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
