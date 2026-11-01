@@ -16,7 +16,6 @@ use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
-use super::tile::playing_bars;
 use super::tokens::{Paint, Type, Typeset};
 use crate::theme::Space;
 use crate::theme::{Icon, KoanIcon};
@@ -135,7 +134,7 @@ pub fn track_row<V: TrackList>(
             if state.current { p.accent } else { p.muted },
         )
         .child(if state.current && state.playing {
-            playing_bars(p).into_any_element()
+            crate::levels::bars(p.accent).into_any_element()
         } else {
             div()
                 .child(

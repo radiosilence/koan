@@ -279,6 +279,7 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `queue/` | The queue page, kept mounted: rows from `QueueItem.run` (`rows.rs`), selection by queue item, keys, drag reorder, context menu |
 | `transport.rs` | The transport bar and the seek slider, whose position is reckoned from the playhead anchor with one timer for the next visible change while playing |
 | `covers.rs` | Sleeves per record and size, decoded off the main thread to the renderer's pixel format |
+| `levels.rs` | The playing bars: one analyser subscription while any bar is on screen; rows draw a slot and each window's root paints the bars over its cached content, so a frame redraws the root alone |
 | `session.rs` | Saving the session while playing, when playback stops, and on queue edits |
 | `window_state.rs` | The window's bounds across launches, in `<config dir>/desktop-window` |
 | `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `play`, `hidden` and `play-hidden` set the app up for its CPU use to be read from outside |
