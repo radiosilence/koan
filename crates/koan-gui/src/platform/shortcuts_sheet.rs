@@ -9,7 +9,7 @@
 //! Drawn from the theme's tokens directly (docs/design/koan-theme.md) until
 //! the theme module is in place.
 
-use gpui_kit::{
+use koan_kit::raw::{
     App, Context, EventEmitter, FocusHandle, Focusable, Hsla, IntoElement, KeyBinding,
     OperatingSystem, ParentElement, Render, Rgba, SharedString, Styled, Window, WindowAppearance,
     actions, div, prelude::*, px,
@@ -207,7 +207,7 @@ impl Render for ShortcutsSheet {
             .child(
                 div()
                     .text_size(size(22.0))
-                    .font_weight(gpui_kit::FontWeight(300.0))
+                    .font_weight(koan_kit::raw::FontWeight(300.0))
                     .text_color(p.strong)
                     .child("keyboard shortcuts"),
             )

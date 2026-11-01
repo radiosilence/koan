@@ -2,8 +2,8 @@
 
 use crate::components::{Picker, Stepper, Toggle};
 use crate::theme::Look;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::mirror::{Mirror, Outputs};
 use crate::settings::Ctx;

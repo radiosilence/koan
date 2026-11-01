@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::FutureExt as _;
-use gpui_kit::*;
+use koan_kit::raw::*;
 use parking_lot::Mutex;
 
 use crate::engine::engine;

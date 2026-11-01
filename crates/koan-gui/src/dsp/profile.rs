@@ -6,15 +6,15 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, PathPromptOptions,
-    Render, SharedString, Styled, Subscription, Task, Window, div, px,
-};
 use koan_ffi::{
     DspDeviceAction, DspEarKind, DspLayerInfo, DspOverview, DspProfileDetail, DspRole,
     DspTargetName, DspTargetOption, DspTargets, DspTuningEntry,
+};
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::FluentBuilder;
+use koan_kit::raw::{
+    AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, PathPromptOptions,
+    Render, SharedString, Styled, Subscription, Task, Window, div, px,
 };
 
 use super::bands::{self, Fields};
@@ -104,15 +104,15 @@ impl Render for ProfilePage {
                         .border_color(look.palette.rule.hsla())
                         .child(
                             div().h(px(GRAPH_H)).child(
-                                gpui_kit::AnyView::from(self.graph.clone())
-                                    .cached(gpui_kit::StyleRefinement::default().size_full()),
+                                koan_kit::raw::AnyView::from(self.graph.clone())
+                                    .cached(koan_kit::raw::StyleRefinement::default().size_full()),
                             ),
                         ),
                 )
             })
             .child(
-                gpui_kit::AnyView::from(self.body.clone()).cached(
-                    gpui_kit::StyleRefinement::default()
+                koan_kit::raw::AnyView::from(self.body.clone()).cached(
+                    koan_kit::raw::StyleRefinement::default()
                         .flex_1()
                         .min_h_0()
                         .w_full(),
@@ -156,7 +156,7 @@ pub struct ProfileBody {
     curve: Option<usize>,
     name_input: Entity<InputState>,
     /// The window the page is in, for its fields.
-    window: gpui_kit::AnyWindowHandle,
+    window: koan_kit::raw::AnyWindowHandle,
     copy_input: Option<Entity<InputState>>,
     loaded: Option<((u64, u64), String)>,
     /// The stamp the detail shown was read at, as its read started.

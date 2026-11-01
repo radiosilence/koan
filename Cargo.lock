@@ -5483,6 +5483,7 @@ dependencies = [
  "image",
  "koan-core",
  "koan-ffi",
+ "koan-kit",
  "lofty",
  "log",
  "objc2 0.6.5",
@@ -5494,6 +5495,22 @@ dependencies = [
  "smallvec",
  "souvlaki",
  "tempfile",
+]
+
+[[package]]
+name = "koan-kit"
+version = "0.69.3"
+dependencies = [
+ "block2 0.6.2",
+ "futures",
+ "gpui-kit",
+ "image",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "parking_lot 0.13.0",
+ "smallvec",
 ]
 
 [[package]]

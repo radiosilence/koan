@@ -17,11 +17,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use gpui_kit::{App, AppContext, Entity, Global};
 use koan_ffi::{
     ConnectionInfo, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo, QueueItem,
     QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer, TransferFigure,
 };
+use koan_kit::raw::{App, AppContext, Entity, Global};
 
 use crate::queue::rows::{self, Row};
 

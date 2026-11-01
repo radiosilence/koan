@@ -4,8 +4,8 @@
 use crate::components::ScrollArea;
 use crate::components::SectionHeader;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 /// A pane's page: sections down a column that scrolls, across the window.
 pub fn page(id: &'static str, look: &Look, sections: Vec<AnyElement>) -> ScrollArea {

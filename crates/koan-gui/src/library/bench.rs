@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::ImageId;
+use koan_kit::raw::ImageId;
 
 use super::covers::Sleeve;
 

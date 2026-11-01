@@ -7,9 +7,9 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Artist, BrowseFilter};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
@@ -402,7 +402,7 @@ impl Render for ArtistBrowser {
                     .pt(px(10.0))
                     .relative()
                     .child(body)
-                    .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
+                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
                 window,
                 cx,

@@ -13,12 +13,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
 use koan_ffi::{
     AutoEqEntry, AutoEqMaker, AutoEqOffer, ConnectionInfo, DspBand, DspBandBounds, DspEdited,
     DspImportPlan, DspImportSummary, DspOverview, DspPoint, DspProfileSummary, DspRole,
     DspTuningEntry, KoanEngine, KoanError,
 };
+use koan_kit::raw::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
 
 use crate::mirror::{Mirror, Slice};
 

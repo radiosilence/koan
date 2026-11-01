@@ -3,8 +3,8 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use gpui_kit::{App, Global};
 use koan_ffi::{KoanEngine, KoanError};
+use koan_kit::raw::{App, Global};
 
 pub struct Engine(pub Arc<KoanEngine>);
 
