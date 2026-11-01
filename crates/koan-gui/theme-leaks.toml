@@ -3,7 +3,7 @@
 # koan-kit's components drops its entry. See docs/design/koan-kit.md.
 
 ["app.rs"]
-number = 4
+number = 2
 raw = 3
 
 ["covers.rs"]

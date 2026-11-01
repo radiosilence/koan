@@ -92,7 +92,8 @@ impl TrackBrowser {
         ];
         let rewinds = lib.nav.read(cx).rewinds(Page::Tracks, cx);
         let restore = lib.nav.read(cx).offset(Page::Tracks);
-        let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
+        let search =
+            cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter tracks", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), false, window, cx));
         let mut this = Self {
             lib,
@@ -408,6 +409,7 @@ impl TrackBrowser {
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()
             .child(self.search.clone())
+            .spacer()
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::track_sort_button(&self.lib, cx))
             .into_any_element()

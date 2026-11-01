@@ -95,6 +95,17 @@ impl EqState {
     }
 
     /// What the button's tooltip says: the preset in force, never "flat".
+    /// What the button says beside its glyph, the Mac's: the preset, or
+    /// flat, or unsaved, all lowercase in the theme.
+    fn label(&self) -> String {
+        match &self.preset {
+            Some(preset) if self.edited => format!("{preset}, edited"),
+            Some(preset) => preset.clone(),
+            None if self.flat => "flat".into(),
+            None => "unsaved".into(),
+        }
+    }
+
     fn summary(&self) -> String {
         match &self.preset {
             Some(preset) if self.edited => format!("EQ: {preset}, edited"),
@@ -234,6 +245,7 @@ impl Transport {
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
         let color = if eq.flat { p.ink } else { p.accent_text };
         let summary: SharedString = eq.summary().into();
+        let label = eq.label();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .role(TypeRole::Body)
@@ -244,19 +256,14 @@ impl Transport {
         };
         self.menus.trigger(
             Menu::Eq,
-            div()
+            trailing_item(p)
                 .id("eq")
-                .flex()
-                .items_center()
-                .justify_center()
-                .min_w(theme::HIT)
-                .min_h(theme::HIT)
-                .px(p.space(Space::S))
-                .cursor_pointer()
-                .text_role(TypeRole::Meta, &p.look)
                 .text_color(color)
                 .hover(|s| s.opacity(0.8))
                 .child(child)
+                .when(p.look.icons, |d| {
+                    d.child(div().text_color(p.ink).child(label))
+                })
                 .tooltip(move |window, cx| {
                     crate::components::Tooltip::view(summary.clone(), window, cx)
                 }),
@@ -491,7 +498,6 @@ fn glyph_or_label(
 fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     let ink = p.ink;
     let child = if p.look.icons {
-        // A glyph button: the transport's glyph size, on the spec's target.
         KoanIcon::new(icon)
             .role(TypeRole::Body)
             .color(p.muted)
@@ -500,19 +506,27 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     } else {
         div().child(label).into_any_element()
     };
-    div()
+    trailing_item(p)
         .group(TEXT_BUTTON)
-        .flex()
-        .items_center()
-        .justify_center()
-        .min_w(theme::HIT)
-        .min_h(theme::HIT)
-        .px(p.space(Space::S))
-        .cursor_pointer()
-        .text_role(TypeRole::Meta, &p.look)
         .text_color(p.muted)
         .hover(move |s| s.text_color(ink))
         .child(child)
+}
+
+/// One of the trailing group's items, as the Mac lays them out: as wide as
+/// what it shows, the full bar's height and half the gap either side to hit.
+fn trailing_item(p: &Paint) -> Div {
+    let reach = TransportMetrics::trailing_gap(&p.look) / 2.;
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(TransportMetrics::label_gap(&p.look))
+        .h(theme::HIT)
+        .px(reach)
+        .mx(-reach)
+        .cursor_pointer()
+        .text_role(TypeRole::Meta, &p.look)
 }
 
 /// The group a text button's glyph follows the pointer by.
@@ -721,7 +735,7 @@ impl Render for Transport {
             .flex()
             .items_center()
             .justify_end()
-            .gap(p.space(Space::S))
+            .gap(TransportMetrics::trailing_gap(&p.look))
             .children(now.format.as_ref().map(|format| {
                 div()
                     .px(p.space(Space::Xs))

@@ -6,17 +6,46 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind};
-use crate::theme::{HAIRLINE, Icon, KoanTheme, Look, Space};
+use crate::theme::{HAIRLINE, Icon, KoanTheme, Look};
 
-/// The toolbar's height on the Mac.
-pub const TOOLBAR_HEIGHT: f32 = 38.0;
+/// The toolbar's figures, the Mac's unified toolbar measured at 2x: 52
+/// tall, its buttons 36-point cells. Gaps are fixed points, as AppKit's.
+pub struct ToolbarMetrics;
+
+impl ToolbarMetrics {
+    pub const HEIGHT: Pixels = px(TOOLBAR_HEIGHT);
+    /// A toolbar button's cell.
+    pub const BUTTON: Pixels = px(36.);
+    /// From the toolbar's edges to its first and last cells.
+    pub const INSET: Pixels = px(8.);
+    /// Between separate items: sidebar, back and forward; select and lyrics.
+    pub const ITEM_GAP: Pixels = px(8.);
+    /// Between the buttons of one group: a page's filters and sort.
+    pub const GROUP_GAP: Pixels = px(2.);
+    /// The fixed spacer between groups: the filter field and the buttons
+    /// after it, the buttons and the selection's controls.
+    pub const SPACER: Pixels = px(16.);
+    /// The filter field, from its glyph to the end of its text.
+    pub const FIELD: Pixels = px(167.);
+    /// Between the filter field's glyph and its text.
+    pub const FIELD_GLYPH_GAP: Pixels = px(10.);
+    /// The window's own buttons (the Mac's traffic lights), 14 tall,
+    /// centred on the toolbar.
+    pub const WINDOW_BUTTONS_ORIGIN: Point<Pixels> = Point {
+        x: px(20.),
+        y: px((TOOLBAR_HEIGHT - 14.) / 2.),
+    };
+}
+
+/// The toolbar's height, in points.
+pub const TOOLBAR_HEIGHT: f32 = 52.0;
 
 /// The room the window's own buttons take where they sit over the app (the
 /// Mac's traffic lights, at the toolbar's height); none where the window
 /// has a title bar or the toolbar draws them.
 #[cfg(target_os = "macos")]
 pub const WINDOW_BUTTONS: Size<Pixels> = Size {
-    width: px(78.),
+    width: px(86.),
     height: px(TOOLBAR_HEIGHT),
 };
 #[cfg(not(target_os = "macos"))]
@@ -69,14 +98,14 @@ impl RenderOnce for Toolbar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         div()
-            .h(px(TOOLBAR_HEIGHT))
+            .h(ToolbarMetrics::HEIGHT)
             .w_full()
             .flex_none()
             .flex()
             .items_center()
-            .pl(self.inset + look.space(Space::S))
-            .pr(look.space(Space::S))
-            .gap(look.space(Space::Xs))
+            .pl(self.inset + ToolbarMetrics::INSET)
+            .pr(ToolbarMetrics::INSET)
+            .gap(ToolbarMetrics::ITEM_GAP)
             // With the wash under the whole window the toolbar has no
             // ground and meets the page at a hairline; otherwise it is on
             // `bg`, flush with the page.
@@ -101,33 +130,60 @@ impl RenderOnce for Toolbar {
     }
 }
 
-/// A run of toolbar items a page supplies, at the toolbar's gap: a filter
-/// field and the buttons beside it.
+/// What a page puts in the toolbar, in groups as the Mac's toolbar items:
+/// the filter field, then its buttons a fixed spacer after it, 2 points
+/// apart, then the selection's controls a spacer further on. Pages declare
+/// the groups; the spacing is the toolbar's.
 #[derive(IntoElement, Default)]
 pub struct ToolbarGroup {
-    items: Vec<AnyElement>,
+    groups: Vec<Vec<AnyElement>>,
 }
 
 impl ToolbarGroup {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            groups: vec![Vec::new()],
+        }
+    }
+
+    /// Starts a new group, a fixed spacer after the last.
+    pub fn spacer(mut self) -> Self {
+        if self.groups.last().is_some_and(|g| !g.is_empty()) {
+            self.groups.push(Vec::new());
+        }
+        self
     }
 }
 
 impl ParentElement for ToolbarGroup {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.items.extend(elements);
+        if self.groups.is_empty() {
+            self.groups.push(Vec::new());
+        }
+        self.groups.last_mut().unwrap().extend(elements);
     }
 }
 
 impl RenderOnce for ToolbarGroup {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let look = Look::of(window, cx);
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         div()
+            .flex_none()
             .flex()
             .items_center()
-            .gap(look.space(Space::Xs))
-            .children(self.items)
+            .gap(ToolbarMetrics::SPACER)
+            .children(
+                self.groups
+                    .into_iter()
+                    .filter(|g| !g.is_empty())
+                    .map(|group| {
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(ToolbarMetrics::GROUP_GAP)
+                            .children(group)
+                    }),
+            )
     }
 }
 

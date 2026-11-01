@@ -181,7 +181,7 @@ fn titlebar() -> TitlebarOptions {
         TitlebarOptions {
             title: Some("kōan".into()),
             appears_transparent: true,
-            traffic_light_position: Some(point(px(12.), px(12.))),
+            traffic_light_position: Some(crate::components::ToolbarMetrics::WINDOW_BUTTONS_ORIGIN),
         }
     } else {
         TitlebarOptions {

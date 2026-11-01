@@ -151,7 +151,8 @@ impl AlbumGrid {
         ];
         let rewinds = lib.nav.read(cx).rewinds(Page::Albums, cx);
         let restore = lib.nav.read(cx).offset(Page::Albums);
-        let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
+        let search =
+            cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter albums", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
         let mut this = Self {
             lib,
@@ -738,9 +739,11 @@ impl AlbumGrid {
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()
             .child(self.search.clone())
+            .spacer()
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .child(chrome::album_sort_button(&self.lib, cx))
             .children(chrome::reshuffle_button(&self.lib, cx))
+            .spacer()
             .child(chrome::select_toggle(
                 self.selection.is_active(),
                 cx.listener(|this, _, _, cx| {

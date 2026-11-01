@@ -79,7 +79,8 @@ impl ArtistBrowser {
         ];
         let rewinds = lib.nav.read(cx).rewinds(Page::Artists, cx);
         let restore = lib.nav.read(cx).offset(Page::Artists);
-        let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
+        let search =
+            cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter artists", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
         let mut this = Self {
             lib,
@@ -306,6 +307,7 @@ impl ArtistBrowser {
     pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crate::components::ToolbarGroup::new()
             .child(self.search.clone())
+            .spacer()
             .child(chrome::filter_button(&self.filters, &self.lib, cx))
             .into_any_element()
     }
