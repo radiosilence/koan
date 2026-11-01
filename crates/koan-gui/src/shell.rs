@@ -53,6 +53,8 @@ pub struct Shell {
     _arrivals: Subscription,
     /// Saves the session when the window loses focus.
     _activation: Subscription,
+    /// Watches the window's one question host, which draws over everything.
+    _asking: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
 }
@@ -95,6 +97,10 @@ impl Shell {
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
+            _asking: {
+                let asking = crate::collections::asking(cx);
+                cx.observe(&asking, |_, _, cx| cx.notify())
+            },
             shortcuts: None,
         }
     }
@@ -406,6 +412,10 @@ impl Render for Shell {
                         .h(transport::HEIGHT)
                         .flex_shrink_0(),
                 ),
+            )
+            .children(
+                crate::collections::overlay(window, cx)
+                    .map(|ask| deferred(div().absolute().inset_0().child(ask)).with_priority(3)),
             )
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().inset_0().child(sheet.clone())).with_priority(2)

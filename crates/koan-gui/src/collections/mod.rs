@@ -7,10 +7,7 @@
 //! listed. What a page writes is asked first, through the one host here
 //! (`Asking`), which says what will change before anything does.
 
-pub mod downloads;
-pub mod history;
 pub mod playlist;
-pub mod shelf;
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -58,6 +55,12 @@ impl Picks {
             .copied()
             .filter(|id| self.ids.contains(id))
             .collect()
+    }
+
+    pub fn toggle(&mut self, id: i64) {
+        if !self.ids.remove(&id) {
+            self.ids.insert(id);
+        }
     }
 
     pub fn all(&mut self, order: &[i64]) {
@@ -293,11 +296,13 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .id("ask")
             .key_context("Ask")
             .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
-            .on_key_down(move |e: &KeyDownEvent, _, cx| match e.keystroke.key.as_str() {
-                "escape" => dismiss(cx),
-                "enter" if !named => go(cx),
-                _ => {}
-            })
+            .on_key_down(
+                move |e: &KeyDownEvent, _, cx| match e.keystroke.key.as_str() {
+                    "escape" => dismiss(cx),
+                    "enter" if !named => go(cx),
+                    _ => {}
+                },
+            )
             .absolute()
             .inset_0()
             .flex()
@@ -317,9 +322,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                     .child(
                         body("ask-body", &look)
                             .pt(look.space(Space::M))
-                            .when_some(ask.name.as_ref(), |d, input| {
-                                d.child(TextField::new(input))
-                            })
+                            .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
                             .children(rows)
                             .when_some(ask.note.clone(), |d, n| {
                                 d.child(note(n, Tone::Muted, &look))

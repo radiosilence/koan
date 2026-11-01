@@ -258,9 +258,7 @@ impl PlaylistPage {
                 this.covers = covers;
                 this.undo_shuffles = undo_shuffles;
                 this.set_entries(entries);
-                if first
-                    && let Some(anchor) = this.lib.nav.read(cx).anchor(Page::Playlist(id))
-                {
+                if first && let Some(anchor) = this.lib.nav.read(cx).anchor(Page::Playlist(id)) {
                     this.list.scroll_to(ListOffset {
                         item_ix: anchor.item_ix.min(this.rows.len().saturating_sub(1)),
                         offset_in_item: anchor.offset,
@@ -611,7 +609,9 @@ impl PlaylistPage {
         for row in from..to {
             let (album, side) = match self.rows[row] {
                 Row::Heading { first, .. } => (self.entries[first].track.album_id, HEADING_SLEEVE),
-                Row::Entry { ix, grouped: false } => (self.entries[ix].track.album_id, rows::SLEEVE),
+                Row::Entry { ix, grouped: false } => {
+                    (self.entries[ix].track.album_id, rows::SLEEVE)
+                }
                 Row::Entry { .. } => (None, 0.0),
             };
             let Some(album) = album else { continue };
@@ -702,7 +702,15 @@ impl PlaylistPage {
         // Each row under its entry's id, so two copies of one track are two
         // rows to hover, press and drag.
         div()
-            .id(("entry", first as u64 | if matches!(row, Row::Heading { .. }) { 1 << 63 } else { 0 }))
+            .id((
+                "entry",
+                first as u64
+                    | if matches!(row, Row::Heading { .. }) {
+                        1 << 63
+                    } else {
+                        0
+                    },
+            ))
             .when(line_above, |d| d.border_t_1().border_color(p.accent))
             .when(line_below, |d| d.border_b_1().border_color(p.accent))
             .on_mouse_down(
@@ -723,10 +731,12 @@ impl PlaylistPage {
                         }
                     },
                 ))
-                .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
-                    let dest = this.drop_at.unwrap_or(ix);
-                    this.dropped(dragged, dest, cx);
-                }))
+                .on_drop(cx.listener(
+                    move |this, dragged: &PlayableDrag, _, cx| {
+                        let dest = this.drop_at.unwrap_or(ix);
+                        this.dropped(dragged, dest, cx);
+                    },
+                ))
             })
             .child(line)
             .into_any_element()
@@ -783,10 +793,7 @@ impl PlaylistPage {
                 cx.notify();
             }))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
-            .on_mouse_down(
-                MouseButton::Right,
-                actions::mark(cx.weak_entity(), target),
-            )
+            .on_mouse_down(MouseButton::Right, actions::mark(cx.weak_entity(), target))
             .child(sleeve_box(p, sleeve, HEADING_SLEEVE))
             .child(
                 div()
@@ -822,7 +829,11 @@ impl PlaylistPage {
         let mosaic = self.mosaic(p, scale, cx);
         let name = self.name();
         let mut detail = vec![count(self.entries.len(), "track", "tracks")];
-        let total: i64 = self.entries.iter().filter_map(|e| e.track.duration_ms).sum();
+        let total: i64 = self
+            .entries
+            .iter()
+            .filter_map(|e| e.track.duration_ms)
+            .sum();
         if total > 0 {
             detail.push(crate::time::clock(total as u64));
         }
@@ -999,11 +1010,13 @@ impl PlaylistPage {
             }
             return square;
         }
-        square.flex().flex_wrap().children(
-            covers
-                .iter()
-                .map(|a| sleeve_box(p, Some(self.sleeve(*a, MOSAIC / 2.0, scale, cx)), MOSAIC / 2.0)),
-        )
+        square.flex().flex_wrap().children(covers.iter().map(|a| {
+            sleeve_box(
+                p,
+                Some(self.sleeve(*a, MOSAIC / 2.0, scale, cx)),
+                MOSAIC / 2.0,
+            )
+        }))
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -1171,7 +1184,11 @@ impl Render for PlaylistPage {
                 let Some(view) = weak.upgrade() else { return m };
                 let (target, entries, fillable) = {
                     let page = view.read(cx);
-                    (page.menu.clone(), page.menu_entries.clone(), page.fillable())
+                    (
+                        page.menu.clone(),
+                        page.menu_entries.clone(),
+                        page.fillable(),
+                    )
                 };
                 let Some(t) = target else { return m };
                 let mut m = actions::menu(m, &lib, t.items, t.album, None, window, cx);
@@ -1222,7 +1239,13 @@ mod tests {
     fn grouped_runs_get_headings_and_flat_rows_do_not() {
         let rows = build(&runs(), true);
         assert_eq!(rows[0], Row::Heading { first: 0, len: 2 });
-        assert_eq!(rows[3], Row::Entry { ix: 2, grouped: false });
+        assert_eq!(
+            rows[3],
+            Row::Entry {
+                ix: 2,
+                grouped: false
+            }
+        );
         assert_eq!(rows[4], Row::Heading { first: 3, len: 2 });
         assert_eq!(rows.len(), 7);
         assert_eq!(build(&runs(), false).len(), 5);

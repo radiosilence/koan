@@ -41,7 +41,12 @@ impl LibraryStage {
     pub fn draws(route: Page) -> bool {
         matches!(
             route,
-            Page::Albums | Page::Artists | Page::Tracks | Page::Album(_) | Page::Artist(_)
+            Page::Albums
+                | Page::Artists
+                | Page::Tracks
+                | Page::Album(_)
+                | Page::Artist(_)
+                | Page::Playlist(_)
         )
     }
 
@@ -66,6 +71,9 @@ impl LibraryStage {
                 .into(),
             Page::Tracks => cx
                 .new(|cx| super::tracks::TrackBrowser::new(lib, window, cx))
+                .into(),
+            Page::Playlist(id) => cx
+                .new(|cx| crate::collections::playlist::PlaylistPage::new(lib, id, window, cx))
                 .into(),
             // The shell draws its own pages for every other route.
             _ => return None,
