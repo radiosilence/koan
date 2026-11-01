@@ -101,6 +101,7 @@ pub struct SheetContent {
     empty_field: Entity<InputState>,
     /// A tooltip as it is drawn, held open for the sheet.
     tooltip: Entity<Tooltip>,
+    _accent: Subscription,
 }
 
 impl SheetContent {
@@ -119,6 +120,7 @@ impl SheetContent {
             field,
             empty_field,
             tooltip: cx.new(|_| Tooltip::new("add to queue")),
+            _accent: theme::observe_accent(cx),
         }
     }
 }

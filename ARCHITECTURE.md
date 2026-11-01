@@ -408,7 +408,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 
 ## koan-gui: the theme in GPUI
 
-`koan-gui` draws only the kōan look (docs/design/koan-theme.md); there is no system theme. `theme::Look::of(window, cx)` is a window's appearance and the tokens and accent for it, read by every component as it renders; `theme::KoanTheme` holds what windows share (text size, "show icons", the accent as it settles).
+`koan-gui` draws only the kōan look (docs/design/koan-theme.md); there is no system theme. `theme::Look::of(window, cx)` is a window's appearance and the tokens and accent for it, read by every component as it renders; `theme::KoanTheme` holds what windows share (text size, "show icons"). The record's accent is an entity, `AccentFeed`: it changes with every record and moves for a quarter second as it settles, so it notifies only the views that draw it, each of which calls `theme::observe_accent` when it is made, rather than redrawing every window past its caches. Appearance and text size, which change rarely, do redraw everything.
 
 **A window's root is two cached views.** The wash (`theme::wash::Wash`) and the content sit side by side under a root whose render only calls `KoanTheme::drive` and places the two cached views. A frame of the drift or of the accent settling then redraws the wash, or refreshes past the caches, without re-laying out the page: `request_animation_frame` dirties the view that asks and every ancestor, so content that is not in its own cached view is redrawn on every frame the wash moves. `sheet::ThemeSheet` is the reference shape.
 

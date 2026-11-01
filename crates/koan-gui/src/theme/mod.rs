@@ -2,12 +2,15 @@
 //! accent and the wash. docs/design/koan-theme.md is the specification; there
 //! is no other look, so nothing here has a "system" answer.
 //!
-//! What every window shares (the text size, "show icons", the accent) is the
-//! global `KoanTheme`. What a window looks like is `Look::of(window, cx)`:
-//! its appearance, dark or light, and the tokens and accent for it. A
-//! component reads the look as it renders, so a change of appearance or text
-//! size takes `window.refresh()` (cached views keep their last frame until
-//! told otherwise), which `follow_appearance` and the setters here do.
+//! What every window shares (the text size, "show icons") is the global
+//! `KoanTheme`; the record's accent is an entity, `AccentFeed`, since it
+//! changes with every record. What a window looks like is
+//! `Look::of(window, cx)`: its appearance, dark or light, and the tokens and
+//! accent for it. A component reads the look as it renders. A change of
+//! appearance or text size redraws every window past its caches, which
+//! `follow_appearance` and the setters here do; a change of accent notifies
+//! only the views that observe the feed (`observe_accent`), so a cached view
+//! that draws the accent calls it when it is made.
 
 pub mod accent;
 pub mod icons;
@@ -19,8 +22,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use gpui_kit::{
-    App, Context, Global, Hsla, Pixels, SharedString, Styled, Subscription, Window,
-    WindowAppearance, WindowId, px,
+    App, AppContext, Context, Entity, Global, Hsla, Pixels, SharedString, Styled, Subscription,
+    Window, WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, AccentState, Shade};
@@ -45,7 +48,6 @@ pub struct KoanTheme {
     pub text_size: u32,
     /// "Show icons": glyphs beside the labels that carry them.
     pub icons: bool,
-    accent: AccentState,
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
     pinned: HashMap<WindowId, bool>,
@@ -58,7 +60,6 @@ impl Default for KoanTheme {
         Self {
             text_size: 100,
             icons: true,
-            accent: AccentState::default(),
             pinned: HashMap::new(),
         }
     }
@@ -78,6 +79,10 @@ pub fn init(cx: &mut App) {
         .add_fonts(FACES.iter().map(|face| Cow::Borrowed(*face)).collect())
         .expect("Geist Mono is bundled and loads");
     cx.set_global(KoanTheme::default());
+    let feed = cx.new(|_| AccentFeed {
+        state: AccentState::default(),
+    });
+    cx.set_global(AccentHandle(feed));
     read_reduce_motion(cx);
     sync_components(is_dark(cx.window_appearance()), cx);
 }
@@ -150,7 +155,7 @@ fn sync_components(dark: bool, cx: &mut App) {
     use gpui_kit::component::theme::Theme;
     let koan = cx.global::<KoanTheme>();
     let palette = Palette::of(dark);
-    let accent = koan.accent.at(Instant::now()).shade(dark).hsla();
+    let accent = accent_state(cx).at(Instant::now()).shade(dark).hsla();
     let size = TypeRole::Control.points() * Scale::of(koan.text_size).text;
     let current = Theme::global(cx);
     if current.colors.background == palette.bg.hsla()
@@ -184,15 +189,18 @@ impl KoanTheme {
     /// every change lands.
     pub fn set_accent(accent: Accent, ease: bool, cx: &mut App) {
         let ease = ease && !cx.reduce_motion();
-        cx.global_mut::<KoanTheme>()
-            .accent
-            .set(accent, ease, Instant::now());
-        cx.refresh_windows();
+        let feed = cx.global::<AccentHandle>().0.clone();
+        feed.update(cx, |feed, cx| {
+            if feed.state.target() != accent {
+                feed.state.set(accent, ease, Instant::now());
+                cx.notify();
+            }
+        });
     }
 
     /// The accent the record has, once it has arrived.
     pub fn accent_target(cx: &App) -> Accent {
-        cx.global::<KoanTheme>().accent.target()
+        accent_state(cx).target()
     }
 
     pub fn set_text_size(percent: u32, cx: &mut App) {
@@ -210,14 +218,38 @@ impl KoanTheme {
     /// What a window's root view calls as it renders: dresses gpui-component's
     /// theme for this window (windows render one at a time, so each one's
     /// text fields read their own appearance, and the caret follows the
-    /// accent as it settles), and keeps frames coming, past cached views,
-    /// while the accent settles. Costs a few assignments once it is at rest.
+    /// accent as it settles), and while the accent settles, notifies the
+    /// feed once a frame so the views observing it redraw, and only those.
+    /// Costs a few comparisons once it is at rest.
     pub fn drive(window: &mut Window, cx: &mut App) {
         sync_components(Look::of(window, cx).dark, cx);
-        if cx.global::<KoanTheme>().accent.settling(Instant::now()) {
-            window.on_next_frame(|window, _| window.refresh());
+        if accent_state(cx).settling(Instant::now()) {
+            let feed = cx.global::<AccentHandle>().0.clone();
+            window.on_next_frame(move |_, cx| feed.update(cx, |_, cx| cx.notify()));
         }
     }
+}
+
+/// The record's accent as it settles. An entity rather than part of the
+/// global so that a change reaches the views that draw it, not every window.
+pub struct AccentFeed {
+    state: AccentState,
+}
+
+struct AccentHandle(Entity<AccentFeed>);
+
+impl Global for AccentHandle {}
+
+fn accent_state(cx: &App) -> &AccentState {
+    &cx.global::<AccentHandle>().0.read(cx).state
+}
+
+/// Redraws a view whenever the accent moves. A cached view that draws the
+/// accent holds the subscription for as long as it lives; an uncached one
+/// redraws with its parent and needs none.
+pub fn observe_accent<V: 'static>(cx: &mut Context<V>) -> Subscription {
+    let feed = cx.global::<AccentHandle>().0.clone();
+    cx.observe(&feed, |_, _, cx| cx.notify())
 }
 
 /// A window's look: its appearance and everything drawn from it.
@@ -241,7 +273,7 @@ impl Look {
         Look {
             dark,
             palette: Palette::of(dark),
-            accent: theme.accent.at(Instant::now()).shade(dark),
+            accent: accent_state(cx).at(Instant::now()).shade(dark),
             scale: Scale::of(theme.text_size),
             icons: theme.icons,
         }
