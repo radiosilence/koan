@@ -299,7 +299,7 @@ impl SettingsWindow {
         {
             tabs.push(Tab::People);
         }
-        tabs.extend([Tab::Playback, Tab::Devices]);
+        tabs.extend([Tab::Playback, Tab::Eq, Tab::Devices]);
         if signed
             && connection.as_ref().is_some_and(|c| {
                 c.scrobbling

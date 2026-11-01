@@ -1920,8 +1920,8 @@ _gui-macos:
     <dict>
         <key>CFBundleExecutable</key><string>koan-gui</string>
         <key>CFBundleIdentifier</key><string>{{gui_id}}</string>
-        <key>CFBundleName</key><string>kōan desktop</string>
-        <key>CFBundleDisplayName</key><string>kōan desktop</string>
+        <key>CFBundleName</key><string>kōan</string>
+        <key>CFBundleDisplayName</key><string>kōan</string>
         <key>CFBundlePackageType</key><string>APPL</string>
         <key>CFBundleShortVersionString</key><string>${version}</string>
         <key>CFBundleVersion</key><string>${version}</string>
