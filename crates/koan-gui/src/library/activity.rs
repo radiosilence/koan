@@ -348,8 +348,23 @@ impl Render for Activity {
         if rows.is_empty() && self.problem.is_none() {
             return div().into_any_element();
         }
+        // One line each for the task and its counts, every line truncating
+        // within the sidebar: the counts alone can outrun its width.
+        let line = |text: SharedString, role: TypeRole, color: Hsla| {
+            div()
+                .w_full()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_role(role, &p.look)
+                .text_color(color)
+                .child(text)
+        };
         div()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
             .flex()
             .flex_col()
             .gap(p.space(Space::S))
@@ -372,44 +387,37 @@ impl Render for Activity {
                 });
                 div()
                     .id(row.id)
+                    .w_full()
+                    .min_w_0()
                     .flex()
                     .flex_col()
                     .gap(px(3.))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(p.space(Space::S))
-                            .text_role(TypeRole::Fine, &p.look)
-                            .child(div().flex_1().text_color(p.muted).child(row.label.clone()))
-                            .children(
-                                row.counts()
-                                    .map(|c| div().text_color(p.muted.opacity(0.7)).child(c)),
-                            ),
+                    .child(line(row.label.clone(), TypeRole::Fine, p.muted))
+                    .children(
+                        row.counts()
+                            .map(|c| line(c.into(), TypeRole::Meta, p.muted.opacity(0.7))),
                     )
                     .child(
                         div()
+                            .w_full()
+                            .min_w_0()
                             .flex()
                             .items_center()
                             .gap(p.space(Space::S))
-                            .child(div().flex_1().child(bar(row, &p, cx)))
+                            .child(div().flex_1().min_w_0().child(bar(row, &p, cx)))
                             .children(cancel),
                     )
-                    .children(row.detail.clone().map(|detail| {
-                        div()
-                            .text_role(TypeRole::Fine, &p.look)
-                            .text_color(p.muted.opacity(0.7))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(detail)
-                    }))
+                    .children(
+                        row.detail
+                            .clone()
+                            .map(|detail| line(detail, TypeRole::Fine, p.muted.opacity(0.7))),
+                    )
             }))
-            .children(self.problem.clone().map(|problem| {
-                div()
-                    .text_role(TypeRole::Fine, &p.look)
-                    .text_color(p.bad)
-                    .child(problem)
-            }))
+            .children(
+                self.problem
+                    .clone()
+                    .map(|problem| line(problem, TypeRole::Fine, p.bad)),
+            )
             .into_any_element()
     }
 }
