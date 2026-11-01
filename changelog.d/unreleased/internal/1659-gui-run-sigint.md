@@ -1,0 +1,1 @@
+- **Ctrl-C quits `just gui-run` cleanly.** Quitting the desktop app from the terminal no longer reports a failed recipe.
