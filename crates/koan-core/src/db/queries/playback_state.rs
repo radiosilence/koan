@@ -698,8 +698,7 @@ mod tests {
         let conn = test_conn();
         let old_json = r#"[{"path":"/music/track.flac","title":"T","artist":"A","album_artist":"A","album":"B","year":null,"codec":null,"track_number":null,"disc":null,"duration_ms":null}]"#;
         conn.execute(
-            "INSERT INTO playback_state (id, queue_json, cursor_id, position_ms, updated_at)
-             VALUES (1, ?1, NULL, 0, datetime('now'))",
+            "INSERT INTO playback_state (device, queue_json) VALUES ('', ?1)",
             rusqlite::params![old_json],
         )
         .unwrap();

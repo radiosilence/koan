@@ -705,6 +705,10 @@ impl MutationRoot {
 
     // -- Playback state persistence --
 
+    /// Save the queue, cursor, position and play mode as the saved session of
+    /// the device whose player this server runs on, for it to restore on its
+    /// next start. Refused by a server that keeps no session, such as a
+    /// headless `koan serve`.
     async fn save_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let device = session(ctx)?;
@@ -752,6 +756,9 @@ impl MutationRoot {
         .await
     }
 
+    /// Clear the saved queue and position of the device whose player this
+    /// server runs on, keeping its play mode. Refused by a server that keeps
+    /// no session.
     async fn clear_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let device = session(ctx)?;
