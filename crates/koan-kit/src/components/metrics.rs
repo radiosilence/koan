@@ -24,6 +24,18 @@ pub enum RowKind {
 
 pub struct RowMetrics;
 
+/// The playing bars, the Mac's: three 2-point bars 2 points apart, 11 tall.
+pub struct BarMetrics;
+
+impl BarMetrics {
+    pub const COUNT: usize = 3;
+    pub const BAR: f32 = 2.0;
+    pub const GAP: f32 = 2.0;
+    pub const WIDTH: Pixels =
+        px(Self::COUNT as f32 * Self::BAR + (Self::COUNT - 1) as f32 * Self::GAP);
+    pub const HEIGHT: Pixels = px(11.0);
+}
+
 /// The transport bar's figures, the spec's: 68 tall, a 40-point cover, the
 /// controls 22 apart over the seek bar.
 pub struct TransportMetrics;
