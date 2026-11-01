@@ -4,16 +4,8 @@
 
 use futures_channel::mpsc;
 use gpui_kit::*;
-use koan_gui::{platform, theme};
+use koan_gui::{app, platform, theme};
 use platform::instance::{self, Launch, Opened};
-
-struct Shell;
-
-impl Render for Shell {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().key_context(platform::actions::CONTEXT)
-    }
-}
 
 fn main() {
     platform::logging::init();
@@ -29,13 +21,13 @@ fn main() {
         let _ = opened.unbounded_send(Opened::Paths(paths));
     }
 
-    let app = gpui_kit::application().with_assets(theme::icons::Assets);
-    app.on_open_urls(move |urls| {
+    let application = gpui_kit::application().with_assets(theme::icons::Assets);
+    application.on_open_urls(move |urls| {
         for next in instance::sort_urls(urls) {
             let _ = opened.unbounded_send(next);
         }
     });
-    app.run(|cx| {
+    application.run(|cx| {
         gpui_kit::init(cx);
         theme::init(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
@@ -55,10 +47,10 @@ fn main() {
                 }
             };
             cx.update(|cx| {
-                // The shell's queue follows what this resolves to.
-                let _restored = platform::init(&engine, opening, cx);
-                gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Shell))
-                    .expect("failed to open the window");
+                // The platform restores the session; the window follows what
+                // that resolves to.
+                let restored = platform::init(&engine, opening, cx);
+                app::start(engine, restored, cx);
             });
         })
         .detach();

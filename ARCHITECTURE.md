@@ -23,8 +23,9 @@ crates/
 │
 ├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for
 │                  macOS and Linux: the kōan theme (`theme/`), its components
-│                  (`components/`) and `platform/`. Links koan-ffi as a Rust
-│                  library. Not published.
+│                  (`components/`), `platform/` and the app over
+│                  KoanEngine. Links koan-ffi as a Rust library.
+│                  Not published.
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.

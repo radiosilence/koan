@@ -27,3 +27,32 @@ The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. See [Keybindings](../
 ## Configuration and the log
 
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal.
+
+## Running a build from source
+
+```bash
+KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui
+```
+
+A build from `main` can move the library database to a newer schema than the released apps read, after which they refuse it; a throwaway `KOAN_CONFIG_DIR`, with `folders` in its `config.toml` pointed at some music, keeps your own library out of it.
+
+## The window
+
+The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, and the sleep timer and output menus. The window opens where it was left.
+
+## The queue
+
+The queue is grouped by record: a heading with the sleeve over each record's run, and a track standing alone with its own sleeve. The playing track is in the accent colour.
+
+| Action | How |
+|--------|-----|
+| Play a track | Double-click it, or select it and press Return |
+| Play or pause | Space, anywhere in the window |
+| Select | Click; ⌘-click adds or removes a row, Shift-click selects a range. A heading selects its record |
+| Move the selection | Up and Down; with Shift, extend it |
+| Select everything | ⌘A |
+| Remove | Delete or Backspace, or the context menu |
+| Reorder | Drag rows; dragging a heading moves its record, and a selected row moves the whole selection |
+| Undo, redo | ⌘Z, ⇧⌘Z |
+
+The queue keeps its place and selection when you visit another page and come back.

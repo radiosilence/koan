@@ -450,6 +450,8 @@ jobs:
           shared-key: gui-mac
           cache-on-failure: true
       - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      # The frame-time measurement, built only with this feature.
+      - run: cargo clippy -p koan-gui --all-targets --features profiler -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui --all-targets
 

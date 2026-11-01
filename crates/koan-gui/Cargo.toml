@@ -14,7 +14,15 @@ path = "src/lib.rs"
 name = "koan-gui"
 path = "src/main.rs"
 
+[features]
+# GPUI's frame histograms, and `measure`, which scrolls the queue and prints
+# them (`KOAN_GUI_MEASURE=scroll`).
+profiler = ["gpui-kit/profiler"]
+
 [dependencies]
+# The engine, linked as a Rust library: the same facade the Swift and Kotlin
+# apps drive through uniffi, without the bindings.
+koan-ffi = { path = "../koan-ffi" }
 chrono = "0.4"
 futures-channel = "0.3"
 futures-lite = "2"
@@ -22,11 +30,12 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 gpui-kit = "0.8.1"
 # Resizing sleeves for the accent and the wash, and the frames GPUI draws,
 # in the version GPUI itself builds against; PNG for the theme sheet's
-# offscreen render.
-image = { version = "0.25.1", default-features = false, features = ["png"] }
+# offscreen render; JPEG, WebP and GIF for the playing record's sleeve.
+image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 koan-core = { workspace = true }
-koan-ffi = { path = "../koan-ffi" }
 log = "0.4"
+# Waiting on the first of two events at startup (`select`, `oneshot`).
+futures = "0.3"
 parking_lot = "0.13"
 smallvec = "1"
 souvlaki = "0.9"
@@ -39,7 +48,6 @@ tempfile = "3"
 # notifications that say when either changes.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
-futures = "0.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", features = ["NSAccessibility", "NSWorkspace"] }
 objc2-foundation = { version = "0.3.2", features = [
