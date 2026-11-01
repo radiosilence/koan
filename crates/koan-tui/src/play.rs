@@ -12,6 +12,11 @@ use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
 
 use crate::app;
 
+/// The terminal UI's saved session, kept apart from the app's on the same
+/// config directory. A second terminal UI on the machine, which is not the
+/// terminal device, shares it.
+pub const SESSION: &str = koan_core::remote::link::LinkIdentity::TERMINAL_FILES;
+
 /// Callbacks for CLI integration. The TUI library crate doesn't own
 /// the logger or signal handler — koan-cli provides those.
 pub struct TuiCallbacks {
@@ -149,6 +154,7 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
     let result = match save {
         Save::Position => queries::save_playback_position(
             &db.conn,
+            SESSION,
             state.play_mode(),
             state
                 .cursor_path()
@@ -161,8 +167,15 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
             let (items, cursor) = state.snapshot_playlist();
             if items.is_empty() {
                 // The mode outlives the queue, and may be what changed.
-                queries::clear_playback_state(&db.conn).and_then(|()| {
-                    queries::save_playback_position(&db.conn, state.play_mode(), None, 0, false)
+                queries::clear_playback_state(&db.conn, SESSION).and_then(|()| {
+                    queries::save_playback_position(
+                        &db.conn,
+                        SESSION,
+                        state.play_mode(),
+                        None,
+                        0,
+                        false,
+                    )
                 })
             } else {
                 let persisted: Vec<PersistedQueueItem> = items
@@ -175,7 +188,7 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
                 let (position_ms, playing) = if played {
                     (state.position_ms(), playing)
                 } else {
-                    queries::load_playback_state(&db.conn)
+                    queries::load_playback_state(&db.conn, SESSION)
                         .ok()
                         .flatten()
                         .filter(|saved| saved.cursor_path == cursor_path)
@@ -183,6 +196,7 @@ fn write(state: &SharedPlayerState, save: Save, played: bool) {
                 };
                 queries::save_playback_state(
                     &db.conn,
+                    SESSION,
                     &persisted,
                     state.play_mode(),
                     cursor_path.as_deref(),

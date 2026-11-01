@@ -264,6 +264,7 @@ mod tests {
             )),
             None,
             jobs.clone(),
+            None,
         );
         let query = "subscription { jobs { kind reason state done total } }";
 

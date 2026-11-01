@@ -1083,12 +1083,12 @@ fn rewrite_saved_queues(
             )
         })
         .collect();
-    let rows: Vec<(i64, String)> = conn
-        .prepare("SELECT id, queue_json FROM playback_state")?
+    let rows: Vec<(String, String)> = conn
+        .prepare("SELECT device, queue_json FROM playback_state")?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    for (id, json) in rows {
+    for (device, json) in rows {
         let Ok(mut items) = serde_json::from_str::<Vec<PersistedQueueItem>>(&json) else {
             continue;
         };
@@ -1106,8 +1106,8 @@ fn rewrite_saved_queues(
             continue;
         };
         conn.execute(
-            "UPDATE playback_state SET queue_json = ?1 WHERE id = ?2",
-            params![updated, id],
+            "UPDATE playback_state SET queue_json = ?1 WHERE device = ?2",
+            params![updated, device],
         )?;
     }
     Ok(())
@@ -2958,6 +2958,7 @@ mod tests {
         };
         queries::save_playback_state(
             &db.conn,
+            "terminal-",
             &[item],
             Default::default(),
             Some(&source_str),
@@ -2978,7 +2979,9 @@ mod tests {
             Some(track)
         );
 
-        let state = queries::load_playback_state(&db.conn).unwrap().unwrap();
+        let state = queries::load_playback_state(&db.conn, "terminal-")
+            .unwrap()
+            .unwrap();
         assert_eq!(state.items[0].path, dest_str);
         assert_eq!(state.cursor_path.as_deref(), Some(dest_str.as_str()));
 
@@ -2987,7 +2990,9 @@ mod tests {
         let favourites =
             queries::load_favourites(&db.conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(favourites.contains(&track));
-        let state = queries::load_playback_state(&db.conn).unwrap().unwrap();
+        let state = queries::load_playback_state(&db.conn, "terminal-")
+            .unwrap()
+            .unwrap();
         assert_eq!(state.items[0].path, source_str);
         assert_eq!(state.cursor_path.as_deref(), Some(source_str.as_str()));
     }
