@@ -24,6 +24,18 @@ pub enum WikimediaError {
     Http(#[from] reqwest::Error),
 }
 
+impl WikimediaError {
+    /// The server answered and will not serve this address: asking for the
+    /// same one again changes nothing.
+    pub fn refused(&self) -> bool {
+        match self {
+            Self::Http(e) => e.status().is_some_and(|s| {
+                s.is_client_error() && s != reqwest::StatusCode::TOO_MANY_REQUESTS
+            }),
+        }
+    }
+}
+
 /// What a Wikidata item says about where to read more and what the artist
 /// looks like.
 #[derive(Debug, Default, PartialEq)]
