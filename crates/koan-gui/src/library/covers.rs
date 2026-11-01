@@ -318,6 +318,10 @@ impl Covers {
         }
     }
 
+    pub fn is_absent(&self, art: Art) -> bool {
+        self.shared.queue.lock().absent.contains(&art)
+    }
+
     /// Whether `key` itself is held, not a stand-in of another size.
     pub fn has(&self, key: Key) -> bool {
         self.memory.contains_key(&key)

@@ -32,8 +32,17 @@ smallvec = "1"
 
 [dev-dependencies]
 gpui-kit = { version = "0.8.1", features = ["test-support"] }
+# The scroll benches (benches/album_grid.rs): GPUI's own harness, drawing
+# through the headless Metal renderer with nothing on screen.
+criterion = "0.8"
+gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support", "bench-support"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["bench-support"] }
 # The large test library's tags (examples/gen_library.rs).
 lofty = "0.25"
+
+[[bench]]
+name = "album_grid"
+harness = false
 
 # Reduce Motion and Low Power Mode, which GPUI does not read, and the
 # notifications that say when either changes.

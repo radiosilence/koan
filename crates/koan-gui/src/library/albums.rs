@@ -495,6 +495,42 @@ fn rank(
     ranked
 }
 
+/// What the album grid's benchmark drives it with.
+impl AlbumGrid {
+    /// The listing is in, and every sleeve on screen is drawn or known to
+    /// have none.
+    pub fn ready_on_screen(&self, cx: &App) -> bool {
+        let Some(grid) = self.grid else { return false };
+        if self.loaded.is_none() {
+            return false;
+        }
+        let visible = self.heading.borrow().visible.clone();
+        if visible.is_empty() {
+            return false;
+        }
+        let covers = self.lib.covers.read(cx);
+        let scale = self.scale.get();
+        visible
+            .flat_map(|row| row * grid.columns..((row + 1) * grid.columns).min(self.albums.len()))
+            .all(|i| {
+                let key = Key::new(Art::Album(self.albums[i].id), grid.side, scale);
+                covers.has(key) || covers.is_absent(key.art)
+            })
+    }
+
+    /// Scrolls on by `distance`, back to the top past the end.
+    pub fn scroll_by(&mut self, distance: Pixels, cx: &mut Context<Self>) {
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        let max = handle.max_offset().y;
+        let mut y = -handle.offset().y + distance;
+        if y > max {
+            y = px(0.0);
+        }
+        handle.set_offset(point(px(0.0), -y));
+        cx.notify();
+    }
+}
+
 impl chrome::Picking for AlbumGrid {
     fn selection_mut(&mut self) -> &mut Selection {
         &mut self.selection
@@ -647,16 +683,11 @@ impl Render for AlbumGrid {
                 "albums",
                 grid.rows(count),
                 cx.processor(move |this, range: Range<usize>, window, cx| {
-                    let began = Instant::now();
                     this.aim(range.clone(), window, cx);
                     let p = Paint::of(window, cx);
-                    let rows = range
+                    range
                         .map(|row| this.row(&p, row, grid, cx))
-                        .collect::<Vec<_>>();
-                    if let Some(bench) = &this.lib.bench {
-                        bench.borrow_mut().frame.rows += began.elapsed();
-                    }
-                    rows
+                        .collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)
