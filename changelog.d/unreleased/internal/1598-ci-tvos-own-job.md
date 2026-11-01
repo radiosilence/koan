@@ -1,0 +1,1 @@
+- **The Apple TV build runs on pull requests.** It has its own CI job beside the Apple one, so a tvOS break is caught before it reaches main, and the Apple job no longer waits on tvOS.
