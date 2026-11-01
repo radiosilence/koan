@@ -184,12 +184,8 @@ fn follow(levels: &Levels, cx: &mut App) {
                 }
                 registry.take([heard.low, heard.mid, heard.high])
             };
-            if moved
-                && cx
-                    .update(|cx| feed.update(cx, |_, cx| cx.notify()))
-                    .is_err()
-            {
-                break;
+            if moved {
+                cx.update(|cx| feed.update(cx, |_, cx| cx.notify()));
             }
         }
         // Dropping the stream lets the analyser park.
@@ -221,7 +217,7 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{QUIETEST, Registry};
 
     #[test]
     fn a_band_is_measured_against_its_own_recent_loudest() {
