@@ -1,0 +1,1 @@
+- **Protocol schemas render in key order with or without serde_json's `preserve_order`.** koan-gui's dependencies turn the feature on in a workspace build, which made the schema check fail there.
