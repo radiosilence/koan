@@ -376,11 +376,42 @@ jobs:
           shared-key: linux
           # A failing check would otherwise leave the cache unsaved.
           cache-on-failure: true
-      - run: cargo clippy --all-targets -- -D warnings
+      # The desktop app has a job of its own: GPUI and the libraries it links
+      # are the bulk of its build, and nothing else here needs them.
+      - run: cargo clippy --workspace --exclude koan-desktop --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test --all-targets
+        run: cargo test --workspace --exclude koan-desktop --all-targets
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test --doc
+        run: cargo test --workspace --exclude koan-desktop --doc
+
+  # koan-desktop on Linux, beside the job above: it links koan-ffi and so
+  # koan-core and koan-server, which any Rust change can break for it.
+  desktop:
+    name: Desktop (Linux)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 60
+    concurrency:
+      group: desktop-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/linux-deps
+        with:
+          gui: "true"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - id: cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: desktop
+          cache-on-failure: true
+      - run: cargo clippy -p koan-desktop --all-targets -- -D warnings
+      - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
+        run: cargo test -p koan-desktop --all-targets
 
   audit:
     name: Security Audit
@@ -729,7 +760,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, desktop, audit, pulumi-package, linux-build, container, apple, android]
     if: always()
     steps:
       - env:
@@ -975,6 +1006,76 @@ jobs:
           name: koan-macos-app
           path: apps/macos/.build/pkg/Koan.dmg
 
+  # The desktop app's packages: a signed .app in a DMG, and for each Linux
+  # architecture an AppImage and a .deb. Built when a release is, and attached
+  # to it; a failure here leaves the release without them rather than holding
+  # it back, while the app is new.
+  desktop-release:
+    name: Release (desktop, ${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    needs: [changes, make-room]
+    if: ${{ !cancelled() && needs.make-room.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            runner: macos-latest
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-deps
+        with:
+          gui: "true"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: desktop-release-${{ matrix.name }}
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          install_args: just
+      - if: runner.os == 'macOS'
+        name: Developer ID
+        uses: ./.github/actions/developer-id
+        with:
+          certificate-p12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      # appimagetool publishes a rolling build only. It is an AppImage itself,
+      # extracted and run here since the runners have no FUSE.
+      - if: runner.os == 'Linux'
+        name: appimagetool
+        run: |
+          tool="$RUNNER_TEMP/appimagetool"
+          curl -fsSL --retry 3 -o "$tool" \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(uname -m).AppImage"
+          chmod +x "$tool"
+          echo "APPIMAGETOOL=$tool" >> "$GITHUB_ENV"
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+      - run: just desktop-bundle
+      - name: Name the packages
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir out
+          if [ "$RUNNER_OS" = macOS ]; then
+            cp target/desktop/koan-desktop.dmg "out/koan-desktop-$NAME.dmg"
+          else
+            cp target/desktop/*.deb target/desktop/*.AppImage out/
+          fi
+          ls -l out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: koan-desktop-${{ matrix.name }}
+          path: out/*
+
   # The image this commit already pushed, tagged with the release's version
   # and `latest` once the release's builds have passed: a failed release must
   # not move `latest`. Retagging needs no rebuild, and repeats safely.
@@ -1110,7 +1211,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check-version, android, linux-build, macos-release, publish-crate, publish-package]
+    needs: [check-version, android, linux-build, macos-release, desktop-release, publish-crate, publish-package]
     # Every need having succeeded, named one by one: a skipped job is not a
     # failure, and a release without one of its parts is not a release.
     # needs.*.result would also see jobs further up the graph, such as Apple,
@@ -1173,6 +1274,8 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.dmg
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
             artifacts/koan-android-arm64.apk
 
   update-homebrew:
@@ -1268,7 +1371,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
-          pattern: koan-macos-*
+          pattern: koan-*macos-*
       - name: API key
         run: |
           test -n "$APPLE_API_KEY_P8" || { echo "::error::set the APPLE_API_KEY_* secrets"; exit 1; }
@@ -1306,6 +1409,25 @@ jobs:
             exit 1
           fi
           gh release upload "v$VERSION" stapled/Koan.dmg --clobber
+      # When the desktop app's build made it into the release.
+      - name: Notarise, staple and replace the desktop DMG
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          src=artifacts/koan-desktop-macos-arm64/koan-desktop-macos-arm64.dmg
+          if [ ! -f "$src" ]; then
+            echo "::warning::no desktop DMG in this release"
+            exit 0
+          fi
+          hash=$(shasum -a 256 "$src" | cut -c1-12)
+          dmg="$RUNNER_TEMP/koan-desktop-$VERSION-$hash.dmg"
+          cp "$src" "$dmg"
+          scripts/notarise.sh "$dmg"
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          cp "$dmg" stapled/koan-desktop-macos-arm64.dmg
+          gh release upload "v$VERSION" stapled/koan-desktop-macos-arm64.dmg --clobber
       - name: Update the Homebrew cask
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
