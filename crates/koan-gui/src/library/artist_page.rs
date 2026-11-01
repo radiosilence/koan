@@ -2,6 +2,11 @@
 //! article, play as the one prominent action, their records under a heading
 //! per kind of release, then the records they feature on. An artist with no
 //! records of their own shows the tracks they appear on instead.
+//!
+//! A list of variable-height items (the header, headings, rows of tiles,
+//! track rows), so only what is on screen is built, however many records an
+//! artist features on. Every item's height but the header's is fixed, which
+//! is what lets the page rank sleeves by their distance from the screen.
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -20,6 +25,11 @@ use super::tile::{self, Grid, Part, TileHost, TileState};
 use super::tokens::{self, Type, Typeset, space};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 
+/// A biography longer than this opens clamped, with "more" under it.
+const BIO_CLAMP: usize = 300;
+/// Until the header has been laid out once.
+const HEADER_GUESS: f32 = 320.0;
+
 struct Record {
     artist: Option<Artist>,
     albums: Vec<Album>,
@@ -27,10 +37,24 @@ struct Record {
     appearances: Vec<Track>,
 }
 
+/// One item of the page's list.
+#[derive(Clone)]
+enum Item {
+    Header,
+    Heading(SharedString),
+    FeaturesHeading,
+    /// A row of tiles: `albums[range]` of the records or the features.
+    Tiles {
+        features: bool,
+        range: std::ops::Range<usize>,
+    },
+    Track(usize),
+}
+
 pub struct ArtistPage {
     lib: Lib,
     artist_id: i64,
-    record: Option<Record>,
+    record: Option<Rc<Record>>,
     info: Option<ArtistInfo>,
     /// The biography shown whole rather than its opening.
     expanded: bool,
@@ -39,7 +63,12 @@ pub struct ArtistPage {
     _load: Option<Task<()>>,
     _enrich: Option<Task<()>>,
     width: Rc<Cell<Option<Pixels>>>,
-    scroll: ScrollHandle,
+    /// The items, and the grid they were cut for.
+    items: Rc<Vec<Item>>,
+    grid: Option<Grid>,
+    list: ListState,
+    /// Where to put the scroll back to, once there is content to scroll.
+    restore: Option<Pixels>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
     starting: HashSet<i64>,
@@ -67,7 +96,7 @@ impl ArtistPage {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                let offset = -this.scroll.offset().y;
+                let offset = this.offset();
                 let page = Page::Artist(this.artist_id);
                 this.lib
                     .nav
@@ -75,10 +104,7 @@ impl ArtistPage {
                 this.lib.covers.update(cx, |c, _| c.release(id));
             }),
         ];
-        let scroll = ScrollHandle::new();
-        if let Some(y) = lib.nav.read(cx).offset(Page::Artist(artist_id)) {
-            scroll.set_offset(point(px(0.0), -y));
-        }
+        let restore = lib.nav.read(cx).offset(Page::Artist(artist_id));
         let mut this = Self {
             lib,
             artist_id,
@@ -90,7 +116,10 @@ impl ArtistPage {
             _load: None,
             _enrich: None,
             width: Rc::new(Cell::new(None)),
-            scroll,
+            items: Rc::new(Vec::new()),
+            grid: None,
+            list: ListState::new(0, ListAlignment::Top, px(400.0)),
+            restore,
             selection: Selection::default(),
             pick: None,
             starting: HashSet::new(),
@@ -133,12 +162,13 @@ impl ArtistPage {
                 if this.request != request {
                     return;
                 }
-                this.record = Some(Record {
+                this.record = Some(Rc::new(Record {
                     artist,
                     albums,
                     features,
                     appearances,
-                });
+                }));
+                this.grid = None;
                 if this.info.is_none() {
                     this.info = info;
                 }
@@ -148,8 +178,8 @@ impl ArtistPage {
         }));
     }
 
-    /// The biography and photograph, fetched when the cache has none or a
-    /// stale one: seconds on a miss, never waited on.
+    /// The biography and photograph, from the cache while it is fresh and
+    /// otherwise fetched: seconds on a miss, never waited on.
     fn enrich(&mut self, cx: &mut Context<Self>) {
         let (engine, id) = (self.lib.engine.clone(), self.artist_id);
         self._enrich = Some(cx.spawn(async move |this, cx| {
@@ -157,11 +187,133 @@ impl ArtistPage {
             this.update(cx, |this, cx| {
                 if fetched.is_some() {
                     this.info = fetched;
+                    this.list.remeasure_items(0..1);
                     cx.notify();
                 }
             })
             .ok();
         }));
+    }
+
+    /// The items for `record` cut into rows of `grid`.
+    fn cut(record: &Record, grid: Grid) -> Vec<Item> {
+        let mut items = vec![Item::Header];
+        let rows = |items: &mut Vec<Item>, features: bool, from: usize, len: usize| {
+            let mut start = from;
+            while start < from + len {
+                let end = (start + grid.columns).min(from + len);
+                items.push(Item::Tiles {
+                    features,
+                    range: start..end,
+                });
+                start = end;
+            }
+        };
+        let sections = sections(&record.albums);
+        let titled = sections.len() > 1;
+        for (section, start, len) in sections {
+            if titled {
+                items.push(Item::Heading(
+                    koan_ffi::release_section_title(section)
+                        .to_lowercase()
+                        .into(),
+                ));
+            }
+            rows(&mut items, false, start, len);
+        }
+        if !record.features.is_empty() {
+            items.push(Item::FeaturesHeading);
+            rows(&mut items, true, 0, record.features.len());
+        }
+        if !record.appearances.is_empty() {
+            items.push(Item::Heading("appears on".into()));
+            items.extend((0..record.appearances.len()).map(Item::Track));
+        }
+        items
+    }
+
+    fn heading_height() -> Pixels {
+        px(40.0)
+    }
+
+    fn height(&self, item: &Item, grid: Grid) -> f32 {
+        f32::from(match item {
+            Item::Header => self
+                .list
+                .bounds_for_item(0)
+                .map_or(px(HEADER_GUESS), |b| b.size.height),
+            Item::Heading(_) | Item::FeaturesHeading => Self::heading_height(),
+            Item::Tiles { .. } => grid.row,
+            Item::Track(_) => rows::art_height(),
+        })
+    }
+
+    /// How far down the page is scrolled, in points.
+    fn offset(&self) -> Pixels {
+        let Some(grid) = self.grid else {
+            return px(0.0);
+        };
+        let top = self.list.logical_scroll_top();
+        let above: f32 = self.items[..top.item_ix.min(self.items.len())]
+            .iter()
+            .map(|i| self.height(i, grid))
+            .sum();
+        px(above) + top.offset_in_item
+    }
+
+    /// Each item's distance from the screen, ranked as the grid ranks its
+    /// rows: on screen, then nearest first, up to two screens away.
+    fn aim(&mut self, grid: Grid, scale: f32, cx: &mut Context<Self>) {
+        let Some(record) = self.record.clone() else {
+            return;
+        };
+        let viewport = f32::from(self.list.viewport_bounds().size.height).max(1.0);
+        let top = f32::from(self.offset());
+        let bottom = top + viewport;
+        let mut y = 0.0;
+        let mut ranked = Vec::new();
+        for item in self.items.iter() {
+            let h = self.height(item, grid);
+            let distance = (y - bottom).max(top - (y + h)).max(0.0);
+            y += h;
+            if distance > 2.0 * viewport {
+                continue;
+            }
+            let priority = if distance == 0.0 {
+                Priority::Visible
+            } else {
+                Priority::Ahead(distance)
+            };
+            match item {
+                Item::Header if self.info.as_ref().is_some_and(|i| i.has_image) => {
+                    ranked.push((
+                        Key::new(Art::Artist(self.artist_id), grid.side, scale),
+                        priority,
+                    ));
+                }
+                Item::Tiles { features, range } => {
+                    let albums = if *features {
+                        &record.features
+                    } else {
+                        &record.albums
+                    };
+                    for album in &albums[range.clone()] {
+                        ranked.push((Key::new(Art::Album(album.id), grid.side, scale), priority));
+                    }
+                }
+                Item::Track(i) => {
+                    if let Some(album) = record.appearances[*i].album_id {
+                        ranked.push((
+                            Key::new(Art::Album(album), px(rows::SLEEVE), scale),
+                            priority,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let owner = cx.entity_id();
+        self.lib.covers.update(cx, |c, _| c.request(owner, ranked));
     }
 
     fn pick(&mut self) -> Option<PlayableDrag> {
@@ -189,6 +341,83 @@ impl ArtistPage {
             .collect()
     }
 
+    fn item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let (Some(record), Some(grid), Some(item)) =
+            (self.record.clone(), self.grid, self.items.get(ix).cloned())
+        else {
+            return div().into_any_element();
+        };
+        let scale = window.scale_factor();
+        match item {
+            Item::Header => self.header(&record, grid, scale, cx).into_any_element(),
+            Item::Heading(title) => Self::heading(title).into_any_element(),
+            Item::FeaturesHeading => {
+                let items: Vec<Playable> = record
+                    .features
+                    .iter()
+                    .map(|a| Playable::Album(a.id))
+                    .collect();
+                let (lib, items2, lib2) = (self.lib.clone(), items.clone(), self.lib.clone());
+                div()
+                    .flex()
+                    .items_end()
+                    .gap(space::s16())
+                    .child(Self::heading("features on"))
+                    .child(
+                        chrome::text_button("features-play", "play")
+                            .pb(space::s8())
+                            .on_click(move |_, _, cx| {
+                                actions::play(&lib, &items, false, cx).detach()
+                            }),
+                    )
+                    .child(
+                        chrome::text_button("features-shuffle", "shuffle")
+                            .pb(space::s8())
+                            .on_click(move |_, _, cx| {
+                                actions::play(&lib2, &items2, true, cx).detach()
+                            }),
+                    )
+                    .into_any_element()
+            }
+            Item::Tiles { features, range } => {
+                let albums = if features {
+                    &record.features
+                } else {
+                    &record.albums
+                };
+                self.tiles(&albums[range], features, grid, scale, cx)
+                    .into_any_element()
+            }
+            Item::Track(index) => {
+                let track = &record.appearances[index];
+                let item = Playable::Track(track.id);
+                let selected = self.selection.contains(item);
+                let drag = match (selected, self.pick()) {
+                    (true, Some(pick)) => pick,
+                    _ => PlayableDrag::new(&[item], track.title.clone()),
+                };
+                let sleeve = track.album_id.map(|album| {
+                    let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);
+                    self.lib.covers.update(cx, |c, _| c.sleeve(key))
+                });
+                let feed = self.lib.feed.read(cx);
+                let state = RowState {
+                    lead: (index + 1).to_string().into(),
+                    lead_width: rows::lead_width(record.appearances.len(), window),
+                    current: feed.playing_track == Some(track.id),
+                    playing: feed.playing,
+                    favourite: feed.is_favourite(item),
+                    selected,
+                    gathered: true,
+                    transfer: feed.transfers.get(&track.id).copied(),
+                    drag,
+                    height: rows::art_height(),
+                };
+                rows::track_row(track, index, state, sleeve, Some(self.artist_id), self, cx)
+            }
+        }
+    }
+
     fn tiles(
         &mut self,
         albums: &[Album],
@@ -206,7 +435,6 @@ impl ArtistPage {
             })
         }));
         let mut tiles = Vec::with_capacity(albums.len());
-        let mut keys = Vec::with_capacity(albums.len());
         for album in albums {
             let item = Playable::Album(album.id);
             let selected = self.selection.contains(item);
@@ -227,36 +455,31 @@ impl ArtistPage {
                 after,
             };
             let key = Key::new(Art::Album(album.id), grid.side, scale);
-            keys.push(key);
             let sleeve = self
                 .lib
                 .covers
                 .update(cx, |c: &mut Covers, _| c.sleeve(key));
             tiles.push(tile::tile(album, grid.side, sleeve, state, self, cx));
         }
-        div()
-            .flex()
-            .flex_wrap()
-            .gap_x(grid.gap)
-            .gap_y(px(22.0))
-            .children(tiles)
+        div().flex().gap(grid.gap).h(grid.row).children(tiles)
     }
 
     fn heading(title: impl Into<SharedString>) -> Div {
         div()
-            .pt(space::s16())
+            .h(Self::heading_height())
+            .flex()
+            .items_end()
             .pb(space::s8())
             .typeset(Type::Fine, tokens::INK)
             .child(title.into())
     }
 
-    fn header(&mut self, grid: Grid, scale: f32, cx: &mut Context<Self>) -> Div {
+    fn header(&mut self, record: &Record, grid: Grid, scale: f32, cx: &mut Context<Self>) -> Div {
         let id = self.artist_id;
         let item = Playable::Artist(id);
-        let name = self
-            .record
+        let name = record
+            .artist
             .as_ref()
-            .and_then(|r| r.artist.as_ref())
             .map(|a| a.name.clone())
             .unwrap_or_default();
         let mut photo = div().size(grid.side).flex_none().bg(tokens::SURFACE);
@@ -287,6 +510,7 @@ impl ArtistPage {
                         .items_center()
                         .gap(space::s16())
                         .child(
+                            // The page's one prominent action.
                             div()
                                 .id("artist-play")
                                 .cursor_pointer()
@@ -327,10 +551,11 @@ impl ArtistPage {
         if let Some(info) = &self.info
             && let Some(bio) = &info.bio
         {
+            let long = bio.len() > BIO_CLAMP;
             let mut body = div()
                 .typeset(Type::Control, tokens::INK)
                 .child(bio.replace('\n', "\n\n"));
-            if !self.expanded {
+            if long && !self.expanded {
                 body = body.line_clamp(4);
             }
             text = text.child(body).child(
@@ -338,7 +563,7 @@ impl ArtistPage {
                     .flex()
                     .gap(space::s12())
                     .typeset(Type::Fine, tokens::MUTED)
-                    .when(!self.expanded, |d| {
+                    .when(long && !self.expanded, |d| {
                         d.child(
                             div()
                                 .id("bio-more")
@@ -347,6 +572,7 @@ impl ArtistPage {
                                 .child("more")
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.expanded = true;
+                                    this.list.remeasure_items(0..1);
                                     cx.notify();
                                 })),
                         )
@@ -390,14 +616,14 @@ impl ArtistPage {
     }
 }
 
-/// The sections of an artist's records, in page order: the engine lists them
-/// section by section, so a section is a run of them.
-fn sections(albums: &[Album]) -> Vec<(ReleaseSection, &[Album])> {
-    let mut out: Vec<(ReleaseSection, &[Album])> = Vec::new();
+/// The sections of an artist's records, in page order, as (section, start,
+/// length): the engine lists them section by section, so a section is a run.
+fn sections(albums: &[Album]) -> Vec<(ReleaseSection, usize, usize)> {
+    let mut out = Vec::new();
     let mut start = 0;
     for i in 1..=albums.len() {
         if i == albums.len() || albums[i].release_section != albums[start].release_section {
-            out.push((albums[start].release_section, &albums[start..i]));
+            out.push((albums[start].release_section, start, i - start));
             start = i;
         }
     }
@@ -530,130 +756,41 @@ impl Render for ArtistPage {
         .absolute()
         .size_full();
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .px(px(tile::MARGIN))
-            .pb(px(tile::MARGIN));
-        if let (Some(width), Some(record)) = (self.width.get(), self.record.take()) {
+        // Cut again when the record or the columns change; the scroll goes
+        // back to where it was left once there is content under it.
+        if let (Some(width), Some(record)) = (self.width.get(), self.record.clone()) {
             let grid = Grid::for_width(width);
-            let scale = window.scale_factor();
-            content = content.child(self.header(grid, scale, cx));
-            let sections = sections(&record.albums);
-            let titled = sections.len() > 1;
-            for (section, albums) in sections {
-                if titled {
-                    content = content.child(Self::heading(
-                        koan_ffi::release_section_title(section).to_lowercase(),
-                    ));
-                }
-                content = content.child(self.tiles(albums, false, grid, scale, cx));
-            }
-            if !record.features.is_empty() {
-                let items: Vec<Playable> = record
-                    .features
-                    .iter()
-                    .map(|a| Playable::Album(a.id))
-                    .collect();
-                let (lib, items2, lib2) = (self.lib.clone(), items.clone(), self.lib.clone());
-                content = content
-                    .child(
-                        div()
-                            .flex()
-                            .items_end()
-                            .gap(space::s16())
-                            .child(Self::heading("features on"))
-                            .child(
-                                chrome::text_button("features-play", "play")
-                                    .pb(space::s8())
-                                    .on_click(move |_, _, cx| {
-                                        actions::play(&lib, &items, false, cx).detach()
-                                    }),
-                            )
-                            .child(
-                                chrome::text_button("features-shuffle", "shuffle")
-                                    .pb(space::s8())
-                                    .on_click(move |_, _, cx| {
-                                        actions::play(&lib2, &items2, true, cx).detach()
-                                    }),
-                            ),
-                    )
-                    .child(self.tiles(&record.features, true, grid, scale, cx));
-            }
-            if !record.appearances.is_empty() {
-                content = content.child(Self::heading("appears on"));
-                let lead_width = rows::lead_width(record.appearances.len(), window);
-                let pick = self.pick();
-                for (index, track) in record.appearances.iter().enumerate() {
-                    let item = Playable::Track(track.id);
-                    let selected = self.selection.contains(item);
-                    let drag = match (selected, &pick) {
-                        (true, Some(pick)) => pick.clone(),
-                        _ => PlayableDrag::new(&[item], track.title.clone()),
-                    };
-                    let feed = self.lib.feed.read(cx);
-                    let state = RowState {
-                        lead: (index + 1).to_string().into(),
-                        lead_width,
-                        current: feed.playing_track == Some(track.id),
-                        playing: feed.playing,
-                        favourite: feed.is_favourite(item),
-                        selected,
-                        gathered: true,
-                        transfer: feed.transfers.get(&track.id).copied(),
-                        drag,
-                        height: rows::art_height(),
-                    };
-                    let sleeve = track.album_id.map(|album| {
-                        let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);
-                        self.lib.covers.update(cx, |c, _| c.sleeve(key))
+            if self.grid != Some(grid) {
+                self.grid = Some(grid);
+                self.items = Rc::new(Self::cut(&record, grid));
+                self.list.reset(self.items.len());
+                if let Some(y) = self.restore.take() {
+                    let mut left = f32::from(y);
+                    let mut ix = 0;
+                    while ix < self.items.len() {
+                        let h = self.height(&self.items[ix], grid);
+                        if left < h {
+                            break;
+                        }
+                        left -= h;
+                        ix += 1;
+                    }
+                    self.list.scroll_to(ListOffset {
+                        item_ix: ix,
+                        offset_in_item: px(left.max(0.0)),
                     });
-                    content = content.child(rows::track_row(
-                        track,
-                        index,
-                        state,
-                        sleeve,
-                        Some(self.artist_id),
-                        self,
-                        cx,
-                    ));
                 }
             }
-            // Every sleeve the page draws, wanted together: a page holds at
-            // most a few hundred, and the visible ones lead the queue anyway.
-            let mut wanted: Vec<(Key, Priority)> = record
-                .albums
-                .iter()
-                .chain(&record.features)
-                .map(|a| {
-                    (
-                        Key::new(Art::Album(a.id), grid.side, scale),
-                        Priority::Ahead(0.0),
-                    )
-                })
-                .chain(
-                    record
-                        .appearances
-                        .iter()
-                        .filter_map(|t| t.album_id)
-                        .map(|a| {
-                            (
-                                Key::new(Art::Album(a), px(rows::SLEEVE), scale),
-                                Priority::Ahead(0.0),
-                            )
-                        }),
-                )
-                .collect();
-            if self.info.as_ref().is_some_and(|i| i.has_image) {
-                wanted.push((
-                    Key::new(Art::Artist(self.artist_id), grid.side, scale),
-                    Priority::Visible,
-                ));
-            }
-            let owner = cx.entity_id();
-            self.lib.covers.update(cx, |c, _| c.request(owner, wanted));
-            self.record = Some(record);
+            self.aim(grid, window.scale_factor(), cx);
         }
+
+        let view = cx.weak_entity();
+        let body = list(self.list.clone(), move |ix, window, cx| {
+            view.update(cx, |this, cx| this.item(ix, window, cx))
+                .unwrap_or_else(|_| div().into_any_element())
+        })
+        .size_full()
+        .px(px(tile::MARGIN));
 
         div()
             .key_context("Library")
@@ -667,15 +804,7 @@ impl Render for ArtistPage {
             .bg(tokens::BG)
             .typeset(Type::Body, tokens::INK)
             .child(measure)
-            .child(
-                div()
-                    .id("artist-page")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .child(content),
-            )
+            .child(div().flex_1().min_h_0().child(body))
             .when(self.selection.is_active(), |d| {
                 d.child(chrome::selection_bar(
                     &self.lib,
@@ -718,11 +847,57 @@ mod tests {
             album(2, ReleaseSection::Albums),
             album(3, ReleaseSection::Live),
         ];
-        let runs = sections(&albums);
-        assert_eq!(runs.len(), 2);
-        assert_eq!(runs[0].0, ReleaseSection::Albums);
-        assert_eq!(runs[0].1.len(), 2);
-        assert_eq!(runs[1].1[0].id, 3);
+        assert_eq!(
+            sections(&albums),
+            vec![(ReleaseSection::Albums, 0, 2), (ReleaseSection::Live, 2, 1)]
+        );
         assert!(sections(&[]).is_empty());
+    }
+
+    #[test]
+    fn records_are_cut_into_rows_under_their_headings() {
+        let record = Record {
+            artist: None,
+            albums: (0..5)
+                .map(|i| {
+                    album(
+                        i,
+                        if i < 4 {
+                            ReleaseSection::Albums
+                        } else {
+                            ReleaseSection::Live
+                        },
+                    )
+                })
+                .collect(),
+            features: vec![album(9, ReleaseSection::Albums)],
+            appearances: Vec::new(),
+        };
+        let grid = Grid::for_width(px(560.0));
+        assert_eq!(grid.columns, 3);
+        let items = ArtistPage::cut(&record, grid);
+        let shape: Vec<String> = items
+            .iter()
+            .map(|i| match i {
+                Item::Header => "header".into(),
+                Item::Heading(t) => format!("[{t}]"),
+                Item::FeaturesHeading => "[features]".into(),
+                Item::Tiles { range, .. } => format!("{}..{}", range.start, range.end),
+                Item::Track(i) => format!("track {i}"),
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                "header",
+                "[albums]",
+                "0..3",
+                "3..4",
+                "[live]",
+                "4..5",
+                "[features]",
+                "0..1"
+            ]
+        );
     }
 }

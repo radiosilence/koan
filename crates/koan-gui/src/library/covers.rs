@@ -318,6 +318,11 @@ impl Covers {
         }
     }
 
+    /// Whether `key` itself is held, not a stand-in of another size.
+    pub fn has(&self, key: Key) -> bool {
+        self.memory.contains_key(&key)
+    }
+
     /// `owner`'s requests, replacing its last ones: a list's visible and
     /// upcoming sleeves ranked as it scrolls, or a page's few. What it no
     /// longer asks for is not started on its account. A record that comes on

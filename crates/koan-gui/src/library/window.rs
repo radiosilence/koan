@@ -127,5 +127,14 @@ impl Render for LibraryWindow {
             )
             .child(div().flex_1().min_h_0().child(page))
             .when_some(self.info.as_ref(), |d, (_, info)| d.child(info.clone()))
+            // Last, so its paint marks the end of the frame's work for the
+            // bench.
+            .when_some(self.lib.bench.clone(), |d, bench| {
+                d.child(
+                    canvas(|_, _, _| {}, move |_, _, _, _| bench.borrow_mut().painted())
+                        .absolute()
+                        .size_0(),
+                )
+            })
     }
 }

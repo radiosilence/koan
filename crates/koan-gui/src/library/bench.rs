@@ -15,10 +15,15 @@ use gpui_kit::*;
 /// What one frame of the grid recorded.
 #[derive(Default)]
 pub struct Frame {
-    /// Time spent building the grid's rows in this frame.
+    /// The frame's whole CPU time on the main thread: from the scroll event's
+    /// dispatch to the end of paint, uploads of new artwork included.
+    pub cpu: Duration,
+    /// Of which building the grid's rows' elements.
     pub rows: Duration,
     /// Tiles on screen drawn without their sleeve.
     pub blank: usize,
+    /// Tiles on screen drawn with another size of their sleeve.
+    pub standin: usize,
     /// Sleeves drawn for the first time this frame, each an atlas upload.
     pub uploads: usize,
 }
@@ -26,17 +31,38 @@ pub struct Frame {
 #[derive(Default)]
 pub struct Recorder {
     pub frame: Frame,
+    /// When this frame's work began, and when its paint ended.
+    began: Option<Instant>,
+    painted: Option<Instant>,
+    /// Frame intervals while nothing scrolls: the display's own rate.
+    idle: Vec<Instant>,
     frames: Vec<(Instant, Frame)>,
     /// When each tile still blank came on screen.
     blank_since: HashMap<i64, Instant>,
     /// How long tiles stayed blank once on screen.
     blank_for: Vec<Duration>,
-    seen: std::collections::HashSet<usize>,
+    seen: std::collections::HashSet<ImageId>,
 }
 
 impl Recorder {
-    /// A tile on screen this frame, and whether it had its sleeve.
-    pub fn tile(&mut self, album: i64, drawn: bool, image: Option<usize>, now: Instant) {
+    /// The window's paint finished: the end of this frame's work.
+    pub fn painted(&mut self) {
+        self.painted = Some(Instant::now());
+    }
+
+    /// A tile on screen this frame: whether it had its sleeve, and whether
+    /// that was another size of it.
+    pub fn tile(
+        &mut self,
+        album: i64,
+        drawn: bool,
+        standin: bool,
+        image: Option<ImageId>,
+        now: Instant,
+    ) {
+        if standin {
+            self.frame.standin += 1;
+        }
         if drawn {
             if let Some(since) = self.blank_since.remove(&album) {
                 self.blank_for.push(now - since);
@@ -53,8 +79,14 @@ impl Recorder {
     }
 
     fn end_frame(&mut self, at: Instant) {
-        let frame = std::mem::take(&mut self.frame);
+        let mut frame = std::mem::take(&mut self.frame);
+        if let (Some(began), Some(painted)) = (self.began.take(), self.painted.take())
+            && painted > began
+        {
+            frame.cpu = painted - began;
+        }
         self.frames.push((at, frame));
+        self.began = Some(Instant::now());
     }
 }
 
@@ -144,6 +176,7 @@ fn scroll(window: &mut Window, cx: &mut App, dy: f32, phase: TouchPhase) {
 fn tick(state: Rc<RefCell<Driver>>, settle: Instant, window: &mut Window, cx: &mut App) {
     let now = Instant::now();
     if now < settle {
+        state.borrow().recorder.borrow_mut().idle.push(now);
         window.on_next_frame(move |window, cx| tick(state, settle, window, cx));
         window.refresh();
         return;
@@ -229,68 +262,69 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     sorted[((sorted.len() - 1) as f64 * p).round() as usize]
 }
 
+fn sorted(mut v: Vec<f64>) -> Vec<f64> {
+    v.sort_by(f64::total_cmp);
+    v
+}
+
+fn ms(d: Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
+}
+
 fn report(d: &Driver) {
     let rec = d.recorder.borrow();
-    let mut bounds: Vec<(usize, usize, &str)> = Vec::new();
+    // The display's interval: what frames come at while nothing moves.
+    let idle = sorted(rec.idle.windows(2).map(|w| ms(w[1] - w[0])).collect());
+    let refresh = percentile(&idle, 0.5);
+    eprintln!("koan-gui bench: album grid, display interval {refresh:.2} ms");
     for (i, (start, name)) in d.marks.iter().enumerate() {
         let end = d.marks.get(i + 1).map_or(rec.frames.len(), |m| m.0);
-        bounds.push((*start, end, name));
-    }
-    eprintln!("koan-gui bench: album grid");
-    for (start, end, name) in bounds {
-        let frames = &rec.frames[start..end];
+        let frames = &rec.frames[*start..end];
         if frames.len() < 2 {
             continue;
         }
-        let mut intervals: Vec<f64> = frames
-            .windows(2)
-            .map(|w| (w[1].0 - w[0].0).as_secs_f64() * 1000.0)
-            .collect();
-        intervals.sort_by(f64::total_cmp);
-        let mut rows: Vec<f64> = frames
-            .iter()
-            .map(|f| f.1.rows.as_secs_f64() * 1000.0)
-            .collect();
-        rows.sort_by(f64::total_cmp);
-        let median = percentile(&intervals, 0.5);
-        let dropped = intervals.iter().filter(|i| **i > median * 1.5).count();
+        let intervals = sorted(frames.windows(2).map(|w| ms(w[1].0 - w[0].0)).collect());
+        let late = intervals.iter().filter(|i| **i > refresh * 1.5).count();
+        let cpu = |upload: bool| {
+            sorted(
+                frames
+                    .iter()
+                    .filter(|f| (f.1.uploads > 0) == upload && f.1.cpu > Duration::ZERO)
+                    .map(|f| ms(f.1.cpu))
+                    .collect(),
+            )
+        };
+        let (steady, uploading) = (cpu(false), cpu(true));
+        let rows = sorted(frames.iter().map(|f| ms(f.1.rows)).collect());
         let blank_frames = frames.iter().filter(|f| f.1.blank > 0).count();
-        let blank_tiles: usize = frames.iter().map(|f| f.1.blank).sum();
-        let upload_frames: Vec<&Frame> = frames
-            .iter()
-            .map(|f| &f.1)
-            .filter(|f| f.uploads > 0)
-            .collect();
-        let mut upload_rows: Vec<f64> = upload_frames
-            .iter()
-            .map(|f| f.rows.as_secs_f64() * 1000.0)
-            .collect();
-        upload_rows.sort_by(f64::total_cmp);
+        let blank: usize = frames.iter().map(|f| f.1.blank).sum();
+        let standin: usize = frames.iter().map(|f| f.1.standin).sum();
+        eprintln!("  {name}: {} frames", frames.len());
         eprintln!(
-            "  {name}: {} frames, interval p50 {:.2} p95 {:.2} p99 {:.2} max {:.2} ms, {} over 1.5x median; \
-             grid rows p50 {:.2} p95 {:.2} max {:.2} ms; {} frames uploaded art (rows p95 {:.2} ms); \
-             {} frames with blank tiles, {} blank tile-frames",
-            frames.len(),
-            median,
+            "    interval p50 {:.2} p95 {:.2} p99 {:.2} max {:.2} ms; {late} frames later than 1.5 display intervals",
+            percentile(&intervals, 0.5),
             percentile(&intervals, 0.95),
             percentile(&intervals, 0.99),
             intervals.last().copied().unwrap_or(0.0),
-            dropped,
+        );
+        eprintln!(
+            "    frame cpu without uploads ({} frames) p50 {:.2} p95 {:.2} max {:.2} ms; with uploads ({} frames) p50 {:.2} p95 {:.2} max {:.2} ms",
+            steady.len(),
+            percentile(&steady, 0.5),
+            percentile(&steady, 0.95),
+            steady.last().copied().unwrap_or(0.0),
+            uploading.len(),
+            percentile(&uploading, 0.5),
+            percentile(&uploading, 0.95),
+            uploading.last().copied().unwrap_or(0.0),
+        );
+        eprintln!(
+            "    of which building rows p50 {:.2} p95 {:.2} ms; {blank_frames} frames with blank tiles ({blank} tile-frames), {standin} stand-in tile-frames",
             percentile(&rows, 0.5),
             percentile(&rows, 0.95),
-            rows.last().copied().unwrap_or(0.0),
-            upload_frames.len(),
-            percentile(&upload_rows, 0.95),
-            blank_frames,
-            blank_tiles,
         );
     }
-    let mut blank: Vec<f64> = rec
-        .blank_for
-        .iter()
-        .map(|d| d.as_secs_f64() * 1000.0)
-        .collect();
-    blank.sort_by(f64::total_cmp);
+    let blank = sorted(rec.blank_for.iter().map(|d| ms(*d)).collect());
     eprintln!(
         "  tiles that came on screen blank: {}, blank for p50 {:.1} p95 {:.1} max {:.1} ms",
         blank.len(),

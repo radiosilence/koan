@@ -166,9 +166,19 @@ impl TrackBrowser {
                     Ok(page) => page,
                     Err(e) => {
                         log::warn!("tracks: {e}");
-                        this.update(cx, |this, _| {
-                            if this.request == request {
-                                this.loading = None;
+                        let swapped = pending.is_none();
+                        this.update(cx, |this, cx| {
+                            if this.request != request {
+                                return;
+                            }
+                            this.loading = None;
+                            // Swapped in but not whole: not the listing, so
+                            // the next change reads it again.
+                            if swapped {
+                                this.loaded = None;
+                            }
+                            if std::mem::take(&mut this.stale) {
+                                this.reload(cx);
                             }
                         })
                         .ok();
