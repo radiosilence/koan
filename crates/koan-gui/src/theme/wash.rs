@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
+    Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
     Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
