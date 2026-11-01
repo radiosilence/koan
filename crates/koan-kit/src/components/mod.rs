@@ -28,6 +28,7 @@ mod ring;
 mod rows;
 mod scroll;
 mod segmented;
+pub mod sheet;
 mod slider;
 mod spinner;
 mod split;

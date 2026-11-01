@@ -512,7 +512,19 @@ impl ArtistPage {
                     drag,
                     kind: crate::components::RowKind::Art,
                 };
-                rows::track_row(p, track, index, state, sleeve, Some(self.artist_id), cx)
+                // A row insets itself by the page's margin, as the body does.
+                div()
+                    .mx(-RowMetrics::page_margin(&p.look))
+                    .child(rows::track_row(
+                        p,
+                        track,
+                        index,
+                        state,
+                        sleeve,
+                        Some(self.artist_id),
+                        cx,
+                    ))
+                    .into_any_element()
             }
         }
     }
@@ -911,13 +923,16 @@ impl Render for ArtistPage {
         let view = cx.weak_entity();
         // The page's margin is the list's parent's: a list lays its items out
         // across its own bounds and ignores padding of its own.
-        let body = div().size_full().px(px(tile::MARGIN)).child(
-            list(self.list.clone(), move |ix, window, cx| {
-                view.update(cx, |this, cx| this.item(ix, window, cx))
-                    .unwrap_or_else(|_| div().into_any_element())
-            })
-            .size_full(),
-        );
+        let body = div()
+            .size_full()
+            .px(RowMetrics::page_margin(&p.look))
+            .child(
+                list(self.list.clone(), move |ix, window, cx| {
+                    view.update(cx, |this, cx| this.item(ix, window, cx))
+                        .unwrap_or_else(|_| div().into_any_element())
+                })
+                .size_full(),
+            );
 
         div()
             .key_context("Library")

@@ -228,7 +228,7 @@ impl AlbumPage {
                     .h(height)
                     .flex()
                     .items_end()
-                    .px(px(super::tile::MARGIN))
+                    .px(RowMetrics::page_margin(&p.look))
                     .pb(p.space(Space::Xs))
                     .typeset(p, Type::Fine, p.ink)
                     .child(title.clone())

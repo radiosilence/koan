@@ -87,7 +87,10 @@ impl RenderOnce for PageHeader {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let p = look.palette;
+        // The whole row's width, whatever holds it: a list item sizes to its
+        // content, and the text beside a cover would collapse to nothing.
         div()
+            .w_full()
             .flex()
             .items_start()
             .gap(look.spaced(18.0))

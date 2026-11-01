@@ -44,7 +44,7 @@ pub fn page_header(
         .flex()
         .items_start()
         .justify_between()
-        .px(px(super::tile::MARGIN))
+        .px(crate::components::RowMetrics::page_margin(&p.look))
         .pt(p.space(Space::L))
         .gap(p.space(Space::L))
         .child(
@@ -548,7 +548,7 @@ pub fn selection_bar<V: Picking>(
         .flex()
         .items_center()
         .justify_between()
-        .px(px(super::tile::MARGIN))
+        .px(crate::components::RowMetrics::page_margin(&p.look))
         .py(p.space(Space::M))
         .border_t_1()
         .border_color(p.rule)

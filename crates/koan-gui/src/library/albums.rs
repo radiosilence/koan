@@ -620,6 +620,11 @@ impl AlbumGrid {
             })
     }
 
+    /// How many records the grid lists.
+    pub fn listed(&self) -> usize {
+        self.records.len()
+    }
+
     /// Jumps to the top, or to the end.
     pub fn jump(&mut self, to_end: bool, cx: &mut Context<Self>) {
         let handle = self.scroll.0.borrow().base_handle.clone();

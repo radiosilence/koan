@@ -9,11 +9,13 @@ use koan_kit::raw::base::InteractiveElementExt as _;
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
+use crate::components::sheet as ask;
 use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
+    self, ActualSize, Back, Bigger, ClearDownloadedFiles, Forward, ShowAlbums, ShowArtists,
+    ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller,
+    ToggleLyrics, ToggleSidebar,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -52,6 +54,8 @@ pub struct Shell {
     _activation: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
+    /// Watches the window's one question host, which draws over everything.
+    _asking: Subscription,
 }
 
 impl Shell {
@@ -103,6 +107,10 @@ impl Shell {
             _arrivals: arrivals,
             _activation: activation,
             shortcuts: None,
+            _asking: {
+                let asking = ask::asking(cx);
+                cx.observe(&asking, |_, _, cx| cx.notify())
+            },
         }
     }
 
@@ -182,6 +190,39 @@ impl Shell {
         window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
         window_state::save(window.window_bounds(), cx);
         cx.notify();
+    }
+
+    /// Asks before throwing away every file downloaded from the server,
+    /// saying how much it frees and that the tracks stay.
+    fn clear_downloads(
+        &mut self,
+        _: &ClearDownloadedFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bytes = cx.global::<crate::mirror::Mirror>().cache.read(cx).0;
+        ask::confirm(
+            ask::Confirm {
+                title: "clear downloaded files".into(),
+                verb: "clear".into(),
+                destructive: true,
+                lines: vec![
+                    format!(
+                        "The copies of tracks downloaded from your server are deleted from this device: {}.",
+                        crate::time::bytes(bytes)
+                    )
+                    .into(),
+                ],
+                note: Some(
+                    "The tracks stay in the library and download again when played.".into(),
+                ),
+            },
+            window,
+            cx,
+            |cx| {
+                crate::engine::command(cx, "clear downloaded files", |e| e.clear_download_cache())
+            },
+        );
     }
 
     /// Bare space that moves the window, as a title bar's does.
@@ -339,6 +380,7 @@ impl Render for Shell {
                 this.show(Route::RecentlyPlayed, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
+            .on_action(cx.listener(Self::clear_downloads))
             .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
             .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))
             .on_action(|_: &ActualSize, _, cx| theme::KoanTheme::set_text_size(100, cx))
@@ -416,6 +458,10 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
+            .children(
+                ask::overlay(window, cx)
+                    .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),
+            )
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
             }))
