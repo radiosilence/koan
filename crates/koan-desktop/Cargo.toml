@@ -23,6 +23,9 @@ futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 log = "0.4"
 parking_lot = "0.13"
+# The browsers' sorts and filters, kept in desktop-ui.json.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 smallvec = "1"
 
 [dev-dependencies]

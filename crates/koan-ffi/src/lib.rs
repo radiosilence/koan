@@ -453,6 +453,14 @@ pub fn set_config_dir(path: String) {
     config::set_config_dir(path);
 }
 
+/// Where configuration lives, for a front end linking this crate as a Rust
+/// library that keeps state of its own beside it (the desktop app's browser
+/// sorts and filters). Not exported: the uniffi apps keep theirs in the
+/// platform's own store.
+pub fn config_dir() -> std::path::PathBuf {
+    config::config_dir()
+}
+
 /// A size as koan reads one in the config ("50GB", "500 MB"), in bytes, or
 /// `None` when it is not one. So the apps read the cache limit as the core
 /// does, without a parser of their own.
@@ -6709,7 +6717,9 @@ fn local_cover_art(row: &queries::TrackRow) -> Option<CoverArt> {
 /// Local art as the size asked for, as a server's thumbnail would be: a
 /// sleeve embedded at 3000 pixels is decoded at that size by every client
 /// that draws it otherwise, for a tile a tenth as wide. Art already within the
-/// size, or that will not decode, is returned as it was found.
+/// size, or that will not decode, is returned as it was found. A scaled copy
+/// is a JPEG, so a transparent sleeve loses its alpha; sleeves are opaque in
+/// practice.
 fn fit_cover(art: CoverArt, size: Option<u32>) -> CoverArt {
     let Some(size) = size.filter(|s| *s > 0) else {
         return art;

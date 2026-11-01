@@ -14,16 +14,25 @@ use super::drag::Playable;
 pub struct Feed {
     pub engine: Arc<KoanEngine>,
     /// Moves whenever the library's rows do. Pages showing a listing ask for
-    /// it again.
-    pub library_version: u64,
+    /// it again. `None` until the engine's first report.
+    pub library_version: Option<u64>,
     pub playing_album: Option<i64>,
     pub playing_track: Option<i64>,
     /// The tracks still arriving, by record, for a tile's download bar.
     pub arriving: HashMap<i64, Vec<i64>>,
+    /// Bumped whenever the connection to the server changes: artwork that
+    /// failed to arrive is worth asking for again.
+    pub connection_epoch: u64,
+    /// The playlists a pick can be added to: every one not read-only.
+    pub playlists: Vec<(i64, SharedString)>,
     favourites: HashSet<Playable>,
     /// Bumped by every toggle, so a re-read that started before one cannot
     /// put back what it changed.
     favourite_edits: u64,
+    /// One read at a time; one asked for while another runs makes it read
+    /// again when it lands.
+    favourites_reading: bool,
+    favourites_stale: bool,
     _observe: Task<()>,
 }
 
@@ -39,12 +48,16 @@ impl Feed {
         });
         Self {
             engine,
-            library_version: 0,
+            library_version: None,
             playing_album: None,
             playing_track: None,
             arriving: HashMap::new(),
+            connection_epoch: 0,
+            playlists: Vec::new(),
             favourites: HashSet::new(),
             favourite_edits: 0,
+            favourites_reading: false,
+            favourites_stale: false,
             _observe: observe,
         }
     }
@@ -54,9 +67,10 @@ impl Feed {
         for slice in batch {
             match slice {
                 StateSlice::Library { version } => {
-                    if version != self.library_version {
-                        self.library_version = version;
+                    if Some(version) != self.library_version {
+                        self.library_version = Some(version);
                         self.reload_favourites(cx);
+                        self.reload_playlists(cx);
                         changed = true;
                     }
                 }
@@ -83,6 +97,10 @@ impl Feed {
                         self.arriving = arriving;
                         changed = true;
                     }
+                }
+                StateSlice::Connection { .. } => {
+                    self.connection_epoch += 1;
+                    changed = true;
                 }
                 _ => {}
             }
@@ -133,25 +151,62 @@ impl Feed {
         }
     }
 
+    pub fn reload_playlists(&mut self, cx: &mut Context<Self>) {
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let playlists = match engine.playlists().await {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("playlists: {e}");
+                    return;
+                }
+            };
+            this.update(cx, |feed, cx| {
+                feed.playlists = playlists
+                    .into_iter()
+                    .filter(|p| !p.readonly)
+                    .map(|p| (p.id, p.name.into()))
+                    .collect();
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Every favourite id, read again: a sync or another device can change
-    /// them without this app toggling anything.
+    /// them without this app toggling anything. A read that a toggle or a
+    /// newer library change overtook is not applied but read again, since
+    /// neither is sure to be followed by another change.
     fn reload_favourites(&mut self, cx: &mut Context<Self>) {
+        if self.favourites_reading {
+            self.favourites_stale = true;
+            return;
+        }
+        self.favourites_reading = true;
+        self.favourites_stale = false;
         let engine = self.engine.clone();
         let edits = self.favourite_edits;
         cx.spawn(async move |this, cx| {
-            let (tracks, albums, artists) = (
-                engine.clone().favourite_track_ids().await,
-                engine.clone().favourite_album_ids().await,
-                engine.favourite_artist_ids().await,
-            );
-            let (Ok(tracks), Ok(albums), Ok(artists)) = (tracks, albums, artists) else {
-                log::warn!("favourites could not be read");
-                return;
-            };
+            let read = async {
+                Ok::<_, koan_ffi::KoanError>((
+                    engine.clone().favourite_track_ids().await?,
+                    engine.clone().favourite_album_ids().await?,
+                    engine.favourite_artist_ids().await?,
+                ))
+            }
+            .await;
             this.update(cx, |feed, cx| {
-                // A toggle landed while these were read: they are older than
-                // what is on screen, and the next library change reads again.
-                if feed.favourite_edits != edits {
+                feed.favourites_reading = false;
+                let (tracks, albums, artists) = match read {
+                    Ok(read) => read,
+                    Err(e) => {
+                        log::warn!("favourites: {e}");
+                        return;
+                    }
+                };
+                if feed.favourites_stale || feed.favourite_edits != edits {
+                    feed.reload_favourites(cx);
                     return;
                 }
                 feed.favourites = tracks

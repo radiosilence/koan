@@ -13,7 +13,9 @@
 //! Row ids are reused once a row is deleted, so whatever is held under an id
 //! is dropped when the engine says the record went (`art_evictions`), and a
 //! fetch or decode that was running then is not kept: each record carries a
-//! generation, bumped by an eviction, which a result must still match.
+//! generation, bumped by an eviction, which a result must still match. Until
+//! the first such sweep has landed, files on disk are not trusted at all: ids
+//! may have been reused while the app was closed.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -25,24 +27,20 @@ use futures::channel::mpsc;
 use gpui_kit::*;
 use koan_ffi::KoanEngine;
 use parking_lot::{Condvar, Mutex};
-use smallvec::smallvec;
+use smallvec::{SmallVec, smallvec};
 
-/// What is asked of the server, and what lands on disk: large enough for a
+/// What is asked of the engine, and what lands on disk: large enough for a
 /// record's own page on a 2× display, small enough that a library's worth is
 /// a cache rather than a second copy of the artwork.
 const SOURCE_PIXELS: u32 = 1000;
 
-/// Roughly 360 grid tiles at 2×. A ceiling: entries drawn recently, or still
-/// held by an element, are never evicted to meet it.
+/// Roughly 360 grid tiles at 2×. A ceiling: entries drawn in the last moment,
+/// or still held by an element, are never evicted to meet it.
 const MEMORY_BUDGET: usize = 256 * 1024 * 1024;
 
 /// Draw sizes are rounded up to a multiple of this, so a window being resized
 /// does not decode every tile again at each pixel.
 const BUCKET: u32 = 32;
-
-/// How long a failed fetch (a server out of reach) waits before it may be
-/// tried again. A record with no art is remembered for good instead.
-const RETRY_AFTER: Duration = Duration::from_secs(20);
 
 /// Bumped when what a cache file means changes; any other scheme's directory
 /// is deleted.
@@ -90,11 +88,12 @@ pub enum Priority {
     Ahead(f32),
 }
 
-/// What a page draws for a record: the bitmap at its size, or a smaller or
-/// larger one of the same record while that decodes.
+/// What a page draws for a record.
 pub enum Sleeve {
+    /// The bitmap at its size, or the nearest other size of the same record
+    /// while that decodes.
     Ready(Arc<RenderImage>),
-    /// Asked for and not here yet.
+    /// Not here yet.
     Waiting,
     /// The record has no art.
     None,
@@ -107,7 +106,7 @@ struct Held {
 }
 
 /// What both lanes and the main thread share, behind one lock that is held
-/// only across map reads and writes.
+/// only across map reads and writes, and the unlinks of an eviction.
 #[derive(Default)]
 struct Queue {
     /// Every request, by key, at the most urgent priority anyone asked for.
@@ -119,8 +118,13 @@ struct Queue {
     decoded: HashSet<Key>,
     /// Looked at, and the answer was that there is no art.
     absent: HashSet<Art>,
-    failed: HashMap<Art, Instant>,
+    /// Asked for, and the engine failed (a server out of reach). Not tried
+    /// again until the connection changes or the record is asked for afresh.
+    failed: HashSet<Art>,
     generation: HashMap<Art, u64>,
+    /// The first eviction sweep has landed, so a file found on disk belongs to
+    /// the record now holding its id.
+    swept: bool,
     closed: bool,
 }
 
@@ -129,35 +133,32 @@ impl Queue {
         self.generation.get(&art).copied().unwrap_or(0)
     }
 
-    /// The most urgent record that still needs fetching.
-    fn next_fetch(&self) -> Option<Art> {
-        let now = Instant::now();
-        self.wanted
-            .iter()
-            .filter(|(k, _)| {
-                !self.on_disk.contains(&k.art)
-                    && !self.fetching.contains(&k.art)
-                    && !self.absent.contains(&k.art)
-                    && self
-                        .failed
-                        .get(&k.art)
-                        .is_none_or(|at| now.duration_since(*at) > RETRY_AFTER)
-            })
-            .min_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(k, _)| k.art)
+    fn fetchable(&self, key: &Key) -> bool {
+        self.swept
+            && !self.on_disk.contains(&key.art)
+            && !self.fetching.contains(&key.art)
+            && !self.absent.contains(&key.art)
+            && !self.failed.contains(&key.art)
     }
 
-    /// The most urgent bitmap whose bytes are on disk.
-    fn next_decode(&self) -> Option<Key> {
+    fn decodable(&self, key: &Key) -> bool {
+        self.on_disk.contains(&key.art) && !self.decoding.contains(key) && !self.decoded.contains(key)
+    }
+
+    fn most_urgent(&self, ok: impl Fn(&Key) -> bool) -> Option<Key> {
         self.wanted
             .iter()
-            .filter(|(k, _)| {
-                self.on_disk.contains(&k.art)
-                    && !self.decoding.contains(k)
-                    && !self.decoded.contains(k)
-            })
+            .filter(|(k, _)| ok(k))
             .min_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(k, _)| *k)
+    }
+
+    fn next_fetch(&self) -> Option<Art> {
+        self.most_urgent(|k| self.fetchable(k)).map(|k| k.art)
+    }
+
+    fn next_decode(&self) -> Option<Key> {
+        self.most_urgent(|k| self.decodable(k))
     }
 }
 
@@ -167,18 +168,34 @@ struct Shared {
     decode_ready: Condvar,
 }
 
+impl Shared {
+    /// Wake one worker per job that has become startable, and none when
+    /// nothing has: a scroll re-aims every frame, and most frames add nothing
+    /// a lane can start.
+    fn wake(&self, fetches: usize, decodes: usize) {
+        for _ in 0..fetches.min(FETCHERS) {
+            self.fetch_ready.notify_one();
+        }
+        for _ in 0..decodes.min(MAX_DECODERS) {
+            self.decode_ready.notify_one();
+        }
+    }
+}
+
+const FETCHERS: usize = 6;
+const MAX_DECODERS: usize = 6;
+
 enum Done {
     Decoded {
         key: Key,
         generation: u64,
         image: Arc<RenderImage>,
     },
-    /// The lanes learned something a page draws differently: a record has
-    /// no art.
-    Changed,
+    /// A record turned out to have no art.
+    Absent,
 }
 
-/// Something the library lost, whose id may come back as something else.
+/// Records the library lost, whose ids may come back as other records.
 pub struct Evicted {
     pub albums: Vec<i64>,
     pub artists: Vec<i64>,
@@ -189,14 +206,15 @@ impl EventEmitter<Evicted> for Covers {}
 
 pub struct Covers {
     engine: Arc<KoanEngine>,
-    dir: Option<PathBuf>,
+    dir: PathBuf,
     shared: Arc<Shared>,
     memory: HashMap<Key, Held>,
+    /// The sizes held for each record, so a miss finds a stand-in without a
+    /// walk of every bitmap.
+    sizes: HashMap<Art, SmallVec<[u32; 4]>>,
     memory_bytes: usize,
-    /// Each list's requests, replaced whole as it scrolls.
-    aims: HashMap<EntityId, HashMap<Key, Priority>>,
-    /// Requests from pages that draw a few sleeves: kept until they land.
-    asks: HashMap<Key, Priority>,
+    /// Each list's and page's requests, replaced whole as it draws.
+    requests: HashMap<EntityId, HashMap<Key, Priority>>,
     evictions_seq: i64,
     _results: Task<()>,
 }
@@ -204,9 +222,8 @@ pub struct Covers {
 impl Covers {
     pub fn new(engine: Arc<KoanEngine>, cx: &mut Context<Self>) -> Self {
         let dir = directory();
-        let evictions_seq = dir
-            .as_ref()
-            .and_then(|d| std::fs::read_to_string(d.join("evictions-seq")).ok())
+        let evictions_seq = std::fs::read_to_string(dir.join("evictions-seq"))
+            .ok()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
         let shared = Arc::new(Shared {
@@ -217,7 +234,7 @@ impl Covers {
         let (tx, mut rx) = mpsc::unbounded();
         let decoders = std::thread::available_parallelism()
             .map_or(2, |n| n.get() / 2)
-            .clamp(2, 6);
+            .clamp(2, MAX_DECODERS);
         for n in 0..decoders {
             let (shared, dir, tx) = (shared.clone(), dir.clone(), tx.clone());
             std::thread::Builder::new()
@@ -227,7 +244,7 @@ impl Covers {
         }
         // Fetches mostly wait on a disk or a server, so there are more of
         // them than there are cores to spare.
-        for n in 0..6 {
+        for n in 0..FETCHERS {
             let (shared, dir, tx, engine) =
                 (shared.clone(), dir.clone(), tx.clone(), engine.clone());
             std::thread::Builder::new()
@@ -243,39 +260,38 @@ impl Covers {
                 }
             }
         });
-        Self {
+        let mut covers = Self {
             engine,
             dir,
             shared,
             memory: HashMap::new(),
+            sizes: HashMap::new(),
             memory_bytes: 0,
-            aims: HashMap::new(),
-            asks: HashMap::new(),
+            requests: HashMap::new(),
             evictions_seq,
             _results: results,
-        }
+        };
+        covers.sweep(cx);
+        covers
     }
 
-    /// What to draw for `key` now, without starting anything. A stand-in of
-    /// another size is drawn while the asked-for one decodes, so a resize or
-    /// a move to a display of another scale never blanks a sleeve.
+    /// What to draw for `key` now, without starting anything. Another size of
+    /// the same record stands in while the asked-for one decodes, the nearest
+    /// larger first, so a resize or a move to a display of another scale never
+    /// blanks a sleeve, and a row's thumbnail is not blown up over a tile.
     pub fn sleeve(&mut self, key: Key) -> Sleeve {
         let now = Instant::now();
-        if let Some(held) = self.memory.get_mut(&key) {
+        let px = self.sizes.get(&key.art).and_then(|sizes| {
+            if sizes.contains(&key.px) {
+                return Some(key.px);
+            }
+            let larger = sizes.iter().filter(|p| **p > key.px).min();
+            let smaller = sizes.iter().filter(|p| **p < key.px).max();
+            larger.or(smaller).copied()
+        });
+        if let Some(held) = px.and_then(|px| self.memory.get_mut(&Key { art: key.art, px })) {
             held.used = now;
             return Sleeve::Ready(held.image.clone());
-        }
-        let standin = self
-            .memory
-            .iter_mut()
-            .filter(|(k, _)| k.art == key.art)
-            .min_by_key(|(k, _)| k.px.abs_diff(key.px))
-            .map(|(_, held)| {
-                held.used = now;
-                held.image.clone()
-            });
-        if let Some(image) = standin {
-            return Sleeve::Ready(image);
         }
         if self.shared.queue.lock().absent.contains(&key.art) {
             Sleeve::None
@@ -288,47 +304,59 @@ impl Covers {
         self.memory.contains_key(&key)
     }
 
-    pub fn is_absent(&self, art: Art) -> bool {
-        self.shared.queue.lock().absent.contains(&art)
-    }
-
-    /// A page's request for a sleeve it is drawing. Kept until it lands, so
-    /// it suits a page with a few sleeves; a list that scrolls aims instead.
-    /// Never notifies, so it can be called while drawing.
-    pub fn ask(&mut self, key: Key) {
-        if self.memory.contains_key(&key) || self.asks.contains_key(&key) {
-            return;
-        }
-        self.asks.insert(key, Priority::Visible);
-        self.publish();
-    }
-
-    /// A scrolling list's requests, replacing its last ones. What it no
-    /// longer asks for is not started. Never notifies, so the list can aim
-    /// from its own layout.
-    pub fn aim(&mut self, owner: EntityId, ranked: impl IntoIterator<Item = (Key, Priority)>) {
+    /// `owner`'s requests, replacing its last ones: a list's visible and
+    /// upcoming sleeves ranked as it scrolls, or a page's few. What it no
+    /// longer asks for is not started on its account. A record asked for
+    /// afresh after a failed fetch is tried again. Never notifies, so it can
+    /// be called while drawing.
+    pub fn request(&mut self, owner: EntityId, ranked: impl IntoIterator<Item = (Key, Priority)>) {
         let wanted: HashMap<Key, Priority> = ranked
             .into_iter()
             .filter(|(k, _)| !self.memory.contains_key(k))
             .collect();
-        if self.aims.get(&owner) == Some(&wanted) {
+        let previous = self.requests.get(&owner);
+        if previous == Some(&wanted) {
             return;
         }
-        self.aims.insert(owner, wanted);
+        let fresh: Vec<Art> = wanted
+            .keys()
+            .filter(|k| previous.is_none_or(|p| !p.contains_key(k)))
+            .map(|k| k.art)
+            .collect();
+        if !fresh.is_empty() {
+            let mut queue = self.shared.queue.lock();
+            for art in fresh {
+                queue.failed.remove(&art);
+            }
+        }
+        self.requests.insert(owner, wanted);
         self.publish();
     }
 
-    /// A list going away: nothing it asked for is wanted on its account.
+    /// A list or page going away: nothing it asked for is wanted on its
+    /// account.
     pub fn release(&mut self, owner: EntityId) {
-        if self.aims.remove(&owner).is_some() {
+        if self.requests.remove(&owner).is_some() {
             self.publish();
         }
     }
 
+    /// The connection to the server changed: what failed may work now.
+    pub fn retry_failed(&mut self) {
+        let mut queue = self.shared.queue.lock();
+        if queue.failed.is_empty() {
+            return;
+        }
+        queue.failed.clear();
+        let fetches = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
+        drop(queue);
+        self.shared.wake(fetches, 0);
+    }
+
     fn publish(&mut self) {
-        let mut wanted = self.asks.clone();
-        for aim in self.aims.values() {
-            for (key, priority) in aim {
+        let mut wanted: HashMap<Key, Priority> = HashMap::new();
+        for request in self.requests.values() {
+            for (key, priority) in request {
                 wanted
                     .entry(*key)
                     .and_modify(|p| {
@@ -340,13 +368,20 @@ impl Covers {
             }
         }
         let mut queue = self.shared.queue.lock();
-        // A bitmap decoded and then evicted from memory is wanted again.
+        // A bitmap decoded and since evicted from memory is wanted again.
         let memory = &self.memory;
         queue.decoded.retain(|k| memory.contains_key(k));
+        let fetches = wanted
+            .keys()
+            .filter(|k| !queue.wanted.contains_key(k) && queue.fetchable(k))
+            .count();
+        let decodes = wanted
+            .keys()
+            .filter(|k| !queue.wanted.contains_key(k) && queue.decodable(k))
+            .count();
         queue.wanted = wanted;
         drop(queue);
-        self.shared.fetch_ready.notify_all();
-        self.shared.decode_ready.notify_all();
+        self.shared.wake(fetches, decodes);
     }
 
     fn land(&mut self, done: Done, cx: &mut Context<Self>) {
@@ -356,95 +391,139 @@ impl Covers {
                 generation,
                 image,
             } => {
-                let current = self.shared.queue.lock().generation(key.art);
-                if current != generation {
+                let mut queue = self.shared.queue.lock();
+                if queue.generation(key.art) != generation {
+                    // Made for the record that held this id before. Not
+                    // marked decoded, so the new record's is made.
+                    queue.decoded.remove(&key);
+                    let decodes = usize::from(queue.wanted.contains_key(&key) && queue.decodable(&key));
+                    drop(queue);
+                    self.shared.wake(0, decodes);
                     cx.drop_image(image, None);
                     return;
                 }
+                drop(queue);
                 let size = image.size(0);
                 let bytes = (i32::from(size.width) * i32::from(size.height) * 4) as usize;
-                if let Some(old) = self.memory.insert(
-                    key,
-                    Held {
-                        image,
-                        bytes,
-                        used: Instant::now(),
-                    },
-                ) {
+                let held = Held {
+                    image,
+                    bytes,
+                    used: Instant::now(),
+                };
+                if let Some(old) = self.memory.insert(key, held) {
                     self.memory_bytes -= old.bytes;
                     cx.drop_image(old.image, None);
+                } else {
+                    self.sizes.entry(key.art).or_default().push(key.px);
                 }
                 self.memory_bytes += bytes;
-                if self.asks.remove(&key).is_some() {
-                    self.publish();
-                }
                 self.trim(cx);
             }
-            Done::Changed => {}
+            Done::Absent => {}
         }
         cx.notify();
     }
 
-    /// Back under budget, oldest first, never touching a bitmap drawn in the
-    /// last moment or still held by an element: dropping one of those from
-    /// the atlas would only have the next paint upload it again, and nothing
-    /// would ever drop it after that.
+    fn forget(&mut self, key: Key, cx: &mut Context<Self>) {
+        if let Some(held) = self.memory.remove(&key) {
+            self.memory_bytes -= held.bytes;
+            if let Some(sizes) = self.sizes.get_mut(&key.art) {
+                sizes.retain(|p| *p != key.px);
+                if sizes.is_empty() {
+                    self.sizes.remove(&key.art);
+                }
+            }
+            cx.drop_image(held.image, None);
+        }
+    }
+
+    /// Back under budget. What nobody is asking for goes first, oldest first;
+    /// then what is wanted least, farthest ahead first. A bitmap drawn in the
+    /// last moment, or still held by an element, is never dropped: the atlas
+    /// would upload it again at the next paint and nothing would drop it
+    /// after that. Evicting what is wanted only after the rest is what keeps
+    /// a tight budget from evicting and re-decoding the rows ahead in a loop.
     fn trim(&mut self, cx: &mut Context<Self>) {
         if self.memory_bytes <= MEMORY_BUDGET {
             return;
         }
         let target = MEMORY_BUDGET / 10 * 9;
         let recent = Instant::now() - Duration::from_millis(500);
-        let mut old: Vec<(Key, Instant)> = self
+        let wanted = self.shared.queue.lock().wanted.clone();
+        let rank = |key: &Key| match wanted.get(key) {
+            None => 0.0,
+            Some(Priority::Ahead(d)) => 1.0 / (1.0 + d),
+            Some(Priority::Landing(_)) => 2.0,
+            Some(Priority::Visible) => 3.0,
+        };
+        let mut candidates: Vec<(Key, f32, Instant)> = self
             .memory
             .iter()
             .filter(|(_, h)| h.used < recent && Arc::strong_count(&h.image) == 1)
-            .map(|(k, h)| (*k, h.used))
+            .map(|(k, h)| (*k, rank(k), h.used))
             .collect();
-        old.sort_by_key(|(_, used)| *used);
-        let mut queue = self.shared.queue.lock();
-        for (key, _) in old {
+        candidates.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.2.cmp(&b.2)));
+        let mut dropped = Vec::new();
+        for (key, _, _) in candidates {
             if self.memory_bytes <= target {
                 break;
             }
-            if let Some(held) = self.memory.remove(&key) {
-                self.memory_bytes -= held.bytes;
-                queue.decoded.remove(&key);
-                cx.drop_image(held.image, None);
-            }
+            self.forget(key, cx);
+            dropped.push(key);
+        }
+        let mut queue = self.shared.queue.lock();
+        for key in dropped {
+            queue.decoded.remove(&key);
         }
     }
 
     /// Forget what the library has deleted since last asked: its files, its
-    /// bitmaps, and any fetch or decode still running for it. Called on each
-    /// library change; the seq is kept beside the files it describes.
+    /// bitmaps, and any fetch or decode still running for it. Called at launch
+    /// and on each library change.
     pub fn sweep(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.clone();
         let after = self.evictions_seq;
         cx.spawn(async move |this, cx| {
-            let gone = match engine.art_evictions(after).await {
-                Ok(gone) => gone,
+            let gone = engine.art_evictions(after).await;
+            this.update(cx, |covers, cx| match gone {
+                Ok(gone) => covers.evict(gone, cx),
+                // Not knowing what went is no reason to show nothing: the
+                // next library change sweeps again.
                 Err(e) => {
                     log::warn!("art evictions: {e}");
-                    return;
+                    covers.mark_swept();
                 }
-            };
-            this.update(cx, |covers, cx| covers.evict(gone, cx)).ok();
+            })
+            .ok();
         })
         .detach();
     }
 
-    fn evict(&mut self, gone: koan_ffi::ArtEvictions, cx: &mut Context<Self>) {
-        if gone.seq <= self.evictions_seq {
+    fn mark_swept(&mut self) {
+        let mut queue = self.shared.queue.lock();
+        if queue.swept {
             return;
         }
-        let arts: Vec<Art> = gone
-            .albums
-            .iter()
-            .map(|id| Art::Album(*id))
-            .chain(gone.artists.iter().map(|id| Art::Artist(*id)))
-            .collect();
+        queue.swept = true;
+        let fetches = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
+        drop(queue);
+        self.shared.wake(fetches, 0);
+    }
+
+    fn evict(&mut self, gone: koan_ffi::ArtEvictions, cx: &mut Context<Self>) {
+        let fresh = gone.seq > self.evictions_seq;
+        let arts: Vec<Art> = if fresh {
+            gone.albums
+                .iter()
+                .map(|id| Art::Album(*id))
+                .chain(gone.artists.iter().map(|id| Art::Artist(*id)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         {
+            // The files go under the lock, so the fetch lane cannot find one
+            // between the generation moving and the file going.
             let mut queue = self.shared.queue.lock();
             for art in &arts {
                 *queue.generation.entry(*art).or_default() += 1;
@@ -452,7 +531,16 @@ impl Covers {
                 queue.absent.remove(art);
                 queue.failed.remove(art);
                 queue.decoded.retain(|k| k.art != *art);
+                std::fs::remove_file(self.dir.join(art.filename())).ok();
             }
+            // What is on screen under those ids is the new record's, to fetch.
+            let fetches = queue
+                .wanted
+                .keys()
+                .filter(|k| arts.contains(&k.art) && queue.fetchable(k))
+                .count();
+            drop(queue);
+            self.shared.wake(fetches, 0);
         }
         let drop: Vec<Key> = self
             .memory
@@ -461,23 +549,19 @@ impl Covers {
             .copied()
             .collect();
         for key in drop {
-            if let Some(held) = self.memory.remove(&key) {
-                self.memory_bytes -= held.bytes;
-                cx.drop_image(held.image, None);
-            }
+            self.forget(key, cx);
+        }
+        self.mark_swept();
+        if !fresh {
+            return;
         }
         self.evictions_seq = gone.seq;
-        if let Some(dir) = self.dir.clone() {
-            let seq = gone.seq;
-            cx.background_executor()
-                .spawn(async move {
-                    for art in arts {
-                        std::fs::remove_file(dir.join(art.filename())).ok();
-                    }
-                    write_atomically(&dir.join("evictions-seq"), seq.to_string().as_bytes()).ok();
-                })
-                .detach();
-        }
+        let (dir, seq) = (self.dir.clone(), gone.seq);
+        cx.background_executor()
+            .spawn(async move {
+                write_atomically(&dir.join("evictions-seq"), seq.to_string().as_bytes()).ok();
+            })
+            .detach();
         cx.emit(Evicted {
             albums: gone.albums,
             artists: gone.artists,
@@ -497,22 +581,30 @@ impl Drop for Covers {
 
 /// `$KOAN_CONFIG_DIR/artwork` for an instance on a configuration of its own
 /// (a test library), since files are named by row id and another library's
-/// ids would show its covers; the platform's cache directory otherwise.
-fn directory() -> Option<PathBuf> {
+/// ids would show its covers; the platform's cache directory otherwise, and
+/// the temporary directory where there is none.
+fn directory() -> PathBuf {
     let root = match std::env::var_os("KOAN_CONFIG_DIR") {
         Some(dir) => PathBuf::from(dir).join("artwork"),
-        None => dirs::cache_dir()?.join("koan-desktop").join("artwork"),
+        None => dirs::cache_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("koan-desktop")
+            .join("artwork"),
     };
     let dir = root.join(SCHEME);
-    std::fs::create_dir_all(&dir).ok()?;
+    if std::fs::create_dir_all(&dir).is_err() {
+        let fallback = std::env::temp_dir().join("koan-desktop-artwork").join(SCHEME);
+        std::fs::create_dir_all(&fallback).ok();
+        return fallback;
+    }
     // Nothing here is authoritative, so an older scheme is deleted rather
     // than migrated; it refills as pages are drawn.
-    for entry in std::fs::read_dir(&root).ok()?.flatten() {
+    for entry in std::fs::read_dir(&root).into_iter().flatten().flatten() {
         if entry.file_name() != SCHEME {
             std::fs::remove_dir_all(entry.path()).ok();
         }
     }
-    Some(dir)
+    dir
 }
 
 fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -525,7 +617,7 @@ fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 fn fetch_lane(
     shared: Arc<Shared>,
-    dir: Option<PathBuf>,
+    dir: PathBuf,
     engine: Arc<KoanEngine>,
     tx: mpsc::UnboundedSender<Done>,
 ) {
@@ -543,17 +635,18 @@ fn fetch_lane(
                 shared.fetch_ready.wait(&mut queue);
             }
         };
-        let file = dir.as_ref().map(|d| d.join(art.filename()));
-        if file.as_ref().is_some_and(|f| f.exists()) {
-            let mut queue = shared.queue.lock();
+        let file = dir.join(art.filename());
+        // Checked under the lock: an eviction unlinks under it too.
+        let mut queue = shared.queue.lock();
+        if queue.generation(art) == generation && file.exists() {
             queue.fetching.remove(&art);
-            if queue.generation(art) == generation {
-                queue.on_disk.insert(art);
-            }
+            queue.on_disk.insert(art);
+            let decodes = queue.wanted.keys().filter(|k| k.art == art).count();
             drop(queue);
-            shared.decode_ready.notify_all();
+            shared.wake(0, decodes);
             continue;
         }
+        drop(queue);
         let fetched = futures::executor::block_on(async {
             match art {
                 Art::Album(id) => engine.clone().album_cover_art(id, Some(SOURCE_PIXELS)).await,
@@ -562,8 +655,8 @@ fn fetch_lane(
         });
         // Written beside its final name and renamed under the lock, so an
         // eviction of the record in between leaves nothing under its id.
-        let staged = match (&fetched, &file) {
-            (Ok(Some(cover)), Some(file)) => {
+        let staged = match &fetched {
+            Ok(Some(cover)) => {
                 let tmp = file.with_extension("part");
                 std::fs::write(&tmp, &cover.data).ok().map(|()| tmp)
             }
@@ -572,40 +665,45 @@ fn fetch_lane(
         let mut queue = shared.queue.lock();
         queue.fetching.remove(&art);
         let current = queue.generation(art) == generation;
-        let mut changed = false;
-        match fetched {
-            Ok(Some(_)) => match (staged, &file) {
-                (Some(tmp), Some(file)) if current && std::fs::rename(&tmp, file).is_ok() => {
-                    queue.on_disk.insert(art);
+        let mut absent = false;
+        match (fetched, staged) {
+            (Ok(Some(_)), Some(tmp)) if current && std::fs::rename(&tmp, &file).is_ok() => {
+                queue.on_disk.insert(art);
+            }
+            (Ok(Some(_)), Some(tmp)) => {
+                std::fs::remove_file(tmp).ok();
+                if current {
+                    queue.failed.insert(art);
                 }
-                (Some(tmp), _) => {
-                    std::fs::remove_file(tmp).ok();
-                }
-                // No directory to keep it in: nothing can be shown.
-                _ => {
-                    queue.failed.insert(art, Instant::now());
-                }
-            },
-            Ok(None) if current => {
+            }
+            // Could not be written: as good as a failed fetch.
+            (Ok(Some(_)), None) if current => {
+                queue.failed.insert(art);
+            }
+            (Ok(None), _) if current => {
                 queue.absent.insert(art);
-                changed = true;
+                absent = true;
             }
-            Ok(None) => {}
-            Err(e) => {
+            (Err(e), _) if current => {
                 log::debug!("art for {art:?}: {e}");
-                queue.failed.insert(art, Instant::now());
+                queue.failed.insert(art);
             }
+            _ => {}
         }
+        let decodes = queue
+            .wanted
+            .keys()
+            .filter(|k| k.art == art && queue.decodable(k))
+            .count();
         drop(queue);
-        shared.decode_ready.notify_all();
-        if changed && tx.unbounded_send(Done::Changed).is_err() {
+        shared.wake(0, decodes);
+        if absent && tx.unbounded_send(Done::Absent).is_err() {
             return;
         }
     }
 }
 
-fn decode_lane(shared: Arc<Shared>, dir: Option<PathBuf>, tx: mpsc::UnboundedSender<Done>) {
-    let Some(dir) = dir else { return };
+fn decode_lane(shared: Arc<Shared>, dir: PathBuf, tx: mpsc::UnboundedSender<Done>) {
     loop {
         let (key, generation) = {
             let mut queue = shared.queue.lock();
@@ -621,16 +719,24 @@ fn decode_lane(shared: Arc<Shared>, dir: Option<PathBuf>, tx: mpsc::UnboundedSen
             }
         };
         let file = dir.join(key.art.filename());
-        let decoded = std::fs::read(&file)
-            .map_err(|_| Missing)
-            .and_then(|data| decode(&data, key.px).ok_or(Missing).map_err(|_| Broken));
+        let decoded = match std::fs::read(&file) {
+            Ok(data) => decode(&data, key.px).ok_or(Failure::Broken),
+            Err(_) => Err(Failure::Missing),
+        };
         let mut queue = shared.queue.lock();
         queue.decoding.remove(&key);
         let current = queue.generation(key.art) == generation;
         match decoded {
             Ok(image) => {
-                queue.decoded.insert(key);
+                // Marked only when it still belongs to the record holding the
+                // id; otherwise the new record's is made in its place.
+                if current {
+                    queue.decoded.insert(key);
+                }
                 drop(queue);
+                if !current {
+                    continue;
+                }
                 let done = Done::Decoded {
                     key,
                     generation,
@@ -642,11 +748,9 @@ fn decode_lane(shared: Arc<Shared>, dir: Option<PathBuf>, tx: mpsc::UnboundedSen
             }
             // Gone from disk (a cache cleared under it): fetched again.
             Err(Failure::Missing) => {
-                if current {
-                    queue.on_disk.remove(&key.art);
-                }
+                let fetch = current && queue.on_disk.remove(&key.art);
                 drop(queue);
-                shared.fetch_ready.notify_all();
+                shared.wake(usize::from(fetch), 0);
             }
             // Bytes that will not make a bitmap will not make one next time:
             // the record is taken to have no art, and the file goes so a later
@@ -658,7 +762,7 @@ fn decode_lane(shared: Arc<Shared>, dir: Option<PathBuf>, tx: mpsc::UnboundedSen
                     std::fs::remove_file(&file).ok();
                 }
                 drop(queue);
-                if tx.unbounded_send(Done::Changed).is_err() {
+                if current && tx.unbounded_send(Done::Absent).is_err() {
                     return;
                 }
             }
@@ -670,7 +774,6 @@ enum Failure {
     Missing,
     Broken,
 }
-use Failure::{Broken, Missing};
 
 /// The sleeve filling a square `px` on a side, centred, as BGRA.
 fn decode(data: &[u8], px: u32) -> Option<RenderImage> {
@@ -707,8 +810,7 @@ mod tests {
 
     #[test]
     fn keys_round_up_to_a_bucket() {
-        let k = Key::new(Art::Album(1), px(200.0), 2.0);
-        assert_eq!(k.px, 416);
+        assert_eq!(Key::new(Art::Album(1), px(200.0), 2.0).px, 416);
         assert_eq!(Key::new(Art::Album(1), px(208.0), 2.0).px, 416);
         assert_eq!(Key::new(Art::Album(1), px(0.0), 1.0).px, BUCKET);
     }
@@ -734,15 +836,17 @@ mod tests {
     }
 
     #[test]
-    fn the_queue_takes_the_most_urgent_job_it_can_start() {
+    fn nothing_is_fetched_before_the_first_sweep_and_failures_wait() {
         let mut q = Queue::default();
         let (a, b) = (Art::Album(1), Art::Album(2));
         q.wanted.insert(Key { art: a, px: 64 }, Priority::Ahead(5.0));
         q.wanted.insert(Key { art: b, px: 64 }, Priority::Visible);
+        assert_eq!(q.next_fetch(), None);
+        q.swept = true;
         assert_eq!(q.next_fetch(), Some(b));
         q.absent.insert(b);
         assert_eq!(q.next_fetch(), Some(a));
-        q.failed.insert(a, Instant::now());
+        q.failed.insert(a);
         assert_eq!(q.next_fetch(), None);
         q.on_disk.insert(a);
         assert_eq!(q.next_decode(), Some(Key { art: a, px: 64 }));
