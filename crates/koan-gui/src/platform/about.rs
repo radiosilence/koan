@@ -1,0 +1,198 @@
+//! Who the app is: kōan → About kōan, and on macOS the name and the icon a
+//! build run from source (`cargo run`, outside a bundle) shows in the Dock,
+//! the app switcher and the menu bar.
+
+use gpui_kit::App;
+
+use super::actions::About;
+
+/// The version, and the commit it was built from.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const BUILD: &str = env!("KOAN_BUILD");
+const SITE: &str = "https://koan.rocks";
+const SOURCE: &str = "https://github.com/radiosilence/koan";
+
+/// The desktop app's icon: kōan's, with a stand beneath the circle so it is
+/// told apart from the Mac app.
+#[cfg(target_os = "macos")]
+const ICON: &[u8] = include_bytes!("../../packaging/AppIcon.icns");
+
+/// Answers About kōan.
+pub fn init(cx: &mut App) {
+    cx.on_action(|_: &About, cx| show(cx));
+}
+
+/// The name a build outside a bundle shows in the menu bar: set before the
+/// application starts, which is when AppKit reads it. A bundle names itself.
+#[cfg(target_os = "macos")]
+pub fn name_unbundled() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send, sel};
+    use objc2_foundation::NSString;
+    // SAFETY: messages to AppKit's own classes on the main thread before
+    // the application runs; `setObject:forKey:` is sent only to a
+    // dictionary that answers to it.
+    unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
+        if !id.is_null() {
+            return;
+        }
+        let info: *mut AnyObject = msg_send![bundle, infoDictionary];
+        if info.is_null() {
+            return;
+        }
+        let mutable: bool = msg_send![info, respondsToSelector: sel!(setObject:forKey:)];
+        if mutable {
+            let name = NSString::from_str("kōan desktop");
+            let key = NSString::from_str("CFBundleName");
+            let _: () = msg_send![info, setObject: &*name, forKey: &*key];
+        }
+    }
+}
+
+/// The icon a build outside a bundle shows in the Dock and the app switcher:
+/// without one it is the system's generic executable. Once the application
+/// is running.
+#[cfg(target_os = "macos")]
+pub fn icon_unbundled() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    // SAFETY: as `name_unbundled`; the image is checked before it is set.
+    unsafe {
+        let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+        let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
+        if !id.is_null() {
+            return;
+        }
+        let data: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: ICON.as_ptr().cast::<std::ffi::c_void>(), length: ICON.len()];
+        let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
+        let image: *mut AnyObject = msg_send![image, initWithData: data];
+        if image.is_null() {
+            return;
+        }
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, setApplicationIconImage: image];
+        let _: () = msg_send![image, release];
+    }
+}
+
+/// The standard About panel, as the Mac app shows it: the icon, the name, the
+/// version and its build, and where kōan lives.
+#[cfg(target_os = "macos")]
+fn show(_cx: &mut App) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSString;
+    let credits = format!(
+        "<div style=\"font: 11px -apple-system; text-align: center\"><a href=\"{SITE}\">koan.rocks</a> · <a href=\"{SOURCE}\">Source</a></div>"
+    );
+    // SAFETY: AppKit's own panel, on the main thread, from an action.
+    unsafe {
+        let html = credits.as_bytes();
+        let data: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: html.as_ptr().cast::<std::ffi::c_void>(), length: html.len()];
+        let null: *mut AnyObject = std::ptr::null_mut();
+        let text: *mut AnyObject = msg_send![class!(NSAttributedString), alloc];
+        let text: *mut AnyObject = msg_send![text, initWithHTML: data, documentAttributes: null];
+        let keys = [
+            NSString::from_str("ApplicationName"),
+            NSString::from_str("ApplicationVersion"),
+            NSString::from_str("Version"),
+        ];
+        let values = [
+            NSString::from_str("kōan desktop"),
+            NSString::from_str(VERSION),
+            NSString::from_str(BUILD),
+        ];
+        let options: *mut AnyObject = msg_send![class!(NSMutableDictionary), dictionary];
+        for (k, v) in keys.iter().zip(&values) {
+            let _: () = msg_send![options, setObject: &**v, forKey: &**k];
+        }
+        if !text.is_null() {
+            let key = NSString::from_str("Credits");
+            let _: () = msg_send![options, setObject: text, forKey: &*key];
+            let _: () = msg_send![text, release];
+        }
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, orderFrontStandardAboutPanelWithOptions: options];
+        let _: () = msg_send![app, activateIgnoringOtherApps: true];
+    }
+}
+
+/// Elsewhere, a window of its own with the same: the name, the version and
+/// its build, and the links.
+#[cfg(not(target_os = "macos"))]
+fn show(cx: &mut App) {
+    use gpui_kit::{
+        AppContext, Bounds, IntoElement, ParentElement, Render, Styled, TitlebarOptions,
+        WindowBounds, WindowOptions, div, px, size,
+    };
+
+    use crate::components::{Button, ButtonKind};
+    use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
+
+    struct AboutWindow;
+
+    impl Render for AboutWindow {
+        fn render(
+            &mut self,
+            window: &mut gpui_kit::Window,
+            cx: &mut gpui_kit::Context<Self>,
+        ) -> impl IntoElement {
+            let look = Look::of(window, cx);
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(look.space(Space::M))
+                .bg(look.palette.bg.hsla())
+                .child(
+                    div()
+                        .text_role(TypeRole::Title, &look)
+                        .text_color(look.palette.strong.hsla())
+                        .child("kōan desktop"),
+                )
+                .child(
+                    div()
+                        .text_role(TypeRole::Meta, &look)
+                        .text_color(look.text_color(Tone::Muted))
+                        .child(format!("{VERSION} ({BUILD})")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(look.space(Space::L))
+                        .child(
+                            Button::new("about-site", ButtonKind::Link)
+                                .text("koan.rocks")
+                                .on_click(|_, _, cx| cx.open_url(SITE)),
+                        )
+                        .child(
+                            Button::new("about-source", ButtonKind::Link)
+                                .label("Source")
+                                .on_click(|_, _, cx| cx.open_url(SOURCE)),
+                        ),
+                )
+        }
+    }
+
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+            None,
+            size(px(360.), px(220.)),
+            cx,
+        ))),
+        titlebar: Some(TitlebarOptions {
+            title: Some("About kōan".into()),
+            ..Default::default()
+        }),
+        is_resizable: false,
+        app_id: Some("koan-gui".into()),
+        ..Default::default()
+    };
+    if let Err(e) = cx.open_window(options, |_, cx| cx.new(|_| AboutWindow)) {
+        log::warn!("about: {e}");
+    }
+}

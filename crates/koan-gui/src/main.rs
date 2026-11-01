@@ -21,6 +21,8 @@ fn main() {
         let _ = opened.unbounded_send(Opened::Paths(paths));
     }
 
+    #[cfg(target_os = "macos")]
+    platform::about::name_unbundled();
     let application = gpui_kit::application().with_assets(theme::icons::Assets);
     application.on_open_urls(move |urls| {
         for next in instance::sort_urls(urls) {
@@ -28,6 +30,8 @@ fn main() {
         }
     });
     application.run(|cx| {
+        #[cfg(target_os = "macos")]
+        platform::about::icon_unbundled();
         gpui_kit::init(cx);
         theme::init(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
