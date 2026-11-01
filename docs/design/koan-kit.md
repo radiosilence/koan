@@ -16,6 +16,19 @@ gpui-kit  ->  koan-kit  ->  koan-gui
 
 **koan-gui** builds pages from koan-kit only. It does not depend on `gpui-kit`: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles, gpui-component's widgets). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
 
+## Beyond kōan
+
+koan-kit is written to be used by other projects (sbr, say) and published to crates.io later, so it stays project-agnostic: no koan-gui types, none of the app's wording, routes or data. Words a component draws come from its caller; a cover is `CoverArt`, never a library record. The kōan look is its default; an app supplies its own accent (the theme's `AccentFeed` takes any colour) and, in time, its own icon set through the asset source. It has a standalone example (the theme sheet, which draws every component), its own docs, and tests of its own.
+
+One thing does not travel: the GPUI patch that stops an idle window waking at every display refresh (#1614) is vendored in this workspace through `[patch.crates-io]`, which applies to this workspace alone. Another project using koan-kit gets GPUI as published. Upstreaming the patch is the real fix.
+
+## Built without the Mac's glitches
+
+The Swift app fixed its glitches one at a time: a seek bar that snapped back, menus that reopened when their button was clicked to close them, hover jank, scroll jumps, layout shifts on load, covers jumping while a window resized. Each koan-kit component is built from its Swift counterpart's history (`git log -p` on the view, and the merged PRs that fixed it), so it has those fixes by construction, with a test where one can be written, and its docs list them. Two so far:
+
+- **Seeking.** A seek lands at once and stale playhead anchors wait until the engine reaches it, or two seconds pass (`PlayerModel.swift`'s pending seek). Shared by every app in koan-ffi's published state, and tested there.
+- **Menus and popovers toggle.** A trigger whose menu is open closes it, including when the click outside that dismisses the menu and the trigger's own click arrive in one event. Part of the anchor every menu and popover trigger uses.
+
 ## Layers
 
 | Layer | Where | Owns |
