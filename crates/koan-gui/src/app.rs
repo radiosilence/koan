@@ -32,6 +32,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.set_global(mirror);
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
+    crate::levels::install(cx);
     crate::platform::dock::follow(engine, cx);
     settings::install(engine.clone(), cx);
     crate::dsp::window::init(cx);

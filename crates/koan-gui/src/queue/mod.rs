@@ -795,14 +795,23 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
         .child(
             div()
                 // A glyph's width, or a word's in the plain look.
-                .w(if p.look.icons { px(14.) } else { px(56.) })
+                .w(if p.look.icons {
+                    crate::levels::SIDE + px(2.)
+                } else {
+                    px(56.)
+                })
                 .flex_shrink_0()
                 .flex()
                 .justify_center()
                 .text_role(TypeRole::Fine, &p.look)
-                .children(
-                    mark.map(|(icon, word, color)| glyph(icon, word, TypeRole::Fine, color, p)),
-                ),
+                .children(mark.map(|(icon, word, color)| {
+                    if icon == Icon::PlayMark {
+                        // Moving with the music, as the Mac's bars do.
+                        crate::levels::bars(color).into_any_element()
+                    } else {
+                        glyph(icon, word, TypeRole::Fine, color, p)
+                    }
+                })),
         )
         .child(leading)
         .child(

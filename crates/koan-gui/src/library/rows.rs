@@ -123,7 +123,7 @@ pub fn track_row<V: TrackList>(
             if state.current { p.accent } else { p.muted },
         )
         .child(if state.current && state.playing {
-            super::tile::playing_bars(p).into_any_element()
+            crate::levels::bars(p.accent).into_any_element()
         } else {
             div()
                 .group_hover("row", |s| s.invisible())

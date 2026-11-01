@@ -346,7 +346,14 @@ impl<V: TileHost> Render for TileView<V> {
             );
         }
         if state.playing {
-            art = art.child(playing_bars(p).absolute().left(px(8.0)).bottom(px(8.0)));
+            art = art.child(
+                div()
+                    .id("tile-playing")
+                    .absolute()
+                    .left(px(8.0))
+                    .bottom(px(8.0))
+                    .child(crate::levels::bars(p.accent)),
+            );
         }
         if let Some(bar) = download_bar(p, record.on_device, state.arriving) {
             art = art.child(bar);
@@ -563,16 +570,6 @@ fn badge(p: &Paint, text: impl Into<SharedString>) -> Div {
         .bg(p.surface)
         .typeset(p, Type::Fine, p.ink)
         .child(text.into())
-}
-
-/// Three bars in the accent: the record is the one playing.
-pub fn playing_bars(p: &Paint) -> Div {
-    div()
-        .flex()
-        .items_end()
-        .gap(px(2.0))
-        .h(px(12.0))
-        .children([7.0, 12.0, 9.0].map(|h| div().w(px(3.0)).h(px(h)).bg(p.accent)))
 }
 
 /// How much of the record is on this device, where the listing says, and

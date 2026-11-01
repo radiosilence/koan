@@ -5,6 +5,7 @@ pub mod app;
 pub mod covers;
 pub mod dsp;
 pub mod engine;
+pub mod levels;
 pub mod library;
 #[cfg(feature = "profiler")]
 pub mod measure;
