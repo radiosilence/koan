@@ -1,0 +1,90 @@
+//! What a sleeve, a photo or a playlist's face shows while it has none, or
+//! none yet: the app icon's ensō, faded back on the ground every cover is
+//! laid on. Calm rather than broken-looking, and koan's own rather than a
+//! generic note or a grey box. The Mac's `EnsoPlaceholder`.
+//!
+//! The mark is an SVG the icon assets serve, so GPUI rasterises it once per
+//! size into the atlas and every placeholder after that is one sprite.
+
+use gpui_kit::*;
+
+use crate::theme::Look;
+
+/// The asset path the mark is served at.
+pub const ENSO: &str = "koan/enso.svg";
+
+/// The ensō traced from the app icon, in its 512-point space: every fourth
+/// of the trace's points, as the Mac's `EnsoShape` keeps them.
+const TRACE: &str = "M230.3 401.8 L222.0 399.7 L213.9 397.3 L205.8 394.6 L198.0 391.4 L190.3 387.7 L182.8 383.8\
+L175.2 380.0 L167.3 376.2 L159.4 372.4 L151.7 367.8 L145.0 362.1 L139.7 355.0 L135.7 347.0\
+L132.6 338.6 L129.7 330.4 L126.3 322.6 L123.0 314.9 L120.2 307.1 L118.3 298.9 L117.2 290.6\
+L116.3 282.4 L114.8 274.3 L112.2 266.3 L108.8 258.1 L105.7 249.4 L103.9 240.6 L104.0 231.7\
+L106.1 223.0 L109.3 214.8 L113.0 206.8 L116.6 198.8 L120.4 191.0 L124.8 183.6 L130.3 176.8\
+L136.9 171.1 L144.2 166.1 L151.1 161.2 L157.2 155.8 L162.4 149.5 L167.2 142.4 L172.4 135.3\
+L178.4 128.8 L185.3 123.6 L192.9 119.4 L200.8 115.8 L208.7 112.1 L216.8 108.5 L225.1 105.4\
+L233.8 103.8 L242.7 104.1 L251.6 106.4 L260.1 109.7 L268.3 112.9 L276.3 115.2 L284.4 116.6\
+L292.6 117.4 L300.9 118.6 L309.0 120.8 L316.8 123.8 L324.5 127.2 L332.4 130.4 L340.6 133.3\
+L349.2 136.2 L357.5 140.0 L364.8 145.2 L370.6 152.1 L374.7 160.2 L377.8 168.8 L380.7 177.2\
+L383.8 185.2 L387.2 192.8 L390.4 200.6 L392.8 208.6 L394.3 216.9 L395.1 225.2 L396.2 233.3\
+L398.3 241.3 L401.3 249.4 L404.7 257.8 L407.4 266.6 L408.3 275.5 L407.2 284.3 L404.5 292.8\
+L401.0 300.9 L397.3 308.8 L393.7 316.7 L389.6 324.4 L384.7 331.5 L378.9 337.9 L372.5 343.8\
+L366.2 349.4 L360.3 355.3 L354.8 361.6 L349.3 368.0 L343.5 374.2 L337.0 379.8 L329.9 384.6\
+L322.4 388.6 L314.6 392.1 L306.6 395.1";
+
+/// The mark as an SVG. Its stroke is lighter than the icon's own, as the
+/// Mac's is: at placeholder size the icon's weight reads as a fat ring
+/// rather than a brush mark.
+pub fn svg() -> String {
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="{TRACE}" fill="none" stroke="black" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
+    )
+}
+
+/// The share of the square the mark takes, centred.
+const MARK: f32 = 0.48;
+
+#[derive(IntoElement)]
+pub struct Placeholder {
+    side: Pixels,
+}
+
+impl Placeholder {
+    /// `side` is the square it fills.
+    pub fn new(side: Pixels) -> Self {
+        Self { side }
+    }
+}
+
+impl RenderOnce for Placeholder {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let p = look.palette;
+        div()
+            .size(self.side)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(p.rule.hsla())
+            .child(
+                svg()
+                    .path(ENSO)
+                    .size(self.side * MARK)
+                    .text_color(p.muted.hsla().opacity(0.5)),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn the_mark_is_one_open_stroke() {
+        let svg = svg();
+        assert!(svg.starts_with("<svg"));
+        assert_eq!(svg.matches('M').count(), 1);
+        assert!(!svg.contains('Z'));
+    }
+}

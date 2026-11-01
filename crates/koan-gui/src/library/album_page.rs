@@ -267,7 +267,9 @@ impl AlbumPage {
                 cover = cover.child(img(ImageSource::Render(image)).size_full())
             }
             Sleeve::Colour(colour) => cover = cover.bg(colour),
-            Sleeve::Waiting | Sleeve::None => {}
+            Sleeve::Waiting | Sleeve::None => {
+                cover = cover.child(crate::components::Placeholder::new(grid.side))
+            }
         }
         let total: i64 = self.tracks.iter().filter_map(|t| t.duration_ms).sum();
         let favourite = self

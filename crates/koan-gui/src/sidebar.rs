@@ -434,7 +434,9 @@ fn face(sleeves: Vec<Sleeve>, p: &Paint) -> Div {
                     .object_fit(ObjectFit::Cover),
             ),
             Sleeve::Colour(colour) => field.bg(*colour),
-            Sleeve::Waiting | Sleeve::None => field,
+            Sleeve::Waiting | Sleeve::None => {
+                field.child(crate::components::Placeholder::new(w.min(h)))
+            }
         }
     };
     let square = div().size(side).flex_shrink_0().overflow_hidden();

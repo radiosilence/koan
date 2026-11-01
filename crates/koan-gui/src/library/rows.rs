@@ -244,7 +244,7 @@ pub fn track_row<V: TrackList>(
                 art = art.child(img(ImageSource::Render(image)).size_full())
             }
             Some(Sleeve::Colour(colour)) => art = art.bg(colour),
-            _ => {}
+            _ => art = art.child(crate::components::Placeholder::new(px(SLEEVE))),
         }
         row = row.child(art);
     }

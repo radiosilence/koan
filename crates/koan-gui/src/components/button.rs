@@ -180,10 +180,9 @@ impl RenderOnce for Button {
             _ => None,
         };
         let (vertical, horizontal) = kind.padding();
-        let glyph_only = matches!(
-            kind,
-            ButtonKind::Icon | ButtonKind::IconOutlined | ButtonKind::Toolbar
-        );
+        // A toolbar button with icons off is its word in the same cell.
+        let glyph_only = matches!(kind, ButtonKind::Icon | ButtonKind::IconOutlined)
+            || (kind == ButtonKind::Toolbar && look.icons && self.icon.is_some());
         let show_glyph = glyph_only || look.icons;
         let role = kind.role();
 
@@ -201,7 +200,7 @@ impl RenderOnce for Button {
             .text_color(color);
         button = match kind {
             ButtonKind::Icon => button.min_w(HIT).min_h(HIT),
-            ButtonKind::Toolbar => button.size(TOOLBAR_BUTTON),
+            ButtonKind::Toolbar => button.min_w(TOOLBAR_BUTTON).h(TOOLBAR_BUTTON),
             _ => button,
         };
         if let Some(outline) = outline {

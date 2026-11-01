@@ -602,7 +602,9 @@ impl ArtistPage {
                     ))
                 }
                 Sleeve::Colour(colour) => photo = photo.bg(colour),
-                Sleeve::Waiting | Sleeve::None => {}
+                Sleeve::Waiting | Sleeve::None => {
+                    photo = photo.child(crate::components::Placeholder::new(grid.side))
+                }
             }
         }
         let favourite = self.lib.feed.read(cx).is_favourite(item);
