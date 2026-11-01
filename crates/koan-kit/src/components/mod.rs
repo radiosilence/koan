@@ -14,6 +14,7 @@
 mod badge;
 mod button;
 mod cover;
+mod dense;
 mod empty;
 mod field;
 mod filter_field;
@@ -48,6 +49,7 @@ use gpui_kit::{
 pub use badge::{Badge, Chip};
 pub use button::{Button, ButtonKind};
 pub use cover::{Cover, CoverArt, Mosaic};
+pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use empty::EmptyState;
 pub use field::TextField;
 pub use filter_field::FilterField;
