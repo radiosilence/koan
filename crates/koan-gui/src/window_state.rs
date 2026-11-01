@@ -14,9 +14,8 @@ fn path() -> PathBuf {
     koan_ffi::config_dir().join(FILE)
 }
 
-/// The bounds last saved, where they still fit on a display. Wayland neither
-/// reports nor sets a window's position: the origin saved there is zero and
-/// the compositor places the window, so only the size carries over.
+/// The bounds last saved, where they still fit on a display, or the saved
+/// size centred.
 pub fn restore(cx: &App) -> Option<WindowBounds> {
     let text = std::fs::read_to_string(path()).ok()?;
     let mut fields = text.split_whitespace();
@@ -25,10 +24,13 @@ pub fn restore(cx: &App) -> Option<WindowBounds> {
     let maximized = next().is_some_and(|m| m != 0.0);
     let size = size(px(w), px(h));
     let saved = Bounds::new(point(px(x), px(y)), size);
-    let on_a_display = cx
-        .displays()
-        .iter()
-        .any(|display| display.bounds().intersects(&saved));
+    // Wayland neither reports nor sets a position, so on Linux the window is
+    // centred at its saved size.
+    let on_a_display = !cfg!(target_os = "linux")
+        && cx
+            .displays()
+            .iter()
+            .any(|display| display.bounds().intersects(&saved));
     let bounds = if on_a_display {
         saved
     } else {

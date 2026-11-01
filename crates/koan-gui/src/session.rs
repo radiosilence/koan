@@ -32,6 +32,11 @@ struct Kept(#[allow(dead_code)] Entity<Session>);
 impl Global for Kept {}
 
 impl Session {
+    /// Whether the session is being kept: only once it was restored.
+    pub fn following(cx: &App) -> bool {
+        cx.has_global::<Kept>()
+    }
+
     pub fn follow(cx: &mut App) {
         let mirror = cx.global::<Mirror>().clone();
         // The queue already in the mirror is the one restored from the last

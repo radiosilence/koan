@@ -118,6 +118,11 @@ pub struct QueueView {
     /// scrolls and as the view draws, so a queue sent whole can be shown from
     /// the same row.
     top: Option<(RowRef, usize)>,
+    /// The row a drag in the queue would drop before, for the one insertion
+    /// line drawn while it lasts.
+    drop_at: Option<usize>,
+    /// The row a secondary click landed on, for the list's one context menu.
+    menu_row: Option<usize>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -151,6 +156,8 @@ impl QueueView {
             anchor: None,
             cursor: None,
             top: None,
+            drop_at: None,
+            menu_row: None,
             _subscriptions: subscriptions,
         };
         view.lay_out(cx);
@@ -406,6 +413,8 @@ impl QueueView {
     /// the one on screen: the engine puts items whose target it cannot find
     /// at the end of the queue, so a stale target would move them there.
     fn drop_rows(&mut self, dragged: &DraggedRows, dest: usize, cx: &mut Context<Self>) {
+        self.drop_at = None;
+        cx.notify();
         let queue = self.queue.read(cx);
         if dragged.whole != queue.whole || dragged.row >= queue.rows.len() {
             return;
@@ -462,9 +471,21 @@ impl QueueView {
             whole: self.queue.read(cx).whole,
             label: self.drag_label(row, cx),
         };
-        let view = cx.entity();
+        // Named by what the row is, so hover and drag state stay with it when
+        // the queue moves under the pointer.
+        let id = match self.rows(cx)[row] {
+            Row::Heading { first, .. } => SharedString::from(format!(
+                "h:{}",
+                self.queue.read(cx).base[first].queue_item_id
+            )),
+            Row::Track { ix, .. } => {
+                SharedString::from(self.queue.read(cx).base[ix].queue_item_id.clone())
+            }
+        };
+        // The insertion line, while a drag in the queue is over this row.
+        let insert_here = self.drop_at == Some(row) && cx.has_active_drag();
         div()
-            .id(("queue-row", row))
+            .id(ElementId::Name(id))
             .h(height)
             .w_full()
             .flex()
@@ -474,7 +495,19 @@ impl QueueView {
             .gap(space::M)
             .when(selected, |d| d.bg(p.surface))
             .when(!selected, |d| d.hover(|s| s.bg(p.hover.opacity(0.3))))
-            .drag_over::<DraggedRows>(move |s, _, _, _| s.border_t_1().border_color(p.accent))
+            .when(insert_here, |d| d.border_t_1().border_color(p.accent))
+            .on_drag_move::<DraggedRows>(cx.listener(
+                move |this, event: &DragMoveEvent<DraggedRows>, _, cx| {
+                    if event.bounds.contains(&event.event.position) && this.drop_at != Some(row) {
+                        this.drop_at = Some(row);
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, _| this.menu_row = Some(row)),
+            )
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 this.click(row, event, cx);
@@ -486,16 +519,15 @@ impl QueueView {
                 this.drop_rows(dragged, row, cx);
             }))
             .child(line)
-            .context_menu(move |menu, _, cx| row_menu(menu, &view, row, cx))
             .into_any_element()
     }
 }
 
-fn row_menu(menu: PopupMenu, view: &Entity<QueueView>, row: usize, cx: &mut App) -> PopupMenu {
+fn row_menu(menu: PopupMenu, view: &Entity<QueueView>, cx: &mut App) -> PopupMenu {
     let this = view.read(cx);
-    if row >= this.rows(cx).len() {
+    let Some(row) = this.menu_row.filter(|&row| row < this.rows(cx).len()) else {
         return menu;
-    }
+    };
     let ids = this.acting_on(row, cx);
     let heading = matches!(this.rows(cx)[row], Row::Heading { .. })
         && ids.len() == this.rows(cx)[row].items().len();
@@ -699,6 +731,13 @@ impl Render for QueueView {
             .size_full()
             .flex()
             .flex_col()
+            // One menu for the list, on the row the secondary click landed on:
+            // cleared as the press arrives, set by the row it reaches.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, _| {
+                if event.button == MouseButton::Right {
+                    this.menu_row = None;
+                }
+            }))
             // Below the last row: the end of the queue.
             .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
                 this.drop_rows(dragged, count, cx);
@@ -712,12 +751,17 @@ impl Render for QueueView {
                 )
             })
             .when(count > 0, |d| {
+                let view = view.clone();
                 d.child(
                     list(self.list.clone(), move |row, _, cx| {
                         view.update(cx, |this, cx| this.render_row(row, cx))
                     })
                     .flex_1(),
                 )
+            })
+            .context_menu({
+                let view = view.clone();
+                move |menu, _, cx| row_menu(menu, &view, cx)
             })
     }
 }

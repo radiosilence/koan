@@ -70,67 +70,91 @@ fn main() {
                     return;
                 }
             };
-            let restored = match engine.clone().restore_session().await {
-                Ok(count) => Some(count),
-                Err(e) => {
-                    log::warn!("session not restored: {e}");
-                    None
-                }
-            };
-            cx.update(|cx| start(engine, restored, cx));
+            cx.update(|cx| start(engine, cx));
         })
         .detach();
     });
 }
 
-/// How long the window waits for the restored queue to arrive.
+/// How long the window waits for the restored queue before opening anyway.
 const RESTORE_WAIT: Duration = Duration::from_millis(500);
+/// How long the session waits for the restored queue to reach the mirror
+/// before it starts saving whatever is there.
+const RESTORE_LIMIT: Duration = Duration::from_secs(10);
 
-/// Opens the window once the restored queue is in the mirror, so its first
-/// frame is the queue that was left rather than an empty one filling in.
-/// `restore_session` answers once the player has the queue to load, not once
-/// it has loaded it, so the wait is for the mirror to hold `restored` rows,
-/// woken by the queue arriving and given up after `RESTORE_WAIT`.
+/// Restores the session and opens the window, neither waiting on the other
+/// for long.
 ///
-/// `restored` is `None` when the session could not be restored. The saved
-/// session is shared by every koan app on a configuration directory, so this
-/// one then never writes it: it would replace a session it never read.
-fn start(engine: Arc<KoanEngine>, restored: Option<u32>, cx: &mut App) {
+/// `restore_session` answers once the player has the queue to load, and that
+/// can take seconds when the queue is kept on a server. The window opens as
+/// soon as the restored rows are in the mirror, so its first frame is the
+/// queue that was left, and after `RESTORE_WAIT` whatever has happened.
+///
+/// The saved session is shared by every koan app on a configuration
+/// directory, so it is written only by a process that read it: saving starts
+/// once the restore has succeeded and its rows have arrived, and never if it
+/// failed.
+fn start(engine: Arc<KoanEngine>, cx: &mut App) {
     let mirror = Mirror::follow(&engine, cx);
     let queue = mirror.queue.clone();
     cx.set_global(mirror);
-    cx.set_global(Engine(engine));
+    cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
 
-    let rows = restored.unwrap_or(0) as usize;
-    let arrived = move |queue: &Queue| queue.items.len() >= rows;
-    let (ready, waiting) = futures::channel::oneshot::channel::<()>();
-    let mut ready = Some(ready);
-    let watch = (!arrived(queue.read(cx))).then(|| {
-        cx.observe(&queue, move |queue, cx| {
-            if arrived(queue.read(cx))
-                && let Some(ready) = ready.take()
-            {
-                ready.send(()).ok();
+    let (shown, showing) = futures::channel::oneshot::channel::<()>();
+    let restore = engine.clone().restore_session();
+    cx.spawn(async move |cx| {
+        let restored = match restore.await {
+            Ok(count) => count,
+            // Dropping `shown` opens the window at once.
+            Err(e) => {
+                log::warn!("session not restored: {e}");
+                return;
             }
-        })
-    });
+        };
+        // From when the restore answers, not from launch: a restore that
+        // takes seconds must not spend the wait for its rows.
+        let limit = cx.background_executor().timer(RESTORE_LIMIT);
+        let arrived = cx.update(|cx| rows_arrived(&queue, restored as usize, cx));
+        futures::future::select(Box::pin(arrived), limit).await;
+        shown.send(()).ok();
+        cx.update(Session::follow);
+    })
+    .detach();
+
     let timeout = cx.background_executor().timer(RESTORE_WAIT);
     cx.spawn(async move |cx| {
-        if watch.is_some() {
-            futures::future::select(waiting, timeout).await;
-        }
-        drop(watch);
-        cx.update(|cx| open(restored.is_some(), cx));
+        futures::future::select(showing, timeout).await;
+        cx.update(open);
     })
     .detach();
 }
 
-fn open(keeps_session: bool, cx: &mut App) {
-    if keeps_session {
-        Session::follow(cx);
+/// Resolves once the mirror's queue holds `rows` rows, woken by the queue
+/// changing rather than by looking.
+fn rows_arrived(
+    queue: &Entity<Queue>,
+    rows: usize,
+    cx: &mut App,
+) -> impl Future<Output = ()> + use<> {
+    let (arrived, arriving) = futures::channel::oneshot::channel::<()>();
+    let mut arrived = Some(arrived);
+    let mut check = move |queue: &Queue| {
+        if queue.items.len() >= rows
+            && let Some(arrived) = arrived.take()
+        {
+            arrived.send(()).ok();
+        }
+    };
+    check(queue.read(cx));
+    let watch = cx.observe(queue, move |queue, cx| check(queue.read(cx)));
+    async move {
+        arriving.await.ok();
+        drop(watch);
     }
+}
 
+fn open(cx: &mut App) {
     cx.on_app_quit(move |cx| {
         // Inside the closure, not the future it returns: GPUI gives that
         // future a fifth of a second, which a large queue can outlast.
@@ -142,6 +166,7 @@ fn open(keeps_session: bool, cx: &mut App) {
                 .ok();
         }
         let engine = engine::engine(cx);
+        let keeps_session = Session::following(cx);
         if keeps_session {
             let executor = cx.foreground_executor().clone();
             if let Err(e) = executor

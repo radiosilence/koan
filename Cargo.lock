@@ -4929,16 +4929,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "koan-desktop"
-version = "0.69.2"
-dependencies = [
- "futures",
- "gpui-kit",
- "koan-ffi",
- "log",
-]
-
-[[package]]
 name = "koan-ffi"
 version = "0.69.2"
 dependencies = [
@@ -4962,6 +4952,16 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "uniffi",
  "uuid",
+]
+
+[[package]]
+name = "koan-gui"
+version = "0.69.2"
+dependencies = [
+ "futures",
+ "gpui-kit",
+ "koan-ffi",
+ "log",
 ]
 
 [[package]]

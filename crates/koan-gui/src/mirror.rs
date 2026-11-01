@@ -18,7 +18,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::{App, AppContext, Entity, Global};
-use koan_ffi::{KoanEngine, NowPlaying, OutputsInfo, QueueItem, StateSlice};
+use koan_ffi::{
+    ConnectionInfo, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo, QueueItem,
+    QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer, TransferFigure,
+};
 
 use crate::queue::rows::{self, Row};
 
@@ -144,6 +147,34 @@ pub struct Library(pub u64);
 /// What the device in view plays through.
 pub struct Outputs(pub Option<OutputsInfo>);
 
+/// A slice held as the engine sent it, for those nothing here reshapes.
+pub struct Slice<T>(pub T);
+
+/// What koan is doing on its own: one entity, since the one reader draws a
+/// row for each and would be woken by either.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tasks {
+    pub scanning: bool,
+    pub syncing: bool,
+}
+
+/// The other devices, and which one this app controls (`None` for itself).
+#[derive(Default)]
+#[expect(dead_code, reason = "read by the device and output pages")]
+pub struct Devices {
+    pub devices: Vec<DeviceInfo>,
+    pub target: Option<String>,
+    pub target_reach: Option<DeviceReach>,
+}
+
+/// UPnP renderers on the network, and the one this koan plays to.
+#[derive(Default)]
+#[expect(dead_code, reason = "read by the device and output pages")]
+pub struct Renderers {
+    pub renderers: Vec<RendererInfo>,
+    pub output: Option<RendererOutput>,
+}
+
 #[derive(Clone)]
 pub struct Mirror {
     pub playback: Entity<Playback>,
@@ -151,6 +182,17 @@ pub struct Mirror {
     pub queue: Entity<Queue>,
     pub library: Entity<Library>,
     pub outputs: Entity<Outputs>,
+    pub lock: Entity<Slice<Option<QueueLock>>>,
+    pub transfers: Entity<Slice<Vec<Transfer>>>,
+    /// The transfers' byte counts: the fast half, apart from `transfers`.
+    pub figures: Entity<Slice<Vec<TransferFigure>>>,
+    pub history: Entity<Slice<u64>>,
+    pub cache: Entity<Slice<u64>>,
+    pub tasks: Entity<Slice<Tasks>>,
+    pub sync: Entity<Slice<Option<SyncProgress>>>,
+    pub devices: Entity<Slice<Devices>>,
+    pub connection: Entity<Slice<Option<ConnectionInfo>>>,
+    pub renderers: Entity<Slice<Renderers>>,
 }
 
 impl Global for Mirror {}
@@ -170,6 +212,16 @@ impl Mirror {
             queue: cx.new(|_| Queue::default()),
             library: cx.new(|_| Library(0)),
             outputs: cx.new(|_| Outputs(None)),
+            lock: cx.new(|_| Slice(None)),
+            transfers: cx.new(|_| Slice(Vec::new())),
+            figures: cx.new(|_| Slice(Vec::new())),
+            history: cx.new(|_| Slice(0)),
+            cache: cx.new(|_| Slice(0)),
+            tasks: cx.new(|_| Slice(Tasks::default())),
+            sync: cx.new(|_| Slice(None)),
+            devices: cx.new(|_| Slice(Devices::default())),
+            connection: cx.new(|_| Slice(None)),
+            renderers: cx.new(|_| Slice(Renderers::default())),
         };
         let stream = engine.observe();
         let held = mirror.clone();
@@ -249,21 +301,46 @@ impl Mirror {
                         cx.notify();
                     });
                 }
-                // Drawn by pages this app does not have yet.
-                StateSlice::Lock { .. }
-                | StateSlice::Transfers { .. }
-                | StateSlice::Figures { .. }
-                | StateSlice::History { .. }
-                | StateSlice::Cache { .. }
-                | StateSlice::Tasks { .. }
-                | StateSlice::Sync { .. }
-                | StateSlice::Devices { .. }
-                | StateSlice::Connection { .. }
-                | StateSlice::Renderers { .. } => {}
+                StateSlice::Lock { lock } => set(&self.lock, lock, cx),
+                StateSlice::Transfers { transfers } => set(&self.transfers, transfers, cx),
+                StateSlice::Figures { figures } => set(&self.figures, figures, cx),
+                StateSlice::History { version } => set(&self.history, version, cx),
+                StateSlice::Cache { bytes } => set(&self.cache, bytes, cx),
+                StateSlice::Tasks { scanning, syncing } => {
+                    set(&self.tasks, Tasks { scanning, syncing }, cx)
+                }
+                StateSlice::Sync { progress } => set(&self.sync, progress, cx),
+                StateSlice::Devices {
+                    devices,
+                    target,
+                    target_reach,
+                } => set(
+                    &self.devices,
+                    Devices {
+                        devices,
+                        target,
+                        target_reach,
+                    },
+                    cx,
+                ),
+                StateSlice::Connection { connection } => {
+                    set(&self.connection, Some(connection), cx)
+                }
+                StateSlice::Renderers { renderers, output } => {
+                    set(&self.renderers, Renderers { renderers, output }, cx)
+                }
             }
         }
         replaced
     }
+}
+
+/// Holds a slice that arrived and wakes that entity's readers alone.
+fn set<T: 'static>(entity: &Entity<Slice<T>>, value: T, cx: &mut App) {
+    entity.update(cx, |held, cx| {
+        held.0 = value;
+        cx.notify();
+    });
 }
 
 /// A slice as the main thread applies it. Made once per slice that changed,

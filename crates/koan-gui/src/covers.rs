@@ -104,6 +104,9 @@ impl Covers {
             .held
             .iter()
             .filter_map(|(key, held)| match held {
+                // Held elsewhere too: a cached view showing it, which may
+                // not draw again for a while. Kept until it lets go.
+                Held::Ready(image, _) if Arc::strong_count(image) > 1 => None,
                 Held::Ready(_, drawn) => Some((drawn.get(), *key)),
                 _ => None,
             })
@@ -174,20 +177,30 @@ fn format(mime: &str) -> ImageFormat {
     }
 }
 
+/// The sleeve for `album_id` drawn at `side` points, if it has landed; asks
+/// for it otherwise. Fetched at twice the side, for Retina displays. A view
+/// that keeps the image while it shows it keeps it from being evicted.
+pub fn image(album_id: Option<i64>, side: Pixels, cx: &mut App) -> Option<Arc<RenderImage>> {
+    let covers = cx.global::<CoversHandle>().0.clone();
+    Covers::get(&covers, album_id?, (f32::from(side) * 2.0) as u32, cx)
+}
+
 /// A square sleeve of `side` points, or the ground's `surface` while there is
-/// none. Fetched at twice the side, for Retina displays.
-pub fn sleeve(album_id: Option<i64>, side: Pixels, cx: &mut App) -> AnyElement {
-    let p = theme::palette(cx);
-    let image = album_id.and_then(|id| {
-        let covers = cx.global::<CoversHandle>().0.clone();
-        Covers::get(&covers, id, (f32::from(side) * 2.0) as u32, cx)
-    });
+/// none.
+pub fn draw(image: Option<Arc<RenderImage>>, side: Pixels, cx: &App) -> AnyElement {
     match image {
         Some(image) => img(image).size(side).flex_shrink_0().into_any_element(),
         None => div()
             .size(side)
             .flex_shrink_0()
-            .bg(p.surface)
+            .bg(theme::palette(cx).surface)
             .into_any_element(),
     }
+}
+
+/// `image` and `draw` together, for rows: drawn whenever they are on screen,
+/// so their sleeves stay recently used without being held.
+pub fn sleeve(album_id: Option<i64>, side: Pixels, cx: &mut App) -> AnyElement {
+    let image = image(album_id, side, cx);
+    draw(image, side, cx)
 }

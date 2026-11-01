@@ -3,6 +3,7 @@
 //! Left, the record and track playing; centre, the controls over the seek
 //! slider; right, the format and the sleep and output menus.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
@@ -10,7 +11,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat};
 
-use crate::covers::{CoversHandle, sleeve};
+use crate::covers::{self, CoversHandle};
 use crate::engine::command;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
 use crate::theme::{self, HAIRLINE, Palette, space, text};
@@ -25,6 +26,9 @@ pub struct Transport {
     outputs: Entity<Outputs>,
     seek: Entity<Seek>,
     menu: Option<(Menu, Entity<PopupMenu>, Subscription)>,
+    /// The sleeve on show, held so the cover cache keeps it: the bar is a
+    /// cached view and may not draw again for a long while.
+    cover: Option<Arc<RenderImage>>,
     _subscriptions: [Subscription; 3],
 }
 
@@ -48,6 +52,7 @@ impl Transport {
             playback: mirror.playback,
             outputs: mirror.outputs,
             menu: None,
+            cover: None,
         }
     }
 
@@ -228,6 +233,7 @@ impl Render for Transport {
         let p = theme::palette(cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
+        self.cover = covers::image(entry.and_then(|e| e.album_id), COVER, cx);
         let playing = now.state == PlayState::Playing;
         let has_outputs = self.outputs.read(cx).0.is_some();
         let repeat_label = match now.repeat_mode {
@@ -247,7 +253,7 @@ impl Render for Transport {
             .flex()
             .items_center()
             .gap(space::M)
-            .child(sleeve(entry.and_then(|e| e.album_id), COVER, cx))
+            .child(covers::draw(self.cover.clone(), COVER, cx))
             .child(
                 div()
                     .flex()
