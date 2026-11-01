@@ -1,0 +1,1 @@
+- **Library tasks in the GUI app.** Rescan, Force Rescan, Rebuild Index and Sync run from the Library menu, and each running task shows its progress at the foot of the sidebar; a scan can be stopped there.
