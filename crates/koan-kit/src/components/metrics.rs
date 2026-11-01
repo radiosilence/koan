@@ -30,6 +30,11 @@ impl RowMetrics {
         px((points * look.scale.size).round()) + Self::padding(look) * 2.0
     }
 
+    /// A navigation row's face, square: a playlist's sleeve in the sidebar.
+    pub fn nav_art(look: &Look) -> Pixels {
+        px((24.0 * look.scale.size).round())
+    }
+
     /// A row's sleeve, square.
     pub fn sleeve(look: &Look) -> Pixels {
         px((32.0 * look.scale.size).round())
@@ -56,6 +61,19 @@ impl RowMetrics {
     pub fn header_gap(look: &Look) -> Pixels {
         look.space(Space::M)
     }
+
+    /// The sidebar's width as it opens, and what a double click on its edge
+    /// restores; a drag keeps it between `sidebar_min` and `sidebar_max`.
+    pub const SIDEBAR: Pixels = px(220.);
+    pub const SIDEBAR_MIN: Pixels = px(180.);
+    pub const SIDEBAR_MAX: Pixels = px(360.);
+
+    /// The window's least size: the sidebar beside a page wide enough for a
+    /// track row's columns.
+    pub const WINDOW_MIN: gpui_kit::Size<Pixels> = gpui_kit::Size {
+        width: px(220. + 640.),
+        height: px(420.),
+    };
 
     /// Between columns of a row.
     pub fn column_gap(look: &Look) -> Pixels {

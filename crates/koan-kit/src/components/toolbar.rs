@@ -11,6 +11,20 @@ use crate::theme::{HAIRLINE, Icon, KoanTheme, Look, Space};
 /// The toolbar's height on the Mac.
 pub const TOOLBAR_HEIGHT: f32 = 38.0;
 
+/// The room the window's own buttons take where they sit over the app (the
+/// Mac's traffic lights, at the toolbar's height); none where the window
+/// has a title bar or the toolbar draws them.
+#[cfg(target_os = "macos")]
+pub const WINDOW_BUTTONS: Size<Pixels> = Size {
+    width: px(78.),
+    height: px(TOOLBAR_HEIGHT),
+};
+#[cfg(not(target_os = "macos"))]
+pub const WINDOW_BUTTONS: Size<Pixels> = Size {
+    width: px(0.),
+    height: px(0.),
+};
+
 #[derive(IntoElement, Default)]
 pub struct Toolbar {
     inset: Pixels,
@@ -24,10 +38,10 @@ impl Toolbar {
         Self::default()
     }
 
-    /// Room left at the leading edge for the window's own buttons, where
-    /// they sit over the toolbar.
-    pub fn inset(mut self, inset: Pixels) -> Self {
-        self.inset = inset;
+    /// The window's own buttons sit over the toolbar's leading edge (the
+    /// sidebar they otherwise sit over is hidden): it leaves them their room.
+    pub fn under_window_buttons(mut self, under: bool) -> Self {
+        self.inset = if under { WINDOW_BUTTONS.width } else { px(0.) };
         self
     }
 
