@@ -20,8 +20,9 @@ use koan_ffi::{EntryStatus, QueueItem};
 use crate::covers::{CoversHandle, sleeve};
 use crate::engine::command;
 use crate::mirror::{Mirror, Queue};
+use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
-use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
+use crate::theme::{self, KoanStyled, Space, TypeRole};
 use rows::Row;
 
 actions!(
@@ -124,11 +125,13 @@ pub struct QueueView {
     drop_at: Option<usize>,
     /// The row a secondary click landed on, for the list's one context menu.
     menu_row: Option<usize>,
-    _subscriptions: [Subscription; 3],
+    /// The navigator's rewinds of the queue already answered.
+    rewinds: u32,
+    _subscriptions: [Subscription; 4],
 }
 
 impl QueueView {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
         let subscriptions = [
@@ -141,6 +144,18 @@ impl QueueView {
             cx.observe(&covers, |_, _, cx| cx.notify()),
             // The playing row is in the accent, and this view is cached.
             theme::observe_accent(cx),
+            // The queue's sidebar row chosen while the queue shows: its top.
+            cx.observe(nav, |this, nav, cx| {
+                let rewinds = nav.read(cx).rewinds(Route::Queue);
+                if rewinds != this.rewinds {
+                    this.rewinds = rewinds;
+                    this.list.scroll_to(ListOffset::default());
+                    // Held now, not at the next paint: a queue sent whole in
+                    // between must keep the top, not the row left behind.
+                    this.top = None;
+                    cx.notify();
+                }
+            }),
         ];
         // The list calls this as it scrolls, with its own state held, so the
         // handler reads the queue and never the list.
@@ -159,6 +174,7 @@ impl QueueView {
             anchor: None,
             cursor: None,
             top: None,
+            rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
             menu_row: None,
             _subscriptions: subscriptions,
@@ -214,6 +230,8 @@ impl QueueView {
 
     fn keep_top(&mut self, row: usize, cx: &App) {
         if row < self.rows(cx).len() {
+            #[cfg(feature = "profiler")]
+            crate::measure::TOP.store(row, std::sync::atomic::Ordering::Relaxed);
             self.top = Some((self.row_ref(row, cx), row));
         }
     }

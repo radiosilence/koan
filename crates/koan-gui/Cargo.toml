@@ -11,6 +11,11 @@ publish = false
 name = "koan-gui"
 path = "src/main.rs"
 
+[features]
+# GPUI's frame histograms, and `measure`, which scrolls the queue and prints
+# them (`KOAN_GUI_MEASURE=scroll`).
+profiler = ["gpui-kit/profiler"]
+
 [dependencies]
 # The engine, linked as a Rust library: the same facade the Swift and Kotlin
 # apps drive through uniffi, without the bindings.
@@ -18,8 +23,8 @@ koan-ffi = { path = "../koan-ffi" }
 gpui-kit = "0.8.1"
 # Resizing sleeves for the accent and the wash, and the frames GPUI draws,
 # in the version GPUI itself builds against; PNG for the theme sheet's
-# offscreen render; JPEG for the playing record's sleeve.
-image = { version = "0.25.1", default-features = false, features = ["png", "jpeg"] }
+# offscreen render; JPEG, WebP and GIF for the playing record's sleeve.
+image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 log = "0.4"
 # Dates on Settings' keys and connections, in the local time zone.
 chrono = "0.4"

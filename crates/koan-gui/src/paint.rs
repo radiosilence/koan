@@ -1,8 +1,8 @@
 //! A window's look as these views draw with it: the theme's `Look`, with its
 //! colours flattened to the values the views paint with.
 
+use crate::theme::{Look, Space, Tone};
 use gpui_kit::{App, Hsla, Pixels, Window};
-use koan_gui::theme::{Look, Space, Tone};
 
 #[derive(Clone, Copy)]
 pub struct Paint {

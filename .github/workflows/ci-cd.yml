@@ -415,10 +415,12 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # It runs on pull requests alone, so a pull request's pushes reuse
+          # the cache its first push saved.
           shared-key: gui-macos
           cache-on-failure: true
       - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      - run: cargo clippy -p koan-gui --all-targets --features profiler -- -D warnings
       - run: cargo test -p koan-gui
 
   audit:

@@ -8,11 +8,11 @@
 
 use std::sync::Arc;
 
+use crate::theme::wash::{Sleeve, Wash};
+use crate::theme::{self, Accent, KoanTheme};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::PlayState;
-use koan_gui::theme::wash::{Sleeve, Wash};
-use koan_gui::theme::{self, Accent, KoanTheme};
 
 use crate::engine::engine;
 use crate::mirror::{Mirror, Playback};
@@ -98,10 +98,17 @@ impl WindowRoot {
         let fetch = engine(cx).album_cover_art(album, Some(SAMPLE));
         let background = cx.background_executor().clone();
         self.fetching = Some(cx.spawn(async move |this, cx| {
-            let decoded = background
+            let decoded: Result<Option<(Option<Sleeve>, Accent)>, ()> = background
                 .spawn(async move {
-                    let art = fetch.await.ok().flatten()?;
-                    let image = image::load_from_memory(&art.data).ok()?.to_rgba8();
+                    // `Err` only when the fetch failed, which is worth asking
+                    // again; no art, or art that will not decode, is `Ok(None)`.
+                    let Some(art) = fetch.await.map_err(|_| ())? else {
+                        return Ok(None);
+                    };
+                    let Ok(image) = image::load_from_memory(&art.data) else {
+                        return Ok(None);
+                    };
+                    let image = image.to_rgba8();
                     let small = image::imageops::resize(
                         &image,
                         SAMPLE,
@@ -110,13 +117,22 @@ impl WindowRoot {
                     );
                     let pixels = small.into_raw();
                     let accent = Accent::of_sleeve(&pixels, SAMPLE, SAMPLE);
-                    Some((Sleeve::new(Arc::from(pixels), SAMPLE, SAMPLE), accent))
+                    Ok(Some((
+                        Sleeve::new(Arc::from(pixels), SAMPLE, SAMPLE),
+                        accent,
+                    )))
                 })
                 .await;
             this.update(cx, |this, cx| {
-                // A record with no sleeve, or one that will not decode, takes
-                // the wash off and gives mint, as no record does.
-                let (sleeve, accent) = decoded.unwrap_or((None, Accent::of(None)));
+                // A record with no sleeve, or one that will not decode or
+                // could not be fetched, takes the wash off and gives mint, as
+                // no record does. Only a failed fetch is worth trying again:
+                // forgetting the record has it asked for at the next change to
+                // what is playing.
+                if decoded.is_err() {
+                    this.album = None;
+                }
+                let (sleeve, accent) = decoded.ok().flatten().unwrap_or((None, Accent::of(None)));
                 this.wash.update(cx, |wash, cx| wash.set_sleeve(sleeve, cx));
                 KoanTheme::set_accent(accent, true, cx);
             })

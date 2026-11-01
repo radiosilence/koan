@@ -630,6 +630,10 @@ pub struct KoanEngine {
     /// The queue's `content_version` as last saved, so a save rewrites the
     /// queue only when its contents moved and otherwise saves the position.
     saved_content: std::sync::atomic::AtomicU64,
+    /// Whose saved session this engine reads and writes: its device's files
+    /// prefix (`LinkIdentity::files`). Another device on the same config
+    /// directory keeps a session of its own.
+    session: &'static str,
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
@@ -2396,6 +2400,7 @@ impl KoanEngine {
             });
             queries::save_playback_state(
                 &db.conn,
+                self.session,
                 &persisted,
                 self.state.play_mode(),
                 cursor_path.as_deref(),
@@ -2490,9 +2495,11 @@ impl KoanEngine {
             // Before the queue and whether there is one: the mode is the
             // player's, and a shuffled queue's play order is drawn as it
             // arrives, from the rows not marked played.
-            let mode = queries::load_play_mode(&db.conn).map_err(fav_err)?;
+            let mode = queries::load_play_mode(&db.conn, self.session).map_err(fav_err)?;
             self.send_local(PlayerCommand::RestorePlayMode(mode))?;
-            let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
+            let Some(saved) =
+                queries::load_playback_state(&db.conn, self.session).map_err(fav_err)?
+            else {
                 return Ok(0);
             };
 
@@ -5943,6 +5950,7 @@ impl KoanEngine {
         let t0 = std::time::Instant::now();
         init_logging();
         raise_open_file_limit();
+        let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
         let db = Database::open_default().map_err(|e| KoanError::Database {
@@ -6043,6 +6051,7 @@ impl KoanEngine {
             sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
+            session: identity.files,
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),
@@ -6091,7 +6100,7 @@ impl KoanEngine {
         // Profiles of one name from two devices are told apart by it.
         koan_core::remote::dsp_sync::set_device_name(device_name.clone());
         koan_core::remote::devices::start(koan_core::remote::link::Local {
-            identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
+            identity,
             // What a command may cost, and where it may go, depends on who
             // sent it: see `handle_link`.
             on_command: Arc::new(move |cmd, source, pending| {
@@ -6228,6 +6237,7 @@ impl KoanEngine {
             .map(|p| p.to_string_lossy().into_owned());
         queries::save_playback_position(
             &db.conn,
+            self.session,
             self.state.play_mode(),
             cursor_path.as_deref(),
             self.state.position_ms(),

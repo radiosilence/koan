@@ -20,37 +20,24 @@ fn render<T: JsonSchema>() -> String {
         .into_generator()
         .into_root_schema_for::<T>();
     let mut value = schema.to_value();
-    strip_descriptions(&mut value);
-    let mut json = serde_json::to_string_pretty(&sorted(value)).unwrap();
+    canonical(&mut value);
+    let mut json = serde_json::to_string_pretty(&value).unwrap();
     json.push('\n');
     json
 }
 
-/// The keys of every object in order. Built into a workspace with a crate
-/// that turns on serde_json's `preserve_order` (GPUI, in koan-gui), objects
-/// keep insertion order rather than sorting, and the text would depend on
-/// what else was compiled.
-fn sorted(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut entries: Vec<_> = map.into_iter().collect();
-            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-            serde_json::Value::Object(entries.into_iter().map(|(k, v)| (k, sorted(v))).collect())
-        }
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.into_iter().map(sorted).collect())
-        }
-        other => other,
-    }
-}
-
-fn strip_descriptions(value: &mut serde_json::Value) {
+/// Descriptions left out and keys in order. Sorted by hand because a
+/// workspace build can turn on serde_json's `preserve_order`, under which
+/// objects keep the order they were built in, or removed from, rather than
+/// sorting themselves.
+fn canonical(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             map.remove("description");
-            map.values_mut().for_each(strip_descriptions);
+            map.sort_keys();
+            map.values_mut().for_each(canonical);
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_descriptions),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(canonical),
         _ => {}
     }
 }

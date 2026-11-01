@@ -17,10 +17,12 @@ use crate::mirror::{Mirror, Playhead, Queue};
 pub struct Session {
     playhead: Entity<Playhead>,
     queue: Entity<Queue>,
-    /// The queue version last written whole. `None` until a queue arrives,
-    /// and the first is the one restored from the last save, so it is
-    /// adopted rather than written again.
-    saved_version: Option<u64>,
+    /// The queue version last written whole: at first the one in the mirror
+    /// when saving starts, which is the queue just restored.
+    saved_version: u64,
+    /// The version a whole write is under way for, so the notifications that
+    /// arrive meanwhile do not start the same write again.
+    writing: Option<u64>,
     playing: bool,
     autosave: Option<Task<()>>,
     _subscriptions: [Subscription; 2],
@@ -41,8 +43,7 @@ impl Session {
         let mirror = cx.global::<Mirror>().clone();
         // The queue already in the mirror is the one restored from the last
         // save; it is adopted as written.
-        let queue = mirror.queue.read(cx);
-        let saved_version = (queue.whole > 0).then_some(queue.version);
+        let saved_version = mirror.queue.read(cx).version;
         let session = cx.new(|cx| Self {
             _subscriptions: [
                 cx.observe(&mirror.playhead, |this: &mut Session, _, cx| {
@@ -55,6 +56,7 @@ impl Session {
             playhead: mirror.playhead,
             queue: mirror.queue,
             saved_version,
+            writing: None,
             playing: false,
             autosave: None,
         });
@@ -86,10 +88,8 @@ impl Session {
 
     fn queue_moved(&mut self, cx: &mut Context<Self>) {
         let version = self.queue.read(cx).version;
-        match self.saved_version {
-            None => self.saved_version = Some(version),
-            Some(saved) if !self.playing && saved != version => self.save(cx),
-            Some(_) => {}
+        if !self.playing && self.saved_version != version && self.writing != Some(version) {
+            self.save(cx);
         }
     }
 
@@ -97,7 +97,10 @@ impl Session {
     /// failed one is tried again by the next save.
     fn save(&mut self, cx: &mut Context<Self>) {
         let version = self.queue.read(cx).version;
-        let whole = self.saved_version.is_some_and(|saved| saved != version);
+        let whole = self.saved_version != version && self.writing != Some(version);
+        if whole {
+            self.writing = Some(version);
+        }
         let engine = engine(cx);
         cx.spawn(async move |this, cx| {
             let written = if whole {
@@ -105,13 +108,17 @@ impl Session {
             } else {
                 engine.save_position().await
             };
-            match written {
-                Ok(()) if whole => {
-                    this.update(cx, |this, _| this.saved_version = Some(version))
-                        .ok();
-                }
-                Ok(()) => {}
-                Err(e) => log::warn!("session: not saved: {e}"),
+            if whole {
+                this.update(cx, |this, _| {
+                    this.writing = None;
+                    if written.is_ok() {
+                        this.saved_version = version;
+                    }
+                })
+                .ok();
+            }
+            if let Err(e) = written {
+                log::warn!("session: not saved: {e}");
             }
         })
         .detach();

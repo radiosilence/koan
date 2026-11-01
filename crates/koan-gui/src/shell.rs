@@ -10,13 +10,13 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::engine::command;
-use crate::navigator::{Navigator, Page};
+use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::sidebar::{self, Sidebar};
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
-use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
 
 actions!(koan, [GoBack, GoForward, TogglePlay]);
 
@@ -40,7 +40,7 @@ const TRAFFIC_LIGHTS: Pixels = px(78.);
 const TRAFFIC_LIGHTS: Pixels = px(0.);
 
 pub struct Shell {
-    nav: Navigator,
+    nav: Entity<Navigator>,
     focus: FocusHandle,
     sidebar: Entity<Sidebar>,
     /// Held for the life of the window, so the queue's selection and scroll
@@ -49,40 +49,40 @@ pub struct Shell {
     transport: Entity<Transport>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
+    /// The route focus was last moved for: the navigator notifies for more
+    /// than moves (a deleted playlist forgotten during a scan), and those
+    /// must not take the keys from wherever they are.
+    arrived_at: Route,
+    _arrivals: Subscription,
 }
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let shell = cx.entity();
-        let queue = cx.new(QueueView::new);
+        let nav = cx.new(|_| Navigator::default());
+        let queue = cx.new(|cx| QueueView::new(&nav, cx));
         window.focus(&queue.focus_handle(cx), cx);
+        // Whatever moved the navigator, the page it lands on takes the keys.
+        let arrivals = cx.observe_in(&nav, window, |this, _, window, cx| this.arrived(window, cx));
         Self {
-            nav: Navigator::default(),
+            sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
+            nav,
             focus: cx.focus_handle(),
-            sidebar: cx.new(|cx| Sidebar::new(&shell, cx)),
             queue,
             transport: cx.new(Transport::new),
             moving_window: false,
+            arrived_at: Route::Queue,
+            _arrivals: arrivals,
         }
-    }
-
-    pub fn page(&self) -> Page {
-        self.nav.current()
-    }
-
-    pub fn go(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nav.go(page) {
-            self.arrived(window, cx);
-        }
-    }
-
-    pub fn forget(&mut self, page: Page, cx: &mut Context<Self>) {
-        self.nav.forget(page);
-        cx.notify();
     }
 
     fn arrived(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nav.current() == Page::Queue {
+        let route = self.nav.read(cx).current();
+        if route == self.arrived_at {
+            cx.notify();
+            return;
+        }
+        self.arrived_at = route;
+        if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
         } else {
             window.focus(&self.focus, cx);
@@ -90,16 +90,20 @@ impl Shell {
         cx.notify();
     }
 
-    fn back(&mut self, _: &GoBack, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nav.back() {
-            self.arrived(window, cx);
-        }
+    fn back(&mut self, _: &GoBack, _: &mut Window, cx: &mut Context<Self>) {
+        self.nav.update(cx, |nav, cx| {
+            if nav.back() {
+                cx.notify();
+            }
+        });
     }
 
-    fn forward(&mut self, _: &GoForward, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nav.forward() {
-            self.arrived(window, cx);
-        }
+    fn forward(&mut self, _: &GoForward, _: &mut Window, cx: &mut Context<Self>) {
+        self.nav.update(cx, |nav, cx| {
+            if nav.forward() {
+                cx.notify();
+            }
+        });
     }
 
     fn toggle_play(&mut self, _: &TogglePlay, _: &mut Window, cx: &mut Context<Self>) {
@@ -107,7 +111,7 @@ impl Shell {
     }
 
     fn toolbar(&self, p: &Paint, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let button = |id: &'static str, label: &'static str, enabled: bool| {
+        let button = |id: &'static str, icon: Option<Icon>, label: &'static str, enabled: bool| {
             let surface = p.surface;
             let hover = p.hover;
             div()
@@ -124,18 +128,27 @@ impl Shell {
                         .hover(move |s| s.bg(surface))
                         .active(move |s| s.bg(hover))
                 })
-                .child(label)
+                .child(if let Some(icon) = icon.filter(|_| p.look.icons) {
+                    KoanIcon::new(icon)
+                        .role(TypeRole::Control)
+                        .color(p.ink)
+                        .into_any_element()
+                } else {
+                    div().child(label).into_any_element()
+                })
         };
-        let title = match self.nav.current() {
-            Page::Queue => "queue",
-            Page::Albums => "albums",
-            Page::Artists => "artists",
-            Page::Tracks => "tracks",
-            Page::Favourites => "favourites",
-            Page::RecentlyPlayed => "recently played",
-            Page::History => "history",
-            Page::Downloads => "downloads",
-            Page::Playlist(_) => "playlist",
+        let nav = self.nav.read(cx);
+        let (can_go_back, can_go_forward) = (nav.can_go_back(), nav.can_go_forward());
+        let title = match nav.current() {
+            Route::Queue => "queue",
+            Route::Albums => "albums",
+            Route::Artists => "artists",
+            Route::Tracks => "tracks",
+            Route::Favourites => "favourites",
+            Route::RecentlyPlayed => "recently played",
+            Route::History => "history",
+            Route::Downloads => "downloads",
+            Route::Playlist(_) => "playlist",
         };
         div()
             .id("toolbar")
@@ -151,11 +164,11 @@ impl Shell {
             .border_b(theme::HAIRLINE)
             .border_color(p.rule)
             .child(
-                button("back", "←", self.nav.can_go_back())
+                button("back", Some(Icon::Back), "back", can_go_back)
                     .on_click(cx.listener(|this, _, window, cx| this.back(&GoBack, window, cx))),
             )
             .child(
-                button("forward", "→", self.nav.can_go_forward()).on_click(
+                button("forward", Some(Icon::Forward), "forward", can_go_forward).on_click(
                     cx.listener(|this, _, window, cx| this.forward(&GoForward, window, cx)),
                 ),
             )
@@ -201,17 +214,17 @@ impl Shell {
                 matches!(window.window_decorations(), Decorations::Client { .. }),
                 |d| {
                     d.child(
-                        button("minimise", "–", true)
+                        button("minimise", None, "–", true)
                             .window_control_area(WindowControlArea::Min)
                             .on_click(|_, window, _| window.minimize_window()),
                     )
                     .child(
-                        button("maximise", "□", true)
+                        button("maximise", None, "□", true)
                             .window_control_area(WindowControlArea::Max)
                             .on_click(|_, window, _| window.zoom_window()),
                     )
                     .child(
-                        button("close", "×", true)
+                        button("close", None, "×", true)
                             .window_control_area(WindowControlArea::Close)
                             // Removing the window skips the close request, so
                             // its bounds are saved here rather than there.
@@ -228,8 +241,8 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        let stage = match self.nav.current() {
-            Page::Queue => self
+        let stage = match self.nav.read(cx).current() {
+            Route::Queue => self
                 .queue
                 .clone()
                 .cached(StyleRefinement::default().size_full())

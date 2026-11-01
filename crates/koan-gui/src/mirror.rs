@@ -160,7 +160,6 @@ pub struct Tasks {
 
 /// The other devices, and which one this app controls (`None` for itself).
 #[derive(Default)]
-#[expect(dead_code, reason = "read by the device and output pages")]
 pub struct Devices {
     pub devices: Vec<DeviceInfo>,
     pub target: Option<String>,
@@ -169,7 +168,6 @@ pub struct Devices {
 
 /// UPnP renderers on the network, and the one this koan plays to.
 #[derive(Default)]
-#[expect(dead_code, reason = "read by the device and output pages")]
 pub struct Renderers {
     pub renderers: Vec<RendererInfo>,
     pub output: Option<RendererOutput>,
