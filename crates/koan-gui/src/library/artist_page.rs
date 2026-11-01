@@ -824,6 +824,13 @@ impl TileHost for ArtistPage {
 }
 
 impl TrackList for ArtistPage {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.record
+            .as_ref()
+            .map(|r| r.appearances.iter().map(|t| t.id).collect())
+            .unwrap_or_default()
+    }
+
     fn clicked(
         &mut self,
         index: usize,

@@ -413,6 +413,10 @@ impl actions::Menus for AlbumPage {
 }
 
 impl TrackList for AlbumPage {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.tracks.iter().map(|t| t.id).collect()
+    }
+
     fn clicked(
         &mut self,
         index: usize,

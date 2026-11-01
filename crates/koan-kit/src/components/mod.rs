@@ -67,7 +67,7 @@ pub use slider::Slider;
 pub use spinner::Spinner;
 pub use split::SplitView;
 pub use stepper::Stepper;
-pub use table::TableRow;
+pub use table::{ROW_GROUP, RowNumber, TableRow};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 

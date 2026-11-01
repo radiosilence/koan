@@ -361,6 +361,10 @@ impl actions::Menus for TrackBrowser {
 }
 
 impl TrackList for TrackBrowser {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.tracks.iter().map(|t| t.id).collect()
+    }
+
     fn clicked(
         &mut self,
         index: usize,
