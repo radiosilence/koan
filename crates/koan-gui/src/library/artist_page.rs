@@ -887,7 +887,7 @@ impl Render for ArtistPage {
         if self
             .lib
             .covers
-            .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, cx))
+            .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, Some(window), cx))
         {
             window.request_animation_frame();
         }

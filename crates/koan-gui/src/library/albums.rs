@@ -318,6 +318,34 @@ impl AlbumGrid {
         self.send_aim(cx);
     }
 
+    /// What happens once a frame, before the rows are built: the rows on
+    /// screen from the scroll's offset (rows are all one height), the cover
+    /// cache aimed from them, a few new sleeves taken into the atlas (another
+    /// frame asked for while more wait), and the frame's tiles begun.
+    fn frame(&mut self, grid: Grid, count: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let (offset, viewport) = {
+            let state = self.scroll.0.borrow();
+            (
+                -f32::from(state.base_handle.offset().y),
+                f32::from(state.base_handle.bounds().size.height),
+            )
+        };
+        let row = f32::from(grid.row).max(1.0);
+        let top = (offset - f32::from(grid.margin)).max(0.0);
+        let rows = grid.rows(count);
+        let last = (((top + viewport) / row).ceil() as usize).min(rows);
+        let first = ((top / row).floor() as usize).min(last);
+        self.aim(first..last, window, cx);
+        if self
+            .lib
+            .covers
+            .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, Some(window), cx))
+        {
+            window.request_animation_frame();
+        }
+        self.tiles.begin();
+    }
+
     fn send_aim(&mut self, cx: &mut Context<Self>) {
         let Some(grid) = self.grid else { return };
         let scale = self.scale.get();
@@ -683,6 +711,9 @@ impl Render for AlbumGrid {
             }
         }
         let count = self.records.len();
+        if let Some(grid) = self.grid {
+            self.frame(grid, count, window, cx);
+        }
         let narrowed = self.lib.browse.read(cx).is_narrowed();
         let header = chrome::page_header(
             p,
@@ -740,18 +771,10 @@ impl Render for AlbumGrid {
             Some(grid) => uniform_list(
                 "albums",
                 grid.rows(count),
-                cx.processor(move |this, range: Range<usize>, window, cx| {
-                    this.aim(range.clone(), window, cx);
-                    // A few new sleeves into the atlas a frame; while more
-                    // wait, another frame follows to take them.
-                    if this
-                        .lib
-                        .covers
-                        .update(cx, |c, cx| c.admit(UPLOADS_PER_FRAME, cx))
-                    {
-                        window.request_animation_frame();
-                    }
-                    this.tiles.begin();
+                // Builds rows only: uniform_list calls it to measure a row as
+                // well as to lay out the visible ones, so anything done once
+                // a frame happens in `render`.
+                cx.processor(move |this, range: Range<usize>, _, cx| {
                     range.map(|row| this.row(row, grid, cx)).collect::<Vec<_>>()
                 }),
             )

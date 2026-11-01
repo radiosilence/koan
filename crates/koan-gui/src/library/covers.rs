@@ -486,7 +486,15 @@ impl Covers {
     /// lists on screen asked for. Returns whether more are staged, in which
     /// case the caller asks for another frame. Never notifies, so a list can
     /// call it from its own layout.
-    pub fn admit(&mut self, budget: usize, cx: &mut Context<Self>) -> bool {
+    /// `window` is the window being drawn, when called while drawing it: an
+    /// image dropped from the atlas from inside a window's update must name
+    /// that window, which the app's list of windows does not hold just then.
+    pub fn admit(
+        &mut self,
+        budget: usize,
+        mut window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.staged.is_empty() {
             return false;
         }
@@ -520,17 +528,17 @@ impl Covers {
             };
             if let Some(old) = self.memory.insert(key, held) {
                 self.memory_bytes -= old.bytes;
-                cx.drop_image(old.image, None);
+                cx.drop_image(old.image, window.as_deref_mut());
             } else {
                 self.sizes.entry(key.art).or_default().push(key.px);
             }
             self.memory_bytes += bytes;
         }
-        self.trim(cx);
+        self.trim(window, cx);
         !self.staged.is_empty()
     }
 
-    fn forget(&mut self, key: Key, cx: &mut Context<Self>) {
+    fn forget(&mut self, key: Key, window: Option<&mut Window>, cx: &mut Context<Self>) {
         if let Some(held) = self.memory.remove(&key) {
             self.memory_bytes -= held.bytes;
             if let Some(sizes) = self.sizes.get_mut(&key.art) {
@@ -539,7 +547,7 @@ impl Covers {
                     self.sizes.remove(&key.art);
                 }
             }
-            cx.drop_image(held.image, None);
+            cx.drop_image(held.image, window);
         }
     }
 
@@ -549,7 +557,7 @@ impl Covers {
     /// would upload it again at the next paint and nothing would drop it
     /// after that. Evicting what is wanted only after the rest is what keeps
     /// a tight budget from evicting and re-decoding the rows ahead in a loop.
-    fn trim(&mut self, cx: &mut Context<Self>) {
+    fn trim(&mut self, mut window: Option<&mut Window>, cx: &mut Context<Self>) {
         if self.memory_bytes <= MEMORY_BUDGET {
             return;
         }
@@ -582,7 +590,7 @@ impl Covers {
             if self.memory_bytes <= target {
                 break;
             }
-            self.forget(key, cx);
+            self.forget(key, window.as_deref_mut(), cx);
             dropped.push(key);
         }
         let mut queue = self.shared.queue.lock();
@@ -683,7 +691,8 @@ impl Covers {
             .copied()
             .collect();
         for key in drop {
-            self.forget(key, cx);
+            // Outside any window's update: the app reaches every window.
+            self.forget(key, None, cx);
         }
         self.allow_fetches(true);
         if !fresh {

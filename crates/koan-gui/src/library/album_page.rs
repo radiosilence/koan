@@ -444,11 +444,9 @@ impl TrackList for AlbumPage {
 impl Render for AlbumPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
-        if self
-            .lib
-            .covers
-            .update(cx, |c, cx| c.admit(super::covers::UPLOADS_PER_FRAME, cx))
-        {
+        if self.lib.covers.update(cx, |c, cx| {
+            c.admit(super::covers::UPLOADS_PER_FRAME, Some(window), cx)
+        }) {
             window.request_animation_frame();
         }
         let width = self.width.clone();

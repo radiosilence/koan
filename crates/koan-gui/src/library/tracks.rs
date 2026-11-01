@@ -397,11 +397,9 @@ impl TrackList for TrackBrowser {
 impl Render for TrackBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
-        if self
-            .lib
-            .covers
-            .update(cx, |c, cx| c.admit(super::covers::UPLOADS_PER_FRAME, cx))
-        {
+        if self.lib.covers.update(cx, |c, cx| {
+            c.admit(super::covers::UPLOADS_PER_FRAME, Some(window), cx)
+        }) {
             window.request_animation_frame();
         }
         let rewinds = self.lib.nav.read(cx).rewinds(Page::Tracks);
@@ -428,6 +426,18 @@ impl Render for TrackBrowser {
         );
         let scale = window.scale_factor();
         let lead_width = rows::lead_width(p, self.total as usize, window);
+        // The rows on screen from the scroll's offset, rows being one height.
+        let (offset, viewport) = {
+            let state = self.scroll.0.borrow();
+            (
+                -f32::from(state.base_handle.offset().y),
+                f32::from(state.base_handle.bounds().size.height),
+            )
+        };
+        let row = f32::from(rows::art_height(p)).max(1.0);
+        let last = (((offset + viewport) / row).ceil() as usize).min(self.total as usize);
+        let first = ((offset / row).floor() as usize).min(last);
+        self.aim(first..last, window, cx);
         let body = if self.total == 0 && self.loaded.is_some() {
             chrome::empty_state(
                 crate::theme::Icon::Track,
@@ -449,8 +459,9 @@ impl Render for TrackBrowser {
             uniform_list(
                 "tracks",
                 self.total as usize,
+                // Builds rows only: uniform_list also calls it to measure a
+                // row, so the cover requests happen once a frame in `render`.
                 cx.processor(move |this, range: Range<usize>, window, cx| {
-                    this.aim(range.clone(), window, cx);
                     let p = Paint::of(window, cx);
                     range
                         .map(|i| this.row(&p, i, scale, lead_width, cx))
