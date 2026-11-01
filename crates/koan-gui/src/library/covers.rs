@@ -177,10 +177,18 @@ struct Queue {
     /// promptly, grown and cut by `observe` as TCP's is. Zero until the first
     /// answer, read as `WINDOW_START`.
     window: f64,
-    /// The quickest answer lately, drifting up slowly: what "prompt" is
-    /// measured against, for this server and its disk.
-    base: Option<Duration>,
-    /// When the window was last cut, so one slow burst cuts it once.
+    /// The last `HISTORY` answers' times, newest last. A server's answers are
+    /// bimodal (a cover it keeps comes back in tens of milliseconds, one it
+    /// reads off a disk in hundreds), so it is judged by medians, never by
+    /// its quickest.
+    answers: std::collections::VecDeque<Duration>,
+    /// Answers since the window was last judged: one judgement per round
+    /// trip, a window's worth of answers.
+    since_judged: usize,
+    /// Round trips in a row whose recent median stood well above the
+    /// history's.
+    slow_rounds: u32,
+    /// When the window was last cut, so a burst of failures cuts it once.
     last_cut: Option<Instant>,
     /// The first eviction sweep has landed, so a file found on disk belongs to
     /// the record now holding its id. Until then every record is fetched
@@ -238,41 +246,63 @@ impl Queue {
         window.min(self.limit).max(1)
     }
 
-    /// One fetch answered after `took`, or failed. While answers come back
-    /// near the quickest lately, the window grows by about one per window's
-    /// worth of answers; when they slow (a server's disk seeking under load)
-    /// or fail, it halves, once per round trip. Returns whether it grew by a
-    /// whole place, which wakes one more fetcher.
+    /// One fetch answered after `took`, or failed. Every answer grows the
+    /// window by 1/window, about one place per round trip. A failure halves
+    /// it at once (once per round trip). Otherwise it halves only when the
+    /// median of the recent answers has stood more than `SLOWER` times the
+    /// median of the longer history for `SLOW_ROUNDS` round trips running:
+    /// a server whose disk is seeking under load, not one answering a mix of
+    /// kept and unkept covers. Returns whether the window grew by a whole
+    /// place, which wakes one more fetcher.
     fn observe(&mut self, took: Duration, ok: bool) -> bool {
         let before = self.allowed();
         if self.window == 0.0 {
             self.window = WINDOW_START as f64;
         }
-        let base = match self.base {
-            Some(base) if took >= base => base + (took - base) / 64,
-            _ => took,
-        };
-        self.base = Some(base);
-        let slow = !ok || took > base * 2 + SLACK;
-        if slow {
-            let settled = self
+        if !ok {
+            let typical = median(self.answers.iter().copied()).unwrap_or(Duration::ZERO);
+            if self
                 .last_cut
-                .is_none_or(|at| at.elapsed() > base.max(SLACK));
-            if settled {
-                self.window = (self.window / 2.0).max(WINDOW_MIN as f64);
-                self.last_cut = Some(Instant::now());
-                log::debug!(
-                    "covers: answers slowing ({} ms, quickest lately {} ms{}), window now {}",
-                    took.as_millis(),
-                    base.as_millis(),
-                    if ok { "" } else { ", failed" },
-                    self.window as usize
-                );
+                .is_none_or(|at| at.elapsed() > typical.max(SETTLE))
+            {
+                self.cut(format_args!("a fetch failed after {} ms", took.as_millis()));
             }
-        } else {
-            self.window = (self.window + 1.0 / self.window).min(MAX_FETCHES as f64);
+            return false;
+        }
+        if self.answers.len() == HISTORY {
+            self.answers.pop_front();
+        }
+        self.answers.push_back(took);
+        self.window = (self.window + 1.0 / self.window).min(MAX_FETCHES as f64);
+        self.since_judged += 1;
+        if self.since_judged >= self.window as usize {
+            self.since_judged = 0;
+            let recent = median(self.answers.iter().rev().take(RECENT).copied());
+            let typical = median(self.answers.iter().copied());
+            match (recent, typical) {
+                (Some(recent), Some(typical))
+                    if self.answers.len() >= 2 * RECENT && recent > typical * SLOWER =>
+                {
+                    self.slow_rounds += 1;
+                    if self.slow_rounds >= SLOW_ROUNDS {
+                        self.slow_rounds = 0;
+                        self.cut(format_args!(
+                            "answers slowed: median {} ms lately against {} ms",
+                            recent.as_millis(),
+                            typical.as_millis()
+                        ));
+                    }
+                }
+                _ => self.slow_rounds = 0,
+            }
         }
         self.allowed() > before
+    }
+
+    fn cut(&mut self, why: std::fmt::Arguments) {
+        self.window = (self.window / 2.0).max(WINDOW_MIN as f64);
+        self.last_cut = Some(Instant::now());
+        log::debug!("covers: {why}; window now {}", self.window as usize);
     }
 
     fn next_fetch(&self) -> Option<Art> {
@@ -320,10 +350,27 @@ pub const MAX_FETCHES: usize = 512;
 /// reading covers off a spinning disk answers 16 at once well and 512 badly;
 /// the window finds what this one takes.
 const WINDOW_START: usize = 16;
-const WINDOW_MIN: usize = 2;
-/// Answers within twice the quickest lately, and this, are prompt: jitter on
-/// a fast server is not mistaken for load.
-const SLACK: Duration = Duration::from_millis(50);
+const WINDOW_MIN: usize = 8;
+/// How many answers the history holds, and how many of the newest are
+/// "recent".
+const HISTORY: usize = 256;
+const RECENT: usize = 16;
+/// How many times the history's median the recent median must stand, and
+/// for how many round trips running, before the window is cut.
+const SLOWER: u32 = 3;
+const SLOW_ROUNDS: u32 = 3;
+/// The least time between two cuts for failures.
+const SETTLE: Duration = Duration::from_millis(500);
+
+/// The middle of `times`, or `None` when there are none.
+fn median(times: impl Iterator<Item = Duration>) -> Option<Duration> {
+    let mut times: Vec<Duration> = times.collect();
+    if times.is_empty() {
+        return None;
+    }
+    let mid = times.len() / 2;
+    Some(*times.select_nth_unstable(mid).1)
+}
 
 enum Done {
     Decoded {
@@ -1231,29 +1278,49 @@ mod tests {
         assert!(decode(b"junk", 100).is_none());
     }
 
-    /// Prompt answers widen the window a place per window's worth; a slow or
-    /// failed one halves it, once for a burst; it never passes the limit.
+    /// Hits and misses together, as a server answers a mix of covers it
+    /// keeps and covers it reads off disk, only widen the window.
     #[test]
-    fn the_window_grows_while_answers_are_prompt_and_halves_when_they_slow() {
+    fn a_mix_of_quick_and_slow_answers_never_narrows_the_window() {
         let mut q = Queue {
             limit: 512,
             ..Queue::default()
         };
-        let quick = Duration::from_millis(20);
         assert_eq!(q.allowed(), WINDOW_START);
-        for _ in 0..WINDOW_START * 4 {
-            q.observe(quick, true);
+        for i in 0..2000 {
+            let took = if i % 3 == 0 { 700 } else { 90 };
+            q.observe(Duration::from_millis(took), true);
+        }
+        assert!(q.allowed() > WINDOW_START * 2, "{}", q.allowed());
+    }
+
+    /// A server that slows and stays slow is given fewer requests, after a
+    /// few round trips; a failure halves the window at once; never below
+    /// the floor.
+    #[test]
+    fn sustained_slowness_and_failures_narrow_the_window_to_its_floor() {
+        let mut q = Queue {
+            limit: 512,
+            ..Queue::default()
+        };
+        for _ in 0..300 {
+            q.observe(Duration::from_millis(100), true);
         }
         let grown = q.allowed();
-        assert!(grown >= WINDOW_START + 3, "{grown}");
-        q.observe(Duration::from_secs(2), true);
-        assert_eq!(q.allowed(), grown / 2);
-        // The rest of the same slow burst does not cut again.
-        q.observe(Duration::from_secs(2), true);
-        assert_eq!(q.allowed(), grown / 2);
-        q.last_cut = None;
-        q.observe(quick, false);
-        assert_eq!(q.allowed(), grown / 4);
+        // One slow round trip is not enough.
+        for _ in 0..grown {
+            q.observe(Duration::from_secs(2), true);
+        }
+        assert!(q.allowed() >= grown, "{} < {grown}", q.allowed());
+        for _ in 0..grown * 4 {
+            q.observe(Duration::from_secs(2), true);
+        }
+        assert!(q.allowed() < grown, "{} not below {grown}", q.allowed());
+        for _ in 0..20 {
+            q.last_cut = None;
+            q.observe(Duration::from_secs(30), false);
+        }
+        assert_eq!(q.allowed(), WINDOW_MIN);
         q.limit = 3;
         assert_eq!(q.allowed(), 3);
     }
