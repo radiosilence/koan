@@ -59,6 +59,8 @@ pub struct TrackBrowser {
     filters: Entity<chrome::FilterPanel>,
     /// The list's height as of the last frame, to tell when it moved.
     viewport: f32,
+    /// Frames asked for while the list has no height.
+    waits: u8,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -113,6 +115,7 @@ impl TrackBrowser {
             search,
             filters,
             viewport: 0.0,
+            waits: 0,
             _subscriptions: subscriptions,
         };
         this.reload(cx);
@@ -439,11 +442,18 @@ impl Render for TrackBrowser {
         };
         // The list's bounds come from its last layout: none yet on the first
         // frame it is drawn, and the old ones just after a resize. Another
-        // frame follows to aim from the real ones.
-        // An empty listing draws no list, so it has no bounds to wait for.
-        if self.total > 0 && (viewport <= 0.0 || viewport != self.viewport) {
-            self.viewport = viewport;
-            window.request_animation_frame();
+        // frame follows to aim from the real ones; a list at no height at all
+        // (a collapsed pane) gets two tries and then waits for a resize. An
+        // empty listing draws no list, so it has no bounds to wait for.
+        if self.total > 0 {
+            if viewport != self.viewport {
+                self.viewport = viewport;
+                self.waits = 0;
+                window.request_animation_frame();
+            } else if viewport <= 0.0 && self.waits < 2 {
+                self.waits += 1;
+                window.request_animation_frame();
+            }
         }
         let row = f32::from(rows::art_height(p)).max(1.0);
         let last = (((offset + viewport) / row).ceil() as usize).min(self.total as usize);
