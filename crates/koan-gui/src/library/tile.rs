@@ -9,9 +9,9 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Album, AlbumOnDevice};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::actions;
 use super::covers::Sleeve;
@@ -310,7 +310,9 @@ impl<V: TileHost> Render for TileView<V> {
                 art = art.child(img(ImageSource::Render(image.clone())).size_full())
             }
             Sleeve::Colour(colour) => art = art.bg(*colour),
-            Sleeve::Waiting | Sleeve::None => {}
+            Sleeve::Waiting | Sleeve::None => {
+                art = art.child(crate::components::Placeholder::new(side))
+            }
         }
         if let Some(codec) = &record.codec {
             // The codec only: at tile size a rate is unreadable, and the codec
@@ -344,7 +346,14 @@ impl<V: TileHost> Render for TileView<V> {
             );
         }
         if state.playing {
-            art = art.child(playing_bars(p).absolute().left(px(8.0)).bottom(px(8.0)));
+            art = art.child(
+                div()
+                    .id("tile-playing")
+                    .absolute()
+                    .left(px(8.0))
+                    .bottom(px(8.0))
+                    .child(crate::levels::bars(p.accent)),
+            );
         }
         if let Some(bar) = download_bar(p, record.on_device, state.arriving) {
             art = art.child(bar);
@@ -563,16 +572,6 @@ fn badge(p: &Paint, text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// Three bars in the accent: the record is the one playing.
-pub fn playing_bars(p: &Paint) -> Div {
-    div()
-        .flex()
-        .items_end()
-        .gap(px(2.0))
-        .h(px(12.0))
-        .children([7.0, 12.0, 9.0].map(|h| div().w(px(3.0)).h(px(h)).bg(p.accent)))
-}
-
 /// How much of the record is on this device, where the listing says, and
 /// whether more of it is arriving.
 fn download_bar(p: &Paint, on_device: Option<AlbumOnDevice>, arriving: bool) -> Option<Div> {
@@ -596,7 +595,7 @@ fn download_bar(p: &Paint, on_device: Option<AlbumOnDevice>, arriving: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
     use core::prelude::v1::test;
 
     #[test]

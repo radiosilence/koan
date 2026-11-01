@@ -6,9 +6,9 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Album, Track};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve};
 use super::drag::{Playable, PlayableDrag};
@@ -18,6 +18,7 @@ use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::components::RowKind;
 use crate::theme::Space;
 
 /// A line of the list: a disc's heading, or a track and the number it shows.
@@ -190,11 +191,11 @@ impl AlbumPage {
     }
 
     /// One height for every line: taller when any row names its artists.
-    fn row_height(&self, p: &Paint) -> Pixels {
+    fn row_kind(&self) -> RowKind {
         if self.credited {
-            rows::text_height(p)
+            RowKind::Text
         } else {
-            rows::height(p)
+            RowKind::Line
         }
     }
 
@@ -205,7 +206,8 @@ impl AlbumPage {
         lead_width: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let height = self.row_height(p);
+        let kind = self.row_kind();
+        let height = crate::components::RowMetrics::height(kind, &p.look);
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
                 return div()
@@ -242,7 +244,7 @@ impl AlbumPage {
             gathered: false,
             transfer: feed.transfers.get(&id).copied(),
             drag,
-            height,
+            kind,
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -267,7 +269,9 @@ impl AlbumPage {
                 cover = cover.child(img(ImageSource::Render(image)).size_full())
             }
             Sleeve::Colour(colour) => cover = cover.bg(colour),
-            Sleeve::Waiting | Sleeve::None => {}
+            Sleeve::Waiting | Sleeve::None => {
+                cover = cover.child(crate::components::Placeholder::new(grid.side))
+            }
         }
         let total: i64 = self.tracks.iter().filter_map(|t| t.duration_ms).sum();
         let favourite = self
@@ -522,7 +526,7 @@ impl Render for AlbumPage {
                                 .pb(grid.margin)
                                 .size_full(),
                             )
-                            .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
+                            .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                         cx.weak_entity(),
                         window,
                         cx,

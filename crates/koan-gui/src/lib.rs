@@ -2,11 +2,12 @@
 //! and Linux, for now.
 
 pub mod app;
-pub mod components;
 pub mod covers;
 pub mod dsp;
 pub mod engine;
+pub mod levels;
 pub mod library;
+pub mod links;
 #[cfg(feature = "profiler")]
 pub mod measure;
 pub mod mirror;
@@ -17,10 +18,10 @@ pub mod queue;
 pub mod root;
 pub mod session;
 pub mod settings;
-pub mod sheet;
 pub mod shell;
 pub mod sidebar;
-pub mod theme;
 pub mod time;
 pub mod transport;
 pub mod window_state;
+
+pub use koan_kit::{components, sheet, theme};

@@ -7,9 +7,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::KoanEngine;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::covers::Covers;
 use crate::engine::Engine;
@@ -17,7 +17,7 @@ use crate::mirror::{Mirror, Queue};
 use crate::root::WindowRoot;
 use crate::session::Session;
 use crate::shell::Shell;
-use crate::{queue, settings, shell, window_state};
+use crate::{queue, settings, window_state};
 
 /// How long the window waits for the restored queue before opening anyway.
 const RESTORE_WAIT: Duration = Duration::from_millis(500);
@@ -32,6 +32,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.set_global(mirror);
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
+    crate::levels::install(cx);
     crate::platform::dock::follow(engine, cx);
     settings::install(engine.clone(), cx);
     crate::dsp::window::init(cx);
@@ -143,14 +144,14 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     };
     let options = WindowOptions {
         window_bounds: Some(bounds),
-        window_min_size: Some(shell::MIN_SIZE),
+        window_min_size: Some(crate::components::RowMetrics::WINDOW_MIN),
         titlebar: Some(titlebar()),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
         // The `.desktop` file's StartupWMClass.
         app_id: Some("koan-gui".into()),
         ..Default::default()
     };
-    let opened = gpui_kit::open_window(options, cx, |window, cx| {
+    let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
         window.on_window_should_close(cx, |window, cx| {
             window_state::save(window.window_bounds(), cx);
             true

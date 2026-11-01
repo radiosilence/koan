@@ -18,8 +18,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use gpui_kit::profiler::journal::{ForegroundJournalEntry, IntervalBoundary};
-use gpui_kit::*;
+use koan_kit::raw::profiler::journal::{ForegroundJournalEntry, IntervalBoundary};
+use koan_kit::raw::*;
 
 /// Wheel steps per direction, 16 ms apart: about five seconds each way.
 const STEPS: usize = 300;

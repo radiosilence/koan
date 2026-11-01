@@ -21,8 +21,10 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::{Action, App, KeyBinding, KeyBindingContextPredicate, OperatingSystem, actions};
 use koan_ffi::KoanEngine;
+use koan_kit::raw::{
+    Action, App, KeyBinding, KeyBindingContextPredicate, OperatingSystem, actions,
+};
 
 /// The key context the shell's root element carries.
 pub const CONTEXT: &str = "koan";
@@ -63,6 +65,7 @@ actions!(
         TopOfQueue,
         EndOfQueue,
         // View.
+        ToggleSidebar,
         ToggleLyrics,
         Bigger,
         Smaller,
@@ -104,7 +107,7 @@ actions!(
 /// the menu's Play / Pause and Delete are never given space and ⌫ as key
 /// equivalents. Each is handled as its menu twin is.
 mod bare {
-    gpui_kit::actions!(koan_bare, [TogglePlayPause, Delete]);
+    koan_kit::raw::actions!(koan_bare, [TogglePlayPause, Delete]);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +189,7 @@ pub const MENU: &[Shortcut] = &[
         FavouriteCurrentTrack
     ),
     shortcut!("EQ…", ["secondary-alt-e"], Playback, ShowEq),
+    shortcut!("Toggle Sidebar", ["ctrl-secondary-s"], View, ToggleSidebar),
     shortcut!("Toggle Lyrics", ["secondary-alt-l"], View, ToggleLyrics),
     shortcut!("Keyboard Shortcuts", ["secondary-/"], View, ShowShortcuts),
     shortcut!("Bigger", ["secondary-+", "secondary-="], View, Bigger),
@@ -456,7 +460,7 @@ mod tests {
         for shortcut in MENU.iter().chain(APPLICATION).chain(HOTKEYS) {
             for key in shortcut.keys {
                 for os in [OperatingSystem::Mac, OperatingSystem::Linux] {
-                    gpui_kit::Keystroke::parse_with_os(key, os)
+                    koan_kit::raw::Keystroke::parse_with_os(key, os)
                         .unwrap_or_else(|_| panic!("{key} does not parse"));
                 }
             }
@@ -466,20 +470,20 @@ mod tests {
     /// The binding a keystroke dispatches with focus at `stack`, innermost
     /// last.
     fn winner(bindings: Vec<KeyBinding>, key: &'static str, stack: &[&str]) -> String {
-        let keymap = gpui_kit::Keymap::new(bindings);
-        let stack: Vec<gpui_kit::KeyContext> = stack
+        let keymap = koan_kit::raw::Keymap::new(bindings);
+        let stack: Vec<koan_kit::raw::KeyContext> = stack
             .iter()
-            .map(|c| gpui_kit::KeyContext::parse(c).unwrap())
+            .map(|c| koan_kit::raw::KeyContext::parse(c).unwrap())
             .collect();
         let (found, _) =
-            keymap.bindings_for_input(&[gpui_kit::Keystroke::parse(key).unwrap()], &stack);
+            keymap.bindings_for_input(&[koan_kit::raw::Keystroke::parse(key).unwrap()], &stack);
         found
             .first()
             .map(|b| b.action().name().to_string())
             .unwrap_or_default()
     }
 
-    gpui_kit::actions!(field, [FieldCopy, FieldDeleteBack]);
+    koan_kit::raw::actions!(field, [FieldCopy, FieldDeleteBack]);
 
     #[test]
     fn a_text_field_keeps_its_own_keys() {
@@ -509,7 +513,7 @@ mod tests {
     fn no_hotkey_carries_a_modifier() {
         for shortcut in HOTKEYS {
             for key in shortcut.keys {
-                let k = gpui_kit::Keystroke::parse_with_os(key, OperatingSystem::Mac).unwrap();
+                let k = koan_kit::raw::Keystroke::parse_with_os(key, OperatingSystem::Mac).unwrap();
                 let m = k.modifiers;
                 assert!(
                     !(m.platform || m.control || m.alt),

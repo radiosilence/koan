@@ -215,7 +215,7 @@ jobs:
             # checks it for any Rust, as it does the Apple apps.
             gui_mac=false
             if [ "$release" = true ] \
-              || touches '^crates/(koan-gui|koan-ffi)/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/'; then
+              || touches '^crates/(koan-gui|koan-kit|koan-ffi)/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/'; then
               gui_mac=true
             fi
             if [ "$EVENT" != "pull_request" ] && [ "$rust" = true ]; then
@@ -422,9 +422,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: gui
           cache-on-failure: true
-      - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      # Pages built beside the design system rather than from it.
+      - run: python3 scripts/gui-theme-leaks.py
+      - run: cargo clippy -p koan-gui -p koan-kit --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test -p koan-gui --all-targets
+        run: cargo test -p koan-gui -p koan-kit --all-targets
 
   # koan-gui on macOS, which the job above cannot see.
   gui-mac:
@@ -449,11 +451,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: gui-mac
           cache-on-failure: true
-      - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      - run: cargo clippy -p koan-gui -p koan-kit --all-targets -- -D warnings
       # The frame-time measurement, built only with this feature.
-      - run: cargo clippy -p koan-gui --all-targets --features profiler -- -D warnings
+      - run: cargo clippy -p koan-gui -p koan-kit --all-targets --features profiler -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test -p koan-gui --all-targets
+        run: cargo test -p koan-gui -p koan-kit --all-targets
 
   audit:
     name: Security Audit
@@ -599,15 +601,16 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE) || '' }}
 
-  # Everything checked for Apple, on one runner: the account's macOS runners
-  # are few, and every macOS job in every run queues behind the others.
+  # Apple is checked on three runners, split by what each needs built first:
+  # the engine's tests (`apple`), the macOS app and the iOS typecheck over one
+  # FFI build (`apple-app`), and the Apple TV app over its own (`apple-tv`).
+  # They contend for the account's few macOS runners, which costs less than
+  # running them on one runner's three cores.
   #
-  # A pull request proves the engine builds and its tests pass on macOS and
-  # that the app compiles against it, in the dev profile throughout, so the
-  # FFI library, the tests and the app share one build of the dependencies.
+  # A pull request proves the engine builds and its tests pass on macOS.
   # Clippy and the full suite are the Linux job's; the code only macOS
-  # compiles is linted on main. Main checks everything, tvOS included, and
-  # saves the cache pull requests start from.
+  # compiles is linted on main. Main checks everything and saves the cache
+  # pull requests start from.
   #
   # A release push is not checked again: its pull request and main's previous
   # push were. The release builds belong to `macos-release`.
@@ -616,98 +619,118 @@ jobs:
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
-    timeout-minutes: 90
+    timeout-minutes: 60
     concurrency:
       group: apple-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     env:
-      # Everything, tvOS included: main and manual runs.
+      # Everything: main and manual runs.
       FULL: ${{ github.event_name != 'pull_request' }}
-      # The FFI library's dependencies are built for this target, as the tests'
-      # are, so neither invalidates the other's build scripts.
       MACOSX_DEPLOYMENT_TARGET: "26.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-          targets: ${{ env.FULL == 'true' && 'aarch64-apple-tvos,aarch64-apple-tvos-sim' || '' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: apple
+          cache-on-failure: true
+      - if: env.FULL == 'true'
+        run: cargo clippy --all-targets -- -D warnings
+      # A pull request tests the crates with code for Apple platforms. Main
+      # builds that same set first, so the cache it saves holds the features a
+      # pull request's narrower build unifies to.
+      - if: ${{ !cancelled() && env.FULL == 'true' }}
+        run: cargo test -p koan-core -p koan-ffi --all-targets --no-run && cargo test --all-targets
+      - if: env.FULL != 'true'
+        run: cargo test -p koan-core -p koan-ffi --all-targets
+      - if: ${{ !cancelled() && env.FULL == 'true' }}
+        run: cargo test --doc
+
+  # The macOS app, and the shared sources typechecked for iOS, against
+  # bindings generated from this build of koan-ffi: the build catches drift
+  # between the Rust surface and the Swift that calls it.
+  apple-app:
+    name: macOS and iOS
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
+    timeout-minutes: 60
+    concurrency:
+      group: apple-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: apple-app
           cache-on-failure: true
       # just as mise.toml pins it; setup-just found no release for just on
       # these runners.
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install_args: just
-      - if: env.FULL == 'true'
-        run: cargo clippy --all-targets -- -D warnings
-      # Builds koan-ffi and regenerates the Swift bindings from it. The bindings
-      # are generated, so the app build below catches drift between the Rust
-      # surface and the Swift that calls it.
-      - id: ffi
-        if: ${{ !cancelled() }}
-        run: just macos-ffi
+      - run: just macos-ffi
         env:
           KOAN_FFI_PROFILE: debug
-      # The tests, the app and the typechecks at once. Each needs only the
-      # library and bindings above, and the tests spend much of their run
-      # waiting, which the Swift compiler fills. Every log is printed, and
-      # every failure named, once all have finished.
-      - name: Tests, the app, and the iOS and tvOS typechecks
-        if: ${{ !cancelled() && steps.ffi.outcome == 'success' }}
+      # Both at once; the typecheck is small beside the app build. Every log is
+      # printed, and every failure named, once both have finished.
+      - name: The app and the iOS typecheck
         run: |
-          names=() pids=()
-          start() {
-            local name=$1; shift
-            "$@" > "$RUNNER_TEMP/$name.log" 2>&1 &
-            names+=("$name") pids+=($!)
-          }
-          # A pull request tests the crates with code for Apple platforms.
-          # Main builds that same set first, so the cache it saves holds the
-          # features a pull request's narrower build unifies to.
-          if [ "$FULL" = true ]; then
-            start tests bash -c 'cargo test -p koan-core -p koan-ffi --all-targets --no-run && cargo test --all-targets'
-          else
-            start tests cargo test -p koan-core -p koan-ffi --all-targets
-          fi
-          start app bash -c 'cd apps/macos && swift build -c debug'
-          # The shared sources build for iOS and tvOS too. These need the
-          # bindings and nothing else: no Rust build for either, no simulator.
-          start ios-typecheck just --no-deps ios-typecheck
-          if [ "$FULL" = true ]; then
-            start tv-typecheck just --no-deps tv-typecheck
-          fi
+          (cd apps/macos && swift build -c debug) > "$RUNNER_TEMP/app.log" 2>&1 & app=$!
+          just --no-deps ios-typecheck > "$RUNNER_TEMP/ios.log" 2>&1 & ios=$!
           failed=()
-          for i in "${!pids[@]}"; do
-            if wait "${pids[$i]}"; then
-              echo "::group::${names[$i]} passed"
-              cat "$RUNNER_TEMP/${names[$i]}.log"
-              echo "::endgroup::"
-            else
-              failed+=("${names[$i]}")
-              echo "${names[$i]} failed:"
-              cat "$RUNNER_TEMP/${names[$i]}.log"
-            fi
-          done
+          wait $app || failed+=(app)
+          wait $ios || failed+=(ios-typecheck)
+          echo "::group::app"; cat "$RUNNER_TEMP/app.log"; echo "::endgroup::"
+          echo "::group::ios-typecheck"; cat "$RUNNER_TEMP/ios.log"; echo "::endgroup::"
           if [ ${#failed[@]} -gt 0 ]; then
             echo "::error::failed: ${failed[*]}"
             exit 1
           fi
-      - if: ${{ !cancelled() && env.FULL == 'true' }}
-        run: cargo test --doc
-      - if: ${{ !cancelled() && env.FULL == 'true' }}
-        run: brew install xcodegen
+
+  # The Apple TV app, on pull requests as well as main: tvOS compiles the
+  # shared sources under its own rules, and a break only it sees otherwise
+  # surfaces at a release. The xcodebuild is the typecheck.
+  apple-tv:
+    name: Apple TV
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
+    timeout-minutes: 60
+    concurrency:
+      group: apple-tv-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-tvos,aarch64-apple-tvos-sim
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: apple-tv
+          cache-on-failure: true
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          install_args: just
+      - run: brew install xcodegen
+      - run: just tv-build
       # The device target as well as the simulator's: they take different
-      # cfgs in places, and only the simulator is built below.
-      - if: ${{ !cancelled() && env.FULL == 'true' }}
+      # cfgs in places, and only the simulator is built above.
+      - if: ${{ !cancelled() }}
         run: cargo check -p koan-ffi --target aarch64-apple-tvos --target-dir target/tv-26.0
         env:
           TVOS_DEPLOYMENT_TARGET: "26.0"
-      - if: ${{ !cancelled() && env.FULL == 'true' }}
-        run: just tv-build
 
   # Tests, lints and builds the app as it ships. Off pull requests it also
   # builds the bundle Google Play takes; CD uploads that, and attaches the APK
@@ -802,7 +825,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, gui-mac, audit, pulumi-package, linux-build, container, apple, apple-app, apple-tv, android]
     if: always()
     steps:
       - env:
@@ -1058,6 +1081,9 @@ jobs:
     timeout-minutes: 90
     needs: [changes, make-room]
     if: ${{ !cancelled() && needs.make-room.result == 'success' }}
+    # Best effort while the GUI app is new: a package that fails to build is
+    # left off the release, and neither the run nor anything after it fails.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -1271,7 +1297,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check-version, android, linux-build, macos-release, gui-release, publish-crate, publish-package]
+    needs: [check-version, android, linux-build, macos-release, publish-crate, publish-package]
     # Every need having succeeded, named one by one: a skipped job is not a
     # failure, and a release without one of its parts is not a release.
     # needs.*.result would also see jobs further up the graph, such as Apple,
@@ -1286,6 +1312,9 @@ jobs:
           path: artifacts
           # What is shipped, not the builds it was packaged from.
           pattern: koan-*
+      # The GUI app's packages are attached by gui-attach, which waits for
+      # them; the release does not.
+      - run: rm -rf artifacts/koan-gui-*
       # Release writes go through RELEASE_TOKEN: GitHub answers the workflow
       # token's with "Resource not accessible by integration", contents: write
       # notwithstanding.
@@ -1413,6 +1442,62 @@ jobs:
   # cask to it. Failing or timing out fails this job alone; re-running it
   # waits on the submissions already made (`scripts/notarise.sh`) rather than
   # submitting again.
+  # The GUI app's packages, added to the release once both exist. Best effort
+  # while the app is new: whatever built is attached, the DMG notarised and
+  # stapled, and nothing here fails the run or holds up the release.
+  gui-attach:
+    name: Attach the GUI packages
+    runs-on: macos-latest
+    timeout-minutes: 120
+    needs: [check-version, publish-release, gui-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
+    continue-on-error: true
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          pattern: koan-gui-*
+      - name: Attach the Linux packages
+        run: |
+          shopt -s nullglob globstar
+          files=(artifacts/**/*.deb artifacts/**/*.AppImage)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::warning::no GUI Linux packages built"
+            exit 0
+          fi
+          gh release upload "v$VERSION" "${files[@]}" --clobber
+      - name: API key
+        run: |
+          test -n "$APPLE_API_KEY_P8" || { echo "::error::set the APPLE_API_KEY_* secrets"; exit 1; }
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+      - name: Notarise, staple and attach the DMG
+        run: |
+          set -euo pipefail
+          src=artifacts/koan-gui-macos-arm64/koan-gui-macos-arm64.dmg
+          if [ ! -f "$src" ]; then
+            echo "::warning::no GUI DMG built"
+            exit 0
+          fi
+          hash=$(shasum -a 256 "$src" | cut -c1-12)
+          dmg="$RUNNER_TEMP/koan-gui-$VERSION-$hash.dmg"
+          cp "$src" "$dmg"
+          scripts/notarise.sh "$dmg"
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          mkdir -p stapled
+          cp "$dmg" stapled/koan-gui-macos-arm64.dmg
+          gh release upload "v$VERSION" stapled/koan-gui-macos-arm64.dmg --clobber
+
   notarise:
     name: Notarise (macOS)
     runs-on: macos-latest
@@ -1469,27 +1554,6 @@ jobs:
             exit 1
           fi
           gh release upload "v$VERSION" stapled/Koan.dmg --clobber
-      # When the desktop app's build made it into the release. A failure here
-      # leaves the release's DMG unnotarised and goes on to the cask.
-      - name: Notarise, staple and replace the desktop DMG
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          set -euo pipefail
-          src=artifacts/koan-gui-macos-arm64/koan-gui-macos-arm64.dmg
-          if [ ! -f "$src" ]; then
-            echo "::warning::no desktop DMG in this release"
-            exit 0
-          fi
-          hash=$(shasum -a 256 "$src" | cut -c1-12)
-          dmg="$RUNNER_TEMP/koan-gui-$VERSION-$hash.dmg"
-          cp "$src" "$dmg"
-          scripts/notarise.sh "$dmg"
-          xcrun stapler staple "$dmg"
-          xcrun stapler validate "$dmg"
-          cp "$dmg" stapled/koan-gui-macos-arm64.dmg
-          gh release upload "v$VERSION" stapled/koan-gui-macos-arm64.dmg --clobber
       - name: Update the Homebrew cask
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}

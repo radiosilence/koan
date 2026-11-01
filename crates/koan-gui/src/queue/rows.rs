@@ -22,7 +22,38 @@ impl Row {
     }
 }
 
-pub fn build(items: &[QueueItem]) -> Vec<Row> {
+/// The records whose rows number by disc and track: those with a track on a
+/// disc past the first anywhere in the queue. Per record rather than per run,
+/// so a record queued twice numbers both copies alike.
+pub fn disc_records(items: &[QueueItem]) -> std::collections::HashSet<i64> {
+    items
+        .iter()
+        .filter(|item| item.disc.is_some_and(|disc| disc > 1))
+        .filter_map(|item| item.album_id)
+        .collect()
+}
+
+/// A track's place on its record: its number, or `disc.NN` on a record that
+/// numbers by disc.
+pub fn track_place(item: &QueueItem, by_disc: bool) -> String {
+    let Some(number) = item.track_number else {
+        return String::new();
+    };
+    if by_disc {
+        format!("{}.{number:02}", item.disc.unwrap_or(1))
+    } else {
+        number.to_string()
+    }
+}
+
+/// The queue's rows: grouped, each record's run under its heading; flat, a
+/// row per item, each naming its own record.
+pub fn build(items: &[QueueItem], grouped: bool) -> Vec<Row> {
+    if !grouped {
+        return (0..items.len())
+            .map(|ix| Row::Track { ix, grouped: false })
+            .collect();
+    }
     let mut rows = Vec::with_capacity(items.len() + items.len() / 8);
     let mut ix = 0;
     while ix < items.len() {
@@ -146,8 +177,37 @@ mod tests {
     }
 
     #[test]
+    fn a_flat_queue_is_a_row_per_item() {
+        let rows = build(&queue(), false);
+        assert_eq!(rows.len(), 6);
+        assert!(
+            rows.iter()
+                .all(|row| matches!(row, Row::Track { grouped: false, .. }))
+        );
+    }
+
+    #[test]
+    fn a_record_with_a_second_disc_numbers_by_disc() {
+        let mut items = queue();
+        for (i, item) in items.iter_mut().enumerate() {
+            item.album_id = Some(if i < 2 { 1 } else { 2 });
+            item.track_number = Some(i as i64 + 1);
+        }
+        items[0].disc = Some(1);
+        items[1].disc = Some(2);
+        items[3].disc = Some(1);
+        let discs = disc_records(&items);
+        assert_eq!(discs, std::collections::HashSet::from([1]));
+        assert_eq!(track_place(&items[0], true), "1.01");
+        assert_eq!(track_place(&items[1], true), "2.02");
+        assert_eq!(track_place(&items[3], false), "4");
+        items[2].track_number = None;
+        assert_eq!(track_place(&items[2], true), "");
+    }
+
+    #[test]
     fn a_run_has_a_heading_and_a_single_stands_alone() {
-        let rows = build(&queue());
+        let rows = build(&queue(), true);
         assert_eq!(
             rows,
             vec![
@@ -206,7 +266,7 @@ mod tests {
     #[test]
     fn a_drop_on_a_heading_lands_above_its_record() {
         let items = queue();
-        let rows = build(&items);
+        let rows = build(&items, true);
         let moving = vec!["s".to_string()];
         assert_eq!(
             drop_target(&rows, 0, &moving, &items),
@@ -221,7 +281,7 @@ mod tests {
     #[test]
     fn a_drop_onto_the_rows_being_moved_skips_past_them() {
         let items = queue();
-        let rows = build(&items);
+        let rows = build(&items, true);
         let moving = vec!["a1".to_string(), "a2".to_string()];
         // Rows 0..3 are the record being moved; the single is the first to stay.
         assert_eq!(
@@ -233,7 +293,7 @@ mod tests {
     #[test]
     fn the_last_rows_lower_half_is_the_end_of_the_queue() {
         let items = queue();
-        let rows = build(&items);
+        let rows = build(&items, true);
         let last = rows.len() - 1;
         assert_eq!(insertion_point(last, true), rows.len());
         let moving = vec!["a1".to_string()];
@@ -250,7 +310,7 @@ mod tests {
     #[test]
     fn a_drop_past_the_end_goes_after_the_last_item_that_stays() {
         let items = queue();
-        let rows = build(&items);
+        let rows = build(&items, true);
         let moving = vec!["a1".to_string()];
         assert_eq!(
             drop_target(&rows, rows.len(), &moving, &items),

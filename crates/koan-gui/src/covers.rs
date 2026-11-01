@@ -10,8 +10,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::engine::engine;
 
@@ -229,16 +229,11 @@ pub fn image(album_id: Option<i64>, side: Pixels, cx: &mut App) -> Option<Arc<Re
     Covers::get(&covers, album_id?, (f32::from(side) * 2.0) as u32, cx)
 }
 
-/// A square sleeve of `side` points, or the ground's `surface` while there is
-/// none.
-pub fn draw(image: Option<Arc<RenderImage>>, side: Pixels, surface: Hsla) -> AnyElement {
+/// A square sleeve of `side` points, or the placeholder while there is none.
+pub fn draw(image: Option<Arc<RenderImage>>, side: Pixels, _surface: Hsla) -> AnyElement {
     match image {
         Some(image) => img(image).size(side).flex_shrink_0().into_any_element(),
-        None => div()
-            .size(side)
-            .flex_shrink_0()
-            .bg(surface)
-            .into_any_element(),
+        None => crate::components::Placeholder::new(side).into_any_element(),
     }
 }
 

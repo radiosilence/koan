@@ -1,0 +1,1 @@
+- **koan-kit, the desktop app's design system, is a crate of its own.** The theme and the components move out of koan-gui, which reaches GPUI only through koan-kit, so pages are built from the system rather than beside it.

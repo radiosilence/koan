@@ -6,8 +6,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use gpui_kit::*;
 use koan_ffi::{KoanEngine, PlayState, StateSlice, TransferState};
+use koan_kit::raw::*;
 
 use super::drag::Playable;
 

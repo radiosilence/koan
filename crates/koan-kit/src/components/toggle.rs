@@ -67,7 +67,8 @@ impl RenderOnce for Toggle {
             .items_center()
             .justify_between()
             .gap(look.space(Space::M))
-            .min_h(HIT)
+            // The Mac toggle's hit height; the whole row takes the click.
+            .min_h(look.spaced(24.0))
             .child(
                 div()
                     .text_role(TypeRole::Body, &look)

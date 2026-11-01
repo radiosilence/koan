@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
-use gpui_kit::{App, AsyncApp, Global};
 use koan_ffi::KoanEngine;
+use koan_kit::raw::{App, AsyncApp, Global};
 
 use instance::Opened;
 
@@ -79,7 +79,7 @@ pub fn init(
     // As the Mac app does unless it is kept running in the menu bar, which
     // this app has no menu bar item for: closing the last window quits.
     // GPUI's default on macOS keeps the process with nothing to bring back.
-    cx.set_quit_mode(gpui_kit::QuitMode::LastWindowClosed);
+    cx.set_quit_mode(koan_kit::raw::QuitMode::LastWindowClosed);
     actions::register(engine, cx);
     about::init(cx);
     shortcuts_sheet::bind(cx);

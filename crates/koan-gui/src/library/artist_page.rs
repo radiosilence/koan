@@ -12,9 +12,9 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -502,7 +502,7 @@ impl ArtistPage {
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
                     drag,
-                    height: rows::art_height(p),
+                    kind: crate::components::RowKind::Art,
                 };
                 rows::track_row(p, track, index, state, sleeve, Some(self.artist_id), cx)
             }
@@ -602,7 +602,9 @@ impl ArtistPage {
                     ))
                 }
                 Sleeve::Colour(colour) => photo = photo.bg(colour),
-                Sleeve::Waiting | Sleeve::None => {}
+                Sleeve::Waiting | Sleeve::None => {
+                    photo = photo.child(crate::components::Placeholder::new(grid.side))
+                }
             }
         }
         let favourite = self.lib.feed.read(cx).is_favourite(item);
@@ -950,7 +952,7 @@ impl Render for ArtistPage {
                     .flex_1()
                     .min_h_0()
                     .child(body)
-                    .child(gpui_kit::base::Scrollbar::vertical(&self.list)),
+                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.list)),
                 cx.weak_entity(),
                 window,
                 cx,

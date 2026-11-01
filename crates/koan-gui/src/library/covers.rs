@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
-use gpui_kit::*;
 use koan_ffi::KoanEngine;
+use koan_kit::raw::*;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
 
@@ -108,6 +108,17 @@ pub enum Sleeve {
     Waiting,
     /// The record has no art.
     None,
+}
+
+impl From<Sleeve> for crate::components::CoverArt {
+    fn from(sleeve: Sleeve) -> Self {
+        use crate::components::CoverArt;
+        match sleeve {
+            Sleeve::Ready(image) => CoverArt::Image(image),
+            Sleeve::Colour(colour) => CoverArt::Colour(colour),
+            Sleeve::Waiting | Sleeve::None => CoverArt::Missing,
+        }
+    }
 }
 
 impl Sleeve {
@@ -1032,7 +1043,7 @@ fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
     use core::prelude::v1::test;
 
     #[test]

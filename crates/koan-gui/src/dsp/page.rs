@@ -7,14 +7,14 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::FluentBuilder;
+use koan_kit::raw::{
     AnyElement, App, AppContext, Context, Entity, ExternalPaths, InteractiveElement, IntoElement,
     ParentElement, PathPromptOptions, Render, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Task, Window, canvas, div, point, px,
 };
-use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 
 use super::graph::{Graph, Part, Stroke};
 use super::menu::{Item, Trigger, menu};
@@ -93,8 +93,8 @@ impl Render for EqPage {
                 dsp.update(cx, |dsp, cx| dsp.import_files(paths, None, None, into, cx));
             })
             .child(
-                gpui_kit::AnyView::from(self.body.clone())
-                    .cached(gpui_kit::StyleRefinement::default().size_full()),
+                koan_kit::raw::AnyView::from(self.body.clone())
+                    .cached(koan_kit::raw::StyleRefinement::default().size_full()),
             )
             .children(sheets)
             .children(prompts)
@@ -456,8 +456,8 @@ impl Render for EqBody {
                     .child(head)
                     .child(
                         div().h(px(290.0)).child(
-                            gpui_kit::AnyView::from(self.graph.clone())
-                                .cached(gpui_kit::StyleRefinement::default().size_full()),
+                            koan_kit::raw::AnyView::from(self.graph.clone())
+                                .cached(koan_kit::raw::StyleRefinement::default().size_full()),
                         ),
                     )
                     .child(chain)
@@ -630,24 +630,25 @@ impl EqBody {
             let this = cx.weak_entity();
             let save = {
                 let (this, preset) = (this.clone(), preset.clone());
-                move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
+                move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
                     this.update(cx, |p, cx| p.save(preset.clone(), true, cx))
                         .ok();
                 }
             };
             let revert = {
                 let (this, preset) = (this.clone(), preset.clone());
-                move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
+                move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
                     this.update(cx, |p, cx| p.choose_preset(preset.clone(), cx))
                         .ok();
                 }
             };
-            let save_new = move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
-                this.update(cx, |p, cx| {
-                    p.ask_preset_name("Save as New Preset", window, cx)
-                })
-                .ok();
-            };
+            let save_new =
+                move |_: &koan_kit::raw::ClickEvent, window: &mut Window, cx: &mut App| {
+                    this.update(cx, |p, cx| {
+                        p.ask_preset_name("Save as New Preset", window, cx)
+                    })
+                    .ok();
+                };
             rows.push(
                 FormRow::data(format!("{} {preset}", label("Changed since")))
                     .control(
@@ -867,7 +868,7 @@ impl EqBody {
         ];
         let pick = |stage: Stage, page: &Self| {
             let (dsp, sheets, device) = (page.dsp.clone(), page.sheets.clone(), device.to_owned());
-            move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+            move |_: &koan_kit::raw::ClickEvent, window: &mut Window, cx: &mut App| {
                 let view = cx.new(|cx| {
                     stage::StagePicker::new(
                         dsp.clone(),
@@ -994,7 +995,7 @@ impl EqBody {
     fn opener(
         &self,
         name: String,
-    ) -> impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static {
+    ) -> impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static {
         let (dsp, sheets, device) = (self.dsp.clone(), self.sheets.clone(), self.device());
         move |_, window, cx| {
             let view = cx.new(|cx| {
@@ -1019,7 +1020,7 @@ impl EqBody {
         o: &DspOverview,
         device: &str,
         detail: Option<String>,
-        outline: gpui_kit::Hsla,
+        outline: koan_kit::raw::Hsla,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1042,7 +1043,7 @@ impl EqBody {
         };
         let mut items = vec![Item::action(label("Edit"), {
             let open = self.opener(entry.name.clone());
-            move |window, cx| open(&gpui_kit::ClickEvent::default(), window, cx)
+            move |window, cx| open(&koan_kit::raw::ClickEvent::default(), window, cx)
         })];
         if i > 0 {
             let (set, chain) = (set.clone(), chain.clone());
@@ -1242,15 +1243,15 @@ impl Stroke {
 /// controls.
 #[allow(clippy::too_many_arguments)]
 fn block(
-    id: impl Into<gpui_kit::ElementId>,
+    id: impl Into<koan_kit::raw::ElementId>,
     title: &str,
     name: String,
     detail: Option<String>,
     db: Option<Vec<f64>>,
     stroke: Stroke,
-    outline: gpui_kit::Hsla,
+    outline: koan_kit::raw::Hsla,
     look: &Look,
-    on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static,
     controls: Vec<AnyElement>,
 ) -> impl IntoElement {
     div()
@@ -1301,9 +1302,9 @@ fn placeholder(
     id: &'static str,
     title: Option<&str>,
     prompt: &str,
-    outline: Option<gpui_kit::Hsla>,
+    outline: Option<koan_kit::raw::Hsla>,
     look: &Look,
-    on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
         .id(id)
@@ -1347,7 +1348,7 @@ pub fn thumb(db: Vec<f64>, stroke: Stroke, range: Option<f64>) -> impl IntoEleme
             let look = Look::of(window, cx);
             let range = range.unwrap_or_else(|| db.iter().fold(6.0f64, |m, v| m.max(v.abs())));
             let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-            let mut b = gpui_kit::PathBuilder::stroke(px(1.5));
+            let mut b = koan_kit::raw::PathBuilder::stroke(px(1.5));
             if !stroke.dash.is_empty() {
                 let dash: Vec<_> = stroke.dash.iter().map(|d| px(*d)).collect();
                 b = b.dash_array(&dash);

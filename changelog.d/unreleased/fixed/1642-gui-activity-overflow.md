@@ -1,0 +1,1 @@
+- **GUI activity rows fit the sidebar.** A long task or count truncates inside the sidebar rather than running over its edge.

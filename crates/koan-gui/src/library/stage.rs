@@ -1,8 +1,8 @@
 //! The library's part of the shell's stage: the page the navigator is on,
 //! and a track's details over it.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::Lib;
 use super::albums::AlbumGrid;
@@ -42,6 +42,13 @@ impl LibraryStage {
             route,
             Page::Albums | Page::Artists | Page::Tracks | Page::Album(_) | Page::Artist(_)
         )
+    }
+
+    /// The page's controls for the window's toolbar: its filter field and
+    /// buttons, drawn in the toolbar's trailing items. None until the pages
+    /// provide them.
+    pub fn toolbar(&self) -> Option<AnyView> {
+        None
     }
 
     fn page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyView> {
