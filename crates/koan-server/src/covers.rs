@@ -27,13 +27,18 @@ use axum::body::Bytes;
 
 use koan_core::db::queries::TrackRow;
 
-/// The sizes a cover is served at. A request is rounded up to one of these,
-/// which bounds what the cache can hold per album.
-pub(crate) const SIZES: [u32; 4] = [200, 400, 800, 1200];
-/// Grid tiles, at 2x.
-pub(crate) const GRID: u32 = 400;
+/// The sizes a cover is served at, the ones every koan client asks for
+/// (`koan_core::remote::client::COVER_SIZES`). A request is rounded up to
+/// one of these, which bounds what the cache can hold per album.
+pub(crate) const SIZES: [u32; 4] = koan_core::remote::client::COVER_SIZES;
+/// Grid tiles, at 2x: the web UI's and the desktop app's.
+pub(crate) const GRID: u32 = 600;
 /// Headers, the player, and link previews.
-pub(crate) const LARGE: u32 = 800;
+pub(crate) const LARGE: u32 = 1200;
+/// What the warm makes for every album: the desktop's and the web UI's grid,
+/// and the phones' thumbnails. The Apple apps' 1200 is made as asked: a
+/// library's worth of them would outgrow `BUDGET`.
+const WARMED: [u32; 2] = [300, GRID];
 
 /// How many of an album's tracks are opened looking for art before giving up.
 const TRACKS_TRIED: usize = 3;
@@ -194,6 +199,11 @@ impl Covers {
     }
 
     fn warm_pass(&self, pool: &koan_core::db::pool::Pool) {
+        // Near the budget, warming would only evict what was warmed before.
+        if dir_bytes(&self.dir) > self.budget / 10 * 8 {
+            log::info!("covers: the cover directory is near its budget; not warming");
+            return;
+        }
         let albums: Vec<i64> = {
             let Ok(db) = pool.get() else { return };
             self.forget_evicted(&db.conn);
@@ -210,7 +220,11 @@ impl Covers {
         };
         let mut made = 0usize;
         for album in albums {
-            if self.dir.join(album_key(album, GRID)).exists() {
+            let wanted: Vec<u32> = WARMED
+                .into_iter()
+                .filter(|size| !self.dir.join(album_key(album, *size)).exists())
+                .collect();
+            if wanted.is_empty() {
                 continue;
             }
             let tracks = match pool.get() {
@@ -219,9 +233,15 @@ impl Covers {
                 }
                 Err(_) => return,
             };
-            self.album_cover(album, GRID, || {
-                (!tracks.is_empty()).then(|| self.cover(&tracks, GRID))
-            });
+            if tracks.is_empty() {
+                continue;
+            }
+            // The source read once for every size wanted.
+            let source = self.source_art(&tracks);
+            for size in wanted {
+                let art = DECODE.install(|| source.as_deref().and_then(|b| encode(b, size)));
+                self.write_disk(&album_key(album, size), art.as_deref());
+            }
             made += 1;
         }
         if made > 0 {
@@ -272,6 +292,19 @@ impl Covers {
         art.map(Bytes::from)
     }
 
+    /// The art of the first of `tracks` that has any, as found: an image beside
+    /// it, or the art embedded in it. Unresized.
+    fn source_art(&self, tracks: &[TrackRow]) -> Option<Vec<u8>> {
+        tracks
+            .iter()
+            .filter_map(|t| crate::subsonic::track_file_path(t).map(PathBuf::from))
+            .take(TRACKS_TRIED)
+            .find_map(|p| match koan_core::index::folder_art::folder_cover(&p) {
+                Some(image) => std::fs::read(image).ok(),
+                None => koan_core::index::metadata::extract_cover_art(&p),
+            })
+    }
+
     /// `Some(None)` is a remembered miss. A hit is marked as read, so the
     /// covers in use are the last evicted.
     fn read_disk(&self, key: &str) -> Option<Option<Bytes>> {
@@ -314,6 +347,18 @@ impl Covers {
             let _ = std::fs::remove_file(&tmp);
         }
     }
+}
+
+/// What the covers in `dir` take up.
+fn dir_bytes(dir: &Path) -> u64 {
+    std::fs::read_dir(dir)
+        .map(|read| {
+            read.flatten()
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        })
+        .unwrap_or(0)
 }
 
 /// Hold `dir` to `budget` bytes, removing the covers read least recently
@@ -553,9 +598,10 @@ mod tests {
 
     #[test]
     fn requests_snap_up_to_a_served_size() {
-        assert_eq!(snap(Some(1)), 200);
-        assert_eq!(snap(Some(400)), 400);
-        assert_eq!(snap(Some(401)), 800);
+        assert_eq!(snap(Some(1)), 150);
+        assert_eq!(snap(Some(300)), 300);
+        assert_eq!(snap(Some(301)), 600);
+        assert_eq!(snap(Some(1000)), 1200);
         assert_eq!(snap(Some(99_999)), 1200);
         assert_eq!(snap(None), LARGE);
     }
@@ -576,21 +622,21 @@ mod tests {
     fn the_placeholder_is_the_size_asked_with_the_mark_inside_the_inset() {
         let png = placeholder(300);
         let img = image::load_from_memory(&png).unwrap().to_rgb8();
-        assert_eq!(img.dimensions(), (400, 400));
+        assert_eq!(img.dimensions(), (300, 300));
         let surface = image::Rgb([42, 42, 42]);
         assert_eq!(*img.get_pixel(0, 0), surface);
-        assert_eq!(*img.get_pixel(200, 200), surface, "the ring is open");
+        assert_eq!(*img.get_pixel(150, 150), surface, "the ring is open");
         let inked: Vec<_> = img
             .enumerate_pixels()
             .filter(|(_, _, p)| **p != surface)
             .collect();
         assert!(!inked.is_empty());
-        let inset = (400.0 * 0.26) as u32;
+        let inset = (300.0 * 0.26) as u32;
         assert!(
             inked
                 .iter()
-                .all(|(x, y, _)| (inset..400 - inset).contains(x)
-                    && (inset..400 - inset).contains(y))
+                .all(|(x, y, _)| (inset..300 - inset).contains(x)
+                    && (inset..300 - inset).contains(y))
         );
     }
 

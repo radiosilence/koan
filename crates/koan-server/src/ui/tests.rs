@@ -636,8 +636,8 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
         authed(&f.state, "/albums").body(Body::empty()).unwrap(),
     )
     .await;
-    let src = format!("src=\"ui/cover/{}?size=400&#38;v=", f.album_id);
-    let src_raw = format!("src=\"ui/cover/{}?size=400&v=", f.album_id);
+    let src = format!("src=\"ui/cover/{}?size=600&#38;v=", f.album_id);
+    let src_raw = format!("src=\"ui/cover/{}?size=600&v=", f.album_id);
     assert!(
         page.body.contains(&src) || page.body.contains(&src_raw),
         "{}",
@@ -645,7 +645,7 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
     );
     assert!(
         page.body
-            .contains("loading=\"lazy\" decoding=\"async\" width=\"400\" height=\"400\"")
+            .contains("loading=\"lazy\" decoding=\"async\" width=\"600\" height=\"600\"")
     );
 
     let uri = format!("/ui/cover/{}?size=300&v=1", f.album_id);
@@ -676,7 +676,7 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn
         .collect();
     assert_eq!(kept.len(), 1, "one remembered miss");
     assert_eq!(kept[0].metadata().unwrap().len(), 0);
-    assert!(kept[0].file_name().to_string_lossy().ends_with("-400.jpg"));
+    assert!(kept[0].file_name().to_string_lossy().ends_with("-300.jpg"));
 }
 
 #[tokio::test]
