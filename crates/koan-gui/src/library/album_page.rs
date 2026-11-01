@@ -18,6 +18,7 @@ use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::components::RowKind;
 use crate::theme::Space;
 
 /// A line of the list: a disc's heading, or a track and the number it shows.
@@ -190,11 +191,11 @@ impl AlbumPage {
     }
 
     /// One height for every line: taller when any row names its artists.
-    fn row_height(&self, p: &Paint) -> Pixels {
+    fn row_kind(&self) -> RowKind {
         if self.credited {
-            rows::text_height(p)
+            RowKind::Text
         } else {
-            rows::height(p)
+            RowKind::Line
         }
     }
 
@@ -205,7 +206,7 @@ impl AlbumPage {
         lead_width: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let height = self.row_height(p);
+        let kind = self.row_kind();
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
                 return div()
@@ -242,7 +243,7 @@ impl AlbumPage {
             gathered: false,
             transfer: feed.transfers.get(&id).copied(),
             drag,
-            height,
+            kind,
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }

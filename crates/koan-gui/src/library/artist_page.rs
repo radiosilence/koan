@@ -502,7 +502,7 @@ impl ArtistPage {
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
                     drag,
-                    height: rows::art_height(p),
+                    kind: crate::components::RowKind::Art,
                 };
                 rows::track_row(p, track, index, state, sleeve, Some(self.artist_id), cx)
             }

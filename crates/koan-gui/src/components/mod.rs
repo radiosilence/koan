@@ -24,6 +24,7 @@ mod segmented;
 mod slider;
 mod spinner;
 mod stepper;
+mod table;
 mod toggle;
 mod toolbar;
 
@@ -55,6 +56,7 @@ pub use segmented::Segmented;
 pub use slider::Slider;
 pub use spinner::Spinner;
 pub use stepper::Stepper;
+pub use table::TableRow;
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
 
