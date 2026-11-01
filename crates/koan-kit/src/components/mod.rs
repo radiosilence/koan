@@ -2,6 +2,11 @@
 //! Geist Mono. docs/design/koan-theme.md#components describes each; the
 //! comments here say only where GPUI asks for something the spec does not.
 //!
+//! Containers (`Page`, `Toolbar`, `Form`, `Menu`, the table's rows) own the
+//! spacing and metrics, and pages declare only content. The design, what
+//! each piece owns and the map from the Swift roles to these, is
+//! docs/design/koan-kit.md.
+//!
 //! Every component is a `RenderOnce` element that reads the window's `Look`
 //! as it renders. Interactive ones take an id, under which they keep what
 //! the pointer is doing and the state of their transitions.
