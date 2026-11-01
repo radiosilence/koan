@@ -1170,14 +1170,15 @@ jobs:
           path: out/*
 
   # The image this commit already pushed, tagged with the release's version
-  # and `latest` once the release's builds have passed: a failed release must
-  # not move `latest`. Retagging needs no rebuild, and repeats safely.
+  # and `latest` once the server's own builds have passed: a failed Linux build
+  # must not move `latest`, and the desktop apps' builds do not hold it up.
+  # Retagging needs no rebuild, and repeats safely.
   container-release:
     name: Container image (release tags)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [check-version, container, macos-release]
-    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.container.result == 'success' && needs.macos-release.result == 'success' }}
+    needs: [check-version, container, linux-build]
+    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.container.result == 'success' && needs.linux-build.result == 'success' }}
     permissions:
       contents: read
       packages: write
