@@ -1913,28 +1913,40 @@ impl Window {
                             })
                             .log_err();
                     })
-                } else if needs_present {
+                } else if needs_present
+                    // KOAN: a live shader is presented again, with its
+                    // uniforms read afresh, on every refresh (#1641).
+                    || handle
+                        .update(&mut cx, |_, window, _| {
+                            window.rendered_frame.scene.has_live_shaders()
+                        })
+                        .unwrap_or(false)
+                {
                     handle
                         .update(&mut cx, |_, window, _| window.present())
                         .log_err();
                 }
 
-                handle
+                // KOAN: a live shader keeps the frames coming (#1641).
+                let live = handle
                     .update(&mut cx, |_, window, _| {
+                        let live = window.rendered_frame.scene.has_live_shaders();
                         if window.invalidator.is_dirty()
                             || !window.next_frame_callbacks.borrow().is_empty()
+                            || live
                         {
                             window.platform_window.schedule_frame();
                         }
+                        live
                     })
-                    .log_err();
+                    .unwrap_or(false);
 
                 // Platforms that stop requesting frames for idle windows only
                 // deliver another request after a wakeup. If demand remains
                 // after this frame (the window was re-invalidated mid-draw, or
                 // animations scheduled next-frame callbacks), re-arm the frame
                 // source explicitly.
-                if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
+                if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() || live {
                     invalidator.wake_platform();
                 }
                 #[cfg(feature = "profiler")]
@@ -4699,6 +4711,28 @@ impl Window {
     /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
     /// where the circular arcs meet. This will not display well when combined with dashed borders.
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
+    // KOAN: shader quads (#1641).
+    /// Paints a quad drawn by `program`, reading `uniforms` as each frame is
+    /// presented. See [`ShaderUniforms`] for keeping it moving between frames.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_shader(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        program: &'static crate::ShaderProgram,
+        uniforms: Arc<crate::ShaderUniforms>,
+    ) {
+        self.invalidator.debug_assert_paint();
+        let shader = crate::PaintShader {
+            order: 0,
+            bounds: self.snap_bounds(bounds),
+            content_mask: self.snapped_content_mask(),
+            program,
+            uniforms,
+        };
+        self.next_frame.scene.insert_primitive(shader);
+    }
+
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 

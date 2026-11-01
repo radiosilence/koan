@@ -50,6 +50,8 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    // KOAN: shader quads (#1641).
+    pub shaders: Vec<crate::PaintShader>,
 }
 
 #[expect(missing_docs)]
@@ -66,6 +68,13 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.shaders.clear(); // KOAN: shader quads (#1641).
+    }
+
+    // KOAN: whether a shader on screen asks for the window to present every
+    // refresh (#1641).
+    pub fn has_live_shaders(&self) -> bool {
+        self.shaders.iter().any(|shader| shader.uniforms.is_live())
     }
 
     pub fn len(&self) -> usize {
@@ -133,6 +142,11 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            // KOAN: shader quads (#1641).
+            Primitive::Shader(shader) => {
+                shader.order = order;
+                self.shaders.push(shader.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -160,6 +174,9 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
         self.surfaces.sort_by_key(|surface| surface.order);
+        // KOAN: shader quads (#1641), kept together by program within an order.
+        self.shaders
+            .sort_by_key(|shader| (shader.order, shader.program.name));
     }
 
     #[cfg_attr(
@@ -187,6 +204,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            shaders_start: 0,
+            shaders_iter: self.shaders.iter().peekable(),
         }
     }
 }
@@ -209,6 +228,7 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    Shader, // KOAN: shader quads (#1641).
 }
 
 pub(crate) enum PaintOperation {
@@ -228,6 +248,7 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    Shader(crate::PaintShader), // KOAN: shader quads (#1641).
 }
 
 #[expect(missing_docs)]
@@ -242,6 +263,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::Shader(shader) => &shader.bounds, // KOAN: #1641.
         }
     }
 
@@ -255,6 +277,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::Shader(shader) => &shader.content_mask, // KOAN: #1641.
         }
     }
 }
@@ -283,6 +306,9 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    // KOAN: shader quads (#1641).
+    shaders_start: usize,
+    shaders_iter: Peekable<slice::Iter<'a, crate::PaintShader>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -315,6 +341,11 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            // KOAN: shader quads (#1641).
+            (
+                self.shaders_iter.peek().map(|s| s.order),
+                PrimitiveKind::Shader,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -461,6 +492,28 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            // KOAN: shader quads (#1641): one batch per run of one program.
+            PrimitiveKind::Shader => {
+                let program = self.shaders_iter.peek().unwrap().program;
+                let shaders_start = self.shaders_start;
+                let mut shaders_end = shaders_start + 1;
+                self.shaders_iter.next();
+                while self
+                    .shaders_iter
+                    .next_if(|shader| {
+                        (shader.order, batch_kind) < max_order_and_kind
+                            && std::ptr::eq(shader.program, program)
+                    })
+                    .is_some()
+                {
+                    shaders_end += 1;
+                }
+                self.shaders_start = shaders_end;
+                Some(PrimitiveBatch::Shaders {
+                    program,
+                    range: shaders_start..shaders_end,
+                })
+            }
         }
     }
 }
@@ -493,6 +546,11 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    // KOAN: shader quads (#1641).
+    Shaders {
+        program: &'static crate::ShaderProgram,
+        range: Range<usize>,
+    },
 }
 
 impl PrimitiveBatch {
@@ -525,6 +583,10 @@ impl PrimitiveBatch {
                 )
             }
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+            // KOAN: shader quads (#1641).
+            Self::Shaders { program, range } => {
+                format!("shaders ({}) of {}", range.len(), program.name)
+            }
         }
     }
 }

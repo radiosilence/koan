@@ -1607,6 +1607,8 @@ impl WgpuRendererCore {
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
+                    // KOAN: shader quads (#1641) are not drawn here yet.
+                    PrimitiveBatch::Shaders { .. } => {}
                 }
             }
         }

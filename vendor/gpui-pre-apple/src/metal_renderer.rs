@@ -126,6 +126,12 @@ pub struct MetalRenderer {
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
+    // KOAN: each shader program's pipeline, compiled the first time it is
+    // drawn; `None` for one that would not compile, which is not tried again
+    // (#1641).
+    shader_pipelines: std::cell::RefCell<
+        std::collections::HashMap<&'static str, Option<metal::RenderPipelineState>>,
+    >,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -423,6 +429,7 @@ impl MetalRenderer {
             path_sprites_pipeline_state,
             shadows_pipeline_state,
             quads_pipeline_state,
+            shader_pipelines: Default::default(), // KOAN: #1641.
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
@@ -813,6 +820,14 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
+                // KOAN: shader quads (#1641).
+                PrimitiveBatch::Shaders { program, range } => self.draw_shaders(
+                    program,
+                    range,
+                    instance_bindings,
+                    viewport_size,
+                    command_encoder,
+                ),
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                     &scene.surfaces[range.clone()],
                     range.start,
@@ -938,6 +953,90 @@ impl MetalRenderer {
             6,
             shadows.len() as u64,
             shadows.start as u64,
+        );
+    }
+
+    // KOAN: shader quads (#1641). A program's pipeline is compiled from its
+    // source the first time it is drawn: the app's `shade` between a prelude
+    // declaring the instance and a vertex and fragment function calling it.
+    fn shader_pipeline(
+        &self,
+        program: &'static gpui::ShaderProgram,
+    ) -> Option<metal::RenderPipelineState> {
+        let mut pipelines = self.shader_pipelines.borrow_mut();
+        pipelines
+            .entry(program.name)
+            .or_insert_with(|| {
+                let source = format!("{SHADER_PRELUDE}\n{}\n{SHADER_MAIN}", program.msl);
+                match self
+                    .device
+                    .new_library_with_source(&source, &metal::CompileOptions::new())
+                {
+                    Ok(library) => Some(build_pipeline_state(
+                        &self.device,
+                        &library,
+                        program.name,
+                        "koan_shader_vertex",
+                        "koan_shader_fragment",
+                        MTLPixelFormat::BGRA8Unorm,
+                    )),
+                    Err(error) => {
+                        log::error!("shader {} did not compile: {error}", program.name);
+                        None
+                    }
+                }
+            })
+            .clone()
+    }
+
+    // KOAN: shader quads (#1641).
+    fn draw_shaders(
+        &self,
+        program: &'static gpui::ShaderProgram,
+        shaders: Range<usize>,
+        instance_bindings: &InstanceBindings,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if shaders.is_empty() {
+            return;
+        }
+        let Some(pipeline) = self.shader_pipeline(program) else {
+            return;
+        };
+        command_encoder.set_render_pipeline_state(&pipeline);
+        command_encoder.set_vertex_buffer(0, Some(&self.unit_vertices), 0);
+        command_encoder.set_vertex_buffer(
+            1,
+            Some(&instance_bindings.shaders.buffer),
+            instance_bindings.shaders.offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            1,
+            Some(&instance_bindings.shaders.buffer),
+            instance_bindings.shaders.offset as u64,
+        );
+        let viewport = [
+            i32::from(viewport_size.width) as f32,
+            i32::from(viewport_size.height) as f32,
+        ];
+        command_encoder.set_vertex_bytes(
+            2,
+            mem::size_of_val(&viewport) as u64,
+            viewport.as_ptr() as *const c_void,
+        );
+        let time = gpui::shader_time(std::time::Instant::now());
+        command_encoder.set_fragment_bytes(
+            3,
+            mem::size_of_val(&time) as u64,
+            &time as *const f32 as *const c_void,
+        );
+        command_encoder.draw_primitives_instanced_base_instance(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            shaders.len() as u64,
+            shaders.start as u64,
         );
     }
 
@@ -1486,7 +1585,59 @@ struct InstanceBindings {
     monochrome_sprites: InstanceBinding,
     polychrome_sprites: InstanceBinding,
     surfaces: InstanceBinding,
+    shaders: InstanceBinding, // KOAN: #1641.
 }
+
+// KOAN: shader quads (#1641): what a program's `shade` is compiled between.
+const SHADER_PRELUDE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct KoanShaderInstance {
+    float4 bounds;
+    float4 clip;
+    float4 uniforms[4];
+};
+
+struct KoanShaderVarying {
+    float4 position [[position]];
+    float2 local;
+    uint instance [[flat]];
+};
+"#;
+
+const SHADER_MAIN: &str = r#"
+vertex KoanShaderVarying koan_shader_vertex(
+    uint vertex_id [[vertex_id]],
+    uint instance_id [[instance_id]],
+    constant float2 *unit [[buffer(0)]],
+    constant KoanShaderInstance *instances [[buffer(1)]],
+    constant float2 *viewport [[buffer(2)]]
+) {
+    KoanShaderInstance s = instances[instance_id];
+    float2 u = unit[vertex_id];
+    float2 p = s.bounds.xy + u * s.bounds.zw;
+    float2 ndc = p / *viewport * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    KoanShaderVarying out;
+    out.position = float4(ndc, 0.0, 1.0);
+    out.local = u * s.bounds.zw;
+    out.instance = instance_id;
+    return out;
+}
+
+fragment float4 koan_shader_fragment(
+    KoanShaderVarying in [[stage_in]],
+    constant KoanShaderInstance *instances [[buffer(1)]],
+    constant float *time [[buffer(3)]]
+) {
+    constant KoanShaderInstance &s = instances[in.instance];
+    float2 p = in.position.xy;
+    if (any(p < s.clip.xy) || any(p > s.clip.xy + s.clip.zw)) {
+        discard_fragment();
+    }
+    return shade(in.local, s.bounds.zw, *time, (constant float *)s.uniforms);
+}
+"#;
 
 fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
     Ok(InstanceBindings {
@@ -1499,6 +1650,9 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
             bounds: surface.bounds,
             content_mask: surface.content_mask,
         }))?,
+        // KOAN: the shaders' uniforms as they are now, when the frame is
+        // presented (#1641).
+        shaders: writer.write_iter(scene.shaders.iter().map(gpui::ShaderInstance::of))?,
     })
 }
 
