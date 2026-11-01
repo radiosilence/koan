@@ -15,7 +15,7 @@ use gpui_kit::*;
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;
 type Ready = Rc<dyn Fn(&[String]) -> bool>;
-type Dismissed = Rc<dyn Fn(&mut Window, &mut App)>;
+pub type Dismissed = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// A sheet's action. It closes the sheet, then runs with what the fields
 /// hold.
@@ -149,6 +149,9 @@ impl Sheets {
     pub fn show(&mut self, sheet: Sheet, window: &mut Window, cx: &mut Context<Self>) {
         if self.open.is_none() {
             self.before = window.focused(cx);
+        } else if let Some(dismissed) = self.open.as_ref().and_then(|s| s.dismissed.clone()) {
+            // The sheet it replaces was asked and not answered.
+            dismissed(window, cx);
         }
         let focus = cx.focus_handle();
         match sheet.fields.first() {
@@ -233,6 +236,13 @@ impl Sheets {
 
     pub fn is_open(&self) -> bool {
         self.open.is_some()
+    }
+
+    /// What the sheet up does when it goes unanswered, for the window to
+    /// run as it closes: a device waiting to pair is declined, not left
+    /// waiting.
+    pub fn unanswered(&self) -> Option<Dismissed> {
+        self.open.as_ref().and_then(|s| s.dismissed.clone())
     }
 
     /// The sheet up, over its scrim, if one is.

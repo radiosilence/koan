@@ -239,7 +239,8 @@ fn names() -> Vec<String> {
         .and_then(|out| String::from_utf8(out.stdout).ok());
     #[cfg(not(target_os = "macos"))]
     let name = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
-    name.map(|name| name.trim().trim_end_matches(".local").to_owned())
+    // Avahi publishes the first label of a host name that has a domain.
+    name.and_then(|name| name.trim().split('.').next().map(str::to_owned))
         .filter(|name| !name.is_empty())
         .map(|name| vec![format!("{name}.local")])
         .unwrap_or_default()

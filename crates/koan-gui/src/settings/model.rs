@@ -335,6 +335,10 @@ impl SettingsModel {
     {
         let id = self.next_task;
         self.next_task += 1;
+        // A result stays until the next action, an error too.
+        self.last_error = None;
+        self.last_result = None;
+        self.dismissal = None;
         self.running.push((id, uses, label.into()));
         cx.notify();
         let future = work(self.engine.clone());
