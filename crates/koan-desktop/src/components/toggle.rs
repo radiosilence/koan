@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div, px,
@@ -88,7 +89,13 @@ impl RenderOnce for Toggle {
                             .items_center()
                             .justify_center()
                             .bg(accent.opacity(on))
-                            .when_checked(self.checked, &look),
+                            .when(self.checked, |cell| {
+                                cell.child(
+                                    KoanIcon::new(Icon::Check)
+                                        .points(BOX * 0.64)
+                                        .color(look.palette.bg.hsla()),
+                                )
+                            }),
                     ),
             );
         if self.disabled {
@@ -99,29 +106,8 @@ impl RenderOnce for Toggle {
                 .track_focus(&handle)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| on_change(&!checked, window, cx));
-                        on_key(&!checked, window, cx);
-                    }
-                });
         }
         row.children(ring(&handle, &look, window))
-    }
-}
-
-trait Tick {
-    fn when_checked(self, checked: bool, look: &Look) -> Self;
-}
-
-impl Tick for gpui_kit::Div {
-    fn when_checked(self, checked: bool, look: &Look) -> Self {
-        if checked {
-            self.child(
-                KoanIcon::new(Icon::Check)
-                    .points(BOX * 0.64)
-                    .color(look.palette.bg.hsla()),
-            )
-        } else {
-            self
-        }
     }
 }
 
@@ -193,9 +179,6 @@ impl RenderOnce for IconToggle {
                 .track_focus(&handle)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| on_change(&!checked, window, cx));
-                        on_key(&!checked, window, cx);
-                    }
-                });
         }
         toggle.children(ring(&handle, &look, window))
     }

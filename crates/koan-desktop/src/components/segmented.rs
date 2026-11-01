@@ -53,7 +53,8 @@ impl RenderOnce for Segmented {
             .items_center()
             .gap(px(18.0));
         for (index, option) in self.options.into_iter().enumerate() {
-            let key = ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
+            let key =
+                ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
             let chosen = fade(key, index == selected, Motion::FAST, window, cx);
             let mut option = div()
                 .id(index)
@@ -61,7 +62,11 @@ impl RenderOnce for Segmented {
                 .border_b(HAIRLINE)
                 .border_color(accent.opacity(chosen))
                 .text_role(TypeRole::Control, &look)
-                .text_color(mix(look.palette.muted.hsla(), look.palette.ink.hsla(), chosen))
+                .text_color(mix(
+                    look.palette.muted.hsla(),
+                    look.palette.ink.hsla(),
+                    chosen,
+                ))
                 .whitespace_nowrap()
                 .child(option);
             if let Some(on_change) = self.on_change.clone() {
