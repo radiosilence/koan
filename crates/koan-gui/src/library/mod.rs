@@ -110,12 +110,17 @@ gpui_kit::actions!(
     ]
 );
 
-/// The library's keys, in the `Library` context every page sets.
+/// The library's keys, in the `Library` context every page sets: ⌘ on macOS,
+/// Ctrl elsewhere.
 pub fn bind_keys(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    let [all, back, forward] = ["cmd-a", "cmd-[", "cmd-]"];
+    #[cfg(not(target_os = "macos"))]
+    let [all, back, forward] = ["ctrl-a", "ctrl-[", "ctrl-]"];
     cx.bind_keys([
-        KeyBinding::new("secondary-a", SelectAll, Some("Library")),
+        KeyBinding::new(all, SelectAll, Some("Library")),
         KeyBinding::new("escape", Dismiss, Some("Library")),
-        KeyBinding::new("secondary-[", GoBack, Some("Library")),
-        KeyBinding::new("secondary-]", GoForward, Some("Library")),
+        KeyBinding::new(back, GoBack, Some("Library")),
+        KeyBinding::new(forward, GoForward, Some("Library")),
     ]);
 }
