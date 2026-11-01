@@ -58,8 +58,11 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 | Remove | Delete or Backspace, or the context menu |
 | Reorder | Drag rows; dragging a heading moves its record, and a selected row moves the whole selection |
 | Undo, redo | ⌘Z, ⇧⌘Z |
+| Follow what's playing | The crosshair in the toolbar; it stays on, keeping the playing track in view, until you scroll |
 
 The queue keeps its place and selection when you visit another page and come back.
+
+Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued.
 
 ## Settings
 

@@ -90,6 +90,8 @@ Toolbar::new()
 
 `ToolbarMetrics` holds the Mac's unified toolbar, measured at 2x: 52 points tall with the traffic lights centred on it, 8 in from the edges, separate items 8 apart. A page's `ToolbarGroup` declares its groups (`spacer()` between them) and the toolbar spaces them: 2 points between the buttons of a group, a 16-point spacer between groups. `ToolbarButton` is the spec's toolbar button: the glyph in `ink` in a 36-point cell, `surface` under the pointer, `hover` pressed, the focus ring, 40 % disabled; the word in the cell with icons off.
 
+`ToolbarSelection::new("3 selected").action(id, label, run)`: what a toolbar says while things are picked, the Mac's selection bar: the count in `muted`, then text buttons in the accent, the toolbar's group spacing between each.
+
 `ToolbarMenu::new(id, button, content)`: a toolbar button that opens a menu panel under it (a page's ⋯, a sort), the panel built each time it opens, its rows given a `Dismiss` to call before they act.
 
 ### Drag and drop (Mac: the drag image, the list's drop indicator)

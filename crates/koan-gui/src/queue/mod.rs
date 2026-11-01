@@ -21,13 +21,13 @@ use koan_kit::raw::{Hsla, px};
 use koan_kit::raw::ListScrollEvent;
 
 use crate::components::{
-    Button, ButtonKind, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
-    KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, ProgressRing, RowKind,
-    RowMetrics, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
+    Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle, KoanContextMenu, Menu, MenuEntry,
+    MenuPanel, MenuRow, Page, PageHeader, ProgressRing, RowKind, RowMetrics, TableRow,
+    ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarSelection,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
-use crate::library::drag::{Playable, PlayableDrag};
+use crate::library::drag::{Playable, PlayableDrag, PlaylistDrag};
 use crate::library::feed::Feed;
 use crate::links::{self, names};
 use crate::mirror::{Mirror, Queue};
@@ -37,7 +37,7 @@ use crate::platform::actions::{
     ClearSelection, Delete, EndOfQueue, Redo, SelectAll, TopOfQueue, Undo,
 };
 use crate::platform::drop;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Tone, TypeRole};
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, TypeRole};
 use crate::window_state;
 use rows::Row;
 
@@ -146,6 +146,12 @@ pub struct QueueView {
     /// The running transfers' progress, read once a frame and only by a frame
     /// that draws a transferring row.
     readings: Option<HashMap<i64, Option<f64>>>,
+    /// Keeping the playing track in view as it changes, the Mac's: on from
+    /// the crosshair, off by a scroll of the person's own or with nothing
+    /// playing. For the session only.
+    following: bool,
+    /// The queue item last brought into view while following.
+    followed: Option<String>,
     _subscriptions: [Subscription; 5],
 }
 
@@ -161,6 +167,7 @@ impl QueueView {
                 if queue.read(cx).whole != this.whole {
                     this.lay_out(cx);
                 }
+                this.follow(cx);
                 cx.notify();
             }),
             cx.observe(&covers, |_, _, cx| cx.notify()),
@@ -202,6 +209,8 @@ impl QueueView {
             nav: nav.clone(),
             feed: None,
             readings: None,
+            following: false,
+            followed: None,
             _subscriptions: subscriptions,
         };
         // The queue can arrive before the window's saved layout is read.
@@ -754,6 +763,23 @@ impl QueueView {
                 let dest = this.drop_at.unwrap_or(row);
                 this.drop_library(dragged, dest, cx);
             }))
+            .on_drag_move::<PlaylistDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let lower = event.event.position.y > event.bounds.center().y;
+                    let at = rows::insertion_point(row, lower);
+                    if this.drop_at != Some(at) {
+                        this.drop_at = Some(at);
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
+                let dest = this.drop_at.unwrap_or(row);
+                this.drop_library(&dragged.as_library(), dest, cx);
+            }))
             .into_any_element()
     }
 }
@@ -1145,16 +1171,49 @@ impl Focusable for QueueView {
 impl QueueView {
     /// Scrolls to the playing row, if there is one.
     fn jump_to_playing(&mut self, cx: &mut Context<Self>) {
-        let queue = self.queue.read(cx);
-        let row = queue
-            .items
-            .iter()
-            .find(|item| item.status == EntryStatus::Playing)
-            .and_then(|item| queue.track_rows.get(&item.queue_item_id))
-            .copied();
-        if let Some(row) = row {
+        if let Some((_, row)) = self.playing_row(cx) {
             self.list.scroll_to_reveal_item(row);
             cx.notify();
+        }
+    }
+
+    /// The playing item and its row.
+    fn playing_row(&self, cx: &App) -> Option<(String, usize)> {
+        let queue = self.queue.read(cx);
+        let item = queue
+            .items
+            .iter()
+            .find(|item| item.status == EntryStatus::Playing)?;
+        let row = *queue.track_rows.get(&item.queue_item_id)?;
+        Some((item.queue_item_id.clone(), row))
+    }
+
+    /// The crosshair: jump to the playing track and follow it, or stop.
+    fn toggle_follow(&mut self, cx: &mut Context<Self>) {
+        if self.following {
+            self.following = false;
+        } else if let Some((id, row)) = self.playing_row(cx) {
+            self.list.scroll_to_reveal_item(row);
+            self.following = true;
+            self.followed = Some(id);
+        }
+        cx.notify();
+    }
+
+    /// While following, a new playing track is brought into view; with
+    /// nothing playing there is nothing to follow.
+    fn follow(&mut self, cx: &mut Context<Self>) {
+        if !self.following {
+            return;
+        }
+        match self.playing_row(cx) {
+            None => self.following = false,
+            Some((id, row)) => {
+                if self.followed.as_ref() != Some(&id) {
+                    self.list.scroll_to_reveal_item(row);
+                    self.followed = Some(id);
+                }
+            }
         }
     }
 }
@@ -1182,8 +1241,7 @@ impl QueueView {
     /// The queue's controls in the window's toolbar, the Mac's: while rows
     /// are picked, how many and what to do with them; then jump to playing,
     /// the dice, grouping, undo and redo, and the rest under ⋯.
-    pub fn controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let p = Paint::of(window, cx);
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let queue = self.queue.read(cx);
         let count = queue.items.len() as u64;
         let grouped = queue.grouped;
@@ -1195,27 +1253,14 @@ impl QueueView {
             let (clear, remove) = (view.clone(), view.clone());
             controls = controls
                 .child(
-                    div()
-                        .text_role(TypeRole::Meta, &p.look)
-                        .text_color(p.muted)
-                        .child(format!("{picked} selected")),
-                )
-                .child(
-                    Button::new("queue-deselect", ButtonKind::Link)
-                        .label("clear")
-                        .tone(Tone::Accent)
-                        .on_click(move |_, _, cx| {
+                    ToolbarSelection::new(format!("{picked} selected"))
+                        .action("queue-deselect", "clear", move |_, _, cx| {
                             clear.update(cx, |this, cx| {
                                 this.selected.clear();
                                 cx.notify();
                             })
-                        }),
-                )
-                .child(
-                    Button::new("queue-remove", ButtonKind::Link)
-                        .label("remove")
-                        .tone(Tone::Accent)
-                        .on_click(move |_, _, cx| {
+                        })
+                        .action("queue-remove", "remove", move |_, _, cx| {
                             remove.update(cx, |this, cx| {
                                 let ids = this.selected_ids(cx);
                                 this.remove(ids, cx);
@@ -1227,9 +1272,17 @@ impl QueueView {
         let (jump, regroup) = (view.clone(), view.clone());
         controls
             .child(
-                ToolbarButton::new("queue-jump", Icon::JumpToPlaying, "jump to playing")
-                    .disabled(count == 0)
-                    .on_click(move |_, _, cx| jump.update(cx, |this, cx| this.jump_to_playing(cx))),
+                IconToggle::new(
+                    "queue-follow",
+                    Icon::JumpToPlaying,
+                    if self.following {
+                        "following what's playing"
+                    } else {
+                        "jump to what's playing and follow it"
+                    },
+                    self.following,
+                )
+                .on_change(move |_, _, cx| jump.update(cx, |this, cx| this.toggle_follow(cx))),
             )
             .child(
                 ToolbarButton::new(
@@ -1354,6 +1407,13 @@ impl Render for QueueView {
             .id("queue")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
+            // A scroll of the person's own stops following.
+            .on_scroll(cx.listener(|this, _: &ScrollEvent, _, cx| {
+                if this.following {
+                    this.following = false;
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(Self::play_selected))
             .on_action(cx.listener(Self::remove_selected))
             .on_action(cx.listener(Self::select_previous))
@@ -1410,6 +1470,18 @@ impl Render for QueueView {
             .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
                 this.drop_library(dragged, dest, cx);
+            }))
+            .on_drag_move::<PlaylistDrag>(cx.listener(
+                |this, event: &DragMoveEvent<PlaylistDrag>, _, cx| {
+                    if this.drop_at.is_some() && !event.bounds.contains(&event.event.position) {
+                        this.drop_at = None;
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
+                let dest = this.drop_at.unwrap_or(count);
+                this.drop_library(&dragged.as_library(), dest, cx);
             }))
             .child(Page::new(self.header(cx)).body(if count == 0 {
                 EmptyState::new(Icon::QueueSection, "queue is empty")
