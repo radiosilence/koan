@@ -595,7 +595,11 @@ pub fn bytes(n: u64) -> String {
     } else {
         format!("{value:.2}")
     };
-    let shown = shown.trim_end_matches('0').trim_end_matches('.');
+    let shown = if shown.contains('.') {
+        shown.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        &shown
+    };
     format!("{shown} {}", UNITS[unit])
 }
 
@@ -740,5 +744,6 @@ mod tests {
         assert_eq!(bytes(1500), "1.5 KB");
         assert_eq!(bytes(12_300_000), "12.3 MB");
         assert_eq!(bytes(250_000_000_000), "250 GB");
+        assert_eq!(bytes(10_000_000), "10 MB");
     }
 }

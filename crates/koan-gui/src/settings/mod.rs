@@ -26,7 +26,8 @@ use koan_ffi::{ConnectionInfo, KoanEngine};
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
-use panes::{Pane, Tab};
+use panes::Pane;
+pub use panes::Tab;
 use sharing::Sharing;
 pub use sheet::Sheets;
 
