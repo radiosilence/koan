@@ -720,7 +720,8 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
         .gap(p.space(Space::M))
         .child(
             div()
-                .w(px(14.))
+                // A glyph's width, or a word's in the plain look.
+                .w(if p.look.icons { px(14.) } else { px(56.) })
                 .flex_shrink_0()
                 .flex()
                 .justify_center()

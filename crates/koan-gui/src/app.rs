@@ -44,9 +44,10 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
 /// so its first frame is the queue that was left, and after `RESTORE_WAIT`
 /// whatever has happened.
 ///
-/// Saving starts once the restore has succeeded and its rows have arrived,
-/// and never if it failed: this process would otherwise write a session it
-/// never read.
+/// Saving as it goes starts once the restore has succeeded and its rows have
+/// arrived, so the queue it saves is the one it restored; the platform saves
+/// on quit either way, as the Mac app does, each device keeping a session of
+/// its own.
 pub fn start(
     engine: Arc<KoanEngine>,
     restored: impl Future<Output = Option<u32>> + 'static,
