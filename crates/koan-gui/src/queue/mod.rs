@@ -20,7 +20,8 @@ use koan_ffi::{EntryStatus, QueueItem};
 use crate::covers::{CoversHandle, sleeve};
 use crate::engine::command;
 use crate::mirror::{Mirror, Queue};
-use crate::theme::{self, Palette, space, text};
+use crate::paint::Paint;
+use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
 use rows::Row;
 
 actions!(
@@ -88,15 +89,15 @@ struct DraggedRows {
 struct DragPreview(SharedString);
 
 impl Render for DragPreview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Paint::of(window, cx);
         div()
-            .px(space::M)
-            .py(space::XS)
+            .px(p.space(Space::M))
+            .py(p.space(Space::Xs))
             .bg(p.surface)
             .border_1()
             .border_color(p.rule)
-            .text_size(text::META)
+            .text_role(TypeRole::Meta, &p.look)
             .text_color(p.ink)
             .child(self.0.clone())
     }
@@ -123,7 +124,7 @@ pub struct QueueView {
     drop_at: Option<usize>,
     /// The row a secondary click landed on, for the list's one context menu.
     menu_row: Option<usize>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 impl QueueView {
@@ -138,6 +139,8 @@ impl QueueView {
                 cx.notify();
             }),
             cx.observe(&covers, |_, _, cx| cx.notify()),
+            // The playing row is in the accent, and this view is cached.
+            theme::observe_accent(cx),
         ];
         // The list calls this as it scrolls, with its own state held, so the
         // handler reads the queue and never the list.
@@ -447,11 +450,11 @@ impl QueueView {
         }
     }
 
-    fn render_row(&mut self, row: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_row(&mut self, row: usize, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         if row >= self.rows(cx).len() {
             return div().into_any_element();
         }
-        let p = theme::palette(cx);
+        let p = Paint::of(window, cx);
         let selected = self.is_selected(row, cx);
         let (height, line) = match self.rows(cx)[row] {
             Row::Heading { first, len } => {
@@ -490,9 +493,9 @@ impl QueueView {
             .w_full()
             .flex()
             .items_center()
-            .px(space::L)
+            .px(p.space(Space::L))
             .py(PADDING)
-            .gap(space::M)
+            .gap(p.space(Space::M))
             .when(selected, |d| d.bg(p.surface))
             .when(!selected, |d| d.hover(|s| s.bg(p.hover.opacity(0.3))))
             .when(insert_here, |d| d.border_t_1().border_color(p.accent))
@@ -554,11 +557,11 @@ fn row_menu(menu: PopupMenu, view: &Entity<QueueView>, cx: &mut App) -> PopupMen
     .item(PopupMenuItem::new("redo").on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))))
 }
 
-fn line(content: impl Into<SharedString>, size: Pixels, color: Hsla) -> Div {
+fn line(content: impl Into<SharedString>, role: TypeRole, color: Hsla, p: &Paint) -> Div {
     div()
         .min_w(px(0.))
         .truncate()
-        .text_size(size)
+        .text_role(role, &p.look)
         .text_color(color)
         .child(content.into())
 }
@@ -587,7 +590,7 @@ fn detail(run: &[QueueItem]) -> String {
     parts.join(" · ")
 }
 
-fn heading(first: &QueueItem, detail: String, p: &Palette, cx: &mut App) -> Div {
+fn heading(first: &QueueItem, detail: String, p: &Paint, cx: &mut App) -> Div {
     let artist = if first.album_artist.is_empty() {
         &first.artist
     } else {
@@ -598,29 +601,29 @@ fn heading(first: &QueueItem, detail: String, p: &Palette, cx: &mut App) -> Div 
         .flex_1()
         .min_w(px(0.))
         .items_center()
-        .gap(space::M)
-        .child(sleeve(first.album_id, HEADING_SLEEVE, cx))
+        .gap(p.space(Space::M))
+        .child(sleeve(first.album_id, HEADING_SLEEVE, p.surface, cx))
         .child(
             div()
                 .flex()
                 .flex_col()
                 .min_w(px(0.))
-                .child(line(first.album.clone(), text::BODY, p.strong))
-                .child(line(artist.clone(), text::META, p.ink))
-                .child(line(detail, text::FINE, p.muted)),
+                .child(line(first.album.clone(), TypeRole::Body, p.strong, p))
+                .child(line(artist.clone(), TypeRole::Meta, p.ink, p))
+                .child(line(detail, TypeRole::Fine, p.muted, p)),
         )
 }
 
-fn track(item: &QueueItem, grouped: bool, p: &Palette, cx: &mut App) -> Div {
+fn track(item: &QueueItem, grouped: bool, p: &Paint, cx: &mut App) -> Div {
     let playing = item.status == EntryStatus::Playing;
     let title_color = match item.status {
-        EntryStatus::Playing => p.accent,
+        EntryStatus::Playing => p.accent_text,
         EntryStatus::Played => p.muted,
         EntryStatus::Failed => p.bad,
         EntryStatus::Queued | EntryStatus::Downloading | EntryStatus::PriorityPending => p.ink,
     };
     let (mark, mark_color) = match item.status {
-        EntryStatus::Playing => ("▶", p.accent),
+        EntryStatus::Playing => ("▶", p.accent_text),
         EntryStatus::Downloading => ("↓", p.muted),
         EntryStatus::PriorityPending => ("…", p.muted),
         EntryStatus::Failed => ("!", p.bad),
@@ -633,12 +636,12 @@ fn track(item: &QueueItem, grouped: bool, p: &Palette, cx: &mut App) -> Div {
             .flex_shrink_0()
             .flex()
             .justify_end()
-            .text_size(text::META)
-            .text_color(if playing { p.accent } else { p.muted })
+            .text_role(TypeRole::Meta, &p.look)
+            .text_color(if playing { p.accent_text } else { p.muted })
             .child(number)
             .into_any_element()
     } else {
-        sleeve(item.album_id, SINGLE_SLEEVE, cx)
+        sleeve(item.album_id, SINGLE_SLEEVE, p.surface, cx)
     };
     // A grouped row names its artists only where they differ from the
     // record's; a row standing alone names its artist and record.
@@ -654,12 +657,12 @@ fn track(item: &QueueItem, grouped: bool, p: &Palette, cx: &mut App) -> Div {
         .flex_1()
         .min_w(px(0.))
         .items_center()
-        .gap(space::M)
+        .gap(p.space(Space::M))
         .child(
             div()
                 .w(px(14.))
                 .flex_shrink_0()
-                .text_size(text::FINE)
+                .text_role(TypeRole::Fine, &p.look)
                 .text_color(mark_color)
                 .child(mark),
         )
@@ -670,14 +673,14 @@ fn track(item: &QueueItem, grouped: bool, p: &Palette, cx: &mut App) -> Div {
                 .flex_col()
                 .flex_1()
                 .min_w(px(0.))
-                .child(line(item.title.clone(), text::BODY, title_color))
-                .children(secondary.map(|s| line(s, text::META, p.muted))),
+                .child(line(item.title.clone(), TypeRole::Body, title_color, p))
+                .children(secondary.map(|s| line(s, TypeRole::Meta, p.muted, p))),
         )
         .when(!item.on_disk && item.on_server, |d| {
             d.child(
                 div()
                     .flex_shrink_0()
-                    .text_size(text::FINE)
+                    .text_role(TypeRole::Fine, &p.look)
                     .text_color(p.muted)
                     .child("☁"),
             )
@@ -686,7 +689,7 @@ fn track(item: &QueueItem, grouped: bool, p: &Palette, cx: &mut App) -> Div {
             div()
                 .w(px(48.))
                 .flex_shrink_0()
-                .text_size(text::FINE)
+                .text_role(TypeRole::Fine, &p.look)
                 .text_color(p.muted)
                 .child(codec.to_lowercase())
         }))
@@ -696,7 +699,7 @@ fn track(item: &QueueItem, grouped: bool, p: &Palette, cx: &mut App) -> Div {
                 .flex_shrink_0()
                 .flex()
                 .justify_end()
-                .text_size(text::META)
+                .text_role(TypeRole::Meta, &p.look)
                 .text_color(p.muted)
                 .child(item.duration_ms.map(crate::time::clock).unwrap_or_default()),
         )
@@ -709,8 +712,8 @@ impl Focusable for QueueView {
 }
 
 impl Render for QueueView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Paint::of(window, cx);
         let top = self.list.logical_scroll_top().item_ix;
         self.keep_top(top, cx);
         let count = self.rows(cx).len();
@@ -745,7 +748,7 @@ impl Render for QueueView {
             .when(count == 0, |d| {
                 d.items_center().justify_center().child(
                     div()
-                        .text_size(text::BODY)
+                        .text_role(TypeRole::Body, &p.look)
                         .text_color(p.muted)
                         .child("the queue is empty"),
                 )
@@ -753,8 +756,8 @@ impl Render for QueueView {
             .when(count > 0, |d| {
                 let view = view.clone();
                 d.child(
-                    list(self.list.clone(), move |row, _, cx| {
-                        view.update(cx, |this, cx| this.render_row(row, cx))
+                    list(self.list.clone(), move |row, window, cx| {
+                        view.update(cx, |this, cx| this.render_row(row, window, cx))
                     })
                     .flex_1(),
                 )

@@ -14,7 +14,6 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::engine::engine;
-use crate::theme;
 
 enum Held {
     /// Asked for and waiting its turn, or being fetched.
@@ -187,20 +186,20 @@ pub fn image(album_id: Option<i64>, side: Pixels, cx: &mut App) -> Option<Arc<Re
 
 /// A square sleeve of `side` points, or the ground's `surface` while there is
 /// none.
-pub fn draw(image: Option<Arc<RenderImage>>, side: Pixels, cx: &App) -> AnyElement {
+pub fn draw(image: Option<Arc<RenderImage>>, side: Pixels, surface: Hsla) -> AnyElement {
     match image {
         Some(image) => img(image).size(side).flex_shrink_0().into_any_element(),
         None => div()
             .size(side)
             .flex_shrink_0()
-            .bg(theme::palette(cx).surface)
+            .bg(surface)
             .into_any_element(),
     }
 }
 
 /// `image` and `draw` together, for rows: drawn whenever they are on screen,
 /// so their sleeves stay recently used without being held.
-pub fn sleeve(album_id: Option<i64>, side: Pixels, cx: &mut App) -> AnyElement {
+pub fn sleeve(album_id: Option<i64>, side: Pixels, surface: Hsla, cx: &mut App) -> AnyElement {
     let image = image(album_id, side, cx);
-    draw(image, side, cx)
+    draw(image, side, surface)
 }

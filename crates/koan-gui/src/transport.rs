@@ -14,8 +14,9 @@ use koan_ffi::{NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, Stre
 use crate::covers::{self, CoversHandle};
 use crate::engine::command;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
-use crate::theme::{self, HAIRLINE, Palette, space, text};
+use crate::paint::Paint;
 use crate::time::clock;
+use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
 
 pub const HEIGHT: Pixels = px(68.);
 const COVER: Pixels = px(40.);
@@ -29,7 +30,7 @@ pub struct Transport {
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: Option<Arc<RenderImage>>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -48,6 +49,8 @@ impl Transport {
                 cx.observe(&mirror.playback, |_, _, cx| cx.notify()),
                 cx.observe(&mirror.outputs, |_, _, cx| cx.notify()),
                 cx.observe(&covers, |_, _, cx| cx.notify()),
+                // Shuffle and repeat are underlined in the accent.
+                theme::observe_accent(cx),
             ],
             playback: mirror.playback,
             outputs: mirror.outputs,
@@ -88,7 +91,7 @@ impl Transport {
         which: Menu,
         label: &'static str,
         enabled: bool,
-        p: &Palette,
+        p: &Paint,
         cx: &mut Context<Self>,
     ) -> Div {
         let open = self
@@ -175,20 +178,20 @@ fn output_menu(menu: PopupMenu, outputs: &koan_ffi::OutputsInfo) -> PopupMenu {
 }
 
 /// The theme's text button: the label in `muted`, `ink` under the pointer.
-fn text_button(label: &'static str, p: &Palette) -> Div {
+fn text_button(label: &'static str, p: &Paint) -> Div {
     let ink = p.ink;
     div()
-        .px(space::S)
-        .py(space::XS)
+        .px(p.space(Space::S))
+        .py(p.space(Space::Xs))
         .cursor_pointer()
-        .text_size(text::META)
+        .text_role(TypeRole::Meta, &p.look)
         .text_color(p.muted)
         .hover(move |s| s.text_color(ink))
         .child(label)
 }
 
 /// A transport control. The glyph set replaces these labels.
-fn control(id: &'static str, label: &'static str, on: Option<bool>, p: &Palette) -> Stateful<Div> {
+fn control(id: &'static str, label: &'static str, on: Option<bool>, p: &Paint) -> Stateful<Div> {
     let (color, underline) = match on {
         Some(true) => (p.ink, Some(p.accent)),
         Some(false) => (p.muted, None),
@@ -202,7 +205,7 @@ fn control(id: &'static str, label: &'static str, on: Option<bool>, p: &Palette)
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .text_size(text::CONTROL)
+        .text_role(TypeRole::Control, &p.look)
         .text_color(color)
         .hover(|s| s.opacity(0.8))
         .child(
@@ -229,8 +232,8 @@ fn format_badge(format: &StreamFormat) -> String {
 }
 
 impl Render for Transport {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
         self.cover = covers::image(entry.and_then(|e| e.album_id), COVER, cx);
@@ -252,8 +255,8 @@ impl Render for Transport {
             .min_w(px(0.))
             .flex()
             .items_center()
-            .gap(space::M)
-            .child(covers::draw(self.cover.clone(), COVER, cx))
+            .gap(p.space(Space::M))
+            .child(covers::draw(self.cover.clone(), COVER, p.surface))
             .child(
                 div()
                     .flex()
@@ -262,7 +265,7 @@ impl Render for Transport {
                     .children(entry.map(|e| {
                         div()
                             .truncate()
-                            .text_size(text::META)
+                            .text_role(TypeRole::Meta, &p.look)
                             .text_color(p.strong)
                             .child(e.title.clone())
                     }))
@@ -274,7 +277,7 @@ impl Render for Transport {
                         };
                         div()
                             .truncate()
-                            .text_size(text::FINE)
+                            .text_role(TypeRole::Fine, &p.look)
                             .text_color(p.muted)
                             .child(detail)
                     })),
@@ -290,7 +293,7 @@ impl Render for Transport {
             .border_1()
             .border_color(p.ink)
             .cursor_pointer()
-            .text_size(text::CONTROL)
+            .text_role(TypeRole::Control, &p.look)
             .text_color(p.ink)
             .hover(|s| s.bg(p.hover))
             .child(if playing { "pause" } else { "play" })
@@ -306,7 +309,7 @@ impl Render for Transport {
                 div()
                     .flex()
                     .items_center()
-                    .gap(space::S)
+                    .gap(p.space(Space::S))
                     .child(control("shuffle", "shuffle", Some(shuffle), &p).on_click(
                         move |_, _, cx| {
                             command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
@@ -347,13 +350,13 @@ impl Render for Transport {
             .flex()
             .items_center()
             .justify_end()
-            .gap(space::S)
+            .gap(p.space(Space::S))
             .children(now.format.as_ref().map(|format| {
                 div()
-                    .px(space::XS)
+                    .px(p.space(Space::Xs))
                     .border_1()
                     .border_color(p.rule)
-                    .text_size(text::FINE)
+                    .text_role(TypeRole::Fine, &p.look)
                     .text_color(p.ink)
                     .child(format_badge(format))
             }))
@@ -376,10 +379,10 @@ impl Render for Transport {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .gap(space::L)
-            .px(space::L)
+            .gap(p.space(Space::L))
+            .px(p.space(Space::L))
             .bg(p.bg)
-            .border_t(HAIRLINE)
+            .border_t(theme::HAIRLINE)
             .border_color(p.rule)
             .child(left)
             .child(centre)
@@ -402,7 +405,7 @@ pub struct Seek {
     bounds: Bounds<Pixels>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 impl Seek {
@@ -412,6 +415,8 @@ impl Seek {
             _subscriptions: [
                 cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
                 cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
+                // The fill is the accent.
+                theme::observe_accent(cx),
             ],
             playhead: mirror.playhead,
             playback: mirror.playback,
@@ -489,8 +494,8 @@ impl Seek {
 }
 
 impl Render for Seek {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
         let position = self.playhead.read(cx).at(Instant::now(), duration);
         let share = match self.dragging {
@@ -525,8 +530,8 @@ impl Render for Seek {
                     .absolute()
                     .left_0()
                     .right_0()
-                    .top(SLIDER_HIT / 2. - HAIRLINE / 2.)
-                    .h(HAIRLINE)
+                    .top(SLIDER_HIT / 2. - theme::HAIRLINE / 2.)
+                    .h(theme::HAIRLINE)
                     .bg(p.rule),
             )
             .child(
@@ -588,7 +593,7 @@ impl Render for Seek {
             div()
                 .w(px(48.))
                 .flex_shrink_0()
-                .text_size(text::FINE)
+                .text_role(TypeRole::Fine, &p.look)
                 .text_color(p.muted)
                 .child(clock(ms))
         };
@@ -597,7 +602,7 @@ impl Render for Seek {
             .w_full()
             .flex()
             .items_center()
-            .gap(space::S)
+            .gap(p.space(Space::S))
             .child(time(shown).flex().justify_end())
             .child(slider)
             .child(time(duration))

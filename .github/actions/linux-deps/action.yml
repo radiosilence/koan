@@ -1,7 +1,8 @@
 name: Linux build dependencies
 description: >
   Installs the ALSA and D-Bus headers koan builds against, and with `gui`
-  the keyboard, font and font-rendering headers GPUI links for koan-gui.
+  the X11, Wayland, xkbcommon, fontconfig, freetype and Vulkan headers GPUI
+  needs for koan-gui.
   A mirror that trickles bytes never trips apt's own timeout, so each attempt
   is cut off after three minutes and tried again, rather than holding the job
   until its timeout-minutes cancels it.
@@ -22,9 +23,8 @@ runs:
         set -uo pipefail
         packages=(libasound2-dev libdbus-1-dev)
         if [ "$GUI" = true ]; then
-          # GPUI's renderer is wgpu, which loads Vulkan at run time, and its
-          # X11 and Wayland clients are pure Rust: neither needs headers.
-          packages+=(libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev)
+          packages+=(libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
+            libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev)
         fi
         for attempt in 1 2 3; do
           if sudo timeout 180 apt-get -o Acquire::Retries=3 update \

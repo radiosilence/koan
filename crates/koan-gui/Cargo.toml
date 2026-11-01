@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "kōan's desktop app for macOS and Linux, drawn with GPUI."
+description = "The kōan GUI app, drawn with GPUI."
 publish = false
 
 [[bin]]
@@ -16,6 +16,29 @@ path = "src/main.rs"
 # apps drive through uniffi, without the bindings.
 koan-ffi = { path = "../koan-ffi" }
 gpui-kit = "0.8.1"
+# Resizing sleeves for the accent and the wash, and the frames GPUI draws,
+# in the version GPUI itself builds against; PNG for the theme sheet's
+# offscreen render; JPEG for the playing record's sleeve.
+image = { version = "0.25.1", default-features = false, features = ["png", "jpeg"] }
 log = "0.4"
 # Waiting on the first of two events at startup (`select`, `oneshot`).
 futures = "0.3"
+parking_lot = "0.13"
+smallvec = "1"
+
+[dev-dependencies]
+gpui-kit = { version = "0.8.1", features = ["test-support"] }
+
+# Reduce Motion and Low Power Mode, which GPUI does not read, and the
+# notifications that say when either changes.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", features = ["NSAccessibility", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", features = [
+  "NSNotification",
+  "NSOperation",
+  "NSProcessInfo",
+  "NSString",
+  "block2",
+] }

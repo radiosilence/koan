@@ -11,11 +11,12 @@ use gpui_kit::*;
 
 use crate::engine::command;
 use crate::navigator::{Navigator, Page};
+use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::sidebar::{self, Sidebar};
-use crate::theme::{self, HAIRLINE, Palette, space, text};
 use crate::transport::{self, Transport};
 use crate::window_state;
+use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
 
 actions!(koan, [GoBack, GoForward, TogglePlay]);
 
@@ -105,7 +106,7 @@ impl Shell {
         command(cx, "play/pause", |e| e.toggle_play_pause());
     }
 
-    fn toolbar(&self, p: &Palette, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn toolbar(&self, p: &Paint, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let button = |id: &'static str, label: &'static str, enabled: bool| {
             let surface = p.surface;
             let hover = p.hover;
@@ -115,7 +116,7 @@ impl Shell {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(text::CONTROL)
+                .text_role(TypeRole::Control, &p.look)
                 .text_color(p.ink)
                 .when(!enabled, |d| d.opacity(0.4))
                 .when(enabled, |d| {
@@ -139,14 +140,15 @@ impl Shell {
         div()
             .id("toolbar")
             .h(TOOLBAR)
+            .bg(p.bg)
             .w_full()
             .flex_shrink_0()
             .flex()
             .items_center()
-            .pl(TRAFFIC_LIGHTS + space::S)
-            .pr(space::L)
-            .gap(space::XS)
-            .border_b(HAIRLINE)
+            .pl(TRAFFIC_LIGHTS + p.space(Space::S))
+            .pr(p.space(Space::L))
+            .gap(p.space(Space::Xs))
+            .border_b(theme::HAIRLINE)
             .border_color(p.rule)
             .child(
                 button("back", "←", self.nav.can_go_back())
@@ -166,8 +168,8 @@ impl Shell {
                     .h_full()
                     .flex()
                     .items_center()
-                    .pl(space::M)
-                    .text_size(text::CONTROL)
+                    .pl(p.space(Space::M))
+                    .text_role(TypeRole::Control, &p.look)
                     .text_color(p.ink)
                     .window_control_area(WindowControlArea::Drag)
                     .on_mouse_down(
@@ -225,7 +227,7 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+        let p = Paint::of(window, cx);
         let stage = match self.nav.current() {
             Page::Queue => self
                 .queue
@@ -237,7 +239,7 @@ impl Render for Shell {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(text::BODY)
+                .text_role(TypeRole::Body, &p.look)
                 .text_color(p.muted)
                 .child("not in the desktop app yet")
                 .into_any_element(),
@@ -259,7 +261,6 @@ impl Render for Shell {
             .size_full()
             .flex()
             .flex_col()
-            .bg(p.bg)
             .text_color(p.ink)
             .child(self.toolbar(&p, window, cx))
             .child(
@@ -280,7 +281,7 @@ impl Render for Shell {
                             .flex_1()
                             .min_w(px(0.))
                             .h_full()
-                            .border_l(HAIRLINE)
+                            .border_l(theme::HAIRLINE)
                             .border_color(p.rule)
                             .child(stage),
                     ),

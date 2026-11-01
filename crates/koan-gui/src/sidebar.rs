@@ -7,8 +7,9 @@ use koan_ffi::Playlist;
 use crate::engine::engine;
 use crate::mirror::Mirror;
 use crate::navigator::Page;
+use crate::paint::Paint;
 use crate::shell::Shell;
-use crate::theme::{self, Palette, space, text};
+use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
 
 pub const WIDTH: Pixels = px(220.);
 
@@ -26,7 +27,7 @@ pub struct Sidebar {
     shell: WeakEntity<Shell>,
     playlists: Vec<Playlist>,
     loading: Option<Task<()>>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 impl Sidebar {
@@ -40,6 +41,8 @@ impl Sidebar {
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
                 // The selected row follows the page.
                 cx.observe(shell, |_, _, cx| cx.notify()),
+                // The selected row is in the accent, and this view is cached.
+                theme::observe_accent(cx),
             ],
         };
         sidebar.reload(cx);
@@ -79,7 +82,7 @@ fn nav_row(
     id: impl Into<ElementId>,
     label: SharedString,
     selected: bool,
-    p: &Palette,
+    p: &Paint,
 ) -> Stateful<Div> {
     let ink = p.ink;
     div()
@@ -87,8 +90,8 @@ fn nav_row(
         .h(px(28.))
         .flex()
         .items_center()
-        .pl(space::L)
-        .pr(space::S)
+        .pl(p.space(Space::L))
+        .pr(p.space(Space::S))
         .border_l_2()
         .border_color(if selected {
             p.accent
@@ -96,18 +99,18 @@ fn nav_row(
             transparent_black()
         })
         .cursor_pointer()
-        .text_size(text::BODY)
-        .text_color(if selected { p.accent } else { p.muted })
+        .text_role(TypeRole::Body, &p.look)
+        .text_color(if selected { p.accent_text } else { p.muted })
         .when(!selected, move |d| d.hover(move |s| s.text_color(ink)))
         .child(div().truncate().child(label))
 }
 
-fn heading(label: &'static str, p: &Palette) -> Div {
+fn heading(label: &'static str, p: &Paint) -> Div {
     div()
-        .pt(space::L)
-        .pb(space::XS)
-        .pl(space::L)
-        .text_size(text::FINE)
+        .pt(p.space(Space::L))
+        .pb(p.space(Space::Xs))
+        .pl(p.space(Space::L))
+        .text_role(TypeRole::Fine, &p.look)
         .text_color(p.ink)
         .child(label)
 }
@@ -124,8 +127,8 @@ fn go(
 }
 
 impl Render for Sidebar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Paint::of(window, cx);
         let current = self.shell.upgrade().map(|shell| shell.read(cx).page());
         let row = |page: Page, id: ElementId, label: SharedString, cx: &mut Context<Self>| {
             nav_row(id, label, current == Some(page), &p).on_click(go(page, cx))
@@ -134,12 +137,13 @@ impl Render for Sidebar {
         div()
             .id("sidebar")
             .w(WIDTH)
+            .bg(p.bg)
             .h_full()
             .flex_shrink_0()
             .flex()
             .flex_col()
             .overflow_y_scroll()
-            .pt(space::S)
+            .pt(p.space(Space::S))
             .child(row(queue, "nav-queue".into(), "queue".into(), cx))
             .child(heading("library", &p))
             .children(

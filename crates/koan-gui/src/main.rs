@@ -20,12 +20,12 @@ mod covers;
 mod engine;
 mod mirror;
 mod navigator;
+mod paint;
 mod queue;
 mod root;
 mod session;
 mod shell;
 mod sidebar;
-mod theme;
 mod time;
 mod transport;
 mod window_state;
@@ -43,6 +43,7 @@ use crate::mirror::{Mirror, Queue};
 use crate::root::WindowRoot;
 use crate::session::Session;
 use crate::shell::Shell;
+use koan_gui::theme;
 
 actions!(koan, [Quit]);
 
@@ -52,9 +53,9 @@ actions!(koan, [Quit]);
 const SAVE_ON_QUIT: Duration = Duration::from_secs(5);
 
 fn main() {
-    application().run(|cx| {
+    application().with_assets(theme::icons::Assets).run(|cx| {
         gpui_kit::init(cx);
-        theme::Theme::follow(cx.window_appearance(), cx);
+        theme::init(cx);
         cx.bind_keys(shell::bindings());
         cx.bind_keys(queue::bindings());
         cx.bind_keys([KeyBinding::new(secondary!("q"), Quit, None)]);
@@ -206,18 +207,12 @@ fn open(cx: &mut App) {
         ..Default::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
-        window
-            .observe_window_appearance(|window, cx| {
-                theme::Theme::follow(window.appearance(), cx);
-                window.refresh();
-            })
-            .detach();
         window.on_window_should_close(cx, |window, _| {
             window_state::save(window.window_bounds());
             true
         });
         let shell = cx.new(|cx| Shell::new(window, cx));
-        cx.new(|_| WindowRoot::new(shell))
+        cx.new(|cx| WindowRoot::new(shell, window, cx))
     });
     if let Err(e) = opened {
         log::error!("the window did not open: {e}");
