@@ -105,7 +105,7 @@ impl Render for LibraryWindow {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(18.0))
+                    .gap(p.look.spaced(18.0))
                     .px(px(super::tile::MARGIN))
                     .pt(p.space(Space::M))
                     .child(

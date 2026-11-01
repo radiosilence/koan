@@ -307,7 +307,7 @@ impl AlbumPage {
             .items_start()
             .gap(grid.gap)
             .px(grid.margin)
-            .pt(px(16.0))
+            .pt(p.space(Space::L))
             .pb(p.space(Space::L))
             .child(cover)
             .child(

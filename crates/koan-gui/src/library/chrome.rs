@@ -45,7 +45,7 @@ pub fn page_header(
         .items_start()
         .justify_between()
         .px(px(super::tile::MARGIN))
-        .pt(px(16.0))
+        .pt(p.space(Space::L))
         .gap(p.space(Space::L))
         .child(
             div()
@@ -114,7 +114,7 @@ impl Render for SearchField {
             .flex()
             .items_center()
             .gap(p.space(Space::Xs))
-            .w(px(200.0))
+            .w(p.sized(200.0))
             .child(
                 KoanIcon::new(Icon::Search)
                     .role(Type::Control)
@@ -455,8 +455,12 @@ impl Render for FilterPanel {
                     div()
                         .flex()
                         .gap(p.space(Space::S))
-                        .child(div().w(px(64.0)).child(TextField::new(&self.year_from)))
-                        .child(div().w(px(64.0)).child(TextField::new(&self.year_to))),
+                        .child(
+                            div()
+                                .w(p.sized(64.0))
+                                .child(TextField::new(&self.year_from)),
+                        )
+                        .child(div().w(p.sized(64.0)).child(TextField::new(&self.year_to))),
                 ),
             )
             .child(rule())

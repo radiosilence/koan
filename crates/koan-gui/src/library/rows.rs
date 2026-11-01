@@ -203,7 +203,7 @@ pub fn track_row<V: TrackList>(
     let mark = availability(p, track, state.transfer);
     let heart = div()
         .id(("row-heart", id as u64))
-        .w(px(20.0))
+        .w(p.sized(20.0))
         .flex_none()
         .cursor_pointer()
         .typeset(
@@ -244,11 +244,11 @@ pub fn track_row<V: TrackList>(
         row = row.child(art);
     }
     row.child(title)
-        .child(div().w(px(14.0)).flex_none().children(mark))
+        .child(div().w(p.sized(14.0)).flex_none().children(mark))
         .child(heart)
         .child(
             div()
-                .w(px(110.0))
+                .w(p.sized(110.0))
                 .flex_none()
                 .flex()
                 .justify_end()
@@ -258,7 +258,7 @@ pub fn track_row<V: TrackList>(
         )
         .child(
             div()
-                .w(px(64.0))
+                .w(p.sized(64.0))
                 .flex_none()
                 .flex()
                 .justify_end()

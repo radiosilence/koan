@@ -205,7 +205,7 @@ impl ArtistBrowser {
         let view = cx.weak_entity();
         let count = |n: i64, one: &str, many: &str| {
             div()
-                .w(px(110.0))
+                .w(p.sized(110.0))
                 .flex_none()
                 .flex()
                 .justify_end()
@@ -235,7 +235,7 @@ impl ArtistBrowser {
             .child(
                 div()
                     .id(("artist-play", id as u64))
-                    .w(px(20.0))
+                    .w(p.sized(20.0))
                     .flex_none()
                     .cursor_pointer()
                     .typeset(p, Type::Meta, p.muted)
@@ -275,7 +275,7 @@ impl ArtistBrowser {
             .child(
                 div()
                     .id(("artist-heart", id as u64))
-                    .w(px(20.0))
+                    .w(p.sized(20.0))
                     .flex_none()
                     .cursor_pointer()
                     .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })

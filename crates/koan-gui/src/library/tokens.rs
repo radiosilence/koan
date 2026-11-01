@@ -49,6 +49,11 @@ impl Paint {
         self.look.space(space)
     }
 
+    /// A width that holds text, in points at 100 %, grown with the text size.
+    pub fn sized(&self, points: f32) -> Pixels {
+        px(points * self.look.scale.size)
+    }
+
     /// A row's hover fill: `hover` at the theme's row opacity.
     pub fn row_hover(&self) -> Hsla {
         self.hover.opacity(theme::ROW_HOVER_OPACITY)

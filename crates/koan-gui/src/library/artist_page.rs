@@ -245,8 +245,9 @@ impl ArtistPage {
         items
     }
 
-    fn heading_height() -> Pixels {
-        px(40.0)
+    /// A heading's line, with the space above it and below.
+    fn heading_height(p: &Paint) -> Pixels {
+        p.look.line_height(Type::Fine) + p.space(Space::L) + p.space(Space::S)
     }
 
     fn height(&self, p: &Paint, item: &Item, grid: Grid) -> f32 {
@@ -255,7 +256,7 @@ impl ArtistPage {
                 .list
                 .bounds_for_item(0)
                 .map_or(px(HEADER_GUESS), |b| b.size.height),
-            Item::Heading(..) | Item::FeaturesHeading => Self::heading_height(),
+            Item::Heading(..) | Item::FeaturesHeading => Self::heading_height(p),
             Item::Tiles { .. } => grid.row,
             Item::Track(_) => rows::art_height(p),
         })
@@ -551,7 +552,7 @@ impl ArtistPage {
 
     fn heading(p: &Paint, title: impl Into<SharedString>) -> Div {
         div()
-            .h(Self::heading_height())
+            .h(Self::heading_height(p))
             .flex()
             .items_end()
             .pb(p.space(Space::S))
@@ -675,7 +676,7 @@ impl ArtistPage {
             .flex()
             .items_start()
             .gap(grid.gap)
-            .pt(px(16.0))
+            .pt(p.space(Space::L))
             .pb(p.space(Space::L))
             .child(photo)
             .child(text)
