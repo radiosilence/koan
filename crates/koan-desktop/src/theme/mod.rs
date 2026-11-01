@@ -1,0 +1,302 @@
+//! The kōan theme for GPUI: tokens, Geist Mono, the icon set, the record
+//! accent and the wash. docs/design/koan-theme.md is the specification; there
+//! is no other look, so nothing here has a "system" answer.
+//!
+//! What every window shares (the text size, "show icons", the accent) is the
+//! global `KoanTheme`. What a window looks like is `Look::of(window, cx)`:
+//! its appearance, dark or light, and the tokens and accent for it. A
+//! component reads the look as it renders, so a change of appearance or text
+//! size takes `window.refresh()` (cached views keep their last frame until
+//! told otherwise), which `follow_appearance` and the setters here do.
+
+pub mod accent;
+pub mod icons;
+pub mod tokens;
+pub mod wash;
+
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::time::Instant;
+
+use gpui_kit::{
+    App, Context, Global, Hsla, Pixels, SharedString, Styled, Subscription, Window, WindowAppearance,
+    WindowId, px,
+};
+
+pub use accent::{Accent, AccentState, Shade};
+pub use icons::{Icon, KoanIcon};
+pub use tokens::{
+    DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette, ROW_HOVER_OPACITY,
+    ROW_RULE_OPACITY, Scale, Space, TOOLBAR_BUTTON, TypeRole,
+};
+
+/// The colours text and glyphs take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Ink,
+    Strong,
+    Muted,
+    Accent,
+    Bad,
+}
+
+pub struct KoanTheme {
+    /// The text size, in percent (80 to 130 in steps of 5).
+    pub text_size: u32,
+    /// "Show icons": glyphs beside the labels that carry them.
+    pub icons: bool,
+    accent: AccentState,
+    /// Windows held to one appearance whatever the system's, as the theme
+    /// sheet holds its two.
+    pinned: HashMap<WindowId, bool>,
+    /// Whether gpui-component's theme has the settled accent.
+    components_settled: bool,
+}
+
+impl Global for KoanTheme {}
+
+impl Default for KoanTheme {
+    fn default() -> Self {
+        Self {
+            text_size: 100,
+            icons: true,
+            accent: AccentState::default(),
+            pinned: HashMap::new(),
+            components_settled: true,
+        }
+    }
+}
+
+const FACES: [&[u8]; 3] = [
+    include_bytes!("../../assets/fonts/GeistMono-ExtraLight.ttf"),
+    include_bytes!("../../assets/fonts/GeistMono-Light.ttf"),
+    include_bytes!("../../assets/fonts/GeistMono-Regular.ttf"),
+];
+
+/// Registers Geist Mono, sets the theme global, reads Reduce Motion and
+/// dresses gpui-component's own theme (which the text field draws with) in
+/// the tokens. Call after `gpui_kit::init`.
+pub fn init(cx: &mut App) {
+    cx.text_system()
+        .add_fonts(FACES.iter().map(|face| Cow::Borrowed(*face)).collect())
+        .expect("Geist Mono is bundled and loads");
+    cx.set_global(KoanTheme::default());
+    read_reduce_motion(cx);
+    sync_components(is_dark(cx.window_appearance()), cx);
+}
+
+/// Keeps a window drawn in its appearance: redrawn when the system's
+/// changes, and Reduce Motion read again whenever the window comes forward.
+/// The setting is changed in System Settings, so coming back to koan is an
+/// activation; only the accessibility shortcut panel can toggle it while koan
+/// stays frontmost, and that change lands on the next activation. Every
+/// window's root calls this, so any window coming forward re-reads it. Hold
+/// the returned subscriptions as long as the window.
+pub fn follow_appearance<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> [Subscription; 2] {
+    [
+        cx.observe_window_appearance(window, |_, window, cx| {
+            sync_components(Look::of(window, cx).dark, cx);
+            window.refresh();
+        }),
+        cx.observe_window_activation(window, |_, window, cx| {
+            if window.is_window_active() {
+                read_reduce_motion(cx);
+            }
+        }),
+    ]
+}
+
+fn is_dark(appearance: WindowAppearance) -> bool {
+    matches!(
+        appearance,
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    )
+}
+
+/// Reduce Motion, from the system: GPUI holds the flag but no platform sets
+/// it. Linux has no setting to read, and keeps motion on.
+fn read_reduce_motion(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    {
+        let reduce = objc2_app_kit::NSWorkspace::sharedWorkspace()
+            .accessibilityDisplayShouldReduceMotion();
+        cx.set_reduce_motion(reduce);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = cx;
+}
+
+/// Holds a window to one appearance whatever the system's, or lets it follow
+/// the system again with `None`.
+pub fn pin_appearance(dark: Option<bool>, window: &mut Window, cx: &mut App) {
+    let id = window.window_handle().window_id();
+    let pinned = &mut cx.global_mut::<KoanTheme>().pinned;
+    match dark {
+        Some(dark) => pinned.insert(id, dark),
+        None => pinned.remove(&id),
+    };
+    sync_components(Look::of(window, cx).dark, cx);
+    window.refresh();
+}
+
+/// gpui-component's theme, in the tokens: the text field is its `Input`, and
+/// reads its text colours, caret, selection, type and corners from this one
+/// global. It follows the window most recently told to (the system's
+/// appearance, or a pinned window's), since it cannot differ per window.
+fn sync_components(dark: bool, cx: &mut App) {
+    use gpui_kit::component::theme::Theme;
+    let koan = cx.global::<KoanTheme>();
+    let palette = Palette::of(dark);
+    let accent = koan.accent.at(Instant::now()).shade(dark).hsla();
+    let size = TypeRole::Control.points() * Scale::of(koan.text_size).text;
+    let theme = Theme::global_mut(cx);
+    theme.font_family = FONT_FAMILY.into();
+    theme.mono_font_family = FONT_FAMILY.into();
+    theme.font_size = px(size);
+    theme.mono_font_size = px(size);
+    theme.radius = px(0.0);
+    theme.radius_lg = px(0.0);
+    theme.shadow = false;
+    theme.colors.foreground = palette.ink.hsla();
+    theme.colors.muted_foreground = palette.muted.hsla();
+    theme.colors.background = palette.bg.hsla();
+    theme.colors.border = palette.muted.hsla();
+    theme.colors.input = palette.muted.hsla();
+    theme.colors.ring = accent;
+    theme.colors.caret = accent;
+    theme.colors.selection = accent.opacity(0.3);
+}
+
+impl KoanTheme {
+    /// Moves the accent to a record's. `ease` is false for a colour already
+    /// known when the record arrived, which lands with it; with Reduce Motion
+    /// every change lands.
+    pub fn set_accent(accent: Accent, ease: bool, cx: &mut App) {
+        let ease = ease && !cx.reduce_motion();
+        let theme = cx.global_mut::<KoanTheme>();
+        theme.accent.set(accent, ease, Instant::now());
+        theme.components_settled = false;
+        cx.refresh_windows();
+    }
+
+    /// The accent the record has, once it has arrived.
+    pub fn accent_target(cx: &App) -> Accent {
+        cx.global::<KoanTheme>().accent.target()
+    }
+
+    pub fn set_text_size(percent: u32, cx: &mut App) {
+        cx.global_mut::<KoanTheme>().text_size = percent.clamp(
+            *tokens::TEXT_SIZES.start(),
+            *tokens::TEXT_SIZES.end(),
+        );
+        sync_components(is_dark(cx.window_appearance()), cx);
+        cx.refresh_windows();
+    }
+
+    pub fn set_icons(icons: bool, cx: &mut App) {
+        cx.global_mut::<KoanTheme>().icons = icons;
+        cx.refresh_windows();
+    }
+
+    /// Keeps frames coming while the accent settles, redrawing past cached
+    /// views. Called from a window's root view as it renders; costs nothing
+    /// once the accent is at rest.
+    pub fn drive(window: &mut Window, cx: &mut App) {
+        let theme = cx.global::<KoanTheme>();
+        if theme.accent.settling(Instant::now()) {
+            window.on_next_frame(|window, _| window.refresh());
+        } else if !theme.components_settled {
+            sync_components(Look::of(window, cx).dark, cx);
+            cx.global_mut::<KoanTheme>().components_settled = true;
+        }
+    }
+}
+
+/// A window's look: its appearance and everything drawn from it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub dark: bool,
+    pub palette: Palette,
+    pub accent: Shade,
+    pub scale: Scale,
+    pub icons: bool,
+}
+
+impl Look {
+    pub fn of(window: &Window, cx: &App) -> Look {
+        let theme = cx.global::<KoanTheme>();
+        let dark = theme
+            .pinned
+            .get(&window.window_handle().window_id())
+            .copied()
+            .unwrap_or_else(|| is_dark(window.appearance()));
+        Look {
+            dark,
+            palette: Palette::of(dark),
+            accent: theme.accent.at(Instant::now()).shade(dark),
+            scale: Scale::of(theme.text_size),
+            icons: theme.icons,
+        }
+    }
+
+    pub fn color(&self, tone: Tone) -> Hsla {
+        let p = self.palette;
+        match tone {
+            Tone::Ink => p.ink.hsla(),
+            Tone::Strong => p.strong.hsla(),
+            Tone::Muted => p.muted.hsla(),
+            Tone::Bad => p.bad.hsla(),
+            Tone::Accent => self.accent.hsla(),
+        }
+    }
+
+    /// A tone for text: the accent stays off text it cannot reach 4.5:1 as,
+    /// which reads in `ink` instead.
+    pub fn text_color(&self, tone: Tone) -> Hsla {
+        match tone {
+            Tone::Accent if !self.accent.reads_as_text => self.palette.ink.hsla(),
+            tone => self.color(tone),
+        }
+    }
+
+    pub fn space(&self, space: Space) -> Pixels {
+        px(space.points() * self.scale.space)
+    }
+
+    /// A length on spacing's scale for a padding the spec gives in points
+    /// that are not steps of the scale (a prominent button's 12 × 20).
+    pub fn spaced(&self, points: f32) -> Pixels {
+        px(points * self.scale.space)
+    }
+
+    pub fn font_size(&self, role: TypeRole) -> Pixels {
+        px(self.points(role))
+    }
+
+    pub fn line_height(&self, role: TypeRole) -> Pixels {
+        px(self.points(role) * role.line_height())
+    }
+
+    /// A role's size in points as drawn, which the icon set is sized beside.
+    pub fn points(&self, role: TypeRole) -> f32 {
+        role.points() * self.scale.text
+    }
+}
+
+/// Type roles on any element.
+pub trait KoanStyled: Styled + Sized {
+    fn role(self, role: TypeRole, look: &Look) -> Self {
+        self.font_family(FONT_FAMILY)
+            .text_size(look.font_size(role))
+            .font_weight(role.weight())
+            .line_height(look.line_height(role))
+    }
+}
+
+impl<T: Styled> KoanStyled for T {}
+
+/// An app word as the theme writes it: lowercase. Text from the library and
+/// from people keeps its own case and does not come through here.
+pub fn label(text: impl AsRef<str>) -> SharedString {
+    text.as_ref().to_lowercase().into()
+}
