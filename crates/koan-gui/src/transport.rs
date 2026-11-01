@@ -305,36 +305,68 @@ fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
     }
 }
 
+/// Where the device in view plays, as the Mac's output picker lists it: the
+/// system default, each of its devices under the glyph of how it is
+/// connected, then the renderers on the network; the one in use ticked, and
+/// one another app holds marked.
 fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
-    let choice = |label: String, chosen: bool, choice: OutputChoice| {
-        MenuEntry::new(label)
-            .checked(chosen)
-            .on_click(move |_, _, cx| {
-                let choice = choice.clone();
-                command(cx, "select output", move |e| e.select_output(choice));
-            })
+    let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
+        entry.checked(chosen).on_click(move |_, _, cx| {
+            let choice = choice.clone();
+            command(cx, "select output", move |e| e.select_output(choice));
+        })
     };
-    let mut menu = menu.item(choice(
-        "system default".into(),
+    let mut menu = menu.section("output");
+    if let Some(owner) = &outputs.owner {
+        menu = menu.item(MenuEntry::data(format!("on {owner}")).disabled(true));
+    }
+    menu = menu.item(choice(
+        MenuEntry::new("system default").icon(Icon::Output),
         outputs.current == OutputChoice::Default,
         OutputChoice::Default,
     ));
     for device in &outputs.devices {
         let id = OutputChoice::Device {
-            name: device.name.clone(),
+            name: device.id.clone(),
         };
-        menu = menu.item(choice(device.name.clone(), outputs.current == id, id));
+        let chosen = outputs.current == id;
+        let icon = if device.busy && !chosen {
+            Icon::Warning
+        } else {
+            output_icon(&device.kind)
+        };
+        menu = menu.item(choice(
+            MenuEntry::data(device.name.clone()).icon(icon),
+            chosen,
+            id,
+        ));
     }
     if !outputs.renderers.is_empty() {
-        menu = menu.separator();
+        menu = menu.section("on this network");
         for renderer in &outputs.renderers {
             let id = OutputChoice::Renderer {
                 udn: renderer.id.clone(),
             };
-            menu = menu.item(choice(renderer.name.clone(), outputs.current == id, id));
+            menu = menu.item(choice(
+                MenuEntry::data(renderer.name.clone()).icon(Icon::Speaker),
+                outputs.current == id,
+                id,
+            ));
         }
     }
     menu
+}
+
+/// An output's glyph by how it is connected, as the Mac's picker gives it.
+fn output_icon(kind: &str) -> Icon {
+    match kind {
+        "builtin" => Icon::Laptop,
+        "usb" => Icon::Cable,
+        "bluetooth" => Icon::Headphones,
+        "airplay" => Icon::Airplay,
+        "display" => Icon::Display,
+        _ => Icon::Speaker,
+    }
 }
 
 /// The output's EQ: none, or each preset, the one it was set from ticked. A
