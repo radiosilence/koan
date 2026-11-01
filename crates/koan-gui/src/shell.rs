@@ -91,7 +91,7 @@ impl Shell {
             nav,
             focus: cx.focus_handle(),
             queue,
-            transport: cx.new(|cx| Transport::new(window, cx)),
+            transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             library: None,
             moving_window: false,
             arrived_at: Route::Queue,

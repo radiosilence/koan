@@ -7,6 +7,7 @@ pub mod covers;
 pub mod dsp;
 pub mod engine;
 pub mod library;
+pub mod links;
 #[cfg(feature = "profiler")]
 pub mod measure;
 pub mod mirror;

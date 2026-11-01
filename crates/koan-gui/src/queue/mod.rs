@@ -20,6 +20,7 @@ use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::library::drag::{Playable, PlayableDrag};
 use crate::library::feed::Feed;
+use crate::links::{self, names};
 use crate::mirror::{Mirror, Queue};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
@@ -841,64 +842,23 @@ struct Extras {
     progress: Option<f64>,
 }
 
-/// A name that leads to its page: underlined under the pointer, as the
-/// theme's link button. Without a page it is plain text.
 fn link(
     id: ElementId,
     text: impl Into<SharedString>,
     route: Option<Route>,
     look: &Look,
 ) -> Stateful<Div> {
-    let name = div().id(id).flex_shrink_0().child(text.into());
-    let Some(route) = route else {
-        return name;
-    };
-    let nav = look.nav.clone();
-    let ink = look.p.ink;
-    name.cursor_pointer()
-        .hover(move |s| s.underline().text_color(ink))
-        .on_click(move |_, _, cx| {
-            // The row beneath would take the click as a pick.
-            cx.stop_propagation();
-            nav.update(cx, |nav, cx| {
-                if nav.go(route) {
-                    cx.notify();
-                }
-            });
-        })
+    links::link(id, text, route, look.nav, look.p.ink)
 }
 
-/// A credit, each credited artist its own link; the joins between them, and
-/// a credit naming no linked artist, are plain.
 fn credit(parts: &[CreditPart], fallback: &str, part: &str, look: &Look) -> Vec<AnyElement> {
-    if parts.is_empty() {
-        return vec![link(look.id(part, 0), fallback.to_string(), None, look).into_any_element()];
-    }
-    parts
-        .iter()
-        .enumerate()
-        .map(|(ix, credited)| {
-            link(
-                look.id(part, ix),
-                credited.text.clone(),
-                credited.artist_id.map(Route::Artist),
-                look,
-            )
-            .into_any_element()
-        })
-        .collect()
-}
-
-/// One line of names on one baseline, clipped at the row's edge.
-fn names(children: Vec<AnyElement>, role: TypeRole, color: Hsla, p: &Paint) -> Div {
-    div()
-        .flex()
-        .min_w(px(0.))
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_role(role, &p.look)
-        .text_color(color)
-        .children(children)
+    links::credit(
+        parts,
+        fallback,
+        |ix| look.id(part, ix),
+        look.nav,
+        look.p.ink,
+    )
 }
 
 fn heading(first: &QueueItem, detail: String, sleeve: AnyElement, look: &Look) -> Div {
