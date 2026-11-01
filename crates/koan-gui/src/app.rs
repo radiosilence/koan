@@ -155,7 +155,11 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     cx.on_app_quit(move |cx| {
         // Inside the closure, not the future it returns: GPUI gives that
         // future a fifth of a second, which a large queue can outlast.
+        // The main window's place; the Settings window keeps none.
         for window in cx.windows() {
+            if settings::is_settings_window(window, cx) {
+                continue;
+            }
             window
                 .update(cx, |_, window, _| {
                     window_state::write(window.window_bounds())
@@ -215,6 +219,11 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         cx.quit();
     }
     cx.activate(true);
+    // `--settings` opens Settings beside the window, for checking it
+    // without a keyboard.
+    if std::env::args().any(|arg| arg == "--settings") {
+        settings::open(cx);
+    }
     #[cfg(feature = "profiler")]
     crate::measure::start(cx);
 }

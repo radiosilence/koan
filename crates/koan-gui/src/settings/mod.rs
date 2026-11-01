@@ -112,6 +112,13 @@ pub fn open(cx: &mut App) {
     }
 }
 
+/// Whether `window` is the Settings window.
+pub fn is_settings_window(window: AnyWindowHandle, cx: &App) -> bool {
+    cx.try_global::<Settings>()
+        .and_then(|settings| settings.window)
+        .is_some_and(|held| AnyWindowHandle::from(held) == window)
+}
+
 /// What every pane reads, handed to each as it is made.
 #[derive(Clone)]
 pub struct Ctx {
@@ -254,7 +261,7 @@ impl SettingsWindow {
         tabs
     }
 
-    fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
+    pub fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
         if tab != self.tab {
             self.show(tab, window, cx);
             cx.notify();
