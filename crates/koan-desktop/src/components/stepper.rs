@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, ElementId, FluentBuilder, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
-    Window, div,
+    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div,
 };
 
 use super::{Button, ButtonKind, Handler, child};

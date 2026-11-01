@@ -49,8 +49,7 @@ impl ThemeSheet {
             cx.update(|cx| {
                 KoanTheme::set_accent(accent, true, cx);
                 sheet_wash.update(cx, |wash, cx| wash.set_sleeve(sleeve, cx));
-            })
-            .ok();
+            });
         })
         .detach();
         Self {
@@ -466,7 +465,9 @@ impl Render for SheetContent {
                 ],
                 controls,
             ]
-            .concat(),
+            .into_iter()
+            .flatten()
+            .collect(),
         );
         let right = column(vec![
             SectionHeader::new("Form").into_any_element(),

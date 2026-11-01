@@ -1,6 +1,7 @@
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Entity, FluentBuilder, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
+    App, Entity, Focusable, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
 };
 
 use super::ring;

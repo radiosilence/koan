@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Bounds, ElementId, FluentBuilder, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, canvas, div, px,
+    App, Bounds, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
+    Point, RenderOnce, SharedString, Styled, Window, canvas, div, px,
 };
 
 use super::{Handler, child, focus, pointer, ring, track};
