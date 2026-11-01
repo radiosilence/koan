@@ -5473,7 +5473,7 @@ impl KoanEngine {
         let track_id = row.id;
 
         if let Some(art) = local_cover_art(&row) {
-            return Ok(Some(art));
+            return Ok(Some(fit_cover(art, size)));
         }
 
         let Some(remote_id) = row.remote_id else {
@@ -6706,6 +6706,41 @@ fn local_cover_art(row: &queries::TrackRow) -> Option<CoverArt> {
     Some(CoverArt { data, mime })
 }
 
+/// Local art as the size asked for, as a server's thumbnail would be: a
+/// sleeve embedded at 3000 pixels is decoded at that size by every client
+/// that draws it otherwise, for a tile a tenth as wide. Art already within the
+/// size, or that will not decode, is returned as it was found.
+fn fit_cover(art: CoverArt, size: Option<u32>) -> CoverArt {
+    let Some(size) = size.filter(|s| *s > 0) else {
+        return art;
+    };
+    // The header alone says whether there is anything to do.
+    let fits = image::ImageReader::new(std::io::Cursor::new(&art.data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .is_none_or(|(w, h)| w <= size && h <= size);
+    if fits {
+        return art;
+    }
+    let Ok(image) = image::load_from_memory(&art.data) else {
+        return art;
+    };
+    let mut data = Vec::new();
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut data, 90);
+    match image
+        .thumbnail(size, size)
+        .into_rgb8()
+        .write_with_encoder(encoder)
+    {
+        Ok(()) => CoverArt {
+            data,
+            mime: "image/jpeg".into(),
+        },
+        Err(_) => art,
+    }
+}
+
 fn sniff_mime(data: &[u8]) -> &'static str {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"
@@ -7135,6 +7170,37 @@ mod cover_tests {
         let art = local_cover_art(&row).expect("the folder image");
         assert_eq!(art.data, png);
         assert_eq!(art.mime, "image/png");
+    }
+
+    fn png(side: u32) -> CoverArt {
+        let mut data = Vec::new();
+        image::RgbImage::new(side, side)
+            .write_to(
+                &mut std::io::Cursor::new(&mut data),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        CoverArt {
+            data,
+            mime: "image/png".into(),
+        }
+    }
+
+    #[test]
+    fn local_art_larger_than_asked_is_scaled_and_smaller_is_untouched() {
+        let big = fit_cover(png(1200), Some(1000));
+        assert_eq!(big.mime, "image/jpeg");
+        let scaled = image::load_from_memory(&big.data).unwrap();
+        assert_eq!((scaled.width(), scaled.height()), (1000, 1000));
+
+        let small = png(400);
+        assert_eq!(fit_cover(small.clone(), Some(1000)).data, small.data);
+        assert_eq!(fit_cover(png(1200), None).mime, "image/png");
+        let junk = CoverArt {
+            data: b"not an image".to_vec(),
+            mime: "application/octet-stream".into(),
+        };
+        assert_eq!(fit_cover(junk, Some(10)).data, b"not an image");
     }
 }
 

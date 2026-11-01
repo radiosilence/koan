@@ -1,0 +1,169 @@
+//! The engine's state as the library pages need it: the library's version,
+//! the record and track playing, the downloads still arriving by record, and
+//! the favourites. A slice of the engine mirror, kept here until the app's
+//! own mirror replaces it.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use gpui_kit::*;
+use koan_ffi::{KoanEngine, StateSlice, TransferState};
+
+use super::drag::Playable;
+
+pub struct Feed {
+    pub engine: Arc<KoanEngine>,
+    /// Moves whenever the library's rows do. Pages showing a listing ask for
+    /// it again.
+    pub library_version: u64,
+    pub playing_album: Option<i64>,
+    pub playing_track: Option<i64>,
+    /// The tracks still arriving, by record, for a tile's download bar.
+    pub arriving: HashMap<i64, Vec<i64>>,
+    favourites: HashSet<Playable>,
+    /// Bumped by every toggle, so a re-read that started before one cannot
+    /// put back what it changed.
+    favourite_edits: u64,
+    _observe: Task<()>,
+}
+
+impl Feed {
+    pub fn new(engine: Arc<KoanEngine>, cx: &mut Context<Self>) -> Self {
+        let stream = engine.observe();
+        let observe = cx.spawn(async move |this, cx| {
+            while let Some(batch) = stream.next().await {
+                if this.update(cx, |feed, cx| feed.apply(batch, cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            engine,
+            library_version: 0,
+            playing_album: None,
+            playing_track: None,
+            arriving: HashMap::new(),
+            favourites: HashSet::new(),
+            favourite_edits: 0,
+            _observe: observe,
+        }
+    }
+
+    fn apply(&mut self, batch: Vec<StateSlice>, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for slice in batch {
+            match slice {
+                StateSlice::Library { version } => {
+                    if version != self.library_version {
+                        self.library_version = version;
+                        self.reload_favourites(cx);
+                        changed = true;
+                    }
+                }
+                StateSlice::Playback { now_playing } => {
+                    let entry = now_playing.entry.as_ref();
+                    let album = entry.and_then(|e| e.album_id);
+                    let track = entry.and_then(|e| e.track_id);
+                    if (album, track) != (self.playing_album, self.playing_track) {
+                        self.playing_album = album;
+                        self.playing_track = track;
+                        changed = true;
+                    }
+                }
+                StateSlice::Transfers { transfers } => {
+                    let mut arriving: HashMap<i64, Vec<i64>> = HashMap::new();
+                    for t in transfers {
+                        if matches!(t.state, TransferState::Queued | TransferState::Running)
+                            && let Some(album) = t.album_id
+                        {
+                            arriving.entry(album).or_default().push(t.track_id);
+                        }
+                    }
+                    if arriving != self.arriving {
+                        self.arriving = arriving;
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub fn is_favourite(&self, item: Playable) -> bool {
+        self.favourites.contains(&item)
+    }
+
+    /// Flips at once, then takes the engine's answer.
+    pub fn toggle_favourite(&mut self, item: Playable, cx: &mut Context<Self>) {
+        let on = !self.favourites.contains(&item);
+        self.set_favourite(item, on);
+        self.favourite_edits += 1;
+        cx.notify();
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let answer = match item {
+                Playable::Track(id) => engine.toggle_favourite(id).await,
+                Playable::Album(id) => engine.toggle_favourite_album(id).await,
+                Playable::Artist(id) => engine.toggle_favourite_artist(id).await,
+            };
+            this.update(cx, |feed, cx| match answer {
+                Ok(now) => {
+                    feed.set_favourite(item, now);
+                    cx.notify();
+                }
+                Err(e) => {
+                    log::warn!("favourite {item:?}: {e}");
+                    feed.set_favourite(item, !on);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn set_favourite(&mut self, item: Playable, on: bool) {
+        if on {
+            self.favourites.insert(item);
+        } else {
+            self.favourites.remove(&item);
+        }
+    }
+
+    /// Every favourite id, read again: a sync or another device can change
+    /// them without this app toggling anything.
+    fn reload_favourites(&mut self, cx: &mut Context<Self>) {
+        let engine = self.engine.clone();
+        let edits = self.favourite_edits;
+        cx.spawn(async move |this, cx| {
+            let (tracks, albums, artists) = (
+                engine.clone().favourite_track_ids().await,
+                engine.clone().favourite_album_ids().await,
+                engine.favourite_artist_ids().await,
+            );
+            let (Ok(tracks), Ok(albums), Ok(artists)) = (tracks, albums, artists) else {
+                log::warn!("favourites could not be read");
+                return;
+            };
+            this.update(cx, |feed, cx| {
+                // A toggle landed while these were read: they are older than
+                // what is on screen, and the next library change reads again.
+                if feed.favourite_edits != edits {
+                    return;
+                }
+                feed.favourites = tracks
+                    .into_iter()
+                    .map(Playable::Track)
+                    .chain(albums.into_iter().map(Playable::Album))
+                    .chain(artists.into_iter().map(Playable::Artist))
+                    .collect();
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}

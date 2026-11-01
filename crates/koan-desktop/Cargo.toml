@@ -1,0 +1,30 @@
+[package]
+name = "koan-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kōan's desktop app for macOS, Linux and Windows, drawn with GPUI."
+publish = false
+
+[[bin]]
+name = "koan-desktop"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = "0.8.1"
+koan-ffi = { path = "../koan-ffi" }
+# The platform cache directory for artwork.
+dirs = "7"
+# Channels from the artwork lanes to the main thread, and blocking on the
+# engine's runtime-agnostic futures inside them.
+futures = "0.3"
+# Cover art decoded off the main thread into GPUI's BGRA frames.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+log = "0.4"
+parking_lot = "0.13"
+smallvec = "1"
+
+[dev-dependencies]
+# The large test library's tags (examples/gen_library.rs).
+lofty = "0.25"
