@@ -958,6 +958,16 @@ impl LinkIdentity {
         }
     }
 
+    /// Who this process is to the server and the network: the identity it
+    /// serves as once it has started serving (`devices::start`), else this
+    /// machine's app. What every sign-in, pairing and profile is named and
+    /// identified by, so the terminal UI and the desktop app never present
+    /// themselves as the native app.
+    pub fn current() -> Self {
+        crate::remote::devices::local()
+            .map_or_else(|| Self::this_device(None), |local| local.identity.clone())
+    }
+
     /// The terminal UI on this machine: named and kept apart from the app,
     /// which may be running beside it on the same config directory. `None`
     /// while another terminal UI on this machine is that device: two
@@ -1547,9 +1557,8 @@ pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
     }
 }
 
-/// The id this machine's app links with, which pairing sends too: the one
-/// place it is read.
-pub fn this_device_id() -> String {
+/// The id this machine's app links with. Read through `LinkIdentity`.
+fn this_device_id() -> String {
     device_id(&config::config_dir())
 }
 

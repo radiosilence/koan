@@ -5,11 +5,14 @@
 //! cannot drift. They follow the Mac app's `MenuShortcut` and `Hotkeys`.
 //!
 //! Two tables because there are two kinds of key. A shortcut with a modifier
-//! belongs to the menu bar and works everywhere, a text field's own binding
-//! for the same key winning while it is focused (GPUI prefers the deeper
-//! context), which is the Mac app's "disabled while typing". A bare key is
-//! live only outside text fields, and is never given to a menu: a menu item
-//! with a bare key equivalent takes the key before any field sees it.
+//! belongs to the menu bar and works anywhere in the window, a text field's
+//! own binding for the same key winning while it is focused, which is the Mac
+//! app's "disabled while typing": GPUI ranks a binding by the depth of the
+//! context it matched, and the window's `koan` sits above any field's
+//! `Input`. A binding with no context would rank deepest of all and take
+//! ⌘C and ⌘← from the field. A bare key is live only outside text fields,
+//! and is never given to a menu: its menu item, where it has one, takes a
+//! separate action, so the key is never the item's key equivalent.
 //!
 //! Engine-only commands are handled here (`register`). The rest are declared
 //! for the shell and the pages to handle with `on_action`; on macOS a menu
@@ -26,6 +29,10 @@ pub const CONTEXT: &str = "koan";
 
 /// Where bare keys are live: inside the window, outside any text field.
 const BARE_CONTEXT: &str = "koan && !Input";
+
+/// What the shell's text fields call their context (gpui-base's `Input`).
+#[cfg(test)]
+const INPUT_CONTEXT: &str = "Input";
 
 /// How far the skip shortcuts move the playhead.
 const SKIP_MS: i64 = 10_000;
@@ -91,10 +98,11 @@ actions!(
     ]
 );
 
-/// The bare-key play/pause. Its own action so the menu's Play / Pause, which
-/// takes the same handler, is never given space as its key equivalent.
+/// The bare keys whose commands are also menu items: their own actions, so
+/// the menu's Play / Pause and Delete are never given space and ⌫ as key
+/// equivalents. Each is handled as its menu twin is.
 mod bare {
-    gpui_kit::actions!(koan_bare, [TogglePlayPause]);
+    gpui_kit::actions!(koan_bare, [TogglePlayPause, Delete]);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -185,7 +193,6 @@ pub const MENU: &[Shortcut] = &[
     shortcut!("Cut", ["secondary-x"], Edit, Cut),
     shortcut!("Copy", ["secondary-c"], Edit, Copy),
     shortcut!("Paste", ["secondary-v"], Edit, Paste),
-    shortcut!("Delete", ["backspace"], Edit, Delete),
     shortcut!("Select All", ["secondary-a"], Edit, SelectAll),
     shortcut!("Find", ["secondary-f"], Edit, Find),
     shortcut!(
@@ -230,6 +237,7 @@ pub const HOTKEYS: &[Shortcut] = &[
     shortcut!("Lyrics panel", ["L"], View, ToggleLyrics),
     shortcut!("Zoom the cover", ["z"], View, ZoomCover),
     shortcut!("Clear selection", ["escape"], View, ClearSelection),
+    shortcut!("Delete", ["backspace"], Edit, bare::Delete),
     shortcut!("This list", ["?"], View, ShowShortcuts),
 ];
 
@@ -293,6 +301,7 @@ pub fn caption(key: &str, os: OperatingSystem) -> String {
 pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     let os = cx.platform_info().os;
     let mac = os == OperatingSystem::Mac;
+    let window = Rc::new(KeyBindingContextPredicate::parse(CONTEXT).expect("a valid context"));
     let bare = Rc::new(KeyBindingContextPredicate::parse(BARE_CONTEXT).expect("a valid context"));
     let mut bindings = Vec::new();
     // The menu tables first: the macOS menu shows an action's first binding.
@@ -302,7 +311,13 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
             .filter(|s| mac || !s.keys[0].starts_with("cmd-")),
     ) {
         for key in shortcut.keys {
-            push(&mut bindings, key, (shortcut.action)(), None, cx);
+            push(
+                &mut bindings,
+                key,
+                (shortcut.action)(),
+                Some(window.clone()),
+                cx,
+            );
         }
     }
     for shortcut in HOTKEYS {
@@ -327,6 +342,8 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
         move |_: &TogglePlayPause, cx| toggle(cx)
     });
     cx.on_action(move |_: &bare::TogglePlayPause, cx| toggle(cx));
+    // Delete means whatever the page in front says it means.
+    cx.on_action(|_: &bare::Delete, cx| cx.dispatch_action(&Delete));
     let e = engine.clone();
     cx.on_action(move |_: &Next, cx| send(cx, e.clone().next()));
     let e = engine.clone();
@@ -340,6 +357,16 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     let e = engine.clone();
     cx.on_action(move |_: &ClearQueue, cx| send(cx, e.clone().clear_queue()));
     cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Minimize, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, _| window.minimize_window());
+        }
+    });
+    cx.on_action(|_: &Zoom, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, _| window.zoom_window());
+        }
+    });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -431,6 +458,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The binding a keystroke dispatches with focus at `stack`, innermost
+    /// last.
+    fn winner(bindings: Vec<KeyBinding>, key: &'static str, stack: &[&str]) -> String {
+        let keymap = gpui_kit::Keymap::new(bindings);
+        let stack: Vec<gpui_kit::KeyContext> = stack
+            .iter()
+            .map(|c| gpui_kit::KeyContext::parse(c).unwrap())
+            .collect();
+        let (found, _) =
+            keymap.bindings_for_input(&[gpui_kit::Keystroke::parse(key).unwrap()], &stack);
+        found
+            .first()
+            .map(|b| b.action().name().to_string())
+            .unwrap_or_default()
+    }
+
+    gpui_kit::actions!(field, [FieldCopy, FieldDeleteBack]);
+
+    #[test]
+    fn a_text_field_keeps_its_own_keys() {
+        let bindings = || {
+            vec![
+                KeyBinding::new("cmd-c", FieldCopy, Some(INPUT_CONTEXT)),
+                KeyBinding::new("backspace", FieldDeleteBack, Some(INPUT_CONTEXT)),
+                KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
+                KeyBinding::new("backspace", bare::Delete, Some(BARE_CONTEXT)),
+            ]
+        };
+        let typing = ["Root", CONTEXT, INPUT_CONTEXT];
+        assert_eq!(winner(bindings(), "cmd-c", &typing), "field::FieldCopy");
+        assert_eq!(
+            winner(bindings(), "backspace", &typing),
+            "field::FieldDeleteBack"
+        );
+        let browsing = ["Root", CONTEXT];
+        assert_eq!(winner(bindings(), "cmd-c", &browsing), "koan::Copy");
+        assert_eq!(
+            winner(bindings(), "backspace", &browsing),
+            "koan_bare::Delete"
+        );
     }
 
     #[test]

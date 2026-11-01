@@ -102,16 +102,38 @@ fn command_of(event: MediaControlEvent, position_ms: u64) -> Option<Command> {
     })
 }
 
-/// Where a cover is written for the system to read. Two names, used in turn,
-/// so a shell that keys its image cache on the URL sees a new one for each
-/// track, and the file a reader may still have open is not the one replaced.
+/// What the covers handed to the system are called, in the configuration
+/// directory.
+const COVER_PREFIX: &str = "desktop-cover-";
+
+/// Where the cover for the `generation`th track is written for the system to
+/// read: a name of its own per track, since a shell that keys its image cache
+/// on the URL would otherwise show an earlier track's cover. The one before
+/// it is removed once the system has been pointed at this one.
 fn cover_path(generation: u64, mime: &str) -> PathBuf {
     let ext = match mime {
         "image/png" => "png",
         "image/webp" => "webp",
         _ => "jpg",
     };
-    koan_core::config::config_dir().join(format!("desktop-cover-{}.{ext}", generation % 2))
+    koan_core::config::config_dir().join(format!("{COVER_PREFIX}{generation}.{ext}"))
+}
+
+/// Remove the covers an earlier run left, which a crash or a kill does.
+fn sweep_covers() {
+    let dir = koan_core::config::config_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(COVER_PREFIX)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Write `bytes` where the system will read them, whole or not at all.
@@ -146,21 +168,31 @@ struct Media {
     /// Bumped on each new track, so a cover that arrives for an earlier one
     /// is dropped.
     generation: u64,
-    cover_url: Option<String>,
+    /// The cover file the system was last pointed at.
+    cover: Option<PathBuf>,
 }
 
 impl Media {
     fn tell_metadata(&mut self) {
-        let (Some(controls), Some(shown)) = (self.controls.as_mut(), self.shown.as_ref()) else {
+        let Some(controls) = self.controls.as_mut() else {
             return;
         };
-        let told = controls.set_metadata(MediaMetadata {
-            title: Some(&shown.title),
-            artist: Some(&shown.artist),
-            album: Some(&shown.album),
-            cover_url: self.cover_url.as_deref(),
-            duration: shown.duration_ms.map(Duration::from_millis),
-        });
+        let url = self
+            .cover
+            .as_ref()
+            .map(|path| format!("file://{}", path.display()));
+        // Nothing under the cursor clears what was shown.
+        let metadata = self
+            .shown
+            .as_ref()
+            .map_or_else(MediaMetadata::default, |shown| MediaMetadata {
+                title: Some(&shown.title),
+                artist: Some(&shown.artist),
+                album: Some(&shown.album),
+                cover_url: url.as_deref(),
+                duration: shown.duration_ms.map(Duration::from_millis),
+            });
+        let told = controls.set_metadata(metadata);
         if let Err(e) = told {
             log::warn!("media controls: setting the track: {e:?}");
         }
@@ -185,13 +217,18 @@ pub fn start(engine: Arc<KoanEngine>, cx: &mut App) {
     let (events, asks) = mpsc::unbounded();
     let controls = controls(events);
     let reachable = controls.is_some();
+    if reachable {
+        cx.background_executor()
+            .spawn(async { sweep_covers() })
+            .detach();
+    }
     let media = Rc::new(RefCell::new(Media {
         controls,
         shown: None,
         state: PlayState::Stopped,
         anchor: None,
         generation: 0,
-        cover_url: None,
+        cover: None,
     }));
 
     let stream = engine.observe();
@@ -213,9 +250,11 @@ pub fn start(engine: Arc<KoanEngine>, cx: &mut App) {
 }
 
 fn controls(events: mpsc::UnboundedSender<MediaControlEvent>) -> Option<MediaControls> {
+    // MPRIS's name for one of several instances: the terminal UI's is `koan`,
+    // and a desktop app on another configuration may be running too.
+    let dbus_name = format!("koan.desktop.instance{}", std::process::id());
     let config = PlatformConfig {
-        // Apart from the terminal UI's `koan`, which may be running beside it.
-        dbus_name: "koan.desktop",
+        dbus_name: &dbus_name,
         display_name: "kōan",
         hwnd: None,
     };
@@ -253,7 +292,7 @@ async fn answer(
             Command::Stop => engine.stop().await,
             Command::Seek(at) => engine.seek(at).await,
             Command::Raise => {
-                cx.update(|cx| cx.activate(true));
+                cx.update(super::to_front);
                 Ok(())
             }
             Command::Quit => {
@@ -285,8 +324,11 @@ fn apply(
                 m.shown = shown;
                 if new_track {
                     m.generation += 1;
-                    m.cover_url = None;
-                    if let Some(track_id) = m.shown.as_ref().and_then(|s| s.track_id) {
+                    if let Some(old) = m.cover.take() {
+                        remove(old, cx);
+                    }
+                    let track_id = m.shown.as_ref().and_then(|s| s.track_id);
+                    if let (Some(track_id), true) = (track_id, m.controls.is_some()) {
                         fetch_cover(track_id, m.generation, media, engine, cx);
                     }
                 }
@@ -345,12 +387,25 @@ fn fetch_cover(
             }
         };
         let mut m = media.borrow_mut();
-        if m.generation == generation {
-            m.cover_url = Some(format!("file://{}", path.display()));
-            m.tell_metadata();
+        if m.generation != generation {
+            remove(path, cx);
+            return;
         }
+        if let Some(old) = m.cover.replace(path) {
+            remove(old, cx);
+        }
+        m.tell_metadata();
     })
     .detach();
+}
+
+/// Remove a cover file, off the UI thread.
+fn remove(path: PathBuf, cx: &AsyncApp) {
+    cx.background_executor()
+        .spawn(async move {
+            let _ = std::fs::remove_file(path);
+        })
+        .detach();
 }
 
 #[cfg(test)]
@@ -507,12 +562,17 @@ mod tests {
     }
 
     #[test]
-    fn covers_alternate_between_two_files_named_by_type() {
+    fn each_track_has_a_cover_name_of_its_own() {
         let a = cover_path(1, "image/jpeg");
-        let b = cover_path(2, "image/png");
-        assert_ne!(a.with_extension(""), b.with_extension(""));
+        let c = cover_path(3, "image/jpeg");
+        assert_ne!(a, c);
         assert_eq!(a.extension().unwrap(), "jpg");
-        assert_eq!(b.extension().unwrap(), "png");
-        assert_eq!(cover_path(3, "image/jpeg"), a);
+        assert_eq!(cover_path(2, "image/png").extension().unwrap(), "png");
+        assert!(
+            a.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(COVER_PREFIX)
+        );
     }
 }

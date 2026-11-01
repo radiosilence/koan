@@ -1826,3 +1826,143 @@ android-walk avd="koan-walk" search="Long":
 # signed with the old one.
 android-release-key:
     PATH="$(mise where java)/bin:$PATH" scripts/android-release-key.sh
+
+# --- Desktop (koan-desktop: GPUI, macOS and Linux) ---
+
+desktop_id := "cc.blit.koan.desktop"
+desktop_out := "target/desktop"
+
+# Build the desktop app in release.
+desktop-build:
+    cargo build --release --locked -p koan-desktop
+
+# Run the desktop app from source. Without a KOAN_CONFIG_DIR of your own it
+# runs against one under target/ with no library folders: a build from a branch
+# migrates the database it opens, and the released apps then refuse it.
+desktop-run *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "${KOAN_CONFIG_DIR:-}" ]; then
+        export KOAN_CONFIG_DIR="$PWD/target/desktop-config"
+        mkdir -p "$KOAN_CONFIG_DIR"
+        [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
+    fi
+    cargo run -p koan-desktop -- {{ARGS}}
+
+# Package the desktop app for this machine: on macOS a signed .app and a DMG,
+# on Linux an AppImage and a .deb, all under target/desktop.
+desktop-bundle: desktop-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+        Darwin) just _desktop-macos ;;
+        Linux) just _desktop-linux ;;
+        *) echo "desktop-bundle: macOS and Linux only (see #1600)" >&2; exit 1 ;;
+    esac
+
+# The .app sits beside the SwiftUI app, never in its place: its own bundle id
+# keeps its preferences and privacy grants apart, as its device id keeps it
+# apart on the network. Signed as `macos-bundle` signs; the DMG laid out as
+# `macos-dmg` lays one out, and signed with a Developer ID when there is one.
+_desktop-macos:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+    out={{desktop_out}}
+    app="$out/kōan desktop.app"
+    rm -rf "$app"
+    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+    cp "${CARGO_TARGET_DIR:-target}/release/koan-desktop" "$app/Contents/MacOS/koan-desktop"
+    cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/"
+    cat > "$app/Contents/Info.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>CFBundleExecutable</key><string>koan-desktop</string>
+        <key>CFBundleIdentifier</key><string>{{desktop_id}}</string>
+        <key>CFBundleName</key><string>kōan desktop</string>
+        <key>CFBundleDisplayName</key><string>kōan desktop</string>
+        <key>CFBundlePackageType</key><string>APPL</string>
+        <key>CFBundleShortVersionString</key><string>${version}</string>
+        <key>CFBundleVersion</key><string>${version}</string>
+        <key>CFBundleIconFile</key><string>AppIcon</string>
+        <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+        <key>LSMinimumSystemVersion</key><string>13.0</string>
+        <key>NSHighResolutionCapable</key><true/>
+        <!-- As the SwiftUI app's: without a reason, macOS drops the app's SSDP
+             and Bonjour traffic without asking, and no renderer or nearby
+             koan appears. -->
+        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_companion-link._tcp</string></array>
+    </dict>
+    </plist>
+    PLIST
+    id="${KOAN_SIGN_IDENTITY:--}"
+    case "$id" in
+        "Developer ID Application"*)
+            codesign --force --options runtime --timestamp --sign "$id" "$app" ;;
+        *)
+            codesign --force --deep --sign "$id" "$app" ;;
+    esac
+    codesign --verify --strict --verbose=2 "$app"
+    bg="$out/dmg"
+    mkdir -p "$bg"
+    swift {{app_dir}}/dmg/background.swift {{app_dir}}/Resources/AppIcon.svg site/public/geist-mono.woff2 "$bg"
+    tiffutil -cathidpicheck "$bg/background.png" "$bg/background@2x.png" -out "$bg/background.tiff" >/dev/null
+    if command -v uvx >/dev/null; then dmgbuild=(uvx --from dmgbuild==1.6.7 dmgbuild)
+    else dmgbuild=(pipx run --spec dmgbuild==1.6.7 dmgbuild); fi
+    rm -f "$out/koan-desktop.dmg"
+    "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
+        -D app="$app" -D background="$bg/background.tiff" \
+        -D volume_icon={{app_dir}}/Resources/AppIcon.icns \
+        "kōan desktop" "$out/koan-desktop.dmg"
+    case "$id" in
+        "Developer ID Application"*) codesign --force --timestamp --sign "$id" "$out/koan-desktop.dmg" ;;
+    esac
+    echo "built $app and $out/koan-desktop.dmg"
+
+# An AppImage, and a .deb for Debian and Ubuntu, from one staged tree. The
+# AppImage needs appimagetool (APPIMAGETOOL, or on PATH); the .deb, dpkg-deb.
+_desktop-linux:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+    arch=$(uname -m)
+    out={{desktop_out}}
+    root="$out/root"
+    rm -rf "$root"
+    mkdir -p "$root/usr/bin" "$root/usr/share/applications" "$root/usr/share/icons/hicolor/scalable/apps"
+    install -m 0755 "${CARGO_TARGET_DIR:-target}/release/koan-desktop" "$root/usr/bin/koan-desktop"
+    install -m 0644 crates/koan-desktop/packaging/koan-desktop.desktop "$root/usr/share/applications/"
+    install -m 0644 {{app_dir}}/Resources/AppIcon.svg "$root/usr/share/icons/hicolor/scalable/apps/koan-desktop.svg"
+
+    # The libraries the binary links (ALSA, D-Bus, xkbcommon, fontconfig,
+    # FreeType) and those GPUI opens at run time (Wayland, xcb, Vulkan).
+    deb="$out/deb"
+    rm -rf "$deb" && cp -a "$root" "$deb" && mkdir -p "$deb/DEBIAN"
+    debarch=$(dpkg --print-architecture)
+    {
+        echo "Package: koan-desktop"
+        echo "Version: ${version}"
+        echo "Architecture: ${debarch}"
+        echo "Maintainer: radiosilence <jc@blit.cc>"
+        echo "Homepage: https://koan.rocks"
+        echo "Section: sound"
+        echo "Priority: optional"
+        echo "Depends: libasound2t64 | libasound2, libdbus-1-3, libxkbcommon0, libxkbcommon-x11-0, libfontconfig1, libfreetype6, libwayland-client0, libxcb1, libvulkan1"
+        echo "Description: kōan, a bit-perfect music player"
+        echo " The desktop app: a local library or a koan or Subsonic server, played"
+        echo " at the source's own sample rate."
+    } > "$deb/DEBIAN/control"
+    dpkg-deb --build --root-owner-group "$deb" "$out/koan-desktop_${version}_${debarch}.deb"
+
+    # The same tree as an AppDir, with the entry, icon and launcher at its
+    # root, where appimagetool looks for them.
+    appdir="$out/koan-desktop.AppDir"
+    rm -rf "$appdir" && cp -a "$root" "$appdir"
+    cp "$appdir/usr/share/applications/koan-desktop.desktop" "$appdir/"
+    cp "$appdir/usr/share/icons/hicolor/scalable/apps/koan-desktop.svg" "$appdir/"
+    ln -s usr/bin/koan-desktop "$appdir/AppRun"
+    ARCH="$arch" "${APPIMAGETOOL:-appimagetool}" "$appdir" "$out/koan-desktop-${arch}.AppImage"
+    echo "built $out/koan-desktop_${version}_${debarch}.deb and $out/koan-desktop-${arch}.AppImage"

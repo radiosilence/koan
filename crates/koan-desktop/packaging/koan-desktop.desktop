@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=kōan
+GenericName=Music Player
+Comment=Bit-perfect music player
+Exec=koan-desktop %F
+Icon=koan-desktop
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/flac;audio/x-flac;audio/mpeg;audio/ogg;audio/x-vorbis+ogg;audio/opus;audio/wav;audio/x-wav;audio/aac;audio/mp4;audio/x-m4a;audio/aiff;audio/x-aiff;
+StartupWMClass=koan-desktop

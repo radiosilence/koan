@@ -60,7 +60,8 @@ pub fn set(cx: &mut App) {
             os_item::<Cut>(Some(OsAction::Cut)),
             os_item::<Copy>(Some(OsAction::Copy)),
             os_item::<Paste>(Some(OsAction::Paste)),
-            item::<Delete>(),
+            // ⌫ is a bare key: see `actions`.
+            plain("Delete", Delete),
             os_item::<SelectAll>(Some(OsAction::SelectAll)),
             MenuItem::separator(),
             item::<Find>(),

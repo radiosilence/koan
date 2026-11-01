@@ -285,7 +285,7 @@ fn this_device() -> String {
     DEVICE_NAME
         .read()
         .clone()
-        .unwrap_or_else(|| crate::remote::link::LinkIdentity::this_device(None).name)
+        .unwrap_or_else(|| crate::remote::link::LinkIdentity::current().name)
 }
 
 /// Whether two profiles would sound the same, whatever else differs: their

@@ -3,11 +3,16 @@
 //!
 //! On macOS a bundled app is kept to one instance by LaunchServices, which
 //! delivers files and links through `on_open_urls`; this covers the bare
-//! binary there, and Linux, where nothing else does. A lock file says who
-//! serves: whoever holds it listens on a Unix socket beside it, and anyone
-//! else connects and writes the absolute paths it was given, one per line.
-//! The system lets go of the lock however the holder ends, so a socket file
-//! left behind by a crash is removed by the next holder before it binds.
+//! binary there, and Linux, where nothing else does.
+//!
+//! A lock in the configuration directory, beside the device's own, says who
+//! serves: whoever holds it listens on a Unix socket and writes the socket's
+//! path into the lock file, and anyone else reads the path there, connects,
+//! and writes the absolute paths it was given, one per line. The socket lives
+//! in a directory short and private enough for one, which can differ between
+//! two launches (a desktop session and an ssh one); the lock is where both
+//! find it. The system lets go of the lock however the holder ends, so a
+//! socket left behind by a crash is replaced by the next holder.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead as _, BufReader, ErrorKind, Read as _, Write as _};
@@ -49,10 +54,10 @@ pub struct Server {
     listener: UnixListener,
 }
 
-/// The directory the lock and socket live in, private to this user and short
-/// enough for a socket's path (104 bytes on macOS, 108 on Linux): the
-/// session's runtime directory on Linux, macOS's per-user temporary directory,
-/// and the configuration directory on a Linux session without one.
+/// The directory the socket lives in, private to this user and short enough
+/// for a socket's path (104 bytes on macOS, 108 on Linux): the session's
+/// runtime directory on Linux, macOS's per-user temporary directory, and the
+/// configuration directory on a Linux session without one.
 fn runtime_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         return std::env::temp_dir();
@@ -76,48 +81,69 @@ fn name_of(config_dir: &Path) -> String {
 }
 
 /// Become the instance for this configuration, or hand `paths` to the one
-/// that is. `Err` when neither is possible: the lock cannot be opened, or
-/// the instance holding it does not answer.
+/// that is. `Err` when neither is possible: the lock or socket cannot be
+/// made, or the instance holding the lock does not answer.
 pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
-    let dir = runtime_dir();
-    std::fs::create_dir_all(&dir)?;
-    let name = name_of(&koan_core::config::config_dir());
-    let socket = dir.join(format!("{name}.sock"));
-    let lock = OpenOptions::new()
+    let config = koan_core::config::config_dir();
+    std::fs::create_dir_all(&config)?;
+    let name = name_of(&config);
+    let mut lock = OpenOptions::new()
         .create(true)
         .truncate(false)
+        .read(true)
         .write(true)
-        .open(dir.join(format!("{name}.lock")))?;
+        .open(config.join("desktop-instance.lock"))?;
     match lock.try_lock() {
         Ok(()) => {
-            match std::fs::remove_file(&socket) {
-                Err(e) if e.kind() != ErrorKind::NotFound => return Err(e),
-                _ => {}
-            }
-            let listener = UnixListener::bind(&socket)?;
-            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+            let dir = runtime_dir();
+            std::fs::create_dir_all(&dir)?;
+            let socket = dir.join(format!("{name}.sock"));
+            let listener = bind_private(&socket)?;
+            lock.set_len(0)?;
+            lock.write_all(socket.as_os_str().as_encoded_bytes())?;
             Ok(Launch::First(Server {
                 _lock: lock,
                 listener,
             }))
         }
         Err(std::fs::TryLockError::WouldBlock) => {
-            hand(&socket, paths)?;
+            hand(&mut lock, paths)?;
             Ok(Launch::Handed)
         }
         Err(std::fs::TryLockError::Error(e)) => Err(e),
     }
 }
 
-/// Write `paths` to the instance listening on `socket`.
-fn hand(socket: &Path, paths: &[PathBuf]) -> std::io::Result<()> {
+/// Listen at `socket`, connectable by this user alone from the moment it
+/// can be found: bound under a name of its own, made 0600, then moved into
+/// place over whatever an earlier holder left there.
+fn bind_private(socket: &Path) -> std::io::Result<UnixListener> {
+    let staged = socket.with_extension(format!("{}.new", std::process::id()));
+    match std::fs::remove_file(&staged) {
+        Err(e) if e.kind() != ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    let listener = UnixListener::bind(&staged)?;
+    let placed = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600))
+        .and_then(|()| std::fs::rename(&staged, socket));
+    if let Err(e) = placed {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
+    Ok(listener)
+}
+
+/// Write `paths` to the instance holding `lock`, at the socket it named
+/// there. The holder may not have named it yet, or be listening yet, so both
+/// are tried until a deadline.
+fn hand(lock: &mut File, paths: &[PathBuf]) -> std::io::Result<()> {
     let deadline = Instant::now() + CONNECT_FOR;
     let mut stream = loop {
-        match UnixStream::connect(socket) {
+        let attempt = socket_named(lock).and_then(|socket| UnixStream::connect(&socket));
+        match attempt {
             Ok(stream) => break stream,
-            // The holder may not have bound yet.
             Err(e) if Instant::now() < deadline => {
-                log::debug!("instance: waiting for {}: {e}", socket.display());
+                log::debug!("instance: waiting for the running app: {e}");
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(e) => return Err(e),
@@ -126,6 +152,25 @@ fn hand(socket: &Path, paths: &[PathBuf]) -> std::io::Result<()> {
     stream.set_write_timeout(Some(READ_FOR))?;
     stream.write_all(&encode(paths))?;
     stream.shutdown(std::net::Shutdown::Write)
+}
+
+/// The socket the lock's holder wrote into it.
+fn socket_named(lock: &mut File) -> std::io::Result<PathBuf> {
+    use std::io::Seek as _;
+    let mut bytes = Vec::new();
+    lock.seek(std::io::SeekFrom::Start(0))?;
+    lock.read_to_end(&mut bytes)?;
+    if bytes.is_empty() {
+        return Err(std::io::Error::new(
+            ErrorKind::NotFound,
+            "the running app has not named its socket yet",
+        ));
+    }
+    // SAFETY: written by `claim` from an OsStr on this platform, where any
+    // byte sequence is a valid OsStr.
+    Ok(PathBuf::from(unsafe {
+        std::ffi::OsString::from_encoded_bytes_unchecked(bytes)
+    }))
 }
 
 fn encode(paths: &[PathBuf]) -> Vec<u8> {
@@ -303,10 +348,17 @@ mod tests {
     fn a_second_launch_reaches_the_first() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("s.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
+        let listener = bind_private(&socket).unwrap();
+        let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
         let paths = vec![PathBuf::from("/a.flac")];
         let sent = paths.clone();
-        let handing = std::thread::spawn(move || hand(&socket, &sent));
+        let lock_path = dir.path().join("lock");
+        std::fs::write(&lock_path, socket.as_os_str().as_encoded_bytes()).unwrap();
+        let handing = std::thread::spawn(move || {
+            let mut lock = OpenOptions::new().read(true).open(lock_path).unwrap();
+            hand(&mut lock, &sent)
+        });
         let (stream, _) = listener.accept().unwrap();
         assert_eq!(decode(stream), paths);
         handing.join().unwrap().unwrap();

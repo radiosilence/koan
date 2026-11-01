@@ -83,7 +83,12 @@ fn import(engine: &Arc<KoanEngine>, paths: Vec<PathBuf>, into: Into, cx: &mut Ap
     let engine = engine.clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
         let problem = match engine.clone().import_files(paths).await {
-            Err(e) => Some(e.to_string()),
+            // As the Mac app says it: an import that fails is a drop with
+            // nothing to play in it. The log has the reason.
+            Err(e) => {
+                log::warn!("import: {e}");
+                Some(NOTHING_TO_PLAY.to_string())
+            }
             Ok(summary) => {
                 let problem = outcome(&summary);
                 let placed = match into {

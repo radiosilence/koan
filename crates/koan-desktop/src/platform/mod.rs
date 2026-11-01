@@ -36,10 +36,23 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
     shortcuts_sheet::bind(cx);
     menus::set(cx);
     media::start(engine.clone(), cx);
-    // Lines the log has not yet written are lost when the process exits.
-    cx.on_app_quit(|cx| {
-        cx.background_executor()
-            .spawn(async { log::logger().flush() })
+    // As the Mac app does at terminate: a UPnP renderer plays from a URL this
+    // process serves, so it is stopped rather than left to play out and
+    // stall; settings still being written are waited for, or a change made
+    // just before quitting is lost; a shared library's Funnel is taken down.
+    // Then the log's last lines, which are lost with the process otherwise.
+    // Off the UI thread, since the settings may take a moment.
+    cx.on_app_quit({
+        let engine = engine.clone();
+        move |cx| {
+            let engine = engine.clone();
+            cx.background_executor().spawn(async move {
+                engine.release_output();
+                engine.flush_settings();
+                engine.release_funnel();
+                log::logger().flush();
+            })
+        }
     })
     .detach();
     let engine = engine.clone();
@@ -58,7 +71,7 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
 }
 
 /// Bring the app and its window to the front.
-fn to_front(cx: &mut App) {
+pub(crate) fn to_front(cx: &mut App) {
     cx.activate(true);
     if let Some(window) = cx.windows().first() {
         let _ = window.update(cx, |_, window, _| window.activate_window());

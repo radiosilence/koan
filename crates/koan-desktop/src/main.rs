@@ -36,8 +36,15 @@ fn main() {
         cx.spawn(async move |cx: &mut AsyncApp| {
             let engine = match koan_ffi::KoanEngine::open_desktop().await {
                 Ok(engine) => engine,
+                // Refused while another desktop app on this configuration is
+                // running, which the single-instance handover makes a launch
+                // that got past it. Said on stderr and in the log; the app does
+                // not run unlinked.
                 Err(e) => {
                     log::error!("could not open the engine: {e}");
+                    cx.background_executor()
+                        .spawn(async { log::logger().flush() })
+                        .await;
                     cx.update(|cx| cx.quit());
                     return;
                 }

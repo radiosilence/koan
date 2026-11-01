@@ -631,9 +631,6 @@ pub struct KoanEngine {
     pairing: parking_lot::Mutex<Option<koan_core::remote::pair::Pending>>,
     /// What ends the wait, by the pairing's id.
     pairing_cancel: parking_lot::Mutex<Option<(String, koan_core::remote::pair::Cancel)>>,
-    /// What the app calls this device — the name the person gave it, where
-    /// the platform says — for the link and for a pairing to ask under.
-    device_name: Option<String>,
     /// The library's reading of the item under the cursor: read once per
     /// track and library version, not on every wake of the state watcher.
     cursor_reading: parking_lot::Mutex<Option<CursorReading>>,
@@ -4291,13 +4288,7 @@ impl KoanEngine {
         self.cancel_pairing();
         offload::offload(move || {
             serve::refuse_while_sharing()?;
-            let device = koan_core::remote::devices::local().map_or_else(
-                || {
-                    koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone())
-                        .name
-                },
-                |local| local.identity.name.clone(),
-            );
+            let device = koan_core::remote::link::LinkIdentity::current().name;
             let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
             let code = PairingCode {
                 id: pending.id.clone(),
@@ -6076,7 +6067,6 @@ impl KoanEngine {
             cursor_reading: Default::default(),
             remote_queue: Default::default(),
             server: Default::default(),
-            device_name: device_name.clone(),
         });
         engine.spawn_watcher();
         engine.spawn_figures();
