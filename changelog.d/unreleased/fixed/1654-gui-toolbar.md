@@ -1,0 +1,1 @@
+- **The desktop app's toolbar and transport.** The filter field can be clicked and shows what it filters; the toolbar is the Mac's height with its spacing and the window's buttons centred on it, and the transport's sleep, output and EQ buttons sit as close as the Mac's, the EQ naming its preset.

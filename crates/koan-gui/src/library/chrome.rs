@@ -17,7 +17,7 @@ use super::{Lib, actions};
 use crate::components::{
     Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, TextField, Toggle, ToolbarButton,
 };
-use crate::theme::{Icon, KoanIcon, Space};
+use crate::theme::{Icon, Space};
 
 /// "1 album", "5,123 albums".
 pub fn count(n: u64, one: &str, many: &str) -> String {
@@ -97,10 +97,16 @@ pub struct SearchField {
 }
 
 impl SearchField {
-    pub fn new(browse: Entity<Browse>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `prompt` says what it narrows: "filter albums".
+    pub fn new(
+        browse: Entity<Browse>,
+        prompt: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let initial = browse.read(cx).search.clone();
         let input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder("filter");
+            let mut state = InputState::new(window, cx).placeholder(prompt);
             state.set_value(initial, window, cx);
             state
         });
@@ -122,19 +128,8 @@ impl SearchField {
 }
 
 impl Render for SearchField {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &Paint::of(window, cx);
-        div()
-            .flex()
-            .items_center()
-            .gap(p.space(Space::Xs))
-            .w(p.sized(200.0))
-            .child(
-                KoanIcon::new(Icon::Search)
-                    .role(Type::Control)
-                    .tone(crate::theme::Tone::Muted),
-            )
-            .child(TextField::new(&self.input).bare())
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        crate::components::FilterField::new(&self.input)
     }
 }
 
@@ -629,8 +624,9 @@ mod tests {
         });
         let browse = cx.new(|_| Browse::fresh());
         let watched = browse.clone();
-        let (field, cx) =
-            cx.add_window_view(move |window, cx| SearchField::new(watched.clone(), window, cx));
+        let (field, cx) = cx.add_window_view(move |window, cx| {
+            SearchField::new(watched.clone(), "filter albums", window, cx)
+        });
         cx.update(|window, cx| {
             let handle = field.read(cx).input.read(cx).focus_handle(cx);
             window.focus(&handle, cx);

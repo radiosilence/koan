@@ -53,6 +53,18 @@ impl TransportMetrics {
         look.spaced(22.0)
     }
 
+    /// Between the trailing group's items (the format badge, sleep, play on,
+    /// output, EQ), the Mac's. Each item is as wide as its glyph or label in
+    /// the layout, its hit area reaching half this gap either side.
+    pub fn trailing_gap(look: &Look) -> Pixels {
+        look.spaced(12.0)
+    }
+
+    /// Between an item's glyph and its label, the EQ's "flat".
+    pub fn label_gap(look: &Look) -> Pixels {
+        look.spaced(5.0)
+    }
+
     /// Between the controls and the seek bar.
     pub fn row_gap(look: &Look) -> Pixels {
         look.spaced(2.0)

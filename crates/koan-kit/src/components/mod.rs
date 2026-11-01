@@ -78,7 +78,9 @@ pub use status::StatusBlock;
 pub use stepper::Stepper;
 pub use table::{ROW_GROUP, RowNumber, TableRow};
 pub use toggle::{IconToggle, Toggle};
-pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, WINDOW_BUTTONS};
+pub use toolbar::{
+    TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMetrics, WINDOW_BUTTONS,
+};
 
 use crate::theme::{Look, MARK, Motion};
 

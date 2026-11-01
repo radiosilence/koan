@@ -338,7 +338,7 @@ impl RenderOnce for Page {
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{AppContext, Context, Render, TestAppContext, VisualTestContext};
+    use gpui_kit::{Context, Render, TestAppContext, VisualTestContext};
 
     use super::*;
     use crate::components::{Cover, CoverArt, FadeIn};

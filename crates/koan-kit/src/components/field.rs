@@ -45,9 +45,12 @@ impl RenderOnce for TextField {
             .relative()
             .flex()
             .items_center()
-            .px(look.space(Space::M))
-            .py(look.space(Space::S))
-            .when(self.ground, |field| field.bg(look.palette.surface.hsla()))
+            .when(self.ground, |field| {
+                field
+                    .px(look.space(Space::M))
+                    .py(look.space(Space::S))
+                    .bg(look.palette.surface.hsla())
+            })
             .child(
                 Input::new(&self.state)
                     .appearance(false)
