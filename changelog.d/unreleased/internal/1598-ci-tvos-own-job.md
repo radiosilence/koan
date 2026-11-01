@@ -1,0 +1,1 @@
+- **Apple CI runs on three runners.** The engine's tests, the macOS app with the iOS typecheck, and the Apple TV app each have a job, so they no longer share one runner's cores; the Apple TV build now runs on pull requests too.
