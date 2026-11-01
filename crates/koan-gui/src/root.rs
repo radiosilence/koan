@@ -26,32 +26,64 @@ pub struct WindowRoot {
     content: AnyView,
     /// The record whose sleeve the wash and accent show.
     album: Option<i64>,
+    /// "Colours from the record" and the theme tint, as last applied.
+    record_colours: bool,
+    wash_tint: u32,
     /// The sleeve on its way; replacing it drops the one before.
     fetching: Option<Task<()>>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 impl WindowRoot {
     pub fn new(content: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let playback = cx.global::<Mirror>().playback.clone();
+        let theme = cx.global::<KoanTheme>();
+        let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
+        let followed = playback.clone();
         let mut root = Self {
             wash: cx.new(|_| Wash::new()),
             content: content.into(),
             album: None,
+            record_colours,
+            wash_tint,
             fetching: None,
             _subscriptions: [
                 theme::follow_appearance(window, cx),
                 cx.observe(&playback, |this, playback, cx| this.follow(&playback, cx)),
+                cx.observe_global::<KoanTheme>(move |this, cx| this.restyle(&followed, cx)),
             ],
         };
+        root.wash
+            .update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
         root.follow(&playback, cx);
         root
+    }
+
+    /// Settings changed the record's colours or the tint: the wash follows.
+    fn restyle(&mut self, playback: &Entity<Playback>, cx: &mut Context<Self>) {
+        let theme = cx.global::<KoanTheme>();
+        let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
+        if wash_tint != self.wash_tint {
+            self.wash_tint = wash_tint;
+            self.wash.update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
+        }
+        if record_colours != self.record_colours {
+            self.record_colours = record_colours;
+            // Fetched again, or taken off, from scratch.
+            self.album = Some(i64::MIN);
+            self.follow(playback, cx);
+        }
     }
 
     fn follow(&mut self, playback: &Entity<Playback>, cx: &mut Context<Self>) {
         let now = &playback.read(cx).0;
         let playing = now.state == PlayState::Playing;
-        let album = now.entry.as_ref().and_then(|entry| entry.album_id);
+        // Off, there is no wash and the accent is mint, as with no record.
+        let album = now
+            .entry
+            .as_ref()
+            .and_then(|entry| entry.album_id)
+            .filter(|_| self.record_colours);
         self.wash.update(cx, |wash, cx| wash.drift(playing, cx));
         if album == self.album {
             return;

@@ -1,0 +1,714 @@
+//! The settings window's copy of the configuration, and what Settings does
+//! to the engine.
+//!
+//! `config.toml` is shared with the CLI and the TUI, so this is a view onto
+//! that file rather than a second source of truth: a control commits when it
+//! is changed, and the window reads the file again when it comes back to the
+//! front, so a change made elsewhere is not silently overwritten.
+
+use std::future::Future;
+use std::sync::Arc;
+use std::time::Duration;
+
+use std::rc::Rc;
+
+use gpui_kit::{AppContext, Context, SharedString, Subscription, Task};
+use koan_ffi::{KoanEngine, KoanError, Settings};
+
+use crate::mirror::{Mirror, Slice};
+
+/// What a task holds while it runs, so another that needs the same waits.
+/// The Mac app's `ActivityModel.Resources`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Uses(u8);
+
+impl Uses {
+    pub const NONE: Uses = Uses(0);
+    /// The files on disk: read for their tags, or moved.
+    pub const LOCAL_FILES: Uses = Uses(1);
+    /// Library rows for files on this machine.
+    pub const LOCAL_TRACKS: Uses = Uses(1 << 1);
+    /// Library rows mirrored from the server.
+    pub const REMOTE_TRACKS: Uses = Uses(1 << 2);
+    /// The downloaded copies of remote tracks.
+    pub const DOWNLOADS: Uses = Uses(1 << 3);
+    /// Reading files and writing their rows: a scan.
+    pub const LOCAL_LIBRARY: Uses = Uses(Self::LOCAL_FILES.0 | Self::LOCAL_TRACKS.0);
+    /// Emptying the library.
+    pub const WHOLE_LIBRARY: Uses = Uses(0b1111);
+
+    pub const fn with(self, other: Uses) -> Uses {
+        Uses(self.0 | other.0)
+    }
+
+    pub const fn overlaps(self, other: Uses) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+/// A change to the settings. Applied to the copy drawn at once, and again
+/// to the file's current contents when it is written, so it must give the
+/// same result applied twice: an append checks the item is not there.
+pub type Edit = Rc<dyn Fn(&mut Settings)>;
+
+/// The settings as the file last read, and the edits not yet in it.
+///
+/// A write reads the file, applies the edits it carries and writes the
+/// result, so it never writes a field nobody here touched: a server signed
+/// in to by the engine, or a folder the TUI added, stays as it is. One write
+/// runs at a time; edits made meanwhile wait for the next.
+pub(crate) struct Draft {
+    base: Settings,
+    writing: Vec<Edit>,
+    queued: Vec<Edit>,
+}
+
+impl Draft {
+    pub(crate) fn new(base: Settings) -> Self {
+        Self {
+            base,
+            writing: Vec::new(),
+            queued: Vec::new(),
+        }
+    }
+
+    /// What the window shows: the file with every edit not yet in it.
+    pub(crate) fn drawn(&self) -> Settings {
+        let mut drawn = self.base.clone();
+        for edit in self.writing.iter().chain(&self.queued) {
+            edit(&mut drawn);
+        }
+        drawn
+    }
+
+    /// Queues an edit. True when no write is running, so one should start.
+    pub(crate) fn edit(&mut self, edit: Edit) -> bool {
+        self.queued.push(edit);
+        self.writing.is_empty()
+    }
+
+    /// The edits the next write carries, now counted as being written.
+    pub(crate) fn take(&mut self) -> Vec<Edit> {
+        self.writing = std::mem::take(&mut self.queued);
+        self.writing.clone()
+    }
+
+    /// A write landed: `written` is what it wrote. True when edits are
+    /// waiting for another.
+    pub(crate) fn wrote(&mut self, written: Settings) -> bool {
+        self.base = written;
+        self.writing.clear();
+        !self.queued.is_empty()
+    }
+
+    /// A write failed: its edits are dropped, so the window shows what the
+    /// file holds. True when edits are waiting for another.
+    pub(crate) fn failed(&mut self) -> bool {
+        self.writing.clear();
+        !self.queued.is_empty()
+    }
+
+    /// The file read again: the edits not yet in it still show over it.
+    pub(crate) fn reloaded(&mut self, base: Settings) {
+        self.base = base;
+    }
+}
+
+/// How long the result of an action stays on the status line. An error
+/// stays until the next action.
+const RESULT_SHOWN: Duration = Duration::from_secs(6);
+
+pub struct SettingsModel {
+    engine: Arc<KoanEngine>,
+    /// `None` until the file has first been read.
+    draft: Option<Draft>,
+    /// The draft as drawn, worked out when it changes rather than per frame.
+    shown: Option<Settings>,
+    pub last_error: Option<SharedString>,
+    pub last_result: Option<SharedString>,
+    dismissal: Option<Task<()>>,
+    reading: Option<Task<()>>,
+    /// The tasks Settings started and what each holds.
+    running: Vec<(u64, Uses)>,
+    next_task: u64,
+    /// What koan is doing on its own (a watched folder's scan, an automatic
+    /// sync), from the engine's tasks slice.
+    engine_busy: Uses,
+    _tasks: Subscription,
+}
+
+impl SettingsModel {
+    /// The app's one model, reading the file now. It outlives every Settings
+    /// window, so an action started from one finishes after it closes.
+    pub fn new(engine: Arc<KoanEngine>, cx: &mut Context<Self>) -> Self {
+        let tasks = cx.global::<Mirror>().tasks.clone();
+        let mut model = Self {
+            engine,
+            draft: None,
+            shown: None,
+            last_error: None,
+            last_result: None,
+            dismissal: None,
+            reading: None,
+            running: Vec::new(),
+            next_task: 0,
+            engine_busy: Uses::NONE,
+            _tasks: cx.observe(&tasks, |model, tasks, cx| {
+                let Slice(tasks) = *tasks.read(cx);
+                let busy = Uses::NONE
+                    .with(if tasks.scanning { Uses::LOCAL_LIBRARY } else { Uses::NONE })
+                    .with(if tasks.syncing { Uses::REMOTE_TRACKS } else { Uses::NONE });
+                if busy != model.engine_busy {
+                    model.engine_busy = busy;
+                    cx.notify();
+                }
+            }),
+        };
+        model.reload(cx);
+        model
+    }
+
+    pub fn engine(&self) -> &Arc<KoanEngine> {
+        &self.engine
+    }
+
+    /// The settings as drawn: the file, with every edit not yet written.
+    pub fn settings(&self) -> Option<&Settings> {
+        self.shown.as_ref()
+    }
+
+    /// Whether starting something that needs `wanted` would collide with
+    /// what is running.
+    pub fn conflicts(&self, wanted: Uses) -> bool {
+        self.running
+            .iter()
+            .fold(self.engine_busy, |held, (_, uses)| held.with(*uses))
+            .overlaps(wanted)
+    }
+
+    // --- Reading and writing ---------------------------------------------
+
+    /// Reads the file again. Edits not yet written still show over it.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        let engine = self.engine.clone();
+        self.reading = Some(cx.spawn(async move |this, cx| {
+            let settings = engine.settings().await;
+            this.update(cx, |model, cx| {
+                match &mut model.draft {
+                    Some(draft) => draft.reloaded(settings),
+                    None => model.draft = Some(Draft::new(settings)),
+                }
+                model.redraw(cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn redraw(&mut self, cx: &mut Context<Self>) {
+        self.shown = self.draft.as_ref().map(Draft::drawn);
+        cx.notify();
+    }
+
+    /// Changes fields and writes them. Every control commits through here,
+    /// so there is one place that decides when the file is touched. `change`
+    /// runs twice, on the copy drawn and on the file as it stands when it is
+    /// written: an append checks the item is not there already.
+    pub fn edit(&mut self, cx: &mut Context<Self>, change: impl Fn(&mut Settings) + 'static) {
+        let Some(draft) = &mut self.draft else { return };
+        let start = draft.edit(Rc::new(change));
+        self.redraw(cx);
+        if start {
+            self.write(cx);
+        }
+    }
+
+    /// Writes the queued edits over the file as it stands, then any queued
+    /// meanwhile, until none are left.
+    fn write(&mut self, cx: &mut Context<Self>) {
+        let Some(draft) = &mut self.draft else { return };
+        let edits = draft.take();
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let mut settings = engine.clone().settings().await;
+            for edit in &edits {
+                edit(&mut settings);
+            }
+            let result = engine.update_settings(settings.clone()).await;
+            this.update(cx, |model, cx| {
+                let Some(draft) = &mut model.draft else { return };
+                let more = match result {
+                    Ok(()) => {
+                        model.last_error = None;
+                        draft.wrote(settings)
+                    }
+                    Err(e) => {
+                        model.last_error = Some(describe(&e).into());
+                        draft.failed()
+                    }
+                };
+                model.redraw(cx);
+                if more {
+                    model.write(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // --- The status line ---------------------------------------------------
+
+    pub fn report(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.last_error = Some(message.into());
+        cx.notify();
+    }
+
+    /// A result, shown for a few seconds. A later one replaces it, and the
+    /// timer goes with the result it was started for.
+    pub fn done(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.last_error = None;
+        self.last_result = Some(message.into());
+        cx.notify();
+        self.dismissal = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RESULT_SHOWN).await;
+            this.update(cx, |model, cx| {
+                model.last_result = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    // --- Running engine work -----------------------------------------------
+
+    /// Runs `work` holding `uses`, then hands its result to `landed` and reads
+    /// the file again, however it ended. The registration goes whether the
+    /// work succeeds or fails, so nothing stays disabled.
+    pub fn run<T: 'static, F>(
+        &mut self,
+        uses: Uses,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(Arc<KoanEngine>) -> F,
+        landed: impl FnOnce(&mut Self, Result<T, KoanError>, &mut Context<Self>) + 'static,
+    ) where
+        F: Future<Output = Result<T, KoanError>> + 'static,
+    {
+        let id = self.next_task;
+        self.next_task += 1;
+        self.running.push((id, uses));
+        cx.notify();
+        let future = work(self.engine.clone());
+        cx.spawn(async move |this, cx| {
+            let result = future.await;
+            this.update(cx, |model, cx| {
+                model.running.retain(|(task, _)| *task != id);
+                landed(model, result, cx);
+                model.reload(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn scan(&mut self, force: bool, cx: &mut Context<Self>) {
+        self.run(
+            Uses::LOCAL_LIBRARY,
+            cx,
+            move |engine| engine.scan_reporting(force, None),
+            |model, result, cx| match result {
+                Ok(s) => model.done(
+                    format!(
+                        "{} added · {} updated · {} removed",
+                        s.added, s.updated, s.removed
+                    ),
+                    cx,
+                ),
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    /// Adds folders to scan, leaving out any already listed, and scans.
+    pub fn add_folders(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        self.edit(cx, move |s| {
+            for path in &paths {
+                if !s.library_folders.iter().any(|f| &f.path == path) {
+                    // The scan this starts fills the count in.
+                    s.library_folders.push(koan_ffi::LibraryFolder {
+                        path: path.clone(),
+                        tracks: 0,
+                    });
+                }
+            }
+        });
+        self.scan(false, cx);
+    }
+
+    /// Stops scanning a folder, and with `forget`, removes what it put in the
+    /// library. Its files are not touched either way.
+    pub fn remove_folder(&mut self, path: String, forget: bool, cx: &mut Context<Self>) {
+        let removed = path.clone();
+        self.edit(cx, move |s| s.library_folders.retain(|f| f.path != removed));
+        if !forget {
+            return;
+        }
+        self.run(
+            Uses::LOCAL_TRACKS,
+            cx,
+            move |engine| engine.forget_folder(path),
+            |model, result, cx| match result {
+                Ok(n) => model.done(format!("Forgot {} tracks", count(n)), cx),
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    pub fn rebuild_index(&mut self, cx: &mut Context<Self>) {
+        self.run(
+            Uses::WHOLE_LIBRARY,
+            cx,
+            |engine| engine.rebuild_index(),
+            |model, result, cx| match result {
+                Ok(s) => model.done(
+                    format!("Removed {} tracks — scan or sync to rebuild", count(s.tracks)),
+                    cx,
+                ),
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    /// Signs in with a password or an API key, then loads the library.
+    pub fn sign_in(
+        &mut self,
+        url: String,
+        username: String,
+        secret: String,
+        with_key: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let shown = url.clone();
+        self.run(
+            Uses::NONE,
+            cx,
+            move |engine| async move {
+                if with_key {
+                    engine
+                        .sign_in_remote_with_key(url, username, secret)
+                        .await
+                } else {
+                    engine.sign_in_remote(url, username, secret).await
+                }
+            },
+            move |model, result, cx| match result {
+                Ok(()) => {
+                    model.done(format!("Signed in to {shown}"), cx);
+                    model.load_library(cx);
+                }
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    fn load_library(&mut self, cx: &mut Context<Self>) {
+        self.run(
+            Uses::REMOTE_TRACKS,
+            cx,
+            |engine| engine.load_remote_library(),
+            |model, result, cx| {
+                if let Err(e) = result {
+                    model.report(
+                        format!("Signed in, but the library did not load: {}", describe(&e)),
+                        cx,
+                    );
+                }
+            },
+        );
+    }
+
+    /// Signs out and forgets everything held for the server: its library,
+    /// the account's favourites, history and playlists, and the downloads.
+    /// Local files stay.
+    pub fn sign_out(&mut self, cx: &mut Context<Self>) {
+        self.run(
+            // Local rows too: it takes the server off the rows that were on
+            // both, so a scan writing them would be writing the same rows.
+            Uses::REMOTE_TRACKS.with(Uses::LOCAL_TRACKS),
+            cx,
+            |engine| engine.sign_out_remote(),
+            |model, result, cx| match result {
+                Ok(()) => model.done("Signed out", cx),
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    pub fn sync(&mut self, cx: &mut Context<Self>) {
+        self.run(
+            Uses::REMOTE_TRACKS,
+            cx,
+            |engine| engine.sync_remote(),
+            |model, result, cx| match result {
+                // "0 tracks across 0 albums" reads as a failure, and is what
+                // an empty server answers.
+                Ok(s) if s.tracks == 0 && s.favourites_imported == 0 => {
+                    model.done("Already up to date", cx)
+                }
+                Ok(s) => model.done(
+                    format!(
+                        "{} tracks across {} albums",
+                        count(s.tracks),
+                        count(s.albums)
+                    ),
+                    cx,
+                ),
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    pub fn clear_cache(&mut self, cx: &mut Context<Self>) {
+        self.run(
+            Uses::DOWNLOADS,
+            cx,
+            |engine| engine.clear_download_cache(),
+            |model, result, cx| match result {
+                Ok(c) => model.done(
+                    format!("Freed {} across {} files", bytes(c.bytes), count(c.files)),
+                    cx,
+                ),
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    /// Keeps this device's queue on the server, or stops. Turning it on
+    /// replaces this queue with the server's, which the pane asks about first.
+    pub fn set_server_queue(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.run(
+            Uses::NONE,
+            cx,
+            move |engine| engine.set_server_queue(on),
+            |model, result, cx| match result {
+                Ok(()) => {
+                    model.last_error = None;
+                    cx.notify();
+                }
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+
+    /// Changes the signed-in account's password. This device stays signed
+    /// in; the account's others sign in again.
+    pub fn change_password(&mut self, current: String, new: String, cx: &mut Context<Self>) {
+        self.run(
+            Uses::NONE,
+            cx,
+            move |engine| engine.change_own_password(current, new),
+            |model, result, cx| match result {
+                Ok(()) => model.done(
+                    "Password changed. Your other devices will have to sign in again.",
+                    cx,
+                ),
+                Err(e) => model.report(describe(&e), cx),
+            },
+        );
+    }
+}
+
+/// An engine error's own message, which is worth reading.
+pub fn describe(error: &KoanError) -> String {
+    match error {
+        KoanError::BadArgument { message }
+        | KoanError::Database { message }
+        | KoanError::NotFound { message }
+        | KoanError::Audio { message }
+        | KoanError::Player { message }
+        | KoanError::Remote { message }
+        | KoanError::Refused { message } => message.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// A count with thousands grouped, as the Mac formats one.
+pub fn count(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// A size in bytes, in the largest unit that keeps it above one, as
+/// Foundation's file-size style writes it (decimal units).
+pub fn bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    if n < 1000 {
+        return format!("{n} {}", if n == 1 { "byte" } else { "bytes" });
+    }
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    let shown = if value >= 100.0 {
+        format!("{value:.0}")
+    } else if value >= 10.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    };
+    let shown = shown.trim_end_matches('0').trim_end_matches('.');
+    format!("{shown} {}", UNITS[unit])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(port: u16) -> Settings {
+        Settings {
+            library_folders: Vec::new(),
+            remote_enabled: false,
+            remote_url: String::new(),
+            remote_username: String::new(),
+            remote_signed_in: false,
+            remote_tracks: 0,
+            remote_last_sync: None,
+            download_workers: 4,
+            cache_limit: String::new(),
+            download_ahead: Some(2),
+            cache_dir: String::new(),
+            cache_bytes: 0,
+            auto_sync: false,
+            auto_sync_interval_mins: 0,
+            play_queue: false,
+            replaygain: "off".into(),
+            pre_amp_db: 0.0,
+            fade_on_pause: false,
+            devices_discoverable: true,
+            devices_addresses: Vec::new(),
+            devices_refused: Vec::new(),
+            devices_nearby_control: "full".into(),
+            devices_keep_running: false,
+            share_enabled: false,
+            share_port: port,
+            share_invite_to: koan_ffi::InviteTo::Network,
+            share_url: String::new(),
+        }
+    }
+
+    fn add(path: &'static str) -> Edit {
+        Rc::new(move |s: &mut Settings| {
+            if !s.library_folders.iter().any(|f| f.path == path) {
+                s.library_folders.push(koan_ffi::LibraryFolder {
+                    path: path.into(),
+                    tracks: 0,
+                });
+            }
+        })
+    }
+
+    fn paths(s: &Settings) -> Vec<&str> {
+        s.library_folders.iter().map(|f| f.path.as_str()).collect()
+    }
+
+    #[test]
+    fn one_write_at_a_time_carrying_what_was_queued() {
+        let mut draft = Draft::new(settings(1));
+        assert!(draft.edit(Rc::new(|s| s.share_port = 2)));
+        let first = draft.take();
+        assert_eq!(first.len(), 1);
+        // Made while the first is written: drawn at once, written next.
+        assert!(!draft.edit(Rc::new(|s| s.share_port = 3)));
+        assert_eq!(draft.drawn().share_port, 3);
+        let mut written = settings(1);
+        first.iter().for_each(|e| e(&mut written));
+        assert!(draft.wrote(written));
+        assert_eq!(draft.take().len(), 1);
+        assert_eq!(draft.drawn().share_port, 3);
+    }
+
+    #[test]
+    fn writes_only_what_was_edited() {
+        // The engine signed in behind the window: the file has a server the
+        // window's copy does not, and the edit leaves it.
+        let mut draft = Draft::new(settings(1));
+        draft.edit(Rc::new(|s| s.fade_on_pause = true));
+        let edits = draft.take();
+        let mut file = settings(1);
+        file.remote_url = "https://music.example".into();
+        edits.iter().for_each(|e| e(&mut file));
+        assert_eq!(file.remote_url, "https://music.example");
+        assert!(file.fade_on_pause);
+    }
+
+    #[test]
+    fn an_append_already_in_the_file_is_not_doubled() {
+        let mut base = settings(1);
+        base.library_folders.push(koan_ffi::LibraryFolder {
+            path: "/music".into(),
+            tracks: 10,
+        });
+        let mut draft = Draft::new(base.clone());
+        draft.edit(add("/music"));
+        assert_eq!(paths(&draft.drawn()), ["/music"]);
+        let mut file = base;
+        draft.take().iter().for_each(|e| e(&mut file));
+        assert_eq!(paths(&file), ["/music"]);
+    }
+
+    #[test]
+    fn a_failed_write_drops_its_edits_and_keeps_later_ones() {
+        let mut draft = Draft::new(settings(1));
+        draft.edit(add("/a"));
+        draft.take();
+        draft.edit(add("/b"));
+        assert_eq!(paths(&draft.drawn()), ["/a", "/b"]);
+        assert!(draft.failed());
+        assert_eq!(paths(&draft.drawn()), ["/b"]);
+        draft.take();
+        assert!(!draft.failed());
+        assert!(paths(&draft.drawn()).is_empty());
+    }
+
+    #[test]
+    fn a_reload_keeps_edits_not_yet_written() {
+        let mut draft = Draft::new(settings(1));
+        draft.edit(Rc::new(|s| s.fade_on_pause = true));
+        let mut file = settings(1);
+        file.remote_signed_in = true;
+        draft.reloaded(file);
+        let drawn = draft.drawn();
+        assert!(drawn.remote_signed_in);
+        assert!(drawn.fade_on_pause);
+    }
+
+    #[test]
+    fn conflicts_with_what_is_held() {
+        assert!(Uses::WHOLE_LIBRARY.overlaps(Uses::DOWNLOADS));
+        assert!(Uses::LOCAL_LIBRARY.overlaps(Uses::LOCAL_TRACKS));
+        assert!(!Uses::LOCAL_LIBRARY.overlaps(Uses::REMOTE_TRACKS));
+        assert!(!Uses::NONE.overlaps(Uses::WHOLE_LIBRARY));
+    }
+
+    #[test]
+    fn formats_counts_and_sizes() {
+        assert_eq!(count(0), "0");
+        assert_eq!(count(999), "999");
+        assert_eq!(count(1000), "1,000");
+        assert_eq!(count(1234567), "1,234,567");
+        assert_eq!(bytes(0), "0 bytes");
+        assert_eq!(bytes(1), "1 byte");
+        assert_eq!(bytes(1500), "1.5 KB");
+        assert_eq!(bytes(12_300_000), "12.3 MB");
+        assert_eq!(bytes(250_000_000_000), "250 GB");
+    }
+}

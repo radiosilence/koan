@@ -22,6 +22,7 @@ pub struct Slider {
     step: f32,
     disabled: bool,
     on_change: Option<Handler<f32>>,
+    on_commit: Option<Handler<()>>,
 }
 
 impl Slider {
@@ -35,6 +36,7 @@ impl Slider {
             step: 0.05,
             disabled: false,
             on_change: None,
+            on_commit: None,
         }
     }
 
@@ -58,6 +60,14 @@ impl Slider {
 
     pub fn on_change(mut self, handler: impl Fn(&f32, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
+        self
+    }
+
+    /// Called once a change is finished: the pointer let go, or after an
+    /// arrow key's step. For a value that is costly to apply at every step
+    /// of a drag.
+    pub fn on_commit(mut self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
+        self.on_commit = Some(Arc::new(handler));
         self
     }
 }
@@ -191,6 +201,28 @@ impl RenderOnce for Slider {
                         drag(&at(event.bounds, event.event.position), window, cx);
                     }
                 });
+            if let Some(on_commit) = self.on_commit.clone() {
+                // A drag ends wherever the pointer is let go, on the rail or
+                // off it; `dragging` keeps a release elsewhere from counting.
+                let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| false);
+                let (start, up, up_out) = (dragging.clone(), dragging.clone(), dragging);
+                let (commit_up, commit_out) = (on_commit.clone(), on_commit);
+                rail = rail
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        start.update(cx, |d, _| *d = true)
+                    })
+                    .on_mouse_up(MouseButton::Left, move |_, window, cx| {
+                        if up.update(cx, |d, _| std::mem::replace(d, false)) {
+                            commit_up(&(), window, cx);
+                        }
+                    })
+                    .on_mouse_up_out(MouseButton::Left, move |_, window, cx| {
+                        if up_out.update(cx, |d, _| std::mem::replace(d, false)) {
+                            commit_out(&(), window, cx);
+                        }
+                    });
+            }
+            let key_commit = self.on_commit;
             slider = track(slider, &state)
                 .track_focus(&handle)
                 .cursor_pointer()
@@ -202,6 +234,9 @@ impl RenderOnce for Slider {
                     };
                     cx.stop_propagation();
                     key(&to.clamp(0.0, 1.0), window, cx);
+                    if let Some(commit) = &key_commit {
+                        commit(&(), window, cx);
+                    }
                 });
         }
         slider

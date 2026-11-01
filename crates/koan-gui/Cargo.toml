@@ -21,6 +21,8 @@ gpui-kit = "0.8.1"
 # offscreen render; JPEG for the playing record's sleeve.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg"] }
 log = "0.4"
+# Dates on Settings' keys and connections, in the local time zone.
+chrono = "0.4"
 # Waiting on the first of two events at startup (`select`, `oneshot`).
 futures = "0.3"
 parking_lot = "0.13"

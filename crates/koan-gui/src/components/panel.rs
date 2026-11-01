@@ -84,6 +84,12 @@ impl MenuRow {
         self
     }
 
+    /// A label that is data rather than the app's words, kept as it is.
+    pub fn label_data(mut self, text: impl Into<SharedString>) -> Self {
+        self.label = text.into();
+        self
+    }
+
     /// One of a set of choices: ticked when in force, with room for the tick
     /// kept when not.
     pub fn checked(mut self, checked: bool) -> Self {
