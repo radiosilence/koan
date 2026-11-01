@@ -1652,6 +1652,13 @@ impl KoanEngine {
         .await
     }
 
+    /// How many cover requests to a server may run at once. The phone apps
+    /// keep the engine's default; the desktop app bounds its own fetches by
+    /// what is on screen and sets this to its ceiling.
+    pub fn set_cover_fetch_limit(&self, limit: u32) {
+        koan_core::remote::client::set_cover_fetch_limit(limit as usize);
+    }
+
     /// The record's artwork, asked for by the record.
     ///
     /// Every track on an album shares its cover, so the track whose art stands

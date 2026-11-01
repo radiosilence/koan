@@ -32,7 +32,7 @@ use smallvec::{SmallVec, smallvec};
 /// What is asked of the engine, and what lands on disk: large enough for a
 /// record's own page on a 2× display, small enough that a library's worth is
 /// a cache rather than a second copy of the artwork.
-const SOURCE_PIXELS: u32 = 1000;
+const SOURCE_PIXELS: u32 = 600;
 
 /// Roughly 360 grid tiles at 2×. A ceiling: entries drawn in the last moment,
 /// or still held by an element, are never evicted to meet it.
@@ -42,12 +42,12 @@ const MEMORY_BUDGET: usize = 256 * 1024 * 1024;
 /// does not decode every tile again at each pixel.
 const BUCKET: u32 = 32;
 
-/// How many bytes of new sleeves a frame takes into the GPU's atlas: about
-/// three tiles at 2×. Each is copied into a texture on the main thread inside
+/// How many bytes of new sleeves a frame takes into the GPU's atlas: about a
+/// dozen tiles at 2×. Each is copied into a texture on the main thread inside
 /// that frame's paint, so a flick that lands forty at once spreads them over
 /// frames, each tile showing its sleeve's colour until its turn. At least one
 /// is taken a frame, whatever its size.
-pub const UPLOAD_BYTES_PER_FRAME: usize = 2 * 1024 * 1024;
+pub const UPLOAD_BYTES_PER_FRAME: usize = 8 * 1024 * 1024;
 
 /// Bumped when what a cache file means changes; any other scheme's directory
 /// is deleted.
@@ -162,6 +162,10 @@ struct Queue {
     evicting: HashMap<Art, u32>,
     /// The first eviction sweep has been tried, so fetches may start.
     fetches_allowed: bool,
+    /// How many fetches may run at once: twice the covers on screen, so
+    /// what is shown and where the scroll is heading are fetched together,
+    /// up to `MAX_FETCHES`. Falls as covers land and the screen fills.
+    limit: usize,
     /// The first eviction sweep has landed, so a file found on disk belongs to
     /// the record now holding its id. Until then every record is fetched
     /// afresh, over whatever file it had.
@@ -198,6 +202,9 @@ impl Queue {
     }
 
     fn next_fetch(&self) -> Option<Art> {
+        if self.fetching.len() >= self.limit.max(1) {
+            return None;
+        }
         self.most_urgent(|k| self.fetchable(k)).map(|k| k.art)
     }
 
@@ -221,17 +228,18 @@ impl Shared {
     /// nothing has: a scroll re-aims every frame, and most frames add nothing
     /// a lane can start.
     fn wake(&self, fetches: usize, decodes: usize) {
-        for _ in 0..fetches.min(FETCHERS) {
+        for _ in 0..fetches.min(MAX_FETCHES) {
             self.fetch_ready.notify_one();
         }
-        for _ in 0..decodes.min(MAX_DECODERS) {
+        for _ in 0..decodes {
             self.decode_ready.notify_one();
         }
     }
 }
 
-const FETCHERS: usize = 6;
-const MAX_DECODERS: usize = 6;
+/// The most covers fetched at once, however many are on screen: a fast
+/// scroll through a large library cannot flood the uplink, sockets or disk.
+pub const MAX_FETCHES: usize = 512;
 
 enum Done {
     Decoded {
@@ -270,11 +278,17 @@ pub struct Covers {
     /// Each list's and page's requests, replaced whole as it draws.
     requests: HashMap<EntityId, HashMap<Key, Priority>>,
     evictions_seq: i64,
+    /// Fetch threads started so far: grown to the limit as it rises, kept
+    /// once started, waiting on the queue while there is nothing to fetch.
+    fetchers: usize,
+    fetch_tx: mpsc::UnboundedSender<Done>,
     _results: Task<()>,
 }
 
 impl Covers {
     pub fn new(engine: Arc<KoanEngine>, cx: &mut Context<Self>) -> Self {
+        // The cache bounds its own fetches by what is on screen.
+        engine.set_cover_fetch_limit(MAX_FETCHES as u32);
         let dir = directory();
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::default()),
@@ -283,9 +297,10 @@ impl Covers {
             decode_ready: Condvar::new(),
         });
         let (tx, mut rx) = mpsc::unbounded();
+        // Every core but the one the window draws on.
         let decoders = std::thread::available_parallelism()
-            .map_or(2, |n| n.get() / 2)
-            .clamp(2, MAX_DECODERS);
+            .map_or(2, |n| n.get().saturating_sub(1))
+            .max(2);
         for n in 0..decoders {
             let (shared, dir, tx) = (shared.clone(), dir.clone(), tx.clone());
             std::thread::Builder::new()
@@ -293,20 +308,24 @@ impl Covers {
                 .spawn(move || decode_lane(shared, dir, tx))
                 .expect("spawn art decoder");
         }
-        // Fetches mostly wait on a disk or a server, so there are more of
-        // them than there are cores to spare.
-        for n in 0..FETCHERS {
-            let (shared, dir, tx, engine) =
-                (shared.clone(), dir.clone(), tx.clone(), engine.clone());
-            std::thread::Builder::new()
-                .name(format!("koan-art-fetch-{n}"))
-                .spawn(move || fetch_lane(shared, dir, engine, tx))
-                .expect("spawn art fetcher");
-        }
+        let fetch_tx = tx.clone();
         drop(tx);
         let results = cx.spawn(async move |this, cx| {
-            while let Some(done) = rx.next().await {
-                if this.update(cx, |covers, cx| covers.land(done, cx)).is_err() {
+            // Everything that has landed since the last pass lands together,
+            // with one notify: covers ready in the same frame appear together
+            // rather than one at a time.
+            while let Some(first) = rx.next().await {
+                let mut batch = vec![first];
+                while let Ok(Some(more)) = rx.try_next() {
+                    batch.push(more);
+                }
+                let landed = this.update(cx, |covers, cx| {
+                    for done in batch {
+                        covers.land(done, cx);
+                    }
+                    cx.notify();
+                });
+                if landed.is_err() {
                     break;
                 }
             }
@@ -337,6 +356,8 @@ impl Covers {
             colours: HashMap::new(),
             requests: HashMap::new(),
             evictions_seq: 0,
+            fetchers: 0,
+            fetch_tx,
             _results: results,
         }
     }
@@ -437,6 +458,29 @@ impl Covers {
         self.shared.wake(fetches, 0);
     }
 
+    /// Starts fetch threads until there are as many as `limit`. A fetch
+    /// waits on a disk or a server, so each holds a thread while it does.
+    fn grow_fetchers(&mut self, limit: usize) {
+        while self.fetchers < limit {
+            let (shared, dir, tx, engine) = (
+                self.shared.clone(),
+                self.dir.clone(),
+                self.fetch_tx.clone(),
+                self.engine.clone(),
+            );
+            let n = self.fetchers;
+            let started = std::thread::Builder::new()
+                .name(format!("koan-art-fetch-{n}"))
+                // A fetch needs little stack: it waits on a socket.
+                .stack_size(256 * 1024)
+                .spawn(move || fetch_lane(shared, dir, engine, tx));
+            if started.is_err() {
+                break;
+            }
+            self.fetchers += 1;
+        }
+    }
+
     fn publish(&mut self) {
         let mut wanted: HashMap<Key, Priority> = HashMap::new();
         for request in self.requests.values() {
@@ -466,8 +510,15 @@ impl Covers {
             .keys()
             .filter(|k| !queue.wanted.contains_key(k) && queue.decodable(k))
             .count();
+        let shown = wanted
+            .iter()
+            .filter(|(k, p)| **p == Priority::Visible && !queue.on_disk.contains(&k.art))
+            .count();
+        queue.limit = (shown * 2).clamp(1, MAX_FETCHES);
         queue.wanted = wanted;
+        let limit = queue.limit;
         drop(queue);
+        self.grow_fetchers(limit);
         self.shared.wake(fetches, decodes);
     }
 
@@ -496,7 +547,6 @@ impl Covers {
             }
             Done::Absent => {}
         }
-        cx.notify();
     }
 
     /// Take staged sleeves into memory up to `budget` bytes, and so into the
