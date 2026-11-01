@@ -1147,10 +1147,9 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
 /// had a table of its own gets that table in the new shape from
 /// `SESSION_TABLES`.
 fn sessions_by_device(conn: &Connection, found: i64) -> rusqlite::Result<()> {
-    let devices = format!(
-        "(SELECT '' AS device UNION ALL SELECT '{}')",
-        crate::remote::link::LinkIdentity::TERMINAL_FILES
-    );
+    // The app's and the terminal UI's files prefixes, as they were when
+    // sessions were first kept per device.
+    let devices = "(SELECT '' AS device UNION ALL SELECT 'terminal-')";
     if !column_exists(conn, "playback_position", "device")? {
         conn.execute_batch("ALTER TABLE playback_position RENAME TO playback_position_by_id;")?;
         conn.execute_batch(SESSION_TABLES)?;
