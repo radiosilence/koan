@@ -29,17 +29,6 @@ fn engine() -> Arc<KoanEngine> {
         .clone()
 }
 
-/// Whether a test library is named. Without one the benches skip, as they
-/// do under `cargo test`: they open a real engine, and the real configuration
-/// is never theirs to open.
-fn configured() -> bool {
-    let named = std::env::var_os("KOAN_CONFIG_DIR").is_some();
-    if !named {
-        eprintln!("album_grid: skipped; point KOAN_CONFIG_DIR at a test library's config");
-    }
-    named
-}
-
 /// The grid on a library, ready to scroll, with its tile counter.
 fn grid(cx: &mut BenchAppContext) -> (gpui::Entity<AlbumGrid>, Rc<RefCell<Recorder>>) {
     cx.update(|cx| {
@@ -78,9 +67,6 @@ fn grid(cx: &mut BenchAppContext) -> (gpui::Entity<AlbumGrid>, Rc<RefCell<Record
 }
 
 fn scroll_at(points_per_second: f32, cx: &mut BenchAppContext) {
-    if !configured() {
-        return;
-    }
     let (grid, recorder) = grid(cx);
     let mut last = Instant::now();
     cx.bench_renderer(grid, move |grid, _, cx| {
@@ -112,9 +98,6 @@ fn album_grid_8000(cx: &mut BenchAppContext) {
 /// every sleeve far from anything ranked ahead.
 #[gpui::bench(fps = 144)]
 fn album_grid_jump(cx: &mut BenchAppContext) {
-    if !configured() {
-        return;
-    }
     let (grid, recorder) = grid(cx);
     let mut to_end = false;
     cx.bench_renderer(grid, move |grid, _, cx| {
@@ -131,4 +114,20 @@ gpui::bench_group!(
     album_grid_8000,
     album_grid_jump
 );
-gpui::bench_main!(benches);
+// `gpui::bench_main!`, with a test library required first. Without one
+// nothing runs, as under `cargo test`: the benches open a real engine, and
+// the real configuration is never theirs to open.
+#[global_allocator]
+static ALLOCATOR: gpui::CountingAllocator<std::alloc::System> =
+    gpui::CountingAllocator::new(std::alloc::System);
+
+fn main() {
+    if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
+        eprintln!("album_grid: skipped; point KOAN_CONFIG_DIR at a test library's config");
+        return;
+    }
+    benches();
+    criterion::Criterion::default()
+        .configure_from_args()
+        .final_summary();
+}
