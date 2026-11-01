@@ -308,6 +308,11 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
 | `library/feed.rs` | The slices the library pages read (library version, playing record, transfers, favourites, playlists, connection), to be replaced by `mirror.rs` |
 | `library/bench.rs` | What `benches/album_grid.rs` counts beside GPUI's frame timings: blank, placeholder and stand-in tiles, and how long tiles stayed blank. The bench scrolls the grid through GPUI's harness and headless renderer, nothing on screen |
+| `search/mod.rs` | `Search`: the query, the search shelf's answer (`shelf_summary`) and the suggestions made from it, a generation dropping answers to older queries; the results route opened when an answer lands and forgotten when the field empties |
+| `search/field.rs` | The sidebar's field and its suggestions panel: five tracks, four records, four artists; ↑↓ light one (captured ahead of the field's own actions), Return takes it or opens every result, Escape empties the field |
+| `search/results.rs` | The results page: artists as pills, records as the library's tiles, tracks as its rows, one pick across every kind, each heading opening its browser on the query |
+| `search/picker.rs` | ⇧⌘K: tracks by full-text search, records and artists by fuzzy matching, several picked before add, add and play, or replace |
+| `search/replace.rs` | Asking before the queue is replaced: how much goes, then replace, add or cancel |
 
 `just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library; `KOAN_CONFIG_DIR=DIR/config cargo bench -p koan-gui --bench album_grid` scrolls the album grid over it.
 

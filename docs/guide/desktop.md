@@ -44,6 +44,12 @@ A build from `main` can move the library database to a newer schema than the rel
 
 The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, and the sleep timer and output menus. The window opens where it was left.
 
+## Search
+
+The field at the top of the sidebar searches the whole library as you type: ⌘K (Ctrl+K on Linux) or `/` reaches it. Under it a few tracks, records and artists are suggested; the arrow keys light one and Return goes to it, while Return with none lit, or the first answer arriving, opens the results page. Each of its headings opens the album, artist or track browser with the search as its filter. A click on a record's sleeve plays it, asking first when that would replace what is queued; ⌘-click or ⇧-click picks results of any kind to play, queue or drag together. Escape empties the field and goes back to the page searched from.
+
+⇧⌘K (Ctrl+Shift+K) opens the picker: pick tracks, records or artists, several at once, then add them to the queue (Return), add and play (⌘Return) or replace the queue (⇧⌘Return).
+
 ## The queue
 
 The queue is grouped by record: a heading with the sleeve over each record's run, and a track standing alone with its own sleeve. The playing track is in the accent colour.
