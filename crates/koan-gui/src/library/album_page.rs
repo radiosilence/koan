@@ -207,6 +207,7 @@ impl AlbumPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let kind = self.row_kind();
+        let height = crate::components::RowMetrics::height(kind, &p.look);
         let (index, number) = match &self.lines[i] {
             Line::Disc(title) => {
                 return div()
