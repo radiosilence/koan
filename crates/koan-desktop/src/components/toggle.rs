@@ -5,7 +5,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, child, fade, focus, ring, track};
+use super::{Handler, child, fade, focus, ring};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole,
     label,
@@ -67,7 +67,6 @@ impl RenderOnce for Toggle {
             .justify_between()
             .gap(look.space(Space::M))
             .min_h(HIT)
-            .track_focus(&handle)
             .child(
                 div()
                     .text_role(TypeRole::Body, &look)
@@ -96,13 +95,10 @@ impl RenderOnce for Toggle {
             row = row.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
-            let on_key = on_change.clone();
             row = row
+                .track_focus(&handle)
                 .cursor_pointer()
-                .on_click(move |_, window, cx| on_change(&!checked, window, cx))
-                .on_key_down(move |event, window, cx| {
-                    if event.keystroke.key == "space" {
-                        cx.stop_propagation();
+                .on_click(move |_, window, cx| on_change(&!checked, window, cx));
                         on_key(&!checked, window, cx);
                     }
                 });
@@ -120,7 +116,7 @@ impl Tick for gpui_kit::Div {
         if checked {
             self.child(
                 KoanIcon::new(Icon::Check)
-                    .points(8.0)
+                    .points(BOX * 0.64)
                     .color(look.palette.bg.hsla()),
             )
         } else {
@@ -162,7 +158,6 @@ impl RenderOnce for IconToggle {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let handle = focus(&self.id, window, cx);
-        let state = super::pointer(&self.id, window, cx);
         let on = fade(
             child(&self.id, "on"),
             self.checked,
@@ -180,7 +175,6 @@ impl RenderOnce for IconToggle {
             .justify_center()
             .min_w(HIT)
             .min_h(HIT)
-            .track_focus(&handle)
             .tooltip(move |window, cx| super::Tooltip::view(label.clone(), window, cx))
             .child(
                 div()
@@ -193,16 +187,12 @@ impl RenderOnce for IconToggle {
                             .color(color),
                     ),
             );
-        toggle = track(toggle, &state);
         if let Some(on_change) = self.on_change {
             let checked = self.checked;
-            let on_key = on_change.clone();
             toggle = toggle
+                .track_focus(&handle)
                 .cursor_pointer()
-                .on_click(move |_, window, cx| on_change(&!checked, window, cx))
-                .on_key_down(move |event, window, cx| {
-                    if event.keystroke.key == "space" {
-                        cx.stop_propagation();
+                .on_click(move |_, window, cx| on_change(&!checked, window, cx));
                         on_key(&!checked, window, cx);
                     }
                 });

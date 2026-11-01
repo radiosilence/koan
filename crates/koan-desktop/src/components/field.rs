@@ -1,10 +1,9 @@
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Entity, Focusable, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
+    App, Entity, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
 };
 
-use super::ring;
 use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
 /// A text field: `control` type in `ink` on a square `surface` field with no
@@ -13,7 +12,10 @@ use crate::theme::{KoanStyled, Look, Space, TypeRole};
 /// The text, the caret, the selection and input methods are gpui-component's
 /// `Input`, whose own frame is turned off and whose padding and type are
 /// replaced with the theme's. It reads its colours from gpui-component's
-/// theme, which `KoanTheme::drive` keeps in the window's look. The owner
+/// theme, which `KoanTheme::drive` keeps in the window's look; the spec
+/// gives no selection colour, so a selection is the accent at 30 %. As on
+/// the Mac, a field draws no focus ring: the caret shows where typing goes.
+/// The owner
 /// makes the `InputState` (`cx.new(|cx| InputState::new(window, cx))`), which
 /// carries the placeholder, drawn in `muted`.
 #[derive(IntoElement)]
@@ -40,7 +42,6 @@ impl TextField {
 impl RenderOnce for TextField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let handle = self.state.read(cx).focus_handle(cx);
         let line = look.line_height(TypeRole::Control);
         div()
             .relative()
@@ -58,6 +59,5 @@ impl RenderOnce for TextField {
                     .text_role(TypeRole::Control, &look)
                     .text_color(look.palette.ink.hsla()),
             )
-            .children(ring(&handle, &look, window))
     }
 }

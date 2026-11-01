@@ -6,7 +6,7 @@ use gpui_kit::{
     RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 
-use super::{Handler, child, fade, fill, pointer, track};
+use super::{Handler, child, fade, fill};
 use crate::theme::{
     HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, ROW_HOVER_OPACITY, Space, TypeRole, label,
 };
@@ -194,9 +194,6 @@ impl RenderOnce for FigureCell {
 impl RenderOnce for ListRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let state = pointer(&self.id, window, cx);
-        let hovered = state.read(cx).hovered;
-        let hover = fade(child(&self.id, "hover"), hovered, Motion::FAST, window, cx);
         let selected = fade(
             child(&self.id, "selected"),
             self.selected,
@@ -224,10 +221,9 @@ impl RenderOnce for ListRow {
             .px(look.space(Space::M))
             .py(look.spaced(12.0))
             .min_h(HIT)
-            .child(fill(
-                look.palette.hover.hsla().opacity(ROW_HOVER_OPACITY),
-                hover,
-            ))
+            // Hover is a style GPUI paints from the hitbox, with no render of
+            // the list behind it as the pointer crosses rows.
+            .hover(|row| row.bg(look.palette.hover.hsla().opacity(ROW_HOVER_OPACITY)))
             .child(fill(look.palette.surface.hsla(), selected))
             .children(self.number.map(|number| {
                 div()
@@ -266,7 +262,7 @@ impl RenderOnce for ListRow {
                     .into_iter()
                     .map(|cell| div().relative().child(cell)),
             );
-        track(row, &state).when_some(on_click, |row, on_click| {
+        row.when_some(on_click, |row, on_click| {
             row.on_click(move |event, window, cx| on_click(event, window, cx))
         })
     }

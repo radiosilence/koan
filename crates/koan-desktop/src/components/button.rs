@@ -191,8 +191,7 @@ impl RenderOnce for Button {
             .py(look.spaced(vertical))
             .px(look.spaced(horizontal))
             .text_role(role, &look)
-            .text_color(color)
-            .track_focus(&handle);
+            .text_color(color);
         button = match kind {
             ButtonKind::Icon => button.min_w(HIT).min_h(HIT),
             ButtonKind::Toolbar => button.size(TOOLBAR_BUTTON),
@@ -204,17 +203,10 @@ impl RenderOnce for Button {
         if self.disabled {
             button = button.opacity(DISABLED_OPACITY);
         } else {
-            button = track(button, &state).cursor_pointer();
+            // GPUI turns Enter and Space on the focused button into a click.
+            button = track(button, &state).track_focus(&handle).cursor_pointer();
             if let Some(on_click) = self.on_click.clone() {
-                let on_key = on_click.clone();
-                button = button
-                    .on_click(move |event, window, cx| on_click(event, window, cx))
-                    .on_key_down(move |event, window, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            cx.stop_propagation();
-                            on_key(&ClickEvent::default(), window, cx);
-                        }
-                    });
+                button = button.on_click(move |event, window, cx| on_click(event, window, cx));
             }
         }
 
@@ -248,7 +240,7 @@ impl RenderOnce for Button {
                 .children(text.map(|text| {
                     let line = div().whitespace_nowrap().child(text);
                     if underline {
-                        line.border_b(HAIRLINE).border_color(color)
+                        line.underline().text_decoration_color(color)
                     } else {
                         line
                     }

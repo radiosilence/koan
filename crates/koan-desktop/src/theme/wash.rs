@@ -354,13 +354,14 @@ impl Wash {
             return;
         }
         if let Some(outgoing) = outgoing {
-            // Held where it stood under the new record, or faded out to the
-            // ground when there is none.
-            let stood = outgoing.opacity.at(now);
+            // Held whole under the new record, however far its own
+            // dissolve had come, or faded out to the ground when there is
+            // none: a part-faded record held under the next would let the
+            // ground show through for the length of a dissolve.
             let opacity = if texture.is_some() {
-                Ramp::still(stood, now)
+                Ramp::still(1.0, now)
             } else {
-                Ramp::still(stood, now).toward(0.0, now)
+                Ramp::still(1.0, now).toward(0.0, now)
             };
             let held = Layer {
                 texture: outgoing.texture.image,
@@ -469,6 +470,10 @@ impl Render for Wash {
         };
         if stale && self.sleeve.is_some() {
             self.start_bake(look.dark, cx);
+        } else if !stale {
+            // A bake still running for something no longer wanted (an
+            // appearance flipped and flipped back) is dropped when it lands.
+            self.baked = None;
         }
         // At rest only one texture is drawn: the one beneath goes once the
         // current one is opaque, or once it has faded out to the ground.

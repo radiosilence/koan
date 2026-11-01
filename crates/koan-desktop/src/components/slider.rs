@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Bounds, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
-    Point, RenderOnce, SharedString, Styled, Window, canvas, div, px,
+    App, AppContext, Bounds, Context, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
+    Point, Render, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, px,
 };
 
 use super::{Handler, child, focus, pointer, ring, track};
@@ -61,6 +61,18 @@ impl Slider {
     }
 }
 
+/// What a slider's drag carries: which track it began on.
+struct SliderDrag(ElementId);
+
+/// A drag that draws nothing under the pointer.
+struct NoPreview;
+
+impl Render for NoPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
 const THUMB: f32 = 8.0;
 const FILL: f32 = 3.0;
 
@@ -89,7 +101,9 @@ impl RenderOnce for Slider {
         let value = self.value;
 
         let measure = track_bounds.clone();
-        let rail = div()
+        let rail_id = child(&self.id, "rail");
+        let mut rail = div()
+            .id(rail_id.clone())
             .relative()
             .flex_1()
             .h(HIT)
@@ -145,30 +159,31 @@ impl RenderOnce for Slider {
             .relative()
             .flex()
             .items_center()
-            .gap(look.space(Space::S))
-            .track_focus(&handle)
-            .children(end(self.low))
-            .child(rail)
-            .children(end(self.high));
+            .gap(look.space(Space::S));
         if self.disabled {
             slider = slider.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let (down, drag, key) = (on_change.clone(), on_change.clone(), on_change);
-            let (down_bounds, drag_bounds) = (track_bounds.clone(), track_bounds);
-            let dragging = state.clone();
+            let down_bounds = track_bounds.clone();
             let step = self.step;
-            slider = track(slider, &state)
-                .cursor_pointer()
+            // A drag follows the pointer past the track and the window
+            // until it is let go: GPUI hands drag moves to every listener
+            // for the drag's type in the capture phase.
+            let mine = rail_id.clone();
+            rail = rail
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     let bounds = *down_bounds.read(cx);
                     down(&at(bounds, event.position), window, cx);
                 })
-                .on_mouse_move(move |event, window, cx| {
-                    if dragging.read(cx).pressed && event.dragging() {
-                        let bounds = *drag_bounds.read(cx);
-                        drag(&at(bounds, event.position), window, cx);
+                .on_drag(SliderDrag(rail_id), |_, _, _, cx| cx.new(|_| NoPreview))
+                .on_drag_move::<SliderDrag>(move |event, window, cx| {
+                    if event.drag(cx).0 == mine {
+                        drag(&at(event.bounds, event.event.position), window, cx);
                     }
-                })
+                });
+            slider = track(slider, &state)
+                .track_focus(&handle)
+                .cursor_pointer()
                 .on_key_down(move |event, window, cx| {
                     let to = match event.keystroke.key.as_str() {
                         "left" | "down" => value - step,
@@ -179,6 +194,10 @@ impl RenderOnce for Slider {
                     key(&to.clamp(0.0, 1.0), window, cx);
                 });
         }
-        slider.children(ring(&handle, &look, window))
+        slider
+            .children(end(self.low))
+            .child(rail)
+            .children(end(self.high))
+            .children(ring(&handle, &look, window))
     }
 }

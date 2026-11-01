@@ -85,8 +85,8 @@ fn stroke_units(points: f32) -> u32 {
 
 /// The asset path of one rasterisation, made once and shared after.
 fn path(icon: Icon, points: f32, layer: Layer) -> SharedString {
-    static PATHS: LazyLock<Mutex<HashMap<(Icon, u32, Layer), SharedString>>> =
-        LazyLock::new(Default::default);
+    type Paths = HashMap<(Icon, u32, Layer), SharedString>;
+    static PATHS: LazyLock<Mutex<Paths>> = LazyLock::new(Default::default);
     let units = stroke_units(points);
     PATHS
         .lock()

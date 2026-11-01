@@ -7,7 +7,7 @@ use gpui_kit::{
     Styled, Window, div,
 };
 
-use super::{Handler, child, fade, fill, pointer, track};
+use super::Handler;
 use crate::theme::{
     HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Motion, Space, Tone, TypeRole, label,
 };
@@ -116,9 +116,6 @@ impl MenuRow {
 impl RenderOnce for MenuRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        let state = pointer(&self.id, window, cx);
-        let lit = state.read(cx).hovered || self.highlighted;
-        let lit = fade(child(&self.id, "lit"), lit, Motion::FAST, window, cx);
         let color = look.color(if self.destructive {
             Tone::Bad
         } else {
@@ -137,7 +134,8 @@ impl RenderOnce for MenuRow {
             .text_role(TypeRole::Control, &look)
             .text_color(color)
             .whitespace_nowrap()
-            .child(fill(look.palette.surface.hsla(), lit))
+            .when(self.highlighted, |row| row.bg(look.palette.surface.hsla()))
+            .hover(|row| row.bg(look.palette.surface.hsla()))
             .children(self.checked.map(|checked| {
                 div()
                     .relative()
@@ -153,7 +151,7 @@ impl RenderOnce for MenuRow {
                     .child(KoanIcon::new(icon).role(TypeRole::Control).color(color))
             }))
             .child(div().relative().child(self.label));
-        track(row, &state).when_some(on_click, |row, on_click| {
+        row.when_some(on_click, |row, on_click| {
             row.cursor_pointer()
                 .on_click(move |event, window, cx| on_click(event, window, cx))
         })
