@@ -21,6 +21,8 @@ pub struct Slider {
     high: Option<SharedString>,
     step: f32,
     disabled: bool,
+    /// The desktop's density: a 20-point rail, as the Mac's seek bar has.
+    compact: bool,
     on_change: Option<Handler<f32>>,
     on_commit: Option<Handler<()>>,
 }
@@ -35,6 +37,7 @@ impl Slider {
             high: None,
             step: 0.05,
             disabled: false,
+            compact: false,
             on_change: None,
             on_commit: None,
         }
@@ -58,6 +61,13 @@ impl Slider {
         self
     }
 
+    /// At the desktop's density, 20 points tall rather than the touch
+    /// target's 44: a transport's seek bar under its controls.
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
+    }
+
     pub fn on_change(mut self, handler: impl Fn(&f32, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
         self
@@ -72,6 +82,8 @@ impl Slider {
 }
 
 const THUMB: f32 = 8.0;
+/// A compact slider's rail.
+const COMPACT: Pixels = px(20.0);
 const FILL: f32 = 3.0;
 
 fn at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> f32 {
@@ -85,6 +97,7 @@ fn at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> f32 {
 impl RenderOnce for Slider {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let height = if self.compact { COMPACT } else { HIT };
         let handle = focus(&self.id, window, cx);
         let state = pointer(&self.id, window, cx);
         let track_bounds = window.use_keyed_state(child(&self.id, "track"), cx, |_, _| {
@@ -111,7 +124,7 @@ impl RenderOnce for Slider {
             .id(rail_id.clone())
             .relative()
             .flex_1()
-            .h(HIT)
+            .h(height)
             .child(
                 canvas(
                     move |bounds, _, cx| measure.update(cx, |b, _| *b = bounds),
@@ -177,7 +190,7 @@ impl RenderOnce for Slider {
                     .absolute()
                     .left_0()
                     .right_0()
-                    .top(px((f32::from(HIT) - f32::from(HAIRLINE)) / 2.0))
+                    .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
                     .h(HAIRLINE)
                     .bg(look.palette.rule.hsla()),
             )
@@ -186,7 +199,7 @@ impl RenderOnce for Slider {
                     .absolute()
                     .left_0()
                     .w(gpui_kit::relative(value))
-                    .top(px((f32::from(HIT) - FILL) / 2.0))
+                    .top(px((f32::from(height) - FILL) / 2.0))
                     .h(px(FILL))
                     .bg(look.accent.hsla()),
             )
@@ -196,7 +209,7 @@ impl RenderOnce for Slider {
                         .absolute()
                         .left(gpui_kit::relative(value))
                         .ml(px(-THUMB / 2.0))
-                        .top(px((f32::from(HIT) - THUMB) / 2.0))
+                        .top(px((f32::from(height) - THUMB) / 2.0))
                         .size(px(THUMB))
                         .bg(look.palette.ink.hsla()),
                 )

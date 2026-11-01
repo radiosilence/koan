@@ -12,18 +12,20 @@ use koan_ffi::{
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use crate::components::{Menu as ThemeMenu, MenuEntry};
+use crate::components::{
+    Button, ButtonKind, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider, TransportMetrics,
+};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
 use crate::paint::Paint;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
+use crate::platform::actions::ShowEq;
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
-pub const HEIGHT: Pixels = px(68.);
-const COVER: Pixels = px(40.);
-const SLIDER_HIT: Pixels = px(20.);
+pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
+const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
     playback: Entity<Playback>,
@@ -31,7 +33,7 @@ pub struct Transport {
     /// Where the playing track's names lead.
     nav: Entity<crate::navigator::Navigator>,
     seek: Entity<Seek>,
-    menu: Option<(Menu, Entity<ThemeMenu>, Subscription)>,
+    menus: MenuSlot<Menu>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: Option<Arc<RenderImage>>,
@@ -157,7 +159,7 @@ impl Transport {
             ],
             playback: mirror.playback,
             outputs: mirror.outputs,
-            menu: None,
+            menus: MenuSlot::default(),
             cover: None,
             eq: None,
             eq_profile: None,
@@ -184,37 +186,27 @@ impl Transport {
         }));
     }
 
-    fn open(&mut self, which: Menu, window: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.as_ref().is_some_and(|(open, ..)| *open == which) {
-            self.menu = None;
-            cx.notify();
-            return;
-        }
-        let menu = match which {
+    /// The menu `which` opens, made from what the transport shows now.
+    fn build(
+        &mut self,
+        which: Menu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<ThemeMenu>> {
+        Some(match which {
             Menu::Sleep => {
                 let sleeping = self.playback.read(cx).0.sleep.is_some();
                 ThemeMenu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
             }
             Menu::Output => {
-                let Some(outputs) = self.outputs.read(cx).0.clone() else {
-                    return;
-                };
+                let outputs = self.outputs.read(cx).0.clone()?;
                 ThemeMenu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
             }
             Menu::Eq => {
-                let Some(eq) = self.eq.clone() else {
-                    return;
-                };
+                let eq = self.eq.clone()?;
                 ThemeMenu::build(window, cx, move |menu, _, _| eq_menu(menu, &eq))
             }
-        };
-        let dismissed = cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
-            this.menu = None;
-            cx.notify();
-        });
-        menu.focus_handle(cx).focus(window, cx);
-        self.menu = Some((which, menu, dismissed));
-        cx.notify();
+        })
     }
 
     fn menu_button(
@@ -226,14 +218,14 @@ impl Transport {
         p: &Paint,
         cx: &mut Context<Self>,
     ) -> Div {
-        self.menu_anchor(
+        self.menus.trigger(
             which,
             text_button(icon, label, p)
                 .id(label)
-                .when(!enabled, |b| b.opacity(0.4))
-                .when(enabled, |b| {
-                    b.on_click(cx.listener(move |this, _, window, cx| this.open(which, window, cx)))
-                }),
+                .when(!enabled, |b| b.opacity(0.4)),
+            |this: &mut Self| &mut this.menus,
+            move |this, window, cx| enabled.then(|| this.build(which, window, cx)).flatten(),
+            cx,
         )
     }
 
@@ -250,7 +242,7 @@ impl Transport {
         } else {
             div().child("eq").into_any_element()
         };
-        self.menu_anchor(
+        self.menus.trigger(
             Menu::Eq,
             div()
                 .id("eq")
@@ -267,27 +259,11 @@ impl Transport {
                 .child(child)
                 .tooltip(move |window, cx| {
                     crate::components::Tooltip::view(summary.clone(), window, cx)
-                })
-                .on_click(cx.listener(|this, _, window, cx| this.open(Menu::Eq, window, cx))),
+                }),
+            |this: &mut Self| &mut this.menus,
+            |this, window, cx| this.build(Menu::Eq, window, cx),
+            cx,
         )
-    }
-
-    /// `button`, with its menu under it while open.
-    fn menu_anchor(&self, which: Menu, button: impl IntoElement) -> Div {
-        let open = self
-            .menu
-            .as_ref()
-            .filter(|(m, ..)| *m == which)
-            .map(|(_, menu, _)| menu.clone());
-        div().relative().child(button).children(open.map(|menu| {
-            deferred(
-                anchored()
-                    .anchor(Anchor::BottomRight)
-                    .snap_to_window()
-                    .child(menu),
-            )
-            .with_priority(1)
-        }))
     }
 }
 
@@ -315,8 +291,10 @@ fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
 
 /// Where the device in view plays, as the Mac's output picker lists it: the
 /// system default, each of its devices under the glyph of how it is
-/// connected, then the renderers on the network; the one in use ticked, and
-/// one another app holds marked.
+/// connected with its EQ under its name, then the renderers on the network;
+/// the one in use on `surface`, its glyph in the accent, ticked. Each device
+/// has its EQ button, in the accent while an EQ is in force there, and a
+/// renderer in use its volume.
 fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
         entry.checked(chosen).on_click(move |_, _, cx| {
@@ -324,12 +302,33 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
             command(cx, "select output", move |e| e.select_output(choice));
         })
     };
+    let eq = |id: String, on: bool| {
+        move |_: &mut Window, _: &mut App| {
+            Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
+                .icon(Icon::Filters)
+                .label("eq")
+                .when(on, |b| b.tone(Tone::Accent))
+                .on_click(|_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(Box::new(ShowEq), cx);
+                })
+                .into_any_element()
+        }
+    };
+    let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
+        (Some(preset), true) => format!("{preset}, edited"),
+        (Some(preset), false) => preset.clone(),
+        (None, true) => "unsaved".into(),
+        (None, false) => "flat".into(),
+    };
     let mut menu = menu.section("output");
     if let Some(owner) = &outputs.owner {
         menu = menu.item(MenuEntry::data(format!("on {owner}")).disabled(true));
     }
     menu = menu.item(choice(
-        MenuEntry::new("system default").icon(Icon::Output),
+        MenuEntry::new("system default")
+            .icon(Icon::Output)
+            .rich("whatever the system plays through"),
         outputs.current == OutputChoice::Default,
         OutputChoice::Default,
     ));
@@ -338,31 +337,74 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
             name: device.id.clone(),
         };
         let chosen = outputs.current == id;
-        let icon = if device.busy && !chosen {
-            Icon::Warning
+        let busy = device.busy && !chosen;
+        let detail = if busy {
+            "in use by another app".to_owned()
         } else {
-            output_icon(&device.kind)
+            preset(device)
         };
+        let shaped = device.preset.is_some() || device.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(device.name.clone()).icon(icon),
+            MenuEntry::data(device.name.clone())
+                .icon(output_icon(&device.kind))
+                .rich(detail)
+                .warns(busy)
+                .trailing(eq(device.id.clone(), shaped)),
             chosen,
             id,
         ));
     }
-    if !outputs.renderers.is_empty() {
-        menu = menu.section("on this network");
-        for renderer in &outputs.renderers {
-            let id = OutputChoice::Renderer {
-                udn: renderer.id.clone(),
+    for renderer in &outputs.renderers {
+        let id = OutputChoice::Renderer {
+            udn: renderer.id.clone(),
+        };
+        let chosen = outputs.current == id;
+        let detail = if renderer.detail.is_empty() {
+            "upnp".to_owned()
+        } else {
+            format!("{} · upnp", renderer.detail)
+        };
+        let shaped = renderer.preset.is_some() || renderer.unsaved;
+        menu = menu.item(choice(
+            MenuEntry::data(renderer.name.clone())
+                .icon(Icon::Speaker)
+                .reach(Icon::Wifi)
+                .rich(detail)
+                .trailing(eq(renderer.id.clone(), shaped)),
+            chosen,
+            id,
+        ));
+        if chosen && let Some(volume) = outputs.volume {
+            let step = |icon: Icon, label: &'static str, to: u8| {
+                move |_: &mut Window, _: &mut App| {
+                    Button::new(label, ButtonKind::Icon)
+                        .icon(icon)
+                        .label(label)
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            command(cx, "volume", move |e| e.set_output_volume(to));
+                        })
+                        .into_any_element()
+                }
             };
-            menu = menu.item(choice(
-                MenuEntry::data(renderer.name.clone()).icon(Icon::Speaker),
-                outputs.current == id,
-                id,
-            ));
+            menu = menu.item(
+                MenuEntry::new("volume")
+                    .icon(Icon::VolumeUp)
+                    .rich(format!("{volume} of 100"))
+                    .trailing(step(Icon::VolumeDown, "quieter", volume.saturating_sub(5)))
+                    .trailing(step(Icon::VolumeUp, "louder", (volume + 5).min(100))),
+            );
         }
     }
     menu
+}
+
+/// A stable small number for an id string, for an element id.
+fn id_hash(id: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
 }
 
 /// An output's glyph by how it is connected, as the Mac's picker gives it.
@@ -490,9 +532,15 @@ fn control(
         Some(false) => (p.muted, None),
         None => (p.ink, None),
     };
+    // 44 points to hit, as the spec asks, but only the glyph's width in the
+    // layout: the rest of the hit area reaches into the gaps beside it, so
+    // the glyphs sit as far apart as the Mac's.
+    let glyph = px(crate::theme::icons::side(p.look.points(TypeRole::Body)));
+    let reach = (theme::HIT - glyph) / 2.;
     div()
         .id(id)
-        .min_w(theme::HIT)
+        .w(theme::HIT)
+        .mx(-reach)
         .h(theme::HIT)
         .flex()
         .items_center()
@@ -609,37 +657,24 @@ impl Render for Transport {
                     })),
             );
 
-        let play_pause = div()
-            .id("play-pause")
-            .w(px(36.))
-            .h(px(28.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .border_1()
-            .border_color(p.ink)
-            .cursor_pointer()
-            .text_role(TypeRole::Control, &p.look)
-            .text_color(p.ink)
-            .hover(|s| s.bg(p.hover))
-            .child(if playing {
-                glyph_or_label(Icon::Pause, "pause", TypeRole::Body, p.ink, &p)
-            } else {
-                glyph_or_label(Icon::Play, "play", TypeRole::Body, p.ink, &p)
-            })
+        // The one control reached for without looking: outlined, as the
+        // Mac's is.
+        let play_pause = Button::new("play-pause", ButtonKind::IconOutlined)
+            .icon(if playing { Icon::Pause } else { Icon::Play })
+            .label(if playing { "pause" } else { "play" })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
         let centre = div()
-            .w(px(520.))
+            .w(TransportMetrics::CENTRE)
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(2.))
+            .gap(TransportMetrics::row_gap(&p.look))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(p.space(Space::S))
+                    .gap(TransportMetrics::control_gap(&p.look))
                     .child(
                         control("shuffle", Icon::Shuffle, "shuffle", Some(shuffle), &p).on_click(
                             move |_, _, cx| {
@@ -673,9 +708,11 @@ impl Render for Transport {
             // that hold it (the bar, the shell), whose other cached children
             // replay their last frame rather than laying out again.
             .child(
-                self.seek
-                    .clone()
-                    .cached(StyleRefinement::default().w_full().h(SLIDER_HIT)),
+                self.seek.clone().cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(TransportMetrics::SEEK),
+                ),
             );
 
         let right = div()
@@ -754,11 +791,11 @@ pub struct Seek {
     /// Whether the window shows: hidden, no timer runs.
     visible: bool,
     tick: Option<Task<()>>,
-    /// Where the slider was last laid out, for turning a pointer into a
-    /// position and the duration into a step.
-    bounds: Bounds<Pixels>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
+    /// The slider's width as last painted, for when its fill next moves a
+    /// pixel.
+    width: std::rc::Rc<std::cell::Cell<f32>>,
     _subscriptions: [Subscription; 4],
 }
 
@@ -782,8 +819,8 @@ impl Seek {
             playhead: mirror.playhead,
             playback: mirror.playback,
             tick: None,
-            bounds: Bounds::default(),
             dragging: None,
+            width: Default::default(),
         };
         seek.schedule(cx);
         seek
@@ -810,7 +847,7 @@ impl Seek {
             return;
         }
         let to_second = 1000 - position % 1000;
-        let width = f32::from(self.bounds.size.width);
+        let width = self.width.get();
         let to_pixel = if width > 0.0 {
             (duration as f32 / width).ceil() as u64
         } else {
@@ -823,14 +860,6 @@ impl Seek {
             cx.background_executor().timer(wait).await;
             this.update(cx, |this, cx| this.moved(cx)).ok();
         }));
-    }
-
-    fn share_at(&self, x: Pixels) -> f32 {
-        let width = f32::from(self.bounds.size.width);
-        if width <= 0.0 {
-            return 0.0;
-        }
-        (f32::from(x - self.bounds.origin.x) / width).clamp(0.0, 1.0)
     }
 
     fn commit(&mut self, cx: &mut Context<Self>) {
@@ -867,105 +896,29 @@ impl Render for Seek {
         let shown = self
             .dragging
             .map_or(position, |s| (s as f64 * duration as f64) as u64);
-        let held = self.dragging.is_some();
-        let view = cx.entity();
-
-        let slider = div()
-            .id("seek")
-            .group("seek")
-            .relative()
-            .flex_1()
-            .h(SLIDER_HIT)
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    if this.duration_ms(cx) > 0 {
-                        this.dragging = Some(this.share_at(event.position.x));
-                        cx.notify();
-                    }
-                }),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(SLIDER_HIT / 2. - theme::HAIRLINE / 2.)
-                    .h(theme::HAIRLINE)
-                    .bg(p.rule),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top(SLIDER_HIT / 2. - px(1.5))
-                    .h(px(3.))
-                    .w(relative(share))
-                    .bg(p.accent),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(SLIDER_HIT / 2. - px(4.))
-                    .left(relative(share))
-                    .ml(px(-4.))
-                    .size(px(8.))
-                    .bg(p.ink)
-                    .when(!held, |d| {
-                        d.opacity(0.).group_hover("seek", |s| s.opacity(1.))
-                    }),
-            )
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, (), window, cx| {
-                        view.update(cx, |this, _| this.bounds = bounds);
-                        // While held, the pointer is followed past the
-                        // slider's edges and let go of anywhere. Listened for
-                        // on every frame, not only once a frame has drawn the
-                        // thumb held: a tap's release can arrive before that.
-                        let moved = view.clone();
-                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Bubble
-                                && event.pressed_button == Some(MouseButton::Left)
-                            {
-                                moved.update(cx, |this, cx| {
-                                    if this.dragging.is_some() {
-                                        this.dragging = Some(this.share_at(event.position.x));
-                                        cx.notify();
-                                    }
-                                });
-                            }
-                        });
-                        let released = view.clone();
-                        window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Bubble {
-                                released.update(cx, |this, cx| this.commit(cx));
-                            }
-                        });
-                    },
-                )
-                .absolute()
-                .size_full(),
-            );
-
-        let time = |ms: u64| {
-            div()
-                .w(px(48.))
-                .flex_shrink_0()
-                .text_role(TypeRole::Fine, &p.look)
-                .text_color(p.muted)
-                .child(clock(ms))
-        };
-
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .gap(p.space(Space::S))
-            .child(time(shown).flex().justify_end())
-            .child(slider)
-            .child(time(duration))
+        let (change, commit) = (cx.entity(), cx.entity());
+        let _ = p;
+        // The playhead the slider shows comes from the engine, which holds a
+        // seek's target until it lands there (koan-ffi's pending seek), so a
+        // click never shows the old place again before the new one.
+        let width = self.width.clone();
+        let measure = canvas(
+            move |bounds, _, _| width.set(f32::from(bounds.size.width)),
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let slider = Slider::new("seek", share)
+            .compact()
+            .ends(clock(shown), clock(duration))
+            .disabled(duration == 0)
+            .on_change(move |share, _, cx| {
+                change.update(cx, |this, cx| {
+                    this.dragging = Some(*share);
+                    cx.notify();
+                })
+            })
+            .on_commit(move |_, _, cx| commit.update(cx, |this, cx| this.commit(cx)));
+        div().relative().w_full().child(slider).child(measure)
     }
 }
