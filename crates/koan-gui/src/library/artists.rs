@@ -16,6 +16,7 @@ use super::nav::Page;
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
+use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
 use crate::theme::{Icon, KoanIcon, Space};
 
 const TYPING: Duration = Duration::from_millis(80);
@@ -25,6 +26,12 @@ struct Query {
     search: Option<String>,
     filter: BrowseFilter,
 }
+
+/// The browser's columns, in points at 100 %: the glyph, the heart, the
+/// counts.
+const LEAD: f32 = 20.0;
+const HEART: f32 = 20.0;
+const COUNT: f32 = 110.0;
 
 pub struct ArtistBrowser {
     lib: Lib,
@@ -203,26 +210,56 @@ impl ArtistBrowser {
             after: None,
         };
         let view = cx.weak_entity();
-        let count = |n: i64, one: &str, many: &str| {
-            div()
-                .w(p.sized(110.0))
-                .flex_none()
-                .flex()
-                .justify_end()
-                .typeset(p, Type::Meta, p.muted)
-                .child(chrome::count(n.max(0) as u64, one, many))
-        };
-        div()
-            .id(("artist", id as u64))
-            .group("row")
-            .w_full()
-            .flex()
-            .items_center()
-            .gap(p.space(Space::M))
-            .px(px(super::tile::MARGIN))
-            .h(rows::height(p))
-            .when(selected, |d| d.bg(p.surface))
-            .when(!selected, |d| d.hover(|s| s.bg(p.row_hover())))
+        let heart = div()
+            .id(("artist-heart", id as u64))
+            .cursor_pointer()
+            .text_color(if favourite { p.accent } else { p.muted })
+            .when(!favourite, |d| {
+                d.invisible().group_hover(ROW_GROUP, |s| s.visible())
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.lib
+                    .feed
+                    .update(cx, |f, cx| f.toggle_favourite(item, cx));
+            }))
+            .child(super::tile::heart_glyph(p, favourite));
+        let name = div()
+            .id(("artist-name", id as u64))
+            .cursor_pointer()
+            .hover(|s| s.underline())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.lib
+                    .nav
+                    .update(cx, |n, cx| n.open(Page::Artist(id), cx));
+            }))
+            .child(artist.name.clone());
+        let play = cx.weak_entity();
+        TableRow::new(("artist", id as u64), RowKind::Line)
+            .selected(selected)
+            .lead(
+                LEAD,
+                if starting {
+                    crate::components::Spinner::new(p.look.font_size(Type::Meta)).into_any_element()
+                } else {
+                    RowNumber::glyph(("artist-play", id as u64), Icon::Artist)
+                        .on_play(move |_, cx| {
+                            play.update(cx, |this, cx| this.play(id, cx)).ok();
+                        })
+                        .into_any_element()
+                },
+            )
+            .title(name)
+            .figure(HEART, heart)
+            .figure(
+                COUNT,
+                chrome::count(artist.album_count.max(0) as u64, "album", "albums"),
+            )
+            .figure(
+                COUNT,
+                chrome::count(artist.track_count.max(0) as u64, "track", "tracks"),
+            )
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 let order = &this.order;
@@ -233,73 +270,6 @@ impl ArtistBrowser {
                 }
                 cx.notify();
             }))
-            .child(
-                div()
-                    .id(("artist-play", id as u64))
-                    .w(p.sized(20.0))
-                    .flex_none()
-                    .cursor_pointer()
-                    .typeset(p, Type::Meta, p.muted)
-                    .hover(|s| s.text_color(p.ink))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.play(id, cx);
-                    }))
-                    .child(if starting {
-                        div().child("…")
-                    } else {
-                        div()
-                            .invisible()
-                            .group_hover("row", |s| s.visible())
-                            .child(KoanIcon::new(Icon::PlayMark).role(Type::Meta).color(p.ink))
-                    }),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(p.space(Space::S))
-                    .child(
-                        div()
-                            .id(("artist-name", id as u64))
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .cursor_pointer()
-                            .typeset(p, Type::Body, p.ink)
-                            .hover(|s| s.underline())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.lib
-                                    .nav
-                                    .update(cx, |n, cx| n.open(Page::Artist(id), cx));
-                            }))
-                            .child(artist.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .id(("artist-heart", id as u64))
-                            .w(p.sized(20.0))
-                            .flex_none()
-                            .cursor_pointer()
-                            .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })
-                            .when(!favourite, |d| {
-                                d.invisible().group_hover("row", |s| s.visible())
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.lib
-                                    .feed
-                                    .update(cx, |f, cx| f.toggle_favourite(item, cx));
-                            }))
-                            .child(super::tile::heart_glyph(p, favourite)),
-                    ),
-            )
-            .child(count(artist.album_count, "album", "albums"))
-            .child(count(artist.track_count, "track", "tracks"))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
             .on_mouse_down(MouseButton::Right, actions::mark(view, target))
             .into_any_element()

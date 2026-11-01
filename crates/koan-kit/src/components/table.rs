@@ -139,6 +139,7 @@ type Play = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 pub struct RowNumber {
     id: ElementId,
     number: SharedString,
+    glyph: Option<crate::theme::Icon>,
     current: bool,
     bars: Option<AnyElement>,
     on_play: Option<Play>,
@@ -149,9 +150,19 @@ impl RowNumber {
         Self {
             id: id.into(),
             number: number.into(),
+            glyph: None,
             current: false,
             bars: None,
             on_play: None,
+        }
+    }
+
+    /// A row with no number leads with its kind's glyph instead, in
+    /// `muted`, as the Mac's browsers do: the microphone for an artist.
+    pub fn glyph(id: impl Into<ElementId>, icon: crate::theme::Icon) -> Self {
+        Self {
+            glyph: Some(icon),
+            ..Self::new(id, SharedString::default())
         }
     }
 
@@ -180,17 +191,25 @@ impl RenderOnce for RowNumber {
         if let Some(bars) = self.bars {
             return div().flex().justify_end().child(bars).into_any_element();
         }
+        let tone = if self.current {
+            accent
+        } else {
+            look.palette.muted.hsla()
+        };
         let number = div()
             .text_role(TypeRole::Meta, &look)
-            .text_color(if self.current {
-                accent
-            } else {
-                look.palette.muted.hsla()
-            })
+            .text_color(tone)
             .when(self.on_play.is_some(), |d| {
                 d.group_hover(ROW_GROUP, |s| s.invisible())
             })
-            .child(self.number);
+            .map(|d| match self.glyph {
+                Some(icon) => d.child(
+                    crate::theme::KoanIcon::new(icon)
+                        .role(TypeRole::Body)
+                        .color(tone),
+                ),
+                None => d.child(self.number),
+            });
         div()
             .relative()
             .flex()
