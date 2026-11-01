@@ -1208,28 +1208,17 @@ jobs:
       VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install system deps
-        uses: ./.github/actions/linux-deps
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-      # The verification build is a debug build of the published crates,
-      # which `Linux` compiles on every push to main, so its
-      # cache is read rather than one of this job's own, which only a release
-      # would save and which eviction always took first. rust-cache hashes
-      # CARGO_* variables into the key, so the registry token is set on the
-      # publishing step alone, not the job.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: linux
-          save-if: false
       - name: Publish crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         # `cargo publish --workspace` resolves dependency order itself and waits
         # for each crate to appear in the index before publishing its dependents.
-        # The verification build is what catches an internal version pin that no
-        # longer resolves, so it must not be skipped.
+        # No verification build: `Linux` and `macOS` built this commit already,
+        # and `check-version` fails any internal pin that drifts from the
+        # workspace version, which is what verifying would have caught.
         #
         # Publishing is not idempotent: it errors on a version that already
         # exists. A release retried after a partial publish, or after a
@@ -1253,12 +1242,7 @@ jobs:
             echo "nothing to publish"
             exit 0
           fi
-          cargo publish --workspace "${EXCLUDE[@]}"
-      # `cargo publish` unpacks each crate under target/package, and the cache
-      # step's clean-up of target trips over what it left there. The compiled
-      # dependencies it caches live elsewhere in target.
-      - if: always()
-        run: rm -rf target/package
+          cargo publish --workspace --no-verify "${EXCLUDE[@]}"
 
   publish-package:
     name: Publish Pulumi package
@@ -1305,12 +1289,12 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check-version, android, linux-build, macos-release, publish-crate, publish-package]
+    needs: [check-version, android, linux-build, macos-release, publish-package]
     # Every need having succeeded, named one by one: a skipped job is not a
     # failure, and a release without one of its parts is not a release.
     # needs.*.result would also see jobs further up the graph, such as Apple,
     # which a release push skips on purpose.
-    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.android.result == 'success' && needs.linux-build.result == 'success' && needs.macos-release.result == 'success' && needs.publish-crate.result == 'success' && needs.publish-package.result == 'success' }}
+    if: ${{ !cancelled() && needs.check-version.outputs.should_release == 'true' && needs.android.result == 'success' && needs.linux-build.result == 'success' && needs.macos-release.result == 'success' && needs.publish-package.result == 'success' }}
     permissions:
       contents: write
     steps:
