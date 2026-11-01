@@ -77,7 +77,7 @@ fn name_of(config_dir: &Path) -> String {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
-    format!("koan-desktop-{hash:016x}")
+    format!("koan-gui-{hash:016x}")
 }
 
 /// Become the instance for this configuration, or hand `paths` to the one
@@ -92,7 +92,7 @@ pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
         .truncate(false)
         .read(true)
         .write(true)
-        .open(config.join("desktop-instance.lock"))?;
+        .open(config.join("gui-instance.lock"))?;
     match lock.try_lock() {
         Ok(()) => {
             let dir = runtime_dir();
@@ -207,7 +207,7 @@ impl Server {
     pub fn serve(self, opened: UnboundedSender<Opened>) {
         let Server { _lock, listener } = self;
         std::thread::Builder::new()
-            .name("koan-desktop-instance".into())
+            .name("koan-gui-instance".into())
             .spawn(move || {
                 let _lock = _lock;
                 for stream in listener.incoming() {
@@ -220,7 +220,7 @@ impl Server {
                     };
                     let opened = opened.clone();
                     let read = std::thread::Builder::new()
-                        .name("koan-desktop-handover".into())
+                        .name("koan-gui-handover".into())
                         .spawn(move || {
                             if let Err(e) = stream.set_read_timeout(Some(READ_FOR)) {
                                 log::warn!("instance: {e}");
@@ -241,11 +241,14 @@ impl Server {
 }
 
 /// The paths named on the command line, made absolute against the directory
-/// it was run in, since the instance they are handed to runs elsewhere.
+/// it was run in, since the instance they are handed to runs elsewhere. An
+/// argument starting with `-` is a flag, whatever a launcher meant by it, and
+/// is left out.
 pub fn argv_paths() -> Vec<PathBuf> {
     let cwd = std::env::current_dir().unwrap_or_default();
     std::env::args_os()
         .skip(1)
+        .filter(|a| !a.as_encoded_bytes().starts_with(b"-"))
         .map(PathBuf::from)
         .map(|p| if p.is_absolute() { p } else { cwd.join(p) })
         .collect()
@@ -322,7 +325,7 @@ mod tests {
         assert_eq!(a, name_of(Path::new("/home/x/.config/koan")));
         assert_ne!(a, name_of(Path::new("/tmp/koan-test")));
         // Short enough for sun_path (104 bytes on macOS) under any runtime dir.
-        assert_eq!(a.len(), "koan-desktop-".len() + 16);
+        assert_eq!(a.len(), "koan-gui-".len() + 16);
     }
 
     #[test]

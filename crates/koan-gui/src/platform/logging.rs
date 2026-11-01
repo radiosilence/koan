@@ -56,7 +56,7 @@ pub fn init() {
     let logger = LOGGER.get_or_init(|| {
         let (lines, writes) = channel::<Line>();
         let spawned = std::thread::Builder::new()
-            .name("koan-desktop-log".into())
+            .name("koan-gui-log".into())
             .spawn(move || {
                 let mut file = config::LogFile::default();
                 for line in writes {

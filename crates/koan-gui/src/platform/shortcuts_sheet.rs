@@ -15,7 +15,7 @@ use gpui_kit::{
     actions, div, prelude::*, px,
 };
 
-use super::actions::{Group, HOTKEYS, MENU, Shortcut, caption};
+use super::actions::{APPLICATION, Group, HOTKEYS, MENU, Shortcut, caption};
 
 actions!(shortcuts_sheet, [Dismiss]);
 
@@ -96,7 +96,7 @@ struct Line {
 }
 
 /// The lines of `table` in `group`, keys captioned for `os`.
-fn lines(table: &[Shortcut], group: Group, os: OperatingSystem) -> Vec<Line> {
+fn lines(table: &[&Shortcut], group: Group, os: OperatingSystem) -> Vec<Line> {
     table
         .iter()
         .filter(|s| s.group == group)
@@ -105,6 +105,21 @@ fn lines(table: &[Shortcut], group: Group, os: OperatingSystem) -> Vec<Line> {
             label: s.title,
         })
         .collect()
+}
+
+/// The shortcuts with a modifier, as the sheet lists them. On macOS the
+/// application's own (Settings, Hide, Quit) are in the menu bar, as in every
+/// app; elsewhere there is no menu bar, so they are listed here too.
+fn with_modifier(os: OperatingSystem) -> Vec<&'static Shortcut> {
+    let mut all: Vec<&Shortcut> = MENU.iter().collect();
+    if os != OperatingSystem::Mac {
+        all.extend(
+            APPLICATION
+                .iter()
+                .filter(|s| !s.keys[0].starts_with("cmd-")),
+        );
+    }
+    all
 }
 
 impl Render for ShortcutsSheet {
@@ -140,7 +155,7 @@ impl Render for ShortcutsSheet {
                 .text_color(p.ink)
                 .child(key)
         };
-        let columns = |table: &[Shortcut]| {
+        let columns = |table: &[&Shortcut]| {
             div().flex().flex_wrap().gap(px(30.0)).children(
                 Group::ALL
                     .into_iter()
@@ -204,16 +219,16 @@ impl Render for ShortcutsSheet {
                     .gap(px(20.0))
                     .max_h(px(460.0))
                     .overflow_y_scroll()
-                    .child(columns(HOTKEYS))
+                    .child(columns(&HOTKEYS.iter().collect::<Vec<_>>()))
                     .child(div().h(px(1.0)).bg(p.rule))
                     .child(section(modifier))
-                    .child(columns(MENU)),
+                    .child(columns(&with_modifier(os))),
             )
             .child(
                 div()
                     .text_size(size(12.0))
                     .text_color(p.muted)
-                    .child("none of these fire while you're typing."),
+                    .child("single keys never fire while you're typing."),
             )
             .child(
                 div().flex().justify_end().child(
@@ -239,14 +254,27 @@ mod tests {
     fn every_group_with_a_hotkey_lists_it() {
         let total: usize = Group::ALL
             .into_iter()
-            .map(|g| lines(HOTKEYS, g, OperatingSystem::Mac).len())
+            .map(|g| lines(&HOTKEYS.iter().collect::<Vec<_>>(), g, OperatingSystem::Mac).len())
             .sum();
         assert_eq!(total, HOTKEYS.len());
     }
 
     #[test]
+    fn linux_lists_settings_and_quit_and_the_mac_leaves_them_to_its_menu() {
+        let titles = |os| -> Vec<&str> { with_modifier(os).iter().map(|s| s.title).collect() };
+        let linux = titles(OperatingSystem::Linux);
+        assert!(linux.contains(&"Quit kōan") && linux.contains(&"Settings…"));
+        assert!(!linux.contains(&"Hide kōan"));
+        assert!(!titles(OperatingSystem::Mac).contains(&"Quit kōan"));
+    }
+
+    #[test]
     fn a_line_shows_every_key_that_does_it() {
-        let nav = lines(HOTKEYS, Group::Navigation, OperatingSystem::Mac);
+        let nav = lines(
+            &HOTKEYS.iter().collect::<Vec<_>>(),
+            Group::Navigation,
+            OperatingSystem::Mac,
+        );
         let albums = nav.iter().find(|l| l.label == "Albums").unwrap();
         assert_eq!(albums.keys, ["l", "a"]);
     }

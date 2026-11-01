@@ -63,6 +63,8 @@ impl Global for Links {}
 ///
 /// Resolves to how many tracks the session restored, or `None` when it could
 /// not be read. The player has not necessarily loaded them yet when it does.
+/// It can take seconds (with the queue kept on the server, the restore waits
+/// for the player), so the window should not wait for it.
 /// The shell must not restore the session itself: a second restore appends
 /// the saved queue again. Its own saves of the session (an autosave) are for
 /// `Some` alone, as the save on quit here is.
@@ -71,6 +73,10 @@ pub fn init(
     mut opened: UnboundedReceiver<Opened>,
     cx: &mut App,
 ) -> impl Future<Output = Option<u32>> + 'static {
+    // As the Mac app does unless it is kept running in the menu bar, which
+    // this app has no menu bar item for: closing the last window quits.
+    // GPUI's default on macOS keeps the process with nothing to bring back.
+    cx.set_quit_mode(gpui_kit::QuitMode::LastWindowClosed);
     actions::register(engine, cx);
     shortcuts_sheet::bind(cx);
     menus::set(cx);
@@ -122,7 +128,7 @@ fn save_on_leaving(engine: &Arc<KoanEngine>) {
     let (saved, waiting) = std::sync::mpsc::channel();
     let saving = engine.clone();
     let spawned = std::thread::Builder::new()
-        .name("koan-desktop-quit".into())
+        .name("koan-gui-quit".into())
         .spawn(move || {
             futures_lite::future::block_on(async {
                 if let Err(e) = saving.clone().save_session().await {

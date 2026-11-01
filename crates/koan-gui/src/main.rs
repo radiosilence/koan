@@ -1,6 +1,6 @@
 use futures_channel::mpsc;
 use gpui_kit::*;
-use koan_desktop::platform;
+use koan_gui::platform;
 use platform::instance::{self, Launch, Opened};
 
 struct Shell;
@@ -49,9 +49,9 @@ fn main() {
                     return;
                 }
             };
-            let restored = cx.update(|cx| platform::init(&engine, opening, cx));
-            restored.await;
             cx.update(|cx| {
+                // The shell's queue follows what this resolves to.
+                let _restored = platform::init(&engine, opening, cx);
                 gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Shell))
                     .expect("failed to open the window");
             });

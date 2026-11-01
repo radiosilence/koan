@@ -814,14 +814,19 @@ impl KoanEngine {
     /// `open`, for the desktop app: a device of its own beside the native app
     /// and the terminal UI on the same config directory (see
     /// `LinkIdentity::desktop`). Refused while another desktop app holds that
-    /// device.
+    /// device, and when its lock cannot be made in the config directory.
     pub async fn open_desktop() -> Result<Arc<Self>, KoanError> {
         offload::offload(|| {
-            let identity = koan_core::remote::link::LinkIdentity::desktop().ok_or_else(|| {
-                KoanError::Refused {
-                    message: "another kōan desktop app is running on this configuration"
-                        .to_string(),
-                }
+            let identity = koan_core::remote::link::LinkIdentity::desktop().map_err(|e| {
+                let message = if e.kind() == std::io::ErrorKind::WouldBlock {
+                    "another kōan desktop app is running on this configuration".to_string()
+                } else {
+                    format!(
+                        "could not take this device's lock in {}: {e}",
+                        config::config_dir().display()
+                    )
+                };
+                KoanError::Refused { message }
             })?;
             Self::build(None, identity)
         })

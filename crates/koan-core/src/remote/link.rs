@@ -976,13 +976,14 @@ impl LinkIdentity {
     /// server and the network.
     pub fn terminal() -> Option<Self> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
-        Self::beside_app("terminal-", "terminal", &HELD)
+        Self::beside_app("terminal-", "terminal", &HELD).ok()
     }
 
     /// The desktop app on this machine, kept apart from the native app and
-    /// the terminal UI as `terminal` is. `None` while another desktop app on
-    /// this config directory is that device.
-    pub fn desktop() -> Option<Self> {
+    /// the terminal UI as `terminal` is. An error of kind `WouldBlock` while
+    /// another desktop app on this config directory is that device; any other
+    /// when its lock cannot be made at all.
+    pub fn desktop() -> std::io::Result<Self> {
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
         Self::beside_app("desktop-", "desktop", &HELD)
     }
@@ -995,21 +996,20 @@ impl LinkIdentity {
         files: &'static str,
         kind: &str,
         held: &'static std::sync::OnceLock<std::fs::File>,
-    ) -> Option<Self> {
+    ) -> std::io::Result<Self> {
         let dir = config::config_dir();
         if held.get().is_none() {
-            std::fs::create_dir_all(&dir).ok()?;
+            std::fs::create_dir_all(&dir)?;
             let lock = std::fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
                 .write(true)
-                .open(dir.join(format!("{files}device.lock")))
-                .ok()?;
-            lock.try_lock().ok()?;
+                .open(dir.join(format!("{files}device.lock")))?;
+            lock.try_lock().map_err(std::io::Error::from)?;
             let _ = held.set(lock);
         }
         let app = Self::this_device(None);
-        Some(Self {
+        Ok(Self {
             name: format!("{} ({kind})", app.name),
             device_id: file_device_id(&dir.join(format!("{files}device-id"))),
             files,

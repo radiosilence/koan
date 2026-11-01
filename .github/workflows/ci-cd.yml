@@ -378,22 +378,22 @@ jobs:
           cache-on-failure: true
       # The desktop app has a job of its own: GPUI and the libraries it links
       # are the bulk of its build, and nothing else here needs them.
-      - run: cargo clippy --workspace --exclude koan-desktop --all-targets -- -D warnings
+      - run: cargo clippy --workspace --exclude koan-gui --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test --workspace --exclude koan-desktop --all-targets
+        run: cargo test --workspace --exclude koan-gui --all-targets
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test --workspace --exclude koan-desktop --doc
+        run: cargo test --workspace --exclude koan-gui --doc
 
-  # koan-desktop on Linux, beside the job above: it links koan-ffi and so
+  # koan-gui on Linux, beside the job above: it links koan-ffi and so
   # koan-core and koan-server, which any Rust change can break for it.
-  desktop:
-    name: Desktop (Linux)
+  gui:
+    name: GUI (Linux)
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 60
     concurrency:
-      group: desktop-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      group: gui-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -407,11 +407,11 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          shared-key: desktop
+          shared-key: gui
           cache-on-failure: true
-      - run: cargo clippy -p koan-desktop --all-targets -- -D warnings
+      - run: cargo clippy -p koan-gui --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test -p koan-desktop --all-targets
+        run: cargo test -p koan-gui --all-targets
 
   audit:
     name: Security Audit
@@ -760,7 +760,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, desktop, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, gui, audit, pulumi-package, linux-build, container, apple, android]
     if: always()
     steps:
       - env:
@@ -1010,8 +1010,8 @@ jobs:
   # architecture an AppImage and a .deb. Built when a release is, and attached
   # to it; a failure here leaves the release without them rather than holding
   # it back, while the app is new.
-  desktop-release:
-    name: Release (desktop, ${{ matrix.name }})
+  gui-release:
+    name: Release (GUI, ${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     needs: [changes, make-room]
@@ -1039,7 +1039,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: desktop-release-${{ matrix.name }}
+          shared-key: gui-release-${{ matrix.name }}
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install_args: just
@@ -1078,7 +1078,7 @@ jobs:
             echo "APPIMAGE_RUNTIME=$runtime"
             echo "APPIMAGE_EXTRACT_AND_RUN=1"
           } >> "$GITHUB_ENV"
-      - run: just desktop-bundle
+      - run: just gui-bundle
       - name: Name the packages
         env:
           NAME: ${{ matrix.name }}
@@ -1086,14 +1086,14 @@ jobs:
           set -euo pipefail
           mkdir out
           if [ "$RUNNER_OS" = macOS ]; then
-            cp target/desktop/koan-desktop.dmg "out/koan-desktop-$NAME.dmg"
+            cp target/gui/koan-gui.dmg "out/koan-gui-$NAME.dmg"
           else
-            cp target/desktop/*.deb target/desktop/*.AppImage out/
+            cp target/gui/*.deb target/gui/*.AppImage out/
           fi
           ls -l out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: koan-desktop-${{ matrix.name }}
+          name: koan-gui-${{ matrix.name }}
           path: out/*
 
   # The image this commit already pushed, tagged with the release's version
@@ -1231,7 +1231,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check-version, android, linux-build, macos-release, desktop-release, publish-crate, publish-package]
+    needs: [check-version, android, linux-build, macos-release, gui-release, publish-crate, publish-package]
     # Every need having succeeded, named one by one: a skipped job is not a
     # failure, and a release without one of its parts is not a release.
     # needs.*.result would also see jobs further up the graph, such as Apple,
@@ -1437,19 +1437,19 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
-          src=artifacts/koan-desktop-macos-arm64/koan-desktop-macos-arm64.dmg
+          src=artifacts/koan-gui-macos-arm64/koan-gui-macos-arm64.dmg
           if [ ! -f "$src" ]; then
             echo "::warning::no desktop DMG in this release"
             exit 0
           fi
           hash=$(shasum -a 256 "$src" | cut -c1-12)
-          dmg="$RUNNER_TEMP/koan-desktop-$VERSION-$hash.dmg"
+          dmg="$RUNNER_TEMP/koan-gui-$VERSION-$hash.dmg"
           cp "$src" "$dmg"
           scripts/notarise.sh "$dmg"
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
-          cp "$dmg" stapled/koan-desktop-macos-arm64.dmg
-          gh release upload "v$VERSION" stapled/koan-desktop-macos-arm64.dmg --clobber
+          cp "$dmg" stapled/koan-gui-macos-arm64.dmg
+          gh release upload "v$VERSION" stapled/koan-gui-macos-arm64.dmg --clobber
       - name: Update the Homebrew cask
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}

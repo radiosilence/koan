@@ -1827,66 +1827,66 @@ android-walk avd="koan-walk" search="Long":
 android-release-key:
     PATH="$(mise where java)/bin:$PATH" scripts/android-release-key.sh
 
-# --- Desktop (koan-desktop: GPUI, macOS and Linux) ---
+# --- The kōan GUI app (koan-gui): desktop builds, macOS and Linux ---
 
-desktop_id := "cc.blit.koan.desktop"
-desktop_out := "target/desktop"
+gui_id := "cc.blit.koan.desktop"
+gui_out := "target/gui"
 # The oldest macOS the desktop app is built for and says it runs on: the one
 # it has been run on, as the SwiftUI app's.
-desktop_macos := "26.0"
+gui_macos := "26.0"
 
 # Build the desktop app in release.
-desktop-build:
+gui-build:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ "$(uname -s)" = Darwin ]; then export MACOSX_DEPLOYMENT_TARGET={{desktop_macos}}; fi
-    cargo build --release --locked -p koan-desktop
+    if [ "$(uname -s)" = Darwin ]; then export MACOSX_DEPLOYMENT_TARGET={{gui_macos}}; fi
+    cargo build --release --locked -p koan-gui
 
 # Run the desktop app from source. Without a KOAN_CONFIG_DIR of your own it
 # runs against one under target/ with no library folders: a build from a branch
 # migrates the database it opens, and the released apps then refuse it.
-desktop-run *ARGS:
+gui-run *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -z "${KOAN_CONFIG_DIR:-}" ]; then
-        export KOAN_CONFIG_DIR="$PWD/target/desktop-config"
+        export KOAN_CONFIG_DIR="$PWD/target/gui-config"
         mkdir -p "$KOAN_CONFIG_DIR"
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
-    cargo run -p koan-desktop -- {{ARGS}}
+    cargo run -p koan-gui -- {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,
-# on Linux an AppImage and a .deb, all under target/desktop.
-desktop-bundle: desktop-build
+# on Linux an AppImage and a .deb, all under target/gui.
+gui-bundle: gui-build
     #!/usr/bin/env bash
     set -euo pipefail
     case "$(uname -s)" in
-        Darwin) just _desktop-macos ;;
-        Linux) just _desktop-linux ;;
-        *) echo "desktop-bundle: macOS and Linux only (see #1600)" >&2; exit 1 ;;
+        Darwin) just _gui-macos ;;
+        Linux) just _gui-linux ;;
+        *) echo "gui-bundle: macOS and Linux only (see #1600)" >&2; exit 1 ;;
     esac
 
 # The .app sits beside the SwiftUI app, never in its place: its own bundle id
 # keeps its preferences and privacy grants apart, as its device id keeps it
 # apart on the network. Signed as `macos-bundle` signs; the DMG laid out as
 # `macos-dmg` lays one out, and signed with a Developer ID when there is one.
-_desktop-macos:
+_gui-macos:
     #!/usr/bin/env bash
     set -euo pipefail
     version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-    out={{desktop_out}}
+    out={{gui_out}}
     app="$out/kōan desktop.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp "${CARGO_TARGET_DIR:-target}/release/koan-desktop" "$app/Contents/MacOS/koan-desktop"
+    cp "${CARGO_TARGET_DIR:-target}/release/koan-gui" "$app/Contents/MacOS/koan-gui"
     cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/"
     cat > "$app/Contents/Info.plist" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0">
     <dict>
-        <key>CFBundleExecutable</key><string>koan-desktop</string>
-        <key>CFBundleIdentifier</key><string>{{desktop_id}}</string>
+        <key>CFBundleExecutable</key><string>koan-gui</string>
+        <key>CFBundleIdentifier</key><string>{{gui_id}}</string>
         <key>CFBundleName</key><string>kōan desktop</string>
         <key>CFBundleDisplayName</key><string>kōan desktop</string>
         <key>CFBundlePackageType</key><string>APPL</string>
@@ -1894,7 +1894,7 @@ _desktop-macos:
         <key>CFBundleVersion</key><string>${version}</string>
         <key>CFBundleIconFile</key><string>AppIcon</string>
         <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
-        <key>LSMinimumSystemVersion</key><string>{{desktop_macos}}</string>
+        <key>LSMinimumSystemVersion</key><string>{{gui_macos}}</string>
         <key>NSHighResolutionCapable</key><true/>
         <!-- As the SwiftUI app's: without a reason, macOS drops the app's SSDP
              and Bonjour traffic without asking, and no renderer or nearby
@@ -1918,32 +1918,32 @@ _desktop-macos:
     tiffutil -cathidpicheck "$bg/background.png" "$bg/background@2x.png" -out "$bg/background.tiff" >/dev/null
     if command -v uvx >/dev/null; then dmgbuild=(uvx --from dmgbuild==1.6.7 dmgbuild)
     else dmgbuild=(pipx run --spec dmgbuild==1.6.7 dmgbuild); fi
-    rm -f "$out/koan-desktop.dmg"
+    rm -f "$out/koan-gui.dmg"
     "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
         -D app="$app" -D background="$bg/background.tiff" \
         -D volume_icon={{app_dir}}/Resources/AppIcon.icns \
-        "kōan desktop" "$out/koan-desktop.dmg"
+        "kōan desktop" "$out/koan-gui.dmg"
     case "$id" in
-        "Developer ID Application"*) codesign --force --timestamp --sign "$id" "$out/koan-desktop.dmg" ;;
+        "Developer ID Application"*) codesign --force --timestamp --sign "$id" "$out/koan-gui.dmg" ;;
     esac
-    echo "built $app and $out/koan-desktop.dmg"
+    echo "built $app and $out/koan-gui.dmg"
 
 # An AppImage, and a .deb for Debian and Ubuntu, from one staged tree. The
 # AppImage needs appimagetool (APPIMAGETOOL, or on PATH) and takes the runtime
 # in APPIMAGE_RUNTIME where one is given; the .deb needs dpkg-deb and
 # dpkg-shlibdeps. Both need at least the glibc of the machine that built them.
-_desktop-linux:
+_gui-linux:
     #!/usr/bin/env bash
     set -euo pipefail
     version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
     arch=$(uname -m)
-    out={{desktop_out}}
+    out={{gui_out}}
     root="$out/root"
     rm -rf "$root"
     mkdir -p "$root/usr/bin" "$root/usr/share/applications" "$root/usr/share/icons/hicolor/scalable/apps"
-    install -m 0755 "${CARGO_TARGET_DIR:-target}/release/koan-desktop" "$root/usr/bin/koan-desktop"
-    install -m 0644 crates/koan-desktop/packaging/koan-desktop.desktop "$root/usr/share/applications/"
-    install -m 0644 {{app_dir}}/Resources/AppIcon.svg "$root/usr/share/icons/hicolor/scalable/apps/koan-desktop.svg"
+    install -m 0755 "${CARGO_TARGET_DIR:-target}/release/koan-gui" "$root/usr/bin/koan-gui"
+    install -m 0644 crates/koan-gui/packaging/koan-gui.desktop "$root/usr/share/applications/"
+    install -m 0644 {{app_dir}}/Resources/AppIcon.svg "$root/usr/share/icons/hicolor/scalable/apps/koan-gui.svg"
 
     # The libraries the binary links, glibc's floor among them, as
     # dpkg-shlibdeps reads them off it (it wants a source package's control
@@ -1953,11 +1953,11 @@ _desktop-linux:
     debarch=$(dpkg --print-architecture)
     shlibs="$out/shlibs"
     rm -rf "$shlibs" && mkdir -p "$shlibs/debian"
-    printf 'Source: koan-desktop\n\nPackage: koan-desktop\n' > "$shlibs/debian/control"
-    bin="$PWD/$deb/usr/bin/koan-desktop"
+    printf 'Source: koan-gui\n\nPackage: koan-gui\n' > "$shlibs/debian/control"
+    bin="$PWD/$deb/usr/bin/koan-gui"
     linked=$(cd "$shlibs" && dpkg-shlibdeps -O "$bin" | sed -n 's/^shlibs:Depends=//p')
     {
-        echo "Package: koan-desktop"
+        echo "Package: koan-gui"
         echo "Version: ${version}"
         echo "Architecture: ${debarch}"
         echo "Maintainer: radiosilence <jc@blit.cc>"
@@ -1969,16 +1969,16 @@ _desktop-linux:
         echo " The desktop app: a local library or a koan or Subsonic server, played"
         echo " at the source's own sample rate."
     } > "$deb/DEBIAN/control"
-    dpkg-deb --build --root-owner-group "$deb" "$out/koan-desktop_${version}_${debarch}.deb"
+    dpkg-deb --build --root-owner-group "$deb" "$out/koan-gui_${version}_${debarch}.deb"
 
     # The same tree as an AppDir, with the entry, icon and launcher at its
     # root, where appimagetool looks for them.
-    appdir="$out/koan-desktop.AppDir"
+    appdir="$out/koan-gui.AppDir"
     rm -rf "$appdir" && cp -a "$root" "$appdir"
-    cp "$appdir/usr/share/applications/koan-desktop.desktop" "$appdir/"
-    cp "$appdir/usr/share/icons/hicolor/scalable/apps/koan-desktop.svg" "$appdir/"
-    ln -s usr/bin/koan-desktop "$appdir/AppRun"
+    cp "$appdir/usr/share/applications/koan-gui.desktop" "$appdir/"
+    cp "$appdir/usr/share/icons/hicolor/scalable/apps/koan-gui.svg" "$appdir/"
+    ln -s usr/bin/koan-gui "$appdir/AppRun"
     runtime=()
     if [ -n "${APPIMAGE_RUNTIME:-}" ]; then runtime=(--runtime-file "$APPIMAGE_RUNTIME"); fi
-    ARCH="$arch" "${APPIMAGETOOL:-appimagetool}" "${runtime[@]}" "$appdir" "$out/koan-desktop-${arch}.AppImage"
-    echo "built $out/koan-desktop_${version}_${debarch}.deb and $out/koan-desktop-${arch}.AppImage"
+    ARCH="$arch" "${APPIMAGETOOL:-appimagetool}" "${runtime[@]}" "$appdir" "$out/koan-gui-${arch}.AppImage"
+    echo "built $out/koan-gui_${version}_${debarch}.deb and $out/koan-gui-${arch}.AppImage"

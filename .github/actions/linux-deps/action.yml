@@ -8,7 +8,7 @@ description: >
 
 inputs:
   gui:
-    description: Also install what koan-desktop builds against.
+    description: Also install what koan-gui builds against.
     required: false
     default: "false"
 

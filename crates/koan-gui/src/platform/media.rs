@@ -104,7 +104,13 @@ fn command_of(event: MediaControlEvent, position_ms: u64) -> Option<Command> {
 
 /// What the covers handed to the system are called, in the configuration
 /// directory.
-const COVER_PREFIX: &str = "desktop-cover-";
+const COVER_PREFIX: &str = "gui-cover-";
+
+/// This process's covers: named for it, so sweeping an earlier run's never
+/// touches one this run has written.
+fn own_prefix() -> String {
+    format!("{COVER_PREFIX}{}-", std::process::id())
+}
 
 /// Where the cover for the `generation`th track is written for the system to
 /// read: a name of its own per track, since a shell that keys its image cache
@@ -116,7 +122,7 @@ fn cover_path(generation: u64, mime: &str) -> PathBuf {
         "image/webp" => "webp",
         _ => "jpg",
     };
-    koan_core::config::config_dir().join(format!("{COVER_PREFIX}{generation}.{ext}"))
+    koan_core::config::config_dir().join(format!("{}{generation}.{ext}", own_prefix()))
 }
 
 /// Remove the covers an earlier run left, which a crash or a kill does.
@@ -125,15 +131,28 @@ fn sweep_covers() {
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };
+    let own = own_prefix();
     for entry in entries.flatten() {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(COVER_PREFIX)
-        {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(COVER_PREFIX) && !name.starts_with(&own) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// `path` as a `file://` URL, every byte outside RFC 3986's unreserved set
+/// and the path's slashes percent-encoded: Now Playing's `NSURL` refuses a
+/// space, and MPRIS's `artUrl` is a URI.
+fn file_url(path: &std::path::Path) -> String {
+    let mut url = String::from("file://");
+    for &byte in path.as_os_str().as_encoded_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            url.push(byte as char);
+        } else {
+            url.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    url
 }
 
 /// Write `bytes` where the system will read them, whole or not at all.
@@ -177,10 +196,7 @@ impl Media {
         let Some(controls) = self.controls.as_mut() else {
             return;
         };
-        let url = self
-            .cover
-            .as_ref()
-            .map(|path| format!("file://{}", path.display()));
+        let url = self.cover.as_deref().map(file_url);
         // Nothing under the cursor clears what was shown.
         let metadata = self
             .shown
@@ -196,6 +212,9 @@ impl Media {
         if let Err(e) = told {
             log::warn!("media controls: setting the track: {e:?}");
         }
+        // Now Playing's dictionary is replaced whole, the elapsed time with
+        // it: without this the position starts again from zero.
+        self.tell_playback();
     }
 
     fn tell_playback(&mut self) {
@@ -252,7 +271,7 @@ pub fn start(engine: Arc<KoanEngine>, cx: &mut App) {
 fn controls(events: mpsc::UnboundedSender<MediaControlEvent>) -> Option<MediaControls> {
     // MPRIS's name for one of several instances: the terminal UI's is `koan`,
     // and a desktop app on another configuration may be running too.
-    let dbus_name = format!("koan.desktop.instance{}", std::process::id());
+    let dbus_name = format!("koan.gui.instance{}", std::process::id());
     let config = PlatformConfig {
         dbus_name: &dbus_name,
         display_name: "kōan",
@@ -558,6 +577,25 @@ mod tests {
         assert_eq!(
             command_of(MediaControlEvent::OpenUri("file:///x.flac".into()), 0),
             None
+        );
+    }
+
+    #[test]
+    fn a_cover_url_is_percent_encoded() {
+        assert_eq!(
+            file_url(std::path::Path::new("/Users/x y/kōan #1/c.jpg")),
+            "file:///Users/x%20y/k%C5%8Dan%20%231/c.jpg"
+        );
+    }
+
+    #[test]
+    fn covers_are_named_for_this_process() {
+        let name = cover_path(1, "image/jpeg");
+        assert!(
+            name.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(&own_prefix())
         );
     }
 
