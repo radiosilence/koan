@@ -118,6 +118,11 @@ impl Picks {
     }
 }
 
+/// What a question shows for what is typed, a line each.
+type Preview = Rc<dyn Fn(&str) -> Vec<SharedString>>;
+/// What a question does once answered, with what was typed.
+type Run = Rc<dyn Fn(String, &mut App)>;
+
 /// A question asked before a write: what will change, and the verb that
 /// changes it. With a name field, the preview follows what is typed.
 struct Ask {
@@ -125,12 +130,12 @@ struct Ask {
     verb: SharedString,
     destructive: bool,
     /// What the write will change, a line each.
-    preview: Rc<dyn Fn(&str) -> Vec<SharedString>>,
+    preview: Preview,
     /// Said under the preview: what the write leaves alone, or how to undo
     /// it.
     note: Option<SharedString>,
     name: Option<Entity<InputState>>,
-    run: Rc<dyn Fn(String, &mut App)>,
+    run: Run,
     /// The sheet's own keys, for a question without a field; with one, the
     /// field has them and answers Return itself.
     focus: Option<FocusHandle>,
@@ -204,7 +209,7 @@ pub fn name(
     let focus = input.read(cx).focus_handle(cx);
     window.focus(&focus, cx);
     let focus = None;
-    let run: Rc<dyn Fn(String, &mut App)> = Rc::new(run);
+    let run: Run = Rc::new(run);
     let enter = {
         let run = run.clone();
         window.subscribe(&input, cx, move |input, event: &InputEvent, _, cx| {
@@ -425,8 +430,10 @@ mod tests {
 
     #[test]
     fn a_pick_keeps_the_lists_order() {
-        let mut picks = Picks::default();
-        picks.ids = HashSet::from([3, 1]);
+        let mut picks = Picks {
+            ids: HashSet::from([3, 1]),
+            ..Picks::default()
+        };
         assert_eq!(picks.in_order(&[1, 2, 3]), vec![1, 3]);
         assert_eq!(picks.acting_on(2, &[1, 2, 3]), vec![2]);
         assert_eq!(picks.acting_on(3, &[1, 2, 3]), vec![1, 3]);

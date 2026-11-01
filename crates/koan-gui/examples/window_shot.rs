@@ -6,7 +6,10 @@
 //! `KOAN_CONFIG_DIR`. `KOAN_SHOT_TRACKS=n` fills the queue with n of the
 //! library's tracks, scanned from that configuration's folders, first, and
 //! saves that session. `KOAN_SHOT_ROUTE` (`albums`, `artists`, `tracks`,
-//! `album:<id>`, `artist:<id>`) draws that page instead of the queue.
+//! `album:<id>`, `artist:<id>`, `playlist:<id>`, `history`, `favourites`,
+//! `recent`, `downloaded`, `downloads`) draws that page instead of the
+//! queue. `KOAN_SHOT_SEED=1` also makes a playlist of the queued tracks and
+//! favourites a few tracks and records, for those pages to show.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example window_shot -- target/window.png
 
@@ -24,10 +27,16 @@ fn route() -> Option<Route> {
     match value.split_once(':') {
         Some(("album", n)) => id(n).map(Route::Album),
         Some(("artist", n)) => id(n).map(Route::Artist),
+        Some(("playlist", n)) => id(n).map(Route::Playlist),
         _ => match value.as_str() {
             "albums" => Some(Route::Albums),
             "artists" => Some(Route::Artists),
             "tracks" => Some(Route::Tracks),
+            "history" => Some(Route::History),
+            "favourites" => Some(Route::Favourites),
+            "recent" => Some(Route::RecentlyPlayed),
+            "downloaded" => Some(Route::OnDevice),
+            "downloads" => Some(Route::Downloads),
             _ => None,
         },
     }
@@ -64,6 +73,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .collect();
         ids.sort_unstable();
         let ids: Vec<i64> = ids.iter().cycle().take(count).copied().collect();
+        if std::env::var_os("KOAN_SHOT_SEED").is_some() {
+            let playlist = futures::executor::block_on(
+                engine
+                    .clone()
+                    .create_playlist("Sunday morning".into(), ids.clone()),
+            )?;
+            println!("playlist {}", playlist.id);
+            for id in ids.iter().step_by(7) {
+                futures::executor::block_on(engine.clone().toggle_favourite(*id))?;
+            }
+            let albums = futures::executor::block_on(engine.clone().random_tracks(6, None))?;
+            for album in albums.iter().filter_map(|t| t.album_id) {
+                futures::executor::block_on(engine.clone().toggle_favourite_album(album))?;
+            }
+        }
         futures::executor::block_on(engine.clone().replace_queue(ids, None, false))?;
         futures::executor::block_on(engine.clone().pause())?;
         // Kept for the app to restore, which is how frame times are measured
