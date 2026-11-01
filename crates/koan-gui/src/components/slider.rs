@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, AppContext, Bounds, Context, ElementId, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Point, Render, RenderOnce, SharedString, StatefulInteractiveElement,
-    Styled, Window, canvas, div, px,
+    App, Bounds, DispatchPhase, ElementId, InteractiveElement, IntoElement, MouseButton,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce, SharedString, Styled,
+    Window, canvas, div, px,
 };
 
 use super::{Handler, child, focus, pointer, ring, track};
@@ -62,18 +62,6 @@ impl Slider {
     }
 }
 
-/// What a slider's drag carries: which slider it began on.
-struct SliderDrag(u64);
-
-/// A drag that draws nothing under the pointer.
-struct NoPreview;
-
-impl Render for NoPreview {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-    }
-}
-
 const THUMB: f32 = 8.0;
 const FILL: f32 = 3.0;
 
@@ -101,17 +89,15 @@ impl RenderOnce for Slider {
         let thumb = !self.disabled && (hovered || pressed || focused);
         let value = self.value;
 
+        // Whether a drag that began on this slider is under way. Set and
+        // cleared without a notify: nothing is drawn from it.
+        let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| false);
         let measure = track_bounds.clone();
         let rail_id = child(&self.id, "rail");
-        // Drag moves reach every slider's listener, so each slider carries a
-        // number of its own rather than its id, which repeats under other
-        // parents.
-        let drag_id = *window
-            .use_keyed_state(child(&self.id, "drag"), cx, |_, _| {
-                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            })
-            .read(cx);
+        let drag_moves = (!self.disabled)
+            .then(|| self.on_change.clone())
+            .flatten()
+            .map(|on_change| (on_change, dragging.clone()));
         let mut rail = div()
             .id(rail_id.clone())
             .relative()
@@ -120,7 +106,30 @@ impl RenderOnce for Slider {
             .child(
                 canvas(
                     move |bounds, _, cx| measure.update(cx, |b, _| *b = bounds),
-                    |_, _, _, _| {},
+                    // The drag follows the pointer past the track and the
+                    // window until it is let go, through window-wide mouse
+                    // listeners. Not GPUI's drag and drop: while one of
+                    // those is active, every mouse move redraws the whole
+                    // window past its caches.
+                    move |bounds, _, window, _| {
+                        let Some((on_change, dragging)) = drag_moves else {
+                            return;
+                        };
+                        let (moving, ending) = (dragging.clone(), dragging);
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Bubble
+                                && event.pressed_button == Some(MouseButton::Left)
+                                && *moving.read(cx)
+                            {
+                                on_change(&at(bounds, event.position), window, cx);
+                            }
+                        });
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                                ending.update(cx, |d, _| *d = false);
+                            }
+                        });
+                    },
                 )
                 .absolute()
                 .size_full(),
@@ -173,24 +182,14 @@ impl RenderOnce for Slider {
         if self.disabled {
             slider = slider.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
-            let (down, drag, key) = (on_change.clone(), on_change.clone(), on_change);
+            let (down, key) = (on_change.clone(), on_change);
             let down_bounds = track_bounds.clone();
             let step = self.step;
-            // A drag follows the pointer past the track and the window
-            // until it is let go: GPUI hands drag moves to every listener
-            // for the drag's type in the capture phase.
-            let mine = drag_id;
-            rail = rail
-                .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                    let bounds = *down_bounds.read(cx);
-                    down(&at(bounds, event.position), window, cx);
-                })
-                .on_drag(SliderDrag(drag_id), |_, _, _, cx| cx.new(|_| NoPreview))
-                .on_drag_move::<SliderDrag>(move |event, window, cx| {
-                    if event.drag(cx).0 == mine {
-                        drag(&at(event.bounds, event.event.position), window, cx);
-                    }
-                });
+            rail = rail.on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                let bounds = *down_bounds.read(cx);
+                dragging.update(cx, |d, _| *d = true);
+                down(&at(bounds, event.position), window, cx);
+            });
             slider = track(slider, &state)
                 .track_focus(&handle)
                 .cursor_pointer()
@@ -209,5 +208,152 @@ impl RenderOnce for Slider {
             .child(rail)
             .children(end(self.high))
             .children(ring(&handle, &look, window))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::{
+        AppContext, Context, Entity, Modifiers, MouseDownEvent, PlatformInput, Render,
+        StyleRefinement, TestAppContext, point,
+    };
+
+    use super::*;
+
+    struct Owner {
+        value: f32,
+    }
+
+    impl Render for Owner {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let owner = cx.entity();
+            div()
+                .w_full()
+                .h(px(60.))
+                .flex()
+                .items_center()
+                .child(
+                    div()
+                        .flex_1()
+                        .child(
+                            Slider::new("slider", self.value).on_change(move |value, _, cx| {
+                                let value = *value;
+                                owner.update(cx, |owner, cx| {
+                                    owner.value = value;
+                                    cx.notify();
+                                })
+                            }),
+                        ),
+                )
+        }
+    }
+
+    struct Neighbour(Rc<Cell<usize>>);
+
+    impl Render for Neighbour {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.set(self.0.get() + 1);
+            div().size_full()
+        }
+    }
+
+    struct Page {
+        owner: Entity<Owner>,
+        neighbour: Entity<Neighbour>,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(
+                    self.owner
+                        .clone()
+                        .cached(StyleRefinement::default().w_full().h(px(60.))),
+                )
+                .child(
+                    div().flex_1().child(
+                        self.neighbour
+                            .clone()
+                            .cached(StyleRefinement::default().size_full()),
+                    ),
+                )
+        }
+    }
+
+    /// A drag moves the slider and redraws its owner alone: the page around
+    /// it replays. GPUI's drag and drop redraws the whole window past its
+    /// caches at every move, which is what a slider must not use.
+    #[gpui_kit::test]
+    fn a_drag_redraws_only_the_slider(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let renders = Rc::new(Cell::new(0));
+        let counted = renders.clone();
+        let owner = Rc::new(Cell::new(None));
+        let held = owner.clone();
+        let window = cx.add_window(move |_, cx| {
+            let slider = cx.new(|_| Owner { value: 0.1 });
+            held.set(Some(slider.clone()));
+            Page {
+                owner: slider,
+                neighbour: cx.new(|_| Neighbour(counted)),
+            }
+        });
+        let at = |x: f32| point(px(x), px(30.));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position: at(40.),
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: at(40.),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        renders.set(0);
+        for step in 1..=20 {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.dispatch_event(
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position: at(40. + step as f32 * 30.),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Modifiers::default(),
+                    }),
+                    cx,
+                );
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+        }
+        let owner = owner.take().unwrap();
+        let value = cx.update(|cx| owner.read(cx).value);
+        assert!(value > 0.3, "the drag moved the slider, to {value}");
+        assert_eq!(
+            renders.get(),
+            0,
+            "the page beside the slider redrew during the drag"
+        );
     }
 }
