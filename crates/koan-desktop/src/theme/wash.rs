@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    App, Bounds, Context, Corners, Frame, IntoElement, ParentElement, Pixels, Render, RenderImage,
+    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage,
     Styled, Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
@@ -341,7 +341,7 @@ impl Wash {
                     .current
                     .as_ref()
                     .is_some_and(|texture| texture.generation == key.0);
-                let image = Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(baked), 1)));
+                let image = Arc::new(RenderImage::new(SmallVec::from_elem(image::Frame::new(baked), 1)));
                 let texture = Texture {
                     image,
                     generation: key.0,

@@ -23,7 +23,7 @@ use parking_lot::Mutex;
 
 pub use glyphs::Icon;
 
-use super::{KoanTheme, Tone, TypeRole};
+use super::{Look, Tone, TypeRole};
 
 /// One glyph: its stroked outline, and the outline of its fill layer (the
 /// heart of a favourite, the box of a selection) where it has one, as
@@ -239,14 +239,14 @@ impl KoanIcon {
 }
 
 impl RenderOnce for KoanIcon {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = KoanTheme::get(cx);
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
         let points = match self.size {
-            Size::Role(role) => theme.icon_points(role),
+            Size::Role(role) => look.points(role),
             Size::Points(points) => points,
         };
         let resolve = |colour: Colour| match colour {
-            Colour::Tone(tone) => theme.color(tone),
+            Colour::Tone(tone) => look.color(tone),
             Colour::Exact(color) => color,
         };
         let color = resolve(self.tone);

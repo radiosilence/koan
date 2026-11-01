@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui_kit::{Hsla, Rgba};
 use parking_lot::Mutex;
@@ -356,20 +356,13 @@ impl AccentState {
         let t = Motion::quick_out(elapsed.as_secs_f32() / Motion::SETTLE.as_secs_f32()) as f64;
         let mix = |a: Shade, b: Shade| Shade {
             rgb: mix_oklab(a.rgb, b.rgb, t),
-            // Text keeps the stricter of the two while moving.
-            reads_as_text: a.reads_as_text && b.reads_as_text,
+            // Whether it is drawn on text is the arriving record's.
+            reads_as_text: b.reads_as_text,
         };
         Accent {
             dark: mix(self.from.dark, self.target.dark),
             light: mix(self.from.light, self.target.light),
         }
-    }
-
-    /// How long until the accent comes to rest.
-    pub fn remaining(&self, now: Instant) -> Duration {
-        self.started
-            .map(|started| Motion::SETTLE.saturating_sub(now.duration_since(started)))
-            .unwrap_or_default()
     }
 }
 
