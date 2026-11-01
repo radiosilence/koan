@@ -1058,6 +1058,9 @@ jobs:
     timeout-minutes: 90
     needs: [changes, make-room]
     if: ${{ !cancelled() && needs.make-room.result == 'success' }}
+    # Best effort while the GUI app is new: a package that fails to build is
+    # left off the release, and neither the run nor anything after it fails.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -1271,7 +1274,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check-version, android, linux-build, macos-release, gui-release, publish-crate, publish-package]
+    needs: [check-version, android, linux-build, macos-release, publish-crate, publish-package]
     # Every need having succeeded, named one by one: a skipped job is not a
     # failure, and a release without one of its parts is not a release.
     # needs.*.result would also see jobs further up the graph, such as Apple,
@@ -1286,6 +1289,9 @@ jobs:
           path: artifacts
           # What is shipped, not the builds it was packaged from.
           pattern: koan-*
+      # The GUI app's packages are attached by gui-attach, which waits for
+      # them; the release does not.
+      - run: rm -rf artifacts/koan-gui-*
       # Release writes go through RELEASE_TOKEN: GitHub answers the workflow
       # token's with "Resource not accessible by integration", contents: write
       # notwithstanding.
@@ -1413,6 +1419,62 @@ jobs:
   # cask to it. Failing or timing out fails this job alone; re-running it
   # waits on the submissions already made (`scripts/notarise.sh`) rather than
   # submitting again.
+  # The GUI app's packages, added to the release once both exist. Best effort
+  # while the app is new: whatever built is attached, the DMG notarised and
+  # stapled, and nothing here fails the run or holds up the release.
+  gui-attach:
+    name: Attach the GUI packages
+    runs-on: macos-latest
+    timeout-minutes: 120
+    needs: [check-version, publish-release, gui-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
+    continue-on-error: true
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          pattern: koan-gui-*
+      - name: Attach the Linux packages
+        run: |
+          shopt -s nullglob globstar
+          files=(artifacts/**/*.deb artifacts/**/*.AppImage)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::warning::no GUI Linux packages built"
+            exit 0
+          fi
+          gh release upload "v$VERSION" "${files[@]}" --clobber
+      - name: API key
+        run: |
+          test -n "$APPLE_API_KEY_P8" || { echo "::error::set the APPLE_API_KEY_* secrets"; exit 1; }
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+      - name: Notarise, staple and attach the DMG
+        run: |
+          set -euo pipefail
+          src=artifacts/koan-gui-macos-arm64/koan-gui-macos-arm64.dmg
+          if [ ! -f "$src" ]; then
+            echo "::warning::no GUI DMG built"
+            exit 0
+          fi
+          hash=$(shasum -a 256 "$src" | cut -c1-12)
+          dmg="$RUNNER_TEMP/koan-gui-$VERSION-$hash.dmg"
+          cp "$src" "$dmg"
+          scripts/notarise.sh "$dmg"
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          mkdir -p stapled
+          cp "$dmg" stapled/koan-gui-macos-arm64.dmg
+          gh release upload "v$VERSION" stapled/koan-gui-macos-arm64.dmg --clobber
+
   notarise:
     name: Notarise (macOS)
     runs-on: macos-latest
@@ -1469,27 +1531,6 @@ jobs:
             exit 1
           fi
           gh release upload "v$VERSION" stapled/Koan.dmg --clobber
-      # When the desktop app's build made it into the release. A failure here
-      # leaves the release's DMG unnotarised and goes on to the cask.
-      - name: Notarise, staple and replace the desktop DMG
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          set -euo pipefail
-          src=artifacts/koan-gui-macos-arm64/koan-gui-macos-arm64.dmg
-          if [ ! -f "$src" ]; then
-            echo "::warning::no desktop DMG in this release"
-            exit 0
-          fi
-          hash=$(shasum -a 256 "$src" | cut -c1-12)
-          dmg="$RUNNER_TEMP/koan-gui-$VERSION-$hash.dmg"
-          cp "$src" "$dmg"
-          scripts/notarise.sh "$dmg"
-          xcrun stapler staple "$dmg"
-          xcrun stapler validate "$dmg"
-          cp "$dmg" stapled/koan-gui-macos-arm64.dmg
-          gh release upload "v$VERSION" stapled/koan-gui-macos-arm64.dmg --clobber
       - name: Update the Homebrew cask
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
