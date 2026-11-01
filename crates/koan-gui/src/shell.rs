@@ -125,7 +125,8 @@ impl Shell {
         });
     }
 
-    fn show(&mut self, route: Route, cx: &mut Context<Self>) {
+    /// Goes to `route`, as a link or a menu would.
+    pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
             if nav.go(route) {
                 cx.notify();
