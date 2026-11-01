@@ -1208,18 +1208,22 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// Write the profiles, and say so: what each output plays through is shown
-/// on every device that can choose it, here and on the devices controlling
-/// this one.
-/// Writes a change to the profiles and tells the engine and the server of
-/// it, when there was one: a refused edit, or one that left everything as
-/// it was, wakes nobody.
+/// Writes the profiles and says so, when they changed: what each output
+/// plays through is shown on every device that can choose it, here and on
+/// the devices controlling this one. A refused edit, or one that left
+/// everything as it was, wakes nobody.
 fn persist(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<(), String> {
-    if Config::persist_changed(mutate).map_err(|e| e.to_string())? {
+    persist_changed(mutate).map(|_| ())
+}
+
+/// `persist`, saying whether anything changed.
+fn persist_changed(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<bool, String> {
+    let changed = Config::persist_changed(mutate).map_err(|e| e.to_string())?;
+    if changed {
         crate::signal::engine_changed().bump();
         crate::remote::dsp_sync::changed();
     }
-    Ok(())
+    Ok(changed)
 }
 
 /// Where `name` keeps its files: responses, and an AutoEQ result's CSV.
@@ -1579,9 +1583,13 @@ pub fn set_band(
 /// What an edit naming the filter it last saw did.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Edited {
-    /// Saved: the filter as stored.
-    Stored(crate::config::DspFilter),
-    /// Not saved: the filter is no longer the one the caller saw.
+    /// Saved: the filter as stored, and whether that changed it.
+    Stored {
+        filter: crate::config::DspFilter,
+        changed: bool,
+    },
+    /// Not saved: the filter is no longer the one the caller saw, since it
+    /// changed, moved, was removed, or its profile was.
     Changed,
 }
 
@@ -1601,29 +1609,53 @@ pub fn edit_band(
 ) -> Result<Edited, String> {
     use crate::config::DspFilter;
     let (kind, freq, gain_db, q) = band_values(kind, freq, gain_db, q)?;
-    may_edit(name)?;
-    let mut found = Err(format!("{name} has no band {}", index + 1));
-    persist(|cfg| {
-        let Some(filter) = cfg
+    edit_filter(name, index, expected, |filter| match filter {
+        DspFilter::Band(b) => {
+            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
+            true
+        }
+        _ => false,
+    })
+    .map_err(|missing| missing.unwrap_or_else(|| format!("{name} has no band {}", index + 1)))
+}
+
+/// Filter `index` of `name` changed by `edit`, which says whether it is of
+/// the kind it edits. With `expected`, a filter that is no longer it, or no
+/// longer there, is `Changed`; without, a missing one is an error (`None`
+/// for the caller to name).
+fn edit_filter(
+    name: &str,
+    index: usize,
+    expected: Option<&crate::config::DspFilter>,
+    edit: impl FnOnce(&mut crate::config::DspFilter) -> bool,
+) -> Result<Edited, Option<String>> {
+    if expected.is_some() && !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Ok(Edited::Changed);
+    }
+    may_edit(name).map_err(Some)?;
+    let mut found: Option<Result<crate::config::DspFilter, ()>> = None;
+    let changed = persist_changed(|cfg| {
+        let filter = cfg
             .dsp
             .profiles
             .iter_mut()
             .find(|p| p.name == name)
-            .and_then(|p| p.filters.get_mut(index))
-        else {
-            return;
-        };
+            .and_then(|p| p.filters.get_mut(index));
+        let Some(filter) = filter else { return };
         if expected.is_some_and(|e| e != &*filter) {
-            found = Ok(Edited::Changed);
+            found = Some(Err(()));
             return;
         }
-        if let DspFilter::Band(b) = filter {
-            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
-            found = Ok(Edited::Stored(filter.clone()));
+        if edit(filter) {
+            found = Some(Ok(filter.clone()));
         }
     })
-    .map_err(|e| e.to_string())?;
-    found
+    .map_err(Some)?;
+    match (found, expected) {
+        (Some(Ok(filter)), _) => Ok(Edited::Stored { filter, changed }),
+        (_, Some(_)) => Ok(Edited::Changed),
+        (_, None) => Err(None),
+    }
 }
 
 /// Set the points of filter `index` of `name`, a graphic curve, each held
@@ -1643,29 +1675,14 @@ pub fn edit_curve(
 ) -> Result<Edited, String> {
     use crate::config::DspFilter;
     let points = curve_points(points)?;
-    may_edit(name)?;
-    let mut found = Err(format!("{name} has no curve {}", index + 1));
-    persist(|cfg| {
-        let Some(filter) = cfg
-            .dsp
-            .profiles
-            .iter_mut()
-            .find(|p| p.name == name)
-            .and_then(|p| p.filters.get_mut(index))
-        else {
-            return;
-        };
-        if expected.is_some_and(|e| e != &*filter) {
-            found = Ok(Edited::Changed);
-            return;
-        }
-        if let DspFilter::Graphic(g) = filter {
+    edit_filter(name, index, expected, |filter| match filter {
+        DspFilter::Graphic(g) => {
             g.points = points;
-            found = Ok(Edited::Stored(filter.clone()));
+            true
         }
+        _ => false,
     })
-    .map_err(|e| e.to_string())?;
-    found
+    .map_err(|missing| missing.unwrap_or_else(|| format!("{name} has no curve {}", index + 1)))
 }
 
 /// Add a flat peaking band at 1 kHz to the end of `name`'s filters, on
@@ -4581,7 +4598,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         config::set_config_dir(dir.path());
         let kept = |edited: Result<Edited, String>| match edited {
-            Ok(Edited::Stored(filter)) => filter,
+            Ok(Edited::Stored { filter, .. }) => filter,
             other => panic!("{other:?}"),
         };
         let band = |freq: f64| {
@@ -4665,7 +4682,25 @@ mod tests {
             edit_curve("Mine", 1, Some(&curve), &[(100.0, 0.0)]),
             Ok(Edited::Changed)
         );
-        kept(edit_curve("Mine", 1, Some(&painted), &[(100.0, 0.0)]));
+        let last = kept(edit_curve("Mine", 1, Some(&painted), &[(100.0, 0.0)]));
+        // Unmoved: stored, and said to have changed nothing.
+        assert!(matches!(
+            edit_curve("Mine", 1, Some(&last), &[(100.0, 0.0)]),
+            Ok(Edited::Stored { changed: false, .. })
+        ));
+        // The filter edited removed, so the list is shorter, and the profile
+        // gone: each is as stale as a filter changed in place.
+        remove_filter("Mine", 1).unwrap();
+        assert_eq!(
+            edit_curve("Mine", 1, Some(&last), &[(100.0, 0.0)]),
+            Ok(Edited::Changed)
+        );
+        assert!(edit_curve("Mine", 1, None, &[(100.0, 0.0)]).is_err());
+        assert_eq!(
+            edit_band("Nobody", 0, Some(&now), "peaking", 100.0, 0.0, 1.0),
+            Ok(Edited::Changed)
+        );
+        assert!(edit_band("Nobody", 0, None, "peaking", 100.0, 0.0, 1.0).is_err());
     }
 
     /// A preview draws an edit without saving it; saving as a copy keeps the

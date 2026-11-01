@@ -3583,7 +3583,10 @@ impl KoanEngine {
                 q,
             )
             .map_err(|message| KoanError::BadArgument { message })?;
-            if matches!(stored, koan_core::audio::dsp::profiles::Edited::Stored(_)) {
+            if matches!(
+                stored,
+                koan_core::audio::dsp::profiles::Edited::Stored { changed: true, .. }
+            ) {
                 self.send_local(PlayerCommand::ReloadDsp)?;
             }
             Ok(stored.into())
@@ -3612,7 +3615,10 @@ impl KoanEngine {
                 &points,
             )
             .map_err(|message| KoanError::BadArgument { message })?;
-            if matches!(stored, koan_core::audio::dsp::profiles::Edited::Stored(_)) {
+            if matches!(
+                stored,
+                koan_core::audio::dsp::profiles::Edited::Stored { changed: true, .. }
+            ) {
                 self.send_local(PlayerCommand::ReloadDsp)?;
             }
             Ok(stored.into())
