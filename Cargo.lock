@@ -4934,6 +4934,7 @@ version = "0.69.2"
 dependencies = [
  "chrono",
  "futures-channel",
+ "futures-lite",
  "futures-util",
  "getrandom 0.4.3",
  "gpui-kit",

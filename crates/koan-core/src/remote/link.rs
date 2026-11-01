@@ -960,9 +960,10 @@ impl LinkIdentity {
 
     /// Who this process is to the server and the network: the identity it
     /// serves as once it has started serving (`devices::start`), else this
-    /// machine's app. What every sign-in, pairing and profile is named and
-    /// identified by, so the terminal UI and the desktop app never present
-    /// themselves as the native app.
+    /// machine's app. What sign-in, pairing and profiles are named and
+    /// identified by, so a process that serves as the terminal UI or the
+    /// desktop app presents itself as that. One that serves as nothing, such
+    /// as `koan remote login`, is this machine's app.
     pub fn current() -> Self {
         crate::remote::devices::local()
             .map_or_else(|| Self::this_device(None), |local| local.identity.clone())

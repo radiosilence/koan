@@ -20,6 +20,9 @@ use koan_ffi::KoanEngine;
 
 use instance::Opened;
 
+/// How long quitting waits for the session and the server's queue to save.
+const QUIT_SAVE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Links the platform asked the app to open that are not files, such as
 /// invites and pairings, oldest first. The shell takes them as they arrive
 /// (`cx.observe_global::<Links>`) and drains it.
@@ -36,22 +39,39 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
     shortcuts_sheet::bind(cx);
     menus::set(cx);
     media::start(engine.clone(), cx);
-    // As the Mac app does at terminate: a UPnP renderer plays from a URL this
-    // process serves, so it is stopped rather than left to play out and
-    // stall; settings still being written are waited for, or a change made
-    // just before quitting is lost; a shared library's Funnel is taken down.
-    // Then the log's last lines, which are lost with the process otherwise.
-    // Off the UI thread, since the settings may take a moment.
+    // As the Mac app quits: the session and the server's queue first, for at
+    // most two seconds, so a server out of reach does not hold the quit up;
+    // then, after that last save, a UPnP renderer is stopped rather than left
+    // to play out from a URL this process serves and stall, settings still
+    // being written are waited for, and a shared library's Funnel is taken
+    // down. All before this returns: GPUI gives the future it returns 200 ms
+    // (`SHUTDOWN_TIMEOUT`), then exits however far it got. The window is gone
+    // by then and nothing waits on the thread. The log's last lines follow in
+    // the future.
     cx.on_app_quit({
         let engine = engine.clone();
         move |cx| {
-            let engine = engine.clone();
-            cx.background_executor().spawn(async move {
-                engine.release_output();
-                engine.flush_settings();
-                engine.release_funnel();
-                log::logger().flush();
-            })
+            let (saved, waiting) = std::sync::mpsc::channel();
+            let saving = engine.clone();
+            let spawned = std::thread::Builder::new()
+                .name("koan-desktop-quit".into())
+                .spawn(move || {
+                    futures_lite::future::block_on(async {
+                        if let Err(e) = saving.clone().save_session().await {
+                            log::warn!("quit: saving the session: {e}");
+                        }
+                        saving.save_server_queue_now().await;
+                    });
+                    let _ = saved.send(());
+                });
+            if spawned.is_ok() && waiting.recv_timeout(QUIT_SAVE_FOR).is_err() {
+                log::warn!("quit: the session was still saving after {QUIT_SAVE_FOR:?}");
+            }
+            engine.release_output();
+            engine.flush_settings();
+            engine.release_funnel();
+            cx.background_executor()
+                .spawn(async { log::logger().flush() })
         }
     })
     .detach();

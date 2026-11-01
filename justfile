@@ -1831,9 +1831,15 @@ android-release-key:
 
 desktop_id := "cc.blit.koan.desktop"
 desktop_out := "target/desktop"
+# The oldest macOS the desktop app is built for and says it runs on: the one
+# it has been run on, as the SwiftUI app's.
+desktop_macos := "26.0"
 
 # Build the desktop app in release.
 desktop-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" = Darwin ]; then export MACOSX_DEPLOYMENT_TARGET={{desktop_macos}}; fi
     cargo build --release --locked -p koan-desktop
 
 # Run the desktop app from source. Without a KOAN_CONFIG_DIR of your own it
@@ -1888,7 +1894,7 @@ _desktop-macos:
         <key>CFBundleVersion</key><string>${version}</string>
         <key>CFBundleIconFile</key><string>AppIcon</string>
         <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
-        <key>LSMinimumSystemVersion</key><string>13.0</string>
+        <key>LSMinimumSystemVersion</key><string>{{desktop_macos}}</string>
         <key>NSHighResolutionCapable</key><true/>
         <!-- As the SwiftUI app's: without a reason, macOS drops the app's SSDP
              and Bonjour traffic without asking, and no renderer or nearby
@@ -1923,7 +1929,9 @@ _desktop-macos:
     echo "built $app and $out/koan-desktop.dmg"
 
 # An AppImage, and a .deb for Debian and Ubuntu, from one staged tree. The
-# AppImage needs appimagetool (APPIMAGETOOL, or on PATH); the .deb, dpkg-deb.
+# AppImage needs appimagetool (APPIMAGETOOL, or on PATH) and takes the runtime
+# in APPIMAGE_RUNTIME where one is given; the .deb needs dpkg-deb and
+# dpkg-shlibdeps. Both need at least the glibc of the machine that built them.
 _desktop-linux:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1937,11 +1945,17 @@ _desktop-linux:
     install -m 0644 crates/koan-desktop/packaging/koan-desktop.desktop "$root/usr/share/applications/"
     install -m 0644 {{app_dir}}/Resources/AppIcon.svg "$root/usr/share/icons/hicolor/scalable/apps/koan-desktop.svg"
 
-    # The libraries the binary links (ALSA, D-Bus, xkbcommon, fontconfig,
-    # FreeType) and those GPUI opens at run time (Wayland, xcb, Vulkan).
+    # The libraries the binary links, glibc's floor among them, as
+    # dpkg-shlibdeps reads them off it (it wants a source package's control
+    # file to stand in), and those GPUI opens at run time, which it cannot see.
     deb="$out/deb"
     rm -rf "$deb" && cp -a "$root" "$deb" && mkdir -p "$deb/DEBIAN"
     debarch=$(dpkg --print-architecture)
+    shlibs="$out/shlibs"
+    rm -rf "$shlibs" && mkdir -p "$shlibs/debian"
+    printf 'Source: koan-desktop\n\nPackage: koan-desktop\n' > "$shlibs/debian/control"
+    bin="$PWD/$deb/usr/bin/koan-desktop"
+    linked=$(cd "$shlibs" && dpkg-shlibdeps -O "$bin" | sed -n 's/^shlibs:Depends=//p')
     {
         echo "Package: koan-desktop"
         echo "Version: ${version}"
@@ -1950,7 +1964,7 @@ _desktop-linux:
         echo "Homepage: https://koan.rocks"
         echo "Section: sound"
         echo "Priority: optional"
-        echo "Depends: libasound2t64 | libasound2, libdbus-1-3, libxkbcommon0, libxkbcommon-x11-0, libfontconfig1, libfreetype6, libwayland-client0, libxcb1, libvulkan1"
+        echo "Depends: ${linked}, libwayland-client0, libxkbcommon-x11-0, libxcb1, libvulkan1"
         echo "Description: kōan, a bit-perfect music player"
         echo " The desktop app: a local library or a koan or Subsonic server, played"
         echo " at the source's own sample rate."
@@ -1964,5 +1978,7 @@ _desktop-linux:
     cp "$appdir/usr/share/applications/koan-desktop.desktop" "$appdir/"
     cp "$appdir/usr/share/icons/hicolor/scalable/apps/koan-desktop.svg" "$appdir/"
     ln -s usr/bin/koan-desktop "$appdir/AppRun"
-    ARCH="$arch" "${APPIMAGETOOL:-appimagetool}" "$appdir" "$out/koan-desktop-${arch}.AppImage"
+    runtime=()
+    if [ -n "${APPIMAGE_RUNTIME:-}" ]; then runtime=(--runtime-file "$APPIMAGE_RUNTIME"); fi
+    ARCH="$arch" "${APPIMAGETOOL:-appimagetool}" "${runtime[@]}" "$appdir" "$out/koan-desktop-${arch}.AppImage"
     echo "built $out/koan-desktop_${version}_${debarch}.deb and $out/koan-desktop-${arch}.AppImage"
