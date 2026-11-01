@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use gpui::{BenchAppContext, px};
+use gpui::{AppContext as _, BenchAppContext, px};
 use koan_ffi::KoanEngine;
 use koan_gui::library::{self, albums::AlbumGrid, bench::Recorder, browse::Browse};
 
