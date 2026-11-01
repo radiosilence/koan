@@ -13,9 +13,9 @@ use std::collections::{HashMap, HashSet};
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use koan_ffi::{CreditPart, EntryStatus, QueueItem};
+use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 
-use crate::components::{KoanContextMenu, Menu, MenuEntry};
+use crate::components::{Button, ButtonKind, KoanContextMenu, Menu, MenuEntry};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::library::drag::{Playable, PlayableDrag};
@@ -28,6 +28,7 @@ use crate::platform::actions::{
 };
 use crate::platform::drop;
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
+use crate::window_state;
 use rows::Row;
 
 // The queue's own keys. Delete, select all, undo and redo are the
@@ -64,6 +65,8 @@ const TRACK: Pixels = px(34. + 8.);
 const HEADING_SLEEVE: Pixels = px(52.);
 const HEADING: Pixels = px(52. + 12. + 8.);
 const SINGLE_SLEEVE: Pixels = px(40.);
+/// The sleeve of the record the queue follows, beside the header's title.
+const HEADER_SLEEVE: Pixels = px(34.);
 const SINGLE: Pixels = px(40. + 8. + 8.);
 
 /// A row, as the selection and the arrows name it: by queue item rather than
@@ -131,14 +134,17 @@ pub struct QueueView {
     /// The running transfers' progress, read once a frame and only by a frame
     /// that draws a transferring row.
     readings: Option<HashMap<i64, Option<f64>>>,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: [Subscription; 5],
 }
 
 impl QueueView {
     pub fn new(nav: &Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
+        let lock = cx.global::<Mirror>().lock.clone();
         let subscriptions = [
+            // The header names what the queue follows.
+            cx.observe(&lock, |_, _, cx| cx.notify()),
             cx.observe(&queue, |this, queue, cx| {
                 if queue.read(cx).whole != this.whole {
                     this.lay_out(cx);
@@ -186,8 +192,23 @@ impl QueueView {
             readings: None,
             _subscriptions: subscriptions,
         };
+        // The queue can arrive before the window's saved layout is read.
+        let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
+        if view.queue.read(cx).grouped != grouped {
+            view.queue.update(cx, |queue, _| queue.regroup(grouped));
+        }
         view.lay_out(cx);
         view
+    }
+
+    /// "Group by album": the rows under record headings, or flat.
+    fn set_grouped(&mut self, grouped: bool, window: &mut Window, cx: &mut Context<Self>) {
+        window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);
+        window_state::save(window.window_bounds(), cx);
+        self.queue.update(cx, |queue, cx| {
+            queue.regroup(grouped);
+            cx.notify();
+        });
     }
 
     /// The rows' hearts read and toggle the library's favourites.
@@ -1144,6 +1165,155 @@ impl Focusable for QueueView {
     }
 }
 
+impl QueueView {
+    /// The page's header, as the Mac's: what the queue is ("queue", or
+    /// "playing" and the playlist or record it still follows, with its
+    /// sleeve) and its count and length, then the pick and the queue's
+    /// actions.
+    fn header(&mut self, p: &Paint, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let lock = cx.global::<Mirror>().lock.read(cx).0.clone();
+        let (grouped, tracks, total) = {
+            let queue = self.queue.read(cx);
+            let total: u64 = queue.items.iter().filter_map(|item| item.duration_ms).sum();
+            (queue.grouped, queue.items.len(), total)
+        };
+        let picked = self.selected.len();
+        // A queue that is one record, grouped, has that record's heading as
+        // its first row; the header does not say it again.
+        let record_once = grouped && matches!(lock, Some(QueueLock::Album { .. }));
+        let mut summary = crate::library::chrome::count(tracks as u64, "track", "tracks");
+        if total > 0 {
+            summary = format!("{summary} · {}", crate::time::clock(total));
+        }
+        let look_row = SharedString::from("queue-header");
+        let look = Look {
+            p,
+            nav: &self.nav,
+            row: &look_row,
+        };
+        let (sleeve, title): (Option<AnyElement>, Vec<AnyElement>) = match &lock {
+            _ if record_once => (None, Vec::new()),
+            Some(QueueLock::Album { album }) => (
+                Some(covers::sleeve(Some(album.id), HEADER_SLEEVE, p.surface, cx)),
+                vec![
+                    div()
+                        .flex_shrink_0()
+                        .child("playing\u{a0}")
+                        .into_any_element(),
+                    link(
+                        look.id("album", 0),
+                        album.title.clone(),
+                        Some(Route::Album(album.id)),
+                        &look,
+                    )
+                    .into_any_element(),
+                ],
+            ),
+            Some(QueueLock::Playlist { playlist }) => (
+                None,
+                vec![
+                    div()
+                        .flex_shrink_0()
+                        .child("playing\u{a0}")
+                        .into_any_element(),
+                    link(look.id("playlist", 0), playlist.name.clone(), None, &look)
+                        .into_any_element(),
+                ],
+            ),
+            None => (None, vec![div().child("queue").into_any_element()]),
+        };
+        let icon = |id: &'static str, icon: Icon, label: &'static str| {
+            Button::new(id, ButtonKind::Icon).icon(icon).label(label)
+        };
+        div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(p.space(Space::M))
+            .px(p.space(Space::L))
+            .pt(p.space(Space::L))
+            .pb(p.space(Space::M))
+            .children(sleeve)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .when(!title.is_empty(), |d| {
+                        d.child(names(title, TypeRole::Body, p.strong, p))
+                    })
+                    .when(!record_once, |d| {
+                        d.child(line(summary, TypeRole::Fine, p.muted, p))
+                    }),
+            )
+            .when(picked > 0, |d| {
+                d.child(line(
+                    format!("{picked} selected"),
+                    TypeRole::Meta,
+                    p.muted,
+                    p,
+                ))
+                .child(
+                    icon("queue-remove", Icon::Remove, "remove selected").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.remove_selected(&Delete, window, cx)
+                        }),
+                    ),
+                )
+            })
+            .child(
+                icon("queue-jump", Icon::JumpToPlaying, "jump to playing")
+                    .on_click(cx.listener(|this, _, _, cx| this.jump_to_playing(cx))),
+            )
+            .child(
+                icon(
+                    "queue-dice",
+                    Icon::Reshuffle,
+                    "shuffle the rest of the queue in place",
+                )
+                .disabled(tracks < 2)
+                .on_click(|_, _, cx| command(cx, "shuffle", |e| e.shuffle_queue())),
+            )
+            .child(
+                icon("queue-group", Icon::Album, "group by album")
+                    .selected(grouped)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_grouped(!grouped, window, cx)
+                    })),
+            )
+            .child(
+                icon("queue-undo", Icon::Undo, "undo")
+                    .on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))),
+            )
+            .child(
+                icon("queue-redo", Icon::Redo, "redo")
+                    .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
+            )
+            .child(
+                // Undoable, with undo beside it.
+                icon("queue-clear", Icon::Clear, "clear queue")
+                    .disabled(tracks == 0)
+                    .on_click(|_, _, cx| command(cx, "clear the queue", |e| e.clear_queue())),
+            )
+    }
+
+    /// Scrolls to the playing row, if there is one.
+    fn jump_to_playing(&mut self, cx: &mut Context<Self>) {
+        let queue = self.queue.read(cx);
+        let row = queue
+            .items
+            .iter()
+            .find(|item| item.status == EntryStatus::Playing)
+            .and_then(|item| queue.track_rows.get(&item.queue_item_id))
+            .copied();
+        if let Some(row) = row {
+            self.list.scroll_to_reveal_item(row);
+            cx.notify();
+        }
+    }
+}
+
 impl Render for QueueView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
@@ -1216,12 +1386,15 @@ impl Render for QueueView {
                 let dest = this.drop_at.unwrap_or(count);
                 this.drop_library(dragged, dest, cx);
             }))
+            .child(self.header(&p, cx))
             .when(count == 0, |d| {
-                d.items_center().justify_center().child(
-                    div()
-                        .text_role(TypeRole::Body, &p.look)
-                        .text_color(p.muted)
-                        .child("the queue is empty"),
+                d.child(
+                    div().flex_1().flex().items_center().justify_center().child(
+                        div()
+                            .text_role(TypeRole::Body, &p.look)
+                            .text_color(p.muted)
+                            .child("the queue is empty"),
+                    ),
                 )
             })
             .when(count > 0, |d| {
