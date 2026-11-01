@@ -7869,10 +7869,17 @@ mod tests {
         let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
         assert!(body.contains("code=\"10\""), "{body}");
         let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
-        assert!(
-            body.contains(
-                "\"device\":\"Den TV\",\"deviceId\":\"0192-den\",\"from\":\"198.51.100.7\",\"local\":false"
-            ),
+        // Compared as values: the order of a JSON object's keys is serde's to
+        // choose, and differs with the features a build unifies.
+        let pair: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            pair["subsonic-response"]["pair"],
+            serde_json::json!({
+                "device": "Den TV",
+                "deviceId": "0192-den",
+                "from": "198.51.100.7",
+                "local": false,
+            }),
             "{body}"
         );
 
@@ -8744,8 +8751,12 @@ mod tests {
         ))
         .await;
         let body = call(format!("/rest/koanUsers?{owner}")).await;
+        let users: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(
-            body.contains("{\"role\":\"user\",\"username\":\"sarita\"}"),
+            users["subsonic-response"]["users"]["user"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!({"role": "user", "username": "sarita"})),
             "{body}"
         );
 
