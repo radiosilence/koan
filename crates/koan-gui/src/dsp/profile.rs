@@ -855,7 +855,7 @@ impl ProfilePage {
         let target_menu = |id: &'static str,
                            title: &str,
                            saved: Option<String>,
-                           save: Rc<dyn Fn(Option<String>, &mut App)>,
+                           save: SaveTarget,
                            window: &mut Window,
                            cx: &mut App| {
             let mut items = vec![{
@@ -892,7 +892,7 @@ impl ProfilePage {
         let has_choices = !(over.is_empty() && in_ear.is_empty() && added.is_empty());
         if d.role == DspRole::Tuning && has_choices {
             let (dsp, name) = (self.dsp.clone(), d.name.clone());
-            let save: Rc<dyn Fn(Option<String>, &mut App)> = Rc::new(move |t, cx| {
+            let save: SaveTarget = Rc::new(move |t, cx| {
                 let name = name.clone();
                 dsp.update(cx, |d, cx| d.act(cx, move |e| e.dsp_set_tuned_for(name, t)));
             });
@@ -1033,7 +1033,7 @@ impl ProfilePage {
             }
             if self.targets.is_none() && !d.measured && has_choices {
                 let (dsp, name) = (self.dsp.clone(), d.name.clone());
-                let save: Rc<dyn Fn(Option<String>, &mut App)> = Rc::new(move |t, cx| {
+                let save: SaveTarget = Rc::new(move |t, cx| {
                     let name = name.clone();
                     dsp.update(cx, |d, cx| d.act(cx, move |e| e.dsp_set_made_for(name, t)));
                 });
@@ -1400,7 +1400,7 @@ impl ProfilePage {
         }
         {
             let this = cx.weak_entity();
-            let open: Rc<dyn Fn(usize, &mut Window, &mut App)> = Rc::new(move |i, _, cx| {
+            let open: bands::RowAction = Rc::new(move |i, _, cx| {
                 this.update(cx, |p, cx| {
                     p.curve = Some(i);
                     cx.notify();
@@ -1409,7 +1409,7 @@ impl ProfilePage {
             });
             let (dsp, sheets, name) = (self.dsp.clone(), self.sheets.clone(), d.name.clone());
             let bands_now = d.bands.clone();
-            let remove: Rc<dyn Fn(usize, &mut Window, &mut App)> = Rc::new(move |i, _, cx| {
+            let remove: bands::RowAction = Rc::new(move |i, _, cx| {
                 let (dsp, n) = (dsp.clone(), name.clone());
                 let what = bands_now
                     .get(i)
@@ -1561,6 +1561,9 @@ impl ProfilePage {
             .into_any_element()
     }
 }
+
+/// Saves a target chosen from a menu, or Unknown with none.
+type SaveTarget = Rc<dyn Fn(Option<String>, &mut App)>;
 
 fn role_label(r: DspRole) -> String {
     label(match r {

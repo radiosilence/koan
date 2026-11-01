@@ -28,7 +28,7 @@ use gpui_kit::{
 };
 use koan_ffi::{DspBand, DspBrush, DspPoint, DspResponse};
 
-use super::model::{Commit, Dsp, Ended, GRAPH_RATE, Outcome};
+use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
 use crate::theme::{
     FONT_FAMILY, HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label, observe_accent,
@@ -127,7 +127,7 @@ struct Drag {
 /// Where an edit made on the graph is.
 enum Edit {
     Idle,
-    Dragging(Drag),
+    Dragging(Box<Drag>),
     /// Let go: its last step is being saved, and the preview stays drawn.
     Settling(u64),
     /// Saved: the first response read at or after `stamp` replaces the
@@ -364,13 +364,15 @@ impl Graph {
             })
             .collect();
         // The band held follows the pointer, not the filters last read.
-        if let Edit::Dragging(Drag {
-            index,
-            step: Some(Commit::Band {
-                freq, gain_db, q, ..
-            }),
-            ..
-        }) = &self.edit
+        if let Edit::Dragging(drag) = &self.edit
+            && let Drag {
+                index,
+                step:
+                    Some(Commit::Band {
+                        freq, gain_db, q, ..
+                    }),
+                ..
+            } = drag.as_ref()
             && let Some(h) = handles.iter_mut().find(|h| h.index == *index)
         {
             (h.hz, h.db, h.q) = (*freq, *gain_db, *q);
@@ -1165,7 +1167,7 @@ impl Graph {
         let band = e.bands[index].clone();
         let edit = e.dsp.update(cx, |dsp, _| dsp.next_edit());
         self.painted = None;
-        self.edit = Edit::Dragging(Drag {
+        self.edit = Edit::Dragging(Box::new(Drag {
             edit,
             index,
             kind,
@@ -1173,7 +1175,7 @@ impl Graph {
             started: at,
             step: None,
             saved_at: Instant::now(),
-        });
+        }));
         cx.notify();
     }
 
@@ -1278,7 +1280,7 @@ impl Graph {
         cx.notify();
     }
 
-    fn on_ended(&self, id: u64, cx: &mut Context<Self>) -> Rc<dyn Fn(Ended, &mut App)> {
+    fn on_ended(&self, id: u64, cx: &mut Context<Self>) -> Done {
         let this = cx.weak_entity();
         Rc::new(move |ended: Ended, cx: &mut App| {
             this.update(cx, |g, cx| g.ended(id, ended, cx)).ok();

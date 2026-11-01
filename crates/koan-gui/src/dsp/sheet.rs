@@ -13,6 +13,9 @@ use gpui_kit::{
 use crate::components::{Button, ButtonKind};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
 
+/// What a choice or a confirmation does.
+pub type Run = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// A change waiting to be confirmed: what it is, what it will do, and the
 /// word that does it.
 #[derive(Clone)]
@@ -22,8 +25,8 @@ pub struct Confirm {
     pub action: SharedString,
     pub destructive: bool,
     /// A second way to go ahead, beside the first.
-    pub also: Option<(SharedString, Rc<dyn Fn(&mut Window, &mut App)>)>,
-    pub run: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub also: Option<(SharedString, Run)>,
+    pub run: Run,
 }
 
 #[derive(Clone)]
@@ -165,7 +168,7 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
             sheets.update(cx, |s, cx| s.pop(cx));
         }
     };
-    let go = |run: Rc<dyn Fn(&mut Window, &mut App)>| {
+    let go = |run: Run| {
         let sheets = sheets.clone();
         move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
             sheets.update(cx, |s, cx| s.pop(cx));

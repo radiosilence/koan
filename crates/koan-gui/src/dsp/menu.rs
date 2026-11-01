@@ -21,7 +21,7 @@ pub enum Item {
         label: SharedString,
         checked: Option<bool>,
         destructive: bool,
-        run: Rc<dyn Fn(&mut Window, &mut App)>,
+        run: super::sheet::Run,
     },
     /// A heading over the choices after it.
     Heading(SharedString),

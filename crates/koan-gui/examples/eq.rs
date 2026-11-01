@@ -253,7 +253,11 @@ fn drag(cx: &mut HeadlessAppContext, dsp: gpui_kit::Entity<Dsp>) -> Result<(), B
     })?;
     for step in 0..600 {
         let t = step as f32 / 600.0;
-        let at = start + point(px(200.0 * (t * 6.28).sin()), px(-60.0 * (t * 12.56).sin()));
+        let at = start
+            + point(
+                px(200.0 * (t * std::f32::consts::TAU).sin()),
+                px(-60.0 * (t * 2.0 * std::f32::consts::TAU).sin()),
+            );
         cx.run_until_parked();
         let took = cx.update_window(window.into(), |_, window, cx| {
             window.dispatch_event(

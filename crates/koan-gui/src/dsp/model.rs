@@ -627,7 +627,7 @@ impl Dsp {
         edit: u64,
         step: Commit,
         last: bool,
-        done: Rc<dyn Fn(Ended, &mut App)>,
+        done: Done,
         cx: &mut Context<Self>,
     ) {
         // An edit refused as stale stays closed: what the rest of its drag
@@ -682,7 +682,7 @@ impl Dsp {
         edit: u64,
         stored: Result<DspEdited, KoanError>,
         last: bool,
-        done: Rc<dyn Fn(Ended, &mut App)>,
+        done: Done,
         cx: &mut Context<Self>,
     ) {
         let Some(lane) = self.lanes.get_mut(&edit) else {
@@ -750,12 +750,15 @@ impl Dsp {
     }
 }
 
+/// What an edit is told when its saves end.
+pub type Done = Rc<dyn Fn(Ended, &mut App)>;
+
 /// The saves of one edit: the filter as last stored, whether a save is
 /// under way, and the newest step waiting for it.
 struct Lane {
     expected: DspBand,
     saving: bool,
-    next: Option<(Commit, bool, Rc<dyn Fn(Ended, &mut App)>)>,
+    next: Option<(Commit, bool, Done)>,
 }
 
 /// How an edit ended, and the stamp of the overview read after it: a
@@ -912,7 +915,7 @@ fn plural(n: u32, one: &str, many: &str) -> String {
 
 /// A rate in kHz, as a person writes it: 48, 44.1.
 pub fn khz(hz: u32) -> String {
-    if hz % 1000 == 0 {
+    if hz.is_multiple_of(1000) {
         format!("{}", hz / 1000)
     } else {
         format!("{:.1}", hz as f64 / 1000.0)

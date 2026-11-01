@@ -207,7 +207,7 @@ impl Render for StagePicker {
                         "none",
                         label("None"),
                         Some(label("No correction: the device as it is")),
-                        chosen(o.active.is_none(), &look),
+                        chosen(o.active.is_none()),
                         &look,
                         move |_, _, cx| {
                             dsp.update(cx, |d, cx| d.assign(None, device.clone(), cx));
@@ -228,7 +228,7 @@ impl Render for StagePicker {
                             ("correction", i),
                             p.name.clone(),
                             Some(describe_profile(&p).into()),
-                            chosen(o.active.as_ref() == Some(&p.name), &look),
+                            chosen(o.active.as_ref() == Some(&p.name)),
                             &look,
                             move |_, _, cx| {
                                 dsp.update(cx, |d, cx| {
@@ -491,18 +491,13 @@ pub fn target_label(t: &koan_ffi::DspTargetOption, is_default: bool) -> String {
     }
 }
 
-fn chosen(chosen: bool, look: &Look) -> Option<AnyElement> {
-    chosen
-        .then(|| {
-            KoanIcon::new(Icon::Check)
-                .role(TypeRole::Body)
-                .tone(Tone::Accent)
-                .into_any_element()
-        })
-        .map(|i| {
-            let _ = look;
-            i
-        })
+fn chosen(chosen: bool) -> Option<AnyElement> {
+    chosen.then(|| {
+        KoanIcon::new(Icon::Check)
+            .role(TypeRole::Body)
+            .tone(Tone::Accent)
+            .into_any_element()
+    })
 }
 
 /// What the words on the EQ page mean.

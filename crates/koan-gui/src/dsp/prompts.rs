@@ -27,10 +27,9 @@ pub fn render(
         import_plan(dsp, &look, window, cx)
     } else if d.needs_rate.is_some() {
         rate(dsp, &look)
-    } else if let Some(ask) = d.ask_role.clone().filter(|_| sheets.read(cx).is_empty()) {
-        role(dsp, ask, &look, cx)
     } else {
-        return None;
+        let ask = d.ask_role.clone().filter(|_| sheets.read(cx).is_empty())?;
+        role(dsp, ask, &look, cx)
     };
     Some(
         div()

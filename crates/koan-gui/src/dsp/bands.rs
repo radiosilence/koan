@@ -246,6 +246,9 @@ const HZ_W: f32 = 72.0;
 const DB_W: f32 = 56.0;
 const Q_W: f32 = 50.0;
 
+/// What a row's control does to filter `index`.
+pub type RowAction = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+
 /// The table: a header, then a row per filter on the channel shown, each
 /// with its index among all the filters.
 #[allow(clippy::too_many_arguments)]
@@ -254,8 +257,8 @@ pub fn table<V: 'static>(
     bands: &[DspBand],
     read_only: bool,
     channel: Option<u16>,
-    open_curve: Rc<dyn Fn(usize, &mut Window, &mut App)>,
-    remove: Rc<dyn Fn(usize, &mut Window, &mut App)>,
+    open_curve: RowAction,
+    remove: RowAction,
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> AnyElement {
@@ -579,7 +582,7 @@ mod tests {
         assert_eq!(figure(1000.0, 0), "1000");
         assert_eq!(figure(3.25, 1), "3.2");
         assert_eq!(figure(3.0, 1), "3");
-        assert_eq!(figure(0.707_106_78, 2), "0.71");
+        assert_eq!(figure(0.712_345, 2), "0.71");
         assert_eq!(figure(-0.04, 1), "0");
     }
 
