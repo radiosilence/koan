@@ -859,7 +859,7 @@ impl PlaylistPage {
             Button::new("playlist-play", ButtonKind::Prominent)
                 .label("play")
                 .disabled(self.entries.is_empty())
-                .on_click(move |_, _, cx| e.read(cx).play(false, cx))
+                .on_click(move |_, _, cx| e.update(cx, |this, cx| this.play(false, cx)))
         };
         let text = |id: &'static str, label: &str| chrome::text_button(id, label);
         let id = self.id;
@@ -872,7 +872,7 @@ impl PlaylistPage {
             .child(play)
             .child(text("playlist-shuffle-play", "shuffle").on_click({
                 let e = entity.clone();
-                move |_, _, cx| e.read(cx).play(true, cx)
+                move |_, _, cx| e.update(cx, |this, cx| this.play(true, cx))
             }))
             .child(text("playlist-next", "play next").on_click({
                 let lib = lib.clone();
@@ -887,7 +887,7 @@ impl PlaylistPage {
         if fillable && self.entries.len() > 1 {
             verbs = verbs.child(text("playlist-reorder", "shuffle order").on_click({
                 let e = entity.clone();
-                move |_, window, cx| e.read(cx).ask_shuffle(window, cx)
+                move |_, window, cx| e.update(cx, |this, cx| this.ask_shuffle(window, cx))
             }));
         }
         if self.undo_shuffles > 0 {
@@ -921,7 +921,7 @@ impl PlaylistPage {
             .when(!from_file, |d| {
                 d.child(text("playlist-rename", "rename").on_click({
                     let e = entity.clone();
-                    move |_, window, cx| e.read(cx).ask_rename(window, cx)
+                    move |_, window, cx| e.update(cx, |this, cx| this.ask_rename(window, cx))
                 }))
             })
             .child(text("playlist-export", "export").on_click({
@@ -930,7 +930,7 @@ impl PlaylistPage {
             }))
             .child(text("playlist-delete", "delete").on_click({
                 let e = entity.clone();
-                move |_, window, cx| e.read(cx).ask_delete(window, cx)
+                move |_, window, cx| e.update(cx, |this, cx| this.ask_delete(window, cx))
             }));
         let picked = self.picks.len();
         div()
@@ -972,9 +972,10 @@ impl PlaylistPage {
                                 .child(text("playlist-remove-picked", "remove").on_click({
                                     let e = entity.clone();
                                     move |_, window, cx| {
-                                        let this = e.read(cx);
-                                        let picked = this.picks.in_order(&this.order);
-                                        this.ask_remove(picked, window, cx)
+                                        e.update(cx, |this, cx| {
+                                            let picked = this.picks.in_order(&this.order);
+                                            this.ask_remove(picked, window, cx)
+                                        })
                                     }
                                 }))
                                 .child(text("playlist-clear-picked", "clear").on_click({
@@ -1198,7 +1199,9 @@ impl Render for PlaylistPage {
                         MenuEntry::new("remove from playlist")
                             .destructive()
                             .on_click(move |_, window, cx| {
-                                view.read(cx).ask_remove(entries.clone(), window, cx)
+                                view.update(cx, |this, cx| {
+                                    this.ask_remove(entries.clone(), window, cx)
+                                })
                             }),
                     );
                 }

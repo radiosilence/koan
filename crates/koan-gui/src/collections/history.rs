@@ -514,18 +514,18 @@ impl Render for HistoryPage {
                             &format!("forget {}", count(self.picks.len(), "play", "plays")),
                         )
                         .on_click(move |_, window, cx| {
-                            let this = e.read(cx);
-                            let picked = this.picks.in_order(&this.order);
-                            this.ask_forget(picked, window, cx)
+                            e.update(cx, |this, cx| {
+                                let picked = this.picks.in_order(&this.order);
+                                this.ask_forget(picked, window, cx)
+                            })
                         }),
                     )
                 })
                 .when(!self.plays.is_empty(), |d| {
                     let e = entity.clone();
-                    d.child(
-                        chrome::text_button("history-clear", "clear…")
-                            .on_click(move |_, window, cx| e.read(cx).ask_clear(window, cx)),
-                    )
+                    d.child(chrome::text_button("history-clear", "clear…").on_click(
+                        move |_, window, cx| e.update(cx, |this, cx| this.ask_clear(window, cx)),
+                    ))
                 }),
         );
         let body = if self.plays.is_empty() && self.loaded.is_some() {
@@ -588,7 +588,9 @@ impl Render for HistoryPage {
                             MenuEntry::new("remove from history")
                                 .destructive()
                                 .on_click(move |_, window, cx| {
-                                    view.read(cx).ask_forget(plays.clone(), window, cx)
+                                    view.update(cx, |this, cx| {
+                                        this.ask_forget(plays.clone(), window, cx)
+                                    })
                                 }),
                         )
                     }),

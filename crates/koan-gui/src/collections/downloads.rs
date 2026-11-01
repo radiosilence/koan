@@ -400,10 +400,11 @@ impl Render for DownloadsPage {
                         let mut m = m;
                         if t.album_id.is_some() {
                             let (view, t) = (view.clone(), t.clone());
-                            m =
-                                m.item(MenuEntry::new("show in library").on_click(
-                                    move |_, _, cx| view.read(cx).show_in_library(&t, cx),
-                                ));
+                            m = m.item(MenuEntry::new("show in library").on_click(
+                                move |_, _, cx| {
+                                    view.update(cx, |this, cx| this.show_in_library(&t, cx))
+                                },
+                            ));
                         }
                         if t.state == TransferState::Done {
                             let view = view.clone();
@@ -411,7 +412,9 @@ impl Render for DownloadsPage {
                                 MenuEntry::new("remove downloaded file")
                                     .destructive()
                                     .on_click(move |_, window, cx| {
-                                        view.read(cx).ask_remove_file(&t, window, cx)
+                                        view.update(cx, |this, cx| {
+                                            this.ask_remove_file(&t, window, cx)
+                                        })
                                     }),
                             );
                         }

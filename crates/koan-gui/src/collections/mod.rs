@@ -421,6 +421,7 @@ pub fn listed(names: impl IntoIterator<Item = String>, shown: usize) -> Vec<Shar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn a_pick_keeps_the_lists_order() {
