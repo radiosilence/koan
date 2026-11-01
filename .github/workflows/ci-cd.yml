@@ -377,7 +377,15 @@ jobs:
     concurrency:
       group: linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
+    # The workspace's test builds outgrew the runner's disk with full debug
+    # info; line tables keep backtraces readable at a fraction of the size.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
+      # Toolchains the image ships and nothing here uses, for disk.
+      - name: Make room
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps
         uses: ./.github/actions/linux-deps
