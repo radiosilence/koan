@@ -113,7 +113,8 @@ impl Navigator {
     /// Drops a route that no longer exists (a deleted playlist): it is not
     /// somewhere Back can return to. What survives behind the cursor keeps
     /// its order, so the cursor stays on the page it was on, or, when that
-    /// page was the one forgotten, lands where Back would have taken it.
+    /// page was the one forgotten, lands where Back would have taken it. Two
+    /// visits of one page left side by side become one.
     /// Rewind counts are kept: they only ever grow, so a route that comes
     /// back (a row id reused) never repeats a count a page has seen.
     pub fn forget(&mut self, route: Route) {
@@ -133,8 +134,22 @@ impl Navigator {
             surviving.saturating_sub(1)
         } else {
             surviving
-        };
-        self.cursor = landing.min(self.history.len() - 1);
+        }
+        .min(self.history.len() - 1);
+        // The pages either side of a forgotten one can be the same page, and
+        // the same page twice in a row is not a step Back can take.
+        let mut collapsed: Vec<Route> = Vec::with_capacity(self.history.len());
+        let mut cursor = 0;
+        for (ix, route) in self.history.iter().enumerate() {
+            if collapsed.last() != Some(route) {
+                collapsed.push(*route);
+            }
+            if ix == landing {
+                cursor = collapsed.len() - 1;
+            }
+        }
+        self.history = collapsed;
+        self.cursor = cursor;
     }
 }
 
@@ -229,6 +244,19 @@ mod tests {
         assert_eq!(nav.current(), ALBUMS);
         assert!(nav.forward());
         assert_eq!(nav.current(), TRACKS);
+    }
+
+    #[test]
+    fn forgetting_a_page_between_two_visits_of_one_page_joins_them() {
+        let mut nav = Navigator::default();
+        nav.go(ALBUMS);
+        nav.go(PLAYLIST);
+        nav.go(ALBUMS);
+        nav.forget(PLAYLIST);
+        assert_eq!(nav.current(), ALBUMS);
+        assert!(nav.back());
+        assert_eq!(nav.current(), QUEUE);
+        assert!(!nav.back());
     }
 
     #[test]

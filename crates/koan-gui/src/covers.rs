@@ -151,13 +151,28 @@ impl Covers {
                     .await;
                 this.update(cx, |covers, cx| {
                     covers.running -= 1;
-                    if matches!(held, Held::Ready(..)) {
+                    // Only a sleeve that landed changes what is drawn; a miss
+                    // leaves the placeholder that was already there.
+                    let landed = matches!(held, Held::Ready(..));
+                    let failed = matches!(held, Held::Failed(_));
+                    if landed {
                         covers.ready += 1;
                         covers.evict(cx);
                     }
                     covers.held.insert((album_id, size), held);
                     covers.pump(cx);
-                    cx.notify();
+                    if landed {
+                        cx.notify();
+                    }
+                    // Drawn again once the wait is up, so a view that does
+                    // not redraw on its own asks for the sleeve again.
+                    if failed {
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(RETRY).await;
+                            this.update(cx, |_, cx| cx.notify()).ok();
+                        })
+                        .detach();
+                    }
                 })
                 .ok();
             })

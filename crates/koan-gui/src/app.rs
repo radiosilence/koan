@@ -150,11 +150,10 @@ fn open(cx: &mut App) {
         let keeps_session = Session::following(cx);
         if keeps_session {
             let executor = cx.foreground_executor().clone();
-            if let Err(e) = executor
-                .block_with_timeout(SAVE_ON_QUIT, engine.clone().save_session())
-                .unwrap_or(Ok(()))
-            {
-                log::warn!("session not saved on quit: {e}");
+            match executor.block_with_timeout(SAVE_ON_QUIT, engine.clone().save_session()) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => log::warn!("session not saved on quit: {e}"),
+                Err(_) => log::warn!("session not saved on quit: no answer in {SAVE_ON_QUIT:?}"),
             }
         }
         async move {

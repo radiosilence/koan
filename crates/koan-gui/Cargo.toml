@@ -23,8 +23,8 @@ koan-ffi = { path = "../koan-ffi" }
 gpui-kit = "0.8.1"
 # Resizing sleeves for the accent and the wash, and the frames GPUI draws,
 # in the version GPUI itself builds against; PNG for the theme sheet's
-# offscreen render; JPEG for the playing record's sleeve.
-image = { version = "0.25.1", default-features = false, features = ["png", "jpeg"] }
+# offscreen render; JPEG, WebP and GIF for the playing record's sleeve.
+image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 log = "0.4"
 # Waiting on the first of two events at startup (`select`, `oneshot`).
 futures = "0.3"
