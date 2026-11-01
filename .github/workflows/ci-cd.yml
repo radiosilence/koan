@@ -548,7 +548,7 @@ jobs:
       group: apple-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     env:
-      # Everything, tvOS included: main and manual runs.
+      # Everything: main and manual runs.
       FULL: ${{ github.event_name != 'pull_request' }}
       # The FFI library's dependencies are built for this target, as the tests'
       # are, so neither invalidates the other's build scripts.
@@ -558,7 +558,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-          targets: ${{ env.FULL == 'true' && 'aarch64-apple-tvos,aarch64-apple-tvos-sim' || '' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -583,7 +582,7 @@ jobs:
       # library and bindings above, and the tests spend much of their run
       # waiting, which the Swift compiler fills. Every log is printed, and
       # every failure named, once all have finished.
-      - name: Tests, the app, and the iOS and tvOS typechecks
+      - name: Tests, the app, and the iOS typecheck
         if: ${{ !cancelled() && steps.ffi.outcome == 'success' }}
         run: |
           names=() pids=()
@@ -601,12 +600,9 @@ jobs:
             start tests cargo test -p koan-core -p koan-ffi --all-targets
           fi
           start app bash -c 'cd apps/macos && swift build -c debug'
-          # The shared sources build for iOS and tvOS too. These need the
-          # bindings and nothing else: no Rust build for either, no simulator.
+          # The shared sources build for iOS too. This needs the bindings and
+          # nothing else: no Rust build for iOS, no simulator.
           start ios-typecheck just --no-deps ios-typecheck
-          if [ "$FULL" = true ]; then
-            start tv-typecheck just --no-deps tv-typecheck
-          fi
           failed=()
           for i in "${!pids[@]}"; do
             if wait "${pids[$i]}"; then
@@ -625,16 +621,42 @@ jobs:
           fi
       - if: ${{ !cancelled() && env.FULL == 'true' }}
         run: cargo test --doc
-      - if: ${{ !cancelled() && env.FULL == 'true' }}
-        run: brew install xcodegen
+
+  # The Apple TV app, on its own runner beside the Apple job, and on pull
+  # requests as well as main: tvOS compiles the shared sources under its own
+  # rules, and a break only it sees otherwise surfaces at a release. The
+  # xcodebuild is the typecheck; nothing else builds these sources for tvOS.
+  apple-tv:
+    name: Apple TV
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.apple == 'true' && !(github.event_name != 'pull_request' && needs.changes.outputs.release == 'true')
+    timeout-minutes: 60
+    concurrency:
+      group: apple-tv-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-tvos,aarch64-apple-tvos-sim
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: apple-tv
+          cache-on-failure: true
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          install_args: just
+      - run: brew install xcodegen
+      - run: just tv-build
       # The device target as well as the simulator's: they take different
-      # cfgs in places, and only the simulator is built below.
-      - if: ${{ !cancelled() && env.FULL == 'true' }}
+      # cfgs in places, and only the simulator is built above.
+      - if: ${{ !cancelled() }}
         run: cargo check -p koan-ffi --target aarch64-apple-tvos --target-dir target/tv-26.0
         env:
           TVOS_DEPLOYMENT_TARGET: "26.0"
-      - if: ${{ !cancelled() && env.FULL == 'true' }}
-        run: just tv-build
 
   # Tests, lints and builds the app as it ships. Off pull requests it also
   # builds the bundle Google Play takes; CD uploads that, and attaches the APK
@@ -729,7 +751,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, audit, pulumi-package, linux-build, container, apple, apple-tv, android]
     if: always()
     steps:
       - env:
