@@ -107,6 +107,7 @@ pub fn track_row<V: TrackList>(
     page_artist: Option<i64>,
     cx: &mut Context<V>,
 ) -> AnyElement {
+    let p = &p.picked(state.selected);
     let id = track.id;
     let view = cx.weak_entity();
     let click = |part: RowPart| {

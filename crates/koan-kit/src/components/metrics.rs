@@ -97,10 +97,10 @@ impl RowMetrics {
         px(points + 8.0)
     }
 
-    /// A page header's cover or photo, square: the grid's largest tile,
+    /// A record page's sleeve in its header, square, the Mac's: fixed
     /// whatever the window's width, so a resize never moves it.
     pub fn header_art(look: &Look) -> Pixels {
-        px((210.0 * look.scale.size).round())
+        px((132.0 * look.scale.size).round())
     }
 
     /// An artist's photo in their page's header, the Mac's.

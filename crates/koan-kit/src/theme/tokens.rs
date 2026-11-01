@@ -36,6 +36,11 @@ pub struct Palette {
     pub strong: Hex,
     pub muted: Hex,
     pub bad: Hex,
+    /// A picked list row's ground, opaque over the wash: the Mac's tables'
+    /// selection, as the person's graphite accent draws it.
+    pub selection: Hex,
+    /// Text and marks on `selection`.
+    pub on_selection: Hex,
 }
 
 impl Palette {
@@ -48,6 +53,8 @@ impl Palette {
         strong: Hex(0xFFFFFF),
         muted: Hex(0x919191),
         bad: Hex(0xEF6B73),
+        selection: Hex(0x1F1D1E),
+        on_selection: Hex(0xFFFFFF),
     };
 
     pub const LIGHT: Palette = Palette {
@@ -59,6 +66,8 @@ impl Palette {
         strong: Hex(0x111111),
         muted: Hex(0x666666),
         bad: Hex(0xC43F3F),
+        selection: Hex(0x5C5C5C),
+        on_selection: Hex(0xFFFFFF),
     };
 
     pub fn of(dark: bool) -> Palette {
