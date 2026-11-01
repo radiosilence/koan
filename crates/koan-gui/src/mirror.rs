@@ -78,6 +78,8 @@ pub struct Queue {
     pub rows: Vec<Row>,
     /// The track row of each queue item.
     pub track_rows: HashMap<String, usize>,
+    /// The records whose rows number by disc and track.
+    pub disc_records: std::collections::HashSet<i64>,
     /// The rows the latest patch changed, put back from `base` before the
     /// next is applied, since each patch is relative to the base.
     patched: Vec<usize>,
@@ -94,6 +96,7 @@ impl Queue {
             .map(|(row, item)| (item.queue_item_id.clone(), row))
             .collect();
         let rows = rows::build(&items);
+        let disc_records = rows::disc_records(&items);
         let track_rows = rows
             .iter()
             .enumerate()
@@ -110,6 +113,7 @@ impl Queue {
             at,
             rows,
             track_rows,
+            disc_records,
             patched: Vec::new(),
         }
     }

@@ -78,6 +78,8 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
+                let feed = lib.feed.clone();
+                this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
             })

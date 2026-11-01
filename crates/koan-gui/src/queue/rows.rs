@@ -22,6 +22,30 @@ impl Row {
     }
 }
 
+/// The records whose rows number by disc and track: those with a track on a
+/// disc past the first anywhere in the queue. Per record rather than per run,
+/// so a record queued twice numbers both copies alike.
+pub fn disc_records(items: &[QueueItem]) -> std::collections::HashSet<i64> {
+    items
+        .iter()
+        .filter(|item| item.disc.is_some_and(|disc| disc > 1))
+        .filter_map(|item| item.album_id)
+        .collect()
+}
+
+/// A track's place on its record: its number, or `disc.NN` on a record that
+/// numbers by disc.
+pub fn place(item: &QueueItem, by_disc: bool) -> String {
+    let Some(number) = item.track_number else {
+        return String::new();
+    };
+    if by_disc {
+        format!("{}.{number:02}", item.disc.unwrap_or(1))
+    } else {
+        number.to_string()
+    }
+}
+
 pub fn build(items: &[QueueItem]) -> Vec<Row> {
     let mut rows = Vec::with_capacity(items.len() + items.len() / 8);
     let mut ix = 0;
@@ -143,6 +167,25 @@ mod tests {
             item("b2", RunRole::Continues),
             item("b3", RunRole::Continues),
         ]
+    }
+
+    #[test]
+    fn a_record_with_a_second_disc_numbers_by_disc() {
+        let mut items = queue();
+        for (i, item) in items.iter_mut().enumerate() {
+            item.album_id = Some(if i < 2 { 1 } else { 2 });
+            item.track_number = Some(i as i64 + 1);
+        }
+        items[0].disc = Some(1);
+        items[1].disc = Some(2);
+        items[3].disc = Some(1);
+        let discs = disc_records(&items);
+        assert_eq!(discs, std::collections::HashSet::from([1]));
+        assert_eq!(place(&items[0], true), "1.01");
+        assert_eq!(place(&items[1], true), "2.02");
+        assert_eq!(place(&items[3], false), "4");
+        items[2].track_number = None;
+        assert_eq!(place(&items[2], true), "");
     }
 
     #[test]
