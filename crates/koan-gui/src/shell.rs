@@ -12,7 +12,7 @@ use gpui_kit::*;
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller,
+    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleSidebar,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -32,6 +32,12 @@ const TOOLBAR_BUTTON: Pixels = px(36.);
 const TRAFFIC_LIGHTS: Pixels = TOOLBAR;
 #[cfg(not(target_os = "macos"))]
 const TRAFFIC_LIGHTS: Pixels = px(0.);
+/// The window's buttons' width, which the toolbar leaves clear while the
+/// sidebar is hidden and they sit over it.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS_WIDTH: Pixels = px(78.);
+#[cfg(not(target_os = "macos"))]
+const TRAFFIC_LIGHTS_WIDTH: Pixels = px(0.);
 
 pub struct Shell {
     nav: Entity<Navigator>,
@@ -46,6 +52,8 @@ pub struct Shell {
     library: Option<Entity<LibraryStage>>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
+    /// Whether the sidebar shows; kept with the window's bounds.
+    sidebar_shown: bool,
     /// The route focus was last moved for: the navigator notifies for more
     /// than moves (a deleted playlist forgotten during a scan), and those
     /// must not take the keys from wherever they are.
@@ -88,12 +96,13 @@ impl Shell {
         .detach();
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
+            transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             nav,
             focus: cx.focus_handle(),
             queue,
-            transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             library: None,
             moving_window: false,
+            sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
@@ -167,6 +176,15 @@ impl Shell {
         } else {
             window.focus(&self.focus, cx);
         }
+        cx.notify();
+    }
+
+    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
+    /// and keeps the choice with the window's bounds.
+    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_shown = !self.sidebar_shown;
+        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
+        window_state::save(window.window_bounds(), cx);
         cx.notify();
     }
 
@@ -246,8 +264,18 @@ impl Shell {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .px(p.space(Space::S))
+            .pr(p.space(Space::S))
+            .pl(if self.sidebar_shown {
+                p.space(Space::S)
+            } else {
+                TRAFFIC_LIGHTS_WIDTH + p.space(Space::S)
+            })
             .gap(p.space(Space::Xs))
+            .child(
+                button("sidebar", Some(Icon::Sidebar), "sidebar", true).on_click(cx.listener(
+                    |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),
+                )),
+            )
             .child(
                 button("back", Some(Icon::Back), "back", can_go_back)
                     .on_click(cx.listener(|this, _, window, cx| this.back(&Back, window, cx))),
@@ -348,6 +376,7 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
+            .on_action(cx.listener(Self::toggle_sidebar))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.back(&Back, window, cx)),
@@ -369,25 +398,27 @@ impl Render for Shell {
                     .flex_1()
                     .min_h(px(0.))
                     .flex()
-                    .child(
-                        div()
-                            .w(sidebar::WIDTH)
-                            .h_full()
-                            .flex_shrink_0()
-                            .flex()
-                            .flex_col()
-                            .bg(p.bg)
-                            .when(TRAFFIC_LIGHTS > px(0.), |d| {
-                                d.child(
-                                    Self::moves_window(div().id("sidebar-drag"), cx)
-                                        .h(TRAFFIC_LIGHTS)
-                                        .flex_shrink_0(),
-                                )
-                            })
-                            .child(self.sidebar.clone().cached(
-                                StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
-                            )),
-                    )
+                    .when(self.sidebar_shown, |d| {
+                        d.child(
+                            div()
+                                .w(sidebar::WIDTH)
+                                .h_full()
+                                .flex_shrink_0()
+                                .flex()
+                                .flex_col()
+                                .bg(p.bg)
+                                .when(TRAFFIC_LIGHTS > px(0.), |d| {
+                                    d.child(
+                                        Self::moves_window(div().id("sidebar-drag"), cx)
+                                            .h(TRAFFIC_LIGHTS)
+                                            .flex_shrink_0(),
+                                    )
+                                })
+                                .child(self.sidebar.clone().cached(
+                                    StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
+                                )),
+                        )
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -395,8 +426,9 @@ impl Render for Shell {
                             .h_full()
                             .flex()
                             .flex_col()
-                            .border_l(theme::HAIRLINE)
-                            .border_color(p.rule)
+                            .when(self.sidebar_shown, |d| {
+                                d.border_l(theme::HAIRLINE).border_color(p.rule)
+                            })
                             .child(self.toolbar(&p, window, cx))
                             .child(div().flex_1().min_h(px(0.)).child(stage)),
                     ),
