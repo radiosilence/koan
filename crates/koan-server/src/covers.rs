@@ -63,7 +63,7 @@ static DECODE: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 });
 
 /// What the cover directory may hold before the least recently read go.
-const BUDGET: u64 = 1024 * 1024 * 1024;
+const BUDGET: u64 = 4 * 1024 * 1024 * 1024;
 /// Writes between looks at the directory's size.
 const SWEEP_EVERY: u64 = 256;
 /// A hit moves a cover's mtime, which is its place in line for eviction, no
@@ -184,6 +184,7 @@ impl Covers {
         let started = std::thread::Builder::new()
             .name("koan-covers-warm".into())
             .spawn(move || {
+                prune(&covers.dir);
                 loop {
                     covers.warm_pass(&pool);
                     let mut poked = covers.warm.0.lock();
@@ -199,9 +200,11 @@ impl Covers {
     }
 
     fn warm_pass(&self, pool: &koan_core::db::pool::Pool) {
-        // Near the budget, warming would only evict what was warmed before.
-        if dir_bytes(&self.dir) > self.budget / 10 * 8 {
-            log::info!("covers: the cover directory is near its budget; not warming");
+        // Warmed covers are the least recently read, so past the budget the
+        // sweep would take them first and the next pass would make them
+        // again: the warm stops at the budget, and requests still write.
+        let mut used = dir_bytes(&self.dir);
+        if used >= self.budget {
             return;
         }
         let albums: Vec<i64> = {
@@ -240,9 +243,14 @@ impl Covers {
             let source = self.source_art(&tracks);
             for size in wanted {
                 let art = DECODE.install(|| source.as_deref().and_then(|b| encode(b, size)));
+                used += art.as_ref().map_or(0, |a| a.len() as u64);
                 self.write_disk(&album_key(album, size), art.as_deref());
             }
             made += 1;
+            if used >= self.budget {
+                log::info!("covers: the cover directory has reached its budget; warming stops");
+                break;
+            }
         }
         if made > 0 {
             log::info!("covers: {made} albums' covers made ready");
@@ -347,6 +355,52 @@ impl Covers {
             let _ = std::fs::remove_file(&tmp);
         }
     }
+}
+
+/// Removes what no request will read again: covers kept at sizes no longer
+/// served, and files in no scheme of this version's. They count against the
+/// budget like any other, and an older version's can fill it.
+fn prune(dir: &Path) {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let (mut files, mut bytes) = (0usize, 0u64);
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !current(&name) {
+            let len = entry.metadata().map_or(0, |m| m.len());
+            if std::fs::remove_file(entry.path()).is_ok() {
+                files += 1;
+                bytes += len;
+            }
+        }
+    }
+    if files > 0 {
+        log::info!(
+            "covers: removed {files} covers no longer served ({} MB)",
+            bytes >> 20
+        );
+    }
+}
+
+/// Whether `name` is something this version keeps: a dot file, a write in
+/// progress, or a cover at a size it serves, kept by album or by source.
+fn current(name: &str) -> bool {
+    if name.starts_with('.') || name.ends_with(".tmp") {
+        return true;
+    }
+    let Some(stem) = name.strip_suffix(".jpg") else {
+        return false;
+    };
+    let Some((head, size)) = stem.rsplit_once('-') else {
+        return false;
+    };
+    let served = size.parse().is_ok_and(|size: u32| SIZES.contains(&size));
+    let keyed = match head.strip_prefix("album-") {
+        Some(id) => id.parse::<i64>().is_ok(),
+        None => head.len() == 32 && head.bytes().all(|b| b.is_ascii_hexdigit()),
+    };
+    served && keyed
 }
 
 /// What the covers in `dir` take up.
@@ -533,6 +587,35 @@ fn draw_placeholder(size: u32) -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Covers at sizes no longer served, and strangers, go; what this version
+    /// reads stays.
+    #[test]
+    fn covers_no_longer_served_are_pruned() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = "0123456789abcdef0123456789abcdef";
+        let keep = [
+            "album-12-600.jpg".to_string(),
+            format!("{hash}-300.jpg"),
+            ".evicted".to_string(),
+            "album-1-600.jpg.42-7.tmp".to_string(),
+        ];
+        let go = [
+            format!("{hash}-800.jpg"),
+            "album-12-400.jpg".to_string(),
+            "notes.txt".to_string(),
+        ];
+        for name in keep.iter().chain(&go) {
+            std::fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        prune(dir.path());
+        for name in &keep {
+            assert!(dir.path().join(name).exists(), "{name} kept");
+        }
+        for name in &go {
+            assert!(!dir.path().join(name).exists(), "{name} removed");
+        }
+    }
 
     /// An album's entry answers without its files: `make` runs once, a miss
     /// is kept like a hit, and a `make` that could not tell keeps nothing.
