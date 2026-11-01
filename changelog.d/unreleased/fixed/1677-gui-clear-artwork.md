@@ -1,0 +1,1 @@
+- **Clear Artwork Cache works in the desktop app.** It says how many covers and how much space it frees, then deletes the covers kept on this device and fetches the ones on screen again.

@@ -41,6 +41,11 @@ impl LibraryStage {
         }
     }
 
+    /// The library's artwork cache.
+    pub fn covers(&self) -> Entity<super::covers::Covers> {
+        self.lib.covers.clone()
+    }
+
     /// Whether the library draws `route`.
     pub fn draws(route: Page) -> bool {
         matches!(
