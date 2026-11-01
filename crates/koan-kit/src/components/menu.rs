@@ -443,3 +443,86 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
 }
 
 impl<E: InteractiveElement + ParentElement> KoanContextMenu for E {}
+
+/// Where a set of buttons keeps the menu one of them has open: the
+/// transport's sleep, output and EQ, a toolbar's menus.
+///
+/// A trigger toggles its menu. A menu closes itself on any press outside
+/// it, and the trigger is outside it, so without care a click meant to
+/// close would close the menu on its press and open it again on its
+/// release. The slot notes, as the press begins and before the menu hears
+/// it, whether the trigger's menu was open then; a click from that press
+/// only closes it. The Mac's menus had to be fixed for the same thing.
+pub struct MenuSlot<K> {
+    open: Option<(K, Entity<Menu>, Subscription)>,
+    /// The menu that was open when the current press began.
+    pressed: Option<K>,
+}
+
+impl<K> Default for MenuSlot<K> {
+    fn default() -> Self {
+        Self {
+            open: None,
+            pressed: None,
+        }
+    }
+}
+
+impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
+    pub fn is_open(&self, which: K) -> bool {
+        self.open.as_ref().is_some_and(|(open, ..)| *open == which)
+    }
+
+    pub fn close(&mut self) {
+        self.open = None;
+    }
+
+    /// The trigger for `which`: `button` with the press noted and the click
+    /// toggling, the menu `build` makes opening beneath it (`None` when there
+    /// is nothing to show). `slot` reaches this slot inside the view that
+    /// holds it.
+    pub fn trigger<V: 'static, E>(
+        &self,
+        which: K,
+        button: E,
+        slot: fn(&mut V) -> &mut MenuSlot<K>,
+        build: impl Fn(&mut V, &mut Window, &mut Context<V>) -> Option<Entity<Menu>> + 'static,
+        cx: &mut Context<V>,
+    ) -> Div
+    where
+        E: StatefulInteractiveElement + IntoElement + 'static,
+    {
+        let button = button
+            .capture_any_mouse_down(cx.listener(move |view, _: &MouseDownEvent, _, _| {
+                let slot = slot(view);
+                slot.pressed = slot.open.as_ref().map(|(open, ..)| *open);
+            }))
+            .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
+                let was_open = slot(view).pressed.take() == Some(which);
+                slot(view).open = None;
+                if !was_open && let Some(menu) = build(view, window, cx) {
+                    let dismissed = cx.subscribe(&menu, move |view, _, _: &DismissEvent, cx| {
+                        slot(view).open = None;
+                        cx.notify();
+                    });
+                    menu.focus_handle(cx).focus(window, cx);
+                    slot(view).open = Some((which, menu, dismissed));
+                }
+                cx.notify();
+            }));
+        let open = self
+            .open
+            .as_ref()
+            .filter(|(open, ..)| *open == which)
+            .map(|(_, menu, _)| menu.clone());
+        div().relative().child(button).children(open.map(|menu| {
+            deferred(
+                anchored()
+                    .anchor(Anchor::BottomRight)
+                    .snap_to_window()
+                    .child(menu),
+            )
+            .with_priority(1)
+        }))
+    }
+}

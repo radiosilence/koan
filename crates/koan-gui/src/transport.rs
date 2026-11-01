@@ -12,7 +12,7 @@ use koan_ffi::{
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use crate::components::{Menu as ThemeMenu, MenuEntry};
+use crate::components::{Menu as ThemeMenu, MenuEntry, MenuSlot};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
@@ -31,7 +31,7 @@ pub struct Transport {
     /// Where the playing track's names lead.
     nav: Entity<crate::navigator::Navigator>,
     seek: Entity<Seek>,
-    menu: Option<(Menu, Entity<ThemeMenu>, Subscription)>,
+    menus: MenuSlot<Menu>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
     cover: Option<Arc<RenderImage>>,
@@ -157,7 +157,7 @@ impl Transport {
             ],
             playback: mirror.playback,
             outputs: mirror.outputs,
-            menu: None,
+            menus: MenuSlot::default(),
             cover: None,
             eq: None,
             eq_profile: None,
@@ -184,37 +184,27 @@ impl Transport {
         }));
     }
 
-    fn open(&mut self, which: Menu, window: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.as_ref().is_some_and(|(open, ..)| *open == which) {
-            self.menu = None;
-            cx.notify();
-            return;
-        }
-        let menu = match which {
+    /// The menu `which` opens, made from what the transport shows now.
+    fn build(
+        &mut self,
+        which: Menu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<ThemeMenu>> {
+        Some(match which {
             Menu::Sleep => {
                 let sleeping = self.playback.read(cx).0.sleep.is_some();
                 ThemeMenu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
             }
             Menu::Output => {
-                let Some(outputs) = self.outputs.read(cx).0.clone() else {
-                    return;
-                };
+                let outputs = self.outputs.read(cx).0.clone()?;
                 ThemeMenu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
             }
             Menu::Eq => {
-                let Some(eq) = self.eq.clone() else {
-                    return;
-                };
+                let eq = self.eq.clone()?;
                 ThemeMenu::build(window, cx, move |menu, _, _| eq_menu(menu, &eq))
             }
-        };
-        let dismissed = cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
-            this.menu = None;
-            cx.notify();
-        });
-        menu.focus_handle(cx).focus(window, cx);
-        self.menu = Some((which, menu, dismissed));
-        cx.notify();
+        })
     }
 
     fn menu_button(
@@ -226,14 +216,14 @@ impl Transport {
         p: &Paint,
         cx: &mut Context<Self>,
     ) -> Div {
-        self.menu_anchor(
+        self.menus.trigger(
             which,
             text_button(icon, label, p)
                 .id(label)
-                .when(!enabled, |b| b.opacity(0.4))
-                .when(enabled, |b| {
-                    b.on_click(cx.listener(move |this, _, window, cx| this.open(which, window, cx)))
-                }),
+                .when(!enabled, |b| b.opacity(0.4)),
+            |this: &mut Self| &mut this.menus,
+            move |this, window, cx| enabled.then(|| this.build(which, window, cx)).flatten(),
+            cx,
         )
     }
 
@@ -250,7 +240,7 @@ impl Transport {
         } else {
             div().child("eq").into_any_element()
         };
-        self.menu_anchor(
+        self.menus.trigger(
             Menu::Eq,
             div()
                 .id("eq")
@@ -267,27 +257,11 @@ impl Transport {
                 .child(child)
                 .tooltip(move |window, cx| {
                     crate::components::Tooltip::view(summary.clone(), window, cx)
-                })
-                .on_click(cx.listener(|this, _, window, cx| this.open(Menu::Eq, window, cx))),
+                }),
+            |this: &mut Self| &mut this.menus,
+            |this, window, cx| this.build(Menu::Eq, window, cx),
+            cx,
         )
-    }
-
-    /// `button`, with its menu under it while open.
-    fn menu_anchor(&self, which: Menu, button: impl IntoElement) -> Div {
-        let open = self
-            .menu
-            .as_ref()
-            .filter(|(m, ..)| *m == which)
-            .map(|(_, menu, _)| menu.clone());
-        div().relative().child(button).children(open.map(|menu| {
-            deferred(
-                anchored()
-                    .anchor(Anchor::BottomRight)
-                    .snap_to_window()
-                    .child(menu),
-            )
-            .with_priority(1)
-        }))
     }
 }
 
