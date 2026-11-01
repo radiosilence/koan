@@ -76,6 +76,11 @@ impl Draft {
         }
     }
 
+    /// Nothing is being written or waiting to be.
+    pub(crate) fn settled(&self) -> bool {
+        self.writing.is_empty() && self.queued.is_empty()
+    }
+
     /// Writes landed so far, for a read to say when it began.
     pub(crate) fn writes(&self) -> u64 {
         self.writes
@@ -142,6 +147,12 @@ pub struct SettingsModel {
     draft: Option<Draft>,
     /// The draft as drawn, worked out when it changes rather than per frame.
     shown: Option<Settings>,
+    /// Edits made before the file was first read, applied once it has been.
+    early: Vec<Edit>,
+    /// What waits for the writes under way to land.
+    written: Vec<Box<dyn FnOnce(&mut Self, &mut Context<Self>)>>,
+    /// The error shown is a write's.
+    write_failed: bool,
     pub last_error: Option<SharedString>,
     pub last_result: Option<SharedString>,
     dismissal: Option<Task<()>>,
@@ -168,6 +179,9 @@ impl SettingsModel {
             engine,
             draft: None,
             shown: None,
+            early: Vec::new(),
+            written: Vec::new(),
+            write_failed: false,
             last_error: None,
             last_result: None,
             dismissal: None,
@@ -233,7 +247,18 @@ impl SettingsModel {
             this.update(cx, |model, cx| {
                 match &mut model.draft {
                     Some(draft) => draft.reloaded(settings, writes),
-                    None => model.draft = Some(Draft::new(settings)),
+                    None => {
+                        // Edits made before the file was first read go in now.
+                        let mut draft = Draft::new(settings);
+                        let early = std::mem::take(&mut model.early);
+                        let start = early
+                            .into_iter()
+                            .fold(false, |start, edit| draft.edit(edit) || start);
+                        model.draft = Some(draft);
+                        if start {
+                            model.write(cx);
+                        }
+                    }
                 }
                 model.redraw(cx);
             })
@@ -251,11 +276,29 @@ impl SettingsModel {
     /// runs twice, on the copy drawn and on the file as it stands when it is
     /// written: an append checks the item is not there already.
     pub fn edit(&mut self, cx: &mut Context<Self>, change: impl Fn(&mut Settings) + 'static) {
-        let Some(draft) = &mut self.draft else { return };
+        let Some(draft) = &mut self.draft else {
+            self.early.push(Rc::new(change));
+            return;
+        };
         let start = draft.edit(Rc::new(change));
         self.redraw(cx);
         if start {
             self.write(cx);
+        }
+    }
+
+    /// Runs `then` once the edits made so far are in the file: now, if none
+    /// are waiting.
+    fn when_written(
+        &mut self,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        let settled = self.early.is_empty() && self.draft.as_ref().is_some_and(Draft::settled);
+        if settled {
+            then(self, cx);
+        } else {
+            self.written.push(Box::new(then));
         }
     }
 
@@ -277,17 +320,26 @@ impl SettingsModel {
                 };
                 let more = match result {
                     Ok(()) => {
-                        model.last_error = None;
+                        // Only a write's own failure is cleared by the next
+                        // write that lands; another action's stays.
+                        if std::mem::take(&mut model.write_failed) {
+                            model.last_error = None;
+                        }
                         draft.wrote(settings)
                     }
                     Err(e) => {
                         model.last_error = Some(describe(&e).into());
+                        model.write_failed = true;
                         draft.failed()
                     }
                 };
                 model.redraw(cx);
                 if more {
                     model.write(cx);
+                } else {
+                    for then in std::mem::take(&mut model.written) {
+                        then(model, cx);
+                    }
                 }
             })
             .ok();
@@ -337,6 +389,7 @@ impl SettingsModel {
         self.next_task += 1;
         // A result stays until the next action, an error too.
         self.last_error = None;
+        self.write_failed = false;
         self.last_result = None;
         self.dismissal = None;
         self.running.push((id, uses, label.into()));
@@ -391,7 +444,8 @@ impl SettingsModel {
                 }
             }
         });
-        self.scan(false, cx);
+        // The scan reads the folders from the file, so it waits for them.
+        self.when_written(cx, |model, cx| model.scan(false, cx));
     }
 
     /// Stops scanning a folder, and with `forget`, removes what it put in the
@@ -412,7 +466,11 @@ impl SettingsModel {
             cx,
             move |engine| engine.forget_folder(path),
             |model, result, cx| match result {
-                Ok(n) => model.done(format!("Forgot {} tracks", count(n)), cx),
+                Ok(n) => {
+                    // Their album ids go to whatever is scanned next.
+                    crate::covers::Covers::purge(cx);
+                    model.done(format!("Forgot {} tracks", count(n)), cx);
+                }
                 Err(e) => model.report(describe(&e), cx),
             },
         );
@@ -465,6 +523,9 @@ impl SettingsModel {
             },
             move |model, result, cx| match result {
                 Ok(()) => {
+                    // Another server's library replaces the one before, and
+                    // takes its album ids.
+                    crate::covers::Covers::purge(cx);
                     model.done(format!("Signed in to {shown}"), cx);
                     model.load_library(cx);
                 }
@@ -483,6 +544,7 @@ impl SettingsModel {
             move |engine| engine.join_invite(invite),
             move |model, result, cx| match result {
                 Ok(()) => {
+                    crate::covers::Covers::purge(cx);
                     model.done(format!("Signed in to {host}"), cx);
                     model.load_library(cx);
                 }

@@ -66,10 +66,16 @@ impl People {
     fn load(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.clone();
         self.loading = Some(cx.spawn(async move |this, cx| {
-            // Refused to anyone not an admin: no list, and no People tab.
-            let accounts = engine.server_accounts().await.ok();
+            let asked = engine.server_accounts().await;
             this.update(cx, |people, cx| {
-                people.accounts = accounts;
+                match asked {
+                    Ok(accounts) => people.accounts = Some(accounts),
+                    // Refused to anyone not an admin: no list, and no People
+                    // tab.
+                    Err(KoanError::Refused { .. }) => people.accounts = None,
+                    // Not reached this time: the list shown stays, with why.
+                    Err(e) => people.error = Some(describe(&e)),
+                }
                 cx.notify();
             })
             .ok();

@@ -130,10 +130,16 @@ impl RenderOnce for Slider {
                         // handler sees it: a release the window never heard
                         // (let go outside it, on some platforms) must not
                         // leave the next drag elsewhere moving this slider.
-                        window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Capture && event.button == MouseButton::Left
+                        let lost = on_commit.clone();
+                        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Capture
+                                && event.button == MouseButton::Left
+                                && starting.update(cx, |d, _| std::mem::replace(d, false))
+                                && let Some(commit) = &lost
                             {
-                                starting.update(cx, |d, _| *d = false);
+                                // The drag ended where the window did not
+                                // hear it: what it reached is committed.
+                                commit(&(), window, cx);
                             }
                         });
                         // In the capture phase, which runs in paint order:

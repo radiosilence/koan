@@ -642,13 +642,17 @@ impl ServerPane {
 
 /// A server's host, from its address.
 pub fn host(url: &str) -> String {
-    url.split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split(['/', ':'])
-        .next()
-        .unwrap_or(url)
-        .to_owned()
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    // An IPv6 literal is bracketed, and its colons are not a port's.
+    if authority.starts_with('[') {
+        return authority
+            .split_inclusive(']')
+            .next()
+            .unwrap_or(authority)
+            .to_owned();
+    }
+    authority.split(':').next().unwrap_or(authority).to_owned()
 }
 
 fn host_of(settings: &Settings) -> String {
@@ -841,5 +845,6 @@ mod tests {
         assert_eq!(host("https://music.example.com/"), "music.example.com");
         assert_eq!(host("http://10.0.0.2:4533"), "10.0.0.2");
         assert_eq!(host("music.local"), "music.local");
+        assert_eq!(host("http://[fe80::1]:4533/rest"), "[fe80::1]");
     }
 }

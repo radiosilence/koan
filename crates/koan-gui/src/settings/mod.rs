@@ -51,6 +51,22 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         sharing,
         window: None,
     });
+    // Quitting with a device waiting to pair declines it rather than leaving
+    // it waiting; the answer is sent as the app goes, if it can be.
+    cx.on_app_quit(|cx| {
+        if let Some(handle) = cx.global::<Settings>().window {
+            handle
+                .update(cx, |root, window, cx| {
+                    if let Ok(view) = root.view().clone().downcast::<SettingsWindow>() {
+                        let sheets = view.read(cx).ctx.sheets.clone();
+                        answer_unanswered(&sheets, window, cx);
+                    }
+                })
+                .ok();
+        }
+        async {}
+    })
+    .detach();
     // `appearance` waits for saves still landing, so it is read off the
     // main thread.
     let read = cx
@@ -206,11 +222,6 @@ impl SettingsWindow {
             _subscriptions: subscriptions,
         };
         this.follow_account(window, cx);
-        if let Some(sheet) = this.ctx.model.update(cx, |m, _| m.unseen.take()) {
-            this.ctx
-                .sheets
-                .update(cx, |s, cx| s.show(sheet, window, cx));
-        }
         this
     }
 
@@ -258,6 +269,12 @@ impl SettingsWindow {
         // gives way to the server's.
         if !self.tabs(cx).contains(&self.tab) {
             self.show(Tab::Server, window, cx);
+        }
+        // A key made in a window that closed before it could show it.
+        if let Some(sheet) = self.ctx.model.update(cx, |m, _| m.unseen.take()) {
+            self.ctx
+                .sheets
+                .update(cx, |s, cx| s.show(sheet, window, cx));
         }
         cx.notify();
     }
