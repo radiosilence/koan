@@ -1453,6 +1453,11 @@ pub enum EqFilterKind {
 }
 
 impl EqFilterKind {
+    /// The kind written `name` in the config.
+    pub fn named(name: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(name.into())).ok()
+    }
+
     /// As written in the config.
     pub fn name(self) -> &'static str {
         match self {

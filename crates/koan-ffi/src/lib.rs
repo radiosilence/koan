@@ -469,6 +469,68 @@ pub fn format_pair_code(typed: String) -> String {
     koan_core::remote::pair::format_code(&typed)
 }
 
+/// The ranges a band edited by hand is held to, and the band types it can
+/// be: what an EQ editor clamps to and offers, so it never shows a value a
+/// save would change.
+#[uniffi::export]
+pub fn dsp_band_bounds() -> DspBandBounds {
+    use koan_core::audio::dsp::edit::{BAND_DB, BAND_HZ, BAND_KINDS, BAND_Q};
+    DspBandBounds {
+        hz_min: *BAND_HZ.start(),
+        hz_max: *BAND_HZ.end(),
+        db_min: *BAND_DB.start(),
+        db_max: *BAND_DB.end(),
+        q_min: *BAND_Q.start(),
+        q_max: *BAND_Q.end(),
+        kinds: BAND_KINDS
+            .iter()
+            .map(|k| DspBandKind {
+                id: k.id.into(),
+                short: k.short.into(),
+                name: k.name.into(),
+                draggable: k.draggable,
+            })
+            .collect(),
+    }
+}
+
+/// The curve `points` pulled toward `db` at `hz` by `brush`: a step of
+/// painting a graphic EQ on its graph.
+#[uniffi::export]
+pub fn dsp_paint_curve(points: Vec<DspPoint>, hz: f64, db: f64, brush: DspBrush) -> Vec<DspPoint> {
+    let points: Vec<(f64, f64)> = points.iter().map(|p| (p.hz, p.db)).collect();
+    koan_core::audio::dsp::edit::paint(&points, hz, db, brush.into())
+        .into_iter()
+        .map(|(hz, db)| DspPoint { hz, db })
+        .collect()
+}
+
+/// A band's Q widened or narrowed by a vertical drag of `dy` points from
+/// `start`, held to the range a band may have.
+#[uniffi::export]
+pub fn dsp_drag_q(start: f64, dy: f64) -> f64 {
+    koan_core::audio::dsp::edit::drag_q(start, dy)
+}
+
+/// What an EQ's page offers on a device for the profile `name` of `role`,
+/// where the device's correction is `active` and its filters hold the
+/// profile where `in_chain`.
+#[uniffi::export]
+pub fn dsp_device_action(
+    name: String,
+    role: DspRole,
+    active: Option<String>,
+    in_chain: bool,
+) -> DspDeviceAction {
+    koan_core::audio::dsp::profiles::DeviceAction::of(
+        &name,
+        role.into(),
+        active.as_deref(),
+        in_chain,
+    )
+    .into()
+}
+
 /// The heading over a section of an artist's records.
 #[uniffi::export]
 pub fn release_section_title(section: ReleaseSection) -> String {
@@ -3488,6 +3550,69 @@ impl KoanEngine {
             )
             .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// `dsp_set_band`, refused unless filter `index` is still `expected`,
+    /// the band as the caller last read it: an index names a place in the
+    /// list, and a filter added or removed elsewhere would put another
+    /// there. Returns the band as stored, which an edit following this one
+    /// expects.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dsp_edit_band(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        expected: DspBand,
+        kind: String,
+        freq: f64,
+        gain_db: f64,
+        q: f64,
+    ) -> Result<DspBand, KoanError> {
+        offload::sequenced(move || {
+            let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
+                message: format!("{name} band {} is not a band", index + 1),
+            })?;
+            let stored = koan_core::audio::dsp::profiles::edit_band(
+                &name,
+                index as usize,
+                Some(&expected),
+                &kind,
+                freq,
+                gain_db,
+                q,
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(stored.into())
+        })
+        .await
+    }
+
+    /// `dsp_set_curve`, refused unless filter `index` is still `expected`,
+    /// as `dsp_edit_band` is. Returns the curve as stored.
+    pub async fn dsp_edit_curve(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        expected: DspBand,
+        points: Vec<DspPoint>,
+    ) -> Result<DspBand, KoanError> {
+        offload::sequenced(move || {
+            let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
+                message: format!("{name} filter {} is not a curve", index + 1),
+            })?;
+            let points: Vec<(f64, f64)> = points.iter().map(|p| (p.hz, p.db)).collect();
+            let stored = koan_core::audio::dsp::profiles::edit_curve(
+                &name,
+                index as usize,
+                Some(&expected),
+                &points,
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(stored.into())
         })
         .await
     }

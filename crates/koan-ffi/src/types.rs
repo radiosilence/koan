@@ -1634,6 +1634,10 @@ pub struct DspOverview {
     /// The output plays filters alone: no correction, nothing matched to a
     /// target.
     pub filters_only: bool,
+    /// The correction aims at a target and the EQs that play meet it
+    /// without conversion, so the chain is drawn as matched.
+    #[uniffi(default = false)]
+    pub matched: bool,
 }
 
 /// What a device is set to, for a menu of presets.
@@ -2055,6 +2059,97 @@ impl From<koan_core::config::DspFilter> for DspBand {
     }
 }
 
+impl DspBand {
+    /// The band or curve as the config holds it, for an edit to name the
+    /// filter it last saw. None for delays and mixes, which are not edited
+    /// by hand, and for a type the config does not know.
+    pub fn to_filter(&self) -> Option<koan_core::config::DspFilter> {
+        use koan_core::config::{DspFilter, EqFilter, GraphicEq};
+        let channels = self.channels.clone();
+        match self.kind.as_str() {
+            "delay" | "mix" => None,
+            "graphic" => Some(DspFilter::Graphic(GraphicEq {
+                points: self.curve.iter().map(|p| (p.hz, p.db)).collect(),
+                channels,
+            })),
+            kind => Some(DspFilter::Band(EqFilter {
+                kind: koan_core::config::EqFilterKind::named(kind)?,
+                freq: self.freq,
+                gain_db: self.gain_db,
+                q: self.q,
+                channels,
+            })),
+        }
+    }
+}
+
+/// The ranges a band edited by hand is held to, and the band types that can
+/// be chosen, from `koan_core::audio::dsp::edit`.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspBandBounds {
+    pub hz_min: f64,
+    pub hz_max: f64,
+    pub db_min: f64,
+    pub db_max: f64,
+    pub q_min: f64,
+    pub q_max: f64,
+    /// In the order a menu lists them.
+    pub kinds: Vec<DspBandKind>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspBandKind {
+    /// Its name in the config, as `DspBand::kind` holds it.
+    pub id: String,
+    /// What a dense table shows, such as "PK".
+    pub short: String,
+    /// What a menu shows, such as "Peak".
+    pub name: String,
+    /// A graph draws a handle for it: it has a gain to drag.
+    pub draggable: bool,
+}
+
+/// How much of a graphic curve a stroke pulls.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DspBrush {
+    Point,
+    Narrow,
+    Wide,
+}
+
+impl From<DspBrush> for koan_core::audio::dsp::edit::Brush {
+    fn from(b: DspBrush) -> Self {
+        match b {
+            DspBrush::Point => Self::Point,
+            DspBrush::Narrow => Self::Narrow,
+            DspBrush::Wide => Self::Wide,
+        }
+    }
+}
+
+/// The one thing an EQ's page offers on a device.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DspDeviceAction {
+    StopCorrecting,
+    MoveToFilters,
+    TakeOutOfFilters,
+    AddToFilters,
+    Correct,
+}
+
+impl From<koan_core::audio::dsp::profiles::DeviceAction> for DspDeviceAction {
+    fn from(a: koan_core::audio::dsp::profiles::DeviceAction) -> Self {
+        use koan_core::audio::dsp::profiles::DeviceAction;
+        match a {
+            DeviceAction::StopCorrecting => Self::StopCorrecting,
+            DeviceAction::MoveToFilters => Self::MoveToFilters,
+            DeviceAction::TakeOutOfFilters => Self::TakeOutOfFilters,
+            DeviceAction::AddToFilters => Self::AddToFilters,
+            DeviceAction::Correct => Self::Correct,
+        }
+    }
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct DspImpulse {
     pub file: String,
@@ -2140,6 +2235,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
         Self {
             enabled: o.enabled,
             filters_only: o.filters_only,
+            matched: o.matched,
             names: Default::default(),
             device: o.device,
             active: o.active,
