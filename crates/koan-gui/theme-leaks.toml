@@ -117,7 +117,7 @@ number = 2
 number = 1
 
 ["transport.rs"]
-number = 16
+number = 4
 
 ["window_state.rs"]
 number = 4
