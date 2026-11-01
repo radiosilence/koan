@@ -316,12 +316,12 @@ impl Covers {
             // rather than one at a time.
             while let Some(first) = rx.next().await {
                 let mut batch = vec![first];
-                while let Ok(Some(more)) = rx.try_next() {
+                while let Ok(more) = rx.try_recv() {
                     batch.push(more);
                 }
                 let landed = this.update(cx, |covers, cx| {
                     for done in batch {
-                        covers.land(done, cx);
+                        covers.land(done);
                     }
                     cx.notify();
                 });
@@ -522,7 +522,7 @@ impl Covers {
         self.shared.wake(fetches, decodes);
     }
 
-    fn land(&mut self, done: Done, cx: &mut Context<Self>) {
+    fn land(&mut self, done: Done) {
         match done {
             Done::Decoded {
                 key,
