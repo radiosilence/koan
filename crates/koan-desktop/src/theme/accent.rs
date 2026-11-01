@@ -60,11 +60,19 @@ const NO_HUE: f64 = 0.04;
 impl Accent {
     pub const MINT: Accent = Accent {
         dark: Shade {
-            rgb: [0x7D as f64 / 255.0, 0xD3 as f64 / 255.0, 0xA7 as f64 / 255.0],
+            rgb: [
+                0x7D as f64 / 255.0,
+                0xD3 as f64 / 255.0,
+                0xA7 as f64 / 255.0,
+            ],
             reads_as_text: true,
         },
         light: Shade {
-            rgb: [0x1F as f64 / 255.0, 0x7A as f64 / 255.0, 0x50 as f64 / 255.0],
+            rgb: [
+                0x1F as f64 / 255.0,
+                0x7A as f64 / 255.0,
+                0x50 as f64 / 255.0,
+            ],
             reads_as_text: true,
         },
     };
@@ -77,8 +85,7 @@ impl Accent {
     /// record, or one with no colour. Worked out once per colour, so the same
     /// record always gives the same value.
     pub fn of(record: Option<[f64; 3]>) -> Accent {
-        static CACHE: LazyLock<Mutex<HashMap<[u64; 3], Accent>>> =
-            LazyLock::new(Default::default);
+        static CACHE: LazyLock<Mutex<HashMap<[u64; 3], Accent>>> = LazyLock::new(Default::default);
         let Some(record) = record else {
             return Accent::MINT;
         };
@@ -271,7 +278,10 @@ pub mod oklch {
     pub fn to_srgb(l: f64, c: f64, h: f64) -> [f64; 3] {
         let mut chroma = c;
         loop {
-            let (a, b) = (chroma * (h * PI / 180.0).cos(), chroma * (h * PI / 180.0).sin());
+            let (a, b) = (
+                chroma * (h * PI / 180.0).cos(),
+                chroma * (h * PI / 180.0).sin(),
+            );
             let lin = linear_from_lab([l, a, b]);
             let inside = lin.iter().all(|v| (-0.0001..=1.0001).contains(v));
             if inside || chroma <= 0.0 {
@@ -388,7 +398,10 @@ mod tests {
 
     #[test]
     fn grey_and_black_sleeves_give_mint() {
-        assert_eq!(Accent::of_sleeve(&solid(128, 128, 128), 64, 64), Accent::MINT);
+        assert_eq!(
+            Accent::of_sleeve(&solid(128, 128, 128), 64, 64),
+            Accent::MINT
+        );
         assert_eq!(Accent::of_sleeve(&solid(0, 0, 0), 64, 64), Accent::MINT);
         assert_eq!(Accent::of(None), Accent::MINT);
     }

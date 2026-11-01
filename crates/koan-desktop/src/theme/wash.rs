@@ -20,8 +20,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage,
-    Styled, Window, canvas, div, point, px, size,
+    App, Bounds, Context, Corners, IntoElement, ParentElement, Pixels, Render, RenderImage, Styled,
+    Window, canvas, div, point, px, size,
 };
 use smallvec::SmallVec;
 
@@ -73,22 +73,41 @@ impl Tone {
 /// A decoded sleeve, as straight-alpha RGBA.
 #[derive(Clone)]
 pub struct Sleeve {
-    pub rgba: Arc<[u8]>,
-    pub width: u32,
-    pub height: u32,
+    rgba: Arc<[u8]>,
+    width: u32,
+    height: u32,
+}
+
+impl Sleeve {
+    /// `None` unless `rgba` holds exactly `width` × `height` pixels.
+    pub fn new(rgba: Arc<[u8]>, width: u32, height: u32) -> Option<Sleeve> {
+        let pixels = width as usize * height as usize;
+        (pixels > 0 && rgba.len() == pixels * 4).then_some(Sleeve {
+            rgba,
+            width,
+            height,
+        })
+    }
+
+    fn same(&self, other: &Sleeve) -> bool {
+        Arc::ptr_eq(&self.rgba, &other.rgba)
+    }
 }
 
 /// The sleeve baked into the wash for one appearance: `hold` is the person's
 /// "theme tint", how far each sample moves toward the tone's limit, from 1,
 /// all the way, to 0, the sleeve's own colour. Returns BGRA pixels, as GPUI's
 /// image sprites take them.
-pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> Option<image::RgbaImage> {
-    let source = image::RgbaImage::from_raw(sleeve.width, sleeve.height, sleeve.rgba.to_vec())?;
+pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
+    let source = image::RgbaImage::from_raw(sleeve.width, sleeve.height, sleeve.rgba.to_vec())
+        .expect("a sleeve is made with its length checked");
     let small = image::imageops::resize(&source, SIDE, SIDE, image::imageops::FilterType::Triangle);
     let tone = if dark { Tone::Dark } else { Tone::Light };
     let ground = Palette::of(dark).bg.channels();
     let n = (SIDE * SIDE) as usize;
-    let decode: Vec<f64> = (0..256).map(|v| super::accent::oklch::linear(v as f64 / 255.0)).collect();
+    let decode: Vec<f64> = (0..256)
+        .map(|v| super::accent::oklch::linear(v as f64 / 255.0))
+        .collect();
 
     let (mut r, mut g, mut b) = (vec![0.0; n], vec![0.0; n], vec![0.0; n]);
     for (i, pixel) in small.pixels().enumerate() {
@@ -131,9 +150,14 @@ pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> Option<image::RgbaImage> 
         let mix = |ground: u8, wash: u8| {
             (ground as f32 + (wash as f32 - ground as f32) * STRENGTH + 0.5).clamp(0.0, 255.0) as u8
         };
-        pixel.0 = [mix(ground[2], wb), mix(ground[1], wg), mix(ground[0], wr), 255];
+        pixel.0 = [
+            mix(ground[2], wb),
+            mix(ground[1], wg),
+            mix(ground[0], wr),
+            255,
+        ];
     }
-    Some(out)
+    out
 }
 
 fn encode(v: f64) -> u8 {
@@ -173,7 +197,8 @@ fn boxed(line: &[f64], mut set: impl FnMut(usize, f64)) {
 
 /// Whether the system lets the wash move: Reduce Motion off and, on a Mac,
 /// Low Power Mode off. The caller adds the rest of the rule (something
-/// playing, the graphics setting) and passes the answer to `Wash::drift`.
+/// playing, the graphics setting) through `Wash::drift`; the wash reads this
+/// itself as it draws, so a change of either setting lands on the next frame.
 pub fn motion_allowed(cx: &App) -> bool {
     #[cfg(target_os = "macos")]
     let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
@@ -200,6 +225,15 @@ impl Ramp {
         now.duration_since(self.started) < EASE
     }
 
+    /// Standing at `value`, not moving.
+    fn still(value: f32, now: Instant) -> Ramp {
+        Ramp {
+            from: value,
+            to: value,
+            started: now - EASE,
+        }
+    }
+
     fn toward(self, to: f32, now: Instant) -> Ramp {
         Ramp {
             from: self.at(now),
@@ -217,42 +251,46 @@ struct Texture {
     hold: u32,
 }
 
+/// A texture on screen and its opacity over time.
+struct Layer<T> {
+    texture: T,
+    opacity: Ramp,
+}
+
 pub struct Wash {
     sleeve: Option<Sleeve>,
     /// Which sleeve is set: a bake for an earlier one is dropped.
     generation: u64,
-    /// A bake running, for (generation, dark, hold).
-    baking: Option<(u64, bool, u32)>,
-    current: Option<Texture>,
-    previous: Option<Arc<RenderImage>>,
-    /// The new record's opacity, or the old one's absence when there is none.
-    fade: Ramp,
+    /// The bake running, or the last one tried, as (generation, dark, hold).
+    baked: Option<(u64, bool, u32)>,
+    current: Option<Layer<Texture>>,
+    /// The record before, held under the current one while it dissolves in,
+    /// or fading out to the bare ground when there is none.
+    previous: Option<Layer<Arc<RenderImage>>>,
+    /// Whether the caller wants the drift: something playing, and the
+    /// graphics setting allowing it.
+    wanted: bool,
     /// How far the drift is drawn, from 0, at rest, to 1.
     amplitude: Ramp,
     /// The drift's clock: its phase is the time since, never a frame count,
     /// so frames the system skips (an occluded window) cost no motion.
     epoch: Instant,
     hold: u32,
-    /// Textures the atlas no longer needs, released on the next frame.
+    /// Textures the atlas no longer needs.
     released: Vec<Arc<RenderImage>>,
 }
 
 impl Wash {
     pub fn new() -> Self {
         let now = Instant::now();
-        let rest = Ramp {
-            from: 0.0,
-            to: 0.0,
-            started: now - EASE,
-        };
         Self {
             sleeve: None,
             generation: 0,
-            baking: None,
+            baked: None,
             current: None,
             previous: None,
-            fade: Ramp { to: 1.0, ..rest },
-            amplitude: rest,
+            wanted: false,
+            amplitude: Ramp::still(0.0, now),
             epoch: now,
             hold: 100,
             released: Vec::new(),
@@ -263,22 +301,29 @@ impl Wash {
     /// art, which fades the wash out to the bare ground. A sleeve still being
     /// fetched is not `None`: leave the wash as it is until it arrives.
     pub fn set_sleeve(&mut self, sleeve: Option<Sleeve>, cx: &mut Context<Self>) {
+        let unchanged = match (&self.sleeve, &sleeve) {
+            (Some(a), Some(b)) => a.same(b),
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return;
+        }
         self.sleeve = sleeve;
         self.generation += 1;
-        self.baking = None;
         if self.sleeve.is_none() {
             self.install(None, true);
         }
         cx.notify();
     }
 
-    /// Whether the wash drifts: something playing, and `motion_allowed`, and
-    /// the graphics setting allowing it. Starting and stopping ease over two
-    /// seconds from wherever the drift stands.
-    pub fn drift(&mut self, drifts: bool, cx: &mut Context<Self>) {
-        let target = if drifts { 1.0 } else { 0.0 };
-        if self.amplitude.to != target {
-            self.amplitude = self.amplitude.toward(target, Instant::now());
+    /// Whether the wash should drift: something playing, and the graphics
+    /// setting allowing it. Reduce Motion and Low Power Mode are read as it
+    /// draws (`motion_allowed`). Starting and stopping ease over two seconds
+    /// from wherever the drift stands.
+    pub fn drift(&mut self, wanted: bool, cx: &mut Context<Self>) {
+        if self.wanted != wanted {
+            self.wanted = wanted;
             cx.notify();
         }
     }
@@ -290,28 +335,45 @@ impl Wash {
         cx.notify();
     }
 
-    /// Puts a texture on. A new record dissolves in over the old; the same
-    /// record rebaked for another appearance or tint replaces it at once.
+    /// Puts a texture on, or takes the wash off with `None`. A new record
+    /// dissolves in over the old; the same record rebaked for another
+    /// appearance or tint replaces everything at once, since a texture of the
+    /// old appearance must not linger under the new.
     fn install(&mut self, texture: Option<Texture>, dissolve: bool) {
         let now = Instant::now();
-        let outgoing = self.current.take().map(|t| t.image);
-        if dissolve {
-            // With nothing on, `previous` may still be fading out a record
-            // before that; it carries on underneath.
-            if let Some(outgoing) = outgoing
-                && let Some(old) = self.previous.replace(outgoing)
-            {
-                self.released.push(old);
-            }
-            self.fade = Ramp {
-                from: 0.0,
-                to: 1.0,
-                started: now,
-            };
-        } else {
-            self.released.extend(outgoing);
+        let outgoing = self.current.take();
+        if !dissolve {
+            self.released
+                .extend(outgoing.map(|layer| layer.texture.image));
+            self.released
+                .extend(self.previous.take().map(|layer| layer.texture));
+            self.current = texture.map(|texture| Layer {
+                texture,
+                opacity: Ramp::still(1.0, now),
+            });
+            return;
         }
-        self.current = texture;
+        if let Some(outgoing) = outgoing {
+            // Held where it stood under the new record, or faded out to the
+            // ground when there is none.
+            let stood = outgoing.opacity.at(now);
+            let opacity = if texture.is_some() {
+                Ramp::still(stood, now)
+            } else {
+                Ramp::still(stood, now).toward(0.0, now)
+            };
+            let held = Layer {
+                texture: outgoing.texture.image,
+                opacity,
+            };
+            self.released
+                .extend(self.previous.replace(held).map(|layer| layer.texture));
+        }
+        // With no record on before, `previous` keeps fading as it was.
+        self.current = texture.map(|texture| Layer {
+            texture,
+            opacity: Ramp::still(0.0, now).toward(1.0, now),
+        });
     }
 
     fn start_bake(&mut self, dark: bool, cx: &mut Context<Self>) {
@@ -319,10 +381,10 @@ impl Wash {
             return;
         };
         let key = (self.generation, dark, self.hold);
-        if self.baking == Some(key) {
+        if self.baked == Some(key) {
             return;
         }
-        self.baking = Some(key);
+        self.baked = Some(key);
         let hold = self.hold;
         let task = cx
             .background_executor()
@@ -330,18 +392,17 @@ impl Wash {
         cx.spawn(async move |wash, cx| {
             let baked = task.await;
             wash.update(cx, |wash, cx| {
-                if wash.baking != Some(key) {
+                if wash.generation != key.0 || wash.baked != Some(key) {
                     return;
                 }
-                wash.baking = None;
-                let Some(baked) = baked else {
-                    return;
-                };
                 let same_record = wash
                     .current
                     .as_ref()
-                    .is_some_and(|texture| texture.generation == key.0);
-                let image = Arc::new(RenderImage::new(SmallVec::from_elem(image::Frame::new(baked), 1)));
+                    .is_some_and(|layer| layer.texture.generation == key.0);
+                let image = Arc::new(RenderImage::new(SmallVec::from_elem(
+                    image::Frame::new(baked),
+                    1,
+                )));
                 let texture = Texture {
                     image,
                     generation: key.0,
@@ -371,10 +432,7 @@ impl Wash {
         let scale = 1.0 + (FAR / NEAR - 1.0) * swing(t, SCALE_PERIOD);
         // Half a swing in, so the travel starts from the middle of the page.
         let travel = 2.0 * swing(t + TRAVEL_PERIOD / 2.0, TRAVEL_PERIOD) - 1.0;
-        (
-            1.0 + (scale - 1.0) * amplitude,
-            travel * amplitude,
-        )
+        (1.0 + (scale - 1.0) * amplitude, travel * amplitude)
     }
 }
 
@@ -401,37 +459,67 @@ impl Render for Wash {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = Instant::now();
         let look = Look::of(window, cx);
-        for image in self.released.drain(..) {
-            window.drop_image(image).ok();
-        }
         let stale = match &self.current {
-            Some(texture) => {
-                texture.generation != self.generation
-                    || texture.dark != look.dark
-                    || texture.hold != self.hold
+            Some(layer) => {
+                layer.texture.generation != self.generation
+                    || layer.texture.dark != look.dark
+                    || layer.texture.hold != self.hold
             }
             None => true,
         };
         if stale && self.sleeve.is_some() {
             self.start_bake(look.dark, cx);
         }
-        let fade = self.fade.at(now);
-        if !self.fade.moving(now)
-            && let Some(old) = self.previous.take()
-        {
-            // At rest only one texture is drawn.
-            self.released.push(old);
+        // At rest only one texture is drawn: the one beneath goes once the
+        // current one is opaque, or once it has faded out to the ground.
+        let covered = self
+            .current
+            .as_ref()
+            .is_some_and(|layer| !layer.opacity.moving(now));
+        let faded = self
+            .previous
+            .as_ref()
+            .is_some_and(|layer| !layer.opacity.moving(now) && layer.opacity.at(now) <= 0.0);
+        if covered || faded {
+            self.released
+                .extend(self.previous.take().map(|layer| layer.texture));
         }
-        let (scale, travel) = self.pose(now);
-        if self.fade.moving(now) || self.amplitude.moving(now) || self.amplitude.to > 0.0 {
+        for image in self.released.drain(..) {
+            // After the frame that last drew it.
+            window.on_next_frame(move |window, _| {
+                window.drop_image(image).ok();
+            });
+        }
+
+        let shown = self.current.is_some() || self.previous.is_some();
+        let target = if self.wanted && shown && motion_allowed(cx) {
+            1.0
+        } else {
+            0.0
+        };
+        if self.amplitude.to != target {
+            self.amplitude = self.amplitude.toward(target, now);
+        }
+        let moving = self.amplitude.moving(now)
+            || (shown && self.amplitude.to > 0.0)
+            || self.current.as_ref().is_some_and(|l| l.opacity.moving(now))
+            || self
+                .previous
+                .as_ref()
+                .is_some_and(|l| l.opacity.moving(now));
+        if moving {
             window.request_animation_frame();
         }
+        let (scale, travel) = self.pose(now);
 
         let layer = |image: Arc<RenderImage>, opacity: f32| {
             div().absolute().size_full().opacity(opacity).child(
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, _| {
+                        // The whole square, unclipped: a sub-rectangle of a
+                        // sprite is cut on whole texels, which at this
+                        // magnification would move the drift in steps.
                         let square = square(bounds, scale, travel);
                         window
                             .paint_image(square, square, Corners::default(), image, 0, false)
@@ -441,19 +529,21 @@ impl Render for Wash {
                 .size_full(),
             )
         };
-        let current = self.current.as_ref().map(|t| t.image.clone());
-        let previous_opacity = if current.is_some() { 1.0 } else { 1.0 - fade };
+        let previous = self
+            .previous
+            .as_ref()
+            .map(|l| (l.texture.clone(), l.opacity.at(now)))
+            .filter(|(_, opacity)| *opacity > 0.0);
+        let current = self
+            .current
+            .as_ref()
+            .map(|l| (l.texture.image.clone(), l.opacity.at(now)));
         div()
             .size_full()
             .overflow_hidden()
             .bg(look.palette.bg.hsla())
-            .children(
-                self.previous
-                    .clone()
-                    .filter(|_| previous_opacity > 0.0)
-                    .map(|image| layer(image, previous_opacity)),
-            )
-            .children(current.map(|image| layer(image, fade)))
+            .children(previous.map(|(image, opacity)| layer(image, opacity)))
+            .children(current.map(|(image, opacity)| layer(image, opacity)))
     }
 }
 
@@ -462,11 +552,7 @@ mod tests {
     use super::*;
 
     fn solid(r: u8, g: u8, b: u8) -> Sleeve {
-        Sleeve {
-            rgba: [r, g, b, 255].repeat(64 * 64).into(),
-            width: 64,
-            height: 64,
-        }
+        Sleeve::new([r, g, b, 255].repeat(64 * 64).into(), 64, 64).unwrap()
     }
 
     fn y(pixel: [u8; 4]) -> f64 {
@@ -476,7 +562,7 @@ mod tests {
 
     #[test]
     fn baked_red_stays_red_in_bgra() {
-        let baked = bake(&solid(220, 20, 20), true, 1.0).unwrap();
+        let baked = bake(&solid(220, 20, 20), true, 1.0);
         let [b, _, r, a] = baked.get_pixel(64, 64).0;
         assert!(r > b, "red {r} blue {b}");
         assert_eq!(a, 255);
@@ -485,12 +571,25 @@ mod tests {
     #[test]
     fn a_white_sleeve_is_held_under_the_dark_limit_and_light_over_its() {
         // Over bg at 0.6, every sample stays dim enough for muted text.
-        let dark = bake(&solid(255, 255, 255), true, 1.0).unwrap();
+        let dark = bake(&solid(255, 255, 255), true, 1.0);
         let muted = 0.2831;
         let contrast = (muted + 0.05) / (y(dark.get_pixel(10, 10).0) + 0.05);
         assert!(contrast >= 4.5, "contrast {contrast}");
-        let light = bake(&solid(0, 0, 0), false, 1.0).unwrap();
-        assert!(y(light.get_pixel(10, 10).0) >= 0.88, "light wash too dark");
+        // Over white at 0.6, as light as `surface` (Y 0.888) at least.
+        let light = bake(&solid(0, 0, 0), false, 1.0);
+        let surface = super::super::accent::oklch::luminance(
+            Palette::LIGHT.surface.channels().map(|v| v as f64 / 255.0),
+        );
+        assert!(
+            y(light.get_pixel(10, 10).0) >= surface - 0.005,
+            "light wash too dark"
+        );
+    }
+
+    #[test]
+    fn a_sleeve_must_hold_its_pixels() {
+        assert!(Sleeve::new([0u8; 7].into(), 2, 1).is_none());
+        assert!(Sleeve::new([0u8; 0].into(), 0, 0).is_none());
     }
 
     #[test]

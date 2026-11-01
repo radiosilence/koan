@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use gpui_kit::{
-    App, Context, Global, Hsla, Pixels, SharedString, Styled, Subscription, Window, WindowAppearance,
-    WindowId, px,
+    App, Context, Global, Hsla, Pixels, SharedString, Styled, Subscription, Window,
+    WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, AccentState, Shade};
@@ -49,8 +49,6 @@ pub struct KoanTheme {
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
     pinned: HashMap<WindowId, bool>,
-    /// Whether gpui-component's theme has the settled accent.
-    components_settled: bool,
 }
 
 impl Global for KoanTheme {}
@@ -62,7 +60,6 @@ impl Default for KoanTheme {
             icons: true,
             accent: AccentState::default(),
             pinned: HashMap::new(),
-            components_settled: true,
         }
     }
 }
@@ -92,7 +89,10 @@ pub fn init(cx: &mut App) {
 /// stays frontmost, and that change lands on the next activation. Every
 /// window's root calls this, so any window coming forward re-reads it. Hold
 /// the returned subscriptions as long as the window.
-pub fn follow_appearance<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> [Subscription; 2] {
+pub fn follow_appearance<V: 'static>(
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> [Subscription; 2] {
     [
         cx.observe_window_appearance(window, |_, window, cx| {
             sync_components(Look::of(window, cx).dark, cx);
@@ -118,8 +118,8 @@ fn is_dark(appearance: WindowAppearance) -> bool {
 fn read_reduce_motion(cx: &mut App) {
     #[cfg(target_os = "macos")]
     {
-        let reduce = objc2_app_kit::NSWorkspace::sharedWorkspace()
-            .accessibilityDisplayShouldReduceMotion();
+        let reduce =
+            objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
         cx.set_reduce_motion(reduce);
     }
     #[cfg(not(target_os = "macos"))]
@@ -149,6 +149,14 @@ fn sync_components(dark: bool, cx: &mut App) {
     let palette = Palette::of(dark);
     let accent = koan.accent.at(Instant::now()).shade(dark).hsla();
     let size = TypeRole::Control.points() * Scale::of(koan.text_size).text;
+    let current = Theme::global(cx);
+    if current.colors.background == palette.bg.hsla()
+        && current.colors.caret == accent
+        && current.font_size == px(size)
+        && current.font_family.as_ref() == FONT_FAMILY
+    {
+        return;
+    }
     let theme = Theme::global_mut(cx);
     theme.font_family = FONT_FAMILY.into();
     theme.mono_font_family = FONT_FAMILY.into();
@@ -173,9 +181,9 @@ impl KoanTheme {
     /// every change lands.
     pub fn set_accent(accent: Accent, ease: bool, cx: &mut App) {
         let ease = ease && !cx.reduce_motion();
-        let theme = cx.global_mut::<KoanTheme>();
-        theme.accent.set(accent, ease, Instant::now());
-        theme.components_settled = false;
+        cx.global_mut::<KoanTheme>()
+            .accent
+            .set(accent, ease, Instant::now());
         cx.refresh_windows();
     }
 
@@ -185,10 +193,8 @@ impl KoanTheme {
     }
 
     pub fn set_text_size(percent: u32, cx: &mut App) {
-        cx.global_mut::<KoanTheme>().text_size = percent.clamp(
-            *tokens::TEXT_SIZES.start(),
-            *tokens::TEXT_SIZES.end(),
-        );
+        cx.global_mut::<KoanTheme>().text_size =
+            percent.clamp(*tokens::TEXT_SIZES.start(), *tokens::TEXT_SIZES.end());
         sync_components(is_dark(cx.window_appearance()), cx);
         cx.refresh_windows();
     }
@@ -198,16 +204,15 @@ impl KoanTheme {
         cx.refresh_windows();
     }
 
-    /// Keeps frames coming while the accent settles, redrawing past cached
-    /// views. Called from a window's root view as it renders; costs nothing
-    /// once the accent is at rest.
+    /// What a window's root view calls as it renders: dresses gpui-component's
+    /// theme for this window (windows render one at a time, so each one's
+    /// text fields read their own appearance, and the caret follows the
+    /// accent as it settles), and keeps frames coming, past cached views,
+    /// while the accent settles. Costs a few assignments once it is at rest.
     pub fn drive(window: &mut Window, cx: &mut App) {
-        let theme = cx.global::<KoanTheme>();
-        if theme.accent.settling(Instant::now()) {
+        sync_components(Look::of(window, cx).dark, cx);
+        if cx.global::<KoanTheme>().accent.settling(Instant::now()) {
             window.on_next_frame(|window, _| window.refresh());
-        } else if !theme.components_settled {
-            sync_components(Look::of(window, cx).dark, cx);
-            cx.global_mut::<KoanTheme>().components_settled = true;
         }
     }
 }
@@ -285,7 +290,7 @@ impl Look {
 
 /// Type roles on any element.
 pub trait KoanStyled: Styled + Sized {
-    fn role(self, role: TypeRole, look: &Look) -> Self {
+    fn text_role(self, role: TypeRole, look: &Look) -> Self {
         self.font_family(FONT_FAMILY)
             .text_size(look.font_size(role))
             .font_weight(role.weight())

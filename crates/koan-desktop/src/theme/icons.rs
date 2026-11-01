@@ -91,9 +91,7 @@ fn path(icon: Icon, points: f32, layer: Layer) -> SharedString {
     PATHS
         .lock()
         .entry((icon, units, layer))
-        .or_insert_with(|| {
-            format!("{PREFIX}{}/{units}/{}", icon.glyph().name, layer.name()).into()
-        })
+        .or_insert_with(|| format!("{PREFIX}{}/{units}/{}", icon.glyph().name, layer.name()).into())
         .clone()
 }
 
@@ -294,7 +292,10 @@ mod tests {
                 let path = path(*icon, 12.9, layer);
                 let bytes = Assets.load(&path).unwrap().unwrap();
                 let text = std::str::from_utf8(&bytes).unwrap();
-                assert!(text.starts_with("<svg") && text.ends_with("</svg>"), "{path}");
+                assert!(
+                    text.starts_with("<svg") && text.ends_with("</svg>"),
+                    "{path}"
+                );
             }
         }
     }
