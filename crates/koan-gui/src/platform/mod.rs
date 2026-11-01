@@ -48,12 +48,24 @@ async fn restore_session(engine: &Arc<KoanEngine>) -> Option<u32> {
 }
 
 /// Links the platform asked the app to open that are not files, such as
-/// invites and pairings, oldest first. The shell takes them as they arrive
-/// (`cx.observe_global::<Links>`) and drains it.
+/// invites and pairings, oldest first. The shell takes them as they arrive:
+/// `cx.observe_global::<Links>` and `Links::take` in the observer.
 #[derive(Default)]
-pub struct Links(pub Vec<String>);
+pub struct Links(Vec<String>);
 
 impl Global for Links {}
+
+impl Links {
+    /// The links waiting, leaving none. Writes the global only when there is
+    /// something to take: any write notifies its observers, so an observer
+    /// that emptied an empty list would wake itself for ever.
+    pub fn take(cx: &mut App) -> Vec<String> {
+        if cx.try_global::<Links>().is_none_or(|l| l.0.is_empty()) {
+            return Vec::new();
+        }
+        std::mem::take(&mut cx.global_mut::<Links>().0)
+    }
+}
 
 /// Everything here that runs for the life of the app, started once the
 /// engine is open and before the window is. `opened` carries files and links
@@ -114,7 +126,10 @@ pub fn init(
                 to_front(cx);
                 match next {
                     Opened::Paths(paths) => drop::queue_files(&engine, paths, cx),
-                    Opened::Links(links) => cx.default_global::<Links>().0.extend(links),
+                    Opened::Links(links) if !links.is_empty() => {
+                        cx.default_global::<Links>().0.extend(links)
+                    }
+                    Opened::Links(_) => {}
                 }
             });
         }

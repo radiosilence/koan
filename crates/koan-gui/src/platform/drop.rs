@@ -29,15 +29,26 @@ pub const NOTHING_TO_PLAY: &str = "Nothing there kōan can play.";
 /// Imports under way, and what the last one had to say. A folder of a few
 /// hundred files takes long enough that a drop with no sign of life reads as
 /// one that missed, so the shell shows `running` as an activity ("Adding
-/// dropped files") and `problem` as the app's error line; it follows this
-/// with `cx.observe_global::<Imports>`.
+/// dropped files") and the problem as the app's error line; it follows this
+/// with `cx.observe_global::<Imports>`, reading `running` and calling
+/// `Imports::take_problem`.
 #[derive(Default)]
 pub struct Imports {
     pub running: usize,
-    pub problem: Option<String>,
+    problem: Option<String>,
 }
 
 impl Global for Imports {}
+
+impl Imports {
+    /// What the last import had to say, once. Writes the global only when
+    /// there is something to take: any write notifies its observers, so an
+    /// observer that cleared nothing would wake itself for ever.
+    pub fn take_problem(cx: &mut App) -> Option<String> {
+        cx.try_global::<Imports>()?.problem.as_ref()?;
+        cx.global_mut::<Imports>().problem.take()
+    }
+}
 
 /// Where a finished import's tracks go.
 enum Into {

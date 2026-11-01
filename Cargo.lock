@@ -4962,7 +4962,6 @@ dependencies = [
  "futures-channel",
  "futures-lite",
  "futures-util",
- "getrandom 0.4.3",
  "gpui-kit",
  "koan-core",
  "koan-ffi",
