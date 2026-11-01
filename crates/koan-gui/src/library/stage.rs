@@ -47,6 +47,11 @@ impl LibraryStage {
                 | Page::Album(_)
                 | Page::Artist(_)
                 | Page::Playlist(_)
+                | Page::History
+                | Page::Favourites
+                | Page::RecentlyPlayed
+                | Page::OnDevice
+                | Page::Downloads
         )
     }
 
@@ -75,6 +80,21 @@ impl LibraryStage {
             Page::Playlist(id) => cx
                 .new(|cx| crate::collections::playlist::PlaylistPage::new(lib, id, window, cx))
                 .into(),
+            Page::Downloads => cx
+                .new(|cx| crate::collections::downloads::DownloadsPage::new(lib, window, cx))
+                .into(),
+            Page::History => cx
+                .new(|cx| crate::collections::history::HistoryPage::new(lib, window, cx))
+                .into(),
+            Page::Favourites | Page::RecentlyPlayed | Page::OnDevice => {
+                use crate::collections::shelf::{Shelf, ShelfPage};
+                let shelf = match current {
+                    Page::Favourites => Shelf::Favourites,
+                    Page::RecentlyPlayed => Shelf::Recent,
+                    _ => Shelf::OnDevice,
+                };
+                cx.new(|cx| ShelfPage::new(lib, shelf, window, cx)).into()
+            }
             // The shell draws its own pages for every other route.
             _ => return None,
         };

@@ -14,12 +14,13 @@ use crate::theme::{self, KoanStyled, Space, TypeRole};
 
 pub const WIDTH: Pixels = px(220.);
 
-const LIBRARY: [(Route, &str); 7] = [
+const LIBRARY: [(Route, &str); 8] = [
     (Route::Albums, "albums"),
     (Route::Artists, "artists"),
     (Route::Tracks, "tracks"),
     (Route::Favourites, "favourites"),
     (Route::RecentlyPlayed, "recently played"),
+    (Route::OnDevice, "downloaded"),
     (Route::History, "history"),
     (Route::Downloads, "downloads"),
 ];

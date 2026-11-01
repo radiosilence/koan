@@ -139,6 +139,11 @@ impl Feed {
         }
     }
 
+    /// How many things are favourited: what a page listing them follows.
+    pub fn favourite_count(&self) -> usize {
+        self.favourites.len()
+    }
+
     pub fn is_favourite(&self, item: Playable) -> bool {
         self.favourites.contains(&item)
     }

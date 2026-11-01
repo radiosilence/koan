@@ -20,6 +20,7 @@ pub enum Route {
     Tracks,
     Favourites,
     RecentlyPlayed,
+    OnDevice,
     History,
     Downloads,
     Playlist(i64),

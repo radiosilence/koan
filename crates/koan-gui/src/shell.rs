@@ -236,6 +236,7 @@ impl Shell {
             Route::Tracks => "tracks",
             Route::Favourites => "favourites",
             Route::RecentlyPlayed => "recently played",
+            Route::OnDevice => "downloaded",
             Route::History => "history",
             Route::Downloads => "downloads",
             Route::Playlist(_) => "playlist",

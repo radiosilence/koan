@@ -7,7 +7,10 @@
 //! listed. What a page writes is asked first, through the one host here
 //! (`Asking`), which says what will change before anything does.
 
+pub mod downloads;
+pub mod history;
 pub mod playlist;
+pub mod shelf;
 
 use std::collections::HashSet;
 use std::rc::Rc;
