@@ -282,15 +282,6 @@ impl Shell {
                 },
             )
     }
-
-    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
-    /// and keeps the choice with the window's bounds.
-    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
-        self.sidebar_shown = !self.sidebar_shown;
-        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
-        window_state::save(window.window_bounds(), cx);
-        cx.notify();
-    }
 }
 
 impl Render for Shell {
