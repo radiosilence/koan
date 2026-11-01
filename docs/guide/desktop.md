@@ -42,7 +42,7 @@ A build from `main` can move the library database to a newer schema than the rel
 
 ## The window
 
-The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, the sleep timer and output menus, and EQ with the preset in use beside it. Each browser narrows its listing from the filter field in the toolbar. The window opens where it was left.
+The sidebar lists the queue, the library's sections and your playlists. Back and forward move through the pages visited, as a browser does, from the toolbar, with ⌘[ and ⌘] (Ctrl on Linux), or with a mouse's back and forward buttons. The transport runs along the foot: the record playing, the controls over the seek slider, the format, the sleep timer and output menus, and EQ, in the accent while one is in force. Each browser narrows its listing from the filter field in the toolbar. The window opens where it was left.
 
 ## The queue
 

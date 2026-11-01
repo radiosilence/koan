@@ -95,17 +95,6 @@ impl EqState {
     }
 
     /// What the button's tooltip says: the preset in force, never "flat".
-    /// What the button says beside its glyph, the Mac's: the preset, or
-    /// flat, or unsaved, all lowercase in the theme.
-    fn label(&self) -> String {
-        match &self.preset {
-            Some(preset) if self.edited => format!("{preset}, edited"),
-            Some(preset) => preset.clone(),
-            None if self.flat => "flat".into(),
-            None => "unsaved".into(),
-        }
-    }
-
     fn summary(&self) -> String {
         match &self.preset {
             Some(preset) if self.edited => format!("EQ: {preset}, edited"),
@@ -245,7 +234,6 @@ impl Transport {
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
         let color = if eq.flat { p.ink } else { p.accent_text };
         let summary: SharedString = eq.summary().into();
-        let label = eq.label();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .role(TypeRole::Body)
@@ -261,9 +249,6 @@ impl Transport {
                 .text_color(color)
                 .hover(|s| s.opacity(0.8))
                 .child(child)
-                .when(p.look.icons, |d| {
-                    d.child(div().text_color(p.ink).child(label))
-                })
                 .tooltip(move |window, cx| {
                     crate::components::Tooltip::view(summary.clone(), window, cx)
                 }),
@@ -521,7 +506,6 @@ fn trailing_item(p: &Paint) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .gap(TransportMetrics::label_gap(&p.look))
         .h(theme::HIT)
         .px(reach)
         .mx(-reach)

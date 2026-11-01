@@ -60,11 +60,6 @@ impl TransportMetrics {
         look.spaced(12.0)
     }
 
-    /// Between an item's glyph and its label, the EQ's "flat".
-    pub fn label_gap(look: &Look) -> Pixels {
-        look.spaced(5.0)
-    }
-
     /// Between the controls and the seek bar.
     pub fn row_gap(look: &Look) -> Pixels {
         look.spaced(2.0)
