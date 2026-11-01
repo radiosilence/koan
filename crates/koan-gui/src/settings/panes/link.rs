@@ -184,7 +184,24 @@ impl Render for LinkDevice {
                         .into_any_element(),
                 ]
             }
-            None => vec![text("Loading…", TypeRole::Body, Tone::Muted, &look).into_any_element()],
+            // The code's room is kept while it is asked for, so the page does
+            // not move when it arrives.
+            None => vec![
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_center()
+                    .py(look.space(Space::S))
+                    .child(
+                        div()
+                            .size(px(220.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::components::Spinner::new(px(24.))),
+                    )
+                    .into_any_element(),
+            ],
         };
         div().child(section(
             Some("Link a Device"),

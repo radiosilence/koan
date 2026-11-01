@@ -373,7 +373,7 @@ impl Render for DevicesPane {
                     Some("Pair a device"),
                     vec![buttons(
                         vec![
-                            div().w(px(160.)).child(TextField::new(&self.code)).into_any_element(),
+                            div().flex_1().child(TextField::new(&self.code)).into_any_element(),
                             Button::new("approve-code", ButtonKind::Prominent)
                                 .label("Approve")
                                 .disabled(!ready)

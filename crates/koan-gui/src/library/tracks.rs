@@ -510,8 +510,12 @@ impl Render for TrackBrowser {
                     .flex_1()
                     .min_h_0()
                     .pt(px(10.0))
-                    .child(body),
+                    .relative()
+                    .child(body)
+                    .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
+                window,
+                cx,
             ))
     }
 }

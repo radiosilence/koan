@@ -16,8 +16,8 @@ use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use gpui_kit::{
-    App, AssetSource, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
-    div, px, svg,
+    App, AssetSource, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, Styled, Window, div, px, svg,
 };
 use parking_lot::Mutex;
 
@@ -183,6 +183,7 @@ pub struct KoanIcon {
     size: Size,
     tone: Colour,
     fill: Option<Colour>,
+    hover: Option<(SharedString, Hsla)>,
 }
 
 enum Size {
@@ -203,7 +204,16 @@ impl KoanIcon {
             size: Size::Role(TypeRole::Body),
             tone: Colour::Tone(Tone::Ink),
             fill: None,
+            hover: None,
         }
+    }
+
+    /// The colour it takes while the pointer is over the group named, as the
+    /// label of a button does: a glyph is drawn in a colour of its own, and
+    /// does not follow its parent's.
+    pub fn hover_color(mut self, group: impl Into<SharedString>, color: Hsla) -> Self {
+        self.hover = Some((group.into(), color));
+        self
     }
 
     /// Sized beside type of this role.
@@ -255,6 +265,27 @@ impl RenderOnce for KoanIcon {
                 .size(side)
                 .text_color(color)
         };
+        // A glyph's colour is its own, so following the pointer is two
+        // sprites, the second shown while the group is under it.
+        if let Some((group, hovered)) = self.hover {
+            return div()
+                .relative()
+                .flex_none()
+                .size(side)
+                .child(
+                    div()
+                        .absolute()
+                        .group_hover(group.clone(), |s| s.opacity(0.))
+                        .child(sprite(Layer::All, color)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .opacity(0.)
+                        .group_hover(group, |s| s.opacity(1.))
+                        .child(sprite(Layer::All, hovered)),
+                );
+        }
         match self.fill.map(resolve) {
             Some(fill) if !self.icon.glyph().fills.is_empty() => div()
                 .relative()

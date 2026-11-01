@@ -834,8 +834,11 @@ impl Render for AlbumGrid {
                     .min_h_0()
                     .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
                     .child(measure)
-                    .child(body),
+                    .child(body)
+                    .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
+                window,
+                cx,
             ))
             .when(self.selection.is_active(), |d| {
                 d.child(chrome::selection_bar(
