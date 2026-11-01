@@ -540,7 +540,6 @@ impl Render for AlbumPage {
             .on_action(cx.listener(Self::dismiss))
             .relative()
             .size_full()
-            .bg(p.bg)
             .typeset(p, Type::Body, p.ink)
             .child(measure)
             .child(content)

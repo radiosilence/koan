@@ -1,0 +1,1 @@
+- **The GUI app's sidebar scrolls and its playlists have sleeves.** A short window scrolls the sidebar's rows rather than squeezing them, each place carries its glyph, playlists show the mosaic of their first four records, and the wash runs under every page, and under the sidebar and toolbar when "Wash the whole window" is on.

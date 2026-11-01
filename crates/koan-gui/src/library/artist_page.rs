@@ -941,7 +941,6 @@ impl Render for ArtistPage {
             .size_full()
             .flex()
             .flex_col()
-            .bg(p.bg)
             .typeset(p, Type::Body, p.ink)
             .child(measure)
             .child(actions::list_menu(
