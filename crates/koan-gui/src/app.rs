@@ -59,6 +59,8 @@ pub fn start(
     cx.bind_keys(queue::bindings());
     crate::library::bind_keys(cx);
     install(&engine, cx);
+    // Reads the mirror `install` sets up.
+    crate::library::activity::init(cx);
     settings::resume(cx);
     cx.on_action(|_: &crate::platform::actions::Settings, cx| settings::open(cx));
     let queue = cx.global::<Mirror>().queue.clone();

@@ -104,6 +104,7 @@ pub fn set(cx: &mut App) {
         Menu::new("Library").items([
             item::<Rescan>(),
             plain("Force Rescan", ForceRescan),
+            plain("Rebuild Index", RebuildIndex),
             MenuItem::separator(),
             plain("Sync", Sync),
             MenuItem::separator(),

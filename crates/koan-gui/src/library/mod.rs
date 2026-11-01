@@ -2,6 +2,7 @@
 //! record and an artist.
 
 pub mod actions;
+pub mod activity;
 pub mod album_page;
 pub mod albums;
 pub mod artist_page;
