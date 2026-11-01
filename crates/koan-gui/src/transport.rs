@@ -15,6 +15,7 @@ use koan_kit::raw::*;
 use crate::components::{Menu as ThemeMenu, MenuEntry};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
+use crate::links;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
 use crate::paint::Paint;
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
@@ -27,6 +28,8 @@ const SLIDER_HIT: Pixels = px(20.);
 pub struct Transport {
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
+    /// Where the playing track's names lead.
+    nav: Entity<crate::navigator::Navigator>,
     seek: Entity<Seek>,
     menu: Option<(Menu, Entity<ThemeMenu>, Subscription)>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
@@ -101,10 +104,15 @@ impl EqState {
 }
 
 impl Transport {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        nav: &Entity<crate::navigator::Navigator>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mirror = cx.global::<Mirror>().clone();
         let covers = cx.global::<CoversHandle>().0.clone();
         let mut this = Self {
+            nav: nav.clone(),
             seek: cx.new(|cx| Seek::new(window, cx)),
             _subscriptions: [
                 cx.observe(&mirror.playback, |this, playback, cx| {
@@ -551,24 +559,53 @@ impl Render for Transport {
                     .flex()
                     .flex_col()
                     .min_w(px(0.))
+                    // The title and the record lead to the record, each
+                    // credited artist to the artist.
                     .children(entry.map(|e| {
-                        div()
-                            .truncate()
-                            .text_role(TypeRole::Meta, &p.look)
-                            .text_color(p.strong)
-                            .child(e.title.clone())
+                        let album = e.album_id.map(crate::navigator::Route::Album);
+                        links::names(
+                            vec![
+                                links::link(
+                                    "np-title".into(),
+                                    e.title.clone(),
+                                    album,
+                                    &self.nav,
+                                    p.ink,
+                                )
+                                .into_any_element(),
+                            ],
+                            TypeRole::Meta,
+                            p.strong,
+                            &p,
+                        )
                     }))
                     .children(entry.map(|e| {
-                        let detail = if e.album.is_empty() {
-                            e.artist.clone()
-                        } else {
-                            format!("{} · {}", e.artist, e.album)
-                        };
-                        div()
-                            .truncate()
-                            .text_role(TypeRole::Fine, &p.look)
-                            .text_color(p.muted)
-                            .child(detail)
+                        let mut detail = links::credit(
+                            &e.artist_credit,
+                            &e.artist,
+                            |ix| ElementId::NamedInteger("np-artist".into(), ix as u64),
+                            &self.nav,
+                            p.ink,
+                        );
+                        if !e.album.is_empty() {
+                            detail.push(
+                                div()
+                                    .flex_shrink_0()
+                                    .child("\u{a0}·\u{a0}")
+                                    .into_any_element(),
+                            );
+                            detail.push(
+                                links::link(
+                                    "np-album".into(),
+                                    e.album.clone(),
+                                    e.album_id.map(crate::navigator::Route::Album),
+                                    &self.nav,
+                                    p.ink,
+                                )
+                                .into_any_element(),
+                            );
+                        }
+                        links::names(detail, TypeRole::Fine, p.muted, &p)
                     })),
             );
 

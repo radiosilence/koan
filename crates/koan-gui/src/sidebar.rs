@@ -6,6 +6,7 @@ use koan_ffi::Playlist;
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
+use crate::components::{CoverArt, Mosaic, NavHeading, NavNote, NavRow, RowMetrics};
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
 use crate::library::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
@@ -14,16 +15,7 @@ use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
-
-/// The sidebar's width as it opens, and what a double click on its edge
-/// restores; a drag keeps it between the least and greatest.
-pub const WIDTH: Pixels = px(220.);
-pub const MIN_WIDTH: Pixels = px(180.);
-pub const MAX_WIDTH: Pixels = px(360.);
-const ROW: Pixels = px(28.);
-const PLAYLIST_ROW: Pixels = px(40.);
-const PLAYLIST_SLEEVE: Pixels = px(24.);
+use crate::theme::{self, Icon, Space, Tone};
 
 const LIBRARY: [(Route, &str, Icon); 7] = [
     (Route::Albums, "albums", Icon::Album),
@@ -151,52 +143,6 @@ impl Sidebar {
     }
 }
 
-/// A place in the sidebar: its glyph when icons are on, then its label.
-fn nav_row(
-    id: impl Into<ElementId>,
-    label: SharedString,
-    icon: Icon,
-    selected: bool,
-    p: &Paint,
-) -> Stateful<Div> {
-    let ink = p.ink;
-    let colour = if selected { p.accent_text } else { p.muted };
-    div()
-        .id(id)
-        .h(ROW)
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .pl(p.space(Space::L))
-        .pr(p.space(Space::S))
-        .border_l_2()
-        .border_color(if selected {
-            p.accent
-        } else {
-            transparent_black()
-        })
-        .cursor_pointer()
-        .text_role(TypeRole::Body, &p.look)
-        .gap(p.space(Space::S))
-        .text_color(colour)
-        .when(!selected, move |d| d.hover(move |s| s.text_color(ink)))
-        .when(p.look.icons, |d| {
-            d.child(KoanIcon::new(icon).role(TypeRole::Body).color(colour))
-        })
-        .child(div().truncate().child(label))
-}
-
-fn heading(label: &'static str, p: &Paint) -> Div {
-    div()
-        .flex_shrink_0()
-        .pt(p.space(Space::L))
-        .pb(p.space(Space::Xs))
-        .pl(p.space(Space::L))
-        .text_role(TypeRole::Fine, &p.look)
-        .text_color(p.ink)
-        .child(label)
-}
-
 fn go(
     page: Route,
     cx: &mut Context<Sidebar>,
@@ -215,10 +161,13 @@ impl Render for Sidebar {
         let current = Some(self.nav.read(cx).current());
         let row = |page: Route,
                    id: ElementId,
-                   label: SharedString,
+                   label: &'static str,
                    icon: Icon,
                    cx: &mut Context<Self>| {
-            nav_row(id, label, icon, current == Some(page), &p).on_click(go(page, cx))
+            NavRow::new(id, label)
+                .icon(icon)
+                .selected(current == Some(page))
+                .on_click(go(page, cx))
         };
         let queue = Route::Queue;
         let sleeves = self.sleeves(window, cx);
@@ -236,29 +185,23 @@ impl Render for Sidebar {
             // Files, and what is dragged from the library, dropped on the
             // queue's row are queued.
             .child(
-                row(
-                    queue,
-                    "nav-queue".into(),
-                    "queue".into(),
-                    Icon::QueueSection,
-                    cx,
-                )
-                .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
-                    drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
-                }))
-                .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
-                    let sets = dragged.sets.to_vec();
-                    command(cx, "queue from the library", move |e| {
-                        e.queue(sets, koan_ffi::Placement::Append)
-                    });
-                })),
+                row(queue, "nav-queue".into(), "queue", Icon::QueueSection, cx)
+                    .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                        drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
+                    }))
+                    .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
+                        let sets = dragged.sets.to_vec();
+                        command(cx, "queue from the library", move |e| {
+                            e.queue(sets, koan_ffi::Placement::Append)
+                        });
+                    })),
             )
-            .child(heading("library", &p))
+            .child(NavHeading::new("library"))
             .children(LIBRARY.map(|(page, label, icon)| {
-                row(page, ElementId::Name(label.into()), label.into(), icon, cx)
+                row(page, ElementId::Name(label.into()), label, icon, cx)
             }))
             .when(!self.playlists.is_empty(), |d| {
-                d.child(heading("playlists", &p))
+                d.child(NavHeading::new("playlists"))
             })
             .children(
                 self.playlists
@@ -266,7 +209,13 @@ impl Render for Sidebar {
                     .zip(sleeves)
                     .map(|(playlist, sleeve)| {
                         let page = Route::Playlist(playlist.id);
-                        playlist_row(playlist, sleeve, current == Some(page), &p)
+                        NavRow::data(("nav-playlist", playlist.id as u64), playlist.name.clone())
+                            .art(Mosaic::new(
+                                sleeve.into_iter().map(CoverArt::from).collect(),
+                                RowMetrics::nav_art(&p.look),
+                            ))
+                            .detail(count(playlist.track_count.into(), "track", "tracks"))
+                            .selected(current == Some(page))
                             .on_click(go(page, cx))
                             // Files, and what is dragged from the library, dropped on a
                             // playlist's row are added to it.
@@ -301,7 +250,7 @@ impl Render for Sidebar {
                 div()
                     .relative()
                     .flex_1()
-                    .min_h(px(0.))
+                    .min_h_0()
                     .child(body)
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
             )
@@ -312,12 +261,12 @@ impl Render for Sidebar {
                     .clone(),
             )
             .when(self.importing > 0, |d| {
-                d.child(foot_line("adding dropped files", p.muted, &p))
+                d.child(NavNote::new("adding dropped files", Tone::Muted))
             })
             .children(
                 self.import_problem
                     .clone()
-                    .map(|problem| foot_line(problem, p.bad, &p)),
+                    .map(|problem| NavNote::new(problem, Tone::Bad)),
             )
     }
 }
@@ -337,6 +286,7 @@ impl Sidebar {
                 .collect();
         };
         let scale = window.scale_factor();
+        let side = RowMetrics::nav_art(&crate::theme::Look::of(window, cx));
         let owner = cx.entity_id();
         let keys: Vec<Vec<Key>> = self
             .playlists
@@ -346,7 +296,7 @@ impl Sidebar {
                     .get(&playlist.id)
                     .into_iter()
                     .flatten()
-                    .map(|album| Key::new(Art::Album(*album), PLAYLIST_SLEEVE, scale))
+                    .map(|album| Key::new(Art::Album(*album), side, scale))
                     .collect()
             })
             .collect();
@@ -367,124 +317,4 @@ impl Sidebar {
         }
         sleeves
     }
-}
-
-/// A playlist's row: its sleeve, its name and how many tracks it holds.
-fn playlist_row(
-    playlist: &Playlist,
-    sleeve: Vec<Sleeve>,
-    selected: bool,
-    p: &Paint,
-) -> Stateful<Div> {
-    let ink = p.ink;
-    div()
-        .id(("nav-playlist", playlist.id as u64))
-        .h(PLAYLIST_ROW)
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(p.space(Space::S))
-        .pl(p.space(Space::L))
-        .pr(p.space(Space::S))
-        .border_l_2()
-        .border_color(if selected {
-            p.accent
-        } else {
-            transparent_black()
-        })
-        .cursor_pointer()
-        .text_color(if selected { p.accent_text } else { p.muted })
-        .when(!selected, move |d| d.hover(move |s| s.text_color(ink)))
-        .child(face(sleeve, p))
-        .child(
-            div()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .truncate()
-                        .text_role(TypeRole::Body, &p.look)
-                        .child(playlist.name.clone()),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .text_role(TypeRole::Meta, &p.look)
-                        .text_color(p.muted)
-                        .child(count(playlist.track_count.into(), "track", "tracks")),
-                ),
-        )
-}
-
-/// A playlist's sleeve: its first four records, square and edge to edge.
-/// One fills the square, two split it down the middle, three put the third
-/// across the foot; an empty playlist is a plain square of `rule`.
-fn face(sleeves: Vec<Sleeve>, p: &Paint) -> Div {
-    let side = PLAYLIST_SLEEVE;
-    let half = side / 2.;
-    let surface = p.surface;
-    let tile = |sleeve: &Sleeve, w: Pixels, h: Pixels| {
-        let field = div()
-            .w(w)
-            .h(h)
-            .flex_shrink_0()
-            .bg(surface)
-            .overflow_hidden();
-        match sleeve {
-            Sleeve::Ready(image) => field.child(
-                img(ImageSource::Render(image.clone()))
-                    .size_full()
-                    .object_fit(ObjectFit::Cover),
-            ),
-            Sleeve::Colour(colour) => field.bg(*colour),
-            Sleeve::Waiting | Sleeve::None => {
-                field.child(crate::components::Placeholder::new(w.min(h)))
-            }
-        }
-    };
-    let square = div().size(side).flex_shrink_0().overflow_hidden();
-    match sleeves.as_slice() {
-        [] => square.bg(p.rule),
-        [one] => square.child(tile(one, side, side)),
-        [a, b] => square
-            .flex()
-            .child(tile(a, half, side))
-            .child(tile(b, half, side)),
-        [a, b, c] => square
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .child(tile(a, half, half))
-                    .child(tile(b, half, half)),
-            )
-            .child(tile(c, side, half)),
-        [a, b, c, d, ..] => square
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex()
-                    .child(tile(a, half, half))
-                    .child(tile(b, half, half)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .child(tile(c, half, half))
-                    .child(tile(d, half, half)),
-            ),
-    }
-}
-
-/// A line at the sidebar's foot: what koan is doing, or what went wrong.
-fn foot_line(text: impl Into<SharedString>, color: Hsla, p: &Paint) -> Div {
-    div()
-        .px(p.space(Space::L))
-        .py(p.space(Space::Xs))
-        .text_role(TypeRole::Fine, &p.look)
-        .text_color(color)
-        .child(text.into())
 }

@@ -110,6 +110,17 @@ pub enum Sleeve {
     None,
 }
 
+impl From<Sleeve> for crate::components::CoverArt {
+    fn from(sleeve: Sleeve) -> Self {
+        use crate::components::CoverArt;
+        match sleeve {
+            Sleeve::Ready(image) => CoverArt::Image(image),
+            Sleeve::Colour(colour) => CoverArt::Colour(colour),
+            Sleeve::Waiting | Sleeve::None => CoverArt::Missing,
+        }
+    }
+}
+
 impl Sleeve {
     /// The same thing to draw: the same bitmap, colour or absence.
     pub fn same(&self, other: &Sleeve) -> bool {

@@ -9,7 +9,7 @@ use koan_kit::raw::base::InteractiveElementExt as _;
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use crate::components::{SplitView, TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
+use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
@@ -21,23 +21,10 @@ use crate::library::{self, stage::LibraryStage};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
-use crate::sidebar::{self, Sidebar};
+use crate::sidebar::Sidebar;
 use crate::theme::{self, Icon, KoanStyled, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
-
-const TOOLBAR: Pixels = px(TOOLBAR_HEIGHT);
-/// Room above the sidebar for the window's buttons, which sit on its ground.
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS: Pixels = TOOLBAR;
-#[cfg(not(target_os = "macos"))]
-const TRAFFIC_LIGHTS: Pixels = px(0.);
-/// The window's buttons' width, which the toolbar leaves clear while the
-/// sidebar is hidden and they sit over it.
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS_WIDTH: Pixels = px(78.);
-#[cfg(not(target_os = "macos"))]
-const TRAFFIC_LIGHTS_WIDTH: Pixels = px(0.);
 
 pub struct Shell {
     nav: Entity<Navigator>,
@@ -88,6 +75,8 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
+                let feed = lib.feed.clone();
+                this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
                 let covers = lib.covers.clone();
                 this.sidebar
                     .update(cx, |sidebar, cx| sidebar.set_covers(covers, cx));
@@ -99,16 +88,17 @@ impl Shell {
         .detach();
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
+            transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             nav,
             focus: cx.focus_handle(),
             queue,
-            transport: cx.new(|cx| Transport::new(window, cx)),
             library: None,
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
-            sidebar_width: px(f32::from_bits(
+            sidebar_width: f32::from_bits(
                 window_state::SIDEBAR_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
-            )),
+            )
+            .into(),
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
@@ -185,6 +175,15 @@ impl Shell {
         cx.notify();
     }
 
+    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
+    /// and keeps the choice with the window's bounds.
+    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_shown = !self.sidebar_shown;
+        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
+        window_state::save(window.window_bounds(), cx);
+        cx.notify();
+    }
+
     /// Bare space that moves the window, as a title bar's does.
     fn moves_window(area: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
         area.window_control_area(WindowControlArea::Drag)
@@ -224,11 +223,7 @@ impl Shell {
         Toolbar::new()
             // With the sidebar hidden the window's buttons sit over the
             // toolbar, which leaves them their room.
-            .inset(if self.sidebar_shown {
-                px(0.)
-            } else {
-                TRAFFIC_LIGHTS_WIDTH
-            })
+            .under_window_buttons(!self.sidebar_shown)
             .leading(
                 ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
                     |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),
@@ -286,15 +281,6 @@ impl Shell {
                         )
                 },
             )
-    }
-
-    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
-    /// and keeps the choice with the window's bounds.
-    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
-        self.sidebar_shown = !self.sidebar_shown;
-        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
-        window_state::save(window.window_bounds(), cx);
-        cx.notify();
     }
 }
 
@@ -359,6 +345,7 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
+            .on_action(cx.listener(Self::toggle_sidebar))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.back(&Back, window, cx)),
@@ -379,13 +366,13 @@ impl Render for Shell {
             // transport spans the whole window; otherwise they are on `bg`
             // and the transport spans the page column only.
             .child(
-                div().flex_1().min_h(px(0.)).child(
+                div().flex_1().min_h_0().child(
                     SplitView::new(
                         "sidebar-split",
                         self.sidebar_width,
-                        sidebar::MIN_WIDTH,
-                        sidebar::MAX_WIDTH,
-                        sidebar::WIDTH,
+                        RowMetrics::SIDEBAR_MIN,
+                        RowMetrics::SIDEBAR_MAX,
+                        RowMetrics::SIDEBAR,
                     )
                     .when(self.sidebar_shown, |split| {
                         split.leading(
@@ -394,15 +381,15 @@ impl Render for Shell {
                                 .flex()
                                 .flex_col()
                                 .when(!washed, |d| d.bg(p.bg))
-                                .when(TRAFFIC_LIGHTS > px(0.), |d| {
+                                .when(!WINDOW_BUTTONS.height.is_zero(), |d| {
                                     d.child(
                                         Self::moves_window(div().id("sidebar-drag"), cx)
-                                            .h(TRAFFIC_LIGHTS)
+                                            .h(WINDOW_BUTTONS.height)
                                             .flex_shrink_0(),
                                     )
                                 })
                                 .child(self.sidebar.clone().cached(
-                                    StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
+                                    StyleRefinement::default().w_full().flex_1().min_h_0(),
                                 )),
                         )
                     })
@@ -412,7 +399,7 @@ impl Render for Shell {
                             .flex()
                             .flex_col()
                             .child(self.toolbar(window, cx))
-                            .child(div().flex_1().min_h(px(0.)).child(stage))
+                            .child(div().flex_1().min_h_0().child(stage))
                             .when(!washed, |d| d.child(transport())),
                     )
                     .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
@@ -430,12 +417,7 @@ impl Render for Shell {
             )
             .when(washed, |d| d.child(transport()))
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
-                deferred(div().absolute().inset_0().child(sheet.clone())).with_priority(2)
+                deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
             }))
     }
 }
-
-pub const MIN_SIZE: Size<Pixels> = Size {
-    width: px(220. + 640.),
-    height: px(420.),
-};

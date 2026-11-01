@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement, Interactivity, IntoElement,
+    ParentElement, RenderOnce, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
+    div,
 };
 
 use super::{Handler, child, fade, fill};
@@ -14,24 +15,61 @@ use crate::theme::{
 /// A navigation row, as the sidebar's: the label in `body`, `muted`, after
 /// its glyph when icons are on; where you are, in the accent with a 2-point
 /// accent rule on the leading edge, and no fill.
+///
+/// A place with a face of its own (a playlist) carries its art before the
+/// label and a line of detail under it. Listeners attach as to a `div`, so
+/// a row can take drops.
 #[derive(IntoElement)]
 pub struct NavRow {
     id: ElementId,
+    base: Stateful<Div>,
     label: SharedString,
     icon: Option<Icon>,
+    art: Option<AnyElement>,
+    detail: Option<SharedString>,
     selected: bool,
     on_click: Option<Handler<ClickEvent>>,
 }
 
+impl InteractiveElement for NavRow {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.base.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for NavRow {}
+
 impl NavRow {
     pub fn new(id: impl Into<ElementId>, text: impl AsRef<str>) -> Self {
+        Self::data(id, label(text))
+    }
+
+    /// A place named by data (a playlist), which keeps its case.
+    pub fn data(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
+        let id = id.into();
         Self {
-            id: id.into(),
-            label: label(text),
+            base: div().id(id.clone()),
+            id,
+            label: text.into(),
             icon: None,
+            art: None,
+            detail: None,
             selected: false,
             on_click: None,
         }
+    }
+
+    /// The place's own face, square, before the label: a playlist's sleeve.
+    /// Drawn whatever "show icons" says, as covers are.
+    pub fn art(mut self, art: impl IntoElement) -> Self {
+        self.art = Some(art.into_any_element());
+        self
+    }
+
+    /// A line under the label, in `meta`, `muted`: a playlist's count.
+    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 
     pub fn icon(mut self, icon: Icon) -> Self {
@@ -69,16 +107,26 @@ impl RenderOnce for NavRow {
             on,
         );
         let on_click = self.on_click;
-        div()
-            .id(self.id)
+        let ink = look.palette.ink.hsla();
+        let label = div()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .child(self.label);
+        self.base
             .relative()
             .flex()
+            .flex_none()
             .items_center()
             .gap(look.space(Space::S))
             .px(look.space(Space::L))
             .min_h(look.line_height(TypeRole::Body) + look.space(Space::S) * 2.0)
             .text_role(TypeRole::Body, &look)
             .text_color(color)
+            .when(!self.selected, move |row| {
+                row.hover(move |s| s.text_color(ink))
+            })
             .child(
                 div()
                     .absolute()
@@ -90,14 +138,99 @@ impl RenderOnce for NavRow {
             )
             .children(
                 self.icon
-                    .filter(|_| look.icons)
+                    .filter(|_| look.icons && self.art.is_none())
                     .map(|icon| KoanIcon::new(icon).color(color)),
             )
-            .child(self.label)
+            .children(self.art)
+            .map(|row| match self.detail {
+                None => row.child(label),
+                Some(detail) => row.child(
+                    div().min_w_0().flex().flex_col().child(label).child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_role(TypeRole::Meta, &look)
+                            .text_color(look.palette.muted.hsla())
+                            .child(detail),
+                    ),
+                ),
+            })
             .when_some(on_click, |row, on_click| {
                 row.cursor_pointer()
                     .on_click(move |event, window, cx| on_click(event, window, cx))
             })
+    }
+}
+
+/// A heading over a group of navigation rows: `fine`, `ink`, lowercase,
+/// with 16 points above, at the rows' inset.
+#[derive(IntoElement)]
+pub struct NavHeading {
+    title: SharedString,
+    trailing: Option<AnyElement>,
+}
+
+impl NavHeading {
+    pub fn new(title: impl AsRef<str>) -> Self {
+        Self {
+            title: label(title),
+            trailing: None,
+        }
+    }
+
+    /// At the heading's far end: an action on the group ("new").
+    pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
+        self.trailing = Some(trailing.into_any_element());
+        self
+    }
+}
+
+impl RenderOnce for NavHeading {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .flex()
+            .flex_none()
+            .items_end()
+            .justify_between()
+            .pt(look.space(Space::L))
+            .pb(look.space(Space::Xs))
+            .px(look.space(Space::L))
+            .text_role(TypeRole::Fine, &look)
+            .text_color(look.palette.ink.hsla())
+            .child(self.title)
+            .children(self.trailing)
+    }
+}
+
+/// A line at the foot of a navigation list: what the app is doing, or what
+/// went wrong.
+#[derive(IntoElement)]
+pub struct NavNote {
+    text: SharedString,
+    tone: crate::theme::Tone,
+}
+
+impl NavNote {
+    pub fn new(text: impl Into<SharedString>, tone: crate::theme::Tone) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+        }
+    }
+}
+
+impl RenderOnce for NavNote {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .px(look.space(Space::L))
+            .py(look.space(Space::Xs))
+            .text_role(TypeRole::Fine, &look)
+            .text_color(look.text_color(self.tone))
+            .child(self.text)
     }
 }
 

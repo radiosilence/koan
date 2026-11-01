@@ -13,6 +13,7 @@
 
 mod badge;
 mod button;
+mod cover;
 mod empty;
 mod field;
 mod filter_field;
@@ -23,6 +24,7 @@ mod page;
 mod panel;
 mod picker;
 pub(crate) mod placeholder;
+mod ring;
 mod rows;
 mod scroll;
 mod segmented;
@@ -44,6 +46,7 @@ use gpui_kit::{
 
 pub use badge::{Badge, Chip};
 pub use button::{Button, ButtonKind};
+pub use cover::{Cover, CoverArt, Mosaic};
 pub use empty::EmptyState;
 pub use field::TextField;
 pub use filter_field::FilterField;
@@ -56,7 +59,8 @@ pub use page::{Page, PageHeader};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use placeholder::Placeholder;
-pub use rows::{ListRow, NavRow};
+pub use ring::ProgressRing;
+pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use slider::Slider;
@@ -65,7 +69,7 @@ pub use split::SplitView;
 pub use stepper::Stepper;
 pub use table::TableRow;
 pub use toggle::{IconToggle, Toggle};
-pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
+pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 
 use crate::theme::{Look, MARK, Motion};
 

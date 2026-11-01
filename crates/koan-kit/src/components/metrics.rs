@@ -16,9 +16,16 @@ pub enum RowKind {
     Text,
     /// A sleeve beside the title and its credit.
     Art,
+    /// A record's heading over its run in a queue or playlist: its sleeve
+    /// (`RowMetrics::heading_sleeve`), the record over its artist and a
+    /// line of detail.
+    Heading,
 }
 
 pub struct RowMetrics;
+
+/// A record heading's sleeve at 100 %, the Mac queue's.
+const HEADING_SLEEVE: f32 = 52.0;
 
 impl RowMetrics {
     pub fn height(kind: RowKind, look: &Look) -> Pixels {
@@ -26,8 +33,31 @@ impl RowMetrics {
             RowKind::Line => 24.0,
             RowKind::Text => 34.0,
             RowKind::Art => 40.0,
+            RowKind::Heading => HEADING_SLEEVE + 12.0,
         };
         px((points * look.scale.size).round()) + Self::padding(look) * 2.0
+    }
+
+    /// A navigation row's face, square: a playlist's sleeve in the sidebar.
+    pub fn nav_art(look: &Look) -> Pixels {
+        px((24.0 * look.scale.size).round())
+    }
+
+    /// A row's height at 100 %, for what has no window to ask: a list's
+    /// guess for the rows it has not measured yet.
+    pub fn estimate(kind: RowKind) -> Pixels {
+        let points = match kind {
+            RowKind::Line => 24.0,
+            RowKind::Text => 34.0,
+            RowKind::Art => 40.0,
+            RowKind::Heading => HEADING_SLEEVE + 12.0,
+        };
+        px(points + 8.0)
+    }
+
+    /// A record heading's sleeve, square.
+    pub fn heading_sleeve(look: &Look) -> Pixels {
+        px((HEADING_SLEEVE * look.scale.size).round())
     }
 
     /// A row's sleeve, square.
@@ -56,6 +86,19 @@ impl RowMetrics {
     pub fn header_gap(look: &Look) -> Pixels {
         look.space(Space::M)
     }
+
+    /// The sidebar's width as it opens, and what a double click on its edge
+    /// restores; a drag keeps it between `sidebar_min` and `sidebar_max`.
+    pub const SIDEBAR: Pixels = px(220.);
+    pub const SIDEBAR_MIN: Pixels = px(180.);
+    pub const SIDEBAR_MAX: Pixels = px(360.);
+
+    /// The window's least size: the sidebar beside a page wide enough for a
+    /// track row's columns.
+    pub const WINDOW_MIN: gpui_kit::Size<Pixels> = gpui_kit::Size {
+        width: px(220. + 640.),
+        height: px(420.),
+    };
 
     /// Between columns of a row.
     pub fn column_gap(look: &Look) -> Pixels {

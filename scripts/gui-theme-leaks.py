@@ -22,10 +22,10 @@ BASELINE = ROOT / "crates/koan-gui/theme-leaks.toml"
 
 KINDS = {
     # A size, a colour or a face chosen by hand.
-    "number": re.compile(r"\b(px|rems|rgb|rgba|hsla|font)\("),
+    "number": re.compile(r"(?<![.\w])(px|rems|rgb|rgba|hsla|font)\("),
     # GPUI's fixed-size styles: tailwind's scale, not the theme's.
     "fixed": re.compile(
-        r"\.(p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|gap_x|gap_y|w|h|size|min_w|min_h|max_w|max_h|top|left|right|bottom|inset)_\d+(p\d+)?\("
+        r"\.(p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|gap_x|gap_y|w|h|size|min_w|min_h|max_w|max_h|top|left|right|bottom|inset)_[1-9]\d*(p\d+)?\("
         r"|\.text_(xs|sm|base|lg|xl|\dxl)\(|\.rounded_(sm|md|lg|xl|full)\(|\.(text_size|line_height|font_family|font_weight)\("
     ),
     # Containers built from parts: a page's title, a toolbar's button.
