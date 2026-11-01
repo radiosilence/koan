@@ -14,9 +14,9 @@ use crate::navigator::{Navigator, Page};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::sidebar::{self, Sidebar};
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
-use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
 
 actions!(koan, [GoBack, GoForward, TogglePlay]);
 
@@ -107,7 +107,7 @@ impl Shell {
     }
 
     fn toolbar(&self, p: &Paint, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let button = |id: &'static str, label: &'static str, enabled: bool| {
+        let button = |id: &'static str, icon: Option<Icon>, label: &'static str, enabled: bool| {
             let surface = p.surface;
             let hover = p.hover;
             div()
@@ -124,7 +124,14 @@ impl Shell {
                         .hover(move |s| s.bg(surface))
                         .active(move |s| s.bg(hover))
                 })
-                .child(label)
+                .child(if let Some(icon) = icon.filter(|_| p.look.icons) {
+                    KoanIcon::new(icon)
+                        .role(TypeRole::Control)
+                        .color(p.ink)
+                        .into_any_element()
+                } else {
+                    div().child(label).into_any_element()
+                })
         };
         let title = match self.nav.current() {
             Page::Queue => "queue",
@@ -151,13 +158,17 @@ impl Shell {
             .border_b(theme::HAIRLINE)
             .border_color(p.rule)
             .child(
-                button("back", "←", self.nav.can_go_back())
+                button("back", Some(Icon::Back), "back", self.nav.can_go_back())
                     .on_click(cx.listener(|this, _, window, cx| this.back(&GoBack, window, cx))),
             )
             .child(
-                button("forward", "→", self.nav.can_go_forward()).on_click(
-                    cx.listener(|this, _, window, cx| this.forward(&GoForward, window, cx)),
-                ),
+                button(
+                    "forward",
+                    Some(Icon::Forward),
+                    "forward",
+                    self.nav.can_go_forward(),
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.forward(&GoForward, window, cx))),
             )
             // The toolbar's bare space moves the window, and its buttons do
             // not: a press that wobbles on back is still a click.
@@ -201,17 +212,17 @@ impl Shell {
                 matches!(window.window_decorations(), Decorations::Client { .. }),
                 |d| {
                     d.child(
-                        button("minimise", "–", true)
+                        button("minimise", None, "–", true)
                             .window_control_area(WindowControlArea::Min)
                             .on_click(|_, window, _| window.minimize_window()),
                     )
                     .child(
-                        button("maximise", "□", true)
+                        button("maximise", None, "□", true)
                             .window_control_area(WindowControlArea::Max)
                             .on_click(|_, window, _| window.zoom_window()),
                     )
                     .child(
-                        button("close", "×", true)
+                        button("close", None, "×", true)
                             .window_control_area(WindowControlArea::Close)
                             // Removing the window skips the close request, so
                             // its bounds are saved here rather than there.

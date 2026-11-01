@@ -21,7 +21,7 @@ use crate::covers::{CoversHandle, sleeve};
 use crate::engine::command;
 use crate::mirror::{Mirror, Queue};
 use crate::paint::Paint;
-use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
+use crate::theme::{self, KoanStyled, Space, TypeRole};
 use rows::Row;
 
 actions!(

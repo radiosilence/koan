@@ -9,7 +9,7 @@ use crate::mirror::Mirror;
 use crate::navigator::Page;
 use crate::paint::Paint;
 use crate::shell::Shell;
-use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
+use crate::theme::{self, KoanStyled, Space, TypeRole};
 
 pub const WIDTH: Pixels = px(220.);
 

@@ -11,6 +11,11 @@ publish = false
 name = "koan-gui"
 path = "src/main.rs"
 
+[features]
+# GPUI's frame histograms, and `measure`, which scrolls the queue and prints
+# them (`KOAN_GUI_MEASURE=scroll`).
+profiler = ["gpui-kit/profiler"]
+
 [dependencies]
 # The engine, linked as a Rust library: the same facade the Swift and Kotlin
 # apps drive through uniffi, without the bindings.

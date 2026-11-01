@@ -15,8 +15,8 @@ use crate::covers::{self, CoversHandle};
 use crate::engine::command;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
 use crate::paint::Paint;
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 use crate::time::clock;
-use koan_gui::theme::{self, KoanStyled, Space, TypeRole};
 
 pub const HEIGHT: Pixels = px(68.);
 const COVER: Pixels = px(40.);
@@ -89,6 +89,7 @@ impl Transport {
     fn menu_button(
         &self,
         which: Menu,
+        icon: Icon,
         label: &'static str,
         enabled: bool,
         p: &Paint,
@@ -102,7 +103,7 @@ impl Transport {
         div()
             .relative()
             .child(
-                text_button(label, p)
+                text_button(icon, label, p)
                     .id(label)
                     .when(!enabled, |b| b.opacity(0.4))
                     .when(enabled, |b| {
@@ -178,7 +179,28 @@ fn output_menu(menu: PopupMenu, outputs: &koan_ffi::OutputsInfo) -> PopupMenu {
 }
 
 /// The theme's text button: the label in `muted`, `ink` under the pointer.
-fn text_button(label: &'static str, p: &Paint) -> Div {
+/// The control's glyph with icons on, its label without: the theme's two
+/// variants. The label is what the plain variant shows, so it is lowercase.
+fn glyph_or_label(
+    icon: Icon,
+    label: &'static str,
+    role: TypeRole,
+    color: Hsla,
+    p: &Paint,
+) -> AnyElement {
+    if p.look.icons {
+        KoanIcon::new(icon)
+            .role(role)
+            .color(color)
+            .into_any_element()
+    } else {
+        div().child(label).into_any_element()
+    }
+}
+
+/// The theme's text button, or with icons its icon button: `muted`, `ink`
+/// under the pointer.
+fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     let ink = p.ink;
     div()
         .px(p.space(Space::S))
@@ -187,11 +209,18 @@ fn text_button(label: &'static str, p: &Paint) -> Div {
         .text_role(TypeRole::Meta, &p.look)
         .text_color(p.muted)
         .hover(move |s| s.text_color(ink))
-        .child(label)
+        .child(glyph_or_label(icon, label, TypeRole::Meta, p.muted, p))
 }
 
-/// A transport control. The glyph set replaces these labels.
-fn control(id: &'static str, label: &'static str, on: Option<bool>, p: &Paint) -> Stateful<Div> {
+/// A transport control: `on` for the two that toggle, underlined in the
+/// accent while on and `muted` while off, as an icon toggle is.
+fn control(
+    id: &'static str,
+    icon: Icon,
+    label: &'static str,
+    on: Option<bool>,
+    p: &Paint,
+) -> Stateful<Div> {
     let (color, underline) = match on {
         Some(true) => (p.ink, Some(p.accent)),
         Some(false) => (p.muted, None),
@@ -211,7 +240,7 @@ fn control(id: &'static str, label: &'static str, on: Option<bool>, p: &Paint) -
         .child(
             div()
                 .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
-                .child(label),
+                .child(glyph_or_label(icon, label, TypeRole::Control, color, p)),
         )
 }
 
@@ -239,6 +268,10 @@ impl Render for Transport {
         self.cover = covers::image(entry.and_then(|e| e.album_id), COVER, cx);
         let playing = now.state == PlayState::Playing;
         let has_outputs = self.outputs.read(cx).0.is_some();
+        let repeat_icon = match now.repeat_mode {
+            RepeatMode::One => Icon::RepeatOne,
+            RepeatMode::Off | RepeatMode::Queue => Icon::RepeatQueue,
+        };
         let repeat_label = match now.repeat_mode {
             RepeatMode::One => "repeat one",
             RepeatMode::Off | RepeatMode::Queue => "repeat",
@@ -296,7 +329,11 @@ impl Render for Transport {
             .text_role(TypeRole::Control, &p.look)
             .text_color(p.ink)
             .hover(|s| s.bg(p.hover))
-            .child(if playing { "pause" } else { "play" })
+            .child(if playing {
+                glyph_or_label(Icon::Pause, "pause", TypeRole::Control, p.ink, &p)
+            } else {
+                glyph_or_label(Icon::Play, "play", TypeRole::Control, p.ink, &p)
+            })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
         let centre = div()
@@ -310,23 +347,26 @@ impl Render for Transport {
                     .flex()
                     .items_center()
                     .gap(p.space(Space::S))
-                    .child(control("shuffle", "shuffle", Some(shuffle), &p).on_click(
-                        move |_, _, cx| {
-                            command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
-                        },
-                    ))
                     .child(
-                        control("previous", "prev", None, &p)
+                        control("shuffle", Icon::Shuffle, "shuffle", Some(shuffle), &p).on_click(
+                            move |_, _, cx| {
+                                command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
+                            },
+                        ),
+                    )
+                    .child(
+                        control("previous", Icon::Previous, "prev", None, &p)
                             .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
-                        control("next", "next", None, &p)
+                        control("next", Icon::Next, "next", None, &p)
                             .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
                         control(
                             "repeat",
+                            repeat_icon,
                             repeat_label,
                             Some(now.repeat_mode != RepeatMode::Off),
                             &p,
@@ -363,6 +403,11 @@ impl Render for Transport {
             .child(self.menu_button(
                 Menu::Sleep,
                 if now.sleep.is_some() {
+                    Icon::SleepSet
+                } else {
+                    Icon::Sleep
+                },
+                if now.sleep.is_some() {
                     "sleeping"
                 } else {
                     "sleep"
@@ -371,7 +416,7 @@ impl Render for Transport {
                 &p,
                 cx,
             ))
-            .child(self.menu_button(Menu::Output, "output", has_outputs, &p, cx));
+            .child(self.menu_button(Menu::Output, Icon::Output, "output", has_outputs, &p, cx));
 
         div()
             .h(HEIGHT)
