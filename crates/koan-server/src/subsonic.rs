@@ -11025,7 +11025,8 @@ mod tests {
             .await
             .unwrap();
         let img = image::load_from_memory(&body).unwrap();
-        assert_eq!((img.width(), img.height()), (200, 200));
+        // 200 asked, served at the next of the sizes clients share.
+        assert_eq!((img.width(), img.height()), (300, 300));
     }
 
     #[tokio::test]

@@ -262,6 +262,20 @@ impl Connections {
     }
 }
 
+/// The sizes covers are asked for and served at, square, in pixels. Every
+/// client rounds what it draws up to one of these (`cover_bucket`) and the
+/// server makes and keeps exactly these, so a cover read from a server's
+/// disk once serves every app, and the server can make them ahead.
+pub const COVER_SIZES: [u32; 4] = [150, 300, 600, 1200];
+
+/// The smallest of `COVER_SIZES` at least `size`, or the largest.
+pub fn cover_bucket(size: u32) -> u32 {
+    COVER_SIZES
+        .into_iter()
+        .find(|s| *s >= size)
+        .unwrap_or(COVER_SIZES[COVER_SIZES.len() - 1])
+}
+
 /// How many `getCoverArt` requests run at once, across every server, unless
 /// the app sets otherwise. A flick through a remote album grid asks for every
 /// tile it passes; past this the rest wait their turn. The phone apps keep
@@ -435,7 +449,8 @@ impl SubsonicClient {
     ///
     /// Returns the raw image rather than a parsed response — `getCoverArt`
     /// answers with image data, not JSON, so it can't go through `get()`.
-    /// `size` requests a square thumbnail; omit it for the original. Empty
+    /// `size` requests a square thumbnail, rounded up to one of
+    /// `COVER_SIZES`; omit it for the original. Empty
     /// when the record has no art: the server's placeholder is not passed on
     /// (see `is_placeholder`), so the caller draws its own.
     pub fn get_cover_art(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
@@ -443,7 +458,7 @@ impl SubsonicClient {
         let mut params = self.auth_params()?;
         params.insert("id".into(), id.to_string());
         if let Some(px) = size {
-            params.insert("size".into(), px.to_string());
+            params.insert("size".into(), cover_bucket(px).to_string());
         }
 
         let _slot = CoverSlots::take()?;
@@ -2050,6 +2065,16 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cover_sizes_round_up_to_a_bucket() {
+        use super::cover_bucket;
+        assert_eq!(cover_bucket(1), 150);
+        assert_eq!(cover_bucket(300), 300);
+        assert_eq!(cover_bucket(301), 600);
+        assert_eq!(cover_bucket(1000), 1200);
+        assert_eq!(cover_bucket(5000), 1200);
+    }
+
     #[test]
     fn placeholders_are_told_by_header_or_by_navidromes_bytes() {
         use reqwest::header::{CACHE_CONTROL, HeaderMap, HeaderValue};
