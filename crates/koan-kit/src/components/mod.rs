@@ -15,6 +15,7 @@ mod badge;
 mod button;
 mod cover;
 mod dense;
+mod drag;
 mod empty;
 mod fade;
 mod field;
@@ -53,6 +54,7 @@ pub use badge::{Badge, Chip};
 pub use button::{Button, ButtonKind};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
+pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
 pub use fade::FadeIn;
 pub use field::TextField;
@@ -79,7 +81,8 @@ pub use stepper::Stepper;
 pub use table::{ROW_GROUP, RowNumber, TableRow};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
-    TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMetrics, WINDOW_BUTTONS,
+    Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
+    WINDOW_BUTTONS,
 };
 
 use crate::theme::{Look, MARK, Motion};

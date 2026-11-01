@@ -41,6 +41,8 @@ pub struct Shell {
     /// Held for the life of the window, so the queue's selection and scroll
     /// position survive a visit to another page.
     queue: Entity<QueueView>,
+    /// The queue's controls, in the toolbar while the queue shows.
+    queue_controls: Entity<library::controls::ControlsSlot>,
     transport: Entity<Transport>,
     /// The library's pages, once the browsers' saved sorts and filters have
     /// been read.
@@ -68,6 +70,11 @@ impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = cx.new(|_| Navigator::default());
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
+        let queue_controls = cx.new(|cx| {
+            let mut slot = library::controls::ControlsSlot::default();
+            slot.show(&queue, QueueView::controls, cx);
+            slot
+        });
         window.focus(&queue.focus_handle(cx), cx);
         // Whatever moved the navigator, the page it lands on takes the keys.
         let arrivals = cx.observe_in(&nav, window, |this, _, window, cx| this.arrived(window, cx));
@@ -102,6 +109,7 @@ impl Shell {
             nav,
             focus: cx.focus_handle(),
             queue,
+            queue_controls,
             library: None,
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
@@ -262,11 +270,14 @@ impl Shell {
         let (can_go_back, can_go_forward, route) =
             (nav.can_go_back(), nav.can_go_forward(), nav.current());
         // The page's own controls: a library page's filter field and buttons.
-        let page = self
-            .library
-            .as_ref()
-            .filter(|_| LibraryStage::draws(route))
-            .and_then(|library| library.read(cx).toolbar());
+        let page = if route == Route::Queue {
+            Some(self.queue_controls.clone().into())
+        } else {
+            self.library
+                .as_ref()
+                .filter(|_| LibraryStage::draws(route))
+                .and_then(|library| library.read(cx).toolbar())
+        };
         Toolbar::new()
             // With the sidebar hidden the window's buttons sit over the
             // toolbar, which leaves them their room.

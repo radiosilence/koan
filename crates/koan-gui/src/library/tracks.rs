@@ -309,7 +309,7 @@ impl TrackBrowser {
         let selected = self.selection.contains(item);
         let drag = match (selected, self.pick()) {
             (true, Some(pick)) => pick,
-            _ => PlayableDrag::new(&[item], title),
+            _ => PlayableDrag::new(&[item], title).with_sleeve(album),
         };
         let sleeve = album.map(|album| {
             let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);

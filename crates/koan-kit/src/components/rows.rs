@@ -119,7 +119,7 @@ impl RenderOnce for NavRow {
             .items_center()
             .gap(look.space(Space::S))
             .px(look.space(Space::L))
-            .min_h(look.line_height(TypeRole::Body) + look.space(Space::S) * 2.0)
+            .h(super::RowMetrics::nav_height(self.detail.is_some(), &look))
             .text_role(TypeRole::Body, &look)
             .text_color(color)
             .when(!self.selected, move |row| {

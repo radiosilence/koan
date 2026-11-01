@@ -489,7 +489,9 @@ impl ArtistPage {
                 let selected = self.selection.contains(item);
                 let drag = match (selected, self.pick()) {
                     (true, Some(pick)) => pick,
-                    _ => PlayableDrag::new(&[item], track.title.clone()),
+                    _ => {
+                        PlayableDrag::new(&[item], track.title.clone()).with_sleeve(track.album_id)
+                    }
                 };
                 let sleeve = track.album_id.map(|album| {
                     let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);

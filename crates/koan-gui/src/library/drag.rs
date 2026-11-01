@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use koan_ffi::TrackSet;
 
-use super::tokens::{Paint, Type, Typeset};
-use crate::theme::Space;
+use super::tokens::Paint;
+use crate::components::{CoverArt, DragChip};
 
 /// One thing a page shows that can be played.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -53,6 +53,9 @@ pub struct PlayableDrag {
     pub items: Arc<[Playable]>,
     /// What the preview says: the one item's name, or how many.
     pub label: SharedString,
+    /// The record whose sleeve the preview shows: the first record dragged,
+    /// or the record of the tracks dragged when the page knows it.
+    pub sleeve: Option<i64>,
 }
 
 impl PlayableDrag {
@@ -61,35 +64,45 @@ impl PlayableDrag {
             sets: sources(items).into(),
             items: items.into(),
             label: label.into(),
+            sleeve: items.iter().find_map(|item| match item {
+                Playable::Album(id) => Some(*id),
+                _ => None,
+            }),
         }
+    }
+
+    /// The record whose sleeve the preview shows, where the first item is
+    /// not a record itself.
+    pub fn with_sleeve(mut self, album: Option<i64>) -> Self {
+        self.sleeve = self.sleeve.or(album);
+        self
     }
 
     /// The drag preview, centred under the pointer.
     pub fn preview(&self, at: Point<Pixels>, cx: &mut App) -> Entity<DragPreview> {
-        let label = self.label.clone();
-        cx.new(|_| DragPreview { label, at })
+        let (label, sleeve) = (self.label.clone(), self.sleeve);
+        cx.new(|_| DragPreview { label, sleeve, at })
     }
 }
 
 pub struct DragPreview {
     label: SharedString,
+    sleeve: Option<i64>,
     at: Point<Pixels>,
 }
 
 impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
-        div().pl(self.at.x).pt(self.at.y).child(
-            div()
-                .px(p.space(Space::M))
-                .py(p.space(Space::Xs))
-                .bg(p.bg)
-                .border_1()
-                .border_color(p.rule)
-                .typeset(p, Type::Meta, p.ink)
-                .whitespace_nowrap()
-                .child(self.label.clone()),
-        )
+        let side = crate::components::RowMetrics::nav_art(&p.look);
+        let mut chip = DragChip::new(self.label.clone());
+        if self.sleeve.is_some() {
+            chip = chip.sleeve(match crate::covers::image(self.sleeve, side, cx) {
+                Some(image) => CoverArt::Image(image),
+                None => CoverArt::Missing,
+            });
+        }
+        div().pl(self.at.x).pt(self.at.y).child(chip)
     }
 }
 

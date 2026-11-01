@@ -7,7 +7,7 @@ use koan_kit::app::*;
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use koan_kit::raw::ScrollHandle;
 
-use crate::components::{CoverArt, Mosaic, NavHeading, NavNote, NavRow, RowMetrics};
+use crate::components::{CoverArt, DropTarget, Mosaic, NavHeading, NavNote, NavRow, RowMetrics};
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
 use crate::library::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
@@ -190,6 +190,8 @@ impl Render for Sidebar {
             // queue's row are queued.
             .child(
                 row(queue, "nav-queue".into(), "queue", Icon::QueueSection, cx)
+                    .drop_highlight::<ExternalPaths>(&p.look)
+                    .drop_highlight::<PlayableDrag>(&p.look)
                     .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
                         drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
                     }))
@@ -221,6 +223,8 @@ impl Render for Sidebar {
                             .detail(count(playlist.track_count.into(), "track", "tracks"))
                             .selected(current == Some(page))
                             .on_click(go(page, cx))
+                            .drop_highlight::<ExternalPaths>(&p.look)
+                            .drop_highlight::<PlayableDrag>(&p.look)
                             // Files, and what is dragged from the library, dropped on a
                             // playlist's row are added to it.
                             .on_drop(cx.listener({

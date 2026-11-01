@@ -1,0 +1,1 @@
+- **The desktop app's sidebar, drags and queue controls.** Sidebar rows are the Mac's height; a drag shows what it carries, with a sleeve, and lights only the places that take it; the queue's controls sit in the toolbar as the Mac's, with save as playlist and clear under ⋯; pages have a 16-point margin.

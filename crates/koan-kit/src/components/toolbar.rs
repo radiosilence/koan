@@ -243,3 +243,50 @@ impl RenderOnce for ToolbarButton {
         self.button
     }
 }
+
+/// Closes the menu a `ToolbarMenu` opened: what a row runs before its action.
+pub type Dismiss = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
+
+type Content = std::rc::Rc<dyn Fn(Dismiss, &mut Window, &mut App) -> super::MenuPanel>;
+
+/// A toolbar button that opens a menu panel under it: a page's ⋯, a sort.
+/// Drawn pressed while the menu shows.
+#[derive(IntoElement)]
+pub struct ToolbarMenu {
+    id: ElementId,
+    button: ToolbarButton,
+    content: Content,
+}
+
+impl ToolbarMenu {
+    /// `content` builds the panel each time it opens; its rows call the
+    /// `Dismiss` they are given before they act.
+    pub fn new(
+        id: impl Into<ElementId>,
+        button: ToolbarButton,
+        content: impl Fn(Dismiss, &mut Window, &mut App) -> super::MenuPanel + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            button,
+            content: std::rc::Rc::new(content),
+        }
+    }
+}
+
+impl RenderOnce for ToolbarMenu {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let content = self.content;
+        gpui_kit::component::popover::Popover::new(self.id)
+            .appearance(false)
+            .arrow(false)
+            .trigger(self.button)
+            .content(move |_, window, cx| {
+                let state = cx.weak_entity();
+                let dismiss: Dismiss = std::rc::Rc::new(move |window, cx| {
+                    state.update(cx, |s, cx| s.dismiss(window, cx)).ok();
+                });
+                content(dismiss, window, cx)
+            })
+    }
+}
