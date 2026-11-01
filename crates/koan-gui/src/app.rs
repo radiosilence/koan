@@ -33,6 +33,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
     settings::install(engine.clone(), cx);
+    crate::dsp::window::init(cx);
 }
 
 /// Opens the window once the restored session is in the mirror, and keeps

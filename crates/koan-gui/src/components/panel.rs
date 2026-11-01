@@ -79,6 +79,15 @@ impl MenuRow {
         }
     }
 
+    /// A row whose label is data rather than the app's words (a preset's
+    /// name, a device's), which keeps its case.
+    pub fn data(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
+        Self {
+            label: text.into(),
+            ..Self::new(id, "")
+        }
+    }
+
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
         self

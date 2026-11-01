@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::edit::{BAND_DB, BAND_HZ, BAND_Q};
 use super::import::Imported;
 use super::{Setup, convolver, raw};
 use crate::config::{self, Config, DspEar, DspMeasurement, DspProfile, DspRole, DspScope};
@@ -538,6 +539,68 @@ pub struct Overview {
     pub outputs: Vec<OutputState>,
     /// That device plays filters alone, with no correction.
     pub filters_only: bool,
+    /// The correction aims at a target, and the EQs that play meet it
+    /// without conversion: see [`Overview::is_matched`].
+    pub matched: bool,
+}
+
+impl Overview {
+    /// Whether the chain plays matched: a correction that is not baked, a
+    /// tuning that plays, its first EQ that plays made against the
+    /// correction's target, and none after it made against another. An EQ
+    /// that says no target, such as a generic one stacked on top, leaves it
+    /// matched. What counts as playing is what the chain plays: on, and not
+    /// left out.
+    pub fn is_matched(&self) -> bool {
+        let baked = self
+            .profiles
+            .iter()
+            .find(|p| Some(&p.name) == self.active.as_ref())
+            .is_none_or(|c| c.role == DspRole::Baked);
+        if baked || !self.tuning_plays {
+            return false;
+        }
+        let mut playing = self
+            .chain
+            .iter()
+            .zip(&self.joins)
+            .filter(|((name, on), _)| *on && !self.left_out_eqs.contains(name))
+            .map(|(_, j)| j.join.as_ref());
+        playing.next() == Some(Some(&Join::Matched))
+            && playing.all(|j| matches!(j, Some(Join::Matched | Join::Unknown)))
+    }
+}
+
+/// The one thing an EQ's page offers on a device, by what the EQ is and
+/// what the device plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceAction {
+    /// It is the device's correction: stop correcting with it.
+    StopCorrecting,
+    /// It is the device's correction but is now said to be a tuning: play it
+    /// in the filters instead.
+    MoveToFilters,
+    /// It is in the device's filters: take it out.
+    TakeOutOfFilters,
+    /// A tuning the device does not play: add it to the filters.
+    AddToFilters,
+    /// Anything else: correct the device with it.
+    Correct,
+}
+
+impl DeviceAction {
+    /// For the profile `name` of `role` on a device whose correction is
+    /// `active` and whose filters hold it where `in_chain`.
+    pub fn of(name: &str, role: DspRole, active: Option<&str>, in_chain: bool) -> Self {
+        let active = active == Some(name);
+        match () {
+            _ if active && role == DspRole::Tuning => Self::MoveToFilters,
+            _ if active => Self::StopCorrecting,
+            _ if in_chain => Self::TakeOutOfFilters,
+            _ if role == DspRole::Tuning => Self::AddToFilters,
+            _ => Self::Correct,
+        }
+    }
 }
 
 /// The device the player resolves to: the configured one if it is there, or
@@ -569,7 +632,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
         .as_deref()
         .and_then(|d| cfg.dsp.profile_for(d))
         .and_then(|c| aims_at(c, &cfg.dsp.profiles));
-    Overview {
+    let mut overview = Overview {
         enabled: cfg.dsp.enabled,
         filters_only: device
             .as_deref()
@@ -614,6 +677,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
         tuning: device.as_deref().and_then(tuning_for),
         chain: device.as_deref().map(tunings_for).unwrap_or_default(),
         preset: device.as_deref().and_then(preset_for),
+        matched: false,
         device,
         profiles: cfg
             .dsp
@@ -672,7 +736,9 @@ pub fn overview_for(device: Option<String>) -> Overview {
                 }
             })
             .collect(),
-    }
+    };
+    overview.matched = overview.is_matched();
+    overview
 }
 
 /// Every device the EQ names, in the order first named, and what each is
@@ -1142,14 +1208,22 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// Write the profiles, and say so: what each output plays through is shown
-/// on every device that can choose it, here and on the devices controlling
-/// this one.
+/// Writes the profiles and says so, when they changed: what each output
+/// plays through is shown on every device that can choose it, here and on
+/// the devices controlling this one. A refused edit, or one that left
+/// everything as it was, wakes nobody.
 fn persist(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<(), String> {
-    Config::persist(mutate).map_err(|e| e.to_string())?;
-    crate::signal::engine_changed().bump();
-    crate::remote::dsp_sync::changed();
-    Ok(())
+    persist_changed(mutate).map(|_| ())
+}
+
+/// `persist`, saying whether anything changed.
+fn persist_changed(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<bool, String> {
+    let changed = Config::persist_changed(mutate).map_err(|e| e.to_string())?;
+    if changed {
+        crate::signal::engine_changed().bump();
+        crate::remote::dsp_sync::changed();
+    }
+    Ok(changed)
 }
 
 /// Where `name` keeps its files: responses, and an AutoEQ result's CSV.
@@ -1380,12 +1454,6 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// The ranges a band edited by hand is held to: the audible band, what a
-/// correction plausibly asks, and Q from very broad to very narrow.
-const BAND_HZ: std::ops::RangeInclusive<f64> = 10.0..=22_000.0;
-const BAND_DB: std::ops::RangeInclusive<f64> = -30.0..=30.0;
-const BAND_Q: std::ops::RangeInclusive<f64> = 0.1..=20.0;
-
 fn clamp(v: f64, r: &std::ops::RangeInclusive<f64>) -> Result<f64, String> {
     if !v.is_finite() {
         return Err("Not a number".into());
@@ -1509,48 +1577,112 @@ pub fn set_band(
     gain_db: f64,
     q: f64,
 ) -> Result<(), String> {
+    edit_band(name, index, None, kind, freq, gain_db, q).map(|_| ())
+}
+
+/// What an edit naming the filter it last saw did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Edited {
+    /// Saved: the filter as stored, and whether that changed it.
+    Stored {
+        filter: crate::config::DspFilter,
+        changed: bool,
+    },
+    /// Not saved: the filter is no longer the one the caller saw, since it
+    /// changed, moved, was removed, or its profile was.
+    Changed,
+}
+
+/// `set_band`, unless filter `index` is no longer `expected`, the filter as
+/// the caller last read it: an index names a place in the list, and a band
+/// added or removed elsewhere since would put another filter there. Says
+/// what it stored, held within the ranges, which is what a caller editing
+/// it again expects next.
+pub fn edit_band(
+    name: &str,
+    index: usize,
+    expected: Option<&crate::config::DspFilter>,
+    kind: &str,
+    freq: f64,
+    gain_db: f64,
+    q: f64,
+) -> Result<Edited, String> {
     use crate::config::DspFilter;
     let (kind, freq, gain_db, q) = band_values(kind, freq, gain_db, q)?;
-    may_edit(name)?;
-    let mut found = Err(format!("{name} has no band {}", index + 1));
-    persist(|cfg| {
-        if let Some(DspFilter::Band(b)) = cfg
+    edit_filter(name, index, expected, |filter| match filter {
+        DspFilter::Band(b) => {
+            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
+            true
+        }
+        _ => false,
+    })
+    .map_err(|missing| missing.unwrap_or_else(|| format!("{name} has no band {}", index + 1)))
+}
+
+/// Filter `index` of `name` changed by `edit`, which says whether it is of
+/// the kind it edits. With `expected`, a filter that is no longer it, or no
+/// longer there, is `Changed`; without, a missing one is an error (`None`
+/// for the caller to name).
+fn edit_filter(
+    name: &str,
+    index: usize,
+    expected: Option<&crate::config::DspFilter>,
+    edit: impl FnOnce(&mut crate::config::DspFilter) -> bool,
+) -> Result<Edited, Option<String>> {
+    if expected.is_some() && !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Ok(Edited::Changed);
+    }
+    may_edit(name).map_err(Some)?;
+    let mut found: Option<Result<crate::config::DspFilter, ()>> = None;
+    let changed = persist_changed(|cfg| {
+        let filter = cfg
             .dsp
             .profiles
             .iter_mut()
             .find(|p| p.name == name)
-            .and_then(|p| p.filters.get_mut(index))
-        {
-            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
-            found = Ok(());
+            .and_then(|p| p.filters.get_mut(index));
+        let Some(filter) = filter else { return };
+        if expected.is_some_and(|e| e != &*filter) {
+            found = Some(Err(()));
+            return;
+        }
+        if edit(filter) {
+            found = Some(Ok(filter.clone()));
         }
     })
-    .map_err(|e| e.to_string())?;
-    found
+    .map_err(Some)?;
+    match (found, expected) {
+        (Some(Ok(filter)), _) => Ok(Edited::Stored { filter, changed }),
+        (_, Some(_)) => Ok(Edited::Changed),
+        (_, None) => Err(None),
+    }
 }
 
 /// Set the points of filter `index` of `name`, a graphic curve, each held
 /// within the ranges a band may have and put in order of frequency. Its
 /// channels are kept. Refused for a correction, which plays as made.
 pub fn set_curve(name: &str, index: usize, points: &[(f64, f64)]) -> Result<(), String> {
+    edit_curve(name, index, None, points).map(|_| ())
+}
+
+/// `set_curve`, unless filter `index` is no longer `expected`, as
+/// `edit_band` is. Says what it stored.
+pub fn edit_curve(
+    name: &str,
+    index: usize,
+    expected: Option<&crate::config::DspFilter>,
+    points: &[(f64, f64)],
+) -> Result<Edited, String> {
     use crate::config::DspFilter;
     let points = curve_points(points)?;
-    may_edit(name)?;
-    let mut found = Err(format!("{name} has no curve {}", index + 1));
-    persist(|cfg| {
-        if let Some(DspFilter::Graphic(g)) = cfg
-            .dsp
-            .profiles
-            .iter_mut()
-            .find(|p| p.name == name)
-            .and_then(|p| p.filters.get_mut(index))
-        {
+    edit_filter(name, index, expected, |filter| match filter {
+        DspFilter::Graphic(g) => {
             g.points = points;
-            found = Ok(());
+            true
         }
+        _ => false,
     })
-    .map_err(|e| e.to_string())?;
-    found
+    .map_err(|missing| missing.unwrap_or_else(|| format!("{name} has no curve {}", index + 1)))
 }
 
 /// Add a flat peaking band at 1 kHz to the end of `name`'s filters, on
@@ -1731,18 +1863,45 @@ pub fn set_stereo(name: &str, stereo: bool, keep: u16) -> Result<(), String> {
 
 /// Take filter `index` out of `name`.
 pub fn remove_filter(name: &str, index: usize) -> Result<(), String> {
+    remove_edited(name, index, None::<fn(&crate::config::DspFilter) -> bool>).map(|_| ())
+}
+
+/// `remove_filter`, unless filter `index` is no longer the one `expected`
+/// recognises, as `edit_band` is: an index names a place in the list, and
+/// removing by it after a filter before it went would remove another. A
+/// test rather than a filter, so a caller holding a delay or a mix as it
+/// reads one can name it. Says what it removed.
+pub fn remove_edited(
+    name: &str,
+    index: usize,
+    expected: Option<impl Fn(&crate::config::DspFilter) -> bool>,
+) -> Result<Edited, String> {
+    if expected.is_some() && !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Ok(Edited::Changed);
+    }
     may_edit(name)?;
-    let mut found = Err(format!("{name} has no filter {}", index + 1));
+    let mut found: Option<Result<crate::config::DspFilter, ()>> = None;
     persist(|cfg| {
-        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name)
-            && index < p.filters.len()
-        {
-            p.filters.remove(index);
-            found = Ok(());
+        let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) else {
+            return;
+        };
+        let Some(filter) = p.filters.get(index) else {
+            return;
+        };
+        if expected.as_ref().is_some_and(|e| !e(filter)) {
+            found = Some(Err(()));
+            return;
         }
-    })
-    .map_err(|e| e.to_string())?;
-    found
+        found = Some(Ok(p.filters.remove(index)));
+    })?;
+    match (found, expected) {
+        (Some(Ok(filter)), _) => Ok(Edited::Stored {
+            filter,
+            changed: true,
+        }),
+        (_, Some(_)) => Ok(Edited::Changed),
+        (_, None) => Err(format!("{name} has no filter {}", index + 1)),
+    }
 }
 
 /// What a profile does to the sound, for drawing: every curve on AutoEQ's
@@ -4454,6 +4613,140 @@ mod tests {
         assert!(set_curve("Mine", 0, &[(100.0, 1.0)]).is_err(), "a band");
     }
 
+    /// An edit that names the filter it last saw is refused once another
+    /// filter has taken its place, and what it is given back is what it
+    /// expects next, even past a range.
+    #[test]
+    fn edits_refuse_a_filter_changed_since() {
+        use crate::config::{DspFilter, EqFilter, EqFilterKind, GraphicEq};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let kept = |edited: Result<Edited, String>| match edited {
+            Ok(Edited::Stored { filter, .. }) => filter,
+            other => panic!("{other:?}"),
+        };
+        let band = |freq: f64| {
+            DspFilter::Band(EqFilter {
+                kind: EqFilterKind::Peaking,
+                freq,
+                gain_db: 0.0,
+                q: 1.0,
+                channels: Vec::new(),
+            })
+        };
+        let curve = DspFilter::Graphic(GraphicEq {
+            points: vec![(100.0, 0.0), (1000.0, 0.0)],
+            channels: Vec::new(),
+        });
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Mine".into(),
+                filters: vec![band(100.0), band(200.0), curve.clone()],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        let seen = band(200.0);
+        // A drag past every range: what is stored is held, and the next step
+        // expecting it goes through.
+        let stored = kept(edit_band(
+            "Mine",
+            1,
+            Some(&seen),
+            "peaking",
+            40_000.0,
+            50.0,
+            90.0,
+        ));
+        assert_eq!(
+            stored,
+            DspFilter::Band(EqFilter {
+                kind: EqFilterKind::Peaking,
+                freq: 22_000.0,
+                gain_db: 30.0,
+                q: 20.0,
+                channels: Vec::new(),
+            })
+        );
+        assert_eq!(
+            edit_band("Mine", 1, Some(&seen), "peaking", 300.0, 1.0, 1.0),
+            Ok(Edited::Changed)
+        );
+        let now = kept(edit_band(
+            "Mine",
+            1,
+            Some(&stored),
+            "peaking",
+            300.0,
+            1.0,
+            1.0,
+        ));
+        // The band before it removed elsewhere: the same index is now the
+        // curve, and an edit of band 1 as it was seen is refused.
+        remove_filter("Mine", 0).unwrap();
+        assert_eq!(
+            edit_band("Mine", 1, Some(&now), "peaking", 400.0, 1.0, 1.0),
+            Ok(Edited::Changed)
+        );
+        assert_eq!(detail("Mine").unwrap().filters[1], curve);
+        let painted = kept(edit_curve(
+            "Mine",
+            1,
+            Some(&curve),
+            &[(2000.0, 1.0), (5.0, 50.0)],
+        ));
+        assert_eq!(
+            painted,
+            DspFilter::Graphic(GraphicEq {
+                points: vec![(10.0, 30.0), (2000.0, 1.0)],
+                channels: Vec::new(),
+            })
+        );
+        assert_eq!(
+            edit_curve("Mine", 1, Some(&curve), &[(100.0, 0.0)]),
+            Ok(Edited::Changed)
+        );
+        let last = kept(edit_curve("Mine", 1, Some(&painted), &[(100.0, 0.0)]));
+        // Unmoved: stored, and said to have changed nothing.
+        assert!(matches!(
+            edit_curve("Mine", 1, Some(&last), &[(100.0, 0.0)]),
+            Ok(Edited::Stored { changed: false, .. })
+        ));
+        // The filter edited removed, so the list is shorter, and the profile
+        // gone: each is as stale as a filter changed in place.
+        remove_filter("Mine", 1).unwrap();
+        assert_eq!(
+            edit_curve("Mine", 1, Some(&last), &[(100.0, 0.0)]),
+            Ok(Edited::Changed)
+        );
+        assert!(edit_curve("Mine", 1, None, &[(100.0, 0.0)]).is_err());
+        assert_eq!(
+            edit_band("Nobody", 0, Some(&now), "peaking", 100.0, 0.0, 1.0),
+            Ok(Edited::Changed)
+        );
+        assert!(edit_band("Nobody", 0, None, "peaking", 100.0, 0.0, 1.0).is_err());
+        // Removing names the filter too.
+        let is = |f: &DspFilter| {
+            let f = f.clone();
+            move |g: &DspFilter| *g == f
+        };
+        assert_eq!(
+            remove_edited("Mine", 0, Some(is(&last))),
+            Ok(Edited::Changed)
+        );
+        assert!(matches!(
+            remove_edited("Mine", 0, Some(is(&now))),
+            Ok(Edited::Stored { changed: true, .. })
+        ));
+        assert_eq!(
+            remove_edited("Mine", 0, Some(is(&now))),
+            Ok(Edited::Changed)
+        );
+    }
+
     /// A preview draws an edit without saving it; saving as a copy keeps the
     /// edit apart, puts the original back and swaps the copy into the
     /// device's tuning.
@@ -6546,6 +6839,76 @@ mod tests {
         assert_eq!(j.step.len(), targets::grid().len());
         assert!(j.step[low] < -3.0, "{}", j.step[low]);
         assert_eq!(j.suggestion, None);
+    }
+
+    /// A chain is matched while what plays meets the correction's target:
+    /// the first EQ that plays made against it, none after it against
+    /// another, and an EQ that says no target leaving it so.
+    #[test]
+    fn a_chain_is_matched_by_what_plays() {
+        use crate::config::DspTarget;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                filters: vec![band(100.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            let tuning = |name: &str, freq: f64, tuned_for: Option<&str>| DspProfile {
+                name: name.into(),
+                filters: vec![band(freq)],
+                tuned_for: tuned_for.map(Into::into),
+                role: Some(DspRole::Tuning),
+                ..Default::default()
+            };
+            c.dsp
+                .profiles
+                .push(tuning("Bright", 8000.0, Some("harman-over-ear-2018")));
+            c.dsp.profiles.push(tuning("Plain", 300.0, None));
+            c.dsp
+                .profiles
+                .push(tuning("Warm", 60.0, Some("diffuse-field-gras-kemar")));
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![band(200.0)],
+                role: Some(DspRole::Baked),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let dac = "Desk DAC";
+        let matched = |chain: &[(&str, bool)]| {
+            let chain: Vec<(String, bool)> =
+                chain.iter().map(|(n, on)| ((*n).into(), *on)).collect();
+            set_tunings(dac, &chain).unwrap();
+            overview_for(Some(dac.into())).matched
+        };
+        assign(Some("HD 600"), dac).unwrap();
+        assert!(matched(&[("Bright", true), ("Plain", true)]));
+        assert!(!matched(&[("Bright", true), ("Warm", true)]));
+        assert!(
+            !matched(&[("Plain", true), ("Bright", true)]),
+            "the first says no target"
+        );
+        assert!(
+            matched(&[("Warm", false), ("Bright", true)]),
+            "judged by the first that plays"
+        );
+        assert!(!matched(&[]), "no EQ plays");
+        assert!(matched(&[("Bright", true)]));
+        assign(Some("Lush"), dac).unwrap();
+        assert!(
+            !overview_for(Some(dac.into())).matched,
+            "a baked correction"
+        );
     }
 
     /// An output plays its tuning on top of its correction, with the

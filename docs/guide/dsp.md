@@ -352,6 +352,13 @@ row opens a page of its points, each frequency and gain editable within the
 same limits; a point moved past another takes its place in order. Delays and
 mixes are shown but not edited here.
 
+In the desktop app an edit names the band it started on. When that band was
+changed, moved or removed meanwhile, on another device or elsewhere on the page, the edit is
+dropped rather than written over whatever filter now has its place, and the
+page shows the filters as they are. A figure in the table is saved only when
+its text is changed, so a band keeps every digit its file gave it however
+many places the table shows.
+
 An EQ of bands alone is **Mono**, one list for both channels, or **Stereo**,
 one for each. Stereo starts each channel with a copy of the list, and
 **Editing** picks which channel the graph, its handles and the table show; the

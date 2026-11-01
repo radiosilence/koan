@@ -59,6 +59,10 @@ The queue keeps its place and selection when you visit another page and come bac
 
 ## Settings
 
-⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. EQ is not there yet.
+⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. EQ has a window of its own, below.
 
 Settings reads the configuration again when its window opens and whenever it comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.
+
+## EQ
+
+Playback → EQ… (⌥⌘E, Ctrl+Alt+E on Linux) opens EQ in a window of its own, on the output in use; the device menu at its top picks another. It is the same EQ the other apps have, described in [Equalisation and convolution](dsp.md): the chain a device plays, its preset, the curve of the whole, and each profile's page with its bands. Drag a band's handle on the graph for its frequency and gain, with Option held (Alt on Linux) for its Q; a graphic curve is painted by dragging across the graph away from the handles. Files dropped on the window are imported into the device's filters.

@@ -47,6 +47,7 @@ actions!(
         SkipForward,
         SkipBack,
         FavouriteCurrentTrack,
+        ShowEq,
         // Navigation.
         Search,
         AddMusic,
@@ -183,6 +184,7 @@ pub const MENU: &[Shortcut] = &[
         Playback,
         FavouriteCurrentTrack
     ),
+    shortcut!("EQ…", ["secondary-alt-e"], Playback, ShowEq),
     shortcut!("Toggle Lyrics", ["secondary-alt-l"], View, ToggleLyrics),
     shortcut!("Keyboard Shortcuts", ["secondary-/"], View, ShowShortcuts),
     shortcut!("Bigger", ["secondary-+", "secondary-="], View, Bigger),

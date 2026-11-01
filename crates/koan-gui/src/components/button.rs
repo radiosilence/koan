@@ -102,6 +102,13 @@ impl Button {
         self
     }
 
+    /// A label that holds data, a device's or a profile's name, which keeps
+    /// its case: the caller lowercases the app's own words in it.
+    pub fn text(mut self, text: impl Into<SharedString>) -> Self {
+        self.label = Some(text.into());
+        self
+    }
+
     /// The glyph: beside the label with "show icons" on, or alone in a glyph
     /// button whatever the setting.
     pub fn icon(mut self, icon: Icon) -> Self {

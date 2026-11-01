@@ -21,6 +21,7 @@ pub mod autoeq;
 pub mod autoeq_squig;
 pub mod camilla;
 pub mod convolver;
+pub mod edit;
 pub mod import;
 pub mod impulse;
 pub mod klippel;

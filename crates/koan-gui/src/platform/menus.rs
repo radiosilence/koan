@@ -94,6 +94,8 @@ pub fn set(cx: &mut App) {
             item::<SkipBack>(),
             MenuItem::separator(),
             item::<FavouriteCurrentTrack>(),
+            MenuItem::separator(),
+            item::<ShowEq>(),
         ]),
         Menu::new("Queue").items([
             plain("Save Session", SaveSession),

@@ -1,0 +1,1 @@
+- **Saving an EQ that did not change wakes nothing.** An edit that leaves a profile as it was no longer wakes every client watching the engine or sends the profiles to the server.
