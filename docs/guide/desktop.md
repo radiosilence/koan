@@ -10,6 +10,8 @@ Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppIma
 
 On one machine the desktop app, the macOS app and the terminal UI can all run at once on the same library. Each is a device of its own to the server and the network, named for what it is (`studio (desktop)`, `studio (terminal)`), so one can control another and none takes another's place. Only one desktop app runs per configuration directory: opening it again, or opening files with it, brings the running one to the front and hands it the files.
 
+The saved session, the queue and where it had got to, is one per configuration directory, shared by the desktop app and the macOS app. Each picks it up at launch and saves it as it quits, so whichever quits last leaves its own for the next launch of either.
+
 ## Files from outside
 
 Files and folders dropped on the queue are added to the library where they lie and appended to the queue; dropped on a playlist, they are added to it. Folders are walked, so dropping a rip queues the album. On Linux, files opened with the app from the file manager, and on both, files named on the command line (`koan-desktop ~/Music/new/*.flac`), are queued the same way. Nothing is moved: [organize](file-organization.md) is what puts them under a library folder.

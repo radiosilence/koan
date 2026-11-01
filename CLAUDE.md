@@ -347,7 +347,7 @@ Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and genera
 
 | Module | What |
 |--------|------|
-| `platform/mod.rs` | `init`: everything that runs for the app's life, and what files and links from outside become (`Links` for the shell) |
+| `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). `restore_session`, which the shell calls at launch: the session is shared with the Mac app on one config directory, so only a process that read it writes it back |
 | `platform/actions.rs` | Every shortcut, from one table: the key bindings, the macOS menu bar's items and the shortcuts sheet. Modifier shortcuts in the `koan` context, so a text field's own keys win; bare keys in `koan && !Input`, never a menu's key equivalent. Engine-only commands handled here; the rest are the shell's and the pages' to handle |
 | `platform/menus.rs` | The macOS menu bar, in the Mac app's order |
 | `platform/shortcuts_sheet.rs` | What `?` and ⌘/ show |

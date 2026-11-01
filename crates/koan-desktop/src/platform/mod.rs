@@ -12,6 +12,7 @@ pub mod menus;
 pub mod shortcuts_sheet;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt as _;
@@ -22,6 +23,23 @@ use instance::Opened;
 
 /// How long quitting waits for the session and the server's queue to save.
 const QUIT_SAVE_FOR: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// This process restored the saved session, and so may write it back.
+static RESTORED: AtomicBool = AtomicBool::new(false);
+
+/// Restore the queue, cursor and position the last session saved, and from
+/// then on save them on quit. What the shell calls at launch, in place of
+/// `KoanEngine::restore_session`.
+///
+/// On one configuration directory the desktop app shares a single saved
+/// session with the native app, so a process that never read it must not
+/// write it: quitting would leave the other app this one's queue, empty or
+/// not, in place of its own.
+pub async fn restore_session(engine: &Arc<KoanEngine>) -> Result<u32, koan_ffi::KoanError> {
+    let restored = engine.clone().restore_session().await?;
+    RESTORED.store(true, Ordering::Relaxed);
+    Ok(restored)
+}
 
 /// Links the platform asked the app to open that are not files, such as
 /// invites and pairings, oldest first. The shell takes them as they arrive
@@ -39,8 +57,9 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
     shortcuts_sheet::bind(cx);
     menus::set(cx);
     media::start(engine.clone(), cx);
-    // As the Mac app quits: the session and the server's queue first, for at
-    // most two seconds, so a server out of reach does not hold the quit up;
+    // As the Mac app quits: the session and the server's queue first, if this
+    // process restored them (`restore_session`), for at most two seconds, so a
+    // server out of reach does not hold the quit up;
     // then, after that last save, a UPnP renderer is stopped rather than left
     // to play out from a URL this process serves and stall, settings still
     // being written are waited for, and a shared library's Funnel is taken
@@ -51,21 +70,8 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
     cx.on_app_quit({
         let engine = engine.clone();
         move |cx| {
-            let (saved, waiting) = std::sync::mpsc::channel();
-            let saving = engine.clone();
-            let spawned = std::thread::Builder::new()
-                .name("koan-desktop-quit".into())
-                .spawn(move || {
-                    futures_lite::future::block_on(async {
-                        if let Err(e) = saving.clone().save_session().await {
-                            log::warn!("quit: saving the session: {e}");
-                        }
-                        saving.save_server_queue_now().await;
-                    });
-                    let _ = saved.send(());
-                });
-            if spawned.is_ok() && waiting.recv_timeout(QUIT_SAVE_FOR).is_err() {
-                log::warn!("quit: the session was still saving after {QUIT_SAVE_FOR:?}");
+            if RESTORED.load(Ordering::Relaxed) {
+                save_on_leaving(&engine);
             }
             engine.release_output();
             engine.flush_settings();
@@ -88,6 +94,26 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
         }
     })
     .detach();
+}
+
+/// Save the session and the server's queue, waiting at most `QUIT_SAVE_FOR`.
+fn save_on_leaving(engine: &Arc<KoanEngine>) {
+    let (saved, waiting) = std::sync::mpsc::channel();
+    let saving = engine.clone();
+    let spawned = std::thread::Builder::new()
+        .name("koan-desktop-quit".into())
+        .spawn(move || {
+            futures_lite::future::block_on(async {
+                if let Err(e) = saving.clone().save_session().await {
+                    log::warn!("quit: saving the session: {e}");
+                }
+                saving.save_server_queue_now().await;
+            });
+            let _ = saved.send(());
+        });
+    if spawned.is_ok() && waiting.recv_timeout(QUIT_SAVE_FOR).is_err() {
+        log::warn!("quit: the session was still saving after {QUIT_SAVE_FOR:?}");
+    }
 }
 
 /// Bring the app and its window to the front.
