@@ -1,0 +1,1 @@
+- **Covers on screen first in the desktop app.** Covers still downloading after they scrolled away no longer hold places from the ones now on screen, and covers from a server no longer wait behind local covers being resized. `KOAN_LOG=debug` logs how many are being fetched.

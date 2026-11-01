@@ -30,7 +30,7 @@ The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. See [Keybindings](../
 
 ## Configuration and the log
 
-The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal.
+The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
 ## Running a build from source
 

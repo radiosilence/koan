@@ -205,8 +205,20 @@ impl Queue {
             .map(|(k, _)| *k)
     }
 
+    /// Fetches running for records no longer asked for: scrolled away. A
+    /// blocking request cannot be called back, so these finish, but they
+    /// hold no place in `limit`, and what is on screen now starts at once.
+    fn abandoned(&self) -> usize {
+        let wanted: HashSet<Art> = self.wanted.keys().map(|k| k.art).collect();
+        self.fetching
+            .iter()
+            .filter(|art| !wanted.contains(art))
+            .count()
+    }
+
     fn next_fetch(&self) -> Option<Art> {
-        if self.fetching.len() >= self.limit.max(1) {
+        let live = self.fetching.len() - self.abandoned();
+        if live >= self.limit.max(1) {
             return None;
         }
         self.most_urgent(|k| self.fetchable(k)).map(|k| k.art)
@@ -522,10 +534,24 @@ impl Covers {
             .count();
         queue.limit = (shown * 2).clamp(1, MAX_FETCHES);
         queue.wanted = wanted;
-        let limit = queue.limit;
+        // The abandoned still hold threads while they finish: enough more
+        // that the limit's worth run beside them, under the ceiling.
+        let abandoned = queue.abandoned();
+        let threads = (queue.limit + abandoned).min(MAX_FETCHES);
+        let (live, limit) = (queue.fetching.len() - abandoned, queue.limit);
+        let waiting = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
         drop(queue);
-        self.grow_fetchers(limit);
-        self.shared.wake(fetches, decodes);
+        log::debug!(
+            "covers: {live} fetching, {abandoned} scrolled away and finishing, \
+             {waiting} waiting, limit {limit}"
+        );
+        self.grow_fetchers(threads);
+        // Every free place, not only the new requests: what was waiting
+        // behind fetches that have since scrolled away can start now.
+        self.shared.wake(
+            fetches.max(waiting.min(limit.saturating_sub(live))),
+            decodes,
+        );
     }
 
     fn land(&mut self, done: Done) {
@@ -1131,6 +1157,39 @@ mod tests {
         assert_eq!((i32::from(size.width), i32::from(size.height)), (100, 100));
         assert_eq!(&image.as_bytes(0).unwrap()[..4], &[0, 0, 255, 255]);
         assert!(decode(b"junk", 100).is_none());
+    }
+
+    /// Fetches for covers scrolled away finish but hold no place: with every
+    /// place taken by them, what is on screen starts at once.
+    #[test]
+    fn covers_scrolled_away_leave_their_places_to_what_is_shown() {
+        let mut q = Queue {
+            fetches_allowed: true,
+            limit: 2,
+            ..Queue::default()
+        };
+        let (gone_a, gone_b, shown) = (Art::Album(1), Art::Album(2), Art::Album(3));
+        q.fetching.extend([gone_a, gone_b]);
+        q.wanted
+            .insert(Key { art: shown, px: 64 }, Priority::Visible);
+        assert_eq!(q.abandoned(), 2);
+        assert_eq!(q.next_fetch(), Some(shown));
+        // Still wanted, they keep their places.
+        q.wanted.insert(
+            Key {
+                art: gone_a,
+                px: 64,
+            },
+            Priority::Ahead(1.0),
+        );
+        q.wanted.insert(
+            Key {
+                art: gone_b,
+                px: 64,
+            },
+            Priority::Ahead(1.0),
+        );
+        assert_eq!(q.next_fetch(), None);
     }
 
     #[test]

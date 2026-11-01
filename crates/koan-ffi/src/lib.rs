@@ -5737,10 +5737,10 @@ impl KoanEngine {
         };
         let track_id = row.id;
 
-        {
-            // Reading and resizing a local cover is CPU work: as many at once
-            // as there are cores, however many are asked for. A remote
-            // cover, below, waits on the network and is not held here.
+        // Reading and resizing a local cover is CPU work: as many at once as
+        // there are cores, however many are asked for. A record with no file
+        // here goes straight to the server, never waiting behind them.
+        if row.path.is_some() || row.cached_path.is_some() {
             let _core = CoverCore::take();
             if let Some(art) = local_cover_art(&row) {
                 return Ok(Some(fit_cover(art, size)));
