@@ -530,6 +530,11 @@ impl ApiServer {
                     // to sign in rather than refused), so it sits outside the GraphQL auth
                     // layer. Built before the auth routes take their state.
                     let covers = Arc::new(crate::covers::Covers::in_config_dir());
+                    // A standing server keeps every album's grid cover ready; an
+                    // app sharing its own library makes them as asked.
+                    if !embedded {
+                        covers.warm(pool.clone());
+                    }
                     let ui_routes = (!embedded).then(|| crate::ui::router(
                         pool.clone(),
                         auth_route_state.clone(),

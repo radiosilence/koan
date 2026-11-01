@@ -64,6 +64,12 @@ const SWEEP_EVERY: u64 = 256;
 /// A hit moves a cover's mtime, which is its place in line for eviction, no
 /// more than once in this long.
 const TOUCH_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+/// Where the newest eviction applied is kept, beside the covers. A dot file,
+/// which the sweep leaves alone.
+const EVICTED: &str = ".evicted";
+/// How often the warm looks for albums without a cover ready, besides when
+/// the library changes: albums added by a scan evict nothing.
+const WARM_EVERY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// A temporary file older than this was left by a write that never finished.
 const TMP_LEFT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
@@ -72,15 +78,154 @@ pub struct Covers {
     budget: u64,
     writes: std::sync::atomic::AtomicU64,
     sweeping: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The newest `art_evictions` entry already applied to the album
+    /// entries; `None` until the first look, which only reads where the
+    /// library has got to.
+    evicted: parking_lot::Mutex<Option<i64>>,
+    /// Wakes the warm when the library has changed.
+    warm: (parking_lot::Mutex<bool>, parking_lot::Condvar),
 }
 
 impl Covers {
     pub fn new(dir: PathBuf) -> Self {
+        let evicted = std::fs::read_to_string(dir.join(EVICTED))
+            .ok()
+            .and_then(|s| s.trim().parse().ok());
         Self {
             dir,
             budget: BUDGET,
             writes: Default::default(),
             sweeping: Default::default(),
+            evicted: parking_lot::Mutex::new(evicted),
+            warm: Default::default(),
+        }
+    }
+
+    /// An album's cover at `size` from the album's own entry: one small file
+    /// read, no music file opened, listed or even looked at. Without an entry,
+    /// `make` finds it (the tracks' art, as `cover` does) and its answer is
+    /// kept for the album, no art included; `None` from `make` says it could
+    /// not tell, and nothing is kept. Blocking.
+    pub(crate) fn album_cover(
+        &self,
+        album: i64,
+        size: u32,
+        make: impl FnOnce() -> Option<Option<Bytes>>,
+    ) -> Option<Bytes> {
+        let key = album_key(album, size);
+        if let Some(hit) = self.read_disk(&key) {
+            return hit;
+        }
+        let art = make()?;
+        self.write_disk(&key, art.as_deref());
+        art
+    }
+
+    /// Drops the entries of albums the library has named in `art_evictions`
+    /// since the last look (deleted, or rescanned with perhaps another image
+    /// beside them), so their next request reads the files again. One indexed
+    /// read when nothing has changed.
+    pub(crate) fn forget_evicted(&self, conn: &rusqlite::Connection) {
+        let Ok(newest) =
+            conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM art_evictions", [], |r| {
+                r.get::<_, i64>(0)
+            })
+        else {
+            return;
+        };
+        let mut seen = self.evicted.lock();
+        let Some(since) = *seen else {
+            // No entries kept yet: nothing to forget.
+            *seen = Some(newest);
+            self.mark(newest);
+            return;
+        };
+        if newest <= since {
+            return;
+        }
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT DISTINCT id FROM art_evictions WHERE kind = 'album' AND seq > ?1")
+            && let Ok(ids) = stmt.query_map([since], |r| r.get::<_, i64>(0))
+        {
+            for id in ids.flatten() {
+                for size in SIZES {
+                    let _ = std::fs::remove_file(self.dir.join(album_key(id, size)));
+                }
+            }
+        }
+        *seen = Some(newest);
+        self.mark(newest);
+        drop(seen);
+        self.poke();
+    }
+
+    fn mark(&self, seq: i64) {
+        let _ = std::fs::create_dir_all(&self.dir);
+        let _ = std::fs::write(self.dir.join(EVICTED), seq.to_string());
+    }
+
+    /// Wakes the warm for another pass.
+    fn poke(&self) {
+        *self.warm.0.lock() = true;
+        self.warm.1.notify_one();
+    }
+
+    /// Keeps every album's grid-size cover ready, on a thread of its own:
+    /// at start, after the library changes, and every so often, one album at
+    /// a time in the order its files lie in the library, so the disk reads
+    /// in order rather than seeking between requests' files.
+    pub fn warm(self: &std::sync::Arc<Self>, pool: std::sync::Arc<koan_core::db::pool::Pool>) {
+        let covers = self.clone();
+        let started = std::thread::Builder::new()
+            .name("koan-covers-warm".into())
+            .spawn(move || {
+                loop {
+                    covers.warm_pass(&pool);
+                    let mut poked = covers.warm.0.lock();
+                    if !*poked {
+                        covers.warm.1.wait_for(&mut poked, WARM_EVERY);
+                    }
+                    *poked = false;
+                }
+            });
+        if let Err(e) = started {
+            log::warn!("covers: no warm thread: {e}");
+        }
+    }
+
+    fn warm_pass(&self, pool: &koan_core::db::pool::Pool) {
+        let albums: Vec<i64> = {
+            let Ok(db) = pool.get() else { return };
+            self.forget_evicted(&db.conn);
+            let Ok(mut stmt) = db.conn.prepare(
+                "SELECT album_id FROM tracks
+                  WHERE path IS NOT NULL AND album_id IS NOT NULL
+                  GROUP BY album_id ORDER BY MIN(path)",
+            ) else {
+                return;
+            };
+            stmt.query_map([], |r| r.get(0))
+                .map(|rows| rows.flatten().collect())
+                .unwrap_or_default()
+        };
+        let mut made = 0usize;
+        for album in albums {
+            if self.dir.join(album_key(album, GRID)).exists() {
+                continue;
+            }
+            let tracks = match pool.get() {
+                Ok(db) => {
+                    koan_core::db::queries::tracks_for_album(&db.conn, album).unwrap_or_default()
+                }
+                Err(_) => return,
+            };
+            self.album_cover(album, GRID, || {
+                (!tracks.is_empty()).then(|| self.cover(&tracks, GRID))
+            });
+            made += 1;
+        }
+        if made > 0 {
+            log::info!("covers: {made} albums' covers made ready");
         }
     }
 
@@ -183,6 +328,9 @@ fn sweep(dir: &Path, budget: u64) {
         let Ok(meta) = entry.metadata() else { continue };
         let modified = meta.modified().unwrap_or(now);
         let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         if path.extension().is_some_and(|e| e == "tmp") {
             if now.duration_since(modified).unwrap_or_default() > TMP_LEFT {
                 let _ = std::fs::remove_file(&path);
@@ -235,6 +383,11 @@ fn key(path: &Path, size: u32) -> String {
     let len = meta.map_or(0, |m| m.len());
     let digest = md5::compute(format!("{}\0{len}\0{mtime}", path.display()));
     format!("{digest:x}-{size}.jpg")
+}
+
+/// An album's own entry: what `album_cover` reads before any file.
+fn album_key(album: i64, size: u32) -> String {
+    format!("album-{album}-{size}.jpg")
 }
 
 /// Fit within `size` pixels on a side and encode as JPEG. A JPEG already
@@ -335,6 +488,68 @@ fn draw_placeholder(size: u32) -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An album's entry answers without its files: `make` runs once, a miss
+    /// is kept like a hit, and a `make` that could not tell keeps nothing.
+    #[test]
+    fn an_album_is_read_from_its_files_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let covers = Covers::new(dir.path().to_path_buf());
+        let made = std::cell::Cell::new(0);
+        let make = |art: Option<Bytes>| {
+            made.set(made.get() + 1);
+            Some(art)
+        };
+        let jpeg = Bytes::from_static(b"jpeg");
+        assert_eq!(
+            covers.album_cover(1, GRID, || make(Some(jpeg.clone()))),
+            Some(jpeg.clone())
+        );
+        assert_eq!(covers.album_cover(1, GRID, || make(None)), Some(jpeg));
+        assert_eq!(covers.album_cover(2, GRID, || make(None)), None);
+        assert_eq!(
+            covers.album_cover(2, GRID, || make(Some(Bytes::new()))),
+            None
+        );
+        assert_eq!(made.get(), 2);
+        assert_eq!(covers.album_cover(3, GRID, || None), None);
+        assert!(!dir.path().join(album_key(3, GRID)).exists());
+    }
+
+    /// Albums the library names after the first look lose their entries;
+    /// others keep theirs.
+    #[test]
+    fn evicted_albums_are_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE art_evictions (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, id INTEGER);
+             INSERT INTO art_evictions (kind, id) VALUES ('album', 1);",
+        )
+        .unwrap();
+        let covers = Covers::new(dir.path().to_path_buf());
+        let keep = |album| covers.album_cover(album, GRID, || Some(Some(Bytes::from_static(b"x"))));
+        keep(1);
+        keep(2);
+        // The first look only notes where the library is.
+        covers.forget_evicted(&conn);
+        assert!(dir.path().join(album_key(1, GRID)).exists());
+        conn.execute_batch(
+            "INSERT INTO art_evictions (kind, id) VALUES ('album', 2), ('track', 1);",
+        )
+        .unwrap();
+        covers.forget_evicted(&conn);
+        assert!(dir.path().join(album_key(1, GRID)).exists());
+        assert!(!dir.path().join(album_key(2, GRID)).exists());
+        // Where it got to is kept across restarts.
+        assert_eq!(
+            Covers::new(dir.path().to_path_buf())
+                .evicted
+                .lock()
+                .unwrap(),
+            3
+        );
+    }
 
     #[test]
     fn requests_snap_up_to_a_served_size() {
