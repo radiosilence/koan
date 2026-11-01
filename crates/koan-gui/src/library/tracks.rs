@@ -339,7 +339,7 @@ impl TrackBrowser {
     }
 
     fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.is_active() {
+        if !self.selection.is_clear() {
             self.selection.end();
             cx.notify();
         }

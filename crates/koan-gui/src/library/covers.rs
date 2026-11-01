@@ -196,6 +196,10 @@ impl Queue {
 
 struct Shared {
     queue: Mutex<Queue>,
+    /// Held across a check of a record's file and what is done on it, and
+    /// across an eviction's unlinks, so neither runs between the other's
+    /// check and act. Taken before `queue`, never by the main thread.
+    disk: Mutex<()>,
     fetch_ready: Condvar,
     decode_ready: Condvar,
 }
@@ -262,6 +266,7 @@ impl Covers {
         let dir = directory();
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::default()),
+            disk: Mutex::new(()),
             fetch_ready: Condvar::new(),
             decode_ready: Condvar::new(),
         });
@@ -500,10 +505,10 @@ impl Covers {
             return false;
         }
         let queue = self.shared.queue.lock();
-        let mut ranked: Vec<(Key, Option<Priority>)> = self
+        let mut ranked: Vec<(Key, Option<Priority>, u64)> = self
             .staged
             .keys()
-            .map(|k| (*k, queue.wanted.get(k).copied()))
+            .map(|k| (*k, queue.wanted.get(k).copied(), queue.generation(k.art)))
             .collect();
         drop(queue);
         ranked.sort_by(|a, b| match (a.1, b.1) {
@@ -512,16 +517,15 @@ impl Covers {
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
-        let generations = self.shared.queue.lock().generation.clone();
         let mut spent = 0;
-        for (key, _) in ranked {
+        for (key, _, current) in ranked {
             if spent > 0 && spent >= budget {
                 break;
             }
             let Some((image, generation)) = self.staged.remove(&key) else {
                 continue;
             };
-            if generations.get(&key.art).copied().unwrap_or(0) != generation {
+            if current != generation {
                 continue;
             }
             let size = image.size(0);
@@ -668,9 +672,11 @@ impl Covers {
             let (dir, shared, arts) = (self.dir.clone(), self.shared.clone(), arts.clone());
             cx.background_executor()
                 .spawn(async move {
+                    let disk = shared.disk.lock();
                     for art in &arts {
                         std::fs::remove_file(dir.join(art.filename())).ok();
                     }
+                    drop(disk);
                     let mut queue = shared.queue.lock();
                     for art in &arts {
                         queue.evicting.remove(art);
@@ -795,21 +801,27 @@ fn fetch_lane(
             }
         };
         let file = dir.join(art.filename());
-        // Checked under the lock: an eviction unlinks under it too.
-        let mut queue = shared.queue.lock();
-        if queue.disk_trusted
-            && !queue.evicting.contains(&art)
-            && queue.generation(art) == generation
-            && file.exists()
-        {
-            queue.fetching.remove(&art);
-            queue.on_disk.insert(art);
-            let decodes = queue.wanted.keys().filter(|k| k.art == art).count();
-            drop(queue);
-            shared.wake(0, decodes);
-            continue;
+        let usable = |queue: &Queue| {
+            queue.disk_trusted
+                && !queue.evicting.contains(&art)
+                && queue.generation(art) == generation
+        };
+        let disk = shared.disk.lock();
+        if usable(&shared.queue.lock()) && file.exists() {
+            // Checked again: an eviction may have moved the generation
+            // while the file was looked for, though not yet unlinked it.
+            let mut queue = shared.queue.lock();
+            if usable(&queue) {
+                queue.fetching.remove(&art);
+                queue.on_disk.insert(art);
+                let decodes = queue.wanted.keys().filter(|k| k.art == art).count();
+                drop(queue);
+                drop(disk);
+                shared.wake(0, decodes);
+                continue;
+            }
         }
-        drop(queue);
+        drop(disk);
         let fetched = futures::executor::block_on(async {
             match art {
                 Art::Album(id) => {
@@ -821,8 +833,10 @@ fn fetch_lane(
                 Art::Artist(id) => engine.clone().artist_image(id).await,
             }
         });
-        // Written beside its final name and renamed under the lock, so an
-        // eviction of the record in between leaves nothing under its id.
+        // Written beside its final name and renamed only while the record
+        // is still the one fetched. An eviction after the check unlinks the
+        // file once the rename is done, and moves the generation, so the
+        // file is not counted as on disk below.
         let staged = match &fetched {
             Ok(Some(cover)) => {
                 let tmp = file.with_extension("part");
@@ -830,29 +844,33 @@ fn fetch_lane(
             }
             _ => None,
         };
+        let renamed = staged.is_some_and(|tmp| {
+            let disk = shared.disk.lock();
+            let renamed = shared.queue.lock().generation(art) == generation
+                && std::fs::rename(&tmp, &file).is_ok();
+            drop(disk);
+            if !renamed {
+                std::fs::remove_file(tmp).ok();
+            }
+            renamed
+        });
         let mut queue = shared.queue.lock();
         queue.fetching.remove(&art);
         let current = queue.generation(art) == generation;
         let mut absent = false;
-        match (fetched, staged) {
-            (Ok(Some(_)), Some(tmp)) if current && std::fs::rename(&tmp, &file).is_ok() => {
+        match fetched {
+            Ok(Some(_)) if current && renamed => {
                 queue.on_disk.insert(art);
             }
-            (Ok(Some(_)), Some(tmp)) => {
-                std::fs::remove_file(tmp).ok();
-                if current {
-                    queue.failed.insert(art);
-                }
-            }
             // Could not be written: as good as a failed fetch.
-            (Ok(Some(_)), None) if current => {
+            Ok(Some(_)) if current => {
                 queue.failed.insert(art);
             }
-            (Ok(None), _) if current => {
+            Ok(None) if current => {
                 queue.absent.insert(art);
                 absent = true;
             }
-            (Err(e), _) if current => {
+            Err(e) if current => {
                 log::debug!("art for {art:?}: {e}");
                 queue.failed.insert(art);
             }
@@ -954,7 +972,16 @@ enum Failure {
 /// The sleeve filling a square `px` on a side, centred, as BGRA, and its
 /// average colour for the field drawn while it waits for the atlas.
 fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
-    let image = image::load_from_memory(data).ok()?;
+    // A file small enough to be served as it is keeps its EXIF orientation.
+    let mut decoder = image::ImageReader::new(std::io::Cursor::new(data))
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let orientation = image::ImageDecoder::orientation(&mut decoder)
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+    image.apply_orientation(orientation);
     let (w, h) = (image.width(), image.height());
     if w == 0 || h == 0 {
         return None;

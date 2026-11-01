@@ -75,6 +75,8 @@ pub struct AlbumPage {
     album: Option<Album>,
     tracks: Vec<Track>,
     lines: Vec<Line>,
+    /// Whether any row names its artists, which makes every line taller.
+    credited: bool,
     /// Read and found nothing: gone from the library, or the read failed.
     gone: Option<bool>,
     request: u64,
@@ -115,6 +117,7 @@ impl AlbumPage {
             album: None,
             tracks: Vec::new(),
             lines: Vec::new(),
+            credited: false,
             gone: None,
             request: 0,
             loaded_version: None,
@@ -151,6 +154,7 @@ impl AlbumPage {
                 match page {
                     Ok(page) if page.album.is_some() => {
                         this.lines = lines(&page.tracks);
+                        this.credited = page.tracks.iter().any(|t| t.credit_differs);
                         this.album = page.album;
                         this.tracks = page.tracks;
                         this.gone = None;
@@ -187,7 +191,7 @@ impl AlbumPage {
 
     /// One height for every line: taller when any row names its artists.
     fn row_height(&self, p: &Paint) -> Pixels {
-        if self.tracks.iter().any(|t| t.credit_differs) {
+        if self.credited {
             rows::text_height(p)
         } else {
             rows::height(p)
@@ -380,7 +384,7 @@ impl AlbumPage {
     }
 
     fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.is_active() {
+        if !self.selection.is_clear() {
             self.selection.end();
             cx.notify();
         }

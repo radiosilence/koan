@@ -6762,7 +6762,21 @@ fn fit_cover(art: CoverArt, size: Option<u32>) -> CoverArt {
     if fits {
         return art;
     }
-    let Ok(image) = image::load_from_memory(&art.data) else {
+    // The copy carries no EXIF, so the orientation is applied to its pixels.
+    let decoded = image::ImageReader::new(std::io::Cursor::new(&art.data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_decoder().ok())
+        .and_then(|mut decoder| {
+            use image::ImageDecoder;
+            let orientation = decoder
+                .orientation()
+                .unwrap_or(image::metadata::Orientation::NoTransforms);
+            let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+            image.apply_orientation(orientation);
+            Some(image)
+        });
+    let Some(image) = decoded else {
         return art;
     };
     let mut data = Vec::new();
@@ -7240,6 +7254,32 @@ mod cover_tests {
             mime: "application/octet-stream".into(),
         };
         assert_eq!(fit_cover(junk, Some(10)).data, b"not an image");
+    }
+
+    /// A phone's photo stores its pixels sideways and says so in EXIF; the
+    /// scaled copy carries no EXIF, so it is turned upright first.
+    #[test]
+    fn a_scaled_copy_is_upright() {
+        use image::ImageEncoder;
+        // Big-endian TIFF header, one IFD entry: Orientation (0x0112) = 6,
+        // a quarter turn clockwise.
+        let exif = vec![
+            b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0,
+            0,
+        ];
+        let mut data = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut data);
+        encoder.set_exif_metadata(exif).unwrap();
+        let wide = image::RgbImage::new(1200, 600);
+        encoder
+            .write_image(&wide, 1200, 600, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let art = CoverArt {
+            data,
+            mime: "image/png".into(),
+        };
+        let scaled = image::load_from_memory(&fit_cover(art, Some(1000)).data).unwrap();
+        assert_eq!((scaled.width(), scaled.height()), (500, 1000));
     }
 }
 

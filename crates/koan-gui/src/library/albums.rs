@@ -48,15 +48,14 @@ impl Query {
     }
 }
 
-/// What the cover ranking depends on, coarsely: the rows on screen, the pace
-/// in steps of 200 pt/s, the row a flick lands on, the listing's length and
-/// the draw size. Unchanged, the ranking would be too.
+/// What the cover ranking depends on, coarsely, within one listing: the rows
+/// on screen, the pace in steps of 200 pt/s, the row a flick lands on and the
+/// draw size. Unchanged, the ranking would be too; a new listing clears it.
 #[derive(PartialEq)]
 struct Aimed {
     visible: Range<usize>,
     pace: i32,
     landing: Option<i32>,
-    items: usize,
     px: u32,
 }
 
@@ -246,6 +245,7 @@ impl AlbumGrid {
                     Ok(records) => {
                         this.order = records.iter().map(|r| Playable::Album(r.id)).collect();
                         this.records = Rc::new(records.into_iter().map(Rc::new).collect());
+                        this.aimed = None;
                         this.loaded = Some(wanted);
                         if let Some(y) = this.restore.take() {
                             this.scroll
@@ -376,7 +376,6 @@ impl AlbumGrid {
                 visible: h.visible.clone(),
                 pace: (h.velocity / 200.0) as i32,
                 landing: h.decay.map(|d| ((h.offset + h.velocity / d) / row) as i32),
-                items: records.len(),
                 px: Key::new(Art::Album(0), grid.side, scale).px,
             }
         };
@@ -490,7 +489,7 @@ impl AlbumGrid {
     }
 
     fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.is_active() {
+        if !self.selection.is_clear() {
             self.selection.end();
             cx.notify();
         }
@@ -515,7 +514,12 @@ impl AlbumGrid {
         if let Some(old) = self.grid {
             let top = (self.heading.borrow().offset - f32::from(old.margin)).max(0.0);
             let first = (top / f32::from(old.row)) as usize * old.columns;
-            let y = (first / grid.columns) as f32 * f32::from(grid.row);
+            let row = first / grid.columns;
+            let y = if row == 0 {
+                0.0
+            } else {
+                f32::from(grid.margin) + row as f32 * f32::from(grid.row)
+            };
             self.scroll
                 .0
                 .borrow()

@@ -708,7 +708,7 @@ impl ArtistPage {
     }
 
     fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.is_active() {
+        if !self.selection.is_clear() {
             self.selection.end();
             cx.notify();
         }
@@ -814,14 +814,21 @@ impl TrackList for ArtistPage {
                     .as_ref()
                     .map(|r| r.appearances.iter().map(|t| t.id).collect())
                     .unwrap_or_default();
-                let order = || ids.iter().map(|id| Playable::Track(*id)).collect();
-                if rows::select(
-                    &mut self.selection,
-                    Playable::Track(track),
-                    event,
-                    order,
-                    cx,
-                ) {
+                let item = Playable::Track(track);
+                let m = event.modifiers();
+                // Outside the mode a plain click marks the row alone: the
+                // mode would turn every tile's click into a tick.
+                let plays = if !m.shift && !m.secondary(cx) && !self.selection.is_active() {
+                    let double = event.click_count() >= 2;
+                    if !double {
+                        self.selection.mark(item);
+                    }
+                    double
+                } else {
+                    let order = || ids.iter().map(|id| Playable::Track(*id)).collect();
+                    rows::select(&mut self.selection, item, event, order, cx)
+                };
+                if plays {
                     actions::play_list(&self.lib, ids, index, cx);
                 }
                 cx.notify();

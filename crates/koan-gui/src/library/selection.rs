@@ -65,10 +65,24 @@ impl Selection {
         self.begin(Some(item));
     }
 
+    /// A plain click on a list row on a page whose tiles play on a click:
+    /// this one alone, marked without starting the mode, so the tiles still
+    /// play. Esc clears it.
+    pub fn mark(&mut self, item: Playable) {
+        self.end();
+        self.toggle(item);
+    }
+
+    /// Whether there is anything for Esc to clear.
+    pub fn is_clear(&self) -> bool {
+        !self.active && self.picked.is_empty()
+    }
+
     /// A click on an item while selecting: ⇧ extends from the last one
     /// clicked, anything else flips just this one. `page` is what the page
     /// shows, in its order.
     pub fn click(&mut self, item: Playable, shift: bool, page: &[Playable]) {
+        self.active = true;
         match self.anchor {
             Some(anchor) if shift => self.extend(anchor, item, page),
             _ => self.toggle(item),
@@ -179,6 +193,25 @@ mod tests {
         assert_eq!(s.picked(), &[A(9), A(1), A(2)]);
         assert_eq!(s.dragging(A(1)), vec![A(9), A(1), A(2)]);
         assert_eq!(s.dragging(A(7)), vec![A(7)]);
+    }
+
+    #[test]
+    fn a_modified_first_click_starts_the_mode() {
+        let mut s = Selection::default();
+        s.click(A(1), false, &[]);
+        assert!(s.is_active());
+        assert_eq!(s.picked(), &[A(1)]);
+    }
+
+    #[test]
+    fn a_mark_leaves_the_mode_off() {
+        let mut s = Selection::default();
+        s.mark(A(1));
+        assert!(!s.is_active());
+        assert!(s.contains(A(1)));
+        assert!(!s.is_clear());
+        s.mark(A(2));
+        assert_eq!(s.picked(), &[A(2)]);
     }
 
     #[test]
