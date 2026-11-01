@@ -811,6 +811,27 @@ const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
 /// takes longer, and is reported as not started yet.
 const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 
+/// Constructors for front ends that link the engine as a Rust library and
+/// are not reached through uniffi.
+impl KoanEngine {
+    /// `open`, for the desktop app: a device of its own beside the native app
+    /// and the terminal UI on the same config directory (see
+    /// `LinkIdentity::desktop`). Refused while another desktop app holds that
+    /// device.
+    pub async fn open_desktop() -> Result<Arc<Self>, KoanError> {
+        offload::offload(|| {
+            let identity = koan_core::remote::link::LinkIdentity::desktop().ok_or_else(|| {
+                KoanError::Refused {
+                    message: "another kōan desktop app is running on this configuration"
+                        .to_string(),
+                }
+            })?;
+            Self::build(None, identity)
+        })
+        .await
+    }
+}
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -819,7 +840,11 @@ impl KoanEngine {
     /// has no async primary constructors.
     #[uniffi::constructor]
     pub async fn open(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
-        offload::offload(move || Self::build(device_name)).await
+        offload::offload(move || {
+            let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
+            Self::build(device_name, identity)
+        })
+        .await
     }
     // --- Transport ---------------------------------------------------------
 
@@ -4266,8 +4291,13 @@ impl KoanEngine {
         self.cancel_pairing();
         offload::offload(move || {
             serve::refuse_while_sharing()?;
-            let device =
-                koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
+            let device = koan_core::remote::devices::local().map_or_else(
+                || {
+                    koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone())
+                        .name
+                },
+                |local| local.identity.name.clone(),
+            );
             let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
             let code = PairingCode {
                 id: pending.id.clone(),
@@ -5933,7 +5963,10 @@ impl KoanEngine {
         Ok(summary)
     }
 
-    fn build(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+    fn build(
+        device_name: Option<String>,
+        identity: koan_core::remote::link::LinkIdentity,
+    ) -> Result<Arc<Self>, KoanError> {
         let t0 = std::time::Instant::now();
         init_logging();
         raise_open_file_limit();
@@ -6085,7 +6118,7 @@ impl KoanEngine {
         // Profiles of one name from two devices are told apart by it.
         koan_core::remote::dsp_sync::set_device_name(device_name.clone());
         koan_core::remote::devices::start(koan_core::remote::link::Local {
-            identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
+            identity,
             // What a command may cost, and where it may go, depends on who
             // sent it: see `handle_link`.
             on_command: Arc::new(move |cmd, source, pending| {

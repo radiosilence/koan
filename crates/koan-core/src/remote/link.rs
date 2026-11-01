@@ -964,26 +964,44 @@ impl LinkIdentity {
     /// processes under one id would each take the other's place on the
     /// server and the network.
     pub fn terminal() -> Option<Self> {
-        const FILES: &str = "terminal-";
-        // Held for as long as the process runs; the system lets go of it
-        // however the process ends.
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        Self::beside_app("terminal-", "terminal", &HELD)
+    }
+
+    /// The desktop app on this machine, kept apart from the native app and
+    /// the terminal UI as `terminal` is. `None` while another desktop app on
+    /// this config directory is that device.
+    pub fn desktop() -> Option<Self> {
+        static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        Self::beside_app("desktop-", "desktop", &HELD)
+    }
+
+    /// A device of its own on this config directory: its files carry
+    /// `files` as a prefix and its name says `kind`. The lock is held for as
+    /// long as the process runs; the system lets go of it however the
+    /// process ends.
+    fn beside_app(
+        files: &'static str,
+        kind: &str,
+        held: &'static std::sync::OnceLock<std::fs::File>,
+    ) -> Option<Self> {
         let dir = config::config_dir();
-        if HELD.get().is_none() {
+        if held.get().is_none() {
+            std::fs::create_dir_all(&dir).ok()?;
             let lock = std::fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
                 .write(true)
-                .open(dir.join(format!("{FILES}device.lock")))
+                .open(dir.join(format!("{files}device.lock")))
                 .ok()?;
             lock.try_lock().ok()?;
-            let _ = HELD.set(lock);
+            let _ = held.set(lock);
         }
         let app = Self::this_device(None);
         Some(Self {
-            name: format!("{} (terminal)", app.name),
-            device_id: file_device_id(&dir.join(format!("{FILES}device-id"))),
-            files: FILES,
+            name: format!("{} ({kind})", app.name),
+            device_id: file_device_id(&dir.join(format!("{files}device-id"))),
+            files,
             ..app
         })
     }
