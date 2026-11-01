@@ -144,7 +144,7 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     };
     let options = WindowOptions {
         window_bounds: Some(bounds),
-        window_min_size: Some(shell::MIN_SIZE),
+        window_min_size: Some(crate::components::RowMetrics::WINDOW_MIN),
         titlebar: Some(titlebar()),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
         // The `.desktop` file's StartupWMClass.
