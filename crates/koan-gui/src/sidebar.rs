@@ -301,6 +301,12 @@ impl Render for Sidebar {
                     .child(body)
                     .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
             )
+            // Scans, rebuilds and syncs running; nothing while idle.
+            .child(
+                cx.global::<crate::library::activity::ActivityHandle>()
+                    .0
+                    .clone(),
+            )
             .when(self.importing > 0, |d| {
                 d.child(foot_line("adding dropped files", p.muted, &p))
             })

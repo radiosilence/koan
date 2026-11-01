@@ -119,7 +119,9 @@ impl Activity {
                     batch.push(next);
                 }
                 let alive = this.update(cx, |this, cx| {
-                    let Some(scan) = this.scan.as_mut() else { return };
+                    let Some(scan) = this.scan.as_mut() else {
+                        return;
+                    };
                     for report in batch {
                         match report {
                             Report::Started(total) => scan.total = total,
@@ -206,7 +208,12 @@ impl Activity {
         match &self.scan {
             Some(scan) => rows.push(Row {
                 id: "activity-scan",
-                label: if scan.force { "rescanning all" } else { "rescanning" }.into(),
+                label: if scan.force {
+                    "rescanning all"
+                } else {
+                    "rescanning"
+                }
+                .into(),
                 done: Some(scan.done).filter(|_| scan.total > 0 || scan.done > 0),
                 total: Some(scan.total).filter(|t| *t > 0),
                 unit: Some("files"),
@@ -303,7 +310,12 @@ fn grouped(n: u64) -> String {
 /// does not move the row. Two quads; a sliding segment only while motion is
 /// allowed.
 fn bar(row: &Row, p: &Paint, cx: &App) -> AnyElement {
-    let track = div().w_full().h(px(2.)).bg(p.rule).relative().overflow_hidden();
+    let track = div()
+        .w_full()
+        .h(px(2.))
+        .bg(p.rule)
+        .relative()
+        .overflow_hidden();
     match row.fraction() {
         Some(fraction) => track
             .child(div().h_full().w(relative(fraction)).bg(p.accent))
@@ -351,7 +363,11 @@ impl Render for Activity {
                         .cursor_pointer()
                         .text_color(p.muted.opacity(0.6))
                         .hover(|s| s.text_color(p.muted))
-                        .child(KoanIcon::new(Icon::Deselect).role(TypeRole::Fine).color(p.muted))
+                        .child(
+                            KoanIcon::new(Icon::Deselect)
+                                .role(TypeRole::Fine)
+                                .color(p.muted),
+                        )
                         .on_click(|_, _, cx| engine(cx).cancel_library_task())
                 });
                 div()
