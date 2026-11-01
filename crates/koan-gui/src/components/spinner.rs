@@ -16,12 +16,25 @@ const MARKS: usize = 8;
 #[derive(IntoElement)]
 pub struct Spinner {
     side: Pixels,
+    /// The room what is loading will take, held so nothing moves when it
+    /// arrives: the spinner is centred in it.
+    reserve: Option<Size<Pixels>>,
 }
 
 impl Spinner {
     /// `side` is the square it is drawn in.
     pub fn new(side: Pixels) -> Self {
-        Self { side }
+        Self {
+            side,
+            reserve: None,
+        }
+    }
+
+    /// Holds exactly `room`, the size of what is loading, with the spinner
+    /// in its middle.
+    pub fn reserving(mut self, room: Size<Pixels>) -> Self {
+        self.reserve = Some(room);
+        self
     }
 }
 
@@ -30,6 +43,25 @@ static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 impl RenderOnce for Spinner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let reserve = self.reserve;
+        let marks = self.marks(window, cx);
+        match reserve {
+            Some(room) => div()
+                .w(room.width)
+                .h(room.height)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(marks)
+                .into_any_element(),
+            None => marks.into_any_element(),
+        }
+    }
+}
+
+impl Spinner {
+    fn marks(self, window: &mut Window, cx: &mut App) -> impl IntoElement + use<> {
         let look = Look::of(window, cx);
         let ink = look.palette.ink.hsla();
         let moving = KoanTheme::motion_allowed(cx);

@@ -40,7 +40,9 @@ pub use button::{Button, ButtonKind};
 pub use empty::EmptyState;
 pub use field::TextField;
 pub use filter_field::FilterField;
-pub use form::{FormRow, SectionHeader};
+pub use form::{
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
+};
 pub use menu::{KoanContextMenu, Menu, MenuEntry};
 pub use metrics::{RowKind, RowMetrics};
 pub use page::{Page, PageHeader};
