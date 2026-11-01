@@ -215,7 +215,7 @@ jobs:
             # checks it for any Rust, as it does the Apple apps.
             gui_mac=false
             if [ "$release" = true ] \
-              || touches '^crates/(koan-gui|koan-ffi)/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/'; then
+              || touches '^crates/(koan-gui|koan-kit|koan-ffi)/|^Cargo\.(toml|lock)$|^\.cargo/|^rust-toolchain|^\.github/'; then
               gui_mac=true
             fi
             if [ "$EVENT" != "pull_request" ] && [ "$rust" = true ]; then
@@ -422,9 +422,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: gui
           cache-on-failure: true
-      - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      - run: cargo clippy -p koan-gui -p koan-kit --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test -p koan-gui --all-targets
+        run: cargo test -p koan-gui -p koan-kit --all-targets
 
   # koan-gui on macOS, which the job above cannot see.
   gui-mac:
@@ -449,11 +449,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: gui-mac
           cache-on-failure: true
-      - run: cargo clippy -p koan-gui --all-targets -- -D warnings
+      - run: cargo clippy -p koan-gui -p koan-kit --all-targets -- -D warnings
       # The frame-time measurement, built only with this feature.
-      - run: cargo clippy -p koan-gui --all-targets --features profiler -- -D warnings
+      - run: cargo clippy -p koan-gui -p koan-kit --all-targets --features profiler -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
-        run: cargo test -p koan-gui --all-targets
+        run: cargo test -p koan-gui -p koan-kit --all-targets
 
   audit:
     name: Security Audit

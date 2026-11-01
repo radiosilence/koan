@@ -9,10 +9,10 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole};
-use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
+use koan_kit::raw::component::input::InputState;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;

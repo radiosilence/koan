@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use gpui_kit::*;
+use koan_kit::raw::*;
 
 const FILE: &str = "desktop-window";
 

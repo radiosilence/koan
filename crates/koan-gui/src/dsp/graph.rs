@@ -19,14 +19,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use koan_ffi::{DspBand, DspBrush, DspPoint, DspResponse};
+use koan_kit::raw::prelude::FluentBuilder;
+use koan_kit::raw::{
     App, Bounds, Context, DispatchPhase, Entity, Font, FontWeight, Hsla, IntoElement, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Path, PathBuilder,
     Pixels, Point, Render, SharedString, Styled, Subscription, TextAlign, TextRun, WeakEntity,
     Window, canvas, div, fill, font, point, px, size,
 };
-use koan_ffi::{DspBand, DspBrush, DspPoint, DspResponse};
 
 use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
@@ -564,7 +564,7 @@ struct Cache {
     handles: Vec<(usize, Point<Pixels>)>,
 }
 
-type Size = gpui_kit::Size<Pixels>;
+type Size = koan_kit::raw::Size<Pixels>;
 
 /// A curve's path and how it is drawn.
 type Drawn = (Option<Stroke>, Rc<Path<Pixels>>);
@@ -657,7 +657,7 @@ struct Frame {
     domain: (f64, f64),
     level: f64,
     paths: Vec<Drawn>,
-    hitbox: gpui_kit::Hitbox,
+    hitbox: koan_kit::raw::Hitbox,
     handles: Vec<Handle>,
     held: Option<usize>,
     showing_eq: bool,
@@ -713,7 +713,7 @@ impl Render for Graph {
                         domain,
                         level,
                     );
-                    let hitbox = window.insert_hitbox(plot, gpui_kit::HitboxBehavior::Normal);
+                    let hitbox = window.insert_hitbox(plot, koan_kit::raw::HitboxBehavior::Normal);
                     Frame {
                         plot,
                         domain,
@@ -1026,15 +1026,18 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
         }
     }
 
-    window.with_content_mask(Some(gpui_kit::ContentMask { bounds: plot }), |window| {
-        for (stroke, path) in &f.paths {
-            let color = match stroke {
-                Some(stroke) => stroke.color(look),
-                None => muted.opacity(0.15),
-            };
-            window.paint_path(moved(path, plot.origin), color);
-        }
-    });
+    window.with_content_mask(
+        Some(koan_kit::raw::ContentMask { bounds: plot }),
+        |window| {
+            for (stroke, path) in &f.paths {
+                let color = match stroke {
+                    Some(stroke) => stroke.color(look),
+                    None => muted.opacity(0.15),
+                };
+                window.paint_path(moved(path, plot.origin), color);
+            }
+        },
+    );
 
     let accent = look.accent.hsla();
     for handle in &f.handles {

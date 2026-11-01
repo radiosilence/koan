@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use futures_channel::mpsc;
 use futures_util::StreamExt;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{ProgressReporter, SyncPhase};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::engine::engine;
 use crate::mirror::Mirror;

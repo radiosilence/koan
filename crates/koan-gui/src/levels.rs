@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use gpui_kit::*;
+use koan_kit::raw::*;
 
 use crate::engine::engine;
 

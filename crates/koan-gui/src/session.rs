@@ -8,8 +8,8 @@
 
 use std::time::Duration;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::engine::engine;
 use crate::mirror::{Mirror, Playhead, Queue};

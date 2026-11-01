@@ -1,9 +1,9 @@
 //! EQ: what the output in use plays, and the way into the EQ window, where
 //! profiles are imported, made and chosen for each device.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::DspOverview;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::components::{Button, ButtonKind};
 use crate::mirror::Mirror;

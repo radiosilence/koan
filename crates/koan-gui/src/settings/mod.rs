@@ -19,10 +19,10 @@ use std::sync::Arc;
 use crate::theme::{
     self, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole, label,
 };
-use gpui_kit::base::Root;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{ConnectionInfo, KoanEngine};
+use koan_kit::raw::base::Root;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
@@ -169,7 +169,7 @@ pub struct SettingsWindow {
 }
 
 impl SettingsWindow {
-    pub fn new(tab: Tab, window: &mut Window, cx: &mut gpui_kit::Context<Self>) -> Self {
+    pub fn new(tab: Tab, window: &mut Window, cx: &mut koan_kit::raw::Context<Self>) -> Self {
         let settings = cx.global::<Settings>();
         let ctx = Ctx {
             model: settings.model.clone(),
@@ -241,7 +241,7 @@ impl SettingsWindow {
 
     /// Asks for the server's accounts again for each account and server
     /// signed in as, where the server has koan's accounts.
-    fn follow_account(&mut self, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
+    fn follow_account(&mut self, window: &mut Window, cx: &mut koan_kit::raw::Context<Self>) {
         let offered = offers(&self.ctx.connection.read(cx).0, panes::people::EXTENSION);
         let url = self
             .ctx
@@ -314,7 +314,7 @@ impl SettingsWindow {
         tabs
     }
 
-    pub fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
+    pub fn choose(&mut self, tab: Tab, window: &mut Window, cx: &mut koan_kit::raw::Context<Self>) {
         if tab != self.tab {
             self.show(tab, window, cx);
             cx.notify();
@@ -323,7 +323,7 @@ impl SettingsWindow {
 
     /// Makes the pane for `tab`. A tab switch swaps the page at once, and
     /// the page left goes with its fields.
-    fn show(&mut self, tab: Tab, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
+    fn show(&mut self, tab: Tab, window: &mut Window, cx: &mut koan_kit::raw::Context<Self>) {
         self.tab = tab;
         self.pane = Pane::new(tab, &self.ctx, self.people.clone(), window, cx);
     }
@@ -333,7 +333,7 @@ impl Render for SettingsWindow {
     fn render(
         &mut self,
         window: &mut Window,
-        cx: &mut gpui_kit::Context<Self>,
+        cx: &mut koan_kit::raw::Context<Self>,
     ) -> impl IntoElement {
         KoanTheme::drive(window, cx);
         let look = Look::of(window, cx);
@@ -384,7 +384,7 @@ impl SettingsWindow {
     /// buttons sit in it on macOS. It moves the window, and where the
     /// compositor leaves decorations to the app (GNOME on Wayland), it holds
     /// a close button.
-    fn top_strip(&self, window: &Window, cx: &mut gpui_kit::Context<Self>) -> Stateful<Div> {
+    fn top_strip(&self, window: &Window, cx: &mut koan_kit::raw::Context<Self>) -> Stateful<Div> {
         let client = matches!(window.window_decorations(), Decorations::Client { .. });
         let look = Look::of(window, cx);
         div()

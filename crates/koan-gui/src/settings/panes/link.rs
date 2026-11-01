@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use crate::components::{Button, ButtonKind};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{ConnectionInfo, Invite, KoanEngine, KoanError};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::mirror::Slice;
 use crate::settings::form::{section, text};

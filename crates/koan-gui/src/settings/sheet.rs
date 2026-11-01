@@ -7,10 +7,10 @@ use std::rc::Rc;
 
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
-use gpui_kit::base::FocusTrapElement as _;
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::base::FocusTrapElement as _;
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;

@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use std::rc::Rc;
 
-use gpui_kit::{Context, SharedString, Subscription, Task};
 use koan_ffi::{KoanEngine, KoanError, Settings};
+use koan_kit::raw::{Context, SharedString, Subscription, Task};
 
 use crate::mirror::{Mirror, Slice};
 

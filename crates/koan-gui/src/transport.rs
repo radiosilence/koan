@@ -6,11 +6,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::components::{Menu as ThemeMenu, MenuEntry};
 use crate::covers::{self, CoversHandle};

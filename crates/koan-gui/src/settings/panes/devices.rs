@@ -6,10 +6,10 @@
 
 use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{ConnectedInfo, ServerQueue};
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::server::host;
 use crate::settings::Ctx;

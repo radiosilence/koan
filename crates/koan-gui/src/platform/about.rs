@@ -2,7 +2,7 @@
 //! build run from source (`cargo run`, outside a bundle) shows in the Dock,
 //! the app switcher and the menu bar.
 
-use gpui_kit::App;
+use koan_kit::raw::App;
 
 use super::actions::About;
 
@@ -135,7 +135,7 @@ fn show(_cx: &mut App) {
 /// its build, and the links.
 #[cfg(not(target_os = "macos"))]
 fn show(cx: &mut App) {
-    use gpui_kit::{
+    use koan_kit::raw::{
         AppContext, Bounds, IntoElement, ParentElement, Render, Styled, TitlebarOptions,
         WindowBounds, WindowOptions, div, px, size,
     };
@@ -148,8 +148,8 @@ fn show(cx: &mut App) {
     impl Render for AboutWindow {
         fn render(
             &mut self,
-            window: &mut gpui_kit::Window,
-            cx: &mut gpui_kit::Context<Self>,
+            window: &mut koan_kit::raw::Window,
+            cx: &mut koan_kit::raw::Context<Self>,
         ) -> impl IntoElement {
             let look = Look::of(window, cx);
             div()
