@@ -134,6 +134,9 @@ impl Draft {
     }
 }
 
+/// Work that waits for the writes under way to land.
+type Then = Box<dyn FnOnce(&mut SettingsModel, &mut Context<SettingsModel>)>;
+
 /// What a sign-in is called while it runs, by which the pane knows one is.
 pub const SIGNING_IN: &str = "Signing in";
 
@@ -150,7 +153,7 @@ pub struct SettingsModel {
     /// Edits made before the file was first read, applied once it has been.
     early: Vec<Edit>,
     /// What waits for the writes under way to land.
-    written: Vec<Box<dyn FnOnce(&mut Self, &mut Context<Self>)>>,
+    written: Vec<Then>,
     /// The error shown is a write's.
     write_failed: bool,
     pub last_error: Option<SharedString>,
@@ -251,9 +254,11 @@ impl SettingsModel {
                         // Edits made before the file was first read go in now.
                         let mut draft = Draft::new(settings);
                         let early = std::mem::take(&mut model.early);
-                        let start = early
-                            .into_iter()
-                            .fold(false, |start, edit| draft.edit(edit) || start);
+                        let mut start = false;
+                        for edit in early {
+                            // Every edit queued, whatever the first answered.
+                            start |= draft.edit(edit);
+                        }
                         model.draft = Some(draft);
                         if start {
                             model.write(cx);
