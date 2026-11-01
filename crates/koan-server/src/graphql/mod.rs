@@ -362,9 +362,19 @@ pub(crate) fn build_schema_sharing(
     pool: Arc<Pool>,
     viz: Option<Arc<VizSnapshot>>,
     jobs: jobs::JobRegistry,
+    session: Option<&'static str>,
 ) -> KoanSchema {
-    builder_with(DbHandle::new(pool), state, cmd_tx, viz, jobs).finish()
+    let builder = builder_with(DbHandle::new(pool), state, cmd_tx, viz, jobs);
+    match session {
+        Some(device) => builder.data(Session(device)),
+        None => builder,
+    }
+    .finish()
 }
+
+/// Whose saved session the playback-state mutations write: see
+/// `ApiServerOpts::session`. A schema without one keeps none.
+pub(crate) struct Session(pub &'static str);
 
 /// `build_schema` with `extension` running on every request.
 pub(crate) fn build_schema_extended(
@@ -1194,6 +1204,81 @@ mod tests {
         let resp = schema.execute("{ playlists { id } }").await;
         let data = resp.data.into_json().unwrap();
         assert!(data["playlists"].as_array().unwrap().is_empty());
+    }
+
+    /// The playback-state mutations save the session of the device the
+    /// server's player belongs to, and a server without one refuses them.
+    #[tokio::test]
+    async fn the_session_saved_is_the_servers_devices() {
+        use koan_core::player::state::{ItemState, PlaylistItem};
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::schema::create_tables(&db.conn).unwrap();
+        drop(db);
+
+        let state = SharedPlayerState::new();
+        state.add_items(vec![PlaylistItem {
+            uid: None,
+            playlist_entry_id: None,
+            id: QueueItemId::new(),
+            db_id: None,
+            path: std::path::PathBuf::from("/music/a.flac"),
+            title: "A".to_string(),
+            artist: "Artist".to_string(),
+            album_artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            state: ItemState::Ready,
+            played: false,
+        }]);
+        let ch = CommandChannel::new();
+        let schema = |session| {
+            build_schema_sharing(
+                state.clone(),
+                ch.tx.clone(),
+                Arc::new(Pool::new(db_path.clone())),
+                None,
+                Default::default(),
+                session,
+            )
+        };
+        let save = "mutation { savePlaybackState { ok } }";
+
+        let resp = schema(Some("terminal-")).execute(save).await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let db = Database::open(&db_path).unwrap();
+        let saved = queries::playback_state::load_playback_state(&db.conn, "terminal-")
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.items[0].path, "/music/a.flac");
+        assert!(
+            queries::playback_state::load_playback_state(&db.conn, "")
+                .unwrap()
+                .is_none(),
+            "the app's session is not this server's"
+        );
+
+        for mutation in [save, "mutation { clearPlaybackState { ok } }"] {
+            let resp = schema(None).execute(mutation).await;
+            assert!(
+                resp.errors
+                    .iter()
+                    .any(|e| e.message.contains("keeps no saved session")),
+                "{mutation}: {:?}",
+                resp.errors
+            );
+        }
+        assert!(
+            queries::playback_state::load_playback_state(&db.conn, "terminal-")
+                .unwrap()
+                .is_some()
+        );
     }
 
     /// A queue item with no library row behind it cannot go in a playlist: a

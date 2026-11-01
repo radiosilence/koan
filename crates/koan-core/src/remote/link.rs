@@ -934,6 +934,9 @@ pub struct LinkIdentity {
 }
 
 impl LinkIdentity {
+    /// The terminal UI's `files`.
+    pub const TERMINAL_FILES: &'static str = "terminal-";
+
     /// This machine, named `name` or else by its hostname.
     pub fn this_device(name: Option<String>) -> Self {
         let (platform, label) = if cfg!(target_os = "ios") {
@@ -958,32 +961,61 @@ impl LinkIdentity {
         }
     }
 
+    /// Who this process is to the server and the network: the identity it
+    /// serves as once it has started serving (`devices::start`), else this
+    /// machine's app. What sign-in, pairing and profiles are named and
+    /// identified by, so a process that serves as the terminal UI or the
+    /// desktop app presents itself as that. One that serves as nothing, such
+    /// as `koan remote login`, is this machine's app.
+    pub fn current() -> Self {
+        crate::remote::devices::local()
+            .map_or_else(|| Self::this_device(None), |local| local.identity.clone())
+    }
+
     /// The terminal UI on this machine: named and kept apart from the app,
     /// which may be running beside it on the same config directory. `None`
     /// while another terminal UI on this machine is that device: two
     /// processes under one id would each take the other's place on the
     /// server and the network.
     pub fn terminal() -> Option<Self> {
-        const FILES: &str = "terminal-";
-        // Held for as long as the process runs; the system lets go of it
-        // however the process ends.
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        Self::beside_app(Self::TERMINAL_FILES, "terminal", &HELD).ok()
+    }
+
+    /// The desktop app on this machine, kept apart from the native app and
+    /// the terminal UI as `terminal` is. An error of kind `WouldBlock` while
+    /// another desktop app on this config directory is that device; any other
+    /// when its lock cannot be made at all.
+    pub fn desktop() -> std::io::Result<Self> {
+        static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        Self::beside_app("desktop-", "desktop", &HELD)
+    }
+
+    /// A device of its own on this config directory: its files carry
+    /// `files` as a prefix and its name says `kind`. The lock is held for as
+    /// long as the process runs; the system lets go of it however the
+    /// process ends.
+    fn beside_app(
+        files: &'static str,
+        kind: &str,
+        held: &'static std::sync::OnceLock<std::fs::File>,
+    ) -> std::io::Result<Self> {
         let dir = config::config_dir();
-        if HELD.get().is_none() {
+        if held.get().is_none() {
+            std::fs::create_dir_all(&dir)?;
             let lock = std::fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
                 .write(true)
-                .open(dir.join(format!("{FILES}device.lock")))
-                .ok()?;
-            lock.try_lock().ok()?;
-            let _ = HELD.set(lock);
+                .open(dir.join(format!("{files}device.lock")))?;
+            lock.try_lock().map_err(std::io::Error::from)?;
+            let _ = held.set(lock);
         }
         let app = Self::this_device(None);
-        Some(Self {
-            name: format!("{} (terminal)", app.name),
-            device_id: file_device_id(&dir.join(format!("{FILES}device-id"))),
-            files: FILES,
+        Ok(Self {
+            name: format!("{} ({kind})", app.name),
+            device_id: file_device_id(&dir.join(format!("{files}device-id"))),
+            files,
             ..app
         })
     }
@@ -1529,9 +1561,8 @@ pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
     }
 }
 
-/// The id this machine's app links with, which pairing sends too: the one
-/// place it is read.
-pub fn this_device_id() -> String {
+/// The id this machine's app links with. Read through `LinkIdentity`.
+fn this_device_id() -> String {
     device_id(&config::config_dir())
 }
 

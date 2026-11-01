@@ -1,0 +1,241 @@
+//! What can be done with playable things from any library page: the context
+//! menu, the selection bar's verbs, a click on a sleeve. Every one is an
+//! engine call awaited off the main thread.
+
+use std::rc::Rc;
+use std::sync::Arc;
+
+use crate::components::{KoanContextMenu, Menu, MenuEntry};
+use gpui_kit::*;
+use koan_ffi::Placement;
+
+use super::Lib;
+use super::drag::{Playable, sources};
+use super::nav::Page;
+
+/// Put `items` in the queue. The returned task ends once the engine has the
+/// command, which is when a sleeve's "starting" mark can go.
+pub fn queue(lib: &Lib, items: &[Playable], placement: Placement, cx: &mut App) -> Task<()> {
+    let engine = lib.engine.clone();
+    let sets = sources(items);
+    cx.spawn(async move |_| {
+        if let Err(e) = engine.queue(sets, placement).await {
+            log::warn!("queue: {e}");
+        }
+    })
+}
+
+pub fn play(lib: &Lib, items: &[Playable], shuffled: bool, cx: &mut App) -> Task<()> {
+    queue(
+        lib,
+        items,
+        Placement::Replace {
+            start_at: None,
+            shuffled,
+        },
+        cx,
+    )
+}
+
+/// Play a list from one of its rows, keeping the rest behind it: a double
+/// click in a track list. Where showing the queue once it plays belongs, when
+/// the shell has one to show.
+pub fn play_list(lib: &Lib, track_ids: Vec<i64>, index: usize, cx: &mut App) {
+    let engine = lib.engine.clone();
+    cx.spawn(async move |_| {
+        if let Err(e) = engine
+            .replace_queue(track_ids, Some(index as u32), false)
+            .await
+        {
+            log::warn!("play: {e}");
+        }
+    })
+    .detach();
+}
+
+pub fn add_to_playlist(lib: &Lib, playlist: i64, items: &[Playable], cx: &mut App) {
+    let engine = lib.engine.clone();
+    let sets = sources(items);
+    let feed = lib.feed.clone();
+    cx.spawn(async move |cx| {
+        if let Err(e) = engine.add_to_playlist(playlist, sets).await {
+            log::warn!("add to playlist {playlist}: {e}");
+        }
+        feed.update(cx, |feed, cx| feed.reload_playlists(cx));
+    })
+    .detach();
+}
+
+/// Favourite every item, or, when all of them already are, unfavourite them:
+/// what one verb over a pick means.
+pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
+    let all = items.iter().all(|i| lib.feed.read(cx).is_favourite(*i));
+    lib.feed.update(cx, |feed, cx| {
+        for item in items {
+            if feed.is_favourite(*item) == all {
+                feed.toggle_favourite(*item, cx);
+            }
+        }
+    });
+}
+
+/// Run after a menu's verb: ends the pick the menu was opened over, as each
+/// of the selection bar's verbs does.
+pub type After = Option<Rc<dyn Fn(&mut App)>>;
+
+/// What a right click landed on: the items the menu acts on.
+#[derive(Clone)]
+pub struct MenuTarget {
+    pub items: Arc<[Playable]>,
+    /// The record a single track belongs to, for "go to album".
+    pub album: Option<i64>,
+    pub after: After,
+}
+
+/// A page with one context menu over its list, rather than one per row: a
+/// row notes what was right-clicked, and the list's menu acts on it.
+pub trait Menus: Sized + 'static {
+    fn lib(&self) -> &Lib;
+    fn menu_target(&mut self) -> &mut Option<MenuTarget>;
+    fn menu_target_ref(&self) -> &Option<MenuTarget>;
+}
+
+/// A row's or tile's right mouse down, noting what the list's menu acts on.
+pub fn mark<V: Menus>(
+    view: WeakEntity<V>,
+    target: MenuTarget,
+) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    super::listen(view, move |this: &mut V, _: &MouseDownEvent, _, _| {
+        *this.menu_target() = Some(target.clone());
+    })
+}
+
+/// The list's one context menu, over whatever its rows marked. A right
+/// click on the list clears the mark first, in the capture phase, so one on
+/// empty space acts on nothing.
+pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'static>(
+    element: E,
+    view: WeakEntity<V>,
+    window: &mut Window,
+    cx: &mut App,
+) -> E {
+    let clear = view.clone();
+    element
+        .capture_any_mouse_down(super::listen(
+            clear,
+            |this: &mut V, e: &MouseDownEvent, _, _| {
+                if e.button == MouseButton::Right {
+                    *this.menu_target() = None;
+                }
+            },
+        ))
+        .koan_context_menu("list-menu", window, cx, move |m, window, cx| {
+            let Some(view) = view.upgrade() else { return m };
+            let (lib, target) = {
+                let page = view.read(cx);
+                (page.lib().clone(), page.menu_target_ref().clone())
+            };
+            match target {
+                Some(t) => menu(m, &lib, t.items, t.album, t.after, window, cx),
+                None => m,
+            }
+        })
+}
+
+/// The context menu for `items`: one thing, or a whole pick. `album` is the
+/// record a single track belongs to, for "go to album".
+pub fn menu(
+    menu: Menu,
+    lib: &Lib,
+    items: Arc<[Playable]>,
+    album: Option<i64>,
+    after: After,
+    window: &mut Window,
+    cx: &mut Context<Menu>,
+) -> Menu {
+    let single = (items.len() == 1).then(|| items[0]);
+    let container =
+        items.len() > 1 || matches!(single, Some(Playable::Album(_) | Playable::Artist(_)));
+    let favourited = items.iter().all(|i| lib.feed.read(cx).is_favourite(*i));
+    let playlists = lib.feed.read(cx).playlists.clone();
+
+    let verb = |label: &'static str, f: fn(&Lib, &[Playable], &mut App)| {
+        let (lib, items, after) = (lib.clone(), items.clone(), after.clone());
+        MenuEntry::new(label).on_click(move |_, _, cx| {
+            f(&lib, &items, cx);
+            if let Some(after) = &after {
+                after(cx);
+            }
+        })
+    };
+
+    let mut menu = menu
+        .item(verb("play", |lib, items, cx| {
+            play(lib, items, false, cx).detach()
+        }))
+        .item(verb("play next", |lib, items, cx| {
+            queue(lib, items, Placement::Next, cx).detach()
+        }))
+        .item(verb("add to queue", |lib, items, cx| {
+            queue(lib, items, Placement::Append, cx).detach()
+        }));
+    if container {
+        menu = menu.item(verb("shuffle", |lib, items, cx| {
+            play(lib, items, true, cx).detach()
+        }));
+    }
+    let (sub_lib, sub_items, sub_after) = (lib.clone(), items.clone(), after.clone());
+    menu = menu
+        .separator()
+        .submenu("add to playlist", window, cx, move |mut menu, _, _| {
+            if playlists.is_empty() {
+                return menu.label("no playlists");
+            }
+            for (id, name) in &playlists {
+                let (lib, items, after, id) =
+                    (sub_lib.clone(), sub_items.clone(), sub_after.clone(), *id);
+                menu = menu.item(MenuEntry::data(name.clone()).on_click(move |_, _, cx| {
+                    add_to_playlist(&lib, id, &items, cx);
+                    if let Some(after) = &after {
+                        after(cx);
+                    }
+                }));
+            }
+            menu
+        });
+    menu = menu.item(verb(
+        if favourited {
+            "unfavourite"
+        } else {
+            "favourite"
+        },
+        favourite,
+    ));
+    match single {
+        Some(Playable::Track(id)) => {
+            let nav = lib.nav.clone();
+            if let Some(album) = album {
+                let nav = nav.clone();
+                menu = menu
+                    .separator()
+                    .item(MenuEntry::new("go to album").on_click(move |_, _, cx| {
+                        nav.update(cx, |nav, cx| nav.open(Page::Album(album), cx))
+                    }));
+            }
+            menu = menu.item(
+                MenuEntry::new("track info")
+                    .on_click(move |_, _, cx| nav.update(cx, |nav, cx| nav.show_info(id, cx))),
+            );
+        }
+        Some(Playable::Album(id)) => {
+            let nav = lib.nav.clone();
+            menu =
+                menu.separator()
+                    .item(MenuEntry::new("open album").on_click(move |_, _, cx| {
+                        nav.update(cx, |nav, cx| nav.open(Page::Album(id), cx))
+                    }));
+        }
+        _ => {}
+    }
+    menu
+}

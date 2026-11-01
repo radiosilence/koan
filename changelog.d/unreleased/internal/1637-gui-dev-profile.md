@@ -1,0 +1,1 @@
+- **A faster test loop for the desktop app.** `just gui-run` builds with a `gui-dev` profile, at release speed but rebuilt incrementally, so a change to koan-core no longer rebuilds koan-server and koan-ffi whole.

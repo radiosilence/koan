@@ -1,0 +1,1 @@
+- **GUI library pages in fixed columns.** Artist, track and record rows align their figures in right-hand columns, the artist page keeps its margins, its biography and photograph fade in, and the album grid can shuffle again under the random order. An artist lookup MusicBrainz refuses while busy is retried rather than left empty until the next visit.

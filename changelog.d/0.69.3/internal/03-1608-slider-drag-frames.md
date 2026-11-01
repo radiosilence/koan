@@ -1,0 +1,1 @@
+- **Slider drags in the GUI app redraw only the slider.** A drag used GPUI's drag and drop, which redraws the whole window at every mouse move; it now follows the pointer with window-wide mouse listeners, taking a drag's frame from about 1.6 ms to 0.2 ms beside the theme sheet.

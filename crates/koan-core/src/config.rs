@@ -1453,6 +1453,11 @@ pub enum EqFilterKind {
 }
 
 impl EqFilterKind {
+    /// The kind written `name` in the config.
+    pub fn named(name: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(name.into())).ok()
+    }
+
     /// As written in the config.
     pub fn name(self) -> &'static str {
         match self {
@@ -1762,6 +1767,15 @@ impl Config {
     where
         F: FnOnce(&mut Config),
     {
+        Self::persist_changed(mutate).map(|_| ())
+    }
+
+    /// `persist`, saying whether the mutation changed anything, so a caller
+    /// that tells others of a change tells them only of a real one.
+    pub fn persist_changed<F>(mutate: F) -> Result<bool, ConfigError>
+    where
+        F: FnOnce(&mut Config),
+    {
         // Each write reads both files and writes them back whole, so two at
         // once would lose whichever finished first: the player's volume and a
         // setting changed in the app, say.
@@ -1779,7 +1793,7 @@ impl Config {
             &mut changes,
         );
         if changes.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         let base_path = config_file_path();
@@ -1802,7 +1816,7 @@ impl Config {
         write_document(&base_path, &base, false)?;
         write_document(&local_path, &local, true)?;
         Self::invalidate_cache();
-        Ok(())
+        Ok(true)
     }
 
     /// Resolved cache directory — the explicit setting, or `default_cache_dir`.

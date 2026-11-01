@@ -21,6 +21,13 @@ crates/
 ├── koan-ffi/      staticlib + cdylib. uniffi bindings exposing koan-core
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
+├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for
+│                  macOS and Linux: the kōan theme (`theme/`), its components
+│                  (`components/`), `platform/`, the library pages
+│                  (`library/`) and the app over
+│                  KoanEngine. Links koan-ffi as a Rust library.
+│                  Not published.
+│
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
                    Depends on koan-core, koan-tui and koan-server.
@@ -34,7 +41,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); nothing depends on `koan-ffi`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
@@ -46,7 +53,7 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 | Audio owned by | The UI's own process | A separate `koan` process |
 | State updates | State slices from `observe()` | GraphQL subscriptions |
 | Auth | None needed | JWT, cookies, CORS |
-| For | macOS, iOS, tvOS and Android apps | Web UI, jukebox remotes |
+| For | macOS, iOS, tvOS and Android apps, the kōan GUI app | Web UI, jukebox remotes |
 
 **Nothing over the FFI blocks its caller.** koan-core is synchronous — rusqlite has no async form, and the audio path is dedicated threads on purpose — so the boundary is where the hop happens: an exported call that can block is `async` and runs on a worker thread, and the handful that stay synchronous read one atomic. Queue mutations, transport commands and playlist edits go down a single lane so they reach the player and the database in the order the user gave them; a playlist edit and the snapshot undo restores are one transaction. A call joins the lane on its first poll, so the apps make that poll on the thread that made the call: the Swift bindings are built with `NonisolatedNonsendingByDefault`, so a call from the main actor polls there, and Android's `EngineMirror.launch` starts undispatched. Neither waits for one command to finish before sending the next. A command that acts on an album, an artist or a playlist names it (`TrackSet`) and the engine reads its tracks on the lane, and one placed relative to the playing track (`Placement::Next`, `AppendAndPlay`) is placed by the player as it applies it, so no client reads before it sends. Appearance settings are queued and written on a lane of their own, and the setter returns at once, so changing the look never waits on the disk; changes made while a write waits join it (`offload::Batches`). Two synchronous calls can wait: `appearance()` writes anything still queued before it reads, so a read after a change sees it (the Mac and iOS read it at launch, Android off the main thread), and `flush_settings` waits at most two seconds for the lane, as the app is told it is terminating or, on Android, as its task is removed. See `koan-ffi/src/offload.rs`.
 
@@ -163,6 +170,14 @@ DAC → Speakers
 The device rate is not koan's to own — it is one property shared by every client, and Audio MIDI Setup, a vendor control panel or any other app can move it back at any moment, after which the HAL resamples koan to reach it. So the rate the front ends report is not the one read at engine creation: a `SampleRateWatch` (`audio/device.rs`) stays registered on `kAudioDevicePropertyNominalSampleRate` for as long as the engine lives and writes every change into `SharedPlayerState`. koan does not take hog mode, so losing the rate is possible by design — saying so is not.
 
 **Backpressure:** If the ring buffer is full, decode sleeps 500µs and retries. If the ring buffer is empty (underrun), the render callback zeros the output (silence beats glitches).
+
+## Desktop artwork
+
+The desktop app's library pages draw thousands of sleeves, and a sleeve that is not on screen in time is a blank tile. `koan-gui/src/library/covers.rs` keeps two tiers, as the Mac's `CoverArtCache` does: the record's art once on disk, as `album_cover_art` returns it at 1000 pixels (local art is scaled to the size asked for, as a server's thumbnail is), and decoded bitmaps per record and draw size, rounded up to 32 pixels, in a 256 MB LRU. A list does not ask for sleeves one by one: each frame it hands the cache its whole ranked set (on screen, where a flick will come to rest, the rows ahead in the direction of travel), replacing the last, and the fetch and decode lanes each take the most urgent job they can start. A job that falls out of every set before it starts is never run. A decoded bitmap is copied into GPUI's atlas on the main thread in the frame that first paints it, so decoded sleeves are staged and admitted about 2 MB a frame, the most urgent first, each tile showing its sleeve's average colour (worked out on the decode lane) until its turn. Evicting a bitmap also drops its texture from GPUI's atlas, so it is never done to one drawn in the last moment or still held by an element; otherwise the next paint would upload it again and nothing would drop it after that. An eviction during a draw names the window being drawn, which the app's list of windows does not hold during its update.
+
+The grid's tiles are cached views, but a cached view is reused only at the bounds it had, and a scrolling list moves every row, so while it scrolls every tile on screen is laid out and painted each frame. What that costs is the tile's elements and hitboxes: each tile has one interactive element, which tells its parts apart by position, and makes its hover overlays only while hovered. Caching pays off at rest, where a hover, a heart or an arriving sleeve redraws one tile.
+
+Row ids are reused, so a record deleted and another added can share an id. The cache sweeps `art_evictions` at launch and on every library change, bumping a generation per record that every fetch and decode must still match to be kept, and trusts nothing on disk until a sweep has landed.
 
 ## Android
 
@@ -337,7 +352,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/favourites.rs` | Favourite/star status by row id (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
 | `queries/smart.rs` | Smart playlists: rules (`crate::smart`) compiled to one parameterised query over tracks, the owner's plays and favourites. The selection is written into the playlist's entries, so every reader sees an ordinary playlist; reads re-evaluate one older than a minute (a random order, a day) and write only when the selection moved, keeping entry ids. A scrobble or favourite on the server re-evaluates at once the owner's playlists whose rules read it, and `clients::changed` has devices pull any that moved. A read never waits for the write lock: behind a scan it serves the last contents, and the refusal is remembered for the minute so each read does not evaluate again |
 | `queries/history.rs` | Play history — one row per play, written when a track starts. On a server, also forgettings (`play_history_forgotten`) and the pages devices read after a cursor of two `AUTOINCREMENT` ids; on a device, the outbox of scrobbles and forgettings waiting for the server |
-| `queries/playback_state.rs` | Queue and playback position persistence across sessions |
+| `queries/playback_state.rs` | The saved session (queue, position, play mode), one per device on the config directory, keyed by the device's `LinkIdentity::files` prefix: the app (`''`) and the terminal UI (`terminal-`) run side by side on one library and each restores its own. A headless server keeps none |
 
 **Indexes and the planner.** Every question the library is asked about a handful of rows is answerable from an index, so a query plan that says `SCAN` is a defect unless the query genuinely means "all of them". Two shapes defeat an index and neither one fails, so both only ever show up as cost: an `OR` spanning different columns or different tables — a track is reachable by `path`, `cached_path` or `remote_url`, and an artist by their own credit or their album's — and a `LIKE` pattern or a collation the index was not built with. The first is written as a union of indexed lookups; the second as a range over the indexed column. `db/schema.rs::tests::hot_queries_do_not_scan` asserts the plans, because a rewrite that quietly loses its index reads the same.
 
@@ -401,6 +416,20 @@ fb2k-compatible template engine, re-exported from [sift](https://github.com/radi
 ## koan-cli modules
 
 Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch, logger setup, and signal handling. Delegates everything to command handlers (some in koan-cli itself, some calling into koan-tui and koan-server).
+
+## koan-gui: the theme in GPUI
+
+`koan-gui` draws only the kōan look (docs/design/koan-theme.md); there is no system theme. `theme::Look::of(window, cx)` is a window's appearance and the tokens and accent for it, read by every component as it renders; `theme::KoanTheme` holds what windows share (text size, "show icons"). The record's accent is an entity, `AccentFeed`: it changes with every record and moves for a quarter second as it settles, so it notifies only the views that draw it, each of which calls `theme::observe_accent` when it is made, rather than redrawing every window past its caches. Appearance and text size, which change rarely, do redraw everything.
+
+**A window's root is two cached views.** The wash (`theme::wash::Wash`) and the content sit side by side under a root whose render only calls `KoanTheme::drive` and places the two cached views. A frame of the drift or of the accent settling then redraws the wash, or refreshes past the caches, without re-laying out the page: `request_animation_frame` dirties the view that asks and every ancestor, so content that is not in its own cached view is redrawn on every frame the wash moves. `sheet::ThemeSheet` is the reference shape.
+
+**Nothing heavy on the main thread.** The accent is worked out and the wash baked on the background executor; the main thread installs the finished texture. The wash is one textured quad per frame (two while a record dissolves into the next), drawn only while it drifts or fades, and released from the sprite atlas after the frame that last drew it. GPUI rasterises an icon's SVG sprite on the main thread the first time each glyph is drawn at a size; it is kept in the atlas after that.
+
+**An idle window asks for no frames.** GPUI's macOS and X11 backends, as published, wake a visible window at every display refresh and find nothing to draw. The workspace carries patched copies (`vendor/`, wired in by `[patch.crates-io]`) that stop the display link, or the X11 refresh timer, after three frames no one asked for, and start it again through GPUI's `frame_waker` and `schedule_frame`, as the Wayland backend already does. A paused window then costs nothing, and a playing one draws only when the seek bar moves a pixel. `vendor/README.md` says how to carry the patches to a new GPUI release.
+
+**Icons** are generated by `scripts/icons.py` into `theme/icons/glyphs.rs`, with an `Icon` enum named as `Support/Icons.swift` names them. Each (glyph, stroke width, layer) is an asset path that `theme::icons::Assets` turns into an SVG on first use, since the stroke is set by the type size rather than scaled with the drawing.
+
+**Geist Mono** is bundled as static 200, 300 and 400 faces cut from the variable font the Mac app ships (`scripts/gui-fonts.py`): GPUI chooses among a family's faces by weight and never sets a variable font's `wght` axis.
 
 ## koan-tui modules
 

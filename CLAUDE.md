@@ -2,12 +2,13 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android. Five crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android, and the kōan GUI app (GPUI), built for macOS and Linux so far. Six crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
+- **koan-gui** — the kōan GUI app (`koan-gui`), drawn with GPUI (gpui-kit). Desktop builds for macOS and Linux; Windows waits on koan-core (#1600). Links koan-ffi as a plain Rust library and drives `KoanEngine` as the Mac app does. Draws only the kōan look: `src/theme/` (tokens, Geist Mono, the icon set, the record accent, the wash) and `src/components/`. The library pages are `src/library/`. Not published.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
@@ -16,7 +17,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
-Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; nothing depends on koan-ffi. Native clients import koan-core through koan-ffi.
+Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; koan-gui depends on koan-ffi, as a Rust library, and nothing else depends on it. Native clients import koan-core through koan-ffi. Something a GUI page needs that `KoanEngine` lacks goes into koan-core and koan-ffi, so the Mac app could share it.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -85,7 +86,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 ## Releasing
 
-`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, and the changelog section as notes) and the Homebrew formulae. Its iOS and tvOS TestFlight builds join the public TestFlight group and go to beta review; builds from other pushes stay internal. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The App Store is separate too: once a release's TestFlight builds have processed, `gh workflow run store.yml` pushes `apps/ios/store/listing.toml` and submits iOS and tvOS to App Review. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
+`just release patch|minor|major` (or an exact `X.Y.Z`) branches from main, bumps the workspace version and the internal crates' pins in `Cargo.toml`, `Cargo.lock`, `deploy/pulumi/package.json`, `deploy/pulumi/src/versions.ts` and the Android `versionName`, turns the unreleased fragments into the version and opens the release PR; `gh workflow run release.yml` does the same from CI. Merging it is the release: CD, the half of `ci-cd.yml` after the `Checks` gate, publishes the crates, the container image, the Pulumi package, the GitHub release (binaries, the macOS app, the Android APK, the kōan GUI app's DMG, AppImages and .debs, and the changelog section as notes) and the Homebrew formulae. Its iOS and tvOS TestFlight builds join the public TestFlight group and go to beta review; builds from other pushes stay internal. A push releases only when it changes the version; `gh workflow run ci-cd.yml` on main retries a release that failed part way. The App Store is separate too: once a release's TestFlight builds have processed, `gh workflow run store.yml` pushes `apps/ios/store/listing.toml` and submits iOS and tvOS to App Review. The server deploy is triggered separately, with `gh workflow run update-apps.yml -R radiosilence/jaritanet` once `gh release view vX.Y.Z` succeeds.
 
 ## Docs and site
 
@@ -147,6 +148,8 @@ just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bi
 just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
+just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set
+just gui-bundle # package the desktop app for this machine: .app + DMG on macOS, AppImage + .deb on Linux
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -176,7 +179,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
 | `audio/replaygain.rs` | EBU R128 loudness scanning, gain application via lofty |
-| `audio/dsp/` | EQ and convolution per output device, on the decode thread. No profile, no chain: bit-perfect stays checkable. Delays trimmed and flushed so the timeline counts output time. `steps.rs` runs a profile's filters in order — bands, delays, mixes, graphic curves as minimum-phase FIRs — since a mix does not commute; `impulse.rs` is the routing matrix (Convolver's model; a WAV is its diagonal); `import.rs` sorts files, folders and zips into one profile through `convolver`, `camilla`, `apo` and `raw`; `profiles.rs` is what every front end calls |
+| `audio/dsp/` | EQ and convolution per output device, on the decode thread. No profile, no chain: bit-perfect stays checkable. Delays trimmed and flushed so the timeline counts output time. `steps.rs` runs a profile's filters in order — bands, delays, mixes, graphic curves as minimum-phase FIRs — since a mix does not commute; `impulse.rs` is the routing matrix (Convolver's model; a WAV is its diagonal); `import.rs` sorts files, folders and zips into one profile through `convolver`, `camilla`, `apo` and `raw`; `profiles.rs` is what every front end calls; `edit.rs` the rules of an edit by hand (the ranges, the band types, the brush) every editor clamps and paints by |
 | `audio/viz.rs` | `VizBuffer` (ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI), `VizLevels` (the spectrum as three bands, for callers that poll often and draw little) |
 | `audio/analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Runs at configurable FPS |
 | `audio/streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
@@ -257,6 +260,76 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `types.rs` | uniffi records mirroring koan-core types (`Track`, `Album`, `NowPlaying`, `QueueItem`, …) and the conversions |
 
 Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.
+
+### koan-gui (`crates/koan-gui/src/`)
+
+GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::component`). A window's root is the wash and the content as two cached views, so a drift frame redraws the wash alone; see ARCHITECTURE.md. Nothing blocks the main thread: engine futures are awaited from `cx.spawn`, CPU work runs on the background executor, and the main thread applies finished results and draws.
+
+| Module | What |
+|--------|------|
+| `app.rs` | Installs the globals (`install`) once `main.rs` has opened the engine and started `platform::init`, and opens the window once the restored rows arrive or after half a second; the session is kept only once the restore succeeded. Quit saves the window's bounds; `platform` saves the session |
+| `root.rs` | A window's root: the wash and the content as two cached views; the playing record's sleeve, decoded off the main thread, sets the accent and the wash |
+| `paint.rs` | `Paint::of(window, cx)`: the theme's `Look` with its colours flattened for the views |
+| `mirror.rs` | The engine's state slices, one GPUI entity each, fed by one task on `StateStream::next()`. A queue sent whole is indexed and laid out as rows on the background executor; patches are applied relative to their base |
+| `engine.rs` | The `KoanEngine` global and `command`, which runs a command off the main thread and logs failures |
+| `navigator.rs` | Where the app is: `Route` (plain data, ids only), and the `Navigator` entity holding the history, the cursor and each route's rewinds; `choose` sends the page showing to its top. Every navigation rule lives here, with its tests |
+| `shell.rs` | The window: the sidebar from the top edge, the window's buttons on its ground, beside the page column (toolbar with back and forward, then the stage); transport along the foot. "Wash the whole window" takes the sidebar's and toolbar's ground away and spans the transport under both columns |
+| `sidebar.rs` | The queue, the library's sections, the playlists |
+| `queue/` | The queue page, kept mounted: rows from `QueueItem.run` (`rows.rs`), selection by queue item, keys, drag reorder, context menu |
+| `transport.rs` | The transport bar and the seek slider, whose position is reckoned from the playhead anchor with one timer for the next visible change while playing |
+| `covers.rs` | Sleeves per record and size, decoded off the main thread to the renderer's pixel format |
+| `session.rs` | Saving the session while playing, when playback stops, and on queue edits |
+| `window_state.rs` | The window's bounds across launches, in `<config dir>/desktop-window` |
+| `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `play`, `hidden` and `play-hidden` set the app up for its CPU use to be read from outside |
+| `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
+| `theme/mod.rs` | `KoanTheme` (text size, "show icons"), `AccentFeed` (the accent settling; cached views that draw it call `observe_accent`), `Look::of(window, cx)` (a window's appearance and tokens), `KoanStyled::text_role`, `drive` for a window's root, Reduce Motion read from the system, gpui-component's theme dressed in the tokens for its `Input` |
+| `theme/tokens.rs` | Colours, type roles, spacing, hairline, motion durations and the quick-out curve |
+| `theme/accent.rs` | `Color.dominant` and the OKLCH tone mapping, value for value with Swift and Kotlin; `AccentState` eases a new record's accent over `Motion::SETTLE` |
+| `theme/icons.rs` | `KoanIcon` and the asset source serving each glyph at its stroke width; `icons/glyphs.rs` is generated by `just icons` |
+| `theme/wash.rs` | The wash: `bake` (Android's `WashBake`, BGRA out) and the `Wash` view, one textured quad drifting only while asked and allowed |
+| `components/` | Buttons, toggles, segmented, form row, slider, stepper, text field, menu panel and rows, tooltip, nav and list rows, badge, chip, empty state |
+| `sheet.rs` | The theme sheet; `examples/theme_sheet.rs` draws it offscreen to a PNG |
+| `dsp/model.rs` | `Dsp`, the one EQ model: the overview, writes through `act`, imports and their questions, AutoEQ, and the lane each edit's saves go through in order, each naming the filter the last one stored. A step of a drag plays without moving `version`; the last moves it |
+| `dsp/graph.rs` | The response graph on the GPU and its editor: each curve's path tessellated once per change of curve, size or range around the level, and moved into place as painted; a drag previews one step at a time through the core and saves through the model's lane |
+| `dsp/page.rs` | `EqPage`: a frame over the cached `EqBody` (a device's chain, its preset and the graph of the whole), with sheets from `dsp/sheet.rs` and the import questions from `dsp/prompts.rs` over it |
+| `dsp/profile.rs`, `dsp/bands.rs` | A profile's sheet: the graph in a frame over the cached `ProfileBody` (role and targets, layers and groups, channels, keeping an edit) and the dense band table, whose rows save a figure only when its text changed and chain their saves |
+| `dsp/manage.rs`, `dsp/stage.rs`, `dsp/flows.rs` | Manage EQ and recently deleted; choosing a stage's correction or EQ, a new EQ; AutoEQ, measurements and splitting a baked EQ |
+| `examples/eq.rs` | The EQ page against a real engine on a throwaway configuration: offscreen to a PNG, in a window, or `--measure` for a drag's frame times |
+| `library/activity.rs` | The Library menu's tasks (rescan, force rescan, rebuild the index, sync) and the rows at the sidebar's foot showing each one running: progress from a `ProgressReporter` for scans started here and from the `Tasks` and `Sync` slices otherwise; scans can be stopped |
+| `library/stage.rs` | The library's part of the stage, for the shell: the page for an album, artist or track route, and a track's details over it |
+| `library/nav.rs` | Each listing's scroll and anchor, and the track whose details are open, kept beside the navigator, which every move goes to |
+| `library/covers.rs` | Library artwork: bytes on disk once per record (`$KOAN_CONFIG_DIR/artwork` or the platform cache), bitmaps per record and draw size in a bounded LRU whose evictions drop the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
+| `library/albums.rs` | The album grid: a uniform list of rows of tiles, aiming the cover cache from the scroll's heading (the Mac grid's `aim`), scroll kept across visits and column changes |
+| `library/tile.rs` | One record's tile, shared by the grid and the artist page: a cached view with one interactive element, telling its parts apart by position, its strings made once per listing |
+| `library/rows.rs` | One track's row, shared by the track browser, record page and artist page, on the Mac's row metrics |
+| `library/artists.rs`, `tracks.rs` | The artist browser; the track browser, read a page at a time and swapped in once a reload covers the screen |
+| `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with bio, photo, sections, features and appearances |
+| `library/drag.rs` | `PlayableDrag`, what every drag out of the library carries: `TrackSet`s for the engine, shared so a pick is built once. The queue and the sidebar's queue and playlist rows take it |
+| `library/selection.rs` | Picking several things to play together, in tick order |
+| `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
+| `library/feed.rs` | The slices the library pages read (library version, playing record, transfers, favourites, playlists, connection), to be replaced by `mirror.rs` |
+| `library/bench.rs` | What `benches/album_grid.rs` counts beside GPUI's frame timings: blank, placeholder and stand-in tiles, and how long tiles stayed blank. The bench scrolls the grid through GPUI's harness and headless renderer, nothing on screen |
+
+`just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library; `KOAN_CONFIG_DIR=DIR/config cargo bench -p koan-gui --bench album_grid` scrolls the album grid over it.
+
+`platform/` is where the app meets the operating system. Nothing in it blocks the UI thread: engine calls are awaited from `cx.spawn`, file work runs on the background executor, the log is written by a thread of its own.
+
+| Module | What |
+|--------|------|
+| `platform/about.rs` | About kōan (the standard panel on macOS, a window elsewhere), and the name and icon a build outside a bundle gives itself on macOS. The build is the commit, from `build.rs`, or `KOAN_BUILD` |
+| `platform/dock.rs` | The Dock's menu on macOS, rebuilt from the Playback and Devices slices only when what it shows changes |
+| `platform/mod.rs` | `init`: everything that runs for the app's life, quitting as the Mac app quits, and what files and links from outside become (`Links` for the shell). It restores the desktop app's own saved session before taking launch files, so they land after it, and saves it on quit only when it restored it |
+| `platform/actions.rs` | Every shortcut, from one table: the key bindings, the macOS menu bar's items and the shortcuts sheet. Modifier shortcuts in the `koan` context, so a text field's own keys win; bare keys in `koan && !Input`, never a menu's key equivalent. Engine-only commands handled here; the rest are the shell's and the pages' to handle |
+| `platform/menus.rs` | The macOS menu bar, in the Mac app's order |
+| `platform/shortcuts_sheet.rs` | What `?` and ⌘/ show |
+| `platform/media.rs` | souvlaki: MPRIS on Linux, Now Playing on macOS, cover included, from a state stream of its own; `Playhead`, the anchor the skip shortcuts read |
+| `platform/drop.rs` | Files from outside — drops, the command line, a second launch — indexed where they lie and queued, or added to a playlist. `Imports` for the shell's activity row and error line |
+| `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
+| `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
+
+`vendor/` holds patched copies of GPUI's macOS and Linux backends, so an idle window stops waking at every display refresh (#1609); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
+
+`LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry.
 
 ### apps/macos (`apps/macos/Sources/`)
 

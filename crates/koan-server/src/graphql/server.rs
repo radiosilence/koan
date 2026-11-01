@@ -88,6 +88,7 @@ pub fn cmd_serve(
             viz: None, // headless — no viz analyzer
             profile: Profile::Headless,
             hosts: Vec::new(),
+            session: None,
         },
         jobs,
     );
@@ -194,6 +195,10 @@ pub struct ApiServerOpts {
     /// Names this server is reached by beyond `graphql.allowed_hosts`, such as
     /// the Mac's Bonjour name.
     pub hosts: Vec<String>,
+    /// Whose saved session `savePlaybackState` writes: the files prefix of
+    /// the device whose player this is (`LinkIdentity::files`). None where
+    /// nothing restores one, as on a headless server.
+    pub session: Option<&'static str>,
 }
 
 /// A running API server. Dropping it asks the server to stop and does not
@@ -236,6 +241,7 @@ impl ApiServer {
             viz,
             profile,
             hosts,
+            session,
         } = opts;
         use axum::routing::{get, post};
 
@@ -440,7 +446,8 @@ impl ApiServer {
                 stop.clone(),
             )
         });
-        let schema = super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone());
+        let schema =
+            super::build_schema_sharing(state, cmd_tx, pool.clone(), viz, jobs.clone(), session);
 
         if auth_enabled {
             log::info!(
@@ -776,6 +783,7 @@ pub fn start_api_background(
         viz: None,
         profile: Profile::Tui,
         hosts: Vec::new(),
+        session: Some(koan_core::remote::link::LinkIdentity::TERMINAL_FILES),
     });
     match started {
         Ok(server) => server.wait(),
@@ -1364,6 +1372,7 @@ mod tests {
                 viz: None,
                 profile: Profile::Embedded,
                 hosts: Vec::new(),
+                session: None,
             })
             .unwrap()
         };
@@ -1446,6 +1455,7 @@ mod tests {
             viz: None,
             profile: Profile::Embedded,
             hosts: Vec::new(),
+            session: None,
         });
         let Err(why) = started else {
             panic!("started beside another listener on port {port}");

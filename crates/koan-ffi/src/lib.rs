@@ -45,6 +45,8 @@ mod android;
 mod offload;
 mod queue_slice;
 mod serve;
+// For Rust clients, which link this crate rather than its bindings.
+pub use serve::{InviteTo, ShareStatus, Sharing, TailscaleStatus};
 mod server_queue;
 mod state;
 mod types;
@@ -453,6 +455,31 @@ pub fn set_config_dir(path: String) {
     config::set_config_dir(path);
 }
 
+/// The directory `set_config_dir` names, or the platform's default: for a
+/// Rust client keeping its own window state beside the configuration.
+pub fn config_dir() -> std::path::PathBuf {
+    config::config_dir()
+}
+
+/// The album sorts that mean something under `filter`, and with a search when
+/// `searching`, in the order a menu offers them.
+#[uniffi::export]
+pub fn album_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<AlbumSort> {
+    koan_core::browse::AlbumSort::offered(&filter.into(), searching)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+/// As `album_sorts_offered`, for the track browser.
+#[uniffi::export]
+pub fn track_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
+    koan_core::browse::TrackSort::offered(&filter.into(), searching)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
 /// A size as koan reads one in the config ("50GB", "500 MB"), in bytes, or
 /// `None` when it is not one. So the apps read the cache limit as the core
 /// does, without a parser of their own.
@@ -467,6 +494,68 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
 #[uniffi::export]
 pub fn format_pair_code(typed: String) -> String {
     koan_core::remote::pair::format_code(&typed)
+}
+
+/// The ranges a band edited by hand is held to, and the band types it can
+/// be: what an EQ editor clamps to and offers, so it never shows a value a
+/// save would change.
+#[uniffi::export]
+pub fn dsp_band_bounds() -> DspBandBounds {
+    use koan_core::audio::dsp::edit::{BAND_DB, BAND_HZ, BAND_KINDS, BAND_Q};
+    DspBandBounds {
+        hz_min: *BAND_HZ.start(),
+        hz_max: *BAND_HZ.end(),
+        db_min: *BAND_DB.start(),
+        db_max: *BAND_DB.end(),
+        q_min: *BAND_Q.start(),
+        q_max: *BAND_Q.end(),
+        kinds: BAND_KINDS
+            .iter()
+            .map(|k| DspBandKind {
+                id: k.id.into(),
+                short: k.short.into(),
+                name: k.name.into(),
+                draggable: k.draggable,
+            })
+            .collect(),
+    }
+}
+
+/// The curve `points` pulled toward `db` at `hz` by `brush`: a step of
+/// painting a graphic EQ on its graph.
+#[uniffi::export]
+pub fn dsp_paint_curve(points: Vec<DspPoint>, hz: f64, db: f64, brush: DspBrush) -> Vec<DspPoint> {
+    let points: Vec<(f64, f64)> = points.iter().map(|p| (p.hz, p.db)).collect();
+    koan_core::audio::dsp::edit::paint(&points, hz, db, brush.into())
+        .into_iter()
+        .map(|(hz, db)| DspPoint { hz, db })
+        .collect()
+}
+
+/// A band's Q widened or narrowed by a vertical drag of `dy` points from
+/// `start`, held to the range a band may have.
+#[uniffi::export]
+pub fn dsp_drag_q(start: f64, dy: f64) -> f64 {
+    koan_core::audio::dsp::edit::drag_q(start, dy)
+}
+
+/// What an EQ's page offers on a device for the profile `name` of `role`,
+/// where the device's correction is `active` and its filters hold the
+/// profile where `in_chain`.
+#[uniffi::export]
+pub fn dsp_device_action(
+    name: String,
+    role: DspRole,
+    active: Option<String>,
+    in_chain: bool,
+) -> DspDeviceAction {
+    koan_core::audio::dsp::profiles::DeviceAction::of(
+        &name,
+        role.into(),
+        active.as_deref(),
+        in_chain,
+    )
+    .into()
 }
 
 /// The heading over a section of an artist's records.
@@ -624,6 +713,10 @@ pub struct KoanEngine {
     /// The queue's `content_version` as last saved, so a save rewrites the
     /// queue only when its contents moved and otherwise saves the position.
     saved_content: std::sync::atomic::AtomicU64,
+    /// Whose saved session this engine reads and writes: its device's files
+    /// prefix (`LinkIdentity::files`). Another device on the same config
+    /// directory keeps a session of its own.
+    session: &'static str,
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
@@ -631,9 +724,6 @@ pub struct KoanEngine {
     pairing: parking_lot::Mutex<Option<koan_core::remote::pair::Pending>>,
     /// What ends the wait, by the pairing's id.
     pairing_cancel: parking_lot::Mutex<Option<(String, koan_core::remote::pair::Cancel)>>,
-    /// What the app calls this device — the name the person gave it, where
-    /// the platform says — for the link and for a pairing to ask under.
-    device_name: Option<String>,
     /// The library's reading of the item under the cursor: read once per
     /// track and library version, not on every wake of the state watcher.
     cursor_reading: parking_lot::Mutex<Option<CursorReading>>,
@@ -811,6 +901,33 @@ const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
 /// takes longer, and is reported as not started yet.
 const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 
+/// Constructors for front ends that link the engine as a Rust library and
+/// are not reached through uniffi.
+impl KoanEngine {
+    /// `open`, for the desktop app: a device of its own beside the native app
+    /// and the terminal UI on the same config directory (see
+    /// `LinkIdentity::desktop`). Refused while another desktop app holds that
+    /// device, and when its lock cannot be made in the config directory.
+    pub async fn open_desktop() -> Result<Arc<Self>, KoanError> {
+        offload::offload(|| {
+            init_logging();
+            let identity = koan_core::remote::link::LinkIdentity::desktop().map_err(|e| {
+                let message = if e.kind() == std::io::ErrorKind::WouldBlock {
+                    "another kōan desktop app is running on this configuration".to_string()
+                } else {
+                    format!(
+                        "could not take this device's lock in {}: {e}",
+                        config::config_dir().display()
+                    )
+                };
+                KoanError::Refused { message }
+            })?;
+            Self::build(None, identity)
+        })
+        .await
+    }
+}
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -819,7 +936,13 @@ impl KoanEngine {
     /// has no async primary constructors.
     #[uniffi::constructor]
     pub async fn open(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
-        offload::offload(move || Self::build(device_name)).await
+        offload::offload(move || {
+            // Before the identity, which logs when it cannot keep the id.
+            init_logging();
+            let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
+            Self::build(device_name, identity)
+        })
+        .await
     }
     // --- Transport ---------------------------------------------------------
 
@@ -2390,6 +2513,7 @@ impl KoanEngine {
             });
             queries::save_playback_state(
                 &db.conn,
+                self.session,
                 &persisted,
                 self.state.play_mode(),
                 cursor_path.as_deref(),
@@ -2484,9 +2608,11 @@ impl KoanEngine {
             // Before the queue and whether there is one: the mode is the
             // player's, and a shuffled queue's play order is drawn as it
             // arrives, from the rows not marked played.
-            let mode = queries::load_play_mode(&db.conn).map_err(fav_err)?;
+            let mode = queries::load_play_mode(&db.conn, self.session).map_err(fav_err)?;
             self.send_local(PlayerCommand::RestorePlayMode(mode))?;
-            let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
+            let Some(saved) =
+                queries::load_playback_state(&db.conn, self.session).map_err(fav_err)?
+            else {
                 return Ok(0);
             };
 
@@ -3485,6 +3611,78 @@ impl KoanEngine {
         .await
     }
 
+    /// `dsp_set_band`, unless filter `index` is no longer `expected`, the
+    /// band as the caller last read it: an index names a place in the list,
+    /// and a filter added or removed elsewhere would put another there. Says
+    /// what it stored, which an edit following this one names.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dsp_edit_band(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        expected: DspBand,
+        kind: String,
+        freq: f64,
+        gain_db: f64,
+        q: f64,
+    ) -> Result<DspEdited, KoanError> {
+        offload::sequenced(move || {
+            let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
+                message: format!("{name} band {} is not a band", index + 1),
+            })?;
+            let stored = koan_core::audio::dsp::profiles::edit_band(
+                &name,
+                index as usize,
+                Some(&expected),
+                &kind,
+                freq,
+                gain_db,
+                q,
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            if matches!(
+                stored,
+                koan_core::audio::dsp::profiles::Edited::Stored { changed: true, .. }
+            ) {
+                self.send_local(PlayerCommand::ReloadDsp)?;
+            }
+            Ok(stored.into())
+        })
+        .await
+    }
+
+    /// `dsp_set_curve`, unless filter `index` is no longer `expected`, as
+    /// `dsp_edit_band` is.
+    pub async fn dsp_edit_curve(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        expected: DspBand,
+        points: Vec<DspPoint>,
+    ) -> Result<DspEdited, KoanError> {
+        offload::sequenced(move || {
+            let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
+                message: format!("{name} filter {} is not a curve", index + 1),
+            })?;
+            let points: Vec<(f64, f64)> = points.iter().map(|p| (p.hz, p.db)).collect();
+            let stored = koan_core::audio::dsp::profiles::edit_curve(
+                &name,
+                index as usize,
+                Some(&expected),
+                &points,
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            if matches!(
+                stored,
+                koan_core::audio::dsp::profiles::Edited::Stored { changed: true, .. }
+            ) {
+                self.send_local(PlayerCommand::ReloadDsp)?;
+            }
+            Ok(stored.into())
+        })
+        .await
+    }
+
     /// Set the points of `name`'s graphic curve `index`, held within a
     /// band's ranges and put in order of frequency.
     pub async fn dsp_set_curve(
@@ -3572,6 +3770,30 @@ impl KoanEngine {
             koan_core::audio::dsp::profiles::remove_filter(&name, index as usize)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// `dsp_remove_filter`, unless filter `index` is no longer `expected`,
+    /// the filter as the caller last read it, as `dsp_edit_band` is.
+    pub async fn dsp_remove_edited(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        expected: DspBand,
+    ) -> Result<DspEdited, KoanError> {
+        offload::sequenced(move || {
+            let is = |f: &koan_core::config::DspFilter| DspBand::from(f.clone()) == expected;
+            let removed =
+                koan_core::audio::dsp::profiles::remove_edited(&name, index as usize, Some(is))
+                    .map_err(|message| KoanError::BadArgument { message })?;
+            if matches!(
+                removed,
+                koan_core::audio::dsp::profiles::Edited::Stored { .. }
+            ) {
+                self.send_local(PlayerCommand::ReloadDsp)?;
+            }
+            Ok(removed.into())
         })
         .await
     }
@@ -4266,8 +4488,7 @@ impl KoanEngine {
         self.cancel_pairing();
         offload::offload(move || {
             serve::refuse_while_sharing()?;
-            let device =
-                koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
+            let device = koan_core::remote::link::LinkIdentity::current().name;
             let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
             let code = PairingCode {
                 id: pending.id.clone(),
@@ -5473,7 +5694,7 @@ impl KoanEngine {
         let track_id = row.id;
 
         if let Some(art) = local_cover_art(&row) {
-            return Ok(Some(art));
+            return Ok(Some(fit_cover(art, size)));
         }
 
         let Some(remote_id) = row.remote_id else {
@@ -5933,7 +6154,10 @@ impl KoanEngine {
         Ok(summary)
     }
 
-    fn build(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+    fn build(
+        device_name: Option<String>,
+        identity: koan_core::remote::link::LinkIdentity,
+    ) -> Result<Arc<Self>, KoanError> {
         let t0 = std::time::Instant::now();
         init_logging();
         raise_open_file_limit();
@@ -6037,13 +6261,13 @@ impl KoanEngine {
             sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
+            session: identity.files,
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),
             cursor_reading: Default::default(),
             remote_queue: Default::default(),
             server: Default::default(),
-            device_name: device_name.clone(),
         });
         engine.spawn_watcher();
         engine.spawn_figures();
@@ -6085,7 +6309,7 @@ impl KoanEngine {
         // Profiles of one name from two devices are told apart by it.
         koan_core::remote::dsp_sync::set_device_name(device_name.clone());
         koan_core::remote::devices::start(koan_core::remote::link::Local {
-            identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
+            identity,
             // What a command may cost, and where it may go, depends on who
             // sent it: see `handle_link`.
             on_command: Arc::new(move |cmd, source, pending| {
@@ -6222,6 +6446,7 @@ impl KoanEngine {
             .map(|p| p.to_string_lossy().into_owned());
         queries::save_playback_position(
             &db.conn,
+            self.session,
             self.state.play_mode(),
             cursor_path.as_deref(),
             self.state.position_ms(),
@@ -6706,6 +6931,57 @@ fn local_cover_art(row: &queries::TrackRow) -> Option<CoverArt> {
     Some(CoverArt { data, mime })
 }
 
+/// Local art as the size asked for, as a server's thumbnail would be: a
+/// sleeve embedded at 3000 pixels is decoded at that size by every client
+/// that draws it otherwise, for a tile a tenth as wide. Art already within the
+/// size, or that will not decode, is returned as it was found. A scaled copy
+/// is a JPEG, so a transparent sleeve loses its alpha; sleeves are opaque in
+/// practice.
+fn fit_cover(art: CoverArt, size: Option<u32>) -> CoverArt {
+    let Some(size) = size.filter(|s| *s > 0) else {
+        return art;
+    };
+    // The header alone says whether there is anything to do.
+    let fits = image::ImageReader::new(std::io::Cursor::new(&art.data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .is_none_or(|(w, h)| w <= size && h <= size);
+    if fits {
+        return art;
+    }
+    // The copy carries no EXIF, so the orientation is applied to its pixels.
+    let decoded = image::ImageReader::new(std::io::Cursor::new(&art.data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_decoder().ok())
+        .and_then(|mut decoder| {
+            use image::ImageDecoder;
+            let orientation = decoder
+                .orientation()
+                .unwrap_or(image::metadata::Orientation::NoTransforms);
+            let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+            image.apply_orientation(orientation);
+            Some(image)
+        });
+    let Some(image) = decoded else {
+        return art;
+    };
+    let mut data = Vec::new();
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut data, 90);
+    match image
+        .thumbnail(size, size)
+        .into_rgb8()
+        .write_with_encoder(encoder)
+    {
+        Ok(()) => CoverArt {
+            data,
+            mime: "image/jpeg".into(),
+        },
+        Err(_) => art,
+    }
+}
+
 fn sniff_mime(data: &[u8]) -> &'static str {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"
@@ -7135,6 +7411,63 @@ mod cover_tests {
         let art = local_cover_art(&row).expect("the folder image");
         assert_eq!(art.data, png);
         assert_eq!(art.mime, "image/png");
+    }
+
+    fn png(side: u32) -> CoverArt {
+        let mut data = Vec::new();
+        image::RgbImage::new(side, side)
+            .write_to(
+                &mut std::io::Cursor::new(&mut data),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        CoverArt {
+            data,
+            mime: "image/png".into(),
+        }
+    }
+
+    #[test]
+    fn local_art_larger_than_asked_is_scaled_and_smaller_is_untouched() {
+        let big = fit_cover(png(1200), Some(1000));
+        assert_eq!(big.mime, "image/jpeg");
+        let scaled = image::load_from_memory(&big.data).unwrap();
+        assert_eq!((scaled.width(), scaled.height()), (1000, 1000));
+
+        let small = png(400);
+        assert_eq!(fit_cover(small.clone(), Some(1000)).data, small.data);
+        assert_eq!(fit_cover(png(1200), None).mime, "image/png");
+        let junk = CoverArt {
+            data: b"not an image".to_vec(),
+            mime: "application/octet-stream".into(),
+        };
+        assert_eq!(fit_cover(junk, Some(10)).data, b"not an image");
+    }
+
+    /// A phone's photo stores its pixels sideways and says so in EXIF; the
+    /// scaled copy carries no EXIF, so it is turned upright first.
+    #[test]
+    fn a_scaled_copy_is_upright() {
+        use image::ImageEncoder;
+        // Big-endian TIFF header, one IFD entry: Orientation (0x0112) = 6,
+        // a quarter turn clockwise.
+        let exif = vec![
+            b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0,
+            0,
+        ];
+        let mut data = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut data);
+        encoder.set_exif_metadata(exif).unwrap();
+        let wide = image::RgbImage::new(1200, 600);
+        encoder
+            .write_image(&wide, 1200, 600, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let art = CoverArt {
+            data,
+            mime: "image/png".into(),
+        };
+        let scaled = image::load_from_memory(&fit_cover(art, Some(1000)).data).unwrap();
+        assert_eq!((scaled.width(), scaled.height()), (500, 1000));
     }
 }
 

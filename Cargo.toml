@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
+exclude = ["vendor"]
+members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-gui", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
 
 [workspace.package]
-version = "0.69.2"
+version = "0.69.3"
 edition = "2024"
 homepage = "https://github.com/radiosilence/koan"
 repository = "https://github.com/radiosilence/koan"
@@ -14,9 +15,9 @@ license = "MIT"
 koan-relay-client = "0.1.2"
 # Internal crates. Keep the version in step with [workspace.package] above —
 # a stale pin here publishes members that resolve against the wrong sibling.
-koan-core = { path = "crates/koan-core", version = "0.69.2" }
-koan-server = { path = "crates/koan-server", version = "0.69.2" }
-koan-tui = { path = "crates/koan-tui", version = "0.69.2" }
+koan-core = { path = "crates/koan-core", version = "0.69.3" }
+koan-server = { path = "crates/koan-server", version = "0.69.3" }
+koan-tui = { path = "crates/koan-tui", version = "0.69.3" }
 # Feature set is the union every member needs; `default-tls` is an alias for
 # `rustls`, so there is exactly one TLS stack.
 reqwest = { version = "0.13", default-features = false, features = [
@@ -31,3 +32,20 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 walkdir = "2.5"
+
+# The desktop app's test loop (`just gui-run`): release speed, but rebuilt
+# incrementally in many units without LTO, so a change to koan-core recompiles
+# what it touches rather than koan-server and koan-ffi whole.
+[profile.gui-dev]
+inherits = "release"
+incremental = true
+codegen-units = 256
+lto = false
+debug = "line-tables-only"
+
+[patch.crates-io]
+# Our copies of GPUI's macOS and Linux backends: an idle window stops waking
+# every refresh, on macOS and X11, as Wayland already does (patches marked
+# KOAN:). #1609; offered upstream.
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }

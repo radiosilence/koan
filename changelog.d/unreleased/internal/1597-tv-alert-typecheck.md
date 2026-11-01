@@ -1,0 +1,1 @@
+- **The Apple TV app builds again.** The tab shell's player alert is a modifier of its own; the shell had grown past what the tvOS type checker solves in time.

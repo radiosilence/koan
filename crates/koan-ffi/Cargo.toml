@@ -21,6 +21,9 @@ koan-core = { workspace = true }
 koan-server = { workspace = true }
 crossbeam-channel = "0.5"
 getrandom = "0.4"
+# Local cover art scaled to the size a client asks for (`fit_cover`). Already
+# linked through koan-server.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 # The open file limit, raised when the engine opens.
 libc = "0.2"
 log = "0.4"

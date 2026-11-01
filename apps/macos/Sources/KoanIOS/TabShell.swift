@@ -282,27 +282,7 @@ struct TabShell: View {
                 held.end()
             }
         }
-        // One alert for both, as the Mac has one toast slot: a failure
-        // outranks a notice, and only a failure is titled as one.
-        .alert(
-            player.lastError != nil ? "Something went wrong" : (player.lastNotice ?? ""),
-            isPresented: Binding(
-                get: { player.lastError != nil || player.lastNotice != nil },
-                set: {
-                    if !$0 {
-                        player.lastError = nil
-                        player.lastNotice = nil
-                    }
-                }
-            ),
-            actions: {
-                Button("OK") {
-                    player.lastError = nil
-                    player.lastNotice = nil
-                }
-            },
-            message: { Text(player.lastError ?? "") }
-        )
+        .modifier(PlayerAlert())
         #if os(tvOS)
         // Every button that does not choose its own style, sheets and covers
         // included, which take their environment from where they hang; see
@@ -579,6 +559,32 @@ struct TabShell: View {
                 follow(chosen)
             }
         )
+    }
+}
+
+/// The player's failures and notices. One alert for both, as the Mac has one
+/// toast slot: a failure outranks a notice, and only a failure is titled as
+/// one. A modifier of its own so the shell's chain stays small enough for the
+/// tvOS type checker.
+private struct PlayerAlert: ViewModifier {
+    @Environment(PlayerModel.self) private var player
+
+    func body(content: Content) -> some View {
+        let showing = Binding(
+            get: { player.lastError != nil || player.lastNotice != nil },
+            set: { if !$0 { dismiss() } }
+        )
+        content.alert(
+            player.lastError != nil ? "Something went wrong" : (player.lastNotice ?? ""),
+            isPresented: showing,
+            actions: { Button("OK", action: dismiss) },
+            message: { Text(player.lastError ?? "") }
+        )
+    }
+
+    private func dismiss() {
+        player.lastError = nil
+        player.lastNotice = nil
     }
 }
 
