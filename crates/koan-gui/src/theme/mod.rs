@@ -54,6 +54,9 @@ pub struct KoanTheme {
     /// "Theme tint", in percent: how far the wash is held to its contrast
     /// limit.
     pub wash_tint: u32,
+    /// "Wash the whole window": the wash runs under the sidebar and the
+    /// toolbar as well as the page, and they draw no ground of their own.
+    pub wash_window: bool,
     /// Low Power Mode, as the system last said.
     low_power: bool,
     /// Windows held to one appearance whatever the system's, as the theme
@@ -70,6 +73,7 @@ impl Default for KoanTheme {
             icons: true,
             record_colours: true,
             wash_tint: 100,
+            wash_window: true,
             low_power: false,
             pinned: HashMap::new(),
         }
@@ -294,6 +298,15 @@ impl KoanTheme {
 
     pub fn set_wash_tint(percent: u32, cx: &mut App) {
         cx.global_mut::<KoanTheme>().wash_tint = percent.min(100);
+    }
+
+    /// Moves the window's grounds, which sit in cached views: every window
+    /// is drawn again.
+    pub fn set_wash_window(on: bool, cx: &mut App) {
+        if cx.global::<KoanTheme>().wash_window != on {
+            cx.global_mut::<KoanTheme>().wash_window = on;
+            cx.refresh_windows();
+        }
     }
 
     /// What a window's root view calls as it renders: dresses gpui-component's

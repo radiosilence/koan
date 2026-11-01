@@ -823,7 +823,6 @@ impl Render for AlbumGrid {
             .size_full()
             .flex()
             .flex_col()
-            .bg(p.bg)
             .typeset(p, Type::Body, p.ink)
             .child(header)
             .child(actions::list_menu(

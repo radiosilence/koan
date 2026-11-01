@@ -92,7 +92,6 @@ impl Render for LibraryStage {
         div()
             .relative()
             .size_full()
-            .bg(p.bg)
             // Each page replays its last frame unless it notified, so the
             // overlay above it never redraws a 5,000-record grid.
             .children(page.map(|page| page.cached(StyleRefinement::default().size_full())))
