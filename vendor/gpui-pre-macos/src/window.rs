@@ -860,6 +860,9 @@ impl MacWindowState {
         if let Some(frame_source) = self.frame_source.as_mut() {
             frame_source.stop();
         }
+        // KOAN: stopped by its owner (occlusion, a native frame), so a wake
+        // must not start it; `step` marks its own stop as parked afterwards.
+        self.parked = false;
     }
 
     fn is_maximized(&self) -> bool {
