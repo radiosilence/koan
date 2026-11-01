@@ -5316,7 +5316,8 @@ static COVER_CORE_FREE: parking_lot::Condvar = parking_lot::Condvar::new();
 
 impl CoverCore {
     fn take() -> Self {
-        let width = std::thread::available_parallelism().map_or(4, |n| n.get());
+        // Half the cores: an app decodes what lands on the other half.
+        let width = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(1));
         let mut busy = COVER_CORES.lock();
         while *busy >= width {
             COVER_CORE_FREE.wait(&mut busy);

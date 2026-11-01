@@ -297,9 +297,11 @@ impl Covers {
             decode_ready: Condvar::new(),
         });
         let (tx, mut rx) = mpsc::unbounded();
-        // Every core but the one the window draws on.
+        // Half the cores: the engine reads and resizes local covers on the
+        // other half (`CoverCore`), and the two together fill the machine
+        // without either thrashing it.
         let decoders = std::thread::available_parallelism()
-            .map_or(2, |n| n.get().saturating_sub(1))
+            .map_or(2, |n| n.get() / 2)
             .max(2);
         for n in 0..decoders {
             let (shared, dir, tx) = (shared.clone(), dir.clone(), tx.clone());
