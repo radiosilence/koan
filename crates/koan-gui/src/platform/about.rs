@@ -65,8 +65,7 @@ pub fn icon_unbundled() {
         if !id.is_null() {
             return;
         }
-        let data: *mut AnyObject =
-            msg_send![class!(NSData), dataWithBytes: ICON.as_ptr(), length: ICON.len()];
+        let data: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: ICON.as_ptr().cast::<std::ffi::c_void>(), length: ICON.len()];
         let image: *mut AnyObject = msg_send![class!(NSImage), alloc];
         let image: *mut AnyObject = msg_send![image, initWithData: data];
         if image.is_null() {
@@ -91,8 +90,7 @@ fn show(_cx: &mut App) {
     // SAFETY: AppKit's own panel, on the main thread, from an action.
     unsafe {
         let html = credits.as_bytes();
-        let data: *mut AnyObject =
-            msg_send![class!(NSData), dataWithBytes: html.as_ptr(), length: html.len()];
+        let data: *mut AnyObject = msg_send![class!(NSData), dataWithBytes: html.as_ptr().cast::<std::ffi::c_void>(), length: html.len()];
         let null: *mut AnyObject = std::ptr::null_mut();
         let text: *mut AnyObject = msg_send![class!(NSAttributedString), alloc];
         let text: *mut AnyObject = msg_send![text, initWithHTML: data, documentAttributes: null];
