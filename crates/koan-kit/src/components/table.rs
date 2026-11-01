@@ -129,6 +129,9 @@ fn clipped(content: AnyElement) -> Div {
 /// the play button over the number, the heart.
 pub const ROW_GROUP: &str = "koan-row";
 
+/// What a row's play button runs.
+type Play = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// A row's number column: the number, the playing bars in its place while
 /// the row plays, and under the pointer the play button, as the Mac's
 /// `RowPlayButton`: the play mark in the accent, which plays from the row.
@@ -138,7 +141,7 @@ pub struct RowNumber {
     number: SharedString,
     current: bool,
     bars: Option<AnyElement>,
-    on_play: Option<std::rc::Rc<dyn Fn(&mut Window, &mut App)>>,
+    on_play: Option<Play>,
 }
 
 impl RowNumber {
