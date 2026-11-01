@@ -5,7 +5,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenu, ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_kit::*;
 use koan_ffi::Placement;
 
@@ -82,6 +82,63 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
 /// Run after a menu's verb: ends the pick the menu was opened over, as each
 /// of the selection bar's verbs does.
 pub type After = Option<Rc<dyn Fn(&mut App)>>;
+
+/// What a right click landed on: the items the menu acts on.
+#[derive(Clone)]
+pub struct MenuTarget {
+    pub items: Arc<[Playable]>,
+    /// The record a single track belongs to, for "go to album".
+    pub album: Option<i64>,
+    pub after: After,
+}
+
+/// A page with one context menu over its list, rather than one per row: a
+/// row notes what was right-clicked, and the list's menu acts on it.
+pub trait Menus: Sized + 'static {
+    fn lib(&self) -> &Lib;
+    fn menu_target(&mut self) -> &mut Option<MenuTarget>;
+    fn menu_target_ref(&self) -> &Option<MenuTarget>;
+}
+
+/// A row's or tile's right mouse down, noting what the list's menu acts on.
+pub fn mark<V: Menus>(
+    view: WeakEntity<V>,
+    target: MenuTarget,
+) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    super::listen(view, move |this: &mut V, _: &MouseDownEvent, _, _| {
+        *this.menu_target() = Some(target.clone());
+    })
+}
+
+/// The list's one context menu, over whatever its rows marked. A right
+/// click on the list clears the mark first, in the capture phase, so one on
+/// empty space acts on nothing.
+pub fn list_menu<V: Menus, E: InteractiveElement + ParentElement + Styled + 'static>(
+    element: E,
+    view: WeakEntity<V>,
+) -> ContextMenu<E> {
+    let clear = view.clone();
+    element
+        .capture_any_mouse_down(super::listen(
+            clear,
+            |this: &mut V, e: &MouseDownEvent, _, _| {
+                if e.button == MouseButton::Right {
+                    *this.menu_target() = None;
+                }
+            },
+        ))
+        .context_menu(move |m, window, cx| {
+            let Some(view) = view.upgrade() else { return m };
+            let (lib, target) = {
+                let page = view.read(cx);
+                (page.lib().clone(), page.menu_target_ref().clone())
+            };
+            match target {
+                Some(t) => menu(m, &lib, t.items, t.album, t.after, window, cx),
+                None => m,
+            }
+        })
+}
 
 /// The context menu for `items`: one thing, or a whole pick. `album` is the
 /// record a single track belongs to, for "go to album".

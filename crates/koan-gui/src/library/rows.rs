@@ -7,18 +7,17 @@
 //! Lists select as lists do: a click picks the row, ⌘ adds or removes one,
 //! ⇧ extends, and a double click plays the list from it.
 
-use gpui_kit::component::menu::ContextMenuExt;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Track, TransferState};
 
+use super::actions;
 use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
 use super::tile::playing_bars;
 use super::tokens::{self, Type, Typeset, space};
-use super::{Lib, actions};
 
 /// The rows' padding above and below, on the spacing scale.
 fn padding() -> Pixels {
@@ -50,8 +49,7 @@ pub enum RowPart {
     Heart,
 }
 
-pub trait TrackList: Sized + 'static {
-    fn lib(&self) -> &Lib;
+pub trait TrackList: actions::Menus {
     fn clicked(
         &mut self,
         index: usize,
@@ -104,11 +102,9 @@ pub fn track_row<V: TrackList>(
     state: RowState,
     sleeve: Option<Sleeve>,
     page_artist: Option<i64>,
-    host: &V,
     cx: &mut Context<V>,
 ) -> AnyElement {
     let id = track.id;
-    let lib = host.lib().clone();
     let view = cx.weak_entity();
     let click = |part: RowPart| {
         super::listen(
@@ -226,8 +222,11 @@ pub fn track_row<V: TrackList>(
         .child(if state.favourite { "♥" } else { "♡" });
 
     let drag = state.drag;
-    let items = drag.items.clone();
-    let album = track.album_id;
+    let target = actions::MenuTarget {
+        items: drag.items.clone(),
+        album: track.album_id,
+        after: None,
+    };
 
     let mut row = div()
         .id(("row", id as u64))
@@ -279,9 +278,7 @@ pub fn track_row<V: TrackList>(
                 .child(format::duration(track.duration_ms)),
         )
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
-        .context_menu(move |menu, window, cx| {
-            actions::menu(menu, &lib, items.clone(), album, None, window, cx)
-        })
+        .on_mouse_down(MouseButton::Right, actions::mark(view, target))
         .into_any_element()
 }
 

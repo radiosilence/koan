@@ -194,14 +194,18 @@ fn tick(state: Rc<RefCell<Driver>>, settle: Instant, window: &mut Window, cx: &m
         cx.quit();
         return;
     };
-    let started = *d.started.get_or_insert_with(|| {
-        let n = d.recorder.borrow().frames.len();
-        let name = match phase {
-            Phase::Steady { name, .. } | Phase::Flicks { name, .. } => name,
-        };
-        d.marks.push((n, name));
-        now
-    });
+    let started = match d.started {
+        Some(started) => started,
+        None => {
+            let n = d.recorder.borrow().frames.len();
+            let name = match phase {
+                Phase::Steady { name, .. } | Phase::Flicks { name, .. } => name,
+            };
+            d.marks.push((n, name));
+            d.started = Some(now);
+            now
+        }
+    };
     let elapsed = (now - started).as_secs_f32();
     let mut next = false;
     match phase {

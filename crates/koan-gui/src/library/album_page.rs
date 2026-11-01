@@ -83,6 +83,8 @@ pub struct AlbumPage {
     width: Rc<Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
+    /// What the list's context menu acts on: the row last right-clicked.
+    menu: Option<actions::MenuTarget>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -118,6 +120,7 @@ impl AlbumPage {
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
             pick: None,
+            menu: None,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -227,7 +230,7 @@ impl AlbumPage {
             drag,
             height,
         };
-        rows::track_row(&self.tracks[index], index, state, None, None, self, cx)
+        rows::track_row(&self.tracks[index], index, state, None, None, cx)
     }
 
     fn header(
@@ -381,11 +384,21 @@ impl AlbumPage {
     }
 }
 
-impl TrackList for AlbumPage {
+impl actions::Menus for AlbumPage {
     fn lib(&self) -> &Lib {
         &self.lib
     }
 
+    fn menu_target(&mut self) -> &mut Option<actions::MenuTarget> {
+        &mut self.menu
+    }
+
+    fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
+        &self.menu
+    }
+}
+
+impl TrackList for AlbumPage {
     fn clicked(
         &mut self,
         index: usize,
@@ -472,20 +485,23 @@ impl Render for AlbumPage {
                     .flex()
                     .flex_col()
                     .child(self.header(grid, window, cx))
-                    .child(
-                        uniform_list(
-                            "album-tracks",
-                            self.lines.len(),
-                            cx.processor(move |this, range: Range<usize>, _, cx| {
-                                range
-                                    .map(|i| this.line(i, lead_width, cx))
-                                    .collect::<Vec<_>>()
-                            }),
-                        )
-                        .track_scroll(&self.scroll)
-                        .pb(grid.margin)
-                        .flex_1(),
-                    )
+                    .child(actions::list_menu(
+                        div().id("album-track-list").flex_1().min_h_0().child(
+                            uniform_list(
+                                "album-tracks",
+                                self.lines.len(),
+                                cx.processor(move |this, range: Range<usize>, _, cx| {
+                                    range
+                                        .map(|i| this.line(i, lead_width, cx))
+                                        .collect::<Vec<_>>()
+                                }),
+                            )
+                            .track_scroll(&self.scroll)
+                            .pb(grid.margin)
+                            .size_full(),
+                        ),
+                        cx.weak_entity(),
+                    ))
                     .into_any_element()
             }
             // Still reading: nothing rather than a spinner, since a local

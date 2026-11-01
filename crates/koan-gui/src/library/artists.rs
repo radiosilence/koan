@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use gpui_kit::component::menu::ContextMenuExt;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Artist, BrowseFilter};
@@ -37,6 +36,8 @@ pub struct ArtistBrowser {
     scroll: UniformListScrollHandle,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
+    /// What the list's context menu acts on: the row last right-clicked.
+    menu: Option<actions::MenuTarget>,
     starting: HashSet<i64>,
     restore: Option<Pixels>,
     rewinds: u64,
@@ -50,6 +51,7 @@ impl ArtistBrowser {
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.reload(cx);
                 cx.notify();
@@ -82,6 +84,7 @@ impl ArtistBrowser {
             scroll: UniformListScrollHandle::new(),
             selection: Selection::default(),
             pick: None,
+            menu: None,
             starting: HashSet::new(),
             restore,
             rewinds,
@@ -191,8 +194,12 @@ impl ArtistBrowser {
         };
         let favourite = self.lib.feed.read(cx).is_favourite(item);
         let starting = self.starting.contains(&id);
-        let items = drag.items.clone();
-        let lib = self.lib.clone();
+        let target = actions::MenuTarget {
+            items: drag.items.clone(),
+            album: None,
+            after: None,
+        };
+        let view = cx.weak_entity();
         let count = |n: i64, one: &str, many: &str| {
             div()
                 .w(px(110.0))
@@ -292,9 +299,7 @@ impl ArtistBrowser {
             .child(count(artist.album_count, "album", "albums"))
             .child(count(artist.track_count, "track", "tracks"))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
-            .context_menu(move |menu, window, cx| {
-                actions::menu(menu, &lib, items.clone(), None, None, window, cx)
-            })
+            .on_mouse_down(MouseButton::Right, actions::mark(view, target))
             .into_any_element()
     }
 
@@ -308,6 +313,20 @@ impl ArtistBrowser {
             self.selection.end();
             cx.notify();
         }
+    }
+}
+
+impl actions::Menus for ArtistBrowser {
+    fn lib(&self) -> &Lib {
+        &self.lib
+    }
+
+    fn menu_target(&mut self) -> &mut Option<actions::MenuTarget> {
+        &mut self.menu
+    }
+
+    fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
+        &self.menu
     }
 }
 
@@ -370,6 +389,14 @@ impl Render for ArtistBrowser {
             .bg(tokens::BG)
             .typeset(Type::Body, tokens::INK)
             .child(header)
-            .child(div().flex_1().min_h_0().pt(px(10.0)).child(body))
+            .child(actions::list_menu(
+                div()
+                    .id("artist-list")
+                    .flex_1()
+                    .min_h_0()
+                    .pt(px(10.0))
+                    .child(body),
+                cx.weak_entity(),
+            ))
     }
 }

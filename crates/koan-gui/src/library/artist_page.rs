@@ -72,6 +72,8 @@ pub struct ArtistPage {
     restore: Option<Anchor>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
+    /// What the list's context menu acts on: the row last right-clicked.
+    menu: Option<actions::MenuTarget>,
     starting: HashSet<i64>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -124,6 +126,7 @@ impl ArtistPage {
             restore,
             selection: Selection::default(),
             pick: None,
+            menu: None,
             starting: HashSet::new(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -494,7 +497,7 @@ impl ArtistPage {
                     drag,
                     height: rows::art_height(),
                 };
-                rows::track_row(track, index, state, sleeve, Some(self.artist_id), self, cx)
+                rows::track_row(track, index, state, sleeve, Some(self.artist_id), cx)
             }
         }
     }
@@ -540,7 +543,7 @@ impl ArtistPage {
                 .lib
                 .covers
                 .update(cx, |c: &mut Covers, _| c.sleeve(key));
-            tiles.push(tile::tile(album, grid.side, sleeve, state, self, cx));
+            tiles.push(tile::tile(album, grid.side, sleeve, state, cx));
         }
         div().flex().gap(grid.gap).h(grid.row).children(tiles)
     }
@@ -711,11 +714,21 @@ fn sections(albums: &[Album]) -> Vec<(ReleaseSection, usize, usize)> {
     out
 }
 
-impl TileHost for ArtistPage {
+impl actions::Menus for ArtistPage {
     fn lib(&self) -> &Lib {
         &self.lib
     }
 
+    fn menu_target(&mut self) -> &mut Option<actions::MenuTarget> {
+        &mut self.menu
+    }
+
+    fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
+        &self.menu
+    }
+}
+
+impl TileHost for ArtistPage {
     fn clicked(
         &mut self,
         album: i64,
@@ -769,10 +782,6 @@ impl TileHost for ArtistPage {
 }
 
 impl TrackList for ArtistPage {
-    fn lib(&self) -> &Lib {
-        &self.lib
-    }
-
     fn clicked(
         &mut self,
         index: usize,
@@ -877,7 +886,10 @@ impl Render for ArtistPage {
             .bg(tokens::BG)
             .typeset(Type::Body, tokens::INK)
             .child(measure)
-            .child(div().flex_1().min_h_0().child(body))
+            .child(actions::list_menu(
+                div().id("artist-page-list").flex_1().min_h_0().child(body),
+                cx.weak_entity(),
+            ))
             .when(self.selection.is_active(), |d| {
                 d.child(chrome::selection_bar(
                     &self.lib,

@@ -5,12 +5,10 @@
 //! Hover is drawn by GPUI's group styles rather than tracked state, so the
 //! pointer moving over a grid redraws nothing but the tile under it.
 
-use gpui_kit::component::menu::ContextMenuExt;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::Album;
 
-use super::Lib;
 use super::actions;
 use super::covers::Sleeve;
 use super::drag::PlayableDrag;
@@ -78,8 +76,7 @@ pub enum Part {
 }
 
 /// What a page holding tiles does with them.
-pub trait TileHost: Sized + 'static {
-    fn lib(&self) -> &Lib;
+pub trait TileHost: actions::Menus {
     fn clicked(
         &mut self,
         album: i64,
@@ -111,11 +108,9 @@ pub fn tile<V: TileHost>(
     side: Pixels,
     sleeve: Sleeve,
     state: TileState,
-    host: &V,
     cx: &mut Context<V>,
 ) -> AnyElement {
     let id = album.id;
-    let lib = host.lib().clone();
     let view = cx.weak_entity();
     let click = |part: Part| {
         super::listen(
@@ -264,7 +259,11 @@ pub fn tile<V: TileHost>(
     }
 
     let drag = state.drag;
-    let (items, after) = (drag.items.clone(), state.after);
+    let target = actions::MenuTarget {
+        items: drag.items.clone(),
+        album: None,
+        after: state.after,
+    };
     div()
         .id(("tile", id as u64))
         .group("tile")
@@ -276,9 +275,7 @@ pub fn tile<V: TileHost>(
         .child(title)
         .child(credit)
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
-        .context_menu(move |menu, window, cx| {
-            actions::menu(menu, &lib, items.clone(), None, after.clone(), window, cx)
-        })
+        .on_mouse_down(MouseButton::Right, actions::mark(view, target))
         .into_any_element()
 }
 

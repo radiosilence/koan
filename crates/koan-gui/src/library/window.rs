@@ -125,7 +125,14 @@ impl Render for LibraryWindow {
                     .child(tab("artists", Page::Artists, nav.clone()))
                     .child(tab("tracks", Page::Tracks, nav.clone())),
             )
-            .child(div().flex_1().min_h_0().child(page))
+            // Each page replays its last frame unless it notified, so the
+            // tabs and the overlay above it never redraw a 5,000-record grid.
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(page.cached(StyleRefinement::default().size_full())),
+            )
             .when_some(self.info.as_ref(), |d, (_, info)| d.child(info.clone()))
             // Last, so its paint marks the end of the frame's work for the
             // bench.

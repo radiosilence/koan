@@ -49,6 +49,8 @@ pub struct TrackBrowser {
     visible: Range<usize>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
+    /// What the list's context menu acts on: the row last right-clicked.
+    menu: Option<actions::MenuTarget>,
     restore: Option<Pixels>,
     rewinds: u64,
     focus: FocusHandle,
@@ -62,6 +64,7 @@ impl TrackBrowser {
         let id = cx.entity_id();
         let subscriptions = vec![
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.reload(cx);
                 cx.notify();
@@ -98,6 +101,7 @@ impl TrackBrowser {
             visible: 0..0,
             selection: Selection::default(),
             pick: None,
+            menu: None,
             restore,
             rewinds,
             focus: cx.focus_handle(),
@@ -311,7 +315,7 @@ impl TrackBrowser {
             drag,
             height: rows::art_height(),
         };
-        rows::track_row(&self.tracks[index], index, state, sleeve, None, self, cx)
+        rows::track_row(&self.tracks[index], index, state, sleeve, None, cx)
     }
 
     fn order(&self) -> Vec<Playable> {
@@ -332,11 +336,21 @@ impl TrackBrowser {
     }
 }
 
-impl TrackList for TrackBrowser {
+impl actions::Menus for TrackBrowser {
     fn lib(&self) -> &Lib {
         &self.lib
     }
 
+    fn menu_target(&mut self) -> &mut Option<actions::MenuTarget> {
+        &mut self.menu
+    }
+
+    fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
+        &self.menu
+    }
+}
+
+impl TrackList for TrackBrowser {
     fn clicked(
         &mut self,
         index: usize,
@@ -443,6 +457,14 @@ impl Render for TrackBrowser {
             .bg(tokens::BG)
             .typeset(Type::Body, tokens::INK)
             .child(header)
-            .child(div().flex_1().min_h_0().pt(px(10.0)).child(body))
+            .child(actions::list_menu(
+                div()
+                    .id("track-list")
+                    .flex_1()
+                    .min_h_0()
+                    .pt(px(10.0))
+                    .child(body),
+                cx.weak_entity(),
+            ))
     }
 }

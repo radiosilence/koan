@@ -90,6 +90,8 @@ pub struct AlbumGrid {
     selection: Selection,
     /// The pick's drag payload, and the selection revision it was built for.
     pick: Option<(u64, PlayableDrag)>,
+    /// What the list's context menu acts on: the row last right-clicked.
+    menu: Option<actions::MenuTarget>,
     starting: HashSet<i64>,
     /// Where to put the scroll back to once the records are in.
     restore: Option<Pixels>,
@@ -105,6 +107,7 @@ impl AlbumGrid {
         let id = cx.entity_id();
         let subscriptions = vec![
             cx.observe(&lib.browse, |this, _, cx| this.reload(cx)),
+            cx.observe(&lib.nav, |_, _, cx| cx.notify()),
             cx.observe(&lib.feed, |this, _, cx| {
                 this.reload(cx);
                 cx.notify();
@@ -144,6 +147,7 @@ impl AlbumGrid {
             stopped: None,
             selection: Selection::default(),
             pick: None,
+            menu: None,
             starting: HashSet::new(),
             restore,
             rewinds,
@@ -358,15 +362,16 @@ impl AlbumGrid {
                 .update(cx, |c: &mut Covers, _| c.sleeve(key));
             if let Some(bench) = &self.lib.bench {
                 let image = match &sleeve {
-                    Sleeve::Ready(image) => Some(std::sync::Arc::as_ptr(image) as usize),
+                    Sleeve::Ready(image) => Some(image.id),
                     _ => None,
                 };
                 let drawn = !matches!(sleeve, Sleeve::Waiting);
+                let standin = image.is_some() && !self.lib.covers.read(cx).has(key);
                 bench
                     .borrow_mut()
-                    .tile(album.id, drawn, image, Instant::now());
+                    .tile(album.id, drawn, standin, image, Instant::now());
             }
-            tiles.push(tile::tile(album, grid.side, sleeve, state, self, cx));
+            tiles.push(tile::tile(album, grid.side, sleeve, state, cx));
         }
         div()
             .flex()
@@ -493,11 +498,21 @@ impl chrome::Picking for AlbumGrid {
     }
 }
 
-impl TileHost for AlbumGrid {
+impl actions::Menus for AlbumGrid {
     fn lib(&self) -> &Lib {
         &self.lib
     }
 
+    fn menu_target(&mut self) -> &mut Option<actions::MenuTarget> {
+        &mut self.menu
+    }
+
+    fn menu_target_ref(&self) -> &Option<actions::MenuTarget> {
+        &self.menu
+    }
+}
+
+impl TileHost for AlbumGrid {
     fn clicked(
         &mut self,
         album: i64,
@@ -654,7 +669,7 @@ impl Render for AlbumGrid {
             .bg(tokens::BG)
             .typeset(Type::Body, tokens::INK)
             .child(header)
-            .child(
+            .child(actions::list_menu(
                 div()
                     .id("album-grid")
                     .relative()
@@ -663,7 +678,8 @@ impl Render for AlbumGrid {
                     .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
                     .child(measure)
                     .child(body),
-            )
+                cx.weak_entity(),
+            ))
             .when(self.selection.is_active(), |d| {
                 d.child(chrome::selection_bar(
                     &self.lib,
