@@ -85,6 +85,32 @@ impl PlayableDrag {
     }
 }
 
+/// A playlist dragged from the sidebar: dropped among the playlists it moves
+/// there, dropped on the queue its tracks are queued.
+#[derive(Clone, Debug)]
+pub struct PlaylistDrag {
+    pub id: i64,
+    pub name: SharedString,
+    /// The record whose sleeve the preview shows: the playlist's first.
+    pub sleeve: Option<i64>,
+}
+
+impl PlaylistDrag {
+    /// What the queue takes from it: the playlist's tracks, as one set.
+    pub fn as_library(&self) -> PlayableDrag {
+        PlayableDrag {
+            sets: vec![TrackSet::Playlist { id: self.id }].into(),
+            items: Vec::new().into(),
+            label: self.name.clone(),
+            sleeve: self.sleeve,
+        }
+    }
+
+    pub fn preview(&self, at: Point<Pixels>, cx: &mut App) -> Entity<DragPreview> {
+        self.as_library().preview(at, cx)
+    }
+}
+
 pub struct DragPreview {
     label: SharedString,
     sleeve: Option<i64>,

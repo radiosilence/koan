@@ -16,6 +16,6 @@ pub use gpui_kit::{
     ElementId, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable, Global,
     IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement, PathPromptOptions, Pixels,
-    Point, ReadGlobal, Render, RenderOnce, SharedString, Size, Stateful, Subscription, Task,
-    UpdateGlobal, WeakEntity, Window, WindowHandle, WindowVisibility, actions, div,
+    Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString, Size, Stateful, Subscription,
+    Task, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowVisibility, actions, div,
 };

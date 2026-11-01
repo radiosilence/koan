@@ -82,7 +82,7 @@ pub use table::{ROW_GROUP, RowNumber, TableRow};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
-    WINDOW_BUTTONS,
+    ToolbarSelection, WINDOW_BUTTONS,
 };
 
 use crate::theme::{Look, MARK, Motion};
