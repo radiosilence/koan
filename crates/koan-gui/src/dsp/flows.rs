@@ -81,7 +81,7 @@ pub fn suggestion(
             let find = {
                 let (dsp, sheets, query) = (dsp.clone(), sheets.clone(), query.clone());
                 Button::new("suggest-find", ButtonKind::Bordered)
-                    .label(format!("Find {query} in AutoEQ…"))
+                    .text(format!("{} {query} {}", label("Find"), label("in AutoEQ…")))
                     .on_click(move |_, window, cx| {
                         let view = cx.new(|cx| {
                             AutoEqSearch::new(
@@ -841,7 +841,7 @@ impl MeasurementFlow {
                         None,
                         vec![
                             Button::new("measure-file", ButtonKind::Bordered)
-                                .label(self.file.as_ref().map(|f| format!("Chosen: {f}")).unwrap_or_else(|| "Choose a File…".into()))
+                                .text(self.file.as_ref().map(|f| format!("{} {f}", label("Chosen:"))).unwrap_or_else(|| label("Choose a File…").to_string()))
                                 .on_click(move |_, window, cx| {
                                     this.update(cx, |m, cx| m.choose_files(window, cx)).ok();
                                 })
@@ -1286,10 +1286,10 @@ impl Render for SplitFlow {
                     Some("Measurement"),
                     vec![
                         Button::new("split-file", ButtonKind::Bordered)
-                            .label(
-                                self.file
-                                    .clone()
-                                    .unwrap_or_else(|| "Choose a Measurement File…".into()),
+                            .text(
+                                self.file.clone().unwrap_or_else(|| {
+                                    label("Choose a Measurement File…").to_string()
+                                }),
                             )
                             .on_click(move |_, window, cx| {
                                 choose.update(cx, |f, cx| f.choose(window, cx)).ok();

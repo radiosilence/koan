@@ -169,6 +169,8 @@ pub fn body(id: impl Into<gpui_kit::ElementId>, look: &Look) -> gpui_kit::Statef
         .gap(look.space(Space::S))
         .px(look.space(Space::L))
         .pb(look.space(Space::L))
+        // Shrinks below its content inside the panel's height, and scrolls.
+        .min_h_0()
         .overflow_y_scroll()
 }
 

@@ -739,6 +739,7 @@ impl Render for Graph {
         div()
             .flex()
             .flex_col()
+            .w_full()
             .gap(look.space(Space::M))
             .when(measured, |d| {
                 d.child(
@@ -1008,7 +1009,7 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
             label_at(
                 format!("{} {}", label("Preamp"), db_label(f.level)),
                 point(
-                    plot.origin.x,
+                    plot.origin.x + px(4.0),
                     plot.origin.y
                         + y
                         + if f.level < 0.0 {
@@ -1017,7 +1018,7 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
                             -line_height - px(2.0)
                         },
                 ),
-                TextAlign::Right,
+                TextAlign::Left,
                 plot.size.width,
                 window,
                 cx,

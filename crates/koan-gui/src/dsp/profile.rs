@@ -29,11 +29,103 @@ use crate::components::{
 };
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
+/// A profile's sheet: its name and Done, the graph, which stays in view
+/// while the bands scroll under it, and the body, drawn by `ProfileBody` as
+/// a cached view so that a drag on the graph redraws the graph and this
+/// frame and nothing of the body.
+pub struct ProfilePage {
+    body: Entity<ProfileBody>,
+    graph: Entity<Graph>,
+    sheets: Entity<Sheets>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl ProfilePage {
+    pub fn new(
+        dsp: Entity<Dsp>,
+        sheets: Entity<Sheets>,
+        name: String,
+        device: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let body = cx.new(|cx| ProfileBody::new(dsp, sheets.clone(), name, device, window, cx));
+        let graph = body.read(cx).graph.clone();
+        let subscriptions = vec![cx.observe(&body, |_, _, cx| cx.notify())];
+        Self {
+            body,
+            graph,
+            sheets,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    pub fn graph(&self) -> Entity<Graph> {
+        self.graph.clone()
+    }
+}
+
+impl Render for ProfilePage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let (name, curve) = self.body.read(cx).shown();
+        let head = if curve {
+            let body = self.body.clone();
+            let back = Button::new("curve-back", ButtonKind::Standard)
+                .label("Back")
+                .on_click(move |_, _, cx| {
+                    body.update(cx, |p, cx| {
+                        p.curve = None;
+                        cx.notify();
+                    })
+                });
+            head("Graphic EQ", vec![back.into_any_element()], &look).into_any_element()
+        } else {
+            let (sheets, me) = (self.sheets.clone(), cx.entity_id());
+            let done = Button::new("profile-done", ButtonKind::Standard)
+                .label("Done")
+                .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.close(me, cx)));
+            head_data(name, vec![done.into_any_element()], &look).into_any_element()
+        };
+        // A definite height, so the cached body has one to lay out in.
+        let height = window.viewport_size().height * 0.8;
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .h(height)
+            .child(head)
+            .when(!curve, |d| {
+                d.child(
+                    div()
+                        .px(look.space(Space::L))
+                        .py(look.space(Space::M))
+                        .border_b(crate::theme::HAIRLINE)
+                        .border_color(look.palette.rule.hsla())
+                        .child(
+                            div().h(px(GRAPH_H)).child(
+                                gpui_kit::AnyView::from(self.graph.clone())
+                                    .cached(gpui_kit::StyleRefinement::default().size_full()),
+                            ),
+                        ),
+                )
+            })
+            .child(
+                gpui_kit::AnyView::from(self.body.clone()).cached(
+                    gpui_kit::StyleRefinement::default()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full(),
+                ),
+            )
+    }
+}
+
 /// The graph's room at the top of the page: the chart, its legend and the
 /// brushes, held to one height so the graph can be cached.
-const GRAPH_H: f32 = 320.0;
+const GRAPH_H: f32 = 290.0;
 
-pub struct ProfilePage {
+pub struct ProfileBody {
     dsp: Entity<Dsp>,
     sheets: Entity<Sheets>,
     name: String,
@@ -73,7 +165,7 @@ pub struct ProfilePage {
     _subscriptions: Vec<Subscription>,
 }
 
-impl ProfilePage {
+impl ProfileBody {
     pub fn new(
         dsp: Entity<Dsp>,
         sheets: Entity<Sheets>,
@@ -278,8 +370,14 @@ impl ProfilePage {
         }]
     }
 
-    fn close(&self, cx: &mut App) {
-        self.sheets.update(cx, |s, cx| s.pop(cx));
+    /// The name shown, and whether a curve's points are.
+    fn shown(&self) -> (String, bool) {
+        let curve = self.curve.is_some_and(|i| {
+            self.detail
+                .as_ref()
+                .is_some_and(|d| d.bands.get(i).is_some_and(|b| b.kind == "graphic"))
+        });
+        (self.name.clone(), curve)
     }
 
     fn confirm(&self, confirm: Confirm, cx: &mut App) {
@@ -380,7 +478,7 @@ impl ProfilePage {
         let device_label = self.dsp.read(cx).label(&device);
         Some(
             Button::new("used-for", ButtonKind::Bordered)
-                .label(format!("{} {device_label}", label(words)))
+                .text(format!("{} {device_label}", label(words)))
                 .on_click(move |_, _, cx| {
                     let (device, chain, added, name) =
                         (device.clone(), chain.clone(), added.clone(), name.clone());
@@ -481,28 +579,12 @@ impl ProfilePage {
     }
 }
 
-impl Render for ProfilePage {
+impl Render for ProfileBody {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let this = cx.weak_entity();
-        let done = Button::new("profile-done", ButtonKind::Standard)
-            .label("Done")
-            .on_click({
-                let this = this.clone();
-                move |_, _, cx| {
-                    this.update(cx, |p, cx| p.close(cx)).ok();
-                }
-            });
         let Some(d) = self.detail.clone() else {
-            return div()
-                .flex()
-                .flex_col()
-                .child(head_data(
-                    self.name.clone(),
-                    vec![done.into_any_element()],
-                    &look,
-                ))
-                .into_any_element();
+            return div().into_any_element();
         };
         if let Some(index) = self.curve {
             if d.bands.get(index).is_some_and(|b| b.kind == "graphic") {
@@ -629,39 +711,15 @@ impl Render for ProfilePage {
                     .into_any_element(),
             );
         }
-        // The graph stays in view while the bands scroll under it: what an
-        // edit does is the point of making it.
-        div()
-            .flex()
-            .flex_col()
-            .child(head_data(
-                self.name.clone(),
-                vec![done.into_any_element()],
-                &look,
-            ))
-            .child(
-                div()
-                    .px(look.space(Space::L))
-                    .py(look.space(Space::M))
-                    .border_b(crate::theme::HAIRLINE)
-                    .border_color(look.palette.rule.hsla())
-                    .child(
-                        div().h(px(GRAPH_H)).child(
-                            gpui_kit::AnyView::from(self.graph.clone())
-                                .cached(gpui_kit::StyleRefinement::default().size_full()),
-                        ),
-                    ),
-            )
-            .child(
-                body("profile-body", &look)
-                    .pt(look.space(Space::M))
-                    .children(s),
-            )
+        body("profile-body", &look)
+            .size_full()
+            .pt(look.space(Space::M))
+            .children(s)
             .into_any_element()
     }
 }
 
-impl ProfilePage {
+impl ProfileBody {
     fn keeping(
         &self,
         d: &DspProfileDetail,
@@ -1007,7 +1065,12 @@ impl ProfilePage {
                 let (dsp, name) = (self.dsp.clone(), d.name.clone());
                 rows.push(
                     Button::new("profile-suggest", ButtonKind::Link)
-                        .label(format!("Looks made for {}. Use that?", s.name))
+                        .text(format!(
+                            "{} {}. {}",
+                            label("Looks made for"),
+                            s.name,
+                            label("Use that?")
+                        ))
                         .on_click(move |_, _, cx| {
                             let (name, id) = (name.clone(), s.id.clone());
                             dsp.update(cx, |d, cx| {
@@ -1567,16 +1630,6 @@ impl ProfilePage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let look = Look::of(window, cx);
-        let this = cx.weak_entity();
-        let back = Button::new("curve-back", ButtonKind::Standard)
-            .label("Back")
-            .on_click(move |_, _, cx| {
-                this.update(cx, |p, cx| {
-                    p.curve = None;
-                    cx.notify();
-                })
-                .ok();
-            });
         let band = d.bands[index].clone();
         let read_at = self.read_at();
         let points = bands::points(&mut self.fields, index, &band, read_at, window, cx);
@@ -1613,11 +1666,10 @@ impl ProfilePage {
                     .into_any_element(),
             );
         }
-        div()
-            .flex()
-            .flex_col()
-            .child(head("Graphic EQ", vec![back.into_any_element()], &look))
-            .child(body("curve-body", &look).children(s))
+        body("curve-body", &look)
+            .size_full()
+            .pt(look.space(Space::M))
+            .children(s)
             .into_any_element()
     }
 }

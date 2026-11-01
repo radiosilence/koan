@@ -82,13 +82,16 @@ struct Field {
 struct RowState {
     band: DspBand,
     edit: Option<u64>,
-    /// Saves of the row under way.
-    saving: usize,
+    /// The row's newest save, numbered, and whether it is still under way.
+    /// Saves of one edit chain, and only the newest is answered, so it is
+    /// the one waited on: it carries every figure typed before it.
+    latest: u64,
+    saving: bool,
     /// The stamp the row's last save was read back at: until the page has
     /// read the filters at or after it, what it read is older than the row.
     settled: Option<(u64, u64)>,
-    /// A save was refused as stale: the row takes the filters as read at
-    /// once, even while it is being typed in.
+    /// A save was refused as stale: the row takes the filters as next read,
+    /// at or after the refusal, even while it is being typed in.
     stale: bool,
     /// Moves each time the row is put back, so a field being typed in is
     /// put back too.
@@ -154,7 +157,8 @@ impl Fields {
             state: Rc::new(RefCell::new(RowState {
                 band: band.clone(),
                 edit: None,
-                saving: 0,
+                latest: 0,
+                saving: false,
                 settled: None,
                 stale: false,
                 reset: 0,
@@ -167,12 +171,15 @@ impl Fields {
             .any(|f| gpui_kit::Focusable::focus_handle(f.input.read(cx), cx).is_focused(window));
         let state = row.state.clone();
         let mut s = state.borrow_mut();
+        let read_since = s.settled.is_none_or(|at| stamp >= at);
         let take = if s.stale {
-            s.stale = false;
-            s.reset += 1;
-            true
+            if read_since {
+                s.stale = false;
+                s.reset += 1;
+            }
+            read_since
         } else {
-            !typing && s.saving == 0 && s.settled.is_none_or(|at| stamp >= at)
+            !typing && !s.saving && read_since
         };
         if take {
             s.band = band.clone();
@@ -302,13 +309,14 @@ fn commit(
     change: impl FnOnce(&mut DspBand),
     cx: &mut App,
 ) {
-    let (expected, band, id) = {
+    let (expected, band, id, seq) = {
         let mut s = state.borrow_mut();
         let expected = s.band.clone();
         let mut band = expected.clone();
         change(&mut band);
         s.band = band.clone();
-        s.saving += 1;
+        s.latest += 1;
+        s.saving = true;
         let id = match s.edit {
             Some(id) => id,
             None => {
@@ -317,7 +325,7 @@ fn commit(
                 id
             }
         };
-        (expected, band, id)
+        (expected, band, id, s.latest)
     };
     let step = if band.kind == "graphic" {
         Commit::Curve {
@@ -340,18 +348,18 @@ fn commit(
     let row = state.clone();
     let done: super::model::Done = Rc::new(move |e: super::model::Ended, _| {
         let mut s = row.borrow_mut();
-        s.saving = s.saving.saturating_sub(1);
-        if s.edit != Some(id) {
+        if s.edit != Some(id) || s.latest != seq {
             return;
         }
+        s.saving = false;
+        s.settled = Some(e.stamp);
         match (e.outcome, e.band) {
             (super::model::Outcome::Saved, Some(stored)) => {
                 // The save held a figure to its range: the row shows that.
-                if s.saving == 0 && stored != s.band {
+                if stored != s.band {
                     s.band = stored;
                     s.reset += 1;
                 }
-                s.settled = Some(e.stamp);
             }
             _ => {
                 s.edit = None;

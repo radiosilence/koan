@@ -23,12 +23,87 @@ use super::sheet::{Confirm, Sheets, note};
 use super::{flows, manage, prompts, stage};
 use crate::components::{Button, ButtonKind, FormRow, SectionHeader, TextField, Toggle};
 use crate::theme::{
-    HAIRLINE, Icon, KoanIcon, KoanStyled, Look, MARK, Space, Tone, TypeRole, label,
+    HAIRLINE, Icon, KoanIcon, KoanStyled, Look, MARK, Space, Tone, TypeRole, label, observe_accent,
 };
 
+/// The page a window shows: the device's chain, drawn by `EqBody` as a
+/// cached view, with the sheets and the import questions over it. Whatever
+/// redraws a sheet, a graph being dragged in one say, leaves the chain
+/// beneath as it was drawn.
 pub struct EqPage {
+    body: Entity<EqBody>,
     dsp: Entity<Dsp>,
     pub sheets: Entity<Sheets>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl EqPage {
+    /// The page for `device`, or for the output in use.
+    pub fn new(
+        dsp: Entity<Dsp>,
+        device: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let sheets = Sheets::new(cx);
+        let body = cx.new(|cx| EqBody::new(dsp.clone(), sheets.clone(), device, window, cx));
+        let subscriptions = vec![
+            cx.observe(&sheets, |_, _, cx| cx.notify()),
+            // The import questions are the model's.
+            cx.observe(&dsp, |_, _, cx| cx.notify()),
+        ];
+        Self {
+            body,
+            dsp,
+            sheets,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    /// Shows `device`, the output in use with none.
+    pub fn show(&mut self, device: Option<String>, cx: &mut Context<Self>) {
+        self.body.update(cx, |b, cx| b.show(device, cx));
+    }
+
+    /// Opens the file picker for a stage's Import…; what it makes goes into
+    /// that stage once its role is answered.
+    pub fn import(dsp: Entity<Dsp>, into: Option<Placement>, cx: &mut App) {
+        EqBody::import(dsp, into, cx);
+    }
+}
+
+impl Render for EqPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let sheets = Sheets::render(&self.sheets, window, cx);
+        let prompts = prompts::render(&self.dsp, window, cx);
+        let dsp = self.dsp.clone();
+        let device = self.body.read(cx).device();
+        div()
+            .id("eq-page")
+            .relative()
+            .size_full()
+            .bg(look.palette.bg.hsla())
+            .on_drop(move |paths: &ExternalPaths, _, cx| {
+                let into = device.clone().map(|device| Placement {
+                    device,
+                    stage: Stage::Eq,
+                });
+                let paths = paths.paths().to_vec();
+                dsp.update(cx, |dsp, cx| dsp.import_files(paths, None, None, into, cx));
+            })
+            .child(
+                gpui_kit::AnyView::from(self.body.clone())
+                    .cached(gpui_kit::StyleRefinement::default().size_full()),
+            )
+            .children(sheets)
+            .children(prompts)
+    }
+}
+
+pub struct EqBody {
+    dsp: Entity<Dsp>,
+    sheets: Entity<Sheets>,
     /// The device shown: the output in use until another is picked.
     picked: Option<String>,
     overview: Option<DspOverview>,
@@ -46,19 +121,18 @@ pub struct EqPage {
     _subscriptions: Vec<Subscription>,
 }
 
-impl EqPage {
-    /// The page for `device`, or for the output in use.
-    pub fn new(
+impl EqBody {
+    fn new(
         dsp: Entity<Dsp>,
+        sheets: Entity<Sheets>,
         device: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let graph = cx.new(|cx| Graph::new(Graph::flat_response(), window, cx).height(px(220.0)));
-        let sheets = Sheets::new(cx);
         let subscriptions = vec![
-            cx.observe(&dsp, |page: &mut EqPage, _, cx| page.follow(cx)),
-            cx.observe(&sheets, |_, _, cx| cx.notify()),
+            cx.observe(&dsp, |page: &mut EqBody, _, cx| page.follow(cx)),
+            observe_accent(cx),
         ];
         let mut page = Self {
             dsp,
@@ -79,7 +153,7 @@ impl EqPage {
     }
 
     /// Shows `device`, the output in use with none.
-    pub fn show(&mut self, device: Option<String>, cx: &mut Context<Self>) {
+    fn show(&mut self, device: Option<String>, cx: &mut Context<Self>) {
         let in_use = self
             .dsp
             .read(cx)
@@ -90,7 +164,7 @@ impl EqPage {
         self.follow(cx);
     }
 
-    fn device(&self) -> Option<String> {
+    pub fn device(&self) -> Option<String> {
         self.picked
             .clone()
             .or_else(|| self.overview.as_ref().and_then(|o| o.device.clone()))
@@ -170,9 +244,7 @@ impl EqPage {
 
     // MARK: - Doing
 
-    /// Opens the file picker for a stage's Import…; what it makes goes into
-    /// that stage once its role is answered.
-    pub fn import(dsp: Entity<Dsp>, into: Option<Placement>, cx: &mut App) {
+    fn import(dsp: Entity<Dsp>, into: Option<Placement>, cx: &mut App) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -370,7 +442,7 @@ const FLAT: &str = "\u{0}flat";
 const UNSAVED: &str = "\u{0}unsaved";
 const EDITED: &str = "\u{0}edited";
 
-impl Render for EqPage {
+impl Render for EqBody {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(window, cx);
         let content = match (self.overview.clone(), self.device()) {
@@ -402,42 +474,21 @@ impl Render for EqPage {
             _ => div().into_any_element(),
         };
         let foot = self.foot(window, cx);
-        let sheets = Sheets::render(&self.sheets, window, cx);
-        let prompts = prompts::render(&self.dsp, window, cx);
-        let dsp = self.dsp.clone();
-        let device = self.device();
-        div()
-            .id("eq-page")
-            .relative()
-            .size_full()
-            .bg(look.palette.bg.hsla())
-            .on_drop(move |paths: &ExternalPaths, _, cx| {
-                let into = device.clone().map(|device| Placement {
-                    device,
-                    stage: Stage::Eq,
-                });
-                let paths = paths.paths().to_vec();
-                dsp.update(cx, |dsp, cx| dsp.import_files(paths, None, None, into, cx));
-            })
-            .child(
-                div().id("eq-scroll").size_full().overflow_y_scroll().child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(look.space(Space::L))
-                        .max_w(px(720.0))
-                        .mx_auto()
-                        .p(look.space(Space::Xl))
-                        .child(content)
-                        .child(foot),
-                ),
-            )
-            .children(sheets)
-            .children(prompts)
+        div().id("eq-scroll").size_full().overflow_y_scroll().child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(look.space(Space::L))
+                .max_w(px(720.0))
+                .mx_auto()
+                .p(look.space(Space::Xl))
+                .child(content)
+                .child(foot),
+        )
     }
 }
 
-impl EqPage {
+impl EqBody {
     /// The device, and the preset it was set from, or Flat, or Unsaved.
     fn head(
         &mut self,
@@ -1113,7 +1164,12 @@ impl EqPage {
                             SharedString::from(format!("join-suggest-{eq}")),
                             ButtonKind::Link,
                         )
-                        .label(format!("Looks made for {}. Use that?", s.name))
+                        .text(format!(
+                            "{} {}. {}",
+                            label("Looks made for"),
+                            s.name,
+                            label("Use that?")
+                        ))
                         .on_click(move |_, _, cx| {
                             let (eq, id) = (eq.clone(), s.id.clone());
                             dsp.update(cx, |d, cx| {
@@ -1295,8 +1351,14 @@ pub fn thumb(db: Vec<f64>, stroke: Stroke, range: Option<f64>) -> impl IntoEleme
                 let dash: Vec<_> = stroke.dash.iter().map(|d| px(*d)).collect();
                 b = b.dash_array(&dash);
             }
+            // Two points a pixel is all a thumbnail can show.
             let n = db.len();
-            for (i, v) in db.iter().enumerate() {
+            let every = n.div_ceil((2.0 * w) as usize).max(1);
+            for (i, v) in db
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % every == 0 || *i == n - 1)
+            {
                 let p = bounds.origin
                     + point(
                         px(w * i as f32 / (n - 1) as f32),
