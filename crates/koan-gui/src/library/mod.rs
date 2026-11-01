@@ -15,6 +15,7 @@ pub mod covers;
 pub mod drag;
 pub mod feed;
 pub mod format;
+pub mod header;
 pub mod info;
 pub mod nav;
 pub mod rows;

@@ -55,7 +55,7 @@ pub use form::{
 };
 pub use menu::{KoanContextMenu, Menu, MenuEntry};
 pub use metrics::{RowKind, RowMetrics};
-pub use page::{Page, PageHeader};
+pub use page::{Page, PageHeader, PlayButton, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use placeholder::Placeholder;

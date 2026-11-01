@@ -15,9 +15,9 @@ use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
 pub struct PageHeader {
     title: SharedString,
     art: Option<AnyElement>,
-    lead: Option<AnyElement>,
-    detail: Option<SharedString>,
-    actions: Option<AnyElement>,
+    lead: Vec<AnyElement>,
+    detail: Option<AnyElement>,
+    actions: Vec<AnyElement>,
     trailing: Option<AnyElement>,
 }
 
@@ -33,9 +33,9 @@ impl PageHeader {
         Self {
             title: title.into(),
             art: None,
-            lead: None,
+            lead: Vec::new(),
             detail: None,
-            actions: None,
+            actions: Vec::new(),
             trailing: None,
         }
     }
@@ -46,20 +46,24 @@ impl PageHeader {
         self
     }
 
-    /// Above the title: a record's play and shuffle.
-    pub fn lead(mut self, lead: impl IntoElement) -> Self {
-        self.lead = Some(lead.into_any_element());
+    /// Above the title, side by side: a record's `PlayButton` and
+    /// `ShuffleButton`.
+    pub fn lead(mut self, item: impl IntoElement) -> Self {
+        self.lead.push(item.into_any_element());
         self
     }
 
-    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
-        self.detail = Some(detail.into());
+    /// Under the title, in `control`, `muted`: a count, or a credit with its
+    /// links.
+    pub fn detail(mut self, detail: impl IntoElement) -> Self {
+        self.detail = Some(detail.into_any_element());
         self
     }
 
-    /// Under the detail: the page's verbs.
-    pub fn actions(mut self, actions: impl IntoElement) -> Self {
-        self.actions = Some(actions.into_any_element());
+    /// Under the detail, side by side: the page's lesser verbs, compact
+    /// buttons with their glyphs.
+    pub fn action(mut self, action: impl IntoElement) -> Self {
+        self.actions.push(action.into_any_element());
         self
     }
 
@@ -86,14 +90,16 @@ impl RenderOnce for PageHeader {
                     .flex_1()
                     .min_w_0()
                     .gap(look.spaced(6.0))
-                    .children(self.lead.map(|lead| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(look.space(Space::M))
-                            .pb(look.space(Space::S))
-                            .child(lead)
-                    }))
+                    .when(!self.lead.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(look.space(Space::M))
+                                .pb(look.space(Space::S))
+                                .children(self.lead),
+                        )
+                    })
                     .child(
                         div()
                             .text_role(TypeRole::Title, &look)
@@ -107,10 +113,17 @@ impl RenderOnce for PageHeader {
                             .text_color(p.muted.hsla())
                             .child(detail)
                     }))
-                    .children(
-                        self.actions
-                            .map(|actions| div().pt(look.space(Space::Xs)).child(actions)),
-                    ),
+                    .when(!self.actions.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap(look.space(Space::M))
+                                .pt(look.space(Space::Xs))
+                                .children(self.actions),
+                        )
+                    }),
             )
             .children(self.trailing.map(|t| {
                 div()
@@ -120,6 +133,135 @@ impl RenderOnce for PageHeader {
                     .gap(look.space(Space::L))
                     .child(t)
             }))
+    }
+}
+
+/// A header's play: the page's one prominent action, as the Mac draws it
+/// in the theme. A square in a hairline accent outline with the play glyph
+/// in the accent, 44 points to hit, and the spinner while what it plays is
+/// still being read.
+#[derive(IntoElement)]
+pub struct PlayButton {
+    id: ElementId,
+    label: SharedString,
+    loading: bool,
+    on_click: Option<super::Handler<ClickEvent>>,
+}
+
+impl PlayButton {
+    /// `label` names it to VoiceOver ("play the record").
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            loading: false,
+            on_click: None,
+        }
+    }
+
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(std::sync::Arc::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for PlayButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let accent = look.color(crate::theme::Tone::Accent);
+        let hover = look.palette.hover.hsla();
+        let loading = self.loading;
+        let _ = &self.label;
+        div()
+            .id(self.id)
+            .size(crate::theme::HIT)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .border(crate::theme::HAIRLINE)
+            .border_color(accent)
+            .when(!loading, |d| {
+                d.cursor_pointer().active(move |s| s.bg(hover))
+            })
+            .child(if loading {
+                super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
+            } else {
+                crate::theme::KoanIcon::new(crate::theme::Icon::Play)
+                    .role(TypeRole::Body)
+                    .color(look.text_color(crate::theme::Tone::Accent))
+                    .into_any_element()
+            })
+            .when_some(self.on_click.filter(|_| !loading), |d, on_click| {
+                d.on_click(move |event, window, cx| on_click(event, window, cx))
+            })
+    }
+}
+
+/// Beside the header's play and quieter than it: the same tracks shuffled.
+/// The glyph in `muted`, 44 points to hit.
+#[derive(IntoElement)]
+pub struct ShuffleButton {
+    id: ElementId,
+    disabled: bool,
+    on_click: Option<super::Handler<ClickEvent>>,
+}
+
+impl ShuffleButton {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            disabled: false,
+            on_click: None,
+        }
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(std::sync::Arc::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for ShuffleButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let ink = look.palette.ink.hsla();
+        div()
+            .id(self.id)
+            .size(crate::theme::HIT)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(look.palette.muted.hsla())
+            .when(self.disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+            .when(!self.disabled, |d| {
+                d.cursor_pointer().hover(move |s| s.text_color(ink))
+            })
+            .child(
+                crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
+                    .role(TypeRole::Body)
+                    .tone(crate::theme::Tone::Muted),
+            )
+            .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
+                d.on_click(move |event, window, cx| on_click(event, window, cx))
+            })
     }
 }
 
