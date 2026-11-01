@@ -25,6 +25,10 @@ pub enum Route {
     Playlist(i64),
     Album(i64),
     Artist(i64),
+    /// Everything the sidebar's search found. It exists while there is a
+    /// query: emptying the field forgets it, so Back never returns to an
+    /// empty results page.
+    Search,
 }
 
 /// What choosing a route did.

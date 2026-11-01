@@ -235,6 +235,7 @@ impl Shell {
             Route::Playlist(_) => "playlist",
             Route::Album(_) => "record",
             Route::Artist(_) => "artist",
+            Route::Search => "search",
         };
         div()
             .id("toolbar")
