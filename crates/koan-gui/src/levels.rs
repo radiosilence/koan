@@ -25,10 +25,10 @@ use koan_kit::raw::*;
 
 use crate::engine::engine;
 
-/// The bars' size: three 3-point bars 2 points apart, 12 points tall.
-const BAR: f32 = 3.0;
-const GAP: f32 = 2.0;
-pub const SIDE: Pixels = px(12.);
+use crate::components::BarMetrics;
+
+const BAR: f32 = BarMetrics::BAR;
+const GAP: f32 = BarMetrics::GAP;
 /// How far a bar stands with nothing playing through it, so a still bar
 /// reads as a mark rather than as nothing.
 const FLOOR: f32 = 0.15;
@@ -129,7 +129,8 @@ pub fn bars(color: Hsla) -> impl IntoElement {
         },
         |_, _, _, _| {},
     )
-    .size(SIDE)
+    .w(BarMetrics::WIDTH)
+    .h(BarMetrics::HEIGHT)
     .flex_shrink_0()
 }
 

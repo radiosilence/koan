@@ -32,26 +32,23 @@ container = 2
 number = 4
 
 ["levels.rs"]
-number = 3
+number = 2
 
 ["library/activity.rs"]
 number = 2
-
-["library/album_page.rs"]
-number = 1
 
 ["library/albums.rs"]
 number = 10
 
 ["library/artist_page.rs"]
-number = 10
+number = 9
 fixed = 1
 
 ["library/artists.rs"]
 number = 2
 
 ["library/chrome.rs"]
-number = 4
+number = 2
 container = 1
 
 ["library/covers.rs"]

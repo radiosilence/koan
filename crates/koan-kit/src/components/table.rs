@@ -6,13 +6,15 @@
 //!
 //! It takes elements, not records: what a cell shows is the page's, where it
 //! sits is the row's. Listeners attach to it as to a `div` (clicks, drags,
-//! drops, menus), and its hover and selection are drawn here.
+//! drops, menus), and its selection is drawn here. A row has no hover fill
+//! (the user's call over the spec's 30 % `hover`): what shows under the
+//! pointer is the play mark and the heart, through `ROW_GROUP`.
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{RowKind, RowMetrics};
-use crate::theme::{KoanStyled, Look, ROW_HOVER_OPACITY, TypeRole};
+use crate::theme::{KoanStyled, Look, TypeRole};
 
 /// A fixed-width cell, its width in points at 100 % and grown with the text
 /// size.
@@ -93,7 +95,7 @@ impl TableRow {
         self
     }
 
-    /// Picked: on `surface`, and no hover fill.
+    /// Picked: on `surface`.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
@@ -247,7 +249,6 @@ impl RenderOnce for TableRow {
         let look = Look::of(window, cx);
         let p = look.palette;
         let scale = look.scale.size;
-        let hover = p.hover.hsla().opacity(ROW_HOVER_OPACITY);
         let cell = |cell: Cell| {
             div()
                 .w(match cell.width {
@@ -270,7 +271,6 @@ impl RenderOnce for TableRow {
             .py(RowMetrics::padding(&look))
             .gap(RowMetrics::column_gap(&look))
             .when(self.selected, |d| d.bg(p.surface.hsla()))
-            .when(!self.selected, |d| d.hover(move |s| s.bg(hover)))
             .children(self.leading.into_iter().map(cell))
             .child(
                 div()

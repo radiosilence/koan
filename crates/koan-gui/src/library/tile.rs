@@ -38,14 +38,16 @@ const MIN_SIDE: f32 = 150.0;
 const MAX_SIDE: f32 = 210.0;
 const MIN_GAP: f32 = 18.0;
 pub const LINE_GAP: f32 = 22.0;
-pub const MARGIN: f32 = 20.0;
 /// Between sleeve, title and credit.
 const CAPTION_GAP: f32 = 7.0;
 
 impl Grid {
     /// The grid for a list `width` wide, with captions on `scale`.
     pub fn for_width(width: Pixels, scale: &Scale) -> Self {
-        let usable = (f32::from(width) - 2.0 * MARGIN).max(MIN_SIDE);
+        // The page's margin, so the grid's edge is the header's and the
+        // rows'.
+        let margin = crate::theme::Space::Xxl.points() * scale.space;
+        let usable = (f32::from(width) - 2.0 * margin).max(MIN_SIDE);
         let columns = (((usable + MIN_GAP) / (MIN_SIDE + MIN_GAP)).floor() as usize).max(1);
         let side = ((usable - MIN_GAP * (columns as f32 - 1.0)) / columns as f32)
             .floor()
@@ -59,7 +61,7 @@ impl Grid {
             columns,
             side: px(side),
             gap: px(gap),
-            margin: px(MARGIN),
+            margin: px(margin),
             row: px(side) + caption_height(scale) + px(LINE_GAP),
         }
     }
@@ -607,7 +609,7 @@ mod tests {
         assert!(wide.side >= px(MIN_SIDE) && wide.side <= px(MAX_SIDE));
         assert!(wide.gap >= px(MIN_GAP));
         let used = wide.side * wide.columns as f32 + wide.gap * (wide.columns as f32 - 1.0);
-        assert!((f32::from(used) - (1920.0 - 2.0 * MARGIN)).abs() < 1.0);
+        assert!((f32::from(used) - (1920.0 - 2.0 * f32::from(wide.margin))).abs() < 1.0);
         assert_eq!(wide.rows(0), 0);
         assert_eq!(wide.rows(wide.columns + 1), 2);
     }

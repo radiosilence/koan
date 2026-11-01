@@ -620,6 +620,11 @@ impl AlbumGrid {
             })
     }
 
+    /// How many records the grid lists.
+    pub fn listed(&self) -> usize {
+        self.records.len()
+    }
+
     /// How many tiles are on screen.
     pub fn on_screen(&self) -> usize {
         let Some(grid) = self.grid else { return 0 };

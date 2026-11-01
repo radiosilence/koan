@@ -8,9 +8,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, child, fade, fill};
-use crate::theme::{
-    HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, ROW_HOVER_OPACITY, Space, TypeRole, label,
-};
+use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
 
 /// A navigation row, as the sidebar's: the label in `body`, `muted`, after
 /// its glyph when icons are on; where you are, in the accent with a 2-point
@@ -354,9 +352,6 @@ impl RenderOnce for ListRow {
             .px(look.space(Space::M))
             .py(look.spaced(12.0))
             .min_h(HIT)
-            // Hover is a style GPUI paints from the hitbox, with no render of
-            // the list behind it as the pointer crosses rows.
-            .hover(|row| row.bg(look.palette.hover.hsla().opacity(ROW_HOVER_OPACITY)))
             .child(fill(look.palette.surface.hsla(), selected))
             .children(self.number.map(|number| {
                 div()

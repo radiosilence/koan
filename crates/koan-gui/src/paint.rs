@@ -50,11 +50,6 @@ impl Paint {
         px(points * self.look.scale.size)
     }
 
-    /// A row's hover fill: `hover` at the theme's row opacity.
-    pub fn row_hover(&self) -> Hsla {
-        self.hover.opacity(tokens::ROW_HOVER_OPACITY)
-    }
-
     /// A faint hairline of `ink` between regions.
     pub fn row_rule(&self) -> Hsla {
         self.ink.opacity(tokens::ROW_RULE_OPACITY)

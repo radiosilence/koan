@@ -1,0 +1,301 @@
+//! A sheet: the square panel over the window, its head with a title and the
+//! actions trailing, its scrolling body; and the one place a question is
+//! asked before a write (`confirm`, `name`), drawn over the whole window by
+//! `overlay`. A menu that asks is gone the moment it is used, so the
+//! question lives here instead.
+
+use std::rc::Rc;
+
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
+
+use super::{Button, ButtonKind, TextField};
+use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
+
+/// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
+pub fn panel(look: &Look) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .w(px(560.0))
+        .max_h(relative(0.85))
+        .bg(look.palette.bg.hsla())
+        .border(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+}
+
+/// A sheet's head: its title in the app's words, and its actions trailing.
+pub fn head(title: impl AsRef<str>, actions: Vec<AnyElement>, look: &Look) -> impl IntoElement {
+    head_data(label(title), actions, look)
+}
+
+/// A sheet's head whose title is data, a profile's name, which keeps its
+/// case.
+pub fn head_data(
+    title: impl Into<SharedString>,
+    actions: Vec<AnyElement>,
+    look: &Look,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(look.space(Space::M))
+        .px(look.space(Space::L))
+        .py(look.space(Space::M))
+        .border_b(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .child(
+            div()
+                .text_role(TypeRole::Title, look)
+                .text_color(look.palette.strong.hsla())
+                .child(title.into()),
+        )
+        .child(div().flex().gap(look.space(Space::M)).children(actions))
+}
+
+/// A sheet's scrolling body.
+pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .flex()
+        .flex_col()
+        .gap(look.space(Space::S))
+        .px(look.space(Space::L))
+        .pb(look.space(Space::L))
+        // Shrinks below its content inside the panel's height, and scrolls.
+        .min_h_0()
+        .overflow_y_scroll()
+}
+
+/// A line of `fine` text in a tone, for footers and notes.
+pub fn note(text: impl Into<SharedString>, tone: Tone, look: &Look) -> Div {
+    div()
+        .text_role(TypeRole::Fine, look)
+        .text_color(look.text_color(tone))
+        .child(text.into())
+}
+
+/// What a question shows for what is typed, a line each.
+type Preview = Rc<dyn Fn(&str) -> Vec<SharedString>>;
+/// What a question does once answered, with what was typed.
+type Run = Rc<dyn Fn(String, &mut App)>;
+
+/// A question asked before a write: what will change, and the verb that
+/// changes it. With a name field, the preview follows what is typed.
+struct Ask {
+    title: SharedString,
+    verb: SharedString,
+    destructive: bool,
+    /// What the write will change, a line each.
+    preview: Preview,
+    /// Said under the preview: what the write leaves alone, or how to undo
+    /// it.
+    note: Option<SharedString>,
+    name: Option<Entity<InputState>>,
+    run: Run,
+    /// The sheet's own keys, for a question without a field; with one, the
+    /// field has them and answers Return itself.
+    focus: Option<FocusHandle>,
+    _enter: Option<Subscription>,
+}
+
+/// The one place a question is asked, over the whole window: a menu that
+/// asks is gone the moment it is used, so the question cannot live there.
+#[derive(Default)]
+pub struct Asking {
+    ask: Option<Ask>,
+}
+
+struct AskingHandle(Entity<Asking>);
+
+impl Global for AskingHandle {}
+
+/// The window's question host, made the first time it is wanted.
+pub fn asking(cx: &mut App) -> Entity<Asking> {
+    if let Some(handle) = cx.try_global::<AskingHandle>() {
+        return handle.0.clone();
+    }
+    let entity = cx.new(|_| Asking::default());
+    cx.set_global(AskingHandle(entity.clone()));
+    entity
+}
+
+/// What a confirmation shows and does.
+pub struct Confirm {
+    pub title: SharedString,
+    pub verb: SharedString,
+    pub destructive: bool,
+    pub lines: Vec<SharedString>,
+    pub note: Option<SharedString>,
+}
+
+/// Asks before `run`: the lines are what it will change.
+pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut App) + 'static) {
+    let lines = c.lines;
+    let focus = cx.focus_handle();
+    window.focus(&focus, cx);
+    show(
+        Ask {
+            title: c.title,
+            verb: c.verb,
+            destructive: c.destructive,
+            preview: Rc::new(move |_| lines.clone()),
+            note: c.note,
+            name: None,
+            run: Rc::new(move |_, cx| run(cx)),
+            focus: Some(focus),
+            _enter: None,
+        },
+        cx,
+    );
+}
+
+/// Asks for a name, saying what it will do with what is typed, before
+/// `run` gets it trimmed and not empty.
+pub fn name(
+    title: impl Into<SharedString>,
+    verb: impl Into<SharedString>,
+    initial: &str,
+    preview: impl Fn(&str) -> Vec<SharedString> + 'static,
+    window: &mut Window,
+    cx: &mut App,
+    run: impl Fn(String, &mut App) + 'static,
+) {
+    let initial = initial.to_owned();
+    let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
+    let focus = input.read(cx).focus_handle(cx);
+    window.focus(&focus, cx);
+    let focus = None;
+    let run: Run = Rc::new(run);
+    let enter = {
+        let run = run.clone();
+        window.subscribe(&input, cx, move |input, event: &InputEvent, _, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                let typed = input.read(cx).value().trim().to_owned();
+                if !typed.is_empty() {
+                    dismiss(cx);
+                    run(typed, cx);
+                }
+            }
+        })
+    };
+    show(
+        Ask {
+            title: title.into(),
+            verb: verb.into(),
+            destructive: false,
+            preview: Rc::new(preview),
+            note: None,
+            name: Some(input.clone()),
+            run,
+            focus,
+            _enter: Some(enter),
+        },
+        cx,
+    );
+    // The preview follows the field.
+    let host = asking(cx);
+    cx.observe(&input, move |_, cx| host.update(cx, |_, cx| cx.notify()))
+        .detach();
+}
+
+fn show(ask: Ask, cx: &mut App) {
+    asking(cx).update(cx, |a, cx| {
+        a.ask = Some(ask);
+        cx.notify();
+    });
+}
+
+fn dismiss(cx: &mut App) {
+    asking(cx).update(cx, |a, cx| {
+        a.ask = None;
+        cx.notify();
+    });
+}
+
+/// The question being asked, over the window, for the shell to draw.
+pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let host = asking(cx);
+    let a = host.read(cx);
+    let ask = a.ask.as_ref()?;
+    let look = Look::of(window, cx);
+    let typed = ask
+        .name
+        .as_ref()
+        .map(|i| i.read(cx).value().trim().to_owned());
+    let lines = (ask.preview)(typed.as_deref().unwrap_or(""));
+    let blocked = typed.as_ref().is_some_and(String::is_empty);
+    let go = {
+        let (run, name) = (ask.run.clone(), ask.name.clone());
+        move |cx: &mut App| {
+            let typed = name
+                .as_ref()
+                .map(|i| i.read(cx).value().trim().to_owned())
+                .unwrap_or_default();
+            if name.is_some() && typed.is_empty() {
+                return;
+            }
+            dismiss(cx);
+            run(typed, cx);
+        }
+    };
+    let go = Rc::new(go);
+    let named = ask.name.is_some();
+    let cancel = Button::new("ask-cancel", ButtonKind::Standard)
+        .label("cancel")
+        .on_click(|_, _, cx| dismiss(cx));
+    let verb = {
+        let go = go.clone();
+        Button::new("ask-go", ButtonKind::Standard)
+            .label(ask.verb.as_ref())
+            .destructive(ask.destructive)
+            .disabled(blocked)
+            .on_click(move |_, _, cx| go(cx))
+    };
+    let rows: Vec<AnyElement> = lines
+        .into_iter()
+        .map(|line| note(line, Tone::Ink, &look).into_any_element())
+        .collect();
+    Some(
+        div()
+            .id("ask")
+            .key_context("Ask")
+            .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
+            .on_key_down(
+                move |e: &KeyDownEvent, _, cx| match e.keystroke.key.as_str() {
+                    "escape" => dismiss(cx),
+                    "enter" if !named => go(cx),
+                    _ => {}
+                },
+            )
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .items_start()
+            .pt(look.space(Space::Xxl))
+            .bg(look.palette.bg.hsla().opacity(0.6))
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                panel(&look)
+                    .child(head(
+                        ask.title.as_ref(),
+                        vec![cancel.into_any_element(), verb.into_any_element()],
+                        &look,
+                    ))
+                    .child(
+                        body("ask-body", &look)
+                            .pt(look.space(Space::M))
+                            .when_some(ask.name.as_ref(), |d, input| d.child(TextField::new(input)))
+                            .children(rows)
+                            .when_some(ask.note.clone(), |d, n| {
+                                d.child(note(n, Tone::Muted, &look))
+                            }),
+                    ),
+            )
+            .into_any_element(),
+    )
+}

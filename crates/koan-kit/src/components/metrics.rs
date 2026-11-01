@@ -24,6 +24,18 @@ pub enum RowKind {
 
 pub struct RowMetrics;
 
+/// The playing bars, the Mac's: three 2-point bars 2 points apart, 11 tall.
+pub struct BarMetrics;
+
+impl BarMetrics {
+    pub const COUNT: usize = 3;
+    pub const BAR: f32 = 2.0;
+    pub const GAP: f32 = 2.0;
+    pub const WIDTH: Pixels =
+        px(Self::COUNT as f32 * Self::BAR + (Self::COUNT - 1) as f32 * Self::GAP);
+    pub const HEIGHT: Pixels = px(11.0);
+}
+
 /// The transport bar's figures, the spec's: 68 tall, a 40-point cover, the
 /// controls 22 apart over the seek bar.
 pub struct TransportMetrics;
@@ -87,6 +99,14 @@ impl RowMetrics {
     /// A record heading's sleeve, square.
     pub fn heading_sleeve(look: &Look) -> Pixels {
         px((HEADING_SLEEVE * look.scale.size).round())
+    }
+
+    /// A row's leading glyph, where it has no number: the glyph's own
+    /// width, so it starts on the page's edge.
+    pub fn lead_glyph(look: &Look) -> Pixels {
+        px(crate::theme::icons::side(
+            look.points(crate::theme::TypeRole::Body),
+        ))
     }
 
     /// A row's sleeve, square.
