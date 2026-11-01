@@ -87,8 +87,7 @@ fn copy_share_link(lib: &Lib, item: Playable, name: String, cx: &mut App) {
         };
         match engine.create_share(ids, Some(name.clone())).await {
             Ok(share) => {
-                cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(share.url)))
-                    .ok();
+                cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(share.url)));
             }
             Err(e) => log::warn!("share {name}: {e}"),
         }

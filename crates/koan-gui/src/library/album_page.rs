@@ -10,7 +10,7 @@ use koan_ffi::{Album, Track};
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use super::covers::{Art, Covers, Key, Priority, Sleeve};
+use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::rows::{self, RowPart, RowState, TrackList};

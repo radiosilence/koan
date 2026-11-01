@@ -18,6 +18,7 @@ pub struct PageHeader {
     lead: Vec<AnyElement>,
     detail: Option<AnyElement>,
     actions: Vec<AnyElement>,
+    body: Option<AnyElement>,
     trailing: Option<AnyElement>,
 }
 
@@ -36,6 +37,7 @@ impl PageHeader {
             lead: Vec::new(),
             detail: None,
             actions: Vec::new(),
+            body: None,
             trailing: None,
         }
     }
@@ -64,6 +66,13 @@ impl PageHeader {
     /// buttons with their glyphs.
     pub fn action(mut self, action: impl IntoElement) -> Self {
         self.actions.push(action.into_any_element());
+        self
+    }
+
+    /// Under the actions: a paragraph about the page's subject, an artist's
+    /// biography.
+    pub fn body(mut self, body: impl IntoElement) -> Self {
+        self.body = Some(body.into_any_element());
         self
     }
 
@@ -123,7 +132,11 @@ impl RenderOnce for PageHeader {
                                 .pt(look.space(Space::Xs))
                                 .children(self.actions),
                         )
-                    }),
+                    })
+                    .children(
+                        self.body
+                            .map(|body| div().pt(look.space(Space::S)).child(body)),
+                    ),
             )
             .children(self.trailing.map(|t| {
                 div()
