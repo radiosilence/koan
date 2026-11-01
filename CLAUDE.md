@@ -275,11 +275,12 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `navigator.rs` | Where the app is: `Route` (plain data, ids only), and the `Navigator` entity holding the history, the cursor and each route's rewinds; `choose` sends the page showing to its top. Every navigation rule lives here, with its tests |
 | `shell.rs` | The window: the sidebar from the top edge, the window's buttons on its ground, beside the page column (toolbar with back and forward, then the stage); transport along the foot. "Wash the whole window" takes the sidebar's and toolbar's ground away and spans the transport under both columns |
 | `sidebar.rs` | The queue, the library's sections, the playlists |
-| `queue/` | The queue page, kept mounted: rows from `QueueItem.run` (`rows.rs`), selection by queue item, keys, drag reorder, context menu |
-| `transport.rs` | The transport bar and the seek slider, whose position is reckoned from the playhead anchor with one timer for the next visible change while playing |
+| `queue/` | The queue page, kept mounted: the header (what the queue follows, its count, its actions), rows from `QueueItem.run` grouped or flat (`rows.rs`, disc numbering there too), linked credits, the heart, the availability mark with a transfer's ring, selection by queue item, keys, drag reorder, context menu |
+| `links.rs` | Names that lead to their pages: a record's title, each credited artist. The queue and the transport draw with it |
+| `transport.rs` | The transport bar, its names linked to their pages, and the seek slider, whose position is reckoned from the playhead anchor with one timer for the next visible change while playing |
 | `covers.rs` | Sleeves per record and size, decoded off the main thread to the renderer's pixel format |
 | `session.rs` | Saving the session while playing, when playback stops, and on queue edits |
-| `window_state.rs` | The window's bounds across launches, in `<config dir>/desktop-window` |
+| `window_state.rs` | The window's bounds, whether the sidebar shows and whether the queue is grouped, across launches, in `<config dir>/desktop-window` |
 | `measure.rs` | With the `profiler` feature: `KOAN_GUI_MEASURE=scroll` scrolls the queue through the window and prints GPUI's frame histograms; `play`, `hidden` and `play-hidden` set the app up for its CPU use to be read from outside |
 | `examples/window_shot.rs` | Draws the real window offscreen, dark and light, into a PNG, against a throwaway `KOAN_CONFIG_DIR` (`KOAN_SHOT_TRACKS=n` fills and saves a queue first) |
 | `theme/mod.rs` | `KoanTheme` (text size, "show icons"), `AccentFeed` (the accent settling; cached views that draw it call `observe_accent`), `Look::of(window, cx)` (a window's appearance and tokens), `KoanStyled::text_role`, `drive` for a window's root, Reduce Motion read from the system, gpui-component's theme dressed in the tokens for its `Input` |
