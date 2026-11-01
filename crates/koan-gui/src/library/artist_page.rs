@@ -29,7 +29,7 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::components::{Cover, CoverArt, FadeIn, RowMetrics};
+use crate::components::{Cover, CoverArt, FadeIn, RowMetrics, SectionHeading};
 use crate::theme::Space;
 
 /// A biography longer than this opens clamped, with "more" under it.
@@ -233,17 +233,15 @@ impl ArtistPage {
                 start = end;
             }
         };
-        let sections = sections(&record.albums);
-        let titled = sections.len() > 1;
-        for (section, start, len) in sections {
-            if titled {
-                items.push(Item::Heading(
-                    koan_ffi::release_section_title(section)
-                        .to_lowercase()
-                        .into(),
-                    Heading::Section(section),
-                ));
-            }
+        // Headed even when there is one section, so a discography of albums
+        // alone still says what it is.
+        for (section, start, len) in sections(&record.albums) {
+            items.push(Item::Heading(
+                koan_ffi::release_section_title(section)
+                    .to_lowercase()
+                    .into(),
+                Heading::Section(section),
+            ));
             rows(&mut items, false, start, len);
         }
         if !record.features.is_empty() {
@@ -259,7 +257,7 @@ impl ArtistPage {
 
     /// A heading's line, with the space above it and below.
     fn heading_height(p: &Paint) -> Pixels {
-        p.look.line_height(Type::Fine) + p.space(Space::L) + p.space(Space::S)
+        SectionHeading::height(&p.look)
     }
 
     fn height(&self, p: &Paint, item: &Item, grid: Grid) -> f32 {
@@ -450,7 +448,7 @@ impl ArtistPage {
         let scale = window.scale_factor();
         match item {
             Item::Header => self.header(p, &record, grid, scale, cx).into_any_element(),
-            Item::Heading(title, _) => Self::heading(p, title).into_any_element(),
+            Item::Heading(title, _) => SectionHeading::new(title).into_any_element(),
             Item::FeaturesHeading => {
                 let items: Vec<Playable> = record
                     .features
@@ -458,21 +456,17 @@ impl ArtistPage {
                     .map(|a| Playable::Album(a.id))
                     .collect();
                 let (lib, items2, lib2) = (self.lib.clone(), items.clone(), self.lib.clone());
-                div()
-                    .flex()
-                    .items_end()
-                    .gap(p.space(Space::L))
-                    .child(Self::heading(p, "features on"))
-                    .child(div().pb(p.space(Space::S)).child(
+                SectionHeading::new("features on")
+                    .trailing(
                         chrome::text_button("features-play", "play").on_click(move |_, _, cx| {
                             actions::play(&lib, &items, false, cx).detach()
                         }),
-                    ))
-                    .child(div().pb(p.space(Space::S)).child(
+                    )
+                    .trailing(
                         chrome::text_button("features-shuffle", "shuffle").on_click(
                             move |_, _, cx| actions::play(&lib2, &items2, true, cx).detach(),
                         ),
-                    ))
+                    )
                     .into_any_element()
             }
             Item::Tiles { features, range } => {
@@ -585,16 +579,6 @@ impl ArtistPage {
             tiles.push(self.tiles.tile(&record, state, height, cx));
         }
         div().flex().gap(grid.gap).h(grid.row).children(tiles)
-    }
-
-    fn heading(p: &Paint, title: impl Into<SharedString>) -> Div {
-        div()
-            .h(Self::heading_height(p))
-            .flex()
-            .items_end()
-            .pb(p.space(Space::S))
-            .typeset(p, Type::Fine, p.ink)
-            .child(title.into())
     }
 
     fn header(
@@ -1032,5 +1016,14 @@ mod tests {
                 "0..1"
             ]
         );
+        // Albums alone are headed too.
+        let alone = Record {
+            artist: None,
+            albums: (0..2).map(|i| album(i, ReleaseSection::Albums)).collect(),
+            features: Vec::new(),
+            appearances: Vec::new(),
+        };
+        let items = ArtistPage::cut(&alone, grid);
+        assert!(matches!(&items[1], Item::Heading(t, _) if t.as_ref() == "albums"));
     }
 }

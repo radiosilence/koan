@@ -83,6 +83,66 @@ impl PageHeader {
     }
 }
 
+/// The heading over one of a page's sections (an artist's albums, their
+/// EPs and singles, the records they feature on), the Mac's: `body` in
+/// `strong`, lowercase, with the room above and below it its own. A list
+/// that measures its items takes `SectionHeading::height`.
+#[derive(IntoElement)]
+pub struct SectionHeading {
+    title: SharedString,
+    trailing: Vec<AnyElement>,
+}
+
+impl SectionHeading {
+    pub fn new(title: impl AsRef<str>) -> Self {
+        Self {
+            title: label(title),
+            trailing: Vec::new(),
+        }
+    }
+
+    /// Beside the title: the section's own play and queue.
+    pub fn trailing(mut self, item: impl IntoElement) -> Self {
+        self.trailing.push(item.into_any_element());
+        self
+    }
+
+    /// Above the heading's line.
+    fn above(look: &Look) -> Pixels {
+        look.space(Space::L)
+    }
+
+    /// Between the heading's line and the section.
+    fn below(look: &Look) -> Pixels {
+        look.space(Space::M)
+    }
+
+    pub fn height(look: &Look) -> Pixels {
+        Self::above(look) + look.line_height(TypeRole::Body) + Self::below(look)
+    }
+}
+
+impl RenderOnce for SectionHeading {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .w_full()
+            .h(Self::height(&look))
+            .pt(Self::above(&look))
+            .pb(Self::below(&look))
+            .flex()
+            .items_center()
+            .gap(look.space(Space::L))
+            .child(
+                div()
+                    .text_role(TypeRole::Body, &look)
+                    .text_color(look.palette.strong.hsla())
+                    .child(self.title),
+            )
+            .children(self.trailing)
+    }
+}
+
 impl RenderOnce for PageHeader {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);

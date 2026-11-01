@@ -62,7 +62,6 @@ raw = 8
 
 ["library/artist_page.rs"]
 number = 9
-fixed = 1
 raw = 7
 
 ["library/artists.rs"]

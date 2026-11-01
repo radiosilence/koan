@@ -1,0 +1,1 @@
+- **The desktop app's wash, sections and queue.** The record's wash no longer shows bands; an artist's sections are always headed, at the Mac's size; pages have the same margin on every side; the queue has its header again, saying what it plays, how much, and offering jump, grouping, undo and clear.
