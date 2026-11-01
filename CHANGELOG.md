@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.69.3
+
+### Added
+
+- **The kōan GUI app, drawn with GPUI, on macOS and Linux.** Its first part: the window with the sidebar, the transport and the queue, grouped by record, with selection, keyboard control, drag to reorder and undo. It links the engine as the Mac app does; the library pages follow. Windows follows once the core builds there.
+- **The kōan GUI app meets the system.** On macOS and Linux it shows what is playing in Now Playing and MPRIS and takes the media keys; has the Mac app's shortcuts and menus, and a shortcuts sheet; queues files dropped on it or opened with it; runs once per configuration, handing a second launch's files to the first; and is a device of its own beside the Mac app and the terminal UI. Releases carry a DMG, AppImages and .debs for it. Signing in, changing a password and redeeming an invite now name the server key after the device as it presents itself (the name given on the phone, or the TUI's and the desktop app's own) rather than the hostname.
+- **Settings in the GUI app.** Everything the Mac app's Settings holds except EQ, in its own window: library folders, signing in or sharing this device's library, accounts, keys, people, playback, devices and appearance. Each change writes only the setting it changes, and anything that removes or replaces something says what it will do first.
+
+### Changed
+
+- **Each device keeps its own saved queue.** The Mac app and the terminal UI can share one config directory, and quitting one no longer replaces the queue the other restores. Each starts from a copy of the queue saved before upgrading. `savePlaybackState` and `clearPlaybackState` now fail on `koan serve`, whose player nothing restores; before, on a config directory shared with the app, they overwrote the app's saved queue.
+
+### Fixed
+
+- **The desktop app no longer replaces a saved session it could not restore.** Quitting after a restore that failed, or before it finished, left whatever the app held, possibly an empty queue, in place of the saved one.
+
+### Internal
+
+- **The kōan theme in GPUI.** A new crate, koan-gui, for the kōan GUI app in GPUI, starting with the theme: tokens, Geist Mono, the icon set, the record accent, the drifting wash, the components and a theme sheet that draws offscreen to a PNG.
+- **Protocol schemas render in key order with or without serde_json's `preserve_order`.** koan-gui's dependencies turn the feature on in a workspace build, which made the schema check fail there.
+- **Slider drags in the GUI app redraw only the slider.** A drag used GPUI's drag and drop, which redraws the whole window at every mouse move; it now follows the pointer with window-wide mouse listeners, taking a drag's frame from about 1.6 ms to 0.2 ms beside the theme sheet.
+- **Builds use the latest stable Rust.** `rust-version` is removed from the manifests, so dependency resolution targets the toolchain in use instead of holding crates back for an old compiler; the MSRV CI job is removed, since there is no longer a minimum version to check.
+
 ## 0.69.2
 
 ### Added
