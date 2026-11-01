@@ -43,6 +43,18 @@ impl RowMetrics {
         px((24.0 * look.scale.size).round())
     }
 
+    /// A row's height at 100 %, for what has no window to ask: a list's
+    /// guess for the rows it has not measured yet.
+    pub fn estimate(kind: RowKind) -> Pixels {
+        let points = match kind {
+            RowKind::Line => 24.0,
+            RowKind::Text => 34.0,
+            RowKind::Art => 40.0,
+            RowKind::Heading => HEADING_SLEEVE + 12.0,
+        };
+        px(points + 8.0)
+    }
+
     /// A record heading's sleeve, square.
     pub fn heading_sleeve(look: &Look) -> Pixels {
         px((HEADING_SLEEVE * look.scale.size).round())

@@ -243,7 +243,8 @@ impl QueueView {
         let top = self.list.logical_scroll_top();
         // A hint for the rows not yet measured, so the scrollbar is sized for
         // the whole queue from the first frame.
-        self.list.reset_with_uniform_height(queue.rows.len(), TRACK);
+        self.list
+            .reset_with_uniform_height(queue.rows.len(), RowMetrics::estimate(RowKind::Text));
         let kept = self.top.take();
         let landing = match kept.and_then(|(r, at)| Some((self.row_of(&r, cx)?, at))) {
             Some((row, at)) => ListOffset {
