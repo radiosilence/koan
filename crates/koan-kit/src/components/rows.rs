@@ -164,6 +164,76 @@ impl RenderOnce for NavRow {
     }
 }
 
+/// A heading over a group of navigation rows: `fine`, `ink`, lowercase,
+/// with 16 points above, at the rows' inset.
+#[derive(IntoElement)]
+pub struct NavHeading {
+    title: SharedString,
+    trailing: Option<AnyElement>,
+}
+
+impl NavHeading {
+    pub fn new(title: impl AsRef<str>) -> Self {
+        Self {
+            title: label(title),
+            trailing: None,
+        }
+    }
+
+    /// At the heading's far end: an action on the group ("new").
+    pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
+        self.trailing = Some(trailing.into_any_element());
+        self
+    }
+}
+
+impl RenderOnce for NavHeading {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .flex()
+            .flex_none()
+            .items_end()
+            .justify_between()
+            .pt(look.space(Space::L))
+            .pb(look.space(Space::Xs))
+            .px(look.space(Space::L))
+            .text_role(TypeRole::Fine, &look)
+            .text_color(look.palette.ink.hsla())
+            .child(self.title)
+            .children(self.trailing)
+    }
+}
+
+/// A line at the foot of a navigation list: what the app is doing, or what
+/// went wrong.
+#[derive(IntoElement)]
+pub struct NavNote {
+    text: SharedString,
+    tone: crate::theme::Tone,
+}
+
+impl NavNote {
+    pub fn new(text: impl Into<SharedString>, tone: crate::theme::Tone) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+        }
+    }
+}
+
+impl RenderOnce for NavNote {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .px(look.space(Space::L))
+            .py(look.space(Space::Xs))
+            .text_role(TypeRole::Fine, &look)
+            .text_color(look.text_color(self.tone))
+            .child(self.text)
+    }
+}
+
 /// A list row: no rule between rows; `hover` at 30 % behind it under the
 /// pointer, `surface` when selected, and the playing row's title and number
 /// in the accent. The caller lays out the row's parts with `ListRow::title`,

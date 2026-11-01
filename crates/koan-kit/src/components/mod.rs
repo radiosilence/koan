@@ -13,6 +13,7 @@
 
 mod badge;
 mod button;
+mod cover;
 mod empty;
 mod field;
 mod filter_field;
@@ -44,6 +45,7 @@ use gpui_kit::{
 
 pub use badge::{Badge, Chip};
 pub use button::{Button, ButtonKind};
+pub use cover::{Cover, CoverArt, Mosaic};
 pub use empty::EmptyState;
 pub use field::TextField;
 pub use filter_field::FilterField;
@@ -56,7 +58,7 @@ pub use page::{Page, PageHeader};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use placeholder::Placeholder;
-pub use rows::{ListRow, NavRow};
+pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use slider::Slider;
