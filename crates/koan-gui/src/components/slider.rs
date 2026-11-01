@@ -3,8 +3,8 @@ use std::sync::Arc;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Bounds, DispatchPhase, ElementId, InteractiveElement, IntoElement, MouseButton,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce, SharedString, Styled,
-    Window, canvas, div, px,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
+    SharedString, Styled, Window, canvas, div, px,
 };
 
 use super::{Handler, child, focus, pointer, ring, track};
@@ -92,6 +92,9 @@ impl RenderOnce for Slider {
         // Whether a drag that began on this slider is under way. Set and
         // cleared without a notify: nothing is drawn from it.
         let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| false);
+        if self.disabled {
+            dragging.update(cx, |d, _| *d = false);
+        }
         let measure = track_bounds.clone();
         let rail_id = child(&self.id, "rail");
         let drag_moves = (!self.disabled)
@@ -115,7 +118,17 @@ impl RenderOnce for Slider {
                         let Some((on_change, dragging)) = drag_moves else {
                             return;
                         };
-                        let (moving, ending) = (dragging.clone(), dragging);
+                        let (moving, ending, starting) =
+                            (dragging.clone(), dragging.clone(), dragging);
+                        // Any press starts afresh, before the rail's own
+                        // handler sees it: a release the window never heard
+                        // (let go outside it, on some platforms) must not
+                        // leave the next drag elsewhere moving this slider.
+                        window.on_mouse_event(move |_: &MouseDownEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Capture {
+                                starting.update(cx, |d, _| *d = false);
+                            }
+                        });
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                             if phase == DispatchPhase::Bubble
                                 && event.pressed_button == Some(MouseButton::Left)
@@ -355,5 +368,32 @@ mod tests {
             0,
             "the page beside the slider redrew during the drag"
         );
+
+        // The release never reached the window; the next press and drag
+        // are elsewhere, and leave the slider where it was.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(px(300.), px(300.)),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position: point(px(40.), px(320.)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(cx.update(|cx| owner.read(cx).value), value);
     }
 }
