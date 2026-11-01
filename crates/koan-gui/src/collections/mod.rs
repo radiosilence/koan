@@ -336,6 +336,68 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     )
 }
 
+/// Asks for a name for a new playlist holding what `sets` name (nothing,
+/// for an empty one), then makes it and hands its id to `created`. The
+/// tracks are resolved first, so the question can say how many it will hold.
+pub fn new_playlist(
+    engine: std::sync::Arc<koan_ffi::KoanEngine>,
+    sets: Vec<koan_ffi::TrackSet>,
+    window: &mut Window,
+    cx: &mut App,
+    created: impl Fn(i64, &mut App) + 'static,
+) {
+    let created = Rc::new(created);
+    let window_handle = window.window_handle();
+    cx.spawn(async move |cx| {
+        let tracks = if sets.is_empty() {
+            Vec::new()
+        } else {
+            match engine.clone().track_ids_of(sets).await {
+                Ok(tracks) => tracks,
+                Err(e) => {
+                    log::warn!("new playlist: {e}");
+                    return;
+                }
+            }
+        };
+        let held = tracks.len();
+        cx.update_window(window_handle, |_, window, cx| {
+            name(
+                "new playlist",
+                "create",
+                "",
+                move |typed| {
+                    let holding = if held == 0 {
+                        "nothing yet".to_owned()
+                    } else {
+                        count(held, "track", "tracks")
+                    };
+                    if typed.is_empty() {
+                        vec![format!("Name it. It will hold {holding}.").into()]
+                    } else {
+                        vec![format!("“{typed}”, holding {holding}.").into()]
+                    }
+                },
+                window,
+                cx,
+                move |name, cx| {
+                    let (engine, tracks, created) =
+                        (engine.clone(), tracks.clone(), created.clone());
+                    cx.spawn(
+                        async move |cx| match engine.create_playlist(name, tracks).await {
+                            Ok(playlist) => cx.update(|cx| created(playlist.id, cx)),
+                            Err(e) => log::warn!("new playlist: {e}"),
+                        },
+                    )
+                    .detach();
+                },
+            )
+        })
+        .ok();
+    })
+    .detach();
+}
+
 /// "3 tracks", "1 play".
 pub fn count(n: usize, one: &str, many: &str) -> String {
     crate::library::chrome::count(n as u64, one, many)

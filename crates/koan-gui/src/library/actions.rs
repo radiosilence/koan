@@ -188,8 +188,27 @@ pub fn menu(
     menu = menu
         .separator()
         .submenu("add to playlist", window, cx, move |mut menu, _, _| {
-            if playlists.is_empty() {
-                return menu.label("no playlists");
+            {
+                let (lib, items, after) = (sub_lib.clone(), sub_items.clone(), sub_after.clone());
+                menu = menu
+                    .item(
+                        MenuEntry::new("new playlist…").on_click(move |_, window, cx| {
+                            let nav = lib.nav.clone();
+                            crate::collections::new_playlist(
+                                lib.engine.clone(),
+                                sources(&items),
+                                window,
+                                cx,
+                                move |id, cx| {
+                                    nav.update(cx, |nav, cx| nav.open(Page::Playlist(id), cx))
+                                },
+                            );
+                            if let Some(after) = &after {
+                                after(cx);
+                            }
+                        }),
+                    )
+                    .separator();
             }
             for (id, name) in &playlists {
                 let (lib, items, after, id) =

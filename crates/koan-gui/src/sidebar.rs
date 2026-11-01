@@ -193,9 +193,42 @@ impl Render for Sidebar {
                     .children(LIBRARY.map(|(page, label)| {
                         row(page, ElementId::Name(label.into()), label.into(), cx)
                     }))
-                    .when(!self.playlists.is_empty(), |d| {
-                        d.child(heading("playlists", &p))
-                    })
+                    .child(
+                        div()
+                            .flex()
+                            .items_end()
+                            .justify_between()
+                            .pr(p.space(Space::M))
+                            .child(heading("playlists", &p))
+                            .child(
+                                div()
+                                    .id("new-playlist")
+                                    .cursor_pointer()
+                                    .text_role(TypeRole::Fine, &p.look)
+                                    .text_color(p.muted)
+                                    .hover({
+                                        let ink = p.ink;
+                                        move |s| s.text_color(ink)
+                                    })
+                                    .pb(p.space(Space::Xs))
+                                    .child("new")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        let nav = this.nav.clone();
+                                        crate::collections::new_playlist(
+                                            engine(cx),
+                                            Vec::new(),
+                                            window,
+                                            cx,
+                                            move |id, cx| {
+                                                nav.update(cx, |nav, cx| {
+                                                    nav.go(Route::Playlist(id));
+                                                    cx.notify();
+                                                })
+                                            },
+                                        );
+                                    })),
+                            ),
+                    )
                     .children(self.playlists.iter().map(|playlist| {
                         let page = Route::Playlist(playlist.id);
                         nav_row(
