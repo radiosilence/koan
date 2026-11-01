@@ -11,8 +11,9 @@ use std::sync::Arc;
 use crate::theme::wash::{Sleeve, Wash};
 use crate::theme::{self, Accent, KoanTheme};
 use koan_ffi::PlayState;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
 
 use crate::engine::engine;
 use crate::mirror::{Mirror, Playback};

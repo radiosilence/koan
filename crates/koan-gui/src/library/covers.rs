@@ -25,7 +25,11 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use koan_ffi::KoanEngine;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// decoded images handed to the renderer.
+use koan_kit::raw::RenderImage;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, Rgba, px};
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
 
@@ -1095,8 +1099,6 @@ fn decode(data: &[u8], px: u32) -> Option<(RenderImage, Hsla)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
-    use core::prelude::v1::test;
 
     #[test]
     fn keys_round_up_to_a_bucket() {

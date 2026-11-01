@@ -2,8 +2,7 @@
 
 use crate::components::{Button, ButtonKind};
 use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, page, section, text};

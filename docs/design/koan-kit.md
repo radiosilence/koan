@@ -205,7 +205,9 @@ Two parts, the compiler first.
 
 **`just gui-theme-leaks`**, in CI's GUI job, for what the compiler cannot see: methods of the re-exported `Styled` trait that fix a size or colour (`.p_4()`, `.text_xs()`, `.w_64()`, `.text_color(` with anything but a `Look` colour, `.line_height(`), and hand-built containers in koan-gui (`TypeRole::Title` outside a `PageHeader`, `ButtonKind::Toolbar`, a `uniform_list(` whose rows are not `TableRow`s, a menu panel outside `Menu`).
 
-While koan-gui moves over, the boundary is opened by one re-export module (`koan_kit::raw`) that holds what pages still use, file by file, and `crates/koan-gui/theme-leaks.toml` holds each file's count of leaks. The check fails when a count grows or a new file appears; an area that has moved drops its entry, and once none is left `koan_kit::raw` is deleted. The baseline only ever shrinks.
+Pages are written in `koan_kit::app`: the app model (entities, contexts, views, events, actions, focus, globals, tasks), `div` with the traits that give it children, layout and listeners, and the platform services the app uses (the clipboard, dropped files, the file picker). Sizes, colours, fonts, images, canvases, lists, overlays and animation are not in it.
+
+What koan-kit does not cover yet is reached through `koan_kit::raw`, by name and never by glob, each import or path under a comment saying why koan-kit cannot cover it; the check refuses a raw use without one. `crates/koan-gui/theme-leaks.toml` holds each file's count of leaks, raw names among them. The check fails when a count grows or a new file appears; an area that has moved drops its entry, and once none is left `koan_kit::raw` is deleted. The baseline only ever shrinks.
 
 ## Order of work
 

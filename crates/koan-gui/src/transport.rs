@@ -9,8 +9,15 @@ use std::time::{Duration, Instant};
 use koan_ffi::{
     DspOverview, NowPlaying, OutputChoice, PlayState, RepeatMode, SleepTimer, StreamFormat,
 };
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, px};
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
+// decoded images handed to the renderer.
+use koan_kit::raw::RenderImage;
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
 
 use crate::components::{
     Button, ButtonKind, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider, TransportMetrics,

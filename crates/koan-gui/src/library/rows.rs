@@ -8,8 +8,11 @@
 //! ⇧ extends, and a double click plays the list from it.
 
 use koan_ffi::{Track, TransferState};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// text measured or shaped at runtime.
+use koan_kit::raw::font;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
 
 use super::actions;
 use super::covers::Sleeve;

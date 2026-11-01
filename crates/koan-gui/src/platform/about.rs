@@ -2,7 +2,7 @@
 //! build run from source (`cargo run`, outside a bundle) shows in the Dock,
 //! the app switcher and the menu bar.
 
-use koan_kit::raw::App;
+use koan_kit::app::App;
 
 use super::actions::About;
 
@@ -135,10 +135,11 @@ fn show(_cx: &mut App) {
 /// its build, and the links.
 #[cfg(not(target_os = "macos"))]
 fn show(cx: &mut App) {
-    use koan_kit::raw::{
-        AppContext, Bounds, IntoElement, ParentElement, Render, Styled, TitlebarOptions,
-        WindowBounds, WindowOptions, div, px, size,
-    };
+    use koan_kit::app::{AppContext, Bounds, IntoElement, ParentElement, Render, Styled, div};
+    // the platform window and its options.
+    use koan_kit::raw::{TitlebarOptions, WindowBounds, WindowOptions};
+    // sizes and colours computed at runtime from measurements, not chosen from the theme.
+    use koan_kit::raw::{px, size};
 
     use crate::components::{Button, ButtonKind};
     use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
@@ -148,8 +149,8 @@ fn show(cx: &mut App) {
     impl Render for AboutWindow {
         fn render(
             &mut self,
-            window: &mut koan_kit::raw::Window,
-            cx: &mut koan_kit::raw::Context<Self>,
+            window: &mut koan_kit::app::Window,
+            cx: &mut koan_kit::app::Context<Self>,
         ) -> impl IntoElement {
             let look = Look::of(window, cx);
             div()

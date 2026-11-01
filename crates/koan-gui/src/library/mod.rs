@@ -30,7 +30,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use koan_ffi::KoanEngine;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 /// A listener on `view` that outlives the borrow of its context: what
 /// `cx.listener` gives, for a handler made inside a closure over that context.
@@ -103,7 +103,7 @@ impl Lib {
     }
 }
 
-koan_kit::raw::actions!(
+koan_kit::app::actions!(
     library,
     [
         /// Tick everything the page shows.

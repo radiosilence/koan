@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use koan_ffi::{AlbumSort, BrowseFilter, TrackBrowseSort};
-use koan_kit::raw::*;
+use koan_kit::app::*;
 use serde::{Deserialize, Serialize};
 
 pub struct Browse {
@@ -310,8 +310,6 @@ fn track_sort(key: &str) -> Option<TrackBrowseSort> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
-    use core::prelude::v1::test;
 
     #[test]
     fn every_sort_reads_back_from_its_stored_name() {

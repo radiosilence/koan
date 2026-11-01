@@ -2,8 +2,7 @@
 //! profiles are imported, made and chosen for each device.
 
 use koan_ffi::DspOverview;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 use crate::components::{Button, ButtonKind};
 use crate::mirror::Mirror;

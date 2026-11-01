@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use koan_ffi::{KoanEngine, PlayState, StateSlice, TransferState};
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 use super::drag::Playable;
 

@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use koan_ffi::{KoanEngine, RepeatMode, SleepTimer};
-use koan_kit::raw::{Action, App, Entity, Global, Menu, MenuItem};
+use koan_kit::app::{Action, App, Entity, Global};
+// the platform's menu bar and Dock menu, which koan-kit does not draw.
+use koan_kit::raw::{Menu, MenuItem};
 
 use super::actions::{Next, Previous, TogglePlayPause};
 use crate::mirror::{Devices, Mirror, Playback, Slice};
@@ -52,6 +54,7 @@ impl Global for DockMenu {}
 /// Follows the mirror and answers the menu's items. Once the mirror is
 /// installed.
 pub fn follow(engine: &Arc<KoanEngine>, cx: &mut App) {
+    // the platform's menu bar and Dock menu, which koan-kit does not draw.
     if cx.platform_info().os != koan_kit::raw::OperatingSystem::Mac {
         return;
     }

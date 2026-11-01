@@ -3,8 +3,9 @@
 //! theme's link button; a name with no page is plain text.
 
 use koan_ffi::CreditPart;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::Hsla;
 
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;

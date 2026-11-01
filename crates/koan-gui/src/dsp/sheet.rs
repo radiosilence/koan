@@ -4,11 +4,7 @@
 
 use std::rc::Rc;
 
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    AnyElement, AnyView, App, AppContext, Context, Entity, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
-};
+use koan_kit::app::*;
 
 use crate::components::{Button, ButtonKind};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
@@ -65,7 +61,7 @@ impl Sheets {
     /// Closes the sheet showing `view`, wherever it is in the stack: what
     /// finishes after the person has moved on closes itself and nothing
     /// above or below it.
-    pub fn close(&mut self, view: koan_kit::raw::EntityId, cx: &mut Context<Self>) {
+    pub fn close(&mut self, view: koan_kit::app::EntityId, cx: &mut Context<Self>) {
         let before = self.stack.len();
         self.stack
             .retain(|s| !matches!(s, Sheet::View(v) if v.entity_id() == view));
@@ -124,13 +120,13 @@ impl Sheets {
 fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoElement {
     let cancel = {
         let sheets = sheets.clone();
-        move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
+        move |_: &koan_kit::app::ClickEvent, _: &mut Window, cx: &mut App| {
             sheets.update(cx, |s, cx| s.pop(cx));
         }
     };
     let go = |run: Run| {
         let sheets = sheets.clone();
-        move |_: &koan_kit::raw::ClickEvent, window: &mut Window, cx: &mut App| {
+        move |_: &koan_kit::app::ClickEvent, window: &mut Window, cx: &mut App| {
             sheets.update(cx, |s, cx| s.pop(cx));
             run(window, cx);
         }
@@ -198,12 +194,12 @@ pub fn section(
 
 /// A row a click acts on: what it is, a line beneath, and what trails.
 pub fn choice_row(
-    id: impl Into<koan_kit::raw::ElementId>,
+    id: impl Into<koan_kit::app::ElementId>,
     title: impl Into<SharedString>,
     detail: Option<SharedString>,
     trailing: Option<AnyElement>,
     look: &Look,
-    on_click: impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
         .id(id.into())

@@ -4,10 +4,15 @@
 //! square, flat, lowercase, one hairline where a region needs one.
 
 use koan_ffi::BrowseChoices;
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
+// gpui-component's popover, the panel koan-kit's menus are built in.
 use koan_kit::raw::component::popover::Popover;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+// GPUI's start-up and headless rendering, which only the app's entry and tools reach.
+use koan_kit::raw::TestAppContext;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
 
 use super::browse::{self, Browse};
 use super::drag::Playable;
@@ -151,6 +156,7 @@ impl Trigger {
     }
 }
 
+// gpui-component's focus and click extensions, for the shell's own handling.
 impl koan_kit::raw::base::Selectable for Trigger {
     fn selected(mut self, selected: bool) -> Self {
         self.open = selected;
@@ -616,9 +622,11 @@ mod tests {
 
     /// Typing in the filter field narrows the browsers: what is typed
     /// reaches the browse model they all listen to.
+    // GPUI's test harness: a window driven with simulated input.
     #[koan_kit::raw::test]
     fn typing_in_the_filter_field_sets_the_search(cx: &mut TestAppContext) {
         cx.update(|cx| {
+            // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
             koan_kit::raw::init(cx);
             crate::theme::init(cx);
         });

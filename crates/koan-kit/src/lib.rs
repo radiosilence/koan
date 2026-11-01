@@ -4,6 +4,7 @@
 //! built and tested alone; `examples/theme_sheet.rs` draws every component.
 //! The design is `docs/design/koan-kit.md`.
 
+pub mod app;
 pub mod components;
 pub mod sheet;
 pub mod theme;

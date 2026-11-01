@@ -21,7 +21,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, point, px, size};
+// the platform window and its options.
+use koan_kit::raw::WindowId;
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::{ContentMask, canvas, fill};
 
 use crate::engine::engine;
 

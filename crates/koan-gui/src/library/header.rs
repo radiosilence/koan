@@ -4,8 +4,7 @@
 //! glyphs: play next, queue, copy share link, favourite.
 
 use koan_ffi::Placement;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 use super::drag::Playable;
 use super::{Lib, actions};

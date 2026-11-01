@@ -3,8 +3,11 @@
 
 use std::sync::Arc;
 
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, rgb, size};
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::{canvas, fill};
 
 /// A code's dark modules, as horizontal runs: (row, first column, length),
 /// on a grid `side` modules square.

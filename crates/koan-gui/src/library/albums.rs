@@ -13,8 +13,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use koan_ffi::{AlbumSort, BrowseFilter};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{ScrollEvent, TouchPhase, UniformListScrollHandle, uniform_list};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, px};
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -856,6 +861,7 @@ impl Render for AlbumGrid {
                     .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
                     .child(measure)
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
                 window,
@@ -876,7 +882,6 @@ impl Render for AlbumGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
     use crate::theme::tokens::Scale;
     use core::prelude::v1::test;
 

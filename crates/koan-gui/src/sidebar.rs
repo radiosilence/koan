@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use koan_ffi::Playlist;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::ScrollHandle;
 
 use crate::components::{CoverArt, Mosaic, NavHeading, NavNote, NavRow, RowMetrics};
 use crate::engine::{command, engine};
@@ -255,6 +256,7 @@ impl Render for Sidebar {
                     .flex_1()
                     .min_h_0()
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
             )
             .child(self.status.clone())

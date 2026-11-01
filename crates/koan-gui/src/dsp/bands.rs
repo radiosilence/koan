@@ -12,11 +12,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use koan_ffi::{DspBand, DspPoint};
-use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::{
-    AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
+use koan_kit::app::{
+    AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, SharedString,
+    Subscription, Window, div,
 };
+use koan_kit::app::{InteractiveElement, StatefulInteractiveElement, Styled};
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
+use koan_kit::raw::component::input::{InputEvent, InputState};
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
@@ -165,7 +167,7 @@ impl Fields {
             fields: HashMap::new(),
         });
         let typing = row.fields.values().any(|f| {
-            koan_kit::raw::Focusable::focus_handle(f.input.read(cx), cx).is_focused(window)
+            koan_kit::app::Focusable::focus_handle(f.input.read(cx), cx).is_focused(window)
         });
         let state = row.state.clone();
         let mut s = state.borrow_mut();
@@ -249,7 +251,7 @@ impl Fields {
         }
         let field = row.fields.get_mut(&part).expect("made above");
         let focused =
-            koan_kit::raw::Focusable::focus_handle(field.input.read(cx), cx).is_focused(window);
+            koan_kit::app::Focusable::focus_handle(field.input.read(cx), cx).is_focused(window);
         if field.reset != reset || (*field.shown.borrow() != text && !focused) {
             field.reset = reset;
             *field.shown.borrow_mut() = text.clone();

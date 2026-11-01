@@ -15,7 +15,9 @@ use std::time::Duration;
 use koan_ffi::KoanEngine;
 use koan_gui::settings::{self, SettingsWindow, Tab};
 use koan_gui::{app, theme};
-use koan_kit::raw::{AppContext, HeadlessAppContext, px, size};
+use koan_kit::app::AppContext;
+// GPUI's start-up and headless rendering, which only the app's entry and tools reach.
+use koan_kit::raw::{HeadlessAppContext, px, size};
 
 const WIDTH: f32 = 900.0;
 const HEIGHT: f32 = 820.0;
@@ -37,13 +39,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
 
+    // geometry and colours computed at runtime, not chosen from the theme.
     let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         std::sync::Arc::new(theme::icons::Assets),
+        // geometry and colours computed at runtime, not chosen from the theme.
         koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         theme::init(cx);
         app::install(&engine, cx);
@@ -61,6 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let shoot = |cx: &mut HeadlessAppContext, tab: Tab, name: &str| -> Result<(), Box<dyn Error>> {
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
             let view = cx.new(|cx| SettingsWindow::new(tab, window, cx));
+            // gpui-component's focus and click extensions, for the shell's own handling.
             cx.new(|cx| koan_kit::raw::base::Root::new(view, window, cx))
         })?;
         cx.update_window(window.into(), |_, window, cx| {
