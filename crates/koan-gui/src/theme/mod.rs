@@ -48,6 +48,12 @@ pub struct KoanTheme {
     pub text_size: u32,
     /// "Show icons": glyphs beside the labels that carry them.
     pub icons: bool,
+    /// The wash and the accent take their colour from the record playing;
+    /// off, there is no wash and the accent is mint.
+    pub record_colours: bool,
+    /// "Theme tint", in percent: how far the wash is held to its contrast
+    /// limit.
+    pub wash_tint: u32,
     /// Low Power Mode, as the system last said.
     low_power: bool,
     /// Windows held to one appearance whatever the system's, as the theme
@@ -62,6 +68,8 @@ impl Default for KoanTheme {
         Self {
             text_size: 100,
             icons: true,
+            record_colours: true,
+            wash_tint: 100,
             low_power: false,
             pinned: HashMap::new(),
         }
@@ -276,6 +284,16 @@ impl KoanTheme {
     pub fn set_icons(icons: bool, cx: &mut App) {
         cx.global_mut::<KoanTheme>().icons = icons;
         cx.refresh_windows();
+    }
+
+    /// Whoever draws the wash observes the global for these two; nothing
+    /// else reads them.
+    pub fn set_record_colours(on: bool, cx: &mut App) {
+        cx.global_mut::<KoanTheme>().record_colours = on;
+    }
+
+    pub fn set_wash_tint(percent: u32, cx: &mut App) {
+        cx.global_mut::<KoanTheme>().wash_tint = percent.min(100);
     }
 
     /// What a window's root view calls as it renders: dresses gpui-component's

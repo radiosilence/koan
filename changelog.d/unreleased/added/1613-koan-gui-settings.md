@@ -1,0 +1,1 @@
+- **Settings in the GUI app.** Everything the Mac app's Settings holds except EQ, in its own window: library folders, signing in or sharing this device's library, accounts, keys, people, playback, devices and appearance. Each change writes only the setting it changes, and anything that removes or replaces something says what it will do first.

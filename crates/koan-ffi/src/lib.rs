@@ -45,6 +45,8 @@ mod android;
 mod offload;
 mod queue_slice;
 mod serve;
+// For Rust clients, which link this crate rather than its bindings.
+pub use serve::{InviteTo, ShareStatus, Sharing, TailscaleStatus};
 mod server_queue;
 mod state;
 mod types;
