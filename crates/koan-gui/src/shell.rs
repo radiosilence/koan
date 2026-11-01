@@ -22,7 +22,7 @@ use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
 use crate::sidebar::{self, Sidebar};
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
+use crate::theme::{self, Icon, KoanStyled, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
 
