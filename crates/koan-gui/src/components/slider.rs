@@ -22,6 +22,7 @@ pub struct Slider {
     step: f32,
     disabled: bool,
     on_change: Option<Handler<f32>>,
+    on_commit: Option<Handler<()>>,
 }
 
 impl Slider {
@@ -35,6 +36,7 @@ impl Slider {
             step: 0.05,
             disabled: false,
             on_change: None,
+            on_commit: None,
         }
     }
 
@@ -58,6 +60,13 @@ impl Slider {
 
     pub fn on_change(mut self, handler: impl Fn(&f32, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
+        self
+    }
+
+    /// Called once a change is finished: a drag let go, or an arrow key's
+    /// step. For a value too costly to apply at every step of a drag.
+    pub fn on_commit(mut self, handler: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
+        self.on_commit = Some(Arc::new(handler));
         self
     }
 }
@@ -97,7 +106,7 @@ impl RenderOnce for Slider {
         let drag_moves = (!self.disabled)
             .then(|| self.on_change.clone())
             .flatten()
-            .map(|on_change| (on_change, dragging.clone()));
+            .map(|on_change| (on_change, self.on_commit.clone(), dragging.clone()));
         let mut rail = div()
             .id(rail_id.clone())
             .relative()
@@ -112,7 +121,7 @@ impl RenderOnce for Slider {
                     // those is active, every mouse move redraws the whole
                     // window past its caches.
                     move |bounds, _, window, _| {
-                        let Some((on_change, dragging)) = drag_moves else {
+                        let Some((on_change, on_commit, dragging)) = drag_moves else {
                             return;
                         };
                         let (moving, ending, starting) =
@@ -121,10 +130,16 @@ impl RenderOnce for Slider {
                         // handler sees it: a release the window never heard
                         // (let go outside it, on some platforms) must not
                         // leave the next drag elsewhere moving this slider.
-                        window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Capture && event.button == MouseButton::Left
+                        let lost = on_commit.clone();
+                        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Capture
+                                && event.button == MouseButton::Left
+                                && starting.update(cx, |d, _| std::mem::replace(d, false))
+                                && let Some(commit) = &lost
                             {
-                                starting.update(cx, |d, _| *d = false);
+                                // The drag ended where the window did not
+                                // hear it: what it reached is committed.
+                                commit(&(), window, cx);
                             }
                         });
                         // In the capture phase, which runs in paint order:
@@ -143,10 +158,13 @@ impl RenderOnce for Slider {
                                 }
                             }
                         });
-                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Capture && event.button == MouseButton::Left
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Capture
+                                && event.button == MouseButton::Left
+                                && ending.update(cx, |d, _| std::mem::replace(d, false))
+                                && let Some(on_commit) = &on_commit
                             {
-                                ending.update(cx, |d, _| *d = false);
+                                on_commit(&(), window, cx);
                             }
                         });
                     },
@@ -203,6 +221,7 @@ impl RenderOnce for Slider {
             slider = slider.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let (down, key) = (on_change.clone(), on_change);
+            let key_commit = self.on_commit;
             let down_bounds = track_bounds.clone();
             let step = self.step;
             rail = rail.on_mouse_down(MouseButton::Left, move |event, window, cx| {
@@ -221,6 +240,9 @@ impl RenderOnce for Slider {
                     };
                     cx.stop_propagation();
                     key(&to.clamp(0.0, 1.0), window, cx);
+                    if let Some(commit) = &key_commit {
+                        commit(&(), window, cx);
+                    }
                 });
         }
         slider

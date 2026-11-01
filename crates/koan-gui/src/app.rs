@@ -17,7 +17,7 @@ use crate::mirror::{Mirror, Queue};
 use crate::root::WindowRoot;
 use crate::session::Session;
 use crate::shell::Shell;
-use crate::{queue, shell, window_state};
+use crate::{queue, settings, shell, window_state};
 
 /// How long the window waits for the restored queue before opening anyway.
 const RESTORE_WAIT: Duration = Duration::from_millis(500);
@@ -32,6 +32,7 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.set_global(mirror);
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
+    settings::install(engine.clone(), cx);
     crate::dsp::window::init(cx);
 }
 
@@ -55,7 +56,10 @@ pub fn start(
     cx: &mut App,
 ) {
     cx.bind_keys(queue::bindings());
+    crate::library::bind_keys(cx);
     install(&engine, cx);
+    settings::resume(cx);
+    cx.on_action(|_: &crate::platform::actions::Settings, cx| settings::open(cx));
     let queue = cx.global::<Mirror>().queue.clone();
 
     let (shown, showing) = futures::channel::oneshot::channel::<()>();
@@ -115,7 +119,11 @@ fn rows_arrived(
 fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     cx.on_app_quit(|cx| {
         // Written now: the app is going, and nothing spawned would finish.
+        // The main window's place; the Settings window keeps none.
         for window in cx.windows() {
+            if settings::is_settings_window(window, cx) {
+                continue;
+            }
             window
                 .update(cx, |_, window, _| {
                     window_state::write(window.window_bounds())
@@ -152,6 +160,11 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         cx.quit();
     }
     cx.activate(true);
+    // `--settings` opens Settings beside the window, for checking it
+    // without a keyboard.
+    if std::env::args().any(|arg| arg == "--settings") {
+        settings::open(cx);
+    }
     #[cfg(feature = "profiler")]
     crate::measure::start(cx);
 }

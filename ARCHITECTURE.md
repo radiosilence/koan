@@ -23,7 +23,8 @@ crates/
 │
 ├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for
 │                  macOS and Linux: the kōan theme (`theme/`), its components
-│                  (`components/`), `platform/` and the app over
+│                  (`components/`), `platform/`, the library pages
+│                  (`library/`) and the app over
 │                  KoanEngine. Links koan-ffi as a Rust library.
 │                  Not published.
 │
@@ -169,6 +170,14 @@ DAC → Speakers
 The device rate is not koan's to own — it is one property shared by every client, and Audio MIDI Setup, a vendor control panel or any other app can move it back at any moment, after which the HAL resamples koan to reach it. So the rate the front ends report is not the one read at engine creation: a `SampleRateWatch` (`audio/device.rs`) stays registered on `kAudioDevicePropertyNominalSampleRate` for as long as the engine lives and writes every change into `SharedPlayerState`. koan does not take hog mode, so losing the rate is possible by design — saying so is not.
 
 **Backpressure:** If the ring buffer is full, decode sleeps 500µs and retries. If the ring buffer is empty (underrun), the render callback zeros the output (silence beats glitches).
+
+## Desktop artwork
+
+The desktop app's library pages draw thousands of sleeves, and a sleeve that is not on screen in time is a blank tile. `koan-gui/src/library/covers.rs` keeps two tiers, as the Mac's `CoverArtCache` does: the record's art once on disk, as `album_cover_art` returns it at 1000 pixels (local art is scaled to the size asked for, as a server's thumbnail is), and decoded bitmaps per record and draw size, rounded up to 32 pixels, in a 256 MB LRU. A list does not ask for sleeves one by one: each frame it hands the cache its whole ranked set (on screen, where a flick will come to rest, the rows ahead in the direction of travel), replacing the last, and the fetch and decode lanes each take the most urgent job they can start. A job that falls out of every set before it starts is never run. A decoded bitmap is copied into GPUI's atlas on the main thread in the frame that first paints it, so decoded sleeves are staged and admitted about 2 MB a frame, the most urgent first, each tile showing its sleeve's average colour (worked out on the decode lane) until its turn. Evicting a bitmap also drops its texture from GPUI's atlas, so it is never done to one drawn in the last moment or still held by an element; otherwise the next paint would upload it again and nothing would drop it after that. An eviction during a draw names the window being drawn, which the app's list of windows does not hold during its update.
+
+The grid's tiles are cached views, but a cached view is reused only at the bounds it had, and a scrolling list moves every row, so while it scrolls every tile on screen is laid out and painted each frame. What that costs is the tile's elements and hitboxes: each tile has one interactive element, which tells its parts apart by position, and makes its hover overlays only while hovered. Caching pays off at rest, where a hover, a heart or an arriving sleeve redraws one tile.
+
+Row ids are reused, so a record deleted and another added can share an id. The cache sweeps `art_evictions` at launch and on every library change, bumping a generation per record that every fetch and decode must still match to be kept, and trusts nothing on disk until a sweep has landed.
 
 ## Android
 

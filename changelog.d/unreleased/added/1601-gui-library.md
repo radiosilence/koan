@@ -1,0 +1,1 @@
+- **Library pages in the GUI app.** The GPUI app has the album grid, artist and track browsers, record and artist pages, filters, sorting, picking several things to play, drag out and context menus, over a cover cache that fetches and decodes ahead of the scroll.

@@ -54,6 +54,26 @@ pub fn insertion_point(row: usize, lower_half: bool) -> usize {
     row + usize::from(lower_half)
 }
 
+/// Where something from outside the queue dropped before row `dest` goes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Place {
+    /// After this queue item: the one just before the row's first item, so
+    /// a drop under a heading lands at the top of its record.
+    After(usize),
+    /// Above the first item, which nothing can be placed after.
+    Top,
+    /// Past the last row.
+    End,
+}
+
+pub fn place(rows: &[Row], dest: usize) -> Place {
+    match rows.get(dest).map(|row| row.items().start) {
+        None => Place::End,
+        Some(0) => Place::Top,
+        Some(start) => Place::After(start - 1),
+    }
+}
+
 /// Where a drop before row `dest` puts the moving items: before the first
 /// item of the first row at or after it that is not itself moving, or, when
 /// every row below is moving, after the last item that stays.
@@ -159,6 +179,28 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_drop_from_outside_follows_the_item_before_the_row() {
+        let track = |ix| Row::Track { ix, grouped: true };
+        let rows = [
+            Row::Heading { first: 0, len: 3 },
+            track(0),
+            track(1),
+            track(2),
+            Row::Heading { first: 3, len: 2 },
+            track(3),
+            track(4),
+        ];
+        assert_eq!(place(&rows, 0), Place::Top);
+        // Under the first heading: still the top of the queue.
+        assert_eq!(place(&rows, 1), Place::Top);
+        assert_eq!(place(&rows, 2), Place::After(0));
+        // Above the second record, and under its heading: after the first.
+        assert_eq!(place(&rows, 4), Place::After(2));
+        assert_eq!(place(&rows, 5), Place::After(2));
+        assert_eq!(place(&rows, 7), Place::End);
     }
 
     #[test]

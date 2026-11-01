@@ -19,6 +19,7 @@ use koan_ffi::{EntryStatus, QueueItem};
 
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
+use crate::library::drag::PlayableDrag;
 use crate::mirror::{Mirror, Queue};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
@@ -447,6 +448,47 @@ impl QueueView {
         });
     }
 
+    /// Queues what was dragged from the library before row `dest`, where
+    /// `rows::place` says.
+    fn drop_library(&mut self, dragged: &PlayableDrag, dest: usize, cx: &mut Context<Self>) {
+        use koan_ffi::Placement;
+        self.drop_at = None;
+        cx.notify();
+        let queue = self.queue.read(cx);
+        let id = |ix: usize| queue.base.get(ix).map(|item| item.queue_item_id.clone());
+        let sets = dragged.sets.to_vec();
+        let place = rows::place(&queue.rows, dest);
+        if place == rows::Place::End {
+            command(cx, "queue from the library", move |e| {
+                e.queue(sets, Placement::Append)
+            });
+        } else if let rows::Place::After(ix) = place {
+            let Some(after) = id(ix) else {
+                return;
+            };
+            command(cx, "queue from the library", move |e| {
+                e.queue(
+                    sets,
+                    Placement::After {
+                        queue_item_id: after,
+                    },
+                )
+            });
+        } else {
+            // Nothing to place after: appended, then moved to the top.
+            let Some(first) = id(0) else {
+                return;
+            };
+            command(cx, "queue from the library", move |e| async move {
+                let added = e.clone().queue(sets, Placement::Append).await?;
+                if added.is_empty() {
+                    return Ok(());
+                }
+                e.move_in_queue(added, first, false).await
+            });
+        }
+    }
+
     fn drag_label(&self, row: usize, cx: &App) -> SharedString {
         let queue = self.queue.read(cx);
         let count = if self.is_selected(row, cx) {
@@ -563,9 +605,26 @@ impl QueueView {
                 });
                 cx.new(|_| DragPreview(label))
             })
+            .on_drag_move::<PlayableDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let lower = event.event.position.y > event.bounds.center().y;
+                    let at = rows::insertion_point(row, lower);
+                    if this.drop_at != Some(at) {
+                        this.drop_at = Some(at);
+                        cx.notify();
+                    }
+                },
+            ))
             .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(row);
                 this.drop_rows(dragged, dest, cx);
+            }))
+            .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
+                let dest = this.drop_at.unwrap_or(row);
+                this.drop_library(dragged, dest, cx);
             }))
             .child(line)
             .into_any_element()
@@ -781,6 +840,9 @@ impl Render for QueueView {
         self.keep_top(top, cx);
         let count = self.rows(cx).len();
         let view = cx.entity();
+        if self.drop_at.is_some() && !cx.has_active_drag() {
+            self.drop_at = None;
+        }
         div()
             .id("queue")
             .key_context(CONTEXT)
@@ -823,10 +885,24 @@ impl Render for QueueView {
                     this.menu_row = None;
                 }
             }))
+            // A library drag that leaves the queue takes its insertion line
+            // with it, so a drag released elsewhere leaves none behind.
+            .on_drag_move::<PlayableDrag>(cx.listener(
+                |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
+                    if this.drop_at.is_some() && !event.bounds.contains(&event.event.position) {
+                        this.drop_at = None;
+                        cx.notify();
+                    }
+                },
+            ))
             // Below the last row: the end of the queue.
             .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
                 this.drop_rows(dragged, dest, cx);
+            }))
+            .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
+                let dest = this.drop_at.unwrap_or(count);
+                this.drop_library(dragged, dest, cx);
             }))
             .when(count == 0, |d| {
                 d.items_center().justify_center().child(
