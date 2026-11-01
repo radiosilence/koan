@@ -453,6 +453,12 @@ pub fn set_config_dir(path: String) {
     config::set_config_dir(path);
 }
 
+/// The directory `set_config_dir` names, or the platform's default: for a
+/// Rust client keeping its own window state beside the configuration.
+pub fn config_dir() -> std::path::PathBuf {
+    config::config_dir()
+}
+
 /// A size as koan reads one in the config ("50GB", "500 MB"), in bytes, or
 /// `None` when it is not one. So the apps read the cache limit as the core
 /// does, without a parser of their own.

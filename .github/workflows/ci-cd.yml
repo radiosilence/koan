@@ -64,6 +64,7 @@ jobs:
       apple: ${{ steps.filter.outputs.apple }}
       apple_apps: ${{ steps.filter.outputs.apple_apps }}
       android: ${{ steps.filter.outputs.android }}
+      desktop: ${{ steps.filter.outputs.desktop }}
       release: ${{ steps.filter.outputs.release }}
       version: ${{ steps.filter.outputs.version }}
     steps:
@@ -92,7 +93,7 @@ jobs:
         # command rather than an answer, so every question is asked in a
         # condition.
         run: |
-          rust=true web=true deps=true docker=true package=true apple=true apple_apps=true android=true release=false
+          rust=true web=true deps=true docker=true package=true apple=true apple_apps=true android=true desktop=true release=false
           version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
           # A pull request merged or closed as its run was created: the
           # cancelling workflow can look before this run is listed, and the
@@ -216,6 +217,15 @@ jobs:
               || touches '^apps/android/|^crates/(koan-core|koan-server|koan-ffi)/|^tools/|^Cargo\.toml$|^\.cargo/|^rust-toolchain|^\.github/'; then
               android=true
             fi
+
+            # koan-desktop on macOS: the Linux job checks it with the rest of
+            # the workspace, and main's Apple job does on macOS. A pull request
+            # holds a macOS runner for it only when it touches the app or the
+            # FFI it links.
+            desktop=$rust
+            if [ "$EVENT" = "pull_request" ]; then
+              touches '^crates/koan-desktop/|^crates/koan-ffi/|^Cargo\.lock$|^\.github/' || desktop=false
+            fi
           fi
           {
             echo "rust=$rust"
@@ -226,6 +236,7 @@ jobs:
             echo "apple=$apple"
             echo "apple_apps=$apple_apps"
             echo "android=$android"
+            echo "desktop=$desktop"
             echo "release=$release"
             echo "version=$version"
           } | tee -a "$GITHUB_OUTPUT"
@@ -366,6 +377,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps
         uses: ./.github/actions/linux-deps
+        with:
+          # The workspace includes koan-desktop.
+          desktop: true
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -381,6 +395,30 @@ jobs:
         run: cargo test --all-targets
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test --doc
+
+  # koan-desktop's macOS platform layer (Metal, AppKit), which the Linux job
+  # cannot compile. Windows follows once koan-core builds there.
+  desktop-macos:
+    name: Desktop (macOS)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    timeout-minutes: 45
+    concurrency:
+      group: desktop-macos-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: desktop-macos
+          cache-on-failure: true
+      - run: cargo clippy -p koan-desktop --all-targets -- -D warnings
+      - run: cargo test -p koan-desktop
 
   audit:
     name: Security Audit
@@ -729,7 +767,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, actionlint, fmt, changelog, css, js, linux, audit, pulumi-package, linux-build, container, apple, android]
+    needs: [changes, actionlint, fmt, changelog, css, js, linux, desktop-macos, audit, pulumi-package, linux-build, container, apple, android]
     if: always()
     steps:
       - env:

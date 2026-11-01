@@ -1,19 +1,34 @@
 name: Linux build dependencies
 description: >
-  Installs the ALSA and D-Bus headers koan builds against. A mirror that
-  trickles bytes never trips apt's own timeout, so each attempt is cut off
-  after three minutes and tried again, rather than holding the job until its
-  timeout-minutes cancels it.
+  Installs the ALSA and D-Bus headers koan builds against, and with `desktop`
+  the keyboard, font and font-rendering headers GPUI links for koan-desktop.
+  A mirror that trickles bytes never trips apt's own timeout, so each attempt
+  is cut off after three minutes and tried again, rather than holding the job
+  until its timeout-minutes cancels it.
+
+inputs:
+  desktop:
+    description: Also install what koan-desktop's GPUI links (xkbcommon, fontconfig, freetype).
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        DESKTOP: ${{ inputs.desktop }}
       run: |
         set -uo pipefail
+        packages=(libasound2-dev libdbus-1-dev)
+        if [ "$DESKTOP" = true ]; then
+          # GPUI's renderer is wgpu, which loads Vulkan at run time, and its
+          # X11 and Wayland clients are pure Rust: neither needs headers.
+          packages+=(libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev)
+        fi
         for attempt in 1 2 3; do
           if sudo timeout 180 apt-get -o Acquire::Retries=3 update \
-            && sudo timeout 180 apt-get -o Acquire::Retries=3 install -y libasound2-dev libdbus-1-dev; then
+            && sudo timeout 180 apt-get -o Acquire::Retries=3 install -y "${packages[@]}"; then
             exit 0
           fi
           echo "::warning::linux-deps: attempt $attempt failed"
