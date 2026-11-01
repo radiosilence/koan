@@ -45,9 +45,9 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
 /// whatever has happened.
 ///
 /// Saving as it goes starts once the restore has succeeded and its rows have
-/// arrived, so the queue it saves is the one it restored; the platform saves
-/// on quit either way, as the Mac app does, each device keeping a session of
-/// its own.
+/// arrived, so the queue it saves is the one it restored. The platform's save
+/// on quit is held to the same success: a process that never read the
+/// session leaves it as it was.
 pub fn start(
     engine: Arc<KoanEngine>,
     restored: impl Future<Output = Option<u32>> + 'static,
