@@ -57,6 +57,8 @@ pub struct TrackBrowser {
     focus: FocusHandle,
     search: Entity<chrome::SearchField>,
     filters: Entity<chrome::FilterPanel>,
+    /// The list's height as of the last frame, to tell when it moved.
+    viewport: f32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -110,6 +112,7 @@ impl TrackBrowser {
             focus: cx.focus_handle(),
             search,
             filters,
+            viewport: 0.0,
             _subscriptions: subscriptions,
         };
         this.reload(cx);
@@ -434,6 +437,14 @@ impl Render for TrackBrowser {
                 f32::from(state.base_handle.bounds().size.height),
             )
         };
+        // The list's bounds come from its last layout: none yet on the first
+        // frame it is drawn, and the old ones just after a resize. Another
+        // frame follows to aim from the real ones.
+        // An empty listing draws no list, so it has no bounds to wait for.
+        if self.total > 0 && (viewport <= 0.0 || viewport != self.viewport) {
+            self.viewport = viewport;
+            window.request_animation_frame();
+        }
         let row = f32::from(rows::art_height(p)).max(1.0);
         let last = (((offset + viewport) / row).ceil() as usize).min(self.total as usize);
         let first = ((offset / row).floor() as usize).min(last);
