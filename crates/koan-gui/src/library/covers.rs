@@ -638,7 +638,7 @@ fn directory() -> PathBuf {
         Some(dir) => PathBuf::from(dir).join("artwork"),
         None => dirs::cache_dir()
             .unwrap_or_else(std::env::temp_dir)
-            .join("koan-desktop")
+            .join("koan-gui")
             .join("artwork"),
     };
     root.join(SCHEME)

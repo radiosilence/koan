@@ -25,7 +25,7 @@ fn main() {
                 .spawn(async { library::browse::Browse::load() })
                 .await;
             cx.update(|cx| {
-                let bench = std::env::var("KOAN_DESKTOP_BENCH")
+                let bench = std::env::var("KOAN_GUI_BENCH")
                     .is_ok_and(|v| v == "albums")
                     .then(library::bench::Shared::default);
                 let lib = library::Lib::new(engine, browse, bench.clone(), cx);

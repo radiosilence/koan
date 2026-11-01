@@ -1,5 +1,5 @@
 //! Scrolling the album grid against a large library and measuring it, for
-//! `KOAN_DESKTOP_BENCH=albums`. Trackpad scrolls are synthesised one per
+//! `KOAN_GUI_BENCH=albums`. Trackpad scrolls are synthesised one per
 //! frame through the window's own input path, gestures and momentum
 //! included, so the heading and prefetch are what is measured too. Prints
 //! per phase: frame intervals, the grid's own CPU time per frame (render and
@@ -236,7 +236,7 @@ fn report(d: &Driver) {
         let end = d.marks.get(i + 1).map_or(rec.frames.len(), |m| m.0);
         bounds.push((*start, end, name));
     }
-    eprintln!("koan-desktop bench: album grid");
+    eprintln!("koan-gui bench: album grid");
     for (start, end, name) in bounds {
         let frames = &rec.frames[start..end];
         if frames.len() < 2 {

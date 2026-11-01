@@ -25,7 +25,7 @@ crates/
 │                  Thin entry point: clap CLI, logger, signal handling.
 │                  Depends on koan-core, koan-tui and koan-server.
 │
-└── koan-desktop/  Binary crate. The GPUI desktop app (in progress).
+└── koan-gui/  Binary crate. The GPUI desktop app (in progress).
                    Links koan-ffi as a Rust library. Not published.
 
 apps/
@@ -37,7 +37,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); nothing depends on `koan-ffi` except `koan-desktop`, which links it as a Rust library and drives `KoanEngine` directly, with no bindings between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); nothing depends on `koan-ffi` except `koan-gui`, which links it as a Rust library and drives `KoanEngine` directly, with no bindings between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
@@ -169,7 +169,7 @@ The device rate is not koan's to own — it is one property shared by every clie
 
 ## Desktop artwork
 
-The desktop app's library pages draw thousands of sleeves, and a sleeve that is not on screen in time is a blank tile. `koan-desktop/src/library/covers.rs` keeps two tiers, as the Mac's `CoverArtCache` does: the record's art once on disk, as `album_cover_art` returns it at 1000 pixels (local art is scaled to the size asked for, as a server's thumbnail is), and decoded bitmaps per record and draw size, rounded up to 32 pixels, in a 256 MB LRU. A list does not ask for sleeves one by one: each frame it hands the cache its whole ranked set (on screen, where a flick will come to rest, the rows ahead in the direction of travel), replacing the last, and the fetch and decode lanes each take the most urgent job they can start. A job that falls out of every set before it starts is never run. Evicting a bitmap also drops its texture from GPUI's atlas, so it is never done to one drawn in the last moment or still held by an element; otherwise the next paint would upload it again and nothing would drop it after that.
+The desktop app's library pages draw thousands of sleeves, and a sleeve that is not on screen in time is a blank tile. `koan-gui/src/library/covers.rs` keeps two tiers, as the Mac's `CoverArtCache` does: the record's art once on disk, as `album_cover_art` returns it at 1000 pixels (local art is scaled to the size asked for, as a server's thumbnail is), and decoded bitmaps per record and draw size, rounded up to 32 pixels, in a 256 MB LRU. A list does not ask for sleeves one by one: each frame it hands the cache its whole ranked set (on screen, where a flick will come to rest, the rows ahead in the direction of travel), replacing the last, and the fetch and decode lanes each take the most urgent job they can start. A job that falls out of every set before it starts is never run. Evicting a bitmap also drops its texture from GPUI's atlas, so it is never done to one drawn in the last moment or still held by an element; otherwise the next paint would upload it again and nothing would drop it after that.
 
 Row ids are reused, so a record deleted and another added can share an id. The cache sweeps `art_evictions` at launch and on every library change, bumping a generation per record that every fetch and decode must still match to be kept, and trusts nothing on disk until a sweep has landed.
 

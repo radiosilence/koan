@@ -1,7 +1,7 @@
 //! A large library of tagged, near-silent FLACs with a distinct cover per
 //! record, for measuring the browsers against tens of thousands of tracks.
 //!
-//! cargo run --release -p koan-desktop --example gen_library -- DIR [ALBUMS] [TRACKS_PER_ALBUM]
+//! cargo run --release -p koan-gui --example gen_library -- DIR [ALBUMS] [TRACKS_PER_ALBUM]
 //!
 //! Needs `ffmpeg` for the one seed file; every track is a copy of it, tagged
 //! with lofty, so 50 000 tracks take seconds rather than an encode each. The

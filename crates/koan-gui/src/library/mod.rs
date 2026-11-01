@@ -48,7 +48,7 @@ pub struct Lib {
     pub covers: Entity<covers::Covers>,
     pub nav: Entity<nav::Nav>,
     pub browse: Entity<browse::Browse>,
-    /// Set while `KOAN_DESKTOP_BENCH` measures the album grid.
+    /// Set while `KOAN_GUI_BENCH` measures the album grid.
     pub bench: Option<bench::Shared>,
 }
 

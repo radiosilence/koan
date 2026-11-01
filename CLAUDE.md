@@ -9,7 +9,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
-- **koan-desktop** — binary crate. The GPUI desktop app for macOS, Linux and Windows (issue #902), on `gpui-kit`. Links koan-ffi as a plain Rust library and drives `KoanEngine` as the native apps do. Not published.
+- **koan-gui** — binary crate. The GPUI desktop app for macOS, Linux and Windows (issue #902), on `gpui-kit`. Links koan-ffi as a plain Rust library and drives `KoanEngine` as the native apps do. Not published.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
@@ -17,7 +17,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
-Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; nothing depends on koan-ffi except koan-desktop, which links it as a Rust library rather than through uniffi bindings. Native clients import koan-core through koan-ffi.
+Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; nothing depends on koan-ffi except koan-gui, which links it as a Rust library rather than through uniffi bindings. Native clients import koan-core through koan-ffi.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -339,7 +339,7 @@ Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and genera
 | `ui/AppShell.kt` | Sign-in, then four tabs (Queue, Library, Search, Settings) on Navigation 3, each with its own back stack; the mini player; Now Playing over the tabs |
 | `ui/<feature>/` | One package per area, each registering its pages through an `…Entries()` function. See `apps/android/README.md` |
 
-### koan-desktop (`crates/koan-desktop/src/`)
+### koan-gui (`crates/koan-gui/src/`)
 
 Nothing it does blocks the main thread: engine calls are awaited from `cx.spawn`, file and image work runs on worker lanes or the background executor, and the main thread applies results and draws.
 
@@ -353,11 +353,11 @@ Nothing it does blocks the main thread: engine calls are awaited from `cx.spawn`
 | `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with bio, photo, sections, features and appearances |
 | `library/drag.rs` | `PlayableDrag`, what every drag out of the library carries: `TrackSet`s for the engine, shared so a pick is built once |
 | `library/selection.rs` | Picking several things to play together, in tick order |
-| `library/browse.rs` | The shared filter and search, each browser's sort, kept in `desktop-ui.json` by a writer thread |
+| `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
 | `library/feed.rs`, `nav.rs`, `window.rs`, `tokens.rs` | Stand-ins for the engine mirror, navigator, shell and theme, replaced as those land |
-| `library/bench.rs` | `KOAN_DESKTOP_BENCH=albums`: scrolls the grid with synthesised trackpad input and prints frame and blank-tile figures |
+| `library/bench.rs` | `KOAN_GUI_BENCH=albums`: scrolls the grid with synthesised trackpad input and prints frame and blank-tile figures |
 
-`just desktop-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library for it.
+`just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library for it.
 
 ### koan-server (`crates/koan-server/src/`)
 

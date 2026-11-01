@@ -1,6 +1,6 @@
 //! What the browsers are narrowed and ordered by. The filter and the search
 //! are shared by the album, artist and track browsers, as the Mac's are; each
-//! listing keeps its own sort. Kept in `desktop-ui.json` beside the
+//! listing keeps its own sort. Kept in `gui-state.json` beside the
 //! configuration: these are one front end's preferences, not engine settings,
 //! so they stay out of `config.toml`.
 
@@ -151,7 +151,7 @@ impl Writer {
             std::sync::Arc::new((parking_lot::Mutex::new(None), parking_lot::Condvar::new()));
         let shared = latest.clone();
         std::thread::Builder::new()
-            .name("koan-desktop-ui-state".into())
+            .name("koan-gui-state".into())
             .spawn(move || {
                 let (slot, ready) = &*shared;
                 loop {
@@ -187,7 +187,7 @@ impl Writer {
 }
 
 fn path() -> PathBuf {
-    koan_ffi::config_dir().join("desktop-ui.json")
+    koan_ffi::config_dir().join("gui-state.json")
 }
 
 fn seed() -> i64 {

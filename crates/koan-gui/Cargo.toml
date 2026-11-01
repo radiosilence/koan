@@ -1,5 +1,5 @@
 [package]
-name = "koan-desktop"
+name = "koan-gui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ description = "kōan's desktop app for macOS, Linux and Windows, drawn with GPUI
 publish = false
 
 [[bin]]
-name = "koan-desktop"
+name = "koan-gui"
 path = "src/main.rs"
 
 [dependencies]
@@ -23,7 +23,7 @@ futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 log = "0.4"
 parking_lot = "0.13"
-# The browsers' sorts and filters, kept in desktop-ui.json.
+# The browsers' sorts and filters, kept in gui-state.json.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = "1"
