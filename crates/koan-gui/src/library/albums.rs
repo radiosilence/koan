@@ -891,7 +891,10 @@ mod tests {
         };
         let ranked = rank(&heading, &g, 1000 * g.columns, keys);
         assert_eq!(priority(&ranked, 11), Some(Priority::Visible));
-        assert_eq!(priority(&ranked, 7), Some(Priority::Ahead(2.0 * row)));
+        let Some(Priority::Ahead(d)) = priority(&ranked, 7) else {
+            panic!("row 7 is ranked ahead");
+        };
+        assert!((d - 2.0 * row).abs() < 0.01);
         assert!(matches!(priority(&ranked, 15), Some(Priority::Ahead(_))));
         assert_eq!(priority(&ranked, 5), None);
         assert_eq!(priority(&ranked, 17), None);
@@ -910,8 +913,16 @@ mod tests {
             ..Heading::default()
         };
         let ranked = rank(&heading, &g, 1000 * g.columns, keys);
-        assert!(matches!(priority(&ranked, 20), Some(Priority::Ahead(_))));
-        assert_eq!(priority(&ranked, 6), None);
+        // 1200 points (0.3 s at 4000 pt/s) and four rows past the screen's
+        // foot, against two rows behind its top.
+        let ahead = |r: usize| {
+            ranked
+                .iter()
+                .any(|(k, p)| k.art == Art::Album(r as i64) && matches!(p, Priority::Ahead(_)))
+        };
+        let reach = ((13.0 * row + 1200.0 + 4.0 * row) / row) as usize;
+        assert!(ahead(reach) && !ahead(reach + 1));
+        assert!(ahead(8) && !ahead(7));
         // 2000 points on, where the flick comes to rest.
         let rest = ((10.0 * row + 2000.0) / row) as usize + 1;
         assert!(matches!(
