@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.69.4
+
+### Added
+
+- **Library pages in the GUI app.** The GPUI app has the album grid, artist and track browsers, record and artist pages, filters, sorting, picking several things to play, drag out and context menus, over a cover cache that fetches and decodes ahead of the scroll.
+- **EQ and convolution in the desktop app.** koan-gui has the EQ page for each output, the response graph with bands dragged and curves painted on it, the band table, Manage EQ, profile pages, AutoEQ, measurements, splitting a baked EQ, presets, and importing files, folders and zips, dropped on the page or chosen. An edit names the band it started on and is dropped when another device or page has changed the filters since.
+- **The desktop app names itself and has a Dock menu.** Its icon carries a spindle at the circle's centre, so it is told apart from the Mac app, and a build run from source shows it, at the size the Dock gives every app's icon, and the name too. About kōan shows the version and its build. On macOS the Dock menu has what is playing, its heart, repeat, shuffle, play and pause, next and previous, the sleep timer and the devices to play on.
+- **Library tasks in the GUI app.** Rescan, Force Rescan, Rebuild Index and Sync run from the Library menu, and each running task shows its progress at the foot of the sidebar; a scan can be stopped there.
+- **The desktop app's transport has an EQ button.** It chooses the output's preset and opens the EQ window. With no EQ in force it is the plain glyph rather than a label reading "flat", and it takes the accent while a profile plays, with the profile named in its tooltip.
+- **The desktop app has an EQ tab in Settings.** It shows what the output in use plays and opens the EQ window.
+
+### Changed
+
+- **Local cover art at the size asked for.** The apps receive a local sleeve scaled to the size they request, as a server already sends it, rather than at full size; a record's opened sleeve on the Mac is now at most 1000 pixels for local files too. A scaled copy is turned upright by the image's EXIF orientation, which it no longer carries.
+- **The GUI app sleeps when nothing moves.** On macOS and X11 a visible window woke at every display refresh to find nothing to draw; it now stops its frames after three idle ones and starts them again when something changes, through patched copies of GPUI's backends that are offered upstream.
+- **The GUI app's sidebar runs from the window's top edge.** The traffic lights sit on the sidebar's ground with no line beneath them, and the toolbar heads the page column alone.
+- **The GUI app's sidebar scrolls and its playlists have sleeves.** A short window scrolls the sidebar's rows rather than squeezing them, each place carries its glyph, playlists show the mosaic of their first four records, and the wash runs under every page, and under the sidebar and toolbar when "Wash the whole window" is on.
+- **The desktop app is called kōan.** The menu bar, About and the Finder name it as the Mac app is named; it still installs beside the Mac app, and About shows its icon rather than a folder.
+- **The GUI app's queue and transport link to their pages.** Credits, records and titles lead to their artist and record pages; multi-disc records number by disc; rows carry the heart and the Mac's availability mark, with a download's progress drawn as it lands; the sidebar hides and shows, and grouping by album is in the queue's menu, both kept with the window.
+- **The GUI app's playing bars move with the music.** The queue's playing row and the library's playing record show three bars driven by the analyser, read only while a bar is on screen and painted over the page so a frame redraws nothing beneath them.
+- **The desktop app's design system.** Covers without art show the ensō, loading shows it drawing itself, Settings is spaced as on the Mac, menus carry their glyphs, and the output menu lists each device under how it is connected. Pages now build from koan-kit's page, toolbar, form, table and menu, which decide the spacing.
+- **The queue and sidebar are built from the design system.** Queue rows are koan-kit table rows with the Mac's columns, the sidebar's rows and playlist faces are its navigation rows and mosaics, and a download's ring no longer builds a path every frame. The queue's titles, records and artists are links, records numbered by disc show their disc, and each row has its heart and where its file is.
+- **Library pages built from the design system.** The browsers' filter field, filters, sort, a new deal and select sit in the toolbar as icons, as on the Mac. A track row shows its play button under the pointer rather than going blank, artist rows lead with the artist glyph, and the record and artist pages share the Mac's header: the square play and the shuffle beside it, the title and its count, then play next, queue, copy share link and favourite. An artist page shows no photo box until a photo is found. A record's page gives the window its colours while it shows. Settings has its top margin back.
+- **The transport and its menus, as on the Mac.** The controls sit as close as the Mac's, play and pause is outlined, and the seek bar is the design system's slider. The output menu lists each device under how it is connected with its EQ beneath its name, an EQ button per device, the network's renderers after them and a renderer's volume. Clicking a menu's button while its menu is open now closes it.
+- **Album art arrives faster from a server.** The desktop app fetches as many covers at once as twice the number on screen, up to 512, rather than six, at the size it draws them, and covers that are ready together land together. Reading and resizing local covers is spread over the machine's cores rather than queued behind six threads or crowding them.
+- **The desktop app's EQ and sidebar foot on koan-kit.** The EQ's band and point tables use koan-kit's dense table and its sheets koan-kit's sheet parts; the sidebar's activity rows are koan-kit progress rows with room below the bar, and the sidebar again ends with the connection and library counts, as the Mac app's does.
+- **The desktop app's queue and record pages, as the Mac app's.** A picked row is a dark fill with white text; the queue marks each track played, waiting, next to download or failed; a record page's sleeve and rows are the Mac's size. The EQ button is its glyph alone, in the accent while an EQ is in force.
+- **The desktop app's wash, sections and queue.** The record's wash no longer shows bands; an artist's sections are always headed, at the Mac's size; pages have the same margin on every side; the queue has its header again, saying what it plays, how much, and offering jump, grouping, undo and clear.
+- **The desktop app's sidebar, drags and queue controls.** Sidebar rows are the Mac's height; a drag shows what it carries, with a sleeve, and lights only the places that take it; the queue's controls sit in the toolbar as the Mac's, with save as playlist and clear under ⋯; pages have a 16-point margin.
+- **Following the queue, and dragging playlists, in the desktop app.** The queue's crosshair keeps the playing track in view until you scroll, as the Mac's does; playlists in the sidebar can be dragged to reorder them, or onto the queue to queue them; the queue's selection controls are spaced and drawn as text buttons.
+- **Covers fade in on the desktop app.** A record's sleeve arriving where there was none fades in over its colour, as the other apps' do; one already in memory, or replacing a smaller copy, is shown at once. With Reduce Motion it appears.
+
+### Fixed
+
+- **Saving an EQ that did not change wakes nothing.** An edit that leaves a profile as it was no longer wakes every client watching the engine or sends the profiles to the server.
+- **GUI library pages in fixed columns.** Artist, track and record rows align their figures in right-hand columns, the artist page keeps its margins, its biography and photograph fade in, and the album grid can shuffle again under the random order. An artist lookup MusicBrainz refuses while busy is retried rather than left empty until the next visit.
+- **GUI activity rows fit the sidebar.** A long task or count truncates inside the sidebar rather than running over its edge.
+- **Seeking no longer flickers.** A click on the seek bar lands there at once in every app, and an update the engine sent before it took the seek no longer pulls the bar back to where it was; a seek the engine refuses gives the bar back after two seconds.
+- **Desktop app fixes from a run through.** An artist's page keeps its title, buttons and verbs when the photo arrives, rather than collapsing them into a gap. List rows, headers and the album grid share one leading edge. Rows lose their hover fill, keeping the play mark under the pointer. The playing bars match the Mac's. Library → Clear Downloaded Files works, saying how much it frees before it does.
+- **Artist photos on the desktop app.** A photo arriving no longer pushes the artist's name, count and buttons out of the header, and a photo whose stored address Wikimedia Commons now refuses is looked up again rather than never shown.
+- **The desktop app's toolbar and transport.** The filter field can be clicked and shows what it filters; the toolbar is the Mac's height with its spacing and the window's buttons centred on it, and the transport's sleep, output and EQ buttons sit as close as the Mac's. The EQ button is its glyph alone, in the accent while an EQ is in force.
+- **Covers on screen first in the desktop app.** Covers still downloading after they scrolled away no longer hold places from the ones now on screen, and covers from a server no longer wait behind local covers being resized. `KOAN_LOG=debug` logs how many are being fetched.
+- **Covers no longer flood a slow server.** The desktop app fetches covers 16 at a time to start, more while the server answers promptly and half as many when it slows, rather than up to 512 at once, which made a server reading covers off a spinning disk thrash.
+- **Covers from a koan server no longer read the music files.** A record's cover is read once, kept, and served from what was kept, so a grid of covers does not send the server's disk seeking; a rescan of the record's folder drops it. The server makes every record's grid cover in the background, in the order the files lie.
+
+### Internal
+
+- **The Apple TV app builds again.** The tab shell's player alert is a modifier of its own; the shell had grown past what the tvOS type checker solves in time.
+- **Apple CI runs on three runners.** The engine's tests, the macOS app with the iOS typecheck, and the Apple TV app each have a job, so they no longer share one runner's cores; the Apple TV build now runs on pull requests too.
+- **GUI packages never hold up or fail a release.** The release goes out without waiting for the kōan GUI app's packages; whichever built are attached afterwards.
+- **Menus, scrollbars and icons in the GUI app.** Menus are the theme's own, as the Mac app draws them, with the keyboard; every list and page has a thin square scrollbar that shows while it scrolls or with the pointer at its edge; the transport's glyphs are at the Mac's sizes and the output button shows a speaker.
+- **A faster test loop for the desktop app.** `just gui-run` builds with a `gui-dev` profile, at release speed but rebuilt incrementally, so a change to koan-core no longer rebuilds koan-server and koan-ffi whole.
+- **koan-kit, the desktop app's design system, is a crate of its own.** The theme and the components move out of koan-gui, which reaches GPUI only through koan-kit, so pages are built from the system rather than beside it.
+- **koan-kit's app module.** The desktop app's pages are written in `koan_kit::app`; every other GPUI use is a named import with a comment saying why, and the theme-leak check counts and enforces them.
+- **Ctrl-C quits `just gui-run` cleanly.** Quitting the desktop app from the terminal no longer reports a failed recipe.
+
 ## 0.69.3
 
 ### Added
