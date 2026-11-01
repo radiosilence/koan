@@ -5477,6 +5477,7 @@ dependencies = [
  "futures-channel",
  "futures-lite",
  "futures-util",
+ "gpui-kit",
  "gpui-pre",
  "gpui-pre-platform",
  "image",
