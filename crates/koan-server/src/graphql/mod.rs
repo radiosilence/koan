@@ -1248,7 +1248,7 @@ mod tests {
                 session,
             )
         };
-        let save = "mutation { savePlaybackState { success } }";
+        let save = "mutation { savePlaybackState { ok } }";
 
         let resp = schema(Some("terminal-")).execute(save).await;
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
@@ -1264,7 +1264,7 @@ mod tests {
             "the app's session is not this server's"
         );
 
-        for mutation in [save, "mutation { clearPlaybackState { success } }"] {
+        for mutation in [save, "mutation { clearPlaybackState { ok } }"] {
             let resp = schema(None).execute(mutation).await;
             assert!(
                 resp.errors
