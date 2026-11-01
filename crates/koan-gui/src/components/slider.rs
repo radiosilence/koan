@@ -129,8 +129,11 @@ impl RenderOnce for Slider {
                                 starting.update(cx, |d, _| *d = false);
                             }
                         });
+                        // In the capture phase, which nothing painted over
+                        // the slider can stop: the drag holds across a
+                        // client-side window border, say.
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                            if phase == DispatchPhase::Bubble
+                            if phase == DispatchPhase::Capture
                                 && event.pressed_button == Some(MouseButton::Left)
                                 && *moving.read(cx)
                             {
@@ -138,7 +141,8 @@ impl RenderOnce for Slider {
                             }
                         });
                         window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                            if phase == DispatchPhase::Capture && event.button == MouseButton::Left
+                            {
                                 ending.update(cx, |d, _| *d = false);
                             }
                         });
