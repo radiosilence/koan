@@ -1,0 +1,1 @@
+- **CI builds carry no debug info.** Faster builds and smaller caches, and the runners stay within their disk.
