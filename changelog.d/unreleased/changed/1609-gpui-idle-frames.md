@@ -1,0 +1,1 @@
+- **The GUI app sleeps when nothing moves.** On macOS and X11 a visible window woke at every display refresh to find nothing to draw; it now stops its frames after three idle ones and starts them again when something changes, through patched copies of GPUI's backends that are offered upstream.

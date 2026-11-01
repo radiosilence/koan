@@ -303,6 +303,8 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `platform/instance.rs` | One app per configuration directory: a lock beside the device's, a Unix socket a second launch hands its paths to |
 | `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
 
+`vendor/` holds patched copies of GPUI's macOS and Linux backends, so an idle window stops waking at every display refresh (#1609); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
+
 `LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry.
 
 ### apps/macos (`apps/macos/Sources/`)
