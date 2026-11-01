@@ -65,6 +65,7 @@ actions!(
         TopOfQueue,
         EndOfQueue,
         // View.
+        ToggleSidebar,
         ToggleLyrics,
         Bigger,
         Smaller,
@@ -188,6 +189,7 @@ pub const MENU: &[Shortcut] = &[
         FavouriteCurrentTrack
     ),
     shortcut!("EQ…", ["secondary-alt-e"], Playback, ShowEq),
+    shortcut!("Toggle Sidebar", ["ctrl-secondary-s"], View, ToggleSidebar),
     shortcut!("Toggle Lyrics", ["secondary-alt-l"], View, ToggleLyrics),
     shortcut!("Keyboard Shortcuts", ["secondary-/"], View, ShowShortcuts),
     shortcut!("Bigger", ["secondary-+", "secondary-="], View, Bigger),

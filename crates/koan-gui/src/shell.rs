@@ -9,10 +9,11 @@ use koan_kit::raw::base::InteractiveElementExt as _;
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
+use crate::components::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
-    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller,
+    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -21,17 +22,22 @@ use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
 use crate::sidebar::{self, Sidebar};
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
+use crate::theme::{self, Icon, KoanStyled, TypeRole};
 use crate::transport::{self, Transport};
 use crate::window_state;
 
-const TOOLBAR: Pixels = px(38.);
-const TOOLBAR_BUTTON: Pixels = px(36.);
+const TOOLBAR: Pixels = px(TOOLBAR_HEIGHT);
 /// Room above the sidebar for the window's buttons, which sit on its ground.
 #[cfg(target_os = "macos")]
 const TRAFFIC_LIGHTS: Pixels = TOOLBAR;
 #[cfg(not(target_os = "macos"))]
 const TRAFFIC_LIGHTS: Pixels = px(0.);
+/// The window's buttons' width, which the toolbar leaves clear while the
+/// sidebar is hidden and they sit over it.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS_WIDTH: Pixels = px(78.);
+#[cfg(not(target_os = "macos"))]
+const TRAFFIC_LIGHTS_WIDTH: Pixels = px(0.);
 
 pub struct Shell {
     nav: Entity<Navigator>,
@@ -46,6 +52,8 @@ pub struct Shell {
     library: Option<Entity<LibraryStage>>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
+    /// Whether the sidebar shows; kept with the window's bounds.
+    sidebar_shown: bool,
     /// The route focus was last moved for: the navigator notifies for more
     /// than moves (a deleted playlist forgotten during a scan), and those
     /// must not take the keys from wherever they are.
@@ -95,6 +103,7 @@ impl Shell {
             transport: cx.new(|cx| Transport::new(window, cx)),
             library: None,
             moving_window: false,
+            sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
@@ -197,115 +206,90 @@ impl Shell {
             })
     }
 
-    fn toolbar(&self, p: &Paint, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let button = |id: &'static str, icon: Option<Icon>, label: &'static str, enabled: bool| {
-            let surface = p.surface;
-            let hover = p.hover;
-            div()
-                .id(id)
-                .size(TOOLBAR_BUTTON)
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_role(TypeRole::Control, &p.look)
-                .text_color(p.ink)
-                .when(!enabled, |d| d.opacity(0.4))
-                .when(enabled, |d| {
-                    d.cursor_pointer()
-                        .hover(move |s| s.bg(surface))
-                        .active(move |s| s.bg(hover))
-                })
-                .child(if let Some(icon) = icon.filter(|_| p.look.icons) {
-                    KoanIcon::new(icon)
-                        .role(TypeRole::Control)
-                        .color(p.ink)
-                        .into_any_element()
-                } else {
-                    div().child(label).into_any_element()
-                })
-        };
+    fn toolbar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let nav = self.nav.read(cx);
-        let (can_go_back, can_go_forward) = (nav.can_go_back(), nav.can_go_forward());
-        let title = match nav.current() {
-            Route::Queue => "queue",
-            Route::Albums => "albums",
-            Route::Artists => "artists",
-            Route::Tracks => "tracks",
-            Route::Favourites => "favourites",
-            Route::RecentlyPlayed => "recently played",
-            Route::History => "history",
-            Route::Downloads => "downloads",
-            Route::Playlist(_) => "playlist",
-            Route::Album(_) => "record",
-            Route::Artist(_) => "artist",
-        };
-        div()
-            .id("toolbar")
-            .h(TOOLBAR)
-            // Washed, the toolbar has no ground and meets the page at a
-            // hairline; otherwise it is on `bg`, flush with the page.
-            .map(|d| {
-                if cx.global::<theme::KoanTheme>().wash_window {
-                    d.border_b(theme::HAIRLINE).border_color(p.rule)
-                } else {
-                    d.bg(p.bg)
-                }
+        let (can_go_back, can_go_forward, route) =
+            (nav.can_go_back(), nav.can_go_forward(), nav.current());
+        // The page's own controls: a library page's filter field and buttons.
+        let page = self
+            .library
+            .as_ref()
+            .filter(|_| LibraryStage::draws(route))
+            .and_then(|library| library.read(cx).toolbar());
+        Toolbar::new()
+            // With the sidebar hidden the window's buttons sit over the
+            // toolbar, which leaves them their room.
+            .inset(if self.sidebar_shown {
+                px(0.)
+            } else {
+                TRAFFIC_LIGHTS_WIDTH
             })
-            .w_full()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .px(p.space(Space::S))
-            .gap(p.space(Space::Xs))
-            .child(
-                button("back", Some(Icon::Back), "back", can_go_back)
+            .leading(
+                ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
+                    |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),
+                )),
+            )
+            .leading(
+                ToolbarButton::new("back", Icon::Back, "back")
+                    .disabled(!can_go_back)
                     .on_click(cx.listener(|this, _, window, cx| this.back(&Back, window, cx))),
             )
-            .child(
-                button("forward", Some(Icon::Forward), "forward", can_go_forward).on_click(
-                    cx.listener(|this, _, window, cx| this.forward(&Forward, window, cx)),
-                ),
+            .leading(
+                ToolbarButton::new("forward", Icon::Forward, "forward")
+                    .disabled(!can_go_forward)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.forward(&Forward, window, cx)),
+                    ),
             )
             // The toolbar's bare space moves the window, and its buttons do
             // not: a press that wobbles on back is still a click.
-            .child(
-                Self::moves_window(div().id("toolbar-drag"), cx)
-                    .flex_1()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .pl(p.space(Space::M))
-                    .text_role(TypeRole::Control, &p.look)
-                    .text_color(p.ink)
-                    .child(title),
+            .principal(Self::moves_window(div().id("toolbar-drag"), cx).size_full())
+            .when_some(page, |toolbar, page| toolbar.trailing(page))
+            .trailing(
+                ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics").on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleLyrics.boxed_clone(), cx)
+                }),
             )
             // Where the compositor leaves decorations to the app (GNOME on
             // Wayland), the toolbar carries the window's buttons.
             .when(
                 matches!(window.window_decorations(), Decorations::Client { .. }),
-                |d| {
-                    d.child(
-                        button("minimise", None, "–", true)
-                            .window_control_area(WindowControlArea::Min)
-                            .on_click(|_, window, _| window.minimize_window()),
-                    )
-                    .child(
-                        button("maximise", None, "□", true)
-                            .window_control_area(WindowControlArea::Max)
-                            .on_click(|_, window, _| window.zoom_window()),
-                    )
-                    .child(
-                        button("close", None, "×", true)
-                            .window_control_area(WindowControlArea::Close)
-                            // Removing the window skips the close request, so
-                            // its bounds are saved here rather than there.
-                            .on_click(|_, window, cx| {
-                                window_state::save(window.window_bounds(), cx);
-                                window.remove_window();
-                            }),
-                    )
+                |toolbar| {
+                    toolbar
+                        .trailing(
+                            div().window_control_area(WindowControlArea::Min).child(
+                                ToolbarButton::new("minimise", Icon::Subtract, "minimise")
+                                    .on_click(|_, window, _| window.minimize_window()),
+                            ),
+                        )
+                        .trailing(
+                            div().window_control_area(WindowControlArea::Max).child(
+                                ToolbarButton::new("maximise", Icon::Expand, "maximise")
+                                    .on_click(|_, window, _| window.zoom_window()),
+                            ),
+                        )
+                        .trailing(
+                            div().window_control_area(WindowControlArea::Close).child(
+                                ToolbarButton::new("close", Icon::Close, "close")
+                                    // Removing the window skips the close
+                                    // request, so its bounds are saved here.
+                                    .on_click(|_, window, cx| {
+                                        window_state::save(window.window_bounds(), cx);
+                                        window.remove_window();
+                                    }),
+                            ),
+                        )
                 },
             )
+    }
+
+    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
+    /// and keeps the choice with the window's bounds.
+    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_shown = !self.sidebar_shown;
+        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
+        window_state::save(window.window_bounds(), cx);
+        cx.notify();
     }
 }
 
@@ -351,6 +335,7 @@ impl Render for Shell {
             .key_context(actions::CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::back))
+            .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::forward))
             .on_action(cx.listener(|this, _: &ShowQueue, _, cx| this.show(Route::Queue, cx)))
             .on_action(cx.listener(|this, _: &ShowAlbums, _, cx| this.show(Route::Albums, cx)))
@@ -421,7 +406,7 @@ impl Render for Shell {
                             .flex_col()
                             .border_l(theme::HAIRLINE)
                             .border_color(p.rule)
-                            .child(self.toolbar(&p, window, cx))
+                            .child(self.toolbar(window, cx))
                             .child(div().flex_1().min_h(px(0.)).child(stage))
                             .when(!washed, |d| d.child(transport())),
                     ),

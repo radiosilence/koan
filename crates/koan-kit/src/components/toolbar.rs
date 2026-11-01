@@ -6,13 +6,14 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind};
-use crate::theme::{Icon, Look, Space};
+use crate::theme::{HAIRLINE, Icon, KoanTheme, Look, Space};
 
 /// The toolbar's height on the Mac.
 pub const TOOLBAR_HEIGHT: f32 = 38.0;
 
 #[derive(IntoElement, Default)]
 pub struct Toolbar {
+    inset: Pixels,
     leading: Vec<AnyElement>,
     principal: Option<AnyElement>,
     trailing: Vec<AnyElement>,
@@ -21,6 +22,13 @@ pub struct Toolbar {
 impl Toolbar {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Room left at the leading edge for the window's own buttons, where
+    /// they sit over the toolbar.
+    pub fn inset(mut self, inset: Pixels) -> Self {
+        self.inset = inset;
+        self
     }
 
     /// At the leading edge: back and forward, the sidebar's toggle.
@@ -52,9 +60,19 @@ impl RenderOnce for Toolbar {
             .flex_none()
             .flex()
             .items_center()
-            .px(look.space(Space::S))
+            .pl(self.inset + look.space(Space::S))
+            .pr(look.space(Space::S))
             .gap(look.space(Space::Xs))
-            .bg(look.palette.bg.hsla())
+            // With the wash under the whole window the toolbar has no
+            // ground and meets the page at a hairline; otherwise it is on
+            // `bg`, flush with the page.
+            .map(|d| {
+                if cx.global::<KoanTheme>().wash_window {
+                    d.border_b(HAIRLINE).border_color(look.palette.rule.hsla())
+                } else {
+                    d.bg(look.palette.bg.hsla())
+                }
+            })
             .children(self.leading)
             .child(
                 div()
