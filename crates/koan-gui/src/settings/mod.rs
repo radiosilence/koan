@@ -184,18 +184,16 @@ impl SettingsWindow {
                     cx.global_mut::<Settings>().window = None;
                 }
             }),
-            // A sheet left unanswered as the window closes is answered the
-            // way its Cancel would.
-            window.on_window_should_close(cx, {
-                let sheets = ctx.sheets.clone();
-                move |window, cx| {
-                    if let Some(dismissed) = sheets.read(cx).unanswered() {
-                        dismissed(window, cx);
-                    }
-                    true
-                }
-            }),
         ];
+        // A sheet left unanswered as the window closes is answered the way
+        // its Cancel would be.
+        window.on_window_should_close(cx, {
+            let sheets = ctx.sheets.clone();
+            move |window, cx| {
+                answer_unanswered(&sheets, window, cx);
+                true
+            }
+        });
         let pane = Pane::new(tab, &ctx, None, window, cx);
         let mut this = Self {
             ctx,
@@ -400,9 +398,21 @@ impl SettingsWindow {
                     )
                     .label("Close")
                     .icon(Icon::Close)
-                    .on_click(|_, window, _| window.remove_window()),
+                    .on_click({
+                        let sheets = self.ctx.sheets.clone();
+                        move |_, window, cx| {
+                            answer_unanswered(&sheets, window, cx);
+                            window.remove_window();
+                        }
+                    }),
                 )
             })
+    }
+}
+
+fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App) {
+    if let Some(dismissed) = sheets.read(cx).unanswered() {
+        dismissed(window, cx);
     }
 }
 
