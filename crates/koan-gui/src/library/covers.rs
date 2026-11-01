@@ -173,6 +173,15 @@ struct Queue {
     /// what is shown and where the scroll is heading are fetched together,
     /// up to `MAX_FETCHES`. Falls as covers land and the screen fills.
     limit: usize,
+    /// The congestion window: how many fetches the server is answering
+    /// promptly, grown and cut by `observe` as TCP's is. Zero until the first
+    /// answer, read as `WINDOW_START`.
+    window: f64,
+    /// The quickest answer lately, drifting up slowly: what "prompt" is
+    /// measured against, for this server and its disk.
+    base: Option<Duration>,
+    /// When the window was last cut, so one slow burst cuts it once.
+    last_cut: Option<Instant>,
     /// The first eviction sweep has landed, so a file found on disk belongs to
     /// the record now holding its id. Until then every record is fetched
     /// afresh, over whatever file it had.
@@ -219,9 +228,56 @@ impl Queue {
             .count()
     }
 
+    /// How many fetches may run now: the window, under the limit.
+    fn allowed(&self) -> usize {
+        let window = if self.window == 0.0 {
+            WINDOW_START
+        } else {
+            self.window as usize
+        };
+        window.min(self.limit).max(1)
+    }
+
+    /// One fetch answered after `took`, or failed. While answers come back
+    /// near the quickest lately, the window grows by about one per window's
+    /// worth of answers; when they slow (a server's disk seeking under load)
+    /// or fail, it halves, once per round trip. Returns whether it grew by a
+    /// whole place, which wakes one more fetcher.
+    fn observe(&mut self, took: Duration, ok: bool) -> bool {
+        let before = self.allowed();
+        if self.window == 0.0 {
+            self.window = WINDOW_START as f64;
+        }
+        let base = match self.base {
+            Some(base) if took >= base => base + (took - base) / 64,
+            _ => took,
+        };
+        self.base = Some(base);
+        let slow = !ok || took > base * 2 + SLACK;
+        if slow {
+            let settled = self
+                .last_cut
+                .is_none_or(|at| at.elapsed() > base.max(SLACK));
+            if settled {
+                self.window = (self.window / 2.0).max(WINDOW_MIN as f64);
+                self.last_cut = Some(Instant::now());
+                log::debug!(
+                    "covers: answers slowing ({} ms, quickest lately {} ms{}), window now {}",
+                    took.as_millis(),
+                    base.as_millis(),
+                    if ok { "" } else { ", failed" },
+                    self.window as usize
+                );
+            }
+        } else {
+            self.window = (self.window + 1.0 / self.window).min(MAX_FETCHES as f64);
+        }
+        self.allowed() > before
+    }
+
     fn next_fetch(&self) -> Option<Art> {
         let live = self.fetching.len() - self.abandoned();
-        if live >= self.limit.max(1) {
+        if live >= self.allowed() {
             return None;
         }
         self.most_urgent(|k| self.fetchable(k)).map(|k| k.art)
@@ -259,6 +315,15 @@ impl Shared {
 /// The most covers fetched at once, however many are on screen: a fast
 /// scroll through a large library cannot flood the uplink, sockets or disk.
 pub const MAX_FETCHES: usize = 512;
+
+/// Where the congestion window starts, and the least it is cut to. A server
+/// reading covers off a spinning disk answers 16 at once well and 512 badly;
+/// the window finds what this one takes.
+const WINDOW_START: usize = 16;
+const WINDOW_MIN: usize = 2;
+/// Answers within twice the quickest lately, and this, are prompt: jitter on
+/// a fast server is not mistaken for load.
+const SLACK: Duration = Duration::from_millis(50);
 
 enum Done {
     Decoded {
@@ -541,12 +606,12 @@ impl Covers {
         // that the limit's worth run beside them, under the ceiling.
         let abandoned = queue.abandoned();
         let threads = (queue.limit + abandoned).min(MAX_FETCHES);
-        let (live, limit) = (queue.fetching.len() - abandoned, queue.limit);
+        let (live, limit) = (queue.fetching.len() - abandoned, queue.allowed());
         let waiting = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
         drop(queue);
         log::debug!(
             "covers: {live} fetching, {abandoned} scrolled away and finishing, \
-             {waiting} waiting, limit {limit}"
+             {waiting} waiting, {limit} allowed"
         );
         self.grow_fetchers(threads);
         // Every free place, not only the new requests: what was waiting
@@ -926,6 +991,7 @@ fn fetch_lane(
             }
         }
         drop(disk);
+        let started = Instant::now();
         let fetched = futures::executor::block_on(async {
             match art {
                 Art::Album(id) => {
@@ -960,6 +1026,7 @@ fn fetch_lane(
         });
         let mut queue = shared.queue.lock();
         queue.fetching.remove(&art);
+        let grew = queue.observe(started.elapsed(), fetched.is_ok());
         let current = queue.generation(art) == generation;
         let mut absent = false;
         match fetched {
@@ -992,7 +1059,7 @@ fn fetch_lane(
                 .keys()
                 .any(|k| k.art == art && queue.fetchable(k));
         drop(queue);
-        shared.wake(usize::from(refetch), decodes);
+        shared.wake(usize::from(refetch) + usize::from(grew), decodes);
         if absent && tx.unbounded_send(Done::Absent).is_err() {
             return;
         }
@@ -1162,6 +1229,33 @@ mod tests {
         assert_eq!((i32::from(size.width), i32::from(size.height)), (100, 100));
         assert_eq!(&image.as_bytes(0).unwrap()[..4], &[0, 0, 255, 255]);
         assert!(decode(b"junk", 100).is_none());
+    }
+
+    /// Prompt answers widen the window a place per window's worth; a slow or
+    /// failed one halves it, once for a burst; it never passes the limit.
+    #[test]
+    fn the_window_grows_while_answers_are_prompt_and_halves_when_they_slow() {
+        let mut q = Queue {
+            limit: 512,
+            ..Queue::default()
+        };
+        let quick = Duration::from_millis(20);
+        assert_eq!(q.allowed(), WINDOW_START);
+        for _ in 0..WINDOW_START * 4 {
+            q.observe(quick, true);
+        }
+        let grown = q.allowed();
+        assert!(grown >= WINDOW_START + 3, "{grown}");
+        q.observe(Duration::from_secs(2), true);
+        assert_eq!(q.allowed(), grown / 2);
+        // The rest of the same slow burst does not cut again.
+        q.observe(Duration::from_secs(2), true);
+        assert_eq!(q.allowed(), grown / 2);
+        q.last_cut = None;
+        q.observe(quick, false);
+        assert_eq!(q.allowed(), grown / 4);
+        q.limit = 3;
+        assert_eq!(q.allowed(), 3);
     }
 
     /// Fetches for covers scrolled away finish but hold no place: with every
