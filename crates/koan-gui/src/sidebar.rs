@@ -16,7 +16,11 @@ use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 
+/// The sidebar's width as it opens, and what a double click on its edge
+/// restores; a drag keeps it between the least and greatest.
 pub const WIDTH: Pixels = px(220.);
+pub const MIN_WIDTH: Pixels = px(180.);
+pub const MAX_WIDTH: Pixels = px(360.);
 const ROW: Pixels = px(28.);
 const PLAYLIST_ROW: Pixels = px(40.);
 const PLAYLIST_SLEEVE: Pixels = px(24.);
@@ -434,7 +438,9 @@ fn face(sleeves: Vec<Sleeve>, p: &Paint) -> Div {
                     .object_fit(ObjectFit::Cover),
             ),
             Sleeve::Colour(colour) => field.bg(*colour),
-            Sleeve::Waiting | Sleeve::None => field,
+            Sleeve::Waiting | Sleeve::None => {
+                field.child(crate::components::Placeholder::new(w.min(h)))
+            }
         }
     };
     let square = div().size(side).flex_shrink_0().overflow_hidden();

@@ -422,6 +422,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: gui
           cache-on-failure: true
+      # Pages built beside the design system rather than from it.
+      - run: python3 scripts/gui-theme-leaks.py
       - run: cargo clippy -p koan-gui -p koan-kit --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui -p koan-kit --all-targets

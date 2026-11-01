@@ -12,6 +12,7 @@ use koan_kit::raw::*;
 use super::Lib;
 use super::drag::{Playable, sources};
 use super::nav::Page;
+use crate::theme::Icon;
 
 /// Put `items` in the queue. The returned task ends once the engine has the
 /// command, which is when a sleeve's "starting" mark can go.
@@ -159,9 +160,9 @@ pub fn menu(
     let favourited = items.iter().all(|i| lib.feed.read(cx).is_favourite(*i));
     let playlists = lib.feed.read(cx).playlists.clone();
 
-    let verb = |label: &'static str, f: fn(&Lib, &[Playable], &mut App)| {
+    let verb = |label: &'static str, icon: Icon, f: fn(&Lib, &[Playable], &mut App)| {
         let (lib, items, after) = (lib.clone(), items.clone(), after.clone());
-        MenuEntry::new(label).on_click(move |_, _, cx| {
+        MenuEntry::new(label).icon(icon).on_click(move |_, _, cx| {
             f(&lib, &items, cx);
             if let Some(after) = &after {
                 after(cx);
@@ -170,24 +171,27 @@ pub fn menu(
     };
 
     let mut menu = menu
-        .item(verb("play", |lib, items, cx| {
+        .item(verb("play", Icon::Play, |lib, items, cx| {
             play(lib, items, false, cx).detach()
         }))
-        .item(verb("play next", |lib, items, cx| {
+        .item(verb("play next", Icon::PlayNext, |lib, items, cx| {
             queue(lib, items, Placement::Next, cx).detach()
         }))
-        .item(verb("add to queue", |lib, items, cx| {
+        .item(verb("add to queue", Icon::Queue, |lib, items, cx| {
             queue(lib, items, Placement::Append, cx).detach()
         }));
     if container {
-        menu = menu.item(verb("shuffle", |lib, items, cx| {
+        menu = menu.item(verb("shuffle", Icon::Shuffle, |lib, items, cx| {
             play(lib, items, true, cx).detach()
         }));
     }
     let (sub_lib, sub_items, sub_after) = (lib.clone(), items.clone(), after.clone());
-    menu = menu
-        .separator()
-        .submenu("add to playlist", window, cx, move |mut menu, _, _| {
+    menu = menu.separator().submenu_icon(
+        "add to playlist",
+        Icon::Playlist,
+        window,
+        cx,
+        move |mut menu, _, _| {
             if playlists.is_empty() {
                 return menu.label("no playlists");
             }
@@ -202,12 +206,18 @@ pub fn menu(
                 }));
             }
             menu
-        });
+        },
+    );
     menu = menu.item(verb(
         if favourited {
             "unfavourite"
         } else {
             "favourite"
+        },
+        if favourited {
+            Icon::Favourited
+        } else {
+            Icon::Favourite
         },
         favourite,
     ));
@@ -216,14 +226,17 @@ pub fn menu(
             let nav = lib.nav.clone();
             if let Some(album) = album {
                 let nav = nav.clone();
-                menu = menu
-                    .separator()
-                    .item(MenuEntry::new("go to album").on_click(move |_, _, cx| {
-                        nav.update(cx, |nav, cx| nav.open(Page::Album(album), cx))
-                    }));
+                menu = menu.separator().item(
+                    MenuEntry::new("go to album")
+                        .icon(Icon::Album)
+                        .on_click(move |_, _, cx| {
+                            nav.update(cx, |nav, cx| nav.open(Page::Album(album), cx))
+                        }),
+                );
             }
             menu = menu.item(
                 MenuEntry::new("track info")
+                    .icon(Icon::Info)
                     .on_click(move |_, _, cx| nav.update(cx, |nav, cx| nav.show_info(id, cx))),
             );
         }
@@ -231,9 +244,9 @@ pub fn menu(
             let nav = lib.nav.clone();
             menu =
                 menu.separator()
-                    .item(MenuEntry::new("open album").on_click(move |_, _, cx| {
-                        nav.update(cx, |nav, cx| nav.open(Page::Album(id), cx))
-                    }));
+                    .item(MenuEntry::new("open album").icon(Icon::Album).on_click(
+                        move |_, _, cx| nav.update(cx, |nav, cx| nav.open(Page::Album(id), cx)),
+                    ));
         }
         _ => {}
     }

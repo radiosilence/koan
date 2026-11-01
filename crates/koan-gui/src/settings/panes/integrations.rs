@@ -211,14 +211,18 @@ impl IntegrationsPane {
                                 })
                             })
                             .into_any_element(),
-                        Button::new("how-to-connect", ButtonKind::Link)
-                            .label("How to Connect an Assistant")
-                            .icon(Icon::OpenExternal)
-                            .on_click(move |_, _, cx| cx.open_url(&connect))
-                            .into_any_element(),
                     ],
                     look,
                 ));
+                // A link of its own, on its own line: it goes somewhere,
+                // where the button beside the address acts on it.
+                rows.push(
+                    Button::new("how-to-connect", ButtonKind::Link)
+                        .label("How to Connect an Assistant")
+                        .icon(Icon::OpenExternal)
+                        .on_click(move |_, _, cx| cx.open_url(&connect))
+                        .into_any_element(),
+                );
             }
             Some(Err(error)) => {
                 footer = error.clone();
