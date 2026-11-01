@@ -1891,6 +1891,8 @@ gui-run *ARGS:
         mkdir -p "$KOAN_CONFIG_DIR"
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
+    # Ctrl-C is how the app is quit from here, not a failure.
+    trap 'exit 0' INT
     cargo run --profile gui-dev -p koan-gui -- {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,
