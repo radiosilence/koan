@@ -1,1 +1,1 @@
-- **The Apple TV build runs on pull requests.** It has its own CI job beside the Apple one, so a tvOS break is caught before it reaches main, and the Apple job no longer waits on tvOS.
+- **Apple CI runs on three runners.** The engine's tests, the macOS app with the iOS typecheck, and the Apple TV app each have a job, so they no longer share one runner's cores; the Apple TV build now runs on pull requests too.
