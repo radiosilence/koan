@@ -4929,23 +4929,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "koan-desktop"
-version = "0.69.2"
-dependencies = [
- "chrono",
- "futures-channel",
- "futures-lite",
- "futures-util",
- "getrandom 0.4.3",
- "gpui-kit",
- "koan-core",
- "koan-ffi",
- "log",
- "souvlaki",
- "tempfile",
-]
-
-[[package]]
 name = "koan-ffi"
 version = "0.69.2"
 dependencies = [
@@ -4969,6 +4952,23 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "uniffi",
  "uuid",
+]
+
+[[package]]
+name = "koan-gui"
+version = "0.69.2"
+dependencies = [
+ "chrono",
+ "futures-channel",
+ "futures-lite",
+ "futures-util",
+ "getrandom 0.4.3",
+ "gpui-kit",
+ "koan-core",
+ "koan-ffi",
+ "log",
+ "souvlaki",
+ "tempfile",
 ]
 
 [[package]]
