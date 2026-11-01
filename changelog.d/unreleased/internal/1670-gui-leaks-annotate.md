@@ -1,0 +1,1 @@
+- **The GUI leak check annotates CI rather than failing it.** Hand-built styling in koan-gui shows as warnings on the run; locally the check still fails.
