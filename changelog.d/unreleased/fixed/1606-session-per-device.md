@@ -1,1 +1,0 @@
-- **Each device keeps its own saved queue.** The Mac app, the terminal UI and the desktop app can share one config directory, and quitting one no longer replaces the queue another restores. An existing saved queue becomes the app's. `koan serve`, whose player nothing restores, keeps no saved session, so `savePlaybackState` there now returns an error.

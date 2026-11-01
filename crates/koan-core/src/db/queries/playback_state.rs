@@ -84,8 +84,9 @@ pub struct PersistedPlaybackState {
 ///
 /// Every device on a config directory keeps a session of its own, named by
 /// the prefix of the files it keeps there (`LinkIdentity::files`): the app,
-/// the terminal UI and the desktop app can run side by side on one library,
-/// and each finds its own queue when it next starts.
+/// the terminal UI and any other front end with a device of its own can run
+/// side by side on one library, and each finds its own queue when it next
+/// starts.
 pub fn save_playback_state(
     conn: &Connection,
     device: &str,

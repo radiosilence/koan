@@ -5942,9 +5942,9 @@ impl KoanEngine {
 
     fn build(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
         let t0 = std::time::Instant::now();
-        let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
         init_logging();
         raise_open_file_limit();
+        let identity = koan_core::remote::link::LinkIdentity::this_device(device_name.clone());
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
         let db = Database::open_default().map_err(|e| KoanError::Database {

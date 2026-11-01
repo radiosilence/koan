@@ -717,12 +717,12 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
 /// kept with the position rather than the queue so that it outlives one.
 const SESSION_TABLES: &str = "
     CREATE TABLE IF NOT EXISTS playback_state (
-        device      TEXT PRIMARY KEY,
+        device      TEXT NOT NULL PRIMARY KEY,
         queue_json  TEXT NOT NULL DEFAULT '[]',
         updated_at  TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS playback_position (
-        device      TEXT PRIMARY KEY,
+        device      TEXT NOT NULL PRIMARY KEY,
         cursor_id   TEXT,
         position_ms INTEGER NOT NULL DEFAULT 0,
         was_playing INTEGER NOT NULL DEFAULT 0,
@@ -1140,21 +1140,27 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Key the saved session by device. The one session kept before was the
-/// app's, whose files carry no prefix. Keyed on the columns rather than the
-/// version alone: a database from before the position had a table of its own
-/// gets that table in the new shape from `SESSION_TABLES`.
+/// Key the saved session by device. The one session kept before was whichever
+/// of the app and the terminal UI saved last, so each starts with a copy of
+/// it: someone who used only one of them keeps their queue. Keyed on the
+/// columns rather than the version alone: a database from before the position
+/// had a table of its own gets that table in the new shape from
+/// `SESSION_TABLES`.
 fn sessions_by_device(conn: &Connection, found: i64) -> rusqlite::Result<()> {
+    let devices = format!(
+        "(SELECT '' AS device UNION ALL SELECT '{}')",
+        crate::remote::link::LinkIdentity::TERMINAL_FILES
+    );
     if !column_exists(conn, "playback_position", "device")? {
         conn.execute_batch("ALTER TABLE playback_position RENAME TO playback_position_by_id;")?;
         conn.execute_batch(SESSION_TABLES)?;
-        conn.execute_batch(
+        conn.execute_batch(&format!(
             "INSERT INTO playback_position
                  (device, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at)
-             SELECT '', cursor_id, position_ms, was_playing, shuffle, repeat, updated_at
-               FROM playback_position_by_id WHERE id = 1;
-             DROP TABLE playback_position_by_id;",
-        )?;
+             SELECT d.device, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at
+               FROM playback_position_by_id, {devices} d WHERE id = 1;
+             DROP TABLE playback_position_by_id;"
+        ))?;
     }
     if !column_exists(conn, "playback_state", "device")? {
         // Before version 9 the position was kept with the queue.
@@ -1168,19 +1174,20 @@ fn sessions_by_device(conn: &Connection, found: i64) -> rusqlite::Result<()> {
                 &format!(
                     "INSERT OR IGNORE INTO playback_position
                          (device, cursor_id, position_ms, was_playing)
-                     SELECT '', cursor_id, position_ms, {playing}
-                       FROM playback_state WHERE id = 1"
+                     SELECT d.device, cursor_id, position_ms, {playing}
+                       FROM playback_state, {devices} d WHERE id = 1"
                 ),
                 [],
             )?;
         }
         conn.execute_batch("ALTER TABLE playback_state RENAME TO playback_state_by_id;")?;
         conn.execute_batch(SESSION_TABLES)?;
-        conn.execute_batch(
+        conn.execute_batch(&format!(
             "INSERT INTO playback_state (device, queue_json, updated_at)
-             SELECT '', queue_json, updated_at FROM playback_state_by_id WHERE id = 1;
-             DROP TABLE playback_state_by_id;",
-        )?;
+             SELECT d.device, queue_json, updated_at FROM playback_state_by_id, {devices} d
+              WHERE id = 1;
+             DROP TABLE playback_state_by_id;"
+        ))?;
     }
     Ok(())
 }
@@ -2373,12 +2380,20 @@ mod tests {
         );
     ";
 
-    fn the_apps_session(conn: &Connection) -> (String, String, i64, bool, bool, String) {
+    /// The session the app and the terminal UI each start with after the
+    /// upgrade, which is the same one.
+    fn the_session_both_keep(conn: &Connection) -> (String, String, i64, bool, bool, String) {
+        let app = session_of(conn, "");
+        assert_eq!(app, session_of(conn, "terminal-"));
+        app
+    }
+
+    fn session_of(conn: &Connection, device: &str) -> (String, String, i64, bool, bool, String) {
         conn.query_row(
             "SELECT s.queue_json, p.cursor_id, p.position_ms, p.was_playing, p.shuffle, p.repeat
                FROM playback_state s JOIN playback_position p ON p.device = s.device
-              WHERE s.device = ''",
-            [],
+              WHERE s.device = ?1",
+            [device],
             |r| {
                 Ok((
                     r.get(0)?,
@@ -2394,7 +2409,7 @@ mod tests {
     }
 
     #[test]
-    fn the_one_saved_session_becomes_the_apps() {
+    fn the_one_saved_session_goes_to_the_app_and_the_terminal() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         conn.execute_batch(&format!(
@@ -2410,7 +2425,7 @@ mod tests {
         create_tables(&conn).unwrap();
 
         assert_eq!(
-            the_apps_session(&conn),
+            the_session_both_keep(&conn),
             (
                 "[{}]".into(),
                 "/music/a.flac".into(),
@@ -2424,13 +2439,13 @@ mod tests {
             let rows: i64 = conn
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(rows, 1, "{table}");
+            assert_eq!(rows, 2, "{table}");
             assert!(!column_exists(&conn, table, "id").unwrap(), "{table}");
         }
     }
 
     #[test]
-    fn a_position_kept_with_the_queue_becomes_the_apps() {
+    fn a_position_kept_with_the_queue_goes_to_both() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         conn.execute_batch(&format!(
@@ -2446,7 +2461,7 @@ mod tests {
         create_tables(&conn).unwrap();
 
         assert_eq!(
-            the_apps_session(&conn),
+            the_session_both_keep(&conn),
             (
                 "[{}]".into(),
                 "/music/a.flac".into(),
@@ -2475,7 +2490,7 @@ mod tests {
 
         create_tables(&conn).unwrap();
 
-        let (_, cursor, position, playing, _, _) = the_apps_session(&conn);
+        let (_, cursor, position, playing, _, _) = the_session_both_keep(&conn);
         assert_eq!(
             (cursor.as_str(), position, playing),
             ("/music/a.flac", 61000, false)
