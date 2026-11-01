@@ -40,15 +40,30 @@ enum Menu {
 }
 
 impl Transport {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
         let covers = cx.global::<CoversHandle>().0.clone();
         Self {
-            seek: cx.new(Seek::new),
+            seek: cx.new(|cx| Seek::new(window, cx)),
             _subscriptions: [
                 cx.observe(&mirror.playback, |_, _, cx| cx.notify()),
                 cx.observe(&mirror.outputs, |_, _, cx| cx.notify()),
-                cx.observe(&covers, |_, _, cx| cx.notify()),
+                // Redrawn when its own sleeve lands, not for every sleeve the
+                // queue fetches as it scrolls.
+                cx.observe(&covers, |this, _, cx| {
+                    if this.cover.is_none() {
+                        let album = this
+                            .playback
+                            .read(cx)
+                            .0
+                            .entry
+                            .as_ref()
+                            .and_then(|e| e.album_id);
+                        if covers::image(album, COVER, cx).is_some() {
+                            cx.notify();
+                        }
+                    }
+                }),
                 // Shuffle and repeat are underlined in the accent.
                 theme::observe_accent(cx),
             ],
@@ -252,10 +267,10 @@ fn format_badge(format: &StreamFormat) -> String {
         format!("{rate:.1}")
     };
     match format.bit_depth {
-        Some(bits) => format!("{} {bits}/{rate}", format.codec.to_lowercase()),
+        Some(bits) => format!("{} {bits}/{rate}", format.codec.to_uppercase()),
         None => match format.bitrate_kbps {
-            Some(kbps) => format!("{} {kbps}k", format.codec.to_lowercase()),
-            None => format!("{} {rate}", format.codec.to_lowercase()),
+            Some(kbps) => format!("{} {kbps}k", format.codec.to_uppercase()),
+            None => format!("{} {rate}", format.codec.to_uppercase()),
         },
     }
 }
@@ -376,8 +391,9 @@ impl Render for Transport {
                         }),
                     ),
             )
-            // Its own cached view: the playhead's ticks redraw the slider and
-            // what holds it, never the rest of the bar's layout.
+            // Its own cached view. A tick re-renders the slider and the views
+            // that hold it (the bar, the shell), whose other cached children
+            // replay their last frame rather than laying out again.
             .child(
                 self.seek
                     .clone()
@@ -444,17 +460,19 @@ impl Render for Transport {
 pub struct Seek {
     playhead: Entity<Playhead>,
     playback: Entity<Playback>,
+    /// Whether the window shows: hidden, no timer runs.
+    visible: bool,
     tick: Option<Task<()>>,
     /// Where the slider was last laid out, for turning a pointer into a
     /// position and the duration into a step.
     bounds: Bounds<Pixels>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 impl Seek {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
         let mut seek = Self {
             _subscriptions: [
@@ -462,7 +480,14 @@ impl Seek {
                 cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
                 // The fill is the accent.
                 theme::observe_accent(cx),
+                // Nothing draws the slider while the window is hidden, so
+                // nothing keeps it moving; showing again puts it where it is.
+                cx.observe_window_visibility(window, |this, visibility, _, cx| {
+                    this.visible = visibility == WindowVisibility::Visible;
+                    this.moved(cx);
+                }),
             ],
+            visible: window.visibility() == WindowVisibility::Visible,
             playhead: mirror.playhead,
             playback: mirror.playback,
             tick: None,
@@ -486,7 +511,7 @@ impl Seek {
         self.tick = None;
         let anchor = *self.playhead.read(cx);
         let duration = self.duration_ms(cx);
-        if !anchor.playing || duration == 0 {
+        if !self.visible || !anchor.playing || duration == 0 {
             return;
         }
         let position = anchor.at(Instant::now(), duration);

@@ -13,6 +13,7 @@ use crate::engine::command;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::queue::QueueView;
+use crate::session::Session;
 use crate::sidebar::{self, Sidebar};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
 use crate::transport::{self, Transport};
@@ -54,6 +55,8 @@ pub struct Shell {
     /// must not take the keys from wherever they are.
     arrived_at: Route,
     _arrivals: Subscription,
+    /// Saves the session when the window loses focus.
+    _activation: Subscription,
 }
 
 impl Shell {
@@ -63,15 +66,21 @@ impl Shell {
         window.focus(&queue.focus_handle(cx), cx);
         // Whatever moved the navigator, the page it lands on takes the keys.
         let arrivals = cx.observe_in(&nav, window, |this, _, window, cx| this.arrived(window, cx));
+        let activation = cx.observe_window_activation(window, |_, window, cx| {
+            if !window.is_window_active() {
+                Session::save_if_changed(cx);
+            }
+        });
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
             nav,
             focus: cx.focus_handle(),
             queue,
-            transport: cx.new(Transport::new),
+            transport: cx.new(|cx| Transport::new(window, cx)),
             moving_window: false,
             arrived_at: Route::Queue,
             _arrivals: arrivals,
+            _activation: activation,
         }
     }
 
@@ -228,8 +237,8 @@ impl Shell {
                             .window_control_area(WindowControlArea::Close)
                             // Removing the window skips the close request, so
                             // its bounds are saved here rather than there.
-                            .on_click(|_, window, _| {
-                                window_state::save(window.window_bounds());
+                            .on_click(|_, window, cx| {
+                                window_state::save(window.window_bounds(), cx);
                                 window.remove_window();
                             }),
                     )
