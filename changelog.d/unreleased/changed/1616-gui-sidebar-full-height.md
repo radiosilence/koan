@@ -1,0 +1,1 @@
+- **The GUI app's sidebar runs from the window's top edge.** The traffic lights sit on the sidebar's ground with no line beneath them, and the toolbar heads the page column alone.

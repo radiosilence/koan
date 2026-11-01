@@ -27,9 +27,9 @@ use crate::window_state;
 
 const TOOLBAR: Pixels = px(38.);
 const TOOLBAR_BUTTON: Pixels = px(36.);
-/// Room left for the window's buttons where the toolbar runs under them.
+/// Room above the sidebar for the window's buttons, which sit on its ground.
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS: Pixels = px(78.);
+const TRAFFIC_LIGHTS: Pixels = TOOLBAR;
 #[cfg(not(target_os = "macos"))]
 const TRAFFIC_LIGHTS: Pixels = px(0.);
 
@@ -168,6 +168,32 @@ impl Shell {
         cx.notify();
     }
 
+    /// Bare space that moves the window, as a title bar's does.
+    fn moves_window(area: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+        area.window_control_area(WindowControlArea::Drag)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.moving_window = true),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.moving_window = false),
+            )
+            .on_mouse_down_out(cx.listener(|this, _, _, _| this.moving_window = false))
+            .on_mouse_move(cx.listener(|this, _, window, _| {
+                if std::mem::take(&mut this.moving_window) {
+                    window.start_window_move();
+                }
+            }))
+            .on_double_click(|_, window, _| {
+                if cfg!(target_os = "macos") {
+                    window.titlebar_double_click();
+                } else {
+                    window.zoom_window();
+                }
+            })
+    }
+
     fn toolbar(&self, p: &Paint, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let button = |id: &'static str, icon: Option<Icon>, label: &'static str, enabled: bool| {
             let surface = p.surface;
@@ -218,11 +244,8 @@ impl Shell {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .pl(TRAFFIC_LIGHTS + p.space(Space::S))
-            .pr(p.space(Space::L))
+            .px(p.space(Space::S))
             .gap(p.space(Space::Xs))
-            .border_b(theme::HAIRLINE)
-            .border_color(p.rule)
             .child(
                 button("back", Some(Icon::Back), "back", can_go_back)
                     .on_click(cx.listener(|this, _, window, cx| this.back(&Back, window, cx))),
@@ -235,8 +258,7 @@ impl Shell {
             // The toolbar's bare space moves the window, and its buttons do
             // not: a press that wobbles on back is still a click.
             .child(
-                div()
-                    .id("toolbar-drag")
+                Self::moves_window(div().id("toolbar-drag"), cx)
                     .flex_1()
                     .h_full()
                     .flex()
@@ -244,28 +266,6 @@ impl Shell {
                     .pl(p.space(Space::M))
                     .text_role(TypeRole::Control, &p.look)
                     .text_color(p.ink)
-                    .window_control_area(WindowControlArea::Drag)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.moving_window = true),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.moving_window = false),
-                    )
-                    .on_mouse_down_out(cx.listener(|this, _, _, _| this.moving_window = false))
-                    .on_mouse_move(cx.listener(|this, _, window, _| {
-                        if std::mem::take(&mut this.moving_window) {
-                            window.start_window_move();
-                        }
-                    }))
-                    .on_double_click(|_, window, _| {
-                        if cfg!(target_os = "macos") {
-                            window.titlebar_double_click();
-                        } else {
-                            window.zoom_window();
-                        }
-                    })
                     .child(title),
             )
             // Where the compositor leaves decorations to the app (GNOME on
@@ -359,28 +359,44 @@ impl Render for Shell {
             .flex()
             .flex_col()
             .text_color(p.ink)
-            .child(self.toolbar(&p, window, cx))
+            // The sidebar runs from the window's top edge to the transport,
+            // the window's buttons on its ground; the toolbar heads the page
+            // column alone.
             .child(
                 div()
                     .flex_1()
                     .min_h(px(0.))
                     .flex()
                     .child(
-                        self.sidebar.clone().cached(
-                            StyleRefinement::default()
-                                .w(sidebar::WIDTH)
-                                .h_full()
-                                .flex_shrink_0(),
-                        ),
+                        div()
+                            .w(sidebar::WIDTH)
+                            .h_full()
+                            .flex_shrink_0()
+                            .flex()
+                            .flex_col()
+                            .bg(p.bg)
+                            .when(TRAFFIC_LIGHTS > px(0.), |d| {
+                                d.child(
+                                    Self::moves_window(div().id("sidebar-drag"), cx)
+                                        .h(TRAFFIC_LIGHTS)
+                                        .flex_shrink_0(),
+                                )
+                            })
+                            .child(self.sidebar.clone().cached(
+                                StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
+                            )),
                     )
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.))
                             .h_full()
+                            .flex()
+                            .flex_col()
                             .border_l(theme::HAIRLINE)
                             .border_color(p.rule)
-                            .child(stage),
+                            .child(self.toolbar(&p, window, cx))
+                            .child(div().flex_1().min_h(px(0.)).child(stage)),
                     ),
             )
             .child(
