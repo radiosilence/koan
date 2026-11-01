@@ -1211,10 +1211,14 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
 /// Write the profiles, and say so: what each output plays through is shown
 /// on every device that can choose it, here and on the devices controlling
 /// this one.
+/// Writes a change to the profiles and tells the engine and the server of
+/// it, when there was one: a refused edit, or one that left everything as
+/// it was, wakes nobody.
 fn persist(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<(), String> {
-    Config::persist(mutate).map_err(|e| e.to_string())?;
-    crate::signal::engine_changed().bump();
-    crate::remote::dsp_sync::changed();
+    if Config::persist_changed(mutate).map_err(|e| e.to_string())? {
+        crate::signal::engine_changed().bump();
+        crate::remote::dsp_sync::changed();
+    }
     Ok(())
 }
 
@@ -1572,11 +1576,20 @@ pub fn set_band(
     edit_band(name, index, None, kind, freq, gain_db, q).map(|_| ())
 }
 
-/// `set_band`, refused unless filter `index` is still `expected`, the
-/// filter as the caller last read it: an index names a place in the list,
-/// and a band added or removed elsewhere since would put another filter
-/// there. Returns the filter as stored, held within the ranges, which is
-/// what a caller editing it again expects next.
+/// What an edit naming the filter it last saw did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Edited {
+    /// Saved: the filter as stored.
+    Stored(crate::config::DspFilter),
+    /// Not saved: the filter is no longer the one the caller saw.
+    Changed,
+}
+
+/// `set_band`, unless filter `index` is no longer `expected`, the filter as
+/// the caller last read it: an index names a place in the list, and a band
+/// added or removed elsewhere since would put another filter there. Says
+/// what it stored, held within the ranges, which is what a caller editing
+/// it again expects next.
 pub fn edit_band(
     name: &str,
     index: usize,
@@ -1585,7 +1598,7 @@ pub fn edit_band(
     freq: f64,
     gain_db: f64,
     q: f64,
-) -> Result<crate::config::DspFilter, String> {
+) -> Result<Edited, String> {
     use crate::config::DspFilter;
     let (kind, freq, gain_db, q) = band_values(kind, freq, gain_db, q)?;
     may_edit(name)?;
@@ -1601,12 +1614,12 @@ pub fn edit_band(
             return;
         };
         if expected.is_some_and(|e| e != &*filter) {
-            found = Err(changed_since(name));
+            found = Ok(Edited::Changed);
             return;
         }
         if let DspFilter::Band(b) = filter {
             (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
-            found = Ok(filter.clone());
+            found = Ok(Edited::Stored(filter.clone()));
         }
     })
     .map_err(|e| e.to_string())?;
@@ -1620,14 +1633,14 @@ pub fn set_curve(name: &str, index: usize, points: &[(f64, f64)]) -> Result<(), 
     edit_curve(name, index, None, points).map(|_| ())
 }
 
-/// `set_curve`, refused unless filter `index` is still `expected`, as
-/// `edit_band` is. Returns the curve as stored.
+/// `set_curve`, unless filter `index` is no longer `expected`, as
+/// `edit_band` is. Says what it stored.
 pub fn edit_curve(
     name: &str,
     index: usize,
     expected: Option<&crate::config::DspFilter>,
     points: &[(f64, f64)],
-) -> Result<crate::config::DspFilter, String> {
+) -> Result<Edited, String> {
     use crate::config::DspFilter;
     let points = curve_points(points)?;
     may_edit(name)?;
@@ -1643,20 +1656,16 @@ pub fn edit_curve(
             return;
         };
         if expected.is_some_and(|e| e != &*filter) {
-            found = Err(changed_since(name));
+            found = Ok(Edited::Changed);
             return;
         }
         if let DspFilter::Graphic(g) = filter {
             g.points = points;
-            found = Ok(filter.clone());
+            found = Ok(Edited::Stored(filter.clone()));
         }
     })
     .map_err(|e| e.to_string())?;
     found
-}
-
-fn changed_since(name: &str) -> String {
-    format!("{name} changed since it was shown. Its filters are shown again as they are now.")
 }
 
 /// Add a flat peaking band at 1 kHz to the end of `name`'s filters, on
@@ -4571,6 +4580,10 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         config::set_config_dir(dir.path());
+        let kept = |edited: Result<Edited, String>| match edited {
+            Ok(Edited::Stored(filter)) => filter,
+            other => panic!("{other:?}"),
+        };
         let band = |freq: f64| {
             DspFilter::Band(EqFilter {
                 kind: EqFilterKind::Peaking,
@@ -4595,7 +4608,15 @@ mod tests {
         let seen = band(200.0);
         // A drag past every range: what is stored is held, and the next step
         // expecting it goes through.
-        let stored = edit_band("Mine", 1, Some(&seen), "peaking", 40_000.0, 50.0, 90.0).unwrap();
+        let stored = kept(edit_band(
+            "Mine",
+            1,
+            Some(&seen),
+            "peaking",
+            40_000.0,
+            50.0,
+            90.0,
+        ));
         assert_eq!(
             stored,
             DspFilter::Band(EqFilter {
@@ -4606,14 +4627,33 @@ mod tests {
                 channels: Vec::new(),
             })
         );
-        assert!(edit_band("Mine", 1, Some(&seen), "peaking", 300.0, 1.0, 1.0).is_err());
-        let now = edit_band("Mine", 1, Some(&stored), "peaking", 300.0, 1.0, 1.0).unwrap();
+        assert_eq!(
+            edit_band("Mine", 1, Some(&seen), "peaking", 300.0, 1.0, 1.0),
+            Ok(Edited::Changed)
+        );
+        let now = kept(edit_band(
+            "Mine",
+            1,
+            Some(&stored),
+            "peaking",
+            300.0,
+            1.0,
+            1.0,
+        ));
         // The band before it removed elsewhere: the same index is now the
         // curve, and an edit of band 1 as it was seen is refused.
         remove_filter("Mine", 0).unwrap();
-        assert!(edit_band("Mine", 1, Some(&now), "peaking", 400.0, 1.0, 1.0).is_err());
+        assert_eq!(
+            edit_band("Mine", 1, Some(&now), "peaking", 400.0, 1.0, 1.0),
+            Ok(Edited::Changed)
+        );
         assert_eq!(detail("Mine").unwrap().filters[1], curve);
-        let painted = edit_curve("Mine", 1, Some(&curve), &[(2000.0, 1.0), (5.0, 50.0)]).unwrap();
+        let painted = kept(edit_curve(
+            "Mine",
+            1,
+            Some(&curve),
+            &[(2000.0, 1.0), (5.0, 50.0)],
+        ));
         assert_eq!(
             painted,
             DspFilter::Graphic(GraphicEq {
@@ -4621,8 +4661,11 @@ mod tests {
                 channels: Vec::new(),
             })
         );
-        assert!(edit_curve("Mine", 1, Some(&curve), &[(100.0, 0.0)]).is_err());
-        edit_curve("Mine", 1, Some(&painted), &[(100.0, 0.0)]).unwrap();
+        assert_eq!(
+            edit_curve("Mine", 1, Some(&curve), &[(100.0, 0.0)]),
+            Ok(Edited::Changed)
+        );
+        kept(edit_curve("Mine", 1, Some(&painted), &[(100.0, 0.0)]));
     }
 
     /// A preview draws an edit without saving it; saving as a copy keeps the
@@ -6717,6 +6760,76 @@ mod tests {
         assert_eq!(j.step.len(), targets::grid().len());
         assert!(j.step[low] < -3.0, "{}", j.step[low]);
         assert_eq!(j.suggestion, None);
+    }
+
+    /// A chain is matched while what plays meets the correction's target:
+    /// the first EQ that plays made against it, none after it against
+    /// another, and an EQ that says no target leaving it so.
+    #[test]
+    fn a_chain_is_matched_by_what_plays() {
+        use crate::config::DspTarget;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                filters: vec![band(100.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            let tuning = |name: &str, freq: f64, tuned_for: Option<&str>| DspProfile {
+                name: name.into(),
+                filters: vec![band(freq)],
+                tuned_for: tuned_for.map(Into::into),
+                role: Some(DspRole::Tuning),
+                ..Default::default()
+            };
+            c.dsp
+                .profiles
+                .push(tuning("Bright", 8000.0, Some("harman-over-ear-2018")));
+            c.dsp.profiles.push(tuning("Plain", 300.0, None));
+            c.dsp
+                .profiles
+                .push(tuning("Warm", 60.0, Some("diffuse-field-gras-kemar")));
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![band(200.0)],
+                role: Some(DspRole::Baked),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let dac = "Desk DAC";
+        let matched = |chain: &[(&str, bool)]| {
+            let chain: Vec<(String, bool)> =
+                chain.iter().map(|(n, on)| ((*n).into(), *on)).collect();
+            set_tunings(dac, &chain).unwrap();
+            overview_for(Some(dac.into())).matched
+        };
+        assign(Some("HD 600"), dac).unwrap();
+        assert!(matched(&[("Bright", true), ("Plain", true)]));
+        assert!(!matched(&[("Bright", true), ("Warm", true)]));
+        assert!(
+            !matched(&[("Plain", true), ("Bright", true)]),
+            "the first says no target"
+        );
+        assert!(
+            matched(&[("Warm", false), ("Bright", true)]),
+            "judged by the first that plays"
+        );
+        assert!(!matched(&[]), "no EQ plays");
+        assert!(matched(&[("Bright", true)]));
+        assign(Some("Lush"), dac).unwrap();
+        assert!(
+            !overview_for(Some(dac.into())).matched,
+            "a baked correction"
+        );
     }
 
     /// An output plays its tuning on top of its correction, with the

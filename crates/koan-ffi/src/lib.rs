@@ -3554,11 +3554,10 @@ impl KoanEngine {
         .await
     }
 
-    /// `dsp_set_band`, refused unless filter `index` is still `expected`,
-    /// the band as the caller last read it: an index names a place in the
-    /// list, and a filter added or removed elsewhere would put another
-    /// there. Returns the band as stored, which an edit following this one
-    /// expects.
+    /// `dsp_set_band`, unless filter `index` is no longer `expected`, the
+    /// band as the caller last read it: an index names a place in the list,
+    /// and a filter added or removed elsewhere would put another there. Says
+    /// what it stored, which an edit following this one names.
     #[allow(clippy::too_many_arguments)]
     pub async fn dsp_edit_band(
         self: Arc<Self>,
@@ -3569,7 +3568,7 @@ impl KoanEngine {
         freq: f64,
         gain_db: f64,
         q: f64,
-    ) -> Result<DspBand, KoanError> {
+    ) -> Result<DspEdited, KoanError> {
         offload::sequenced(move || {
             let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
                 message: format!("{name} band {} is not a band", index + 1),
@@ -3584,21 +3583,23 @@ impl KoanEngine {
                 q,
             )
             .map_err(|message| KoanError::BadArgument { message })?;
-            self.send_local(PlayerCommand::ReloadDsp)?;
+            if matches!(stored, koan_core::audio::dsp::profiles::Edited::Stored(_)) {
+                self.send_local(PlayerCommand::ReloadDsp)?;
+            }
             Ok(stored.into())
         })
         .await
     }
 
-    /// `dsp_set_curve`, refused unless filter `index` is still `expected`,
-    /// as `dsp_edit_band` is. Returns the curve as stored.
+    /// `dsp_set_curve`, unless filter `index` is no longer `expected`, as
+    /// `dsp_edit_band` is.
     pub async fn dsp_edit_curve(
         self: Arc<Self>,
         name: String,
         index: u32,
         expected: DspBand,
         points: Vec<DspPoint>,
-    ) -> Result<DspBand, KoanError> {
+    ) -> Result<DspEdited, KoanError> {
         offload::sequenced(move || {
             let expected = expected.to_filter().ok_or_else(|| KoanError::BadArgument {
                 message: format!("{name} filter {} is not a curve", index + 1),
@@ -3611,7 +3612,9 @@ impl KoanEngine {
                 &points,
             )
             .map_err(|message| KoanError::BadArgument { message })?;
-            self.send_local(PlayerCommand::ReloadDsp)?;
+            if matches!(stored, koan_core::audio::dsp::profiles::Edited::Stored(_)) {
+                self.send_local(PlayerCommand::ReloadDsp)?;
+            }
             Ok(stored.into())
         })
         .await

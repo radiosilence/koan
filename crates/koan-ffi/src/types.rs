@@ -2109,6 +2109,28 @@ pub struct DspBandKind {
     pub draggable: bool,
 }
 
+/// What an edit naming the filter it last saw did.
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum DspEdited {
+    /// Saved: the filter as stored, which the next edit of it names.
+    Stored { band: DspBand },
+    /// Not saved: the filter is no longer the one named, since a filter was
+    /// added, removed or changed elsewhere. Read the profile again.
+    Changed,
+}
+
+impl From<koan_core::audio::dsp::profiles::Edited> for DspEdited {
+    fn from(e: koan_core::audio::dsp::profiles::Edited) -> Self {
+        use koan_core::audio::dsp::profiles::Edited;
+        match e {
+            Edited::Stored(filter) => Self::Stored {
+                band: filter.into(),
+            },
+            Edited::Changed => Self::Changed,
+        }
+    }
+}
+
 /// How much of a graphic curve a stroke pulls.
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DspBrush {
