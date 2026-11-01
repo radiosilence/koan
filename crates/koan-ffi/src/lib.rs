@@ -1659,6 +1659,13 @@ impl KoanEngine {
         .await
     }
 
+    /// How many cover requests to a server may run at once. The phone apps
+    /// keep the engine's default; the desktop app bounds its own fetches by
+    /// what is on screen and sets this to its ceiling.
+    pub fn set_cover_fetch_limit(&self, limit: u32) {
+        koan_core::remote::client::set_cover_fetch_limit(limit as usize);
+    }
+
     /// The record's artwork, asked for by the record.
     ///
     /// Every track on an album shares its cover, so the track whose art stands
@@ -5305,6 +5312,35 @@ impl OrganizeSelection {
 
 // --- Internals -------------------------------------------------------------
 
+/// A core's turn at reading and resizing a local cover. A screen of a
+/// hundred records asks for a hundred at once; run together they thrash the
+/// cores and every cover lands late, where queued at the cores' width the
+/// first land first.
+struct CoverCore;
+
+static COVER_CORES: parking_lot::Mutex<usize> = parking_lot::Mutex::new(0);
+static COVER_CORE_FREE: parking_lot::Condvar = parking_lot::Condvar::new();
+
+impl CoverCore {
+    fn take() -> Self {
+        // Half the cores: an app decodes what lands on the other half.
+        let width = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(1));
+        let mut busy = COVER_CORES.lock();
+        while *busy >= width {
+            COVER_CORE_FREE.wait(&mut busy);
+        }
+        *busy += 1;
+        Self
+    }
+}
+
+impl Drop for CoverCore {
+    fn drop(&mut self) {
+        *COVER_CORES.lock() -= 1;
+        COVER_CORE_FREE.notify_one();
+    }
+}
+
 impl KoanEngine {
     async fn toggle(
         self: Arc<Self>,
@@ -5700,8 +5736,14 @@ impl KoanEngine {
         };
         let track_id = row.id;
 
-        if let Some(art) = local_cover_art(&row) {
-            return Ok(Some(fit_cover(art, size)));
+        {
+            // Reading and resizing a local cover is CPU work: as many at once
+            // as there are cores, however many are asked for. A remote
+            // cover, below, waits on the network and is not held here.
+            let _core = CoverCore::take();
+            if let Some(art) = local_cover_art(&row) {
+                return Ok(Some(fit_cover(art, size)));
+            }
         }
 
         let Some(remote_id) = row.remote_id else {

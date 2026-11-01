@@ -262,10 +262,20 @@ impl Connections {
     }
 }
 
-/// How many `getCoverArt` requests run at once, across every server. A flick
-/// through a remote album grid asks for every tile it passes; past this the
-/// rest wait their turn rather than each opening a socket.
+/// How many `getCoverArt` requests run at once, across every server, unless
+/// the app sets otherwise. A flick through a remote album grid asks for every
+/// tile it passes; past this the rest wait their turn. The phone apps keep
+/// the default; the desktop app bounds its own fetches by what is on screen
+/// and raises this to its ceiling (`set_cover_fetch_limit`).
 const COVER_FETCHES: usize = 8;
+
+static COVER_LIMIT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(COVER_FETCHES);
+
+/// How many cover requests may run at once from now on, at least one.
+pub fn set_cover_fetch_limit(limit: usize) {
+    COVER_LIMIT.store(limit.max(1), std::sync::atomic::Ordering::Relaxed);
+}
 
 /// How long a cover fetch waits for a slot before giving up. A fast scroll
 /// queues fetches for tiles already gone, and a caller cancelling does not
@@ -283,8 +293,9 @@ impl CoverSlots {
     fn take() -> Result<Self, SubsonicError> {
         let deadline = std::time::Instant::now() + COVER_WAIT;
         let mut busy = COVERS_IN_FLIGHT.lock();
-        while *busy >= COVER_FETCHES {
-            if COVER_FREED.wait_until(&mut busy, deadline).timed_out() && *busy >= COVER_FETCHES {
+        let limit = || COVER_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+        while *busy >= limit() {
+            if COVER_FREED.wait_until(&mut busy, deadline).timed_out() && *busy >= limit() {
                 return Err(SubsonicError::Busy);
             }
         }

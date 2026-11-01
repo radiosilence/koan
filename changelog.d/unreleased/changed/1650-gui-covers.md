@@ -1,0 +1,1 @@
+- **Album art arrives faster from a server.** The desktop app fetches as many covers at once as twice the number on screen, up to 512, rather than six, at the size it draws them, and covers that are ready together land together. Reading and resizing local covers is spread over the machine's cores rather than queued behind six threads or crowding them.
