@@ -323,7 +323,7 @@ impl TrackBrowser {
             gathered: true,
             transfer: feed.transfers.get(&id).copied(),
             drag,
-            height: rows::art_height(p),
+            kind: crate::components::RowKind::Art,
         };
         rows::track_row(p, &self.tracks[index], index, state, sleeve, None, cx)
     }

@@ -16,32 +16,26 @@ use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
-use super::tile::playing_bars;
 use super::tokens::{Paint, Type, Typeset};
-use crate::theme::Space;
+use crate::components::{RowKind, RowMetrics, TableRow};
 use crate::theme::{Icon, KoanIcon};
-
-/// Row heights follow the text size alone, as the Mac's do; their padding
-/// follows the spacing scale.
-fn rowed(p: &Paint, points: f32) -> Pixels {
-    px(points * p.look.scale.size) + p.space(Space::Xs) * 2.0
-}
 
 /// A row of one line: the title alone.
 pub fn height(p: &Paint) -> Pixels {
-    rowed(p, 24.0)
+    RowMetrics::height(RowKind::Line, &p.look)
 }
 
 /// A row with a credit line under its title.
 pub fn text_height(p: &Paint) -> Pixels {
-    rowed(p, 34.0)
+    RowMetrics::height(RowKind::Text, &p.look)
 }
 
 /// A row that carries its sleeve, with the artist and record under the title.
 pub fn art_height(p: &Paint) -> Pixels {
-    rowed(p, 40.0)
+    RowMetrics::height(RowKind::Art, &p.look)
 }
 
+/// A gathered row's sleeve, in points at 100 % (`RowMetrics::sleeve`).
 pub const SLEEVE: f32 = 32.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,9 +72,9 @@ pub struct RowState {
     /// What dragging the row carries, and what its menu acts on: the list's
     /// selection when the row is in it, built once for the selection.
     pub drag: PlayableDrag,
-    /// The list's row height: one for every row, since a list lays out
+    /// The list's row kind: one for every row, since a list lays out
     /// uniform rows (`height`, `text_height` or `art_height`).
-    pub height: Pixels,
+    pub kind: RowKind,
 }
 
 /// Where the file is, or how its download is going.
@@ -122,95 +116,60 @@ pub fn track_row<V: TrackList>(
             },
         )
     };
-    let title_tone = if state.current { p.accent } else { p.ink };
-
     let lead = div()
-        .w(state.lead_width)
-        .flex_none()
-        .flex()
-        .justify_end()
         .typeset(
             p,
             Type::Meta,
             if state.current { p.accent } else { p.muted },
         )
         .child(if state.current && state.playing {
-            playing_bars(p).into_any_element()
+            super::tile::playing_bars(p).into_any_element()
         } else {
             div()
-                .child(
-                    div()
-                        .group_hover("row", |s| s.invisible())
-                        .child(state.lead.clone()),
-                )
+                .group_hover("row", |s| s.invisible())
+                .child(state.lead.clone())
                 .into_any_element()
         });
 
-    let credited = track.artist_credit.iter().enumerate().map(|(i, part)| {
-        let span = div()
-            .id(("row-credit", (id as u64) << 8 | i as u64))
-            .child(part.text.clone());
-        match part.artist_id {
-            Some(artist) => span
-                .cursor_pointer()
-                .hover(|s| s.underline().text_color(p.ink))
-                .on_click(click(RowPart::Artist(artist)))
-                .into_any_element(),
-            None => span.into_any_element(),
-        }
-    });
     let names_artist = state.gathered
         || track.credit_differs
         || page_artist.is_some_and(|a| track.artist_id != Some(a));
-    let mut detail =
-        div()
-            .flex()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .typeset(p, Type::Meta, p.muted);
+    let mut detail = div().flex();
     if names_artist {
-        detail = detail.children(credited);
+        detail = detail.children(track.artist_credit.iter().enumerate().map(|(i, part)| {
+            let span = div()
+                .id(("row-credit", (id as u64) << 8 | i as u64))
+                .flex_none()
+                .child(part.text.clone());
+            match part.artist_id {
+                Some(artist) => span
+                    .cursor_pointer()
+                    .hover(|s| s.underline().text_color(p.ink))
+                    .on_click(click(RowPart::Artist(artist)))
+                    .into_any_element(),
+                None => span.into_any_element(),
+            }
+        }));
     }
     if state.gathered
         && let Some(album) = track.album_id
     {
-        detail = detail.child(" · ").child(
-            div()
-                .id(("row-album", id as u64))
-                .cursor_pointer()
-                .hover(|s| s.underline().text_color(p.ink))
-                .on_click(click(RowPart::Album(album)))
-                .child(track.album_title.clone()),
-        );
+        detail = detail
+            .child(div().flex_none().child("\u{a0}·\u{a0}"))
+            .child(
+                div()
+                    .id(("row-album", id as u64))
+                    .cursor_pointer()
+                    .hover(|s| s.underline().text_color(p.ink))
+                    .on_click(click(RowPart::Album(album)))
+                    .child(track.album_title.clone()),
+            );
     }
 
-    let title = div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w_0()
-        .overflow_hidden()
-        .child(
-            div()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .typeset(p, Type::Body, title_tone)
-                .child(track.title.clone()),
-        )
-        .when(state.gathered || names_artist, |d| d.child(detail));
-
-    let mark = availability(p, track, state.transfer);
     let heart = div()
         .id(("row-heart", id as u64))
-        .w(p.sized(20.0))
-        .flex_none()
         .cursor_pointer()
-        .typeset(
-            p,
-            Type::Meta,
-            if state.favourite { p.accent } else { p.muted },
-        )
+        .text_color(if state.favourite { p.accent } else { p.muted })
         .when(!state.favourite, |d| {
             d.invisible().group_hover("row", |s| s.visible())
         })
@@ -224,52 +183,32 @@ pub fn track_row<V: TrackList>(
         after: None,
     };
 
-    let mut row = div()
-        .id(("row", id as u64))
-        .group("row")
-        .w_full()
-        .flex()
-        .items_center()
-        .gap(p.space(Space::M))
-        .px(px(super::tile::MARGIN))
-        .h(state.height)
-        .when(state.selected, |d| d.bg(p.surface))
-        .when(!state.selected, |d| d.hover(|s| s.bg(p.row_hover())))
-        .on_click(click(RowPart::Row))
-        .child(lead);
-    if state.gathered {
-        let mut art = div().size(px(SLEEVE)).flex_none().bg(p.surface);
+    let sleeve = state.gathered.then(|| {
+        let side = RowMetrics::sleeve(&p.look);
+        let art = div().size(side).flex_none().bg(p.surface);
         match sleeve {
-            Some(Sleeve::Ready(image)) => {
-                art = art.child(img(ImageSource::Render(image)).size_full())
-            }
-            Some(Sleeve::Colour(colour)) => art = art.bg(colour),
-            _ => art = art.child(crate::components::Placeholder::new(px(SLEEVE))),
+            Some(Sleeve::Ready(image)) => art.child(img(ImageSource::Render(image)).size_full()),
+            Some(Sleeve::Colour(colour)) => art.bg(colour),
+            _ => art.child(crate::components::Placeholder::new(side)),
         }
-        row = row.child(art);
-    }
-    row.child(title)
-        .child(div().w(p.sized(14.0)).flex_none().children(mark))
-        .child(heart)
-        .child(
+    });
+
+    TableRow::new(("row", id as u64), state.kind)
+        .group("row")
+        .selected(state.selected)
+        .lead_exact(state.lead_width, lead)
+        .when_some(sleeve, |row, sleeve| row.lead(SLEEVE, sleeve))
+        .title(
             div()
-                .w(p.sized(110.0))
-                .flex_none()
-                .flex()
-                .justify_end()
-                .whitespace_nowrap()
-                .typeset(p, Type::Meta, p.muted)
-                .children(format::quality(track)),
+                .text_color(if state.current { p.accent } else { p.ink })
+                .child(track.title.clone()),
         )
-        .child(
-            div()
-                .w(p.sized(64.0))
-                .flex_none()
-                .flex()
-                .justify_end()
-                .typeset(p, Type::Meta, p.muted)
-                .child(format::duration(track.duration_ms)),
-        )
+        .when(state.gathered || names_artist, |row| row.line(detail))
+        .figure(14.0, div().children(availability(p, track, state.transfer)))
+        .figure(20.0, heart)
+        .figure(110.0, div().children(format::quality(track)))
+        .figure(64.0, format::duration(track.duration_ms))
+        .on_click(click(RowPart::Row))
         .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
         .on_mouse_down(MouseButton::Right, actions::mark(view, target))
         .into_any_element()

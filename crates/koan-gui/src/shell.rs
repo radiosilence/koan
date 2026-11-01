@@ -9,7 +9,7 @@ use koan_kit::raw::base::InteractiveElementExt as _;
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use crate::components::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
+use crate::components::{SplitView, TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
     self, ActualSize, Back, Bigger, Forward, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
@@ -52,8 +52,10 @@ pub struct Shell {
     library: Option<Entity<LibraryStage>>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
-    /// Whether the sidebar shows; kept with the window's bounds.
+    /// Whether the sidebar shows, and how wide; kept with the window's
+    /// bounds.
     sidebar_shown: bool,
+    sidebar_width: Pixels,
     /// The route focus was last moved for: the navigator notifies for more
     /// than moves (a deleted playlist forgotten during a scan), and those
     /// must not take the keys from wherever they are.
@@ -104,6 +106,9 @@ impl Shell {
             library: None,
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
+            sidebar_width: px(f32::from_bits(
+                window_state::SIDEBAR_WIDTH.load(std::sync::atomic::Ordering::Relaxed),
+            )),
             arrived_at: Route::Queue,
             _arrivals: arrivals,
             _activation: activation,
@@ -374,42 +379,54 @@ impl Render for Shell {
             // transport spans the whole window; otherwise they are on `bg`
             // and the transport spans the page column only.
             .child(
-                div()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .flex()
-                    .child(
-                        div()
-                            .w(sidebar::WIDTH)
-                            .h_full()
-                            .flex_shrink_0()
-                            .flex()
-                            .flex_col()
-                            .when(!washed, |d| d.bg(p.bg))
-                            .when(TRAFFIC_LIGHTS > px(0.), |d| {
-                                d.child(
-                                    Self::moves_window(div().id("sidebar-drag"), cx)
-                                        .h(TRAFFIC_LIGHTS)
-                                        .flex_shrink_0(),
-                                )
-                            })
-                            .child(self.sidebar.clone().cached(
-                                StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
-                            )),
+                div().flex_1().min_h(px(0.)).child(
+                    SplitView::new(
+                        "sidebar-split",
+                        self.sidebar_width,
+                        sidebar::MIN_WIDTH,
+                        sidebar::MAX_WIDTH,
+                        sidebar::WIDTH,
                     )
-                    .child(
+                    .when(self.sidebar_shown, |split| {
+                        split.leading(
+                            div()
+                                .size_full()
+                                .flex()
+                                .flex_col()
+                                .when(!washed, |d| d.bg(p.bg))
+                                .when(TRAFFIC_LIGHTS > px(0.), |d| {
+                                    d.child(
+                                        Self::moves_window(div().id("sidebar-drag"), cx)
+                                            .h(TRAFFIC_LIGHTS)
+                                            .flex_shrink_0(),
+                                    )
+                                })
+                                .child(self.sidebar.clone().cached(
+                                    StyleRefinement::default().w_full().flex_1().min_h(px(0.)),
+                                )),
+                        )
+                    })
+                    .trailing(
                         div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .h_full()
+                            .size_full()
                             .flex()
                             .flex_col()
-                            .border_l(theme::HAIRLINE)
-                            .border_color(p.rule)
                             .child(self.toolbar(window, cx))
                             .child(div().flex_1().min_h(px(0.)).child(stage))
                             .when(!washed, |d| d.child(transport())),
-                    ),
+                    )
+                    .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
+                        this.sidebar_width = *width;
+                        cx.notify();
+                    }))
+                    .on_commit(|width: &Pixels, window, cx| {
+                        window_state::SIDEBAR_WIDTH.store(
+                            f32::from(*width).to_bits(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        window_state::save(window.window_bounds(), cx);
+                    }),
+                ),
             )
             .when(washed, |d| d.child(transport()))
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
