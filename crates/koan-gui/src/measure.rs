@@ -1,6 +1,9 @@
 //! Frame-time measurement, built with the `profiler` feature.
 //!
-//! With `KOAN_GUI_MEASURE=play` the app starts playback and runs on, for
+//! With `KOAN_GUI_MEASURE=frames` (or `play-frames`) the app counts the
+//! frames the platform asks for over twenty idle seconds and how many drew
+//! anything, then quits. With `KOAN_GUI_MEASURE=play` the app starts playback
+//! and runs on, for
 //! its CPU use to be read from outside. With `KOAN_GUI_MEASURE=scroll` the
 //! app scrolls the queue through its own
 //! window, with input events delivered to the window and nothing sent to
@@ -15,6 +18,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use gpui_kit::profiler::journal::{ForegroundJournalEntry, IntervalBoundary};
 use gpui_kit::*;
 
 /// Wheel steps per direction, 16 ms apart: about five seconds each way.
@@ -29,15 +33,96 @@ pub fn start(cx: &mut App) {
         Ok("scroll") => scroll(cx),
         // Starts playback and leaves the app to run, for its CPU use to be
         // read from outside while it plays with nobody touching it.
-        Ok("play") => crate::engine::command(cx, "play", |e| e.resume()),
+        Ok("play") => play(cx),
+        // Frames the platform asked for over twenty idle seconds, and how many
+        // of them drew anything: the platform's own cost, read from GPUI's
+        // journal rather than from the process's CPU time, which moves with
+        // whatever else the machine is doing.
+        Ok("frames") => frames(cx, false),
+        Ok("play-frames") => frames(cx, true),
         // The same with the app hidden, which stops the window's frames.
         Ok("hidden") => cx.hide(),
         Ok("play-hidden") => {
-            crate::engine::command(cx, "play", |e| e.resume());
+            play(cx);
             cx.hide();
         }
         _ => {}
     }
+}
+
+fn frames(cx: &mut App, playing: bool) {
+    if playing {
+        play(cx);
+    }
+    let journal = cx.foreground_journal();
+    let background = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        background.timer(Duration::from_secs(5)).await;
+        let mut collector = journal.collector();
+        let visible_at_start = visible(cx);
+        background.timer(Duration::from_secs(20)).await;
+        let visible_at_end = visible(cx);
+        let (mut signals, mut skipped, mut presented) = (0, 0, 0);
+        for entry in collector.collect_unseen().entries {
+            match entry {
+                ForegroundJournalEntry::PlatformSignal(_) => signals += 1,
+                ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(_)) => {
+                    skipped += 1
+                }
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(_)) => {
+                    presented += 1
+                }
+                _ => {}
+            }
+        }
+        println!(
+            "frames over 20 s ({}): {signals} asked for, {skipped} with nothing to draw, {presented} drawn; visible {visible_at_start} -> {visible_at_end}",
+            if playing { "playing" } else { "paused" },
+        );
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+fn visible(cx: &mut AsyncApp) -> bool {
+    cx.update(|cx| {
+        cx.windows().first().is_some_and(|window| {
+            window
+                .update(cx, |_, window, _| {
+                    window.visibility() == WindowVisibility::Visible
+                })
+                .unwrap_or(false)
+        })
+    })
+}
+
+/// Plays the queue, filling an empty one with the library first, so a run
+/// against a fresh configuration has something to play.
+fn play(cx: &mut App) {
+    let engine = crate::engine::engine(cx);
+    let empty = cx
+        .global::<crate::mirror::Mirror>()
+        .queue
+        .read(cx)
+        .items
+        .is_empty();
+    cx.background_executor()
+        .spawn(async move {
+            if empty {
+                let tracks = engine
+                    .clone()
+                    .random_tracks(100, None)
+                    .await
+                    .unwrap_or_default();
+                let ids = tracks.iter().map(|track| track.id).collect();
+                if let Err(e) = engine.clone().replace_queue(ids, None, false).await {
+                    log::warn!("measure: queue not filled: {e}");
+                }
+            } else if let Err(e) = engine.clone().resume().await {
+                log::warn!("measure: not resumed: {e}");
+            }
+        })
+        .detach();
 }
 
 fn scroll(cx: &mut App) {
