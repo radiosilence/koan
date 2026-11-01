@@ -1092,6 +1092,13 @@ impl KoanEngine {
     }
 
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
+        // Every client's bar lands where it was asked to now, not when the
+        // player thread gets there; see `state::PendingSeek`.
+        let playing = self.state.playback_state()
+            == koan_core::player::state::PlaybackState::Playing
+            && self.state.playhead_moving();
+        self.out
+            .seek_requested(position_ms, self.state.seekable_ms(), playing);
         offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await
     }
 
