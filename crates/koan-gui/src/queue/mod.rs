@@ -9,16 +9,18 @@
 
 pub mod rows;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use koan_ffi::{EntryStatus, QueueItem};
+use koan_ffi::{CreditPart, EntryStatus, QueueItem};
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
 use crate::components::{KoanContextMenu, Menu, MenuEntry};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
-use crate::library::drag::PlayableDrag;
+use crate::library::drag::{Playable, PlayableDrag};
+use crate::library::feed::Feed;
+use crate::links::{self, names};
 use crate::mirror::{Mirror, Queue};
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
@@ -27,6 +29,7 @@ use crate::platform::actions::{
 };
 use crate::platform::drop;
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
+use crate::window_state;
 use rows::Row;
 
 // The queue's own keys. Delete, select all, undo and redo are the
@@ -123,6 +126,13 @@ pub struct QueueView {
     menu_row: Option<usize>,
     /// The navigator's rewinds of the queue already answered.
     rewinds: u32,
+    /// Where the rows' links lead.
+    nav: Entity<Navigator>,
+    /// The favourites, once the library has loaded.
+    feed: Option<(Entity<Feed>, Subscription)>,
+    /// The running transfers' progress, read once a frame and only by a frame
+    /// that draws a transferring row.
+    readings: Option<HashMap<i64, Option<f64>>>,
     _subscriptions: [Subscription; 4],
 }
 
@@ -173,10 +183,50 @@ impl QueueView {
             rewinds: nav.read(cx).rewinds(Route::Queue),
             drop_at: None,
             menu_row: None,
+            nav: nav.clone(),
+            feed: None,
+            readings: None,
             _subscriptions: subscriptions,
         };
+        // The queue can arrive before the window's saved layout is read.
+        let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
+        if view.queue.read(cx).grouped != grouped {
+            view.queue.update(cx, |queue, _| queue.regroup(grouped));
+        }
         view.lay_out(cx);
         view
+    }
+
+    /// "Group by album": the rows under record headings, or flat.
+    fn set_grouped(&mut self, grouped: bool, window: &mut Window, cx: &mut Context<Self>) {
+        window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);
+        window_state::save(window.window_bounds(), cx);
+        self.queue.update(cx, |queue, cx| {
+            queue.regroup(grouped);
+            cx.notify();
+        });
+    }
+
+    /// The rows' hearts read and toggle the library's favourites.
+    pub fn set_feed(&mut self, feed: Entity<Feed>, cx: &mut Context<Self>) {
+        let observed = cx.observe(&feed, |_, _, cx| cx.notify());
+        self.feed = Some((feed, observed));
+        cx.notify();
+    }
+
+    /// A transfer's progress, from this frame's reading of every transfer.
+    fn progress(&mut self, track: i64, cx: &App) -> Option<f64> {
+        self.readings
+            .get_or_insert_with(|| {
+                engine(cx)
+                    .transfer_readings()
+                    .into_iter()
+                    .map(|figure| (figure.track_id, figure.progress))
+                    .collect()
+            })
+            .get(&track)
+            .copied()
+            .flatten()
     }
 
     /// The queue was sent whole: its rows were laid out off the main thread
@@ -505,7 +555,13 @@ impl QueueView {
         }
     }
 
-    fn render_row(&mut self, row: usize, p: &Paint, cx: &mut Context<Self>) -> AnyElement {
+    fn render_row(
+        &mut self,
+        row: usize,
+        p: &Paint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let count = self.rows(cx).len();
         if row >= count {
             return div().into_any_element();
@@ -527,29 +583,72 @@ impl QueueView {
             };
             covers::draw(covers::image(album, side, cx), side, p.surface)
         });
+        // What a track row reads beyond its item: its heart, and how far its
+        // transfer has come. A transferring row asks for the next frame, so
+        // its ring moves at the display's rate while it is on screen and
+        // nothing is drawn for it otherwise.
+        let mut favourite = None;
+        let mut progress = None;
+        if let Row::Track { ix, .. } = r {
+            let item = &self.queue.read(cx).items[ix];
+            let (track, status) = (item.track_id, item.status);
+            if let (Some(track), Some((feed, _))) = (track, &self.feed) {
+                favourite = Some(feed.read(cx).is_favourite(Playable::Track(track)));
+            }
+            if status == EntryStatus::Downloading {
+                progress = track.and_then(|track| self.progress(track, cx));
+                window.request_animation_frame();
+            }
+        }
+        let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
         let queue = self.queue.read(cx);
         let (height, line, id) = match r {
             Row::Heading { first, len } => {
                 let run = &queue.items[first..first + len];
+                // Named by what the row is, so hover and drag state stay with
+                // it when the queue moves under the pointer.
+                let id = SharedString::from(format!("h:{}", queue.base[first].queue_item_id));
+                let look = Look {
+                    p,
+                    nav: &self.nav,
+                    row: &id,
+                };
                 let line = heading(
                     &run[0],
                     detail(run),
                     sleeve.unwrap_or_else(|| div().into_any_element()),
-                    p,
+                    &look,
                 );
-                // Named by what the row is, so hover and drag state stay with
-                // it when the queue moves under the pointer.
-                let id = SharedString::from(format!("h:{}", queue.base[first].queue_item_id));
                 (HEADING, line, id)
             }
             Row::Track { ix, grouped } => {
                 let height = if grouped { TRACK } else { SINGLE };
-                let line = track(&queue.items[ix], grouped, sleeve, p);
-                (
-                    height,
-                    line,
-                    SharedString::from(queue.base[ix].queue_item_id.clone()),
-                )
+                let id = SharedString::from(queue.base[ix].queue_item_id.clone());
+                let look = Look {
+                    p,
+                    nav: &self.nav,
+                    row: &id,
+                };
+                let item = &queue.items[ix];
+                let numbering = Numbering {
+                    by_disc: item
+                        .album_id
+                        .is_some_and(|album| queue.disc_records.contains(&album)),
+                    wide: !queue.disc_records.is_empty(),
+                };
+                let line = track(
+                    item,
+                    grouped,
+                    sleeve,
+                    numbering,
+                    Extras {
+                        favourite,
+                        feed,
+                        progress,
+                    },
+                    &look,
+                );
+                (height, line, id)
             }
         };
         let dragged = DraggedRows {
@@ -563,7 +662,8 @@ impl QueueView {
         let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
         let view = cx.entity();
         div()
-            .id(ElementId::Name(id))
+            .id(ElementId::Name(id.clone()))
+            .group(id)
             .h(height)
             .w_full()
             .flex()
@@ -636,6 +736,7 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
         return menu;
     };
     let ids = this.acting_on(row, cx);
+    let grouped = this.queue.read(cx).grouped;
     let heading = matches!(this.rows(cx)[row], Row::Heading { .. })
         && ids.len() == this.rows(cx)[row].items().len();
     let remove_label = match (heading, ids.len()) {
@@ -674,6 +775,26 @@ fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
         MenuEntry::new("redo")
             .icon(Icon::Redo)
             .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
+    )
+    .separator()
+    .item(
+        MenuEntry::new("jump to playing")
+            .icon(Icon::JumpToPlaying)
+            .on_click({
+                let view = view.clone();
+                move |_, _, cx| view.update(cx, |this, cx| this.jump_to_playing(cx))
+            }),
+    )
+    .item(
+        MenuEntry::new("group by album")
+            .icon(Icon::Album)
+            .checked(grouped)
+            .on_click({
+                let view = view.clone();
+                move |_, window, cx| {
+                    view.update(cx, |this, cx| this.set_grouped(!grouped, window, cx))
+                }
+            }),
     )
 }
 
@@ -722,12 +843,70 @@ fn glyph(icon: Icon, word: &'static str, role: TypeRole, color: Hsla, p: &Paint)
     }
 }
 
-fn heading(first: &QueueItem, detail: String, sleeve: AnyElement, p: &Paint) -> Div {
-    let artist = if first.album_artist.is_empty() {
-        &first.artist
+/// What every part of one row draws with: the look, where links lead, and
+/// the row's own id, which names its parts.
+struct Look<'a> {
+    p: &'a Paint,
+    nav: &'a Entity<Navigator>,
+    row: &'a SharedString,
+}
+
+impl Look<'_> {
+    fn id(&self, part: &str, ix: usize) -> ElementId {
+        ElementId::Name(format!("{}:{part}:{ix}", self.row).into())
+    }
+}
+
+/// How a track row numbers itself: by disc and track on a record with a
+/// second disc, and wider wherever any record in the queue does.
+#[derive(Clone, Copy)]
+struct Numbering {
+    by_disc: bool,
+    wide: bool,
+}
+
+/// A track row's heart and transfer.
+struct Extras {
+    /// `None` for a track the library does not hold, or before it loads.
+    favourite: Option<bool>,
+    feed: Option<Entity<Feed>>,
+    /// How far the transfer has come, when the server said how big.
+    progress: Option<f64>,
+}
+
+fn link(
+    id: ElementId,
+    text: impl Into<SharedString>,
+    route: Option<Route>,
+    look: &Look,
+) -> Stateful<Div> {
+    links::link(id, text, route, look.nav, look.p.ink)
+}
+
+fn credit(parts: &[CreditPart], fallback: &str, part: &str, look: &Look) -> Vec<AnyElement> {
+    links::credit(
+        parts,
+        fallback,
+        |ix| look.id(part, ix),
+        look.nav,
+        look.p.ink,
+    )
+}
+
+fn heading(first: &QueueItem, detail: String, sleeve: AnyElement, look: &Look) -> Div {
+    let p = look.p;
+    let (parts, artist) = if first.album_artist.is_empty() {
+        (&first.artist_credit, &first.artist)
     } else {
-        &first.album_artist
+        (&first.album_artist_credit, &first.album_artist)
     };
+    let album = link(
+        look.id("album", 0),
+        first.album.clone(),
+        first.album_id.map(Route::Album),
+        look,
+    )
+    .into_any_element();
     div()
         .flex()
         .flex_1()
@@ -740,13 +919,26 @@ fn heading(first: &QueueItem, detail: String, sleeve: AnyElement, p: &Paint) -> 
                 .flex()
                 .flex_col()
                 .min_w(px(0.))
-                .child(line(first.album.clone(), TypeRole::Body, p.strong, p))
-                .child(line(artist.clone(), TypeRole::Meta, p.ink, p))
+                .child(names(vec![album], TypeRole::Body, p.strong, p))
+                .child(names(
+                    credit(parts, artist, "artist", look),
+                    TypeRole::Meta,
+                    p.ink,
+                    p,
+                ))
                 .child(line(detail, TypeRole::Fine, p.muted, p)),
         )
 }
 
-fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint) -> Div {
+fn track(
+    item: &QueueItem,
+    grouped: bool,
+    sleeve: Option<AnyElement>,
+    numbering: Numbering,
+    extras: Extras,
+    look: &Look,
+) -> Div {
+    let p = look.p;
     let playing = item.status == EntryStatus::Playing;
     let title_color = match item.status {
         EntryStatus::Playing => p.accent_text,
@@ -754,25 +946,15 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
         EntryStatus::Failed => p.bad,
         EntryStatus::Queued | EntryStatus::Downloading | EntryStatus::PriorityPending => p.ink,
     };
-    // A state is a glyph, as the theme draws states; the plain variant keeps
-    // a word where a glyph would be.
-    let mark = match item.status {
-        EntryStatus::Playing => Some((Icon::PlayMark, "playing", p.accent_text)),
-        EntryStatus::Downloading => Some((Icon::Downloads, "loading", p.muted)),
-        EntryStatus::PriorityPending => Some((Icon::Pending, "next", p.muted)),
-        EntryStatus::Failed => Some((Icon::Failure, "failed", p.bad)),
-        EntryStatus::Queued | EntryStatus::Played => None,
-    };
     let leading = if grouped {
-        let number = item.track_number.map(|n| n.to_string()).unwrap_or_default();
         div()
-            .w(px(24.))
+            .w(if numbering.wide { px(36.) } else { px(24.) })
             .flex_shrink_0()
             .flex()
             .justify_end()
             .text_role(TypeRole::Meta, &p.look)
             .text_color(if playing { p.accent_text } else { p.muted })
-            .child(number)
+            .child(rows::track_place(item, numbering.by_disc))
             .into_any_element()
     } else {
         sleeve.unwrap_or_else(|| div().into_any_element())
@@ -780,11 +962,28 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
     // A grouped row names its artists only where they differ from the
     // record's; a row standing alone names its artist and record.
     let secondary = if grouped {
-        item.credit_differs.then(|| item.artist.clone())
-    } else if item.album.is_empty() {
-        Some(item.artist.clone())
+        item.credit_differs
+            .then(|| credit(&item.artist_credit, &item.artist, "artist", look))
     } else {
-        Some(format!("{} · {}", item.artist, item.album))
+        let mut parts = credit(&item.artist_credit, &item.artist, "artist", look);
+        if !item.album.is_empty() {
+            parts.push(
+                div()
+                    .flex_shrink_0()
+                    .child("\u{a0}·\u{a0}")
+                    .into_any_element(),
+            );
+            parts.push(
+                link(
+                    look.id("album", 0),
+                    item.album.clone(),
+                    item.album_id.map(Route::Album),
+                    look,
+                )
+                .into_any_element(),
+            );
+        }
+        Some(parts)
     };
     div()
         .flex()
@@ -804,14 +1003,8 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
                 .flex()
                 .justify_center()
                 .text_role(TypeRole::Fine, &p.look)
-                .children(mark.map(|(icon, word, color)| {
-                    if icon == Icon::PlayMark {
-                        // Moving with the music, as the Mac's bars do.
-                        crate::levels::bars(color).into_any_element()
-                    } else {
-                        glyph(icon, word, TypeRole::Fine, color, p)
-                    }
-                })),
+                // Moving with the music, as the Mac's bars do.
+                .when(playing, |d| d.child(crate::levels::bars(p.accent_text))),
         )
         .child(leading)
         .child(
@@ -821,16 +1014,10 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
                 .flex_1()
                 .min_w(px(0.))
                 .child(line(item.title.clone(), TypeRole::Body, title_color, p))
-                .children(secondary.map(|s| line(s, TypeRole::Meta, p.muted, p))),
+                .children(secondary.map(|parts| names(parts, TypeRole::Meta, p.muted, p))),
         )
-        .when(!item.on_disk && item.on_server, |d| {
-            d.child(
-                div()
-                    .flex_shrink_0()
-                    .text_role(TypeRole::Fine, &p.look)
-                    .child(glyph(Icon::Cloud, "server", TypeRole::Fine, p.muted, p)),
-            )
-        })
+        .child(availability(item, extras.progress, p))
+        .child(heart(item, &extras, look))
         .children(item.codec.clone().map(|codec| {
             div()
                 .w(px(48.))
@@ -851,15 +1038,143 @@ fn track(item: &QueueItem, grouped: bool, sleeve: Option<AnyElement>, p: &Paint)
         )
 }
 
+/// Where the track's file is, or how its download is going, as the Mac's
+/// `AvailabilityMark`: waiting at the front of the downloads, failed, a ring
+/// filling as the bytes land (spinning while the size is unknown), or kept
+/// on the server, downloaded from it, or a local file.
+fn availability(item: &QueueItem, progress: Option<f64>, p: &Paint) -> AnyElement {
+    let quiet = p.muted.opacity(0.6);
+    let mark = |icon, word, color| glyph(icon, word, TypeRole::Fine, color, p);
+    let inner = match item.status {
+        EntryStatus::PriorityPending => Some(mark(Icon::Downloads, "next", p.accent_text)),
+        EntryStatus::Failed => Some(mark(Icon::WarningFilled, "failed", p.bad)),
+        EntryStatus::Downloading => Some(ring(progress, p.muted).into_any_element()),
+        _ => match (item.on_server, item.on_disk) {
+            (true, true) => Some(mark(Icon::CloudKept, "kept", p.muted)),
+            (true, false) => Some(mark(Icon::Cloud, "server", quiet)),
+            (false, true) => Some(mark(Icon::OnDevice, "local", p.muted)),
+            (false, false) => None,
+        },
+    };
+    div()
+        .w(if p.look.icons { px(14.) } else { px(48.) })
+        .flex_shrink_0()
+        .flex()
+        .justify_end()
+        .text_role(TypeRole::Fine, &p.look)
+        .children(inner)
+        .into_any_element()
+}
+
+/// A download's ring: an arc of `progress` from twelve o'clock, or, with no
+/// size to measure against, a spinning seven-tenths of one. Painted as one
+/// path; only a row on screen with a running transfer asks for frames.
+fn ring(progress: Option<f64>, color: Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            use std::f32::consts::{FRAC_PI_2, TAU};
+            let (start, sweep) = match progress {
+                Some(fraction) => (0.0, (fraction as f32).clamp(0.02, 1.0)),
+                None => {
+                    let ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() % 1000)
+                        .unwrap_or_default();
+                    (ms as f32 / 1000.0, 0.7)
+                }
+            };
+            let centre = bounds.center();
+            let radius = px(5.);
+            let steps = ((sweep * 48.0).ceil() as usize).max(2);
+            let mut path = PathBuilder::stroke(px(1.5));
+            for step in 0..=steps {
+                let angle = (start + sweep * step as f32 / steps as f32) * TAU - FRAC_PI_2;
+                let at = point(
+                    centre.x + radius * angle.cos(),
+                    centre.y + radius * angle.sin(),
+                );
+                if step == 0 {
+                    path.move_to(at);
+                } else {
+                    path.line_to(at);
+                }
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .size(px(12.))
+    .flex_shrink_0()
+}
+
+/// The heart, as the Mac's: shown while the track is a favourite or the row
+/// is under the pointer, and toggling it.
+fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
+    let p = look.p;
+    let slot = div().w(px(16.)).flex_shrink_0().flex().justify_center();
+    let (Some(track), Some(favourite), Some(feed)) =
+        (item.track_id, extras.favourite, extras.feed.clone())
+    else {
+        return slot.into_any_element();
+    };
+    let row = look.row.clone();
+    slot.child(
+        div()
+            .id(look.id("heart", 0))
+            .cursor_pointer()
+            .when(!favourite, |d| {
+                d.invisible().group_hover(row, |s| s.visible())
+            })
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                feed.update(cx, |feed, cx| {
+                    feed.toggle_favourite(Playable::Track(track), cx)
+                });
+            })
+            .child(glyph(
+                if favourite {
+                    Icon::Favourited
+                } else {
+                    Icon::Favourite
+                },
+                if favourite { "♥" } else { "♡" },
+                TypeRole::Fine,
+                if favourite { p.accent_text } else { p.muted },
+                p,
+            )),
+    )
+    .into_any_element()
+}
+
 impl Focusable for QueueView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
 }
 
+impl QueueView {
+    /// Scrolls to the playing row, if there is one.
+    fn jump_to_playing(&mut self, cx: &mut Context<Self>) {
+        let queue = self.queue.read(cx);
+        let row = queue
+            .items
+            .iter()
+            .find(|item| item.status == EntryStatus::Playing)
+            .and_then(|item| queue.track_rows.get(&item.queue_item_id))
+            .copied();
+        if let Some(row) = row {
+            self.list.scroll_to_reveal_item(row);
+            cx.notify();
+        }
+    }
+}
+
 impl Render for QueueView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
+        self.readings = None;
         let top = self.list.logical_scroll_top().item_ix;
         self.keep_top(top, cx);
         let count = self.rows(cx).len();
@@ -929,11 +1244,13 @@ impl Render for QueueView {
                 this.drop_library(dragged, dest, cx);
             }))
             .when(count == 0, |d| {
-                d.items_center().justify_center().child(
-                    div()
-                        .text_role(TypeRole::Body, &p.look)
-                        .text_color(p.muted)
-                        .child("the queue is empty"),
+                d.child(
+                    div().flex_1().flex().items_center().justify_center().child(
+                        div()
+                            .text_role(TypeRole::Body, &p.look)
+                            .text_color(p.muted)
+                            .child("the queue is empty"),
+                    ),
                 )
             })
             .when(count > 0, |d| {
@@ -944,8 +1261,8 @@ impl Render for QueueView {
                         .flex_1()
                         .min_h_0()
                         .child(
-                            list(self.list.clone(), move |row, _, cx| {
-                                view.update(cx, |this, cx| this.render_row(row, &p, cx))
+                            list(self.list.clone(), move |row, window, cx| {
+                                view.update(cx, |this, cx| this.render_row(row, &p, window, cx))
                             })
                             .size_full(),
                         )

@@ -1,0 +1,1 @@
+- **The GUI app's queue and transport link to their pages.** Credits, records and titles lead to their artist and record pages; multi-disc records number by disc; rows carry the heart and the Mac's availability mark, with a download's progress drawn as it lands; the sidebar hides and shows, and grouping by album is in the queue's menu, both kept with the window.

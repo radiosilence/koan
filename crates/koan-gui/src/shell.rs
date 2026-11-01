@@ -75,6 +75,8 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
+                let feed = lib.feed.clone();
+                this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
                 let covers = lib.covers.clone();
                 this.sidebar
                     .update(cx, |sidebar, cx| sidebar.set_covers(covers, cx));
@@ -86,10 +88,10 @@ impl Shell {
         .detach();
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
+            transport: cx.new(|cx| Transport::new(&nav, window, cx)),
             nav,
             focus: cx.focus_handle(),
             queue,
-            transport: cx.new(|cx| Transport::new(window, cx)),
             library: None,
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
@@ -170,6 +172,15 @@ impl Shell {
         } else {
             window.focus(&self.focus, cx);
         }
+        cx.notify();
+    }
+
+    /// Hides or shows the sidebar, as the Mac's toolbar button and ⌃⌘S do,
+    /// and keeps the choice with the window's bounds.
+    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_shown = !self.sidebar_shown;
+        window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
+        window_state::save(window.window_bounds(), cx);
         cx.notify();
     }
 
@@ -343,6 +354,7 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
+            .on_action(cx.listener(Self::toggle_sidebar))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.back(&Back, window, cx)),
