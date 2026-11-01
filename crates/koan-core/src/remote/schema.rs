@@ -20,19 +20,24 @@ fn render<T: JsonSchema>() -> String {
         .into_generator()
         .into_root_schema_for::<T>();
     let mut value = schema.to_value();
-    strip_descriptions(&mut value);
+    canonical(&mut value);
     let mut json = serde_json::to_string_pretty(&value).unwrap();
     json.push('\n');
     json
 }
 
-fn strip_descriptions(value: &mut serde_json::Value) {
+/// Descriptions left out and keys in order. Sorted by hand because a
+/// workspace build can turn on serde_json's `preserve_order`, under which
+/// objects keep the order they were built in, or removed from, rather than
+/// sorting themselves.
+fn canonical(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             map.remove("description");
-            map.values_mut().for_each(strip_descriptions);
+            map.sort_keys();
+            map.values_mut().for_each(canonical);
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_descriptions),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(canonical),
         _ => {}
     }
 }
