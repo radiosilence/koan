@@ -193,8 +193,24 @@ impl IntegrationsPane {
                         ))
                         .into_any_element(),
                 );
+                let (copy_url, copier) = (assistants.mcp_url.clone(), cx.entity());
                 rows.push(buttons(
                     vec![
+                        Button::new("copy-mcp-address", ButtonKind::Bordered)
+                            .label(if self.copied {
+                                "Copied"
+                            } else {
+                                "Copy Address"
+                            })
+                            .icon(Icon::Copy)
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copy_url.clone()));
+                                copier.update(cx, |pane, cx| {
+                                    pane.copied = true;
+                                    cx.notify();
+                                })
+                            })
+                            .into_any_element(),
                         Button::new("how-to-connect", ButtonKind::Link)
                             .label("How to Connect an Assistant")
                             .icon(Icon::OpenExternal)

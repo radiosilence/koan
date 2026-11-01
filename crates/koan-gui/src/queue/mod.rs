@@ -11,12 +11,11 @@ pub mod rows;
 
 use std::collections::HashSet;
 
-use gpui_kit::component::menu::ContextMenuExt;
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{EntryStatus, QueueItem};
 
+use crate::components::{KoanContextMenu, Menu, MenuEntry};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::library::drag::PlayableDrag;
@@ -631,7 +630,7 @@ impl QueueView {
     }
 }
 
-fn row_menu(menu: PopupMenu, view: &Entity<QueueView>, cx: &mut App) -> PopupMenu {
+fn row_menu(menu: Menu, view: &Entity<QueueView>, cx: &mut App) -> Menu {
     let this = view.read(cx);
     let Some(row) = this.menu_row.filter(|&row| row < this.rows(cx).len()) else {
         return menu;
@@ -648,18 +647,18 @@ fn row_menu(menu: PopupMenu, view: &Entity<QueueView>, cx: &mut App) -> PopupMen
     // sent whole while the menu is open.
     let first = this.row_items(row, cx).next().cloned();
     let remove = view.clone();
-    menu.item(PopupMenuItem::new("play").on_click(move |_, _, cx| {
+    menu.item(MenuEntry::new("play").on_click(move |_, _, cx| {
         if let Some(id) = first.clone() {
             command(cx, "play", move |e| e.play(id));
         }
     }))
-    .item(PopupMenuItem::new(remove_label).on_click(move |_, _, cx| {
+    .item(MenuEntry::new(remove_label).on_click(move |_, _, cx| {
         let ids = ids.clone();
         remove.update(cx, |this, cx| this.remove(ids, cx));
     }))
     .separator()
-    .item(PopupMenuItem::new("undo").on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))))
-    .item(PopupMenuItem::new("redo").on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))))
+    .item(MenuEntry::new("undo").on_click(|_, _, cx| command(cx, "undo", |e| e.undo(None))))
+    .item(MenuEntry::new("redo").on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))))
 }
 
 fn line(content: impl Into<SharedString>, role: TypeRole, color: Hsla, p: &Paint) -> Div {
@@ -915,13 +914,20 @@ impl Render for QueueView {
             .when(count > 0, |d| {
                 let view = view.clone();
                 d.child(
-                    list(self.list.clone(), move |row, _, cx| {
-                        view.update(cx, |this, cx| this.render_row(row, &p, cx))
-                    })
-                    .flex_1(),
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            list(self.list.clone(), move |row, _, cx| {
+                                view.update(cx, |this, cx| this.render_row(row, &p, cx))
+                            })
+                            .size_full(),
+                        )
+                        .child(gpui_kit::base::Scrollbar::vertical(&self.list)),
                 )
             })
-            .context_menu({
+            .koan_context_menu("queue-menu", window, cx, {
                 let view = view.clone();
                 move |menu, _, cx| row_menu(menu, &view, cx)
             })

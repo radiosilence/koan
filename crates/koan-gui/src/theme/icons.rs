@@ -183,6 +183,7 @@ pub struct KoanIcon {
     size: Size,
     tone: Colour,
     fill: Option<Colour>,
+    hover: Option<(SharedString, Hsla)>,
 }
 
 enum Size {
@@ -203,7 +204,16 @@ impl KoanIcon {
             size: Size::Role(TypeRole::Body),
             tone: Colour::Tone(Tone::Ink),
             fill: None,
+            hover: None,
         }
+    }
+
+    /// The colour it takes while the pointer is over the group named, as the
+    /// label of a button does: a glyph is drawn in a colour of its own, and
+    /// does not follow its parent's.
+    pub fn hover_color(mut self, group: impl Into<SharedString>, color: Hsla) -> Self {
+        self.hover = Some((group.into(), color));
+        self
     }
 
     /// Sized beside type of this role.
@@ -249,11 +259,19 @@ impl RenderOnce for KoanIcon {
         };
         let color = resolve(self.tone);
         let side = px(side(points));
+        let hover = self.hover.clone();
         let sprite = |layer: Layer, color: Hsla| {
-            svg()
+            let sprite = svg()
                 .path(path(self.icon, points, layer))
                 .size(side)
-                .text_color(color)
+                .text_color(color);
+            match (&hover, layer) {
+                (Some((group, hovered)), Layer::All | Layer::Strokes) => {
+                    let hovered = *hovered;
+                    sprite.group_hover(group.clone(), move |s| s.text_color(hovered))
+                }
+                _ => sprite,
+            }
         };
         match self.fill.map(resolve) {
             Some(fill) if !self.icon.glyph().fills.is_empty() => div()

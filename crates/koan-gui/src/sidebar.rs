@@ -31,6 +31,7 @@ pub struct Sidebar {
     /// Dropped files being added, and what the last addition had to say.
     importing: usize,
     import_problem: Option<String>,
+    scroll: ScrollHandle,
     _subscriptions: [Subscription; 4],
 }
 
@@ -43,6 +44,7 @@ impl Sidebar {
             loading: None,
             importing: 0,
             import_problem: None,
+            scroll: ScrollHandle::new(),
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
                 // The selected row follows the page.
@@ -156,72 +158,86 @@ impl Render for Sidebar {
         };
         let queue = Route::Queue;
         div()
-            .id("sidebar")
+            .relative()
             .w(WIDTH)
-            .bg(p.bg)
             .h_full()
             .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .overflow_y_scroll()
-            .pt(p.space(Space::S))
-            // Files, and what is dragged from the library, dropped on the
-            // queue's row are queued.
             .child(
-                row(queue, "nav-queue".into(), "queue".into(), cx)
-                    .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
-                        drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
+                div()
+                    .id("sidebar")
+                    .w(WIDTH)
+                    .bg(p.bg)
+                    .h_full()
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .pt(p.space(Space::S))
+                    // Files, and what is dragged from the library, dropped on the
+                    // queue's row are queued.
+                    .child(
+                        row(queue, "nav-queue".into(), "queue".into(), cx)
+                            .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                                drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
+                            }))
+                            .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
+                                let sets = dragged.sets.to_vec();
+                                command(cx, "queue from the library", move |e| {
+                                    e.queue(sets, koan_ffi::Placement::Append)
+                                });
+                            })),
+                    )
+                    .child(heading("library", &p))
+                    .children(LIBRARY.map(|(page, label)| {
+                        row(page, ElementId::Name(label.into()), label.into(), cx)
                     }))
-                    .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
-                        let sets = dragged.sets.to_vec();
-                        command(cx, "queue from the library", move |e| {
-                            e.queue(sets, koan_ffi::Placement::Append)
-                        });
-                    })),
+                    .when(!self.playlists.is_empty(), |d| {
+                        d.child(heading("playlists", &p))
+                    })
+                    .children(self.playlists.iter().map(|playlist| {
+                        let page = Route::Playlist(playlist.id);
+                        nav_row(
+                            ("nav-playlist", playlist.id as u64),
+                            playlist.name.clone().into(),
+                            current == Some(page),
+                            &p,
+                        )
+                        .on_click(go(page, cx))
+                        // Files, and what is dragged from the library, dropped on a
+                        // playlist's row are added to it.
+                        .on_drop(cx.listener({
+                            let id = playlist.id;
+                            move |_, paths: &ExternalPaths, _, cx| {
+                                drop::add_files_to_playlist(
+                                    &engine(cx),
+                                    id,
+                                    paths.paths().to_vec(),
+                                    cx,
+                                )
+                            }
+                        }))
+                        .on_drop(cx.listener({
+                            let id = playlist.id;
+                            move |_, dragged: &PlayableDrag, _, cx| {
+                                let sets = dragged.sets.to_vec();
+                                command(cx, "add to playlist", move |e| {
+                                    e.add_to_playlist(id, sets)
+                                });
+                            }
+                        }))
+                    }))
+                    .child(div().flex_1())
+                    .when(self.importing > 0, |d| {
+                        d.child(foot_line("adding dropped files", p.muted, &p))
+                    })
+                    .children(
+                        self.import_problem
+                            .clone()
+                            .map(|problem| foot_line(problem, p.bad, &p)),
+                    ),
             )
-            .child(heading("library", &p))
-            .children(
-                LIBRARY.map(|(page, label)| {
-                    row(page, ElementId::Name(label.into()), label.into(), cx)
-                }),
-            )
-            .when(!self.playlists.is_empty(), |d| {
-                d.child(heading("playlists", &p))
-            })
-            .children(self.playlists.iter().map(|playlist| {
-                let page = Route::Playlist(playlist.id);
-                nav_row(
-                    ("nav-playlist", playlist.id as u64),
-                    playlist.name.clone().into(),
-                    current == Some(page),
-                    &p,
-                )
-                .on_click(go(page, cx))
-                // Files, and what is dragged from the library, dropped on a
-                // playlist's row are added to it.
-                .on_drop(cx.listener({
-                    let id = playlist.id;
-                    move |_, paths: &ExternalPaths, _, cx| {
-                        drop::add_files_to_playlist(&engine(cx), id, paths.paths().to_vec(), cx)
-                    }
-                }))
-                .on_drop(cx.listener({
-                    let id = playlist.id;
-                    move |_, dragged: &PlayableDrag, _, cx| {
-                        let sets = dragged.sets.to_vec();
-                        command(cx, "add to playlist", move |e| e.add_to_playlist(id, sets));
-                    }
-                }))
-            }))
-            .child(div().flex_1())
-            .when(self.importing > 0, |d| {
-                d.child(foot_line("adding dropped files", p.muted, &p))
-            })
-            .children(
-                self.import_problem
-                    .clone()
-                    .map(|problem| foot_line(problem, p.bad, &p)),
-            )
+            .child(gpui_kit::base::Scrollbar::vertical(&self.scroll))
     }
 }
 
