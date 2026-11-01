@@ -4,7 +4,7 @@
 //! server: approving a device that signs in by code, and keeping the queue
 //! on the server.
 
-use crate::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
+use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
@@ -13,7 +13,7 @@ use koan_ffi::{ConnectedInfo, ServerQueue};
 
 use super::server::host;
 use crate::settings::Ctx;
-use crate::settings::form::{buttons, item, moment, note, page, section, text};
+use crate::settings::form::{Row, buttons, item, moment, note, page, section, text};
 use crate::settings::model::describe;
 use crate::settings::sheet::{Action, Sheet};
 
@@ -418,7 +418,7 @@ impl Render for DevicesPane {
             },
             {
                 let model = model.clone();
-                FormRow::new("Devices on this network")
+                Row::new("Devices on this network")
                     .control(
                         Picker::new(
                             "nearby-control",
@@ -439,7 +439,7 @@ impl Render for DevicesPane {
         ];
         if let Some(port) = connection.as_ref().and_then(|c| c.listening_port) {
             this_device.push(
-                FormRow::new("Listening on port")
+                Row::new("Listening on port")
                     .value(port.to_string())
                     .into_any_element(),
             );

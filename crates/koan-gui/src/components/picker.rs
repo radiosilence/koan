@@ -7,10 +7,13 @@ use gpui_kit::{
 };
 
 use super::{Handler, MenuPanel, MenuRow, child, focus, ring};
-use crate::theme::{DISABLED_OPACITY, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label};
+use crate::theme::{
+    DISABLED_OPACITY, HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
+};
 
-/// A pop-up picker: the chosen option in `control`, `ink`, with a chevron and
-/// no bezel, opening the theme's panel with the options as ticked rows.
+/// A pop-up picker: the chosen option in `control`, `ink`, with a chevron, in
+/// the theme's bordered button, as the Mac's `KoanPicker` is; it opens the
+/// theme's panel with the options as ticked rows.
 /// Options are app words, drawn lowercase, unless `keeps_case` says they are
 /// data (a device's name).
 #[derive(IntoElement)]
@@ -84,7 +87,11 @@ impl RenderOnce for Picker {
             .flex_none()
             .items_center()
             .gap(look.space(Space::Xs))
-            .py(look.space(Space::Xs))
+            // The theme's bordered button, as a form's dropdown is.
+            .py(look.spaced(6.))
+            .px(look.spaced(12.))
+            .border(HAIRLINE)
+            .border_color(look.palette.muted.hsla())
             .text_role(TypeRole::Control, &look)
             .text_color(color)
             .child(div().whitespace_nowrap().child(shown))
@@ -96,8 +103,11 @@ impl RenderOnce for Picker {
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
+            let (surface, pressed) = (look.palette.surface.hsla(), look.palette.hover.hsla());
             picker = picker
                 .cursor_pointer()
+                .hover(move |s| s.bg(surface))
+                .active(move |s| s.bg(pressed))
                 .track_focus(&handle)
                 // Opens only: a click on the picker while the panel is up
                 // lands outside the panel, which closes it.

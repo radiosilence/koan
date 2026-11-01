@@ -6,21 +6,97 @@ use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-/// A pane's page: sections down a column that scrolls, held to a readable
-/// width.
+/// A pane's page: sections down a column that scrolls, across the window.
 pub fn page(id: &'static str, look: &Look, sections: Vec<AnyElement>) -> Stateful<Div> {
     div().id(id).size_full().overflow_y_scroll().child(
         div()
             .flex()
             .flex_col()
-            .gap(look.space(Space::S))
-            .mx_auto()
-            .max_w(px(640.))
+            .gap(look.space(Space::M))
             .w_full()
             .px(look.space(Space::Xl))
             .pb(look.space(Space::Xl))
             .children(sections),
     )
+}
+
+/// The width of a form's label column, before spacing's scale: where the
+/// Mac's forms start their controls.
+const LABELS: f32 = 210.;
+
+/// A form's row in two columns: the label in `body`, `ink`, lowercase, and
+/// what it holds starting at the control column: a value in `control`,
+/// `muted`, or a control, or both.
+#[derive(IntoElement)]
+pub struct Row {
+    label: SharedString,
+    value: Option<SharedString>,
+    control: Option<AnyElement>,
+}
+
+impl Row {
+    pub fn new(text: impl AsRef<str>) -> Self {
+        Self {
+            label: crate::theme::label(text),
+            value: None,
+            control: None,
+        }
+    }
+
+    /// A label that is data, which keeps its case.
+    pub fn data(text: impl Into<SharedString>) -> Self {
+        Self {
+            label: text.into(),
+            value: None,
+            control: None,
+        }
+    }
+
+    pub fn value(mut self, value: impl Into<SharedString>) -> Self {
+        self.value = Some(value.into());
+        self
+    }
+
+    pub fn control(mut self, control: impl IntoElement) -> Self {
+        self.control = Some(control.into_any_element());
+        self
+    }
+}
+
+impl RenderOnce for Row {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .flex()
+            .items_center()
+            .min_h(crate::theme::HIT)
+            .child(
+                div()
+                    .flex_none()
+                    .w(look.spaced(LABELS))
+                    .pr(look.space(Space::M))
+                    .text_role(TypeRole::Body, &look)
+                    .text_color(look.palette.ink.hsla())
+                    .child(self.label),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .gap(look.space(Space::L))
+                    .children(self.value.map(|value| {
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_role(TypeRole::Control, &look)
+                            .text_color(look.palette.muted.hsla())
+                            .child(value)
+                    }))
+                    .children(self.control),
+            )
+    }
 }
 
 /// A section: its header, its rows, and the footer that explains it.
@@ -33,6 +109,7 @@ pub fn section(
     div()
         .flex()
         .flex_col()
+        .gap(look.space(Space::S))
         .children(header.map(SectionHeader::new))
         .child(div().flex().flex_col().children(rows))
         .children(footer.map(|footer| {

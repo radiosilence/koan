@@ -2,7 +2,7 @@
 //! by QR code, its password, the API keys apps sign in with, and app
 //! passwords for apps that cannot use a key. Each where the server lists it.
 
-use crate::components::{Button, ButtonKind, FormRow};
+use crate::components::{Button, ButtonKind};
 use crate::theme::Look;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -10,7 +10,7 @@ use gpui_kit::*;
 use super::keys::{Keys, Kind};
 use super::link::LinkDevice;
 use super::people;
-use crate::settings::form::{page, section};
+use crate::settings::form::{Row, page, section};
 use crate::settings::sheet::{self, Action, Sheet};
 use crate::settings::{Ctx, offers};
 
@@ -134,7 +134,7 @@ impl Render for AccountPane {
             let entity = cx.entity();
             sections.push(section(
                 Some("Password"),
-                vec![FormRow::new("User")
+                vec![Row::new("User")
                     .value(account)
                     .control(
                         Button::new("change-password", ButtonKind::Bordered)

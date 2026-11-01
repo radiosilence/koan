@@ -2,14 +2,14 @@
 //! assistants over MCP, and scrobbling to ListenBrainz. Each where the
 //! server has it.
 
-use crate::components::{Button, ButtonKind, FormRow, TextField};
+use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Assistants, ScrobblingConnection};
 
-use crate::settings::form::{buttons, copyable, note, page, section, text};
+use crate::settings::form::{Row, buttons, copyable, note, page, section, text};
 use crate::settings::model::{count, describe};
 use crate::settings::sheet::{Action, Sheet};
 use crate::settings::{Ctx, offers};
@@ -177,7 +177,7 @@ impl IntegrationsPane {
                 let url = assistants.mcp_url.clone();
                 let connect = assistants.connect_url.clone();
                 rows.push(
-                    FormRow::new("Address")
+                    Row::new("Address")
                         .control(copyable(
                             "copy-mcp",
                             url.clone(),
@@ -280,8 +280,8 @@ impl IntegrationsPane {
             Some(Ok(None)) => {
                 let ready = !self.busy && !self.token.read(cx).value().trim().is_empty();
                 rows.push(
-                    FormRow::new("User token")
-                        .control(div().w(px(300.)).child(TextField::new(&self.token)))
+                    Row::new("User token")
+                        .control(div().w_full().child(TextField::new(&self.token)))
                         .into_any_element(),
                 );
                 rows.push(buttons(

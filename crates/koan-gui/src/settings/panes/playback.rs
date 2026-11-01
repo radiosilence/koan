@@ -1,13 +1,13 @@
 //! Playback: the output device, the transport's fade, and loudness.
 
-use crate::components::{FormRow, Picker, Stepper, Toggle};
+use crate::components::{Picker, Stepper, Toggle};
 use crate::theme::Look;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::mirror::{Mirror, Outputs};
 use crate::settings::Ctx;
-use crate::settings::form::{page, section};
+use crate::settings::form::{Row, page, section};
 
 const REPLAYGAIN: [(&str, &str); 3] = [
     ("Off", "off"),
@@ -94,7 +94,7 @@ impl Render for PlaybackPane {
             Some(name) => self.devices.iter().position(|d| d == name).map(|i| i + 1),
         };
         let devices = self.devices.clone();
-        let device = FormRow::new("Output").control(
+        let device = Row::new("Output").control(
             Picker::keeps_case("output", outputs, selected).on_change(move |index, _, cx| {
                 let name = index.checked_sub(1).and_then(|i| devices.get(i).cloned());
                 entity.update(cx, |pane, cx| pane.set_device(name, cx));
@@ -112,7 +112,7 @@ impl Render for PlaybackPane {
         };
 
         let mut loudness = vec![
-            FormRow::new("ReplayGain")
+            Row::new("ReplayGain")
                 .control({
                     let model = model.clone();
                     Picker::new(

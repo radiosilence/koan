@@ -2,14 +2,14 @@
 //! look, so no theme to choose. Each is saved by the engine in the
 //! background (`[appearance]`) and applied here from the app's own copy.
 
-use crate::components::{FormRow, Slider, Toggle};
+use crate::components::{Slider, Toggle};
 use crate::theme::tokens::{TEXT_SIZE_STEP, TEXT_SIZES};
 use crate::theme::{KoanTheme, Look};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::settings::Ctx;
-use crate::settings::form::{page, section};
+use crate::settings::form::{Row, page, section};
 
 pub struct AppearancePane {
     ctx: Ctx,
@@ -110,8 +110,8 @@ impl Render for AppearancePane {
                     icons_engine.set_theme_icons(*on);
                 })
                 .into_any_element(),
-            FormRow::new(format!("Text size {text_size}%"))
-                .control(div().w(px(260.)).child(size_slider))
+            Row::new(format!("Text size {text_size}%"))
+                .control(div().w_full().child(size_slider))
                 .into_any_element(),
         ];
 
@@ -130,9 +130,9 @@ impl Render for AppearancePane {
         ];
         if record_colours {
             colour_rows.push(
-                FormRow::new(format!("Theme tint {wash_tint}%"))
+                Row::new(format!("Theme tint {wash_tint}%"))
                     .control(
-                        div().w(px(260.)).child(
+                        div().w_full().child(
                             Slider::new("wash-tint", wash_tint as f32 / 100.)
                                 .ends("full colour", "held")
                                 .step(0.05)

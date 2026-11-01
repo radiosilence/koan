@@ -4,9 +4,7 @@
 
 use std::time::Duration;
 
-use crate::components::{
-    Button, ButtonKind, FormRow, Picker, Segmented, Stepper, TextField, Toggle,
-};
+use crate::components::{Button, ButtonKind, Picker, Segmented, Stepper, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
@@ -16,7 +14,7 @@ use koan_ffi::{ConnectionInfo, Settings};
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};
 use crate::settings::Ctx;
-use crate::settings::form::{buttons, copyable, note, page, section, text};
+use crate::settings::form::{Row, buttons, copyable, note, page, section, text};
 use crate::settings::model::{Uses, bytes, count};
 use crate::settings::sheet::{Action, Sheet};
 
@@ -116,15 +114,11 @@ impl ServerPane {
                     }
                 },
             ),
-            cx.subscribe_in(
-                &secret,
-                window,
-                |pane, _, event: &InputEvent, window, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. }) {
-                        pane.sign_in(cx);
-                    }
-                },
-            ),
+            cx.subscribe_in(&secret, window, |pane, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    pane.sign_in(cx);
+                }
+            }),
             cx.subscribe_in(
                 &cache_limit,
                 window,
@@ -365,7 +359,7 @@ impl ServerPane {
         if settings.remote_signed_in {
             let server = settings.remote_url.clone();
             let mut rows = vec![
-                FormRow::new("Server")
+                Row::new("Server")
                     .control(copyable(
                         "copy-server",
                         server,
@@ -381,10 +375,10 @@ impl ServerPane {
                         look,
                     ))
                     .into_any_element(),
-                FormRow::new("User")
+                Row::new("User")
                     .value(settings.remote_username.clone())
                     .into_any_element(),
-                FormRow::new("Tracks")
+                Row::new("Tracks")
                     .value(count(settings.remote_tracks))
                     .into_any_element(),
             ];
@@ -433,13 +427,13 @@ impl ServerPane {
                     .all(|field| !field.read(cx).value().trim().is_empty());
             let secret_label = if self.with_key { "API key" } else { "Password" };
             let rows = vec![
-                FormRow::new("Server URL")
-                    .control(div().w(px(300.)).child(TextField::new(&self.url)))
+                Row::new("Server URL")
+                    .control(div().w_full().child(TextField::new(&self.url)))
                     .into_any_element(),
-                FormRow::new("Username")
-                    .control(div().w(px(300.)).child(TextField::new(&self.username)))
+                Row::new("Username")
+                    .control(div().w_full().child(TextField::new(&self.username)))
                     .into_any_element(),
-                FormRow::new("Sign in with")
+                Row::new("Sign in with")
                     .control(
                         Segmented::new("with-key", ["Password", "API key"], self.with_key as usize)
                             .on_change({
@@ -454,8 +448,8 @@ impl ServerPane {
                             }),
                     )
                     .into_any_element(),
-                FormRow::new(secret_label)
-                    .control(div().w(px(300.)).child(TextField::new(&self.secret)))
+                Row::new(secret_label)
+                    .control(div().w_full().child(TextField::new(&self.secret)))
                     .into_any_element(),
                 buttons(
                     vec![
@@ -464,7 +458,7 @@ impl ServerPane {
                             .disabled(!ready)
                             .on_click({
                                 let entity = entity.clone();
-                                move |_, window, cx| entity.update(cx, |pane, cx| pane.sign_in(cx))
+                                move |_, _, cx| entity.update(cx, |pane, cx| pane.sign_in(cx))
                             })
                             .into_any_element(),
                         Button::new("paste-invite", ButtonKind::Standard)
@@ -507,7 +501,7 @@ impl ServerPane {
         if settings.auto_sync {
             let model = self.ctx.model.clone();
             sync_rows.push(
-                FormRow::new("Every")
+                Row::new("Every")
                     .control(
                         Picker::new(
                             "sync-every",
@@ -590,22 +584,22 @@ impl ServerPane {
 
         let mut rows = vec![
             workers.into_any_element(),
-            FormRow::new("Download ahead")
+            Row::new("Download ahead")
                 .control(ahead_picker)
                 .into_any_element(),
-            FormRow::new("Keep downloads")
+            Row::new("Keep downloads")
                 .control(keeping_picker)
                 .into_any_element(),
         ];
         if shown == Keeping::Limited {
             rows.push(
-                FormRow::new("Limit in GB")
+                Row::new("Limit in GB")
                     .control(div().w(px(120.)).child(TextField::new(&self.cache_limit)))
                     .into_any_element(),
             );
         }
         rows.push(
-            FormRow::new("Using")
+            Row::new("Using")
                 .value(bytes(stored))
                 .control(
                     Button::new("clear-cache", ButtonKind::Compact)
@@ -688,17 +682,13 @@ fn offers(connection: &Option<ConnectionInfo>, look: &Look) -> AnyElement {
             } else {
                 "Offered, not connected"
             };
-            rows.push(FormRow::new("Server").value(server).into_any_element());
+            rows.push(Row::new("Server").value(server).into_any_element());
             rows.push(
-                FormRow::new("OpenSubsonic")
+                Row::new("OpenSubsonic")
                     .value(if c.open_subsonic { "Yes" } else { "No" })
                     .into_any_element(),
             );
-            rows.push(
-                FormRow::new("Your devices")
-                    .value(devices)
-                    .into_any_element(),
-            );
+            rows.push(Row::new("Your devices").value(devices).into_any_element());
             for e in &c.extensions {
                 let versions = e
                     .versions
@@ -706,11 +696,7 @@ fn offers(connection: &Option<ConnectionInfo>, look: &Look) -> AnyElement {
                     .map(|v| format!("v{v}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                rows.push(
-                    FormRow::data(e.name.clone())
-                        .value(versions)
-                        .into_any_element(),
-                );
+                rows.push(Row::data(e.name.clone()).value(versions).into_any_element());
             }
         }
         _ => {
@@ -744,7 +730,7 @@ impl Render for ServerPane {
         let mut sections = vec![section(
             None,
             vec![
-                FormRow::new("This device")
+                Row::new("This device")
                     .control(
                         Picker::new(
                             "mode",

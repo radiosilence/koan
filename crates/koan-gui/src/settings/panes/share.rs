@@ -1,7 +1,7 @@
 //! Server → Shares its library: the first account, sharing on and off, the
 //! port, and where invites send phones away from home.
 
-use crate::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
+use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
@@ -11,7 +11,7 @@ use koan_ffi::{InviteTo, Settings};
 use super::link::LinkDevice;
 use super::server::ServerPane;
 use crate::settings::Ctx;
-use crate::settings::form::{buttons, copyable, note, section, text};
+use crate::settings::form::{Row, buttons, copyable, note, section, text};
 use crate::settings::model::SettingsModel;
 use crate::settings::sharing::Landed;
 use crate::settings::sheet::{self, Action, Sheet};
@@ -288,14 +288,14 @@ impl ShareForm {
         let pane = cx.entity();
         let ctx = ctx.clone();
         let mut rows = vec![
-            FormRow::new("Username")
-                .control(div().w(px(260.)).child(TextField::new(&self.username)))
+            Row::new("Username")
+                .control(div().w_full().child(TextField::new(&self.username)))
                 .into_any_element(),
-            FormRow::new("Password")
-                .control(div().w(px(260.)).child(TextField::new(&self.password)))
+            Row::new("Password")
+                .control(div().w_full().child(TextField::new(&self.password)))
                 .into_any_element(),
-            FormRow::new("Again")
-                .control(div().w(px(260.)).child(TextField::new(&self.again)))
+            Row::new("Again")
+                .control(div().w_full().child(TextField::new(&self.again)))
                 .into_any_element(),
         ];
         if let Some(error) = &self.account_error {
@@ -362,7 +362,7 @@ impl ShareForm {
             let pane = pane.clone();
             let copy = url.clone();
             rows.push(
-                FormRow::new("On your network")
+                Row::new("On your network")
                     .control(copyable(
                         "copy-lan",
                         url,
@@ -396,7 +396,7 @@ impl ShareForm {
         let reset_ctx = ctx.clone();
         let who = account.to_owned();
         rows.push(
-            FormRow::data(account.to_owned())
+            Row::data(account.to_owned())
                 .control(
                     Button::new("reset-admin", ButtonKind::Compact)
                         .label("Reset Password…")
@@ -407,7 +407,7 @@ impl ShareForm {
                 .into_any_element(),
         );
         rows.push(
-            FormRow::new("Port")
+            Row::new("Port")
                 .control(div().w(px(120.)).child(TextField::new(&self.port)))
                 .into_any_element(),
         );
@@ -447,7 +447,7 @@ fn away_from_home(
         serving,
     );
     let mut rows = vec![
-        FormRow::new("Tailscale")
+        Row::new("Tailscale")
             .value(match (&tailscale, checked) {
                 (Some(t), _) => format!("Detected · {}", t.name),
                 (None, true) => "Not detected".to_owned(),
@@ -462,7 +462,7 @@ fn away_from_home(
         .map(|t| t.name.clone())
         .unwrap_or_default();
     rows.push(
-        FormRow::new("Invite phones to")
+        Row::new("Invite phones to")
             .control(
                 Picker::new(
                     "invite-to",
@@ -499,13 +499,13 @@ fn away_from_home(
     if serving && let Some(addresses) = &sharing.status {
         if choice == InviteTo::Custom {
             rows.push(
-                FormRow::new("Address")
-                    .control(div().w(px(300.)).child(TextField::new(address)))
+                Row::new("Address")
+                    .control(div().w_full().child(TextField::new(address)))
                     .into_any_element(),
             );
         } else {
             rows.push(
-                FormRow::new("Address")
+                Row::new("Address")
                     .value(addresses.current.clone().unwrap_or_default())
                     .into_any_element(),
             );

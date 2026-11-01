@@ -156,7 +156,6 @@ impl Render for LibraryPane {
                 // Adding a folder starts a scan, so it waits for the one running.
                 Button::new("add-folder", ButtonKind::Bordered)
                     .label("Add Folder…")
-                    .icon(Icon::Folder)
                     .disabled(scanning)
                     .on_click({
                         let entity = entity.clone();
@@ -173,13 +172,11 @@ impl Render for LibraryPane {
             vec![
                 Button::new("scan", ButtonKind::Bordered)
                     .label("Scan")
-                    .icon(Icon::Rescan)
                     .disabled(scanning)
                     .on_click(move |_, _, cx| model_scan.update(cx, |m, cx| m.scan(false, cx)))
                     .into_any_element(),
                 Button::new("rescan", ButtonKind::Bordered)
                     .label("Rescan Everything")
-                    .icon(Icon::RescanAll)
                     .disabled(scanning)
                     .on_click(move |_, _, cx| model_force.update(cx, |m, cx| m.scan(true, cx)))
                     .into_any_element(),
