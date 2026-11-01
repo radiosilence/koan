@@ -1,8 +1,8 @@
-//! koan-desktop. For now it opens the theme sheet; the app's own window
+//! koan-gui. For now it opens the theme sheet; the app's own window
 //! replaces it as the shell lands.
 
 use gpui_kit::{AppContext, Bounds, WindowBounds, WindowOptions, px, size};
-use koan_desktop::{sheet::ThemeSheet, theme};
+use koan_gui::{sheet::ThemeSheet, theme};
 
 fn main() {
     gpui_kit::application()

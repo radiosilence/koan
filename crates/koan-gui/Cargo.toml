@@ -1,14 +1,14 @@
 [package]
-name = "koan-desktop"
+name = "koan-gui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "kōan's desktop app, drawn with GPUI."
+description = "The kōan GUI app, drawn with GPUI."
 publish = false
 
 [[bin]]
-name = "koan-desktop"
+name = "koan-gui"
 path = "src/main.rs"
 
 [dependencies]

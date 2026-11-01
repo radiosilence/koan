@@ -12,7 +12,7 @@ width is set at draw time from the size, by `KoanGlyph.strokeWidth`.
 
 The same outlines go to crates/koan-server/src/icon/glyphs.rs as one const per
 glyph, which the web UI and the share page draw (`crate::icon`), and to
-crates/koan-desktop/src/theme/icons/glyphs.rs, with an `Icon` enum naming every icon
+crates/koan-gui/src/theme/icons/glyphs.rs, with an `Icon` enum naming every icon
 Support/Icons.swift names and the glyph each one draws, so every client reads
 the set from one source.
 
@@ -33,7 +33,7 @@ SOURCES = ROOT / "apps/macos/Resources/Icons"
 OUTPUT = ROOT / "apps/macos/Sources/Koan/Support/KoanGlyphs.swift"
 ICONS = ROOT / "apps/macos/Sources/Koan/Support/Icons.swift"
 RUST_OUTPUT = ROOT / "crates/koan-server/src/icon/glyphs.rs"
-DESKTOP_OUTPUT = ROOT / "crates/koan-desktop/src/theme/icons/glyphs.rs"
+DESKTOP_OUTPUT = ROOT / "crates/koan-gui/src/theme/icons/glyphs.rs"
 GRID = 24
 
 NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")

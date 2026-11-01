@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Cut koan-desktop's Geist Mono faces from the variable font the site ships.
+"""Cut koan-gui's Geist Mono faces from the variable font the site ships.
 
 GPUI matches a font by choosing among a family's faces, so a variable font
 gives it the default instance alone. The theme's type roles use weights 200
 (display), 300 (titles) and 400 (everything else); each is instanced from
 site/public/geist-mono.woff2, the file the Mac app bundles, into
-crates/koan-desktop/assets/fonts as a static TrueType face. The outputs are
+crates/koan-gui/assets/fonts as a static TrueType face. The outputs are
 checked in, so a build needs no Python.
 
-Usage: uvx --from 'fonttools[woff]' python scripts/desktop-fonts.py
+Usage: uvx --from 'fonttools[woff]' python scripts/gui-fonts.py
 """
 
 from pathlib import Path
@@ -18,7 +18,7 @@ from fontTools.varLib import instancer
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "site/public/geist-mono.woff2"
-OUT = ROOT / "crates/koan-desktop/assets/fonts"
+OUT = ROOT / "crates/koan-gui/assets/fonts"
 WEIGHTS = {200: "ExtraLight", 300: "Light", 400: "Regular"}
 
 for weight, style in WEIGHTS.items():

@@ -2,7 +2,7 @@ name: Linux build dependencies
 description: >
   Installs the ALSA and D-Bus headers koan builds against, and the X11,
   Wayland, xkbcommon, fontconfig and Vulkan headers GPUI needs for
-  koan-desktop. A mirror that
+  koan-gui. A mirror that
   trickles bytes never trips apt's own timeout, so each attempt is cut off
   after three minutes and tried again, rather than holding the job until its
   timeout-minutes cancels it.
