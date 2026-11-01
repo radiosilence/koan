@@ -169,7 +169,7 @@ Promoted from koan-gui's `dsp/sheet.rs`: the square panel, its head with the tit
 The spec wins, except where noted for the user's call.
 
 - **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes 32.
-- **Toggle hit area.** The spec gives 44; the Mac's toggle is 24 tall (`KoanToggleStyle.hit`) and the whole row takes the click. A 44-point row is what made Settings feel too loose against the Mac. Proposed: 24-point rows whose whole width is the target. **For the user's decision.**
+- **Toggle and form rows: 24 points, a deliberate deviation for the desktop.** The spec gives a 44-point hit area; the Mac draws its toggles 24 tall (`KoanToggleStyle.hit`), and 44-point rows made Settings looser than the Mac. Rows are 24 at desktop density, the whole row's width taking the click. 44 stays the rule for touch platforms, should koan-kit ever reach one.
 - **Form label column.** Swift's is 200; koan-gui had 210. 200.
 
 ## Enforcement
