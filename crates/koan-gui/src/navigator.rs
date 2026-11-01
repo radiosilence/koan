@@ -23,6 +23,8 @@ pub enum Route {
     History,
     Downloads,
     Playlist(i64),
+    Album(i64),
+    Artist(i64),
 }
 
 /// What choosing a route did.

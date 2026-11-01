@@ -5,7 +5,8 @@
 //! It opens a real engine, so it refuses to run without a throwaway
 //! `KOAN_CONFIG_DIR`. `KOAN_SHOT_TRACKS=n` fills the queue with n of the
 //! library's tracks, scanned from that configuration's folders, first, and
-//! saves that session.
+//! saves that session. `KOAN_SHOT_ROUTE` (`albums`, `artists`, `tracks`,
+//! `album:<id>`, `artist:<id>`) draws that page instead of the queue.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example window_shot -- target/window.png
 
@@ -14,7 +15,23 @@ use std::time::Duration;
 
 use gpui_kit::{AppContext, HeadlessAppContext, px, size};
 use koan_ffi::KoanEngine;
+use koan_gui::navigator::Route;
 use koan_gui::{app, root::WindowRoot, shell::Shell, theme};
+
+fn route() -> Option<Route> {
+    let value = std::env::var("KOAN_SHOT_ROUTE").ok()?;
+    let id = |s: &str| s.parse::<i64>().ok();
+    match value.split_once(':') {
+        Some(("album", n)) => id(n).map(Route::Album),
+        Some(("artist", n)) => id(n).map(Route::Artist),
+        _ => match value.as_str() {
+            "albums" => Some(Route::Albums),
+            "artists" => Some(Route::Artists),
+            "tracks" => Some(Route::Tracks),
+            _ => None,
+        },
+    }
+}
 
 const WIDTH: f32 = 1180.0;
 const HEIGHT: f32 = 760.0;
@@ -64,12 +81,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         gpui_kit::init(cx);
         theme::init(cx);
         app::install(&engine, cx);
+        koan_gui::library::bind_keys(cx);
     });
 
     let mut shots = Vec::new();
     for dark in [true, false] {
         let window = cx.open_window(size(px(WIDTH), px(HEIGHT)), |window, cx| {
             let shell = cx.new(|cx| Shell::new(window, cx));
+            if let Some(route) = route() {
+                shell.update(cx, |shell, cx| shell.show(route, cx));
+            }
             let root = cx.new(|cx| WindowRoot::new(shell, window, cx));
             cx.new(|cx| gpui_kit::base::Root::new(root, window, cx))
         })?;

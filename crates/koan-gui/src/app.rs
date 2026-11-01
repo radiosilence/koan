@@ -55,6 +55,7 @@ pub fn start(
     cx: &mut App,
 ) {
     cx.bind_keys(queue::bindings());
+    crate::library::bind_keys(cx);
     install(&engine, cx);
     settings::resume(cx);
     cx.on_action(|_: &crate::platform::actions::Settings, cx| settings::open(cx));

@@ -28,21 +28,39 @@ futures-channel = "0.3"
 futures-lite = "2"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 gpui-kit = "0.8.1"
-# Resizing sleeves for the accent and the wash, and the frames GPUI draws,
-# in the version GPUI itself builds against; PNG for the theme sheet's
-# offscreen render; JPEG, WebP and GIF for the playing record's sleeve.
+# The platform cache directory for artwork.
+dirs = "7"
+# Decoding and resizing sleeves for the library, the accent and the wash, and
+# the frames GPUI draws, in the version GPUI itself builds against; PNG for
+# the theme sheet's offscreen render; JPEG, WebP and GIF for sleeves.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 koan-core = { workspace = true }
 log = "0.4"
-# Waiting on the first of two events at startup (`select`, `oneshot`).
+# Waiting on the first of two events at startup (`select`, `oneshot`),
+# channels from the artwork lanes, and blocking on the engine's
+# runtime-agnostic futures inside them.
 futures = "0.3"
 parking_lot = "0.13"
+# The browsers' sorts and filters, kept in gui-state.json.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 smallvec = "1"
 souvlaki = "0.9"
 
 [dev-dependencies]
 gpui-kit = { version = "0.8.1", features = ["test-support"] }
+# The scroll benches (benches/album_grid.rs): GPUI's own harness, drawing
+# through the headless Metal renderer with nothing on screen.
+criterion = "0.8"
+gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support", "bench-support"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["bench-support"] }
+# The large test library's tags (examples/gen_library.rs).
+lofty = "0.25"
 tempfile = "3"
+
+[[bench]]
+name = "album_grid"
+harness = false
 
 # Reduce Motion and Low Power Mode, which GPUI does not read, and the
 # notifications that say when either changes.

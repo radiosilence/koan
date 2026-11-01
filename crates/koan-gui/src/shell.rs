@@ -16,6 +16,7 @@ use crate::platform::actions::{
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
+use crate::library::{self, stage::LibraryStage};
 use crate::paint::Paint;
 use crate::queue::QueueView;
 use crate::session::Session;
@@ -40,6 +41,9 @@ pub struct Shell {
     /// position survive a visit to another page.
     queue: Entity<QueueView>,
     transport: Entity<Transport>,
+    /// The library's pages, once the browsers' saved sorts and filters have
+    /// been read.
+    library: Option<Entity<LibraryStage>>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
     /// The route focus was last moved for: the navigator notifies for more
@@ -65,12 +69,28 @@ impl Shell {
                 Session::save_if_changed(cx);
             }
         });
+        let navigator = nav.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let browse = cx
+                .background_executor()
+                .spawn(async { library::browse::Browse::load() })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                let engine = crate::engine::engine(cx);
+                let lib = library::Lib::new(engine, browse, navigator, None, cx);
+                this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
             nav,
             focus: cx.focus_handle(),
             queue,
             transport: cx.new(|cx| Transport::new(window, cx)),
+            library: None,
             moving_window: false,
             arrived_at: Route::Queue,
             _arrivals: arrivals,
@@ -105,7 +125,8 @@ impl Shell {
         });
     }
 
-    fn show(&mut self, route: Route, cx: &mut Context<Self>) {
+    /// Goes to `route`, as a link or a menu would.
+    pub fn show(&mut self, route: Route, cx: &mut Context<Self>) {
         self.nav.update(cx, |nav, cx| {
             if nav.go(route) {
                 cx.notify();
@@ -186,6 +207,8 @@ impl Shell {
             Route::History => "history",
             Route::Downloads => "downloads",
             Route::Playlist(_) => "playlist",
+            Route::Album(_) => "record",
+            Route::Artist(_) => "artist",
         };
         div()
             .id("toolbar")
@@ -284,6 +307,13 @@ impl Render for Shell {
                 .clone()
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
+            route if LibraryStage::draws(route) => match &self.library {
+                Some(library) => library
+                    .clone()
+                    .cached(StyleRefinement::default().size_full())
+                    .into_any_element(),
+                None => div().size_full().into_any_element(),
+            },
             _ => div()
                 .size_full()
                 .flex()

@@ -8,7 +8,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
-- **koan-gui** — the kōan GUI app (`koan-gui`), drawn with GPUI (gpui-kit). Desktop builds for macOS and Linux; Windows waits on koan-core (#1600). Links koan-ffi as a plain Rust library and drives `KoanEngine` as the Mac app does. Draws only the kōan look: `src/theme/` (tokens, Geist Mono, the icon set, the record accent, the wash) and `src/components/`. Not published.
+- **koan-gui** — the kōan GUI app (`koan-gui`), drawn with GPUI (gpui-kit). Desktop builds for macOS and Linux; Windows waits on koan-core (#1600). Links koan-ffi as a plain Rust library and drives `KoanEngine` as the Mac app does. Draws only the kōan look: `src/theme/` (tokens, Geist Mono, the icon set, the record accent, the wash) and `src/components/`. The library pages are `src/library/`. Not published.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
@@ -289,6 +289,21 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `theme/wash.rs` | The wash: `bake` (Android's `WashBake`, BGRA out) and the `Wash` view, one textured quad drifting only while asked and allowed |
 | `components/` | Buttons, toggles, segmented, form row, slider, stepper, text field, menu panel and rows, tooltip, nav and list rows, badge, chip, empty state |
 | `sheet.rs` | The theme sheet; `examples/theme_sheet.rs` draws it offscreen to a PNG |
+| `library/stage.rs` | The library's part of the stage, for the shell: the page for an album, artist or track route, and a track's details over it |
+| `library/nav.rs` | Each listing's scroll and anchor, and the track whose details are open, kept beside the navigator, which every move goes to |
+| `library/covers.rs` | Library artwork: bytes on disk once per record (`$KOAN_CONFIG_DIR/artwork` or the platform cache), bitmaps per record and draw size in a bounded LRU whose evictions drop the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
+| `library/albums.rs` | The album grid: a uniform list of rows of tiles, aiming the cover cache from the scroll's heading (the Mac grid's `aim`), scroll kept across visits and column changes |
+| `library/tile.rs` | One record's tile, shared by the grid and the artist page: a cached view with one interactive element, telling its parts apart by position, its strings made once per listing |
+| `library/rows.rs` | One track's row, shared by the track browser, record page and artist page, on the Mac's row metrics |
+| `library/artists.rs`, `tracks.rs` | The artist browser; the track browser, read a page at a time and swapped in once a reload covers the screen |
+| `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with bio, photo, sections, features and appearances |
+| `library/drag.rs` | `PlayableDrag`, what every drag out of the library carries: `TrackSet`s for the engine, shared so a pick is built once. The queue and the sidebar's queue and playlist rows take it |
+| `library/selection.rs` | Picking several things to play together, in tick order |
+| `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
+| `library/feed.rs` | The slices the library pages read (library version, playing record, transfers, favourites, playlists, connection), to be replaced by `mirror.rs` |
+| `library/bench.rs` | What `benches/album_grid.rs` counts beside GPUI's frame timings: blank, placeholder and stand-in tiles, and how long tiles stayed blank. The bench scrolls the grid through GPUI's harness and headless renderer, nothing on screen |
+
+`just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library; `KOAN_CONFIG_DIR=DIR/config cargo bench -p koan-gui --bench album_grid` scrolls the album grid over it.
 
 `platform/` is where the app meets the operating system. Nothing in it blocks the UI thread: engine calls are awaited from `cx.spawn`, file work runs on the background executor, the log is written by a thread of its own.
 

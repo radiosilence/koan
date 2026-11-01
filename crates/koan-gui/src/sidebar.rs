@@ -4,7 +4,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::Playlist;
 
-use crate::engine::engine;
+use crate::engine::{command, engine};
+use crate::library::drag::PlayableDrag;
 use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
@@ -164,13 +165,19 @@ impl Render for Sidebar {
             .flex_col()
             .overflow_y_scroll()
             .pt(p.space(Space::S))
-            // Files dropped on the queue's row are queued.
+            // Files, and what is dragged from the library, dropped on the
+            // queue's row are queued.
             .child(
-                row(queue, "nav-queue".into(), "queue".into(), cx).on_drop(cx.listener(
-                    |_, paths: &ExternalPaths, _, cx| {
+                row(queue, "nav-queue".into(), "queue".into(), cx)
+                    .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
                         drop::queue_files(&engine(cx), paths.paths().to_vec(), cx)
-                    },
-                )),
+                    }))
+                    .on_drop(cx.listener(|_, dragged: &PlayableDrag, _, cx| {
+                        let sets = dragged.sets.to_vec();
+                        command(cx, "queue from the library", move |e| {
+                            e.queue(sets, koan_ffi::Placement::Append)
+                        });
+                    })),
             )
             .child(heading("library", &p))
             .children(
@@ -190,11 +197,19 @@ impl Render for Sidebar {
                     &p,
                 )
                 .on_click(go(page, cx))
-                // Files dropped on a playlist's row are added to it.
+                // Files, and what is dragged from the library, dropped on a
+                // playlist's row are added to it.
                 .on_drop(cx.listener({
                     let id = playlist.id;
                     move |_, paths: &ExternalPaths, _, cx| {
                         drop::add_files_to_playlist(&engine(cx), id, paths.paths().to_vec(), cx)
+                    }
+                }))
+                .on_drop(cx.listener({
+                    let id = playlist.id;
+                    move |_, dragged: &PlayableDrag, _, cx| {
+                        let sets = dragged.sets.to_vec();
+                        command(cx, "add to playlist", move |e| e.add_to_playlist(id, sets));
                     }
                 }))
             }))

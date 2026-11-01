@@ -461,6 +461,25 @@ pub fn config_dir() -> std::path::PathBuf {
     config::config_dir()
 }
 
+/// The album sorts that mean something under `filter`, and with a search when
+/// `searching`, in the order a menu offers them.
+#[uniffi::export]
+pub fn album_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<AlbumSort> {
+    koan_core::browse::AlbumSort::offered(&filter.into(), searching)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+/// As `album_sorts_offered`, for the track browser.
+#[uniffi::export]
+pub fn track_sorts_offered(filter: BrowseFilter, searching: bool) -> Vec<TrackBrowseSort> {
+    koan_core::browse::TrackSort::offered(&filter.into(), searching)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
 /// A size as koan reads one in the config ("50GB", "500 MB"), in bytes, or
 /// `None` when it is not one. So the apps read the cache limit as the core
 /// does, without a parser of their own.
@@ -5517,7 +5536,7 @@ impl KoanEngine {
         let track_id = row.id;
 
         if let Some(art) = local_cover_art(&row) {
-            return Ok(Some(art));
+            return Ok(Some(fit_cover(art, size)));
         }
 
         let Some(remote_id) = row.remote_id else {
@@ -6754,6 +6773,57 @@ fn local_cover_art(row: &queries::TrackRow) -> Option<CoverArt> {
     Some(CoverArt { data, mime })
 }
 
+/// Local art as the size asked for, as a server's thumbnail would be: a
+/// sleeve embedded at 3000 pixels is decoded at that size by every client
+/// that draws it otherwise, for a tile a tenth as wide. Art already within the
+/// size, or that will not decode, is returned as it was found. A scaled copy
+/// is a JPEG, so a transparent sleeve loses its alpha; sleeves are opaque in
+/// practice.
+fn fit_cover(art: CoverArt, size: Option<u32>) -> CoverArt {
+    let Some(size) = size.filter(|s| *s > 0) else {
+        return art;
+    };
+    // The header alone says whether there is anything to do.
+    let fits = image::ImageReader::new(std::io::Cursor::new(&art.data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .is_none_or(|(w, h)| w <= size && h <= size);
+    if fits {
+        return art;
+    }
+    // The copy carries no EXIF, so the orientation is applied to its pixels.
+    let decoded = image::ImageReader::new(std::io::Cursor::new(&art.data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_decoder().ok())
+        .and_then(|mut decoder| {
+            use image::ImageDecoder;
+            let orientation = decoder
+                .orientation()
+                .unwrap_or(image::metadata::Orientation::NoTransforms);
+            let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+            image.apply_orientation(orientation);
+            Some(image)
+        });
+    let Some(image) = decoded else {
+        return art;
+    };
+    let mut data = Vec::new();
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut data, 90);
+    match image
+        .thumbnail(size, size)
+        .into_rgb8()
+        .write_with_encoder(encoder)
+    {
+        Ok(()) => CoverArt {
+            data,
+            mime: "image/jpeg".into(),
+        },
+        Err(_) => art,
+    }
+}
+
 fn sniff_mime(data: &[u8]) -> &'static str {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"
@@ -7183,6 +7253,63 @@ mod cover_tests {
         let art = local_cover_art(&row).expect("the folder image");
         assert_eq!(art.data, png);
         assert_eq!(art.mime, "image/png");
+    }
+
+    fn png(side: u32) -> CoverArt {
+        let mut data = Vec::new();
+        image::RgbImage::new(side, side)
+            .write_to(
+                &mut std::io::Cursor::new(&mut data),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        CoverArt {
+            data,
+            mime: "image/png".into(),
+        }
+    }
+
+    #[test]
+    fn local_art_larger_than_asked_is_scaled_and_smaller_is_untouched() {
+        let big = fit_cover(png(1200), Some(1000));
+        assert_eq!(big.mime, "image/jpeg");
+        let scaled = image::load_from_memory(&big.data).unwrap();
+        assert_eq!((scaled.width(), scaled.height()), (1000, 1000));
+
+        let small = png(400);
+        assert_eq!(fit_cover(small.clone(), Some(1000)).data, small.data);
+        assert_eq!(fit_cover(png(1200), None).mime, "image/png");
+        let junk = CoverArt {
+            data: b"not an image".to_vec(),
+            mime: "application/octet-stream".into(),
+        };
+        assert_eq!(fit_cover(junk, Some(10)).data, b"not an image");
+    }
+
+    /// A phone's photo stores its pixels sideways and says so in EXIF; the
+    /// scaled copy carries no EXIF, so it is turned upright first.
+    #[test]
+    fn a_scaled_copy_is_upright() {
+        use image::ImageEncoder;
+        // Big-endian TIFF header, one IFD entry: Orientation (0x0112) = 6,
+        // a quarter turn clockwise.
+        let exif = vec![
+            b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0,
+            0,
+        ];
+        let mut data = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut data);
+        encoder.set_exif_metadata(exif).unwrap();
+        let wide = image::RgbImage::new(1200, 600);
+        encoder
+            .write_image(&wide, 1200, 600, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let art = CoverArt {
+            data,
+            mime: "image/png".into(),
+        };
+        let scaled = image::load_from_memory(&fit_cover(art, Some(1000)).data).unwrap();
+        assert_eq!((scaled.width(), scaled.height()), (500, 1000));
     }
 }
 

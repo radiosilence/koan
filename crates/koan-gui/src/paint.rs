@@ -1,8 +1,8 @@
 //! A window's look as these views draw with it: the theme's `Look`, with its
 //! colours flattened to the values the views paint with.
 
-use crate::theme::{Look, Space, Tone};
-use gpui_kit::{App, Hsla, Pixels, Window};
+use crate::theme::{Look, Space, Tone, tokens};
+use gpui_kit::{App, Hsla, Pixels, Window, hsla, px};
 
 #[derive(Clone, Copy)]
 pub struct Paint {
@@ -43,5 +43,25 @@ impl Paint {
 
     pub fn space(&self, space: Space) -> Pixels {
         self.look.space(space)
+    }
+
+    /// A width that holds text, in points at 100 %, grown with the text size.
+    pub fn sized(&self, points: f32) -> Pixels {
+        px(points * self.look.scale.size)
+    }
+
+    /// A row's hover fill: `hover` at the theme's row opacity.
+    pub fn row_hover(&self) -> Hsla {
+        self.hover.opacity(tokens::ROW_HOVER_OPACITY)
+    }
+
+    /// A faint hairline of `ink` between regions.
+    pub fn row_rule(&self) -> Hsla {
+        self.ink.opacity(tokens::ROW_RULE_OPACITY)
+    }
+
+    /// A flat dim over artwork, under the hover play mark. Not a fade.
+    pub fn dim(&self) -> Hsla {
+        hsla(0.0, 0.0, 0.0, 0.35)
     }
 }
