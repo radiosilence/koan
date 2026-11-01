@@ -2,10 +2,11 @@
 //! output in use, or on a device a preset menu names, and brought to the
 //! front when it is open already.
 
-use koan_kit::raw::{
-    App, AppContext, Bounds, Global, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
-    px, size,
-};
+use koan_kit::app::{App, AppContext, Bounds, Global, WindowHandle};
+// the platform window and its options.
+use koan_kit::raw::{TitlebarOptions, WindowBounds, WindowOptions};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{px, size};
 
 use super::{Dsp, EqPage};
 use crate::engine::engine;
@@ -15,8 +16,8 @@ use crate::root::WindowRoot;
 /// The EQ model, made the first time EQ is opened, and its window while it
 /// is open.
 struct EqWindow {
-    dsp: koan_kit::raw::Entity<Dsp>,
-    window: Option<(WindowHandle<WindowRoot>, koan_kit::raw::Entity<EqPage>)>,
+    dsp: koan_kit::app::Entity<Dsp>,
+    window: Option<(WindowHandle<WindowRoot>, koan_kit::app::Entity<EqPage>)>,
 }
 
 impl Global for EqWindow {}

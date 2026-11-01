@@ -7,12 +7,9 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use koan_ffi::{DeletedDsp, DspOverview, DspProfileSummary, DspRole, DspTuningEntry};
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
-};
 
 use super::flows;
 use super::menu::{Item, Trigger, menu};
@@ -39,7 +36,7 @@ pub struct ManageEq {
     restore_error: Option<SharedString>,
     loaded: Option<((u64, u64), bool)>,
     /// The read under way; a newer one drops it.
-    _load: Option<koan_kit::raw::Task<()>>,
+    _load: Option<koan_kit::app::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 

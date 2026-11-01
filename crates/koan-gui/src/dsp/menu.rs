@@ -4,11 +4,9 @@
 
 use std::rc::Rc;
 
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    AnyElement, App, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
-};
+use koan_kit::app::*;
+// overlays placed against another element.
+use koan_kit::raw::{anchored, deferred};
 
 use crate::components::{MenuPanel, MenuRow};
 use crate::theme::{HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
@@ -91,13 +89,13 @@ pub fn menu(
     // A press on the trigger while the menu is open is the trigger's to
     // close: the panel's press-outside leaves it alone.
     let over_trigger = window.use_keyed_state(
-        koan_kit::raw::ElementId::NamedChild(std::sync::Arc::new(id.clone()), "over".into()),
+        koan_kit::app::ElementId::NamedChild(std::sync::Arc::new(id.clone()), "over".into()),
         cx,
         |_, _| false,
     );
     let toggle = {
         let open = open.clone();
-        move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
+        move |_: &koan_kit::app::ClickEvent, _: &mut Window, cx: &mut App| {
             open.update(cx, |o, cx| {
                 *o = !*o;
                 cx.notify();
@@ -172,11 +170,12 @@ pub fn menu(
         deferred(
             anchored().snap_to_window().child(
                 div()
-                    .id(koan_kit::raw::ElementId::NamedChild(
+                    .id(koan_kit::app::ElementId::NamedChild(
                         std::sync::Arc::new(id.clone()),
                         "panel".into(),
                     ))
                     .occlude()
+                    // geometry and colours computed at runtime, not chosen from the theme.
                     .max_h(koan_kit::raw::px(420.0))
                     .overflow_y_scroll()
                     .on_mouse_down_out({
@@ -193,12 +192,14 @@ pub fn menu(
                     })
                     // Escape closes it, heard while it is drawn.
                     .child(
+                        // painted and hit-tested by hand: drawing koan-kit has no component for.
                         koan_kit::raw::canvas(
                             |_, _, _| (),
                             move |_, _, window, _| {
                                 let close = close.clone();
                                 window.on_key_event(
-                                    move |e: &koan_kit::raw::KeyDownEvent, phase, _, cx| {
+                                    move |e: &koan_kit::app::KeyDownEvent, phase, _, cx| {
+                                        // painted and hit-tested by hand: drawing koan-kit has no component for.
                                         if phase == koan_kit::raw::DispatchPhase::Bubble
                                             && e.keystroke.key == "escape"
                                         {

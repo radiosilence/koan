@@ -4,7 +4,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use koan_ffi::{KoanEngine, KoanError};
-use koan_kit::raw::{App, Global};
+use koan_kit::app::{App, Global};
 
 pub struct Engine(pub Arc<KoanEngine>);
 

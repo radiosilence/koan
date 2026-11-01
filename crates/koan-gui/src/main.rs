@@ -4,7 +4,7 @@
 
 use futures_channel::mpsc;
 use koan_gui::{app, platform, theme};
-use koan_kit::raw::*;
+use koan_kit::app::*;
 use platform::instance::{self, Launch, Opened};
 
 fn main() {
@@ -23,6 +23,7 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     platform::about::name_unbundled();
+    // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let application = koan_kit::raw::application().with_assets(theme::icons::Assets);
     application.on_open_urls(move |urls| {
         for next in instance::sort_urls(urls) {
@@ -32,6 +33,7 @@ fn main() {
     application.run(|cx| {
         #[cfg(target_os = "macos")]
         platform::about::icon_unbundled();
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         theme::init(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {

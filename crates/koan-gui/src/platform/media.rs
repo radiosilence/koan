@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use futures_channel::mpsc;
 use futures_util::StreamExt as _;
 use koan_ffi::{Anchor, KoanEngine, NowPlaying, PlayState, StateSlice};
-use koan_kit::raw::{App, AsyncApp, Global};
+use koan_kit::app::{App, AsyncApp, Global};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
     SeekDirection,

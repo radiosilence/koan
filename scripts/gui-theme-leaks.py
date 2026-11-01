@@ -5,7 +5,9 @@ Pages build from koan-kit's components and take sizes, colours and type from
 its roles. This counts, in each koan-gui source file, what chooses a look by
 hand: a size or colour written as a number, GPUI's fixed-size styles, a
 toolbar button or page title built from parts, `gpui::` named directly, and
-each use of `koan_kit::raw`, GPUI reached around the components.
+each name taken from `koan_kit::raw`, GPUI reached around the components.
+A raw use with no comment on the line above saying why koan-kit cannot cover
+it fails the check outright.
 
 A ratchet: crates/koan-gui/theme-leaks.toml holds each file's counts as the
 pages are now. The check fails when a count grows or a file not listed has
@@ -33,11 +35,34 @@ KINDS = {
     "container": re.compile(r"\b(TypeRole|Type)::Title\b|ButtonKind::Toolbar\b"),
     # GPUI named directly rather than through koan-kit.
     "gpui": re.compile(r"\bgpui(_kit)?::"),
-    # GPUI reached through koan-kit's escape hatch: each is an exception,
-    # kept only with a comment saying why koan-kit cannot cover it, and the
-    # count only falls as pages move onto components.
-    "raw": re.compile(r"\bkoan_kit::raw\b"),
 }
+
+# GPUI reached through koan-kit's escape hatch, counted by the names taken:
+# each is an exception, kept only with a comment saying why koan-kit cannot
+# cover it, and the count only falls as pages move onto components.
+RAW = re.compile(r"\bkoan_kit::raw::(?:\w+::)*(\{[^}]*\}|\w+)")
+
+
+def raw_names(text: str) -> int:
+    total = 0
+    for m in RAW.finditer(text):
+        taken = m.group(1)
+        total += len([n for n in taken.strip("{}").split(",") if n.strip()]) if taken.startswith("{") else 1
+    return total
+
+
+def unreasoned() -> list[str]:
+    """Raw uses with no comment on the line above, or on their own line."""
+    missing = []
+    for path in sorted(SRC.rglob("*.rs")):
+        lines = path.read_text().splitlines()
+        for i, line in enumerate(lines):
+            code = line.split("//", 1)[0]
+            if "koan_kit::raw" not in code or "//" in line:
+                continue
+            if i == 0 or not lines[i - 1].lstrip().startswith("//"):
+                missing.append(f"{path.relative_to(SRC)}:{i + 1}")
+    return missing
 
 
 def counts() -> dict[str, dict[str, int]]:
@@ -50,6 +75,7 @@ def counts() -> dict[str, dict[str, int]]:
         ]
         text = "\n".join(lines)
         per = {kind: len(rx.findall(text)) for kind, rx in KINDS.items()}
+        per["raw"] = raw_names(text)
         per = {k: v for k, v in per.items() if v}
         if per:
             found[str(path.relative_to(SRC))] = per
@@ -89,6 +115,11 @@ def write_baseline(found: dict[str, dict[str, int]]) -> None:
 
 
 def main() -> int:
+    missing = unreasoned()
+    if missing:
+        print("koan_kit::raw used without a comment above it saying why koan-kit cannot cover it:")
+        print("  " + "\n  ".join(missing))
+        return 1
     found = counts()
     baseline = read_baseline()
     grown = [

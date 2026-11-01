@@ -9,7 +9,11 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the platform window and its options.
+use koan_kit::raw::WindowBounds;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, px, size};
 
 const FILE: &str = "desktop-window";
 

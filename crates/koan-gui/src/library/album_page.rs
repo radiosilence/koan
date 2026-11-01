@@ -7,8 +7,11 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use koan_ffi::{Album, Track};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
@@ -462,6 +465,7 @@ impl Render for AlbumPage {
                                 .pb(grid.margin)
                                 .size_full(),
                             )
+                            // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                             .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                         cx.weak_entity(),
                         window,

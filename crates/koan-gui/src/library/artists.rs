@@ -8,8 +8,11 @@ use std::ops::Range;
 use std::time::Duration;
 
 use koan_ffi::{Artist, BrowseFilter};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{point, px};
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{UniformListScrollHandle, uniform_list};
 
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
@@ -379,6 +382,7 @@ impl Render for ArtistBrowser {
                     .pt(px(10.0))
                     .relative()
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
                 window,

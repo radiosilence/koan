@@ -1,8 +1,9 @@
 //! The library's part of the shell's stage: the page the navigator is on,
 //! and a track's details over it.
 
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
 
 use super::Lib;
 use super::albums::AlbumGrid;

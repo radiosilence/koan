@@ -5,7 +5,9 @@
 //! GPUI draws no menu bar on Linux; the bindings and the sheet stand for it
 //! there.
 
-use koan_kit::raw::{Action, App, Menu, MenuItem, OsAction, SystemMenuType};
+use koan_kit::app::{Action, App};
+// the platform's menu bar and Dock menu, which koan-kit does not draw.
+use koan_kit::raw::{Menu, MenuItem, OsAction, SystemMenuType};
 
 use super::actions::{self, APPLICATION, MENU};
 

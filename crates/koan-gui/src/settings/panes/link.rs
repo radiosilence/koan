@@ -15,8 +15,9 @@ use std::time::Duration;
 use crate::components::{Button, ButtonKind};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 use koan_ffi::{ConnectionInfo, Invite, KoanEngine, KoanError};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{px, size};
 
 use crate::mirror::Slice;
 use crate::settings::form::{section, text};

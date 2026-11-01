@@ -10,8 +10,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use koan_ffi::{Album, AlbumOnDevice};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, hsla, px, relative};
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
+// text measured or shaped at runtime.
+use koan_kit::raw::{TextRun, font};
+// decoded images handed to the renderer.
+use koan_kit::raw::{ImageSource, img};
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
 
 use super::actions;
 use super::covers::Sleeve;
@@ -597,8 +606,6 @@ fn download_bar(p: &Paint, on_device: Option<AlbumOnDevice>, arriving: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
-    use core::prelude::v1::test;
 
     #[test]
     fn columns_share_the_width_within_the_tile_bounds() {

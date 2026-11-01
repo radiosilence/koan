@@ -4,7 +4,7 @@
 
 use koan_ffi::Stats;
 // The entity, its context and Render are GPUI's app model, which koan-kit does not wrap.
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 use crate::components::StatusBlock;
 use crate::engine::engine;

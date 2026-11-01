@@ -5,9 +5,15 @@
 //! slider, a row of the queue) redraws itself and the views that hold it,
 //! and the others are reused as they were.
 
+use koan_kit::app::*;
+// gpui-component's focus and click extensions, for the shell's own handling.
 use koan_kit::raw::base::InteractiveElementExt as _;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+// the bounds a cached view keeps between frames.
+use koan_kit::raw::StyleRefinement;
+// overlays placed against another element.
+use koan_kit::raw::deferred;
+// the platform window and its options.
+use koan_kit::raw::{Decorations, WindowControlArea};
 
 use crate::components::sheet as ask;
 use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
@@ -423,7 +429,7 @@ impl Render for Shell {
                                 .flex()
                                 .flex_col()
                                 .when(!washed, |d| d.bg(p.bg))
-                                .when(!WINDOW_BUTTONS.height.is_zero(), |d| {
+                                .when(WINDOW_BUTTONS.height > Pixels::ZERO, |d| {
                                     d.child(
                                         Self::moves_window(div().id("sidebar-drag"), cx)
                                             .h(WINDOW_BUTTONS.height)

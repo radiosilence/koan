@@ -20,13 +20,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use koan_ffi::{DspBand, DspBrush, DspPoint, DspResponse};
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    App, Bounds, Context, DispatchPhase, Entity, Font, FontWeight, Hsla, IntoElement, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Path, PathBuilder,
-    Pixels, Point, Render, SharedString, Styled, Subscription, TextAlign, TextRun, WeakEntity,
-    Window, canvas, div, fill, font, point, px, size,
-};
+use koan_kit::app::*;
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::{DispatchPhase, Path, PathBuilder, canvas, fill};
+// text measured or shaped at runtime.
+use koan_kit::raw::{Font, FontWeight, TextRun, font};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, TextAlign, point, px, size};
 
 use super::model::{Commit, Done, Dsp, Ended, GRAPH_RATE, Outcome};
 use crate::components::Segmented;
@@ -564,7 +564,7 @@ struct Cache {
     handles: Vec<(usize, Point<Pixels>)>,
 }
 
-type Size = koan_kit::raw::Size<Pixels>;
+type Size = koan_kit::app::Size<Pixels>;
 
 /// A curve's path and how it is drawn.
 type Drawn = (Option<Stroke>, Rc<Path<Pixels>>);
@@ -657,6 +657,7 @@ struct Frame {
     domain: (f64, f64),
     level: f64,
     paths: Vec<Drawn>,
+    // painted and hit-tested by hand: drawing koan-kit has no component for.
     hitbox: koan_kit::raw::Hitbox,
     handles: Vec<Handle>,
     held: Option<usize>,
@@ -713,6 +714,7 @@ impl Render for Graph {
                         domain,
                         level,
                     );
+                    // painted and hit-tested by hand: drawing koan-kit has no component for.
                     let hitbox = window.insert_hitbox(plot, koan_kit::raw::HitboxBehavior::Normal);
                     Frame {
                         plot,
@@ -1027,6 +1029,7 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
     }
 
     window.with_content_mask(
+        // painted and hit-tested by hand: drawing koan-kit has no component for.
         Some(koan_kit::raw::ContentMask { bounds: plot }),
         |window| {
             for (stroke, path) in &f.paths {

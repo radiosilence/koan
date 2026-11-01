@@ -8,8 +8,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use koan_ffi::KoanEngine;
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// the platform window and its options.
+use koan_kit::raw::{TitlebarOptions, WindowBounds, WindowOptions};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{px, size};
 
 use crate::covers::Covers;
 use crate::engine::Engine;
@@ -151,6 +154,7 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         app_id: Some("koan-gui".into()),
         ..Default::default()
     };
+    // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
         window.on_window_should_close(cx, |window, cx| {
             window_state::save(window.window_bounds(), cx);

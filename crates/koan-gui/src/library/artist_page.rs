@@ -13,8 +13,13 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{ListAlignment, ListOffset, ListState, list};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
+// painted and hit-tested by hand: drawing koan-kit has no component for.
+use koan_kit::raw::canvas;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -909,6 +914,7 @@ impl Render for ArtistPage {
                     .flex_1()
                     .min_h_0()
                     .child(body)
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.list)),
                 cx.weak_entity(),
                 window,

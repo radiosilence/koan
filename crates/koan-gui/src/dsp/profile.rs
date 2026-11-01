@@ -10,12 +10,11 @@ use koan_ffi::{
     DspDeviceAction, DspEarKind, DspLayerInfo, DspOverview, DspProfileDetail, DspRole,
     DspTargetName, DspTargetOption, DspTargets, DspTuningEntry,
 };
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState};
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, PathPromptOptions,
-    Render, SharedString, Styled, Subscription, Task, Window, div, px,
-};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
 
 use super::bands::{self, Fields};
 use super::graph::{Editing, Graph, Part, Stroke};
@@ -104,14 +103,16 @@ impl Render for ProfilePage {
                         .border_color(look.palette.rule.hsla())
                         .child(
                             div().h(px(GRAPH_H)).child(
-                                koan_kit::raw::AnyView::from(self.graph.clone())
+                                koan_kit::app::AnyView::from(self.graph.clone())
+                                    // the bounds a cached view keeps between frames.
                                     .cached(koan_kit::raw::StyleRefinement::default().size_full()),
                             ),
                         ),
                 )
             })
             .child(
-                koan_kit::raw::AnyView::from(self.body.clone()).cached(
+                koan_kit::app::AnyView::from(self.body.clone()).cached(
+                    // the bounds a cached view keeps between frames.
                     koan_kit::raw::StyleRefinement::default()
                         .flex_1()
                         .min_h_0()
@@ -156,7 +157,7 @@ pub struct ProfileBody {
     curve: Option<usize>,
     name_input: Entity<InputState>,
     /// The window the page is in, for its fields.
-    window: koan_kit::raw::AnyWindowHandle,
+    window: koan_kit::app::AnyWindowHandle,
     copy_input: Option<Entity<InputState>>,
     loaded: Option<((u64, u64), String)>,
     /// The stamp the detail shown was read at, as its read started.

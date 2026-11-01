@@ -5,8 +5,7 @@
 
 use std::rc::Rc;
 
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
 
 type Build = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 

@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use koan_ffi::{InviteTo, KoanEngine, ShareStatus, Sharing as Serving};
-use koan_kit::raw::{App, Context, SharedString, Task};
+use koan_kit::app::{App, Context, SharedString, Task};
 
 use super::model::describe;
 

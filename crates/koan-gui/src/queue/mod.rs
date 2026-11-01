@@ -12,8 +12,13 @@ pub mod rows;
 use std::collections::{HashMap, HashSet};
 
 use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
-use koan_kit::raw::prelude::*;
-use koan_kit::raw::*;
+use koan_kit::app::*;
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::{ListAlignment, ListOffset, ListState, list};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::{Hsla, px};
+// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
+use koan_kit::raw::ListScrollEvent;
 
 use crate::components::{
     Button, ButtonKind, Cover, CoverArt, EmptyState, KoanContextMenu, Menu, MenuEntry, Page,
@@ -1303,6 +1308,7 @@ impl Render for QueueView {
                         })
                         .size_full(),
                     )
+                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
                     .child(koan_kit::raw::base::Scrollbar::vertical(&self.list))
                     .into_any_element()
             }))

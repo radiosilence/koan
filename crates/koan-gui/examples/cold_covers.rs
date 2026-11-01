@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 use koan_ffi::KoanEngine;
 use koan_gui::library::{self, albums::AlbumGrid, browse::Browse};
 use koan_gui::theme;
-use koan_kit::raw::{AppContext as _, Entity, HeadlessAppContext, px, size};
+use koan_kit::app::{AppContext as _, Entity};
+// GPUI's start-up and headless rendering, which only the app's entry and tools reach.
+use koan_kit::raw::{HeadlessAppContext, px, size};
 
 /// 2560 × 1600 points: about a hundred tiles at the grid's sizes.
 const WIDTH: f32 = 2560.0;
@@ -32,13 +34,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
     }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
+    // geometry and colours computed at runtime, not chosen from the theme.
     let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         std::sync::Arc::new(theme::icons::Assets),
+        // geometry and colours computed at runtime, not chosen from the theme.
         koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
+        // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         theme::init(cx);
     });

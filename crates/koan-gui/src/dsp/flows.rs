@@ -9,12 +9,11 @@ use koan_ffi::{
     AutoEqEntry, AutoEqOffer, DspEarKind, DspMeasurementReading, DspResponse, DspTargetOption,
     SquigHit,
 };
+use koan_kit::app::*;
+// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState, Textarea, TextareaState};
-use koan_kit::raw::prelude::FluentBuilder;
-use koan_kit::raw::{
-    AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, PathPromptOptions,
-    Render, SharedString, Styled, Subscription, Task, Window, div, px,
-};
+// sizes and colours computed at runtime from measurements, not chosen from the theme.
+use koan_kit::raw::px;
 
 use super::graph::{Graph, Shown};
 use super::model::{Dsp, describe};
@@ -381,12 +380,12 @@ pub struct MeasurementFlow {
     _fetch: Option<Task<()>>,
     /// A sheet this one was opened from, closed with it once a correction
     /// is saved: AutoEQ's search, which found nothing.
-    closing: Option<koan_kit::raw::EntityId>,
+    closing: Option<koan_kit::app::EntityId>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl MeasurementFlow {
-    pub fn closing(mut self, sheet: koan_kit::raw::EntityId) -> Self {
+    pub fn closing(mut self, sheet: koan_kit::app::EntityId) -> Self {
         self.closing = Some(sheet);
         self
     }

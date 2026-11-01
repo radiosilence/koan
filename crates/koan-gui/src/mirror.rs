@@ -21,7 +21,7 @@ use koan_ffi::{
     ConnectionInfo, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo, QueueItem,
     QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer, TransferFigure,
 };
-use koan_kit::raw::{App, AppContext, Entity, Global};
+use koan_kit::app::{App, AppContext, Entity, Global};
 
 use crate::queue::rows::{self, Row};
 
