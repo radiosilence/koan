@@ -15,6 +15,8 @@ use crate::theme::{Icon, KoanStyled, Look, Space};
 
 type Run = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 type Build = Rc<dyn Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu>;
+/// A button at a rich row's end, made each time the menu draws.
+type Trailing = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
 
 /// An entry of a menu, built as `PopupMenuItem` is.
 pub struct MenuEntry {
@@ -24,6 +26,10 @@ pub struct MenuEntry {
     checked: Option<bool>,
     destructive: bool,
     disabled: bool,
+    detail: Option<(SharedString, bool)>,
+    rich: bool,
+    reach: Option<Icon>,
+    trailing: Vec<Trailing>,
     run: Option<Run>,
 }
 
@@ -37,6 +43,10 @@ impl MenuEntry {
             checked: None,
             destructive: false,
             disabled: false,
+            detail: None,
+            rich: false,
+            reach: None,
+            trailing: Vec::new(),
             run: None,
         }
     }
@@ -57,6 +67,37 @@ impl MenuEntry {
     /// One of a set of choices, ticked when in force.
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = Some(checked);
+        self
+    }
+
+    /// A place to choose, drawn as the Mac's output picker draws one: its
+    /// glyph large, the label over `detail`, the chosen one on `surface`.
+    pub fn rich(mut self, detail: impl Into<SharedString>) -> Self {
+        self.rich = true;
+        self.detail = Some((detail.into(), false));
+        self
+    }
+
+    /// The rich row's detail is a warning, in `bad`.
+    pub fn warns(mut self, warns: bool) -> Self {
+        if let Some((_, w)) = self.detail.as_mut() {
+            *w = warns;
+        }
+        self
+    }
+
+    /// A small glyph after the label: how the place is reached.
+    pub fn reach(mut self, reach: Icon) -> Self {
+        self.reach = Some(reach);
+        self
+    }
+
+    /// A button at the row's end.
+    pub fn trailing(
+        mut self,
+        make: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.trailing.push(Rc::new(make));
         self
     }
 
@@ -342,6 +383,16 @@ impl Render for Menu {
                     }
                     if let Some(icon) = item.icon {
                         row = row.icon(icon);
+                    }
+                    if let Some((detail, warns)) = item.detail.clone() {
+                        row = row.detail(detail, warns);
+                    }
+                    if let Some(reach) = item.reach {
+                        row = row.reach(reach);
+                    }
+                    row = row.rich(item.rich);
+                    for make in &item.trailing {
+                        row = row.trailing(make(window, cx));
                     }
                     let menu = menu.clone();
                     row = row.on_click(move |_, window, cx| {

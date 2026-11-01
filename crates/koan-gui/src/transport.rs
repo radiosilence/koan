@@ -12,13 +12,14 @@ use koan_ffi::{
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use crate::components::{Menu as ThemeMenu, MenuEntry, MenuSlot};
+use crate::components::{Button, ButtonKind, Menu as ThemeMenu, MenuEntry, MenuSlot};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Mirror, Outputs, Playback, Playhead};
 use crate::paint::Paint;
-use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, TypeRole};
+use crate::platform::actions::ShowEq;
+use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
 pub const HEIGHT: Pixels = px(68.);
@@ -289,8 +290,10 @@ fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
 
 /// Where the device in view plays, as the Mac's output picker lists it: the
 /// system default, each of its devices under the glyph of how it is
-/// connected, then the renderers on the network; the one in use ticked, and
-/// one another app holds marked.
+/// connected with its EQ under its name, then the renderers on the network;
+/// the one in use on `surface`, its glyph in the accent, ticked. Each device
+/// has its EQ button, in the accent while an EQ is in force there, and a
+/// renderer in use its volume.
 fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
         entry.checked(chosen).on_click(move |_, _, cx| {
@@ -298,12 +301,33 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
             command(cx, "select output", move |e| e.select_output(choice));
         })
     };
+    let eq = |id: String, on: bool| {
+        move |_: &mut Window, _: &mut App| {
+            Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
+                .icon(Icon::Filters)
+                .label("eq")
+                .when(on, |b| b.tone(Tone::Accent))
+                .on_click(|_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(Box::new(ShowEq), cx);
+                })
+                .into_any_element()
+        }
+    };
+    let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
+        (Some(preset), true) => format!("{preset}, edited"),
+        (Some(preset), false) => preset.clone(),
+        (None, true) => "unsaved".into(),
+        (None, false) => "flat".into(),
+    };
     let mut menu = menu.section("output");
     if let Some(owner) = &outputs.owner {
         menu = menu.item(MenuEntry::data(format!("on {owner}")).disabled(true));
     }
     menu = menu.item(choice(
-        MenuEntry::new("system default").icon(Icon::Output),
+        MenuEntry::new("system default")
+            .icon(Icon::Output)
+            .rich("whatever the system plays through"),
         outputs.current == OutputChoice::Default,
         OutputChoice::Default,
     ));
@@ -312,31 +336,74 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
             name: device.id.clone(),
         };
         let chosen = outputs.current == id;
-        let icon = if device.busy && !chosen {
-            Icon::Warning
+        let busy = device.busy && !chosen;
+        let detail = if busy {
+            "in use by another app".to_owned()
         } else {
-            output_icon(&device.kind)
+            preset(device)
         };
+        let shaped = device.preset.is_some() || device.unsaved;
         menu = menu.item(choice(
-            MenuEntry::data(device.name.clone()).icon(icon),
+            MenuEntry::data(device.name.clone())
+                .icon(output_icon(&device.kind))
+                .rich(detail)
+                .warns(busy)
+                .trailing(eq(device.id.clone(), shaped)),
             chosen,
             id,
         ));
     }
-    if !outputs.renderers.is_empty() {
-        menu = menu.section("on this network");
-        for renderer in &outputs.renderers {
-            let id = OutputChoice::Renderer {
-                udn: renderer.id.clone(),
+    for renderer in &outputs.renderers {
+        let id = OutputChoice::Renderer {
+            udn: renderer.id.clone(),
+        };
+        let chosen = outputs.current == id;
+        let detail = if renderer.detail.is_empty() {
+            "upnp".to_owned()
+        } else {
+            format!("{} · upnp", renderer.detail)
+        };
+        let shaped = renderer.preset.is_some() || renderer.unsaved;
+        menu = menu.item(choice(
+            MenuEntry::data(renderer.name.clone())
+                .icon(Icon::Speaker)
+                .reach(Icon::Wifi)
+                .rich(detail)
+                .trailing(eq(renderer.id.clone(), shaped)),
+            chosen,
+            id,
+        ));
+        if chosen && let Some(volume) = outputs.volume {
+            let step = |icon: Icon, label: &'static str, to: u8| {
+                move |_: &mut Window, _: &mut App| {
+                    Button::new(label, ButtonKind::Icon)
+                        .icon(icon)
+                        .label(label)
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            command(cx, "volume", move |e| e.set_output_volume(to));
+                        })
+                        .into_any_element()
+                }
             };
-            menu = menu.item(choice(
-                MenuEntry::data(renderer.name.clone()).icon(Icon::Speaker),
-                outputs.current == id,
-                id,
-            ));
+            menu = menu.item(
+                MenuEntry::new("volume")
+                    .icon(Icon::VolumeUp)
+                    .rich(format!("{volume} of 100"))
+                    .trailing(step(Icon::VolumeDown, "quieter", volume.saturating_sub(5)))
+                    .trailing(step(Icon::VolumeUp, "louder", (volume + 5).min(100))),
+            );
         }
     }
     menu
+}
+
+/// A stable small number for an id string, for an element id.
+fn id_hash(id: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
 }
 
 /// An output's glyph by how it is connected, as the Mac's picker gives it.
