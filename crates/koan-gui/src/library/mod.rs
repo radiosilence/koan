@@ -10,6 +10,7 @@ pub mod artists;
 pub mod bench;
 pub mod browse;
 pub mod chrome;
+pub mod controls;
 pub mod covers;
 pub mod drag;
 pub mod feed;

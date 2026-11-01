@@ -404,6 +404,17 @@ impl TrackList for TrackBrowser {
     }
 }
 
+impl TrackBrowser {
+    /// The browser's controls, in the window's toolbar.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(self.search.clone())
+            .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .child(chrome::track_sort_button(&self.lib, cx))
+            .into_any_element()
+    }
+}
+
 impl Render for TrackBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
@@ -426,13 +437,7 @@ impl Render for TrackBrowser {
             p,
             "tracks",
             chrome::count(self.total, "track", "tracks"),
-            div()
-                .flex()
-                .items_center()
-                .gap(p.space(Space::L))
-                .child(self.search.clone())
-                .child(chrome::filter_button(&self.filters, &self.lib, cx))
-                .child(chrome::track_sort_button(&self.lib, cx)),
+            div(),
         );
         let scale = window.scale_factor();
         let lead_width = rows::lead_width(p, self.total as usize, window);

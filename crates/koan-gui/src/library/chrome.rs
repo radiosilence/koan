@@ -15,7 +15,7 @@ use super::selection::Selection;
 use super::tokens::{self, Paint, Type, Typeset};
 use super::{Lib, actions};
 use crate::components::{
-    Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, TextField, Toggle,
+    Button, ButtonKind, EmptyState, FormRow, MenuPanel, MenuRow, TextField, Toggle, ToolbarButton,
 };
 use crate::theme::{Icon, KoanIcon, Space};
 
@@ -78,7 +78,11 @@ pub fn select_toggle(
 ) -> ToolbarButton {
     ToolbarButton::new(
         "select",
-        if active { Icon::Selecting } else { Icon::Select },
+        if active {
+            Icon::Selecting
+        } else {
+            Icon::Select
+        },
         if active { "done" } else { "select" },
     )
     .selected(active)
@@ -248,7 +252,8 @@ pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<ToolbarButton> {
     let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
     let browse = lib.browse.clone();
     random.then(|| {
-        ToolbarButton::new("album-reshuffle", Icon::Reshuffle, "shuffle again").on_click(move |_, _, cx| browse.update(cx, |b, cx| b.reshuffle(cx)))
+        ToolbarButton::new("album-reshuffle", Icon::Reshuffle, "shuffle again")
+            .on_click(move |_, _, cx| browse.update(cx, |b, cx| b.reshuffle(cx)))
     })
 }
 

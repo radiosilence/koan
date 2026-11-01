@@ -332,6 +332,16 @@ impl actions::Menus for ArtistBrowser {
     }
 }
 
+impl ArtistBrowser {
+    /// The browser's controls, in the window's toolbar.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(self.search.clone())
+            .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .into_any_element()
+    }
+}
+
 impl Render for ArtistBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
@@ -349,12 +359,7 @@ impl Render for ArtistBrowser {
             p,
             "artists",
             chrome::count(self.artists.len() as u64, "artist", "artists"),
-            div()
-                .flex()
-                .items_center()
-                .gap(p.space(Space::L))
-                .child(self.search.clone())
-                .child(chrome::filter_button(&self.filters, &self.lib, cx)),
+            div(),
         );
         let body = if self.artists.is_empty() && self.loaded.is_some() {
             chrome::empty_state(

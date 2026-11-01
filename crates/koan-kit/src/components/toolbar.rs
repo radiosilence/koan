@@ -101,6 +101,36 @@ impl RenderOnce for Toolbar {
     }
 }
 
+/// A run of toolbar items a page supplies, at the toolbar's gap: a filter
+/// field and the buttons beside it.
+#[derive(IntoElement, Default)]
+pub struct ToolbarGroup {
+    items: Vec<AnyElement>,
+}
+
+impl ToolbarGroup {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ParentElement for ToolbarGroup {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.items.extend(elements);
+    }
+}
+
+impl RenderOnce for ToolbarGroup {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .flex()
+            .items_center()
+            .gap(look.space(Space::Xs))
+            .children(self.items)
+    }
+}
+
 /// A toolbar's button: the glyph in `ink` in a 36-point cell, `surface`
 /// under the pointer and `hover` pressed; the word in its place with icons
 /// off.
