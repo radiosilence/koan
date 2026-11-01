@@ -16,8 +16,8 @@ use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
-use super::tokens::{Paint, Type, Typeset};
-use crate::components::{RowKind, RowMetrics, TableRow};
+use super::tokens::{Paint, Type};
+use crate::components::{Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow};
 use crate::theme::{Icon, KoanIcon};
 
 /// A row of one line: the title alone.
@@ -56,6 +56,10 @@ pub trait TrackList: actions::Menus {
         window: &mut Window,
         cx: &mut Context<Self>,
     );
+
+    /// The list's tracks in the order they play, for a row's play button to
+    /// play from that row with the rest behind it, as a double click does.
+    fn row_tracks(&self) -> Vec<i64>;
 }
 
 pub struct RowState {
@@ -116,20 +120,22 @@ pub fn track_row<V: TrackList>(
             },
         )
     };
-    let lead = div()
-        .typeset(
-            p,
-            Type::Meta,
-            if state.current { p.accent } else { p.muted },
-        )
-        .child(if state.current && state.playing {
-            crate::levels::bars(p.accent).into_any_element()
-        } else {
-            div()
-                .group_hover("row", |s| s.invisible())
-                .child(state.lead.clone())
-                .into_any_element()
-        });
+    let play = {
+        let view = view.clone();
+        move |_: &mut Window, cx: &mut App| {
+            view.update(cx, |this, cx| {
+                let ids = this.row_tracks();
+                actions::play_list(this.lib(), ids, index, cx);
+            })
+            .ok();
+        }
+    };
+    let lead = RowNumber::new(("row-play", id as u64), state.lead.clone())
+        .current(state.current)
+        .when(state.current && state.playing, |n| {
+            n.bars(crate::levels::bars(p.accent))
+        })
+        .on_play(play);
 
     let names_artist = state.gathered
         || track.credit_differs
@@ -171,7 +177,7 @@ pub fn track_row<V: TrackList>(
         .cursor_pointer()
         .text_color(if state.favourite { p.accent } else { p.muted })
         .when(!state.favourite, |d| {
-            d.invisible().group_hover("row", |s| s.visible())
+            d.invisible().group_hover(ROW_GROUP, |s| s.visible())
         })
         .on_click(click(RowPart::Heart))
         .child(super::tile::heart_glyph(p, state.favourite));
@@ -184,17 +190,13 @@ pub fn track_row<V: TrackList>(
     };
 
     let sleeve = state.gathered.then(|| {
-        let side = RowMetrics::sleeve(&p.look);
-        let art = div().size(side).flex_none().bg(p.surface);
-        match sleeve {
-            Some(Sleeve::Ready(image)) => art.child(img(ImageSource::Render(image)).size_full()),
-            Some(Sleeve::Colour(colour)) => art.bg(colour),
-            _ => art.child(crate::components::Placeholder::new(side)),
-        }
+        Cover::new(
+            sleeve.map_or(CoverArt::Missing, CoverArt::from),
+            RowMetrics::sleeve(&p.look),
+        )
     });
 
     TableRow::new(("row", id as u64), state.kind)
-        .group("row")
         .selected(state.selected)
         .lead_exact(state.lead_width, lead)
         .when_some(sleeve, |row, sleeve| row.lead(SLEEVE, sleeve))

@@ -23,7 +23,6 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::theme::Space;
 
 /// How long typing in the filter field waits for the next keystroke before
 /// asking again: each answer is the whole listing, and asking per keystroke
@@ -720,6 +719,29 @@ impl TileHost for AlbumGrid {
     }
 }
 
+impl AlbumGrid {
+    /// The grid's controls, in the window's toolbar.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(self.search.clone())
+            .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .child(chrome::album_sort_button(&self.lib, cx))
+            .children(chrome::reshuffle_button(&self.lib, cx))
+            .child(chrome::select_toggle(
+                self.selection.is_active(),
+                cx.listener(|this, _, _, cx| {
+                    if this.selection.is_active() {
+                        this.selection.end();
+                    } else {
+                        this.selection.begin(None);
+                    }
+                    cx.notify();
+                }),
+            ))
+            .into_any_element()
+    }
+}
+
 impl Render for AlbumGrid {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
@@ -748,25 +770,7 @@ impl Render for AlbumGrid {
             p,
             "albums",
             chrome::count(count as u64, "album", "albums"),
-            div()
-                .flex()
-                .items_center()
-                .gap(p.space(Space::L))
-                .child(self.search.clone())
-                .child(chrome::filter_button(&self.filters, &self.lib, cx))
-                .child(chrome::album_sort_button(&self.lib, cx))
-                .children(chrome::reshuffle_button(&self.lib, cx))
-                .child(chrome::select_toggle(
-                    self.selection.is_active(),
-                    cx.listener(|this, _, _, cx| {
-                        if this.selection.is_active() {
-                            this.selection.end();
-                        } else {
-                            this.selection.begin(None);
-                        }
-                        cx.notify();
-                    }),
-                )),
+            div(),
         );
 
         let width = self.width.clone();

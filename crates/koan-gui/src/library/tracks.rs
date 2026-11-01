@@ -22,7 +22,6 @@ use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::theme::Space;
 
 const PAGE: u32 = 1000;
 const TYPING: Duration = Duration::from_millis(80);
@@ -361,6 +360,10 @@ impl actions::Menus for TrackBrowser {
 }
 
 impl TrackList for TrackBrowser {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.tracks.iter().map(|t| t.id).collect()
+    }
+
     fn clicked(
         &mut self,
         index: usize,
@@ -400,6 +403,17 @@ impl TrackList for TrackBrowser {
     }
 }
 
+impl TrackBrowser {
+    /// The browser's controls, in the window's toolbar.
+    pub fn controls(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::components::ToolbarGroup::new()
+            .child(self.search.clone())
+            .child(chrome::filter_button(&self.filters, &self.lib, cx))
+            .child(chrome::track_sort_button(&self.lib, cx))
+            .into_any_element()
+    }
+}
+
 impl Render for TrackBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
@@ -422,13 +436,7 @@ impl Render for TrackBrowser {
             p,
             "tracks",
             chrome::count(self.total, "track", "tracks"),
-            div()
-                .flex()
-                .items_center()
-                .gap(p.space(Space::L))
-                .child(self.search.clone())
-                .child(chrome::filter_button(&self.filters, &self.lib, cx))
-                .child(chrome::track_sort_button(&self.lib, cx)),
+            div(),
         );
         let scale = window.scale_factor();
         let lead_width = rows::lead_width(p, self.total as usize, window);

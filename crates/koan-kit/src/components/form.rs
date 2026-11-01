@@ -52,8 +52,7 @@ impl Form {
                 .flex_col()
                 .gap(look.space(Space::L))
                 .w_full()
-                .px(look.space(Space::Xl))
-                .pb(look.space(Space::Xl))
+                .p(look.space(Space::Xl))
                 .children(self.sections),
         )
     }

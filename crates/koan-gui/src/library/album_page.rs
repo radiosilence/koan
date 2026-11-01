@@ -10,7 +10,7 @@ use koan_ffi::{Album, Track};
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use super::covers::{Art, Covers, Key, Priority, Sleeve};
+use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
 use super::rows::{self, RowPart, RowState, TrackList};
@@ -18,7 +18,7 @@ use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::components::RowKind;
+use crate::components::{Cover, CoverArt, RowKind, RowMetrics};
 use crate::theme::Space;
 
 /// A line of the list: a disc's heading, or a track and the number it shows.
@@ -96,6 +96,8 @@ pub struct AlbumPage {
 impl AlbumPage {
     pub fn new(lib: Lib, album_id: i64, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let id = cx.entity_id();
+        // The window takes this record's colours while its page shows.
+        cx.set_global(crate::root::ShownRecord(Some(album_id)));
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
             crate::theme::observe_accent(cx),
@@ -110,7 +112,18 @@ impl AlbumPage {
                     .retain(|p| !matches!(p, Playable::Track(id) if tracks.contains(&id)));
                 cx.notify();
             }),
-            cx.on_release(move |this, cx| this.lib.covers.update(cx, |c, _| c.release(id))),
+            cx.on_release(move |this, cx| {
+                this.lib.covers.update(cx, |c, _| c.release(id));
+                // The window takes the playing record's colours back, unless
+                // another record's page has taken them meanwhile.
+                if cx
+                    .try_global::<crate::root::ShownRecord>()
+                    .and_then(|s| s.0)
+                    == Some(this.album_id)
+                {
+                    cx.set_global(crate::root::ShownRecord(None));
+                }
+            }),
         ];
         let mut this = Self {
             lib,
@@ -252,35 +265,21 @@ impl AlbumPage {
     fn header(
         &mut self,
         p: &Paint,
-        grid: Grid,
+        _grid: Grid,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let album = self.album.clone();
-        let key = Key::new(Art::Album(self.album_id), grid.side, window.scale_factor());
+        let side = RowMetrics::header_art(&p.look);
+        let key = Key::new(Art::Album(self.album_id), side, window.scale_factor());
         let owner = cx.entity_id();
         let sleeve = self.lib.covers.update(cx, |c: &mut Covers, _| {
             c.request(owner, [(key, Priority::Visible)]);
             c.sleeve(key)
         });
-        let mut cover = div().size(grid.side).flex_none().bg(p.surface);
-        match sleeve {
-            Sleeve::Ready(image) => {
-                cover = cover.child(img(ImageSource::Render(image)).size_full())
-            }
-            Sleeve::Colour(colour) => cover = cover.bg(colour),
-            Sleeve::Waiting | Sleeve::None => {
-                cover = cover.child(crate::components::Placeholder::new(grid.side))
-            }
-        }
         let total: i64 = self.tracks.iter().filter_map(|t| t.duration_ms).sum();
-        let favourite = self
-            .lib
-            .feed
-            .read(cx)
-            .is_favourite(Playable::Album(self.album_id));
         let item = Playable::Album(self.album_id);
-        let mut details = div().flex().flex_wrap().typeset(p, Type::Control, p.muted);
+        let mut details = div().flex().flex_wrap();
         if let Some(album) = &album {
             for (i, part) in album.artist_credit.iter().enumerate() {
                 let span = div().id(("page-credit", i)).child(part.text.clone());
@@ -312,75 +311,15 @@ impl AlbumPage {
                 details = details.child(format!(" · {}", rest.join(" · ")));
             }
         }
-        let lib = self.lib.clone();
-        let lib2 = self.lib.clone();
-        let lib3 = self.lib.clone();
+        let title = album.as_ref().map(|a| a.title.clone()).unwrap_or_default();
         div()
-            .w_full()
-            .flex()
-            .items_start()
-            .gap(grid.gap)
-            .px(grid.margin)
-            .pt(p.space(Space::L))
-            .pb(p.space(Space::L))
-            .child(cover)
+            .px(RowMetrics::page_margin(&p.look))
+            .pt(RowMetrics::page_top(&p.look))
+            .pb(RowMetrics::header_gap(&p.look))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(p.space(Space::S))
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .typeset(p, Type::Title, p.strong)
-                            .line_clamp(2)
-                            .child(album.as_ref().map(|a| a.title.clone()).unwrap_or_default()),
-                    )
-                    .child(details)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(p.space(Space::L))
-                            .pt(p.space(Space::S))
-                            .child(
-                                // The page's one prominent action.
-                                crate::components::Button::new(
-                                    "page-play",
-                                    crate::components::ButtonKind::Prominent,
-                                )
-                                .label("play")
-                                .on_click(move |_, _, cx| {
-                                    actions::play(&lib, &[item], false, cx).detach()
-                                }),
-                            )
-                            .child(chrome::text_button("page-shuffle", "shuffle").on_click(
-                                move |_, _, cx| actions::play(&lib2, &[item], true, cx).detach(),
-                            ))
-                            .child(chrome::text_button("page-queue", "add to queue").on_click(
-                                move |_, _, cx| {
-                                    actions::queue(&lib3, &[item], koan_ffi::Placement::Append, cx)
-                                        .detach()
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .id("page-heart")
-                                    .cursor_pointer()
-                                    .typeset(
-                                        p,
-                                        Type::Meta,
-                                        if favourite { p.accent } else { p.muted },
-                                    )
-                                    .child(super::tile::heart_glyph(p, favourite))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.lib
-                                            .feed
-                                            .update(cx, |f, cx| f.toggle_favourite(item, cx))
-                                    })),
-                            ),
-                    ),
+                super::header::playable_header(&self.lib, item, title, cx)
+                    .art(Cover::new(CoverArt::from(sleeve), side))
+                    .detail(details),
             )
     }
 
@@ -413,6 +352,10 @@ impl actions::Menus for AlbumPage {
 }
 
 impl TrackList for AlbumPage {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.tracks.iter().map(|t| t.id).collect()
+    }
+
     fn clicked(
         &mut self,
         index: usize,

@@ -101,12 +101,43 @@ impl RenderOnce for Toolbar {
     }
 }
 
+/// A run of toolbar items a page supplies, at the toolbar's gap: a filter
+/// field and the buttons beside it.
+#[derive(IntoElement, Default)]
+pub struct ToolbarGroup {
+    items: Vec<AnyElement>,
+}
+
+impl ToolbarGroup {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ParentElement for ToolbarGroup {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.items.extend(elements);
+    }
+}
+
+impl RenderOnce for ToolbarGroup {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        div()
+            .flex()
+            .items_center()
+            .gap(look.space(Space::Xs))
+            .children(self.items)
+    }
+}
+
 /// A toolbar's button: the glyph in `ink` in a 36-point cell, `surface`
 /// under the pointer and `hover` pressed; the word in its place with icons
 /// off.
 #[derive(IntoElement)]
 pub struct ToolbarButton {
     button: Button,
+    selected: bool,
 }
 
 impl ToolbarButton {
@@ -114,6 +145,7 @@ impl ToolbarButton {
     pub fn new(id: impl Into<ElementId>, icon: Icon, label: impl AsRef<str>) -> Self {
         Self {
             button: Button::new(id, ButtonKind::Toolbar).icon(icon).label(label),
+            selected: false,
         }
     }
 
@@ -122,8 +154,11 @@ impl ToolbarButton {
         self
     }
 
+    /// Drawn pressed: a toggle that is on, or a menu or panel it opened
+    /// that is showing.
     pub fn selected(mut self, selected: bool) -> Self {
         self.button = self.button.selected(selected);
+        self.selected = selected;
         self
     }
 
@@ -133,6 +168,17 @@ impl ToolbarButton {
     ) -> Self {
         self.button = self.button.on_click(handler);
         self
+    }
+}
+
+/// A popover's trigger: drawn pressed while what it opened shows.
+impl gpui_kit::base::Selectable for ToolbarButton {
+    fn selected(self, selected: bool) -> Self {
+        ToolbarButton::selected(self, selected)
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
     }
 }
 

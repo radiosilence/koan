@@ -125,6 +125,123 @@ fn clipped(content: AnyElement) -> Div {
         .child(content)
 }
 
+/// The hover group every row is, for what shows only under the pointer:
+/// the play button over the number, the heart.
+pub const ROW_GROUP: &str = "koan-row";
+
+/// What a row's play button runs.
+type Play = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// A row's number column: the number, the playing bars in its place while
+/// the row plays, and under the pointer the play button, as the Mac's
+/// `RowPlayButton`: the play mark in the accent, which plays from the row.
+#[derive(IntoElement)]
+pub struct RowNumber {
+    id: ElementId,
+    number: SharedString,
+    glyph: Option<crate::theme::Icon>,
+    current: bool,
+    bars: Option<AnyElement>,
+    on_play: Option<Play>,
+}
+
+impl RowNumber {
+    pub fn new(id: impl Into<ElementId>, number: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            number: number.into(),
+            glyph: None,
+            current: false,
+            bars: None,
+            on_play: None,
+        }
+    }
+
+    /// A row with no number leads with its kind's glyph instead, in
+    /// `muted`, as the Mac's browsers do: the microphone for an artist.
+    pub fn glyph(id: impl Into<ElementId>, icon: crate::theme::Icon) -> Self {
+        Self {
+            glyph: Some(icon),
+            ..Self::new(id, SharedString::default())
+        }
+    }
+
+    /// The row is the one playing or paused: its number in the accent.
+    pub fn current(mut self, current: bool) -> Self {
+        self.current = current;
+        self
+    }
+
+    /// Drawn in the number's place while the row plays.
+    pub fn bars(mut self, bars: impl IntoElement) -> Self {
+        self.bars = Some(bars.into_any_element());
+        self
+    }
+
+    pub fn on_play(mut self, play: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_play = Some(std::rc::Rc::new(play));
+        self
+    }
+}
+
+impl RenderOnce for RowNumber {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let accent = look.text_color(crate::theme::Tone::Accent);
+        if let Some(bars) = self.bars {
+            return div().flex().justify_end().child(bars).into_any_element();
+        }
+        let tone = if self.current {
+            accent
+        } else {
+            look.palette.muted.hsla()
+        };
+        let number = div()
+            .text_role(TypeRole::Meta, &look)
+            .text_color(tone)
+            .when(self.on_play.is_some(), |d| {
+                d.group_hover(ROW_GROUP, |s| s.invisible())
+            })
+            .map(|d| match self.glyph {
+                Some(icon) => d.child(
+                    crate::theme::KoanIcon::new(icon)
+                        .role(TypeRole::Body)
+                        .color(tone),
+                ),
+                None => d.child(self.number),
+            });
+        div()
+            .relative()
+            .flex()
+            .justify_end()
+            .child(number)
+            .when_some(self.on_play, |d, play| {
+                d.child(
+                    div()
+                        .id(self.id)
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .invisible()
+                        .group_hover(ROW_GROUP, |s| s.visible())
+                        .cursor_pointer()
+                        .child(
+                            crate::theme::KoanIcon::new(crate::theme::Icon::PlayMark)
+                                .role(TypeRole::Body)
+                                .color(accent),
+                        )
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            play(window, cx)
+                        }),
+                )
+            })
+            .into_any_element()
+    }
+}
+
 impl RenderOnce for TableRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
@@ -144,6 +261,7 @@ impl RenderOnce for TableRow {
                 .child(cell.content)
         };
         self.base
+            .group(ROW_GROUP)
             .h(RowMetrics::height(self.kind, &look))
             .w_full()
             .flex()

@@ -55,7 +55,7 @@ pub use form::{
 };
 pub use menu::{KoanContextMenu, Menu, MenuEntry};
 pub use metrics::{RowKind, RowMetrics};
-pub use page::{Page, PageHeader};
+pub use page::{Page, PageHeader, PlayButton, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use placeholder::Placeholder;
@@ -67,9 +67,9 @@ pub use slider::Slider;
 pub use spinner::Spinner;
 pub use split::SplitView;
 pub use stepper::Stepper;
-pub use table::TableRow;
+pub use table::{ROW_GROUP, RowNumber, TableRow};
 pub use toggle::{IconToggle, Toggle};
-pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton, WINDOW_BUTTONS};
+pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, WINDOW_BUTTONS};
 
 use crate::theme::{Look, MARK, Motion};
 

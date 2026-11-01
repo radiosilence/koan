@@ -24,6 +24,7 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
+use crate::components::{Cover, CoverArt, RowMetrics};
 use crate::theme::Space;
 
 /// A biography longer than this opens clamped, with "more" under it.
@@ -79,6 +80,8 @@ pub struct ArtistPage {
     /// What the list's context menu acts on: the row last right-clicked.
     menu: Option<actions::MenuTarget>,
     starting: HashSet<i64>,
+    /// Whether the header drew the photo, to measure it again when it comes.
+    photo_shown: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -136,6 +139,7 @@ impl ArtistPage {
             tiles: Tiles::default(),
             menu: None,
             starting: HashSet::new(),
+            photo_shown: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -376,7 +380,11 @@ impl ArtistPage {
             match item {
                 Item::Header if self.info.as_ref().is_some_and(|i| i.has_image) => {
                     ranked.push((
-                        Key::new(Art::Artist(self.artist_id), grid.side, scale),
+                        Key::new(
+                            Art::Artist(self.artist_id),
+                            RowMetrics::header_art(&p.look),
+                            scale,
+                        ),
                         priority,
                     ));
                 }
@@ -579,7 +587,7 @@ impl ArtistPage {
         &mut self,
         p: &Paint,
         record: &Record,
-        grid: Grid,
+        _grid: Grid,
         scale: f32,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -590,126 +598,89 @@ impl ArtistPage {
             .as_ref()
             .map(|a| a.name.clone())
             .unwrap_or_default();
-        let mut photo = div().size(grid.side).flex_none().bg(p.surface);
-        if self.info.as_ref().is_some_and(|i| i.has_image) {
-            let key = Key::new(Art::Artist(id), grid.side, scale);
-            match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
-                Sleeve::Ready(image) => {
-                    photo = photo.child(fade_in(
-                        ("artist-photo", id as u64),
-                        img(ImageSource::Render(image)).size_full(),
-                        cx,
-                    ))
-                }
-                Sleeve::Colour(colour) => photo = photo.bg(colour),
-                Sleeve::Waiting | Sleeve::None => {
-                    photo = photo.child(crate::components::Placeholder::new(grid.side))
-                }
-            }
+        // No box until there is a photo to put in it: the header starts at
+        // the page's edge, and the photo fades in once it is found.
+        let side = RowMetrics::header_art(&p.look);
+        let photo = self
+            .photo(side, scale, cx)
+            .map(|art| fade_in(("artist-photo", id as u64), Cover::new(art, side), cx));
+        let albums = record.albums.len() as u64;
+        let mut header = super::header::playable_header(&self.lib, item, name, cx)
+            .detail(chrome::count(albums, "album", "albums"));
+        if let Some(photo) = photo {
+            header = header.art(photo);
         }
-        let favourite = self.lib.feed.read(cx).is_favourite(item);
-        let (lib, lib2) = (self.lib.clone(), self.lib.clone());
-        let mut text = div()
-            .flex()
-            .flex_col()
-            .gap(p.space(Space::S))
-            .min_w_0()
-            .flex_1()
-            .child(
-                div()
-                    .typeset(p, Type::Title, p.strong)
-                    .line_clamp(2)
-                    .child(name),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(p.space(Space::L))
-                    .child(
-                        // The page's one prominent action.
-                        crate::components::Button::new(
-                            "artist-play",
-                            crate::components::ButtonKind::Prominent,
-                        )
-                        .label("play")
-                        .on_click(move |_, _, cx| actions::play(&lib, &[item], false, cx).detach()),
-                    )
-                    .child(
-                        chrome::text_button("artist-shuffle", "shuffle").on_click(
-                            move |_, _, cx| actions::play(&lib2, &[item], true, cx).detach(),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .id("artist-page-heart")
-                            .cursor_pointer()
-                            .typeset(p, Type::Meta, if favourite { p.accent } else { p.muted })
-                            .child(super::tile::heart_glyph(p, favourite))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.lib
-                                    .feed
-                                    .update(cx, |f, cx| f.toggle_favourite(item, cx))
-                            })),
-                    ),
-            );
         if let Some(info) = &self.info
             && let Some(bio) = &info.bio
         {
             let long = bio.len() > BIO_CLAMP;
-            let mut body = div()
+            let mut text = div()
                 .typeset(p, Type::Control, p.ink)
                 .child(bio.replace('\n', "\n\n"));
             if long && !self.expanded {
-                body = body.line_clamp(4);
+                text = text.line_clamp(4);
             }
-            text = text
-                .child(fade_in(("artist-bio", id as u64), body, cx))
-                .child(
-                    div()
-                        .flex()
-                        .gap(p.space(Space::M))
-                        .typeset(p, Type::Fine, p.muted)
-                        .when(long && !self.expanded, |d| {
-                            d.child(
-                                div()
-                                    .id("bio-more")
-                                    .cursor_pointer()
-                                    .underline()
-                                    .child("more")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.expanded = true;
-                                        this.list.remeasure_items(0..1);
-                                        cx.notify();
-                                    })),
-                            )
-                        })
-                        .when_some(info.bio_url.clone(), |d, url| {
-                            d.child(
-                                div()
-                                    .id("bio-source")
-                                    .cursor_pointer()
-                                    .underline()
-                                    .child("wikipedia")
-                                    .on_click(move |_, _, cx| cx.open_url(&url)),
-                            )
-                        })
-                        .when_some(info.image_credit.clone(), |d, credit| {
-                            d.child(format!("photo: {credit}"))
-                        }),
-                );
+            let links = div()
+                .flex()
+                .gap(p.space(Space::M))
+                .typeset(p, Type::Fine, p.muted)
+                .when(long && !self.expanded, |d| {
+                    d.child(
+                        div()
+                            .id("bio-more")
+                            .cursor_pointer()
+                            .underline()
+                            .child("more")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.expanded = true;
+                                this.list.remeasure_items(0..1);
+                                cx.notify();
+                            })),
+                    )
+                })
+                .when_some(info.bio_url.clone(), |d, url| {
+                    d.child(
+                        div()
+                            .id("bio-source")
+                            .cursor_pointer()
+                            .underline()
+                            .child("wikipedia")
+                            .on_click(move |_, _, cx| cx.open_url(&url)),
+                    )
+                })
+                .when_some(info.image_credit.clone(), |d, credit| {
+                    d.child(format!("photo: {credit}"))
+                });
+            header = header.body(fade_in(
+                ("artist-bio", id as u64),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(p.space(Space::S))
+                    .child(text)
+                    .child(links),
+                cx,
+            ));
         }
         div()
             .w_full()
-            .flex()
-            .items_start()
-            .gap(grid.gap)
-            .pt(p.space(Space::L))
-            .pb(p.space(Space::L))
-            .child(photo)
-            .child(text)
+            .pt(RowMetrics::page_top(&p.look))
+            .pb(RowMetrics::header_gap(&p.look))
+            .child(header)
     }
 
+    /// The artist's photo, once it has been found and decoded.
+    fn photo(&mut self, side: Pixels, scale: f32, cx: &mut Context<Self>) -> Option<CoverArt> {
+        if !self.info.as_ref().is_some_and(|i| i.has_image) {
+            return None;
+        }
+        let key = Key::new(Art::Artist(self.artist_id), side, scale);
+        match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
+            Sleeve::Ready(image) => Some(CoverArt::Image(image)),
+            Sleeve::Colour(colour) => Some(CoverArt::Colour(colour)),
+            Sleeve::Waiting | Sleeve::None => None,
+        }
+    }
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         let order = self.order();
         self.selection.select_all(&order);
@@ -824,6 +795,13 @@ impl TileHost for ArtistPage {
 }
 
 impl TrackList for ArtistPage {
+    fn row_tracks(&self) -> Vec<i64> {
+        self.record
+            .as_ref()
+            .map(|r| r.appearances.iter().map(|t| t.id).collect())
+            .unwrap_or_default()
+    }
+
     fn clicked(
         &mut self,
         index: usize,
@@ -882,6 +860,13 @@ impl chrome::Picking for ArtistPage {
 impl Render for ArtistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
+        // The photo arriving changes the header's height.
+        let side = RowMetrics::header_art(&p.look);
+        let shown = self.photo(side, window.scale_factor(), cx).is_some();
+        if shown != self.photo_shown {
+            self.photo_shown = shown;
+            self.list.remeasure_items(0..1);
+        }
         let width = self.width.clone();
         let entity = cx.entity_id();
         let measure = canvas(
