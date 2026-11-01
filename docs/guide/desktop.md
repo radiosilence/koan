@@ -61,6 +61,18 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 
 The queue keeps its place and selection when you visit another page and come back.
 
+## Playlists
+
+A playlist's page lists it flat, each track with its sleeve, or grouped under a heading per record (group by record, kept per playlist on this machine). Double-click a row to play the playlist from there. Drag rows to reorder; anything dragged from the library, or from another playlist, is added where it is dropped, and files dropped on the page are added at its end. Delete removes the selected rows, the context menu removes the rows under it, and both say which tracks go before they do. Shuffle order puts the playlist in a random order for good, and undo shuffle puts the last order back. Rename, delete and export (an M3U8 of the tracks with a file on this machine) are in the header. A smart playlist, or one read from a file in the library, keeps its contents and order.
+
+New in the sidebar's playlists heading makes an empty playlist; Add to playlist → New playlist… in any library menu makes one holding what the menu is over.
+
+## History, favourites, recently played, downloaded
+
+History lists every play, newest first, under a heading per day; Delete forgets the selected plays and Clear… forgets them all, here and on every device of the account. Favourites, Recently played and Downloaded each show the first few artists, records and tracks on that shelf, with how many there are; a section's heading opens the album, artist or track browser filtered to the shelf. Downloads lists the tracks arriving from the server with their progress, rate and size, and the finished ones until Clear finished.
+
+Anything that removes something (tracks from a playlist, a playlist, plays, a downloaded file) says what it will remove and asks first.
+
 ## Settings
 
 ⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. EQ has a window of its own, below.

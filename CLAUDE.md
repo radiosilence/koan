@@ -307,6 +307,11 @@ GPUI through `gpui-kit` (`use gpui_kit::*` is GPUI; components at `gpui_kit::com
 | `library/selection.rs` | Picking several things to play together, in tick order |
 | `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
 | `library/feed.rs` | The slices the library pages read (library version, playing record, transfers, favourites, playlists, connection), to be replaced by `mirror.rs` |
+| `collections/mod.rs` | Playlists, history, shelves and downloads. `Picks`, a selection by row id for lists whose rows are not tracks; `Asking`, the window's one host for the question a write asks first (`confirm`, `name`, `new_playlist`), drawn over the shell |
+| `collections/playlist.rs` | A playlist, flat or grouped by record (`build`), rows by entry; drag to reorder (`moved`), drop to add where it lands (`position`); shuffle order, undo, rename, delete, export |
+| `collections/history.rs` | Plays under a heading per day (`cut`), dated off the main thread; forget picked plays or all |
+| `collections/shelf.rs` | Favourites, recently played and downloaded: `shelf_summary`'s artists, records and tracks, each heading opening the browser with the shelf as its filter |
+| `collections/downloads.rs` | The transfers, their bars read from `transfer_readings` each frame while one runs and the page is drawn, and no frames otherwise |
 | `library/bench.rs` | What `benches/album_grid.rs` counts beside GPUI's frame timings: blank, placeholder and stand-in tiles, and how long tiles stayed blank. The bench scrolls the grid through GPUI's harness and headless renderer, nothing on screen |
 
 `just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library; `KOAN_CONFIG_DIR=DIR/config cargo bench -p koan-gui --bench album_grid` scrolls the album grid over it.
