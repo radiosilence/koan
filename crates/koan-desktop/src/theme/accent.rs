@@ -420,8 +420,9 @@ mod tests {
 
     #[test]
     fn dominant_matches_the_apple_formula() {
-        // A pure blue sleeve: hue 240°, saturation clamped to 0.85, value 0.8.
-        let colour = dominant(&solid(0, 0, 255), 64, 64).unwrap();
+        // A saturated blue sleeve, under the blown-out ceiling: hue 240°,
+        // saturation clamped to 0.85, value 0.8.
+        let colour = dominant(&solid(0, 0, 200), 64, 64).unwrap();
         assert_eq!(hex(colour), 0x1F1FCC);
     }
 

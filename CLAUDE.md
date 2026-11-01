@@ -8,7 +8,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native ap
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core, and on koan-server to share the device's library (`serve.rs`). Not published to crates.io.
-- **koan-desktop** — binary + library crate. The GPUI desktop app (gpui-kit). Draws only the kōan look: `src/theme/` (tokens, Geist Mono, the icon set, the record accent, the wash) and `src/components/`. Reaches the engine through koan-ffi as a Rust library, as the native apps do through uniffi. Not published.
+- **koan-desktop** — binary + library crate. The GPUI desktop app (gpui-kit). Draws only the kōan look: `src/theme/` (tokens, Geist Mono, the icon set, the record accent, the wash) and `src/components/`. Not published.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
@@ -17,7 +17,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
-Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; nothing depends on koan-ffi except koan-desktop, which links it as a plain Rust library. Native clients import koan-core through koan-ffi.
+Dependency rules (compiler-enforced): front ends hold no business logic, which lives in koan-core. koan-tui and koan-server depend only on koan-core; koan-ffi embeds koan-server as koan-cli does, starting and stopping it on the app's own player; nothing depends on koan-ffi. Native clients import koan-core through koan-ffi.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the TUI's remote bridge, the MCP server, scripts and jukebox remotes. The web UI is server-rendered and calls koan-core in-process. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -341,7 +341,7 @@ Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and genera
 
 ### koan-desktop (`crates/koan-desktop/src/`)
 
-A window's root is the wash and the content as two cached views, so a drift frame redraws the wash alone; see ARCHITECTURE.md. Nothing heavy runs on the main thread: decodes, the accent and the wash's bake run on the background executor.
+A window's root is the wash and the content as two cached views, so a drift frame redraws the wash alone; see ARCHITECTURE.md. Nothing heavy runs on the main thread: the accent and the wash's bake run on the background executor.
 
 | Module | What |
 |--------|------|
