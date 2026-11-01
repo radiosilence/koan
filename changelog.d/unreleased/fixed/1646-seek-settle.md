@@ -1,0 +1,1 @@
+- **Seeking no longer flickers.** A click on the seek bar lands there at once in every app, and an update the engine sent before it took the seek no longer pulls the bar back to where it was; a seek the engine refuses gives the bar back after two seconds.
