@@ -33,6 +33,16 @@ reqwest = { version = "0.13", default-features = false, features = [
 rusqlite = { version = "0.41", features = ["bundled"] }
 walkdir = "2.5"
 
+# The desktop app's test loop (`just gui-run`): release speed, but rebuilt
+# incrementally in many units without LTO, so a change to koan-core recompiles
+# what it touches rather than koan-server and koan-ffi whole.
+[profile.gui-dev]
+inherits = "release"
+incremental = true
+codegen-units = 256
+lto = false
+debug = "line-tables-only"
+
 [patch.crates-io]
 # Our copies of GPUI's macOS and Linux backends: an idle window stops waking
 # every refresh, on macOS and X11, as Wayland already does (patches marked
