@@ -967,7 +967,7 @@ impl LinkIdentity {
     /// processes under one id would each take the other's place on the
     /// server and the network.
     pub fn terminal() -> Option<Self> {
-        const FILES: &str = Self::TERMINAL_FILES;
+        const FILES: &str = LinkIdentity::TERMINAL_FILES;
         // Held for as long as the process runs; the system lets go of it
         // however the process ends.
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
