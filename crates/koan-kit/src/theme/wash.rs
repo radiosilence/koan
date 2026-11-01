@@ -130,8 +130,12 @@ pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
     }
 
     let limit = tone.limit();
-    let mut out = image::RgbaImage::new(SIDE, SIDE);
-    for (i, pixel) in out.pixels_mut().enumerate() {
+    // The wash over the ground, per channel, in encoded values as a layer's
+    // opacity composites, still in floats: quantised only once, dithered,
+    // at the output's size.
+    let ground = [ground[0], ground[1], ground[2]].map(|v| v as f64);
+    let mut mixed = [vec![0.0; n], vec![0.0; n], vec![0.0; n]];
+    for i in 0..n {
         let (mut lr, mut lg, mut lb) = (r[i], g[i], b[i]);
         let y = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
         match tone {
@@ -149,23 +153,53 @@ pub fn bake(sleeve: &Sleeve, dark: bool, hold: f64) -> image::RgbaImage {
             }
             _ => {}
         }
-        // Over the ground in encoded values, as a layer's opacity composites.
-        let [wr, wg, wb] = [lr, lg, lb].map(encode);
-        let mix = |ground: u8, wash: u8| {
-            (ground as f32 + (wash as f32 - ground as f32) * STRENGTH + 0.5).clamp(0.0, 255.0) as u8
-        };
-        pixel.0 = [
-            mix(ground[2], wb),
-            mix(ground[1], wg),
-            mix(ground[0], wr),
-            255,
-        ];
+        for (c, v) in [lr, lg, lb].into_iter().enumerate() {
+            let wash = super::accent::oklch::gamma(v) * 255.0;
+            mixed[c][i] = ground[c] + (wash - ground[c]) * STRENGTH as f64;
+        }
+    }
+    dither_up(&mixed)
+}
+
+/// The baked texture's side: the wash at `SIDE`, magnified in floats and
+/// dithered as it is quantised. A gradient this soft spans a few levels of
+/// 8 bits across a whole window, and quantised at `SIDE` and magnified by
+/// the GPU it shows as bands; dithered at this size, the GPU's last few
+/// times of magnification leave the noise too fine to see and no bands.
+pub const OUT: u32 = 1024;
+
+/// `channels` (red, green, blue, 0–255 floats at `SIDE`) bilinearly
+/// magnified to `OUT` and quantised with triangular noise of a level either
+/// way, from interleaved gradient noise: no pattern the eye picks out, and
+/// the same every bake, so a sleeve's wash does not shimmer when baked again.
+/// BGRA out, as the renderer takes it.
+fn dither_up(channels: &[Vec<f64>; 3]) -> image::RgbaImage {
+    let side = SIDE as usize;
+    let scale = SIDE as f64 / OUT as f64;
+    let mut out = image::RgbaImage::new(OUT, OUT);
+    for (x, y, pixel) in out.enumerate_pixels_mut() {
+        // Texel centres line up with the source's, the edge clamped.
+        let sx = ((x as f64 + 0.5) * scale - 0.5).clamp(0.0, (side - 1) as f64);
+        let sy = ((y as f64 + 0.5) * scale - 0.5).clamp(0.0, (side - 1) as f64);
+        let (x0, y0) = (sx.floor() as usize, sy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(side - 1), (y0 + 1).min(side - 1));
+        let (fx, fy) = (sx - x0 as f64, sy - y0 as f64);
+        let noise = ign(x, y) + ign(x + 37, y + 91) - 1.0;
+        let [r, g, b] = [0, 1, 2].map(|c| {
+            let at = |xx: usize, yy: usize| channels[c][yy * side + xx];
+            let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+            let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+            let v = top + (bottom - top) * fy;
+            (v + noise + 0.5).floor().clamp(0.0, 255.0) as u8
+        });
+        pixel.0 = [b, g, r, 255];
     }
     out
 }
 
-fn encode(v: f64) -> u8 {
-    (super::accent::oklch::gamma(v) * 255.0 + 0.5) as u8
+/// Interleaved gradient noise (Jimenez), uniform in 0..1.
+fn ign(x: u32, y: u32) -> f64 {
+    (52.982_918_9 * (0.067_110_56 * x as f64 + 0.005_837_15 * y as f64).fract()).fract()
 }
 
 /// Three box passes, about a Gaussian of the radius, with the edge clamped:
@@ -587,6 +621,23 @@ mod tests {
             y(light.get_pixel(10, 10).0) >= surface - 0.005,
             "light wash too dark"
         );
+    }
+
+    /// A level between two of 8 bits comes out as a mix of both that
+    /// averages to it, where rounding would give one level everywhere and,
+    /// across a slow gradient, a band at each step.
+    #[test]
+    fn a_level_between_two_is_dithered_to_its_mean() {
+        let n = (SIDE * SIDE) as usize;
+        let baked = dither_up(&[vec![100.4; n], vec![30.0; n], vec![200.75; n]]);
+        let mean =
+            |c: usize| baked.pixels().map(|p| p.0[c] as f64).sum::<f64>() / (OUT * OUT) as f64;
+        // BGRA.
+        assert!((mean(2) - 100.4).abs() < 0.02, "red {}", mean(2));
+        assert!((mean(0) - 200.75).abs() < 0.02, "blue {}", mean(0));
+        let levels: std::collections::BTreeSet<u8> = baked.pixels().map(|p| p.0[2]).collect();
+        assert!(levels.contains(&100) && levels.contains(&101), "{levels:?}");
+        assert!(levels.iter().all(|l| (99..=102).contains(l)), "{levels:?}");
     }
 
     #[test]

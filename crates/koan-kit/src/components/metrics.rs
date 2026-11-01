@@ -138,9 +138,10 @@ impl RowMetrics {
         look.space(Space::Xxl)
     }
 
-    /// Above a page's header.
+    /// Above a page's header: the page's margin, as the spec has it on
+    /// every side.
     pub fn page_top(look: &Look) -> Pixels {
-        look.space(Space::L)
+        Self::page_margin(look)
     }
 
     /// Between a page's header and its list.
