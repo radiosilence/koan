@@ -1,0 +1,1 @@
+- **Covers fill quickly again.** A koan server removes covers an older version kept at sizes no longer served, keeps up to 4 GB and makes every record's covers whenever there is room; the desktop app keeps asking for covers while a server answers a mix of kept and unkept ones, holding back only when it fails or stays slow.
