@@ -5370,6 +5370,7 @@ name = "koan-gui"
 version = "0.69.2"
 dependencies = [
  "block2 0.6.2",
+ "chrono",
  "futures",
  "gpui-kit",
  "image",
