@@ -49,6 +49,7 @@ fn grid(cx: &mut BenchAppContext) -> (gpui::Entity<AlbumGrid>, Rc<RefCell<Record
         cx.read(|cx| grid.read(cx).ready_on_screen(cx))
             .then_some(())
     });
+    recorder.borrow_mut().reset();
     (grid, recorder)
 }
 

@@ -63,6 +63,12 @@ impl Recorder {
         }
     }
 
+    /// Forget everything counted so far: the benchmark's setup, waiting for
+    /// the first screen, is not part of what it measures.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     pub fn summary(&self) -> String {
         let mut blank: Vec<f64> = self
             .blank_for
