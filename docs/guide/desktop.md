@@ -8,6 +8,8 @@ KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui
 
 A build from `main` can move the library database to a newer schema than the released apps read, after which they refuse it; a throwaway `KOAN_CONFIG_DIR`, with `folders` in its `config.toml` pointed at some music, keeps your own library out of it.
 
+On macOS, do not run it on the Mac app's configuration while the Mac app is running: for now it signs in as the same device, so the two take each other's place on your server and the network, and share one saved session.
+
 On Linux it needs the xkbcommon, fontconfig and freetype libraries, and a Vulkan driver.
 
 ## The window
