@@ -33,10 +33,7 @@ pub struct Feed {
     reach: Option<(Option<String>, bool, Option<String>)>,
     /// The playlists a pick can be added to: every one not read-only.
     pub playlists: Vec<(i64, SharedString)>,
-    favourites: HashSet<Playable>,
-    /// Bumped by every toggle, so a re-read that started before one cannot
-    /// put back what it changed.
-    favourite_edits: u64,
+    favourites: Favourites,
     /// One read at a time; one asked for while another runs makes it read
     /// again when it lands.
     favourites_reading: bool,
@@ -65,8 +62,7 @@ impl Feed {
             connection_epoch: 0,
             reach: None,
             playlists: Vec::new(),
-            favourites: HashSet::new(),
-            favourite_edits: 0,
+            favourites: Favourites::default(),
             favourites_reading: false,
             favourites_stale: false,
             _observe: observe,
@@ -140,14 +136,13 @@ impl Feed {
     }
 
     pub fn is_favourite(&self, item: Playable) -> bool {
-        self.favourites.contains(&item)
+        self.favourites.contains(item)
     }
 
-    /// Flips at once, then takes the engine's answer.
+    /// Flips at once, then takes the engine's answer, and reads every id
+    /// again after it, as the Mac does.
     pub fn toggle_favourite(&mut self, item: Playable, cx: &mut Context<Self>) {
-        let on = !self.favourites.contains(&item);
-        self.set_favourite(item, on);
-        self.favourite_edits += 1;
+        let on = self.favourites.flip(item);
         cx.notify();
         let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {
@@ -156,28 +151,17 @@ impl Feed {
                 Playable::Album(id) => engine.toggle_favourite_album(id).await,
                 Playable::Artist(id) => engine.toggle_favourite_artist(id).await,
             };
-            this.update(cx, |feed, cx| match answer {
-                Ok(now) => {
-                    feed.set_favourite(item, now);
-                    cx.notify();
-                }
-                Err(e) => {
-                    log::warn!("favourite {item:?}: {e}");
-                    feed.set_favourite(item, !on);
-                    cx.notify();
-                }
+            this.update(cx, |feed, cx| {
+                let now = answer
+                    .inspect_err(|e| log::warn!("favourite {item:?}: {e}"))
+                    .unwrap_or(!on);
+                feed.favourites.answered(item, now);
+                feed.reload_favourites(cx);
+                cx.notify();
             })
             .ok();
         })
         .detach();
-    }
-
-    fn set_favourite(&mut self, item: Playable, on: bool) {
-        if on {
-            self.favourites.insert(item);
-        } else {
-            self.favourites.remove(&item);
-        }
     }
 
     pub fn reload_playlists(&mut self, cx: &mut Context<Self>) {
@@ -215,7 +199,7 @@ impl Feed {
         self.favourites_reading = true;
         self.favourites_stale = false;
         let engine = self.engine.clone();
-        let edits = self.favourite_edits;
+        let edits = self.favourites.edits;
         cx.spawn(async move |this, cx| {
             let read = async {
                 Ok::<_, koan_ffi::KoanError>((
@@ -239,20 +223,122 @@ impl Feed {
                         return;
                     }
                 };
-                if feed.favourites_stale || feed.favourite_edits != edits {
-                    feed.reload_favourites(cx);
-                    return;
-                }
-                feed.favourites = tracks
+                let read = tracks
                     .into_iter()
                     .map(Playable::Track)
                     .chain(albums.into_iter().map(Playable::Album))
                     .chain(artists.into_iter().map(Playable::Artist))
                     .collect();
+                if feed.favourites_stale || !feed.favourites.read_landed(edits, read) {
+                    feed.reload_favourites(cx);
+                    return;
+                }
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+}
+
+/// The favourite ids, with the hearts clicked whose answer has not come.
+///
+/// A read of every id can start before a toggle is written and land after
+/// the engine has answered it, carrying the old state. So `edits` moves
+/// when a heart is clicked and again when its answer lands, and a read that
+/// either overtook is not applied; a read that lands while a toggle is still
+/// out keeps that toggle's flip over it.
+#[derive(Default)]
+struct Favourites {
+    set: HashSet<Playable>,
+    pending: HashMap<Playable, bool>,
+    edits: u64,
+}
+
+impl Favourites {
+    fn contains(&self, item: Playable) -> bool {
+        self.set.contains(&item)
+    }
+
+    fn put(&mut self, item: Playable, on: bool) {
+        if on {
+            self.set.insert(item);
+        } else {
+            self.set.remove(&item);
+        }
+    }
+
+    /// A heart clicked: shown flipped at once. Returns the state it shows.
+    fn flip(&mut self, item: Playable) -> bool {
+        let on = !self.contains(item);
+        self.put(item, on);
+        self.pending.insert(item, on);
+        self.edits += 1;
+        on
+    }
+
+    /// The engine's answer: the state it wrote, or the state before the
+    /// click when the write failed.
+    fn answered(&mut self, item: Playable, now: bool) {
+        self.pending.remove(&item);
+        self.put(item, now);
+        self.edits += 1;
+    }
+
+    /// A read that started at `edits` landing. Whether it was applied.
+    fn read_landed(&mut self, edits: u64, read: HashSet<Playable>) -> bool {
+        if edits != self.edits {
+            return false;
+        }
+        self.set = read;
+        let pending: Vec<_> = self.pending.iter().map(|(i, on)| (*i, *on)).collect();
+        for (item, on) in pending {
+            self.put(item, on);
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    const ARTIST: Playable = Playable::Artist(7);
+    const TRACK: Playable = Playable::Track(3);
+
+    #[test]
+    fn a_read_that_started_before_the_answer_cannot_undo_it() {
+        let mut f = Favourites::default();
+        assert!(f.flip(ARTIST));
+        let started = f.edits;
+        f.answered(ARTIST, true);
+        // Read before the write, landing after the answer.
+        assert!(!f.read_landed(started, HashSet::new()));
+        assert!(f.contains(ARTIST));
+    }
+
+    #[test]
+    fn a_read_while_the_toggle_is_out_keeps_its_flip() {
+        let mut f = Favourites::default();
+        f.flip(TRACK);
+        let started = f.edits;
+        assert!(f.read_landed(started, HashSet::new()));
+        assert!(f.contains(TRACK));
+        f.answered(TRACK, true);
+        let started = f.edits;
+        assert!(f.read_landed(started, [TRACK].into()));
+        assert!(f.contains(TRACK));
+    }
+
+    #[test]
+    fn a_failed_toggle_goes_back_and_a_later_read_is_taken() {
+        let mut f = Favourites::default();
+        let on = f.flip(TRACK);
+        f.answered(TRACK, !on);
+        assert!(!f.contains(TRACK));
+        let started = f.edits;
+        assert!(f.read_landed(started, [ARTIST].into()));
+        assert!(f.contains(ARTIST) && !f.contains(TRACK));
     }
 }
