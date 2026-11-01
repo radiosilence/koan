@@ -352,9 +352,9 @@ A window's root is the wash and the content as two cached views, so a drift fram
 | `theme/wash.rs` | The wash: `bake` (Android's `WashBake`, BGRA out) and the `Wash` view, one textured quad drifting only while asked and allowed |
 | `components/` | Buttons, toggles, segmented, form row, slider, stepper, text field, menu panel and rows, tooltip, nav and list rows, badge, chip, empty state |
 | `sheet.rs` | The theme sheet; `examples/theme_sheet.rs` draws it offscreen to a PNG |
-| `library/covers.rs` | Artwork: bytes on disk once per record (`$KOAN_CONFIG_DIR/artwork` or the platform cache), bitmaps per record and draw size in a bounded LRU whose evictions drop the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
+| `library/covers.rs` | Artwork: bytes on disk once per record (`$KOAN_CONFIG_DIR/artwork` or the platform cache), bitmaps per record and draw size in a bounded LRU whose evictions drop the GPU texture. A fetch lane and a decode lane take the most urgent job each time; lists replace their requests as they scroll (`request`). Decoded sleeves enter the atlas about 2 MB a frame (`admit`), drawn as their average colour meanwhile. Generations and `art_evictions` keep a reused row id from showing another record's sleeve |
 | `library/albums.rs` | The album grid: a uniform list of rows of tiles, aiming the cover cache from the scroll's heading (the Mac grid's `aim`), scroll kept across visits and column changes |
-| `library/tile.rs` | One record's tile, shared by the grid and the artist page; hover drawn by group styles, not state |
+| `library/tile.rs` | One record's tile, shared by the grid and the artist page: a cached view with one interactive element, telling its parts apart by position, its strings made once per listing |
 | `library/rows.rs` | One track's row, shared by the track browser, record page and artist page, on the Mac's row metrics |
 | `library/artists.rs`, `tracks.rs` | The artist browser; the track browser, read a page at a time and swapped in once a reload covers the screen |
 | `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with bio, photo, sections, features and appearances |
@@ -362,9 +362,9 @@ A window's root is the wash and the content as two cached views, so a drift fram
 | `library/selection.rs` | Picking several things to play together, in tick order |
 | `library/browse.rs` | The shared filter and search, each browser's sort, kept in `gui-state.json` by a writer thread |
 | `library/feed.rs`, `nav.rs`, `window.rs`, `tokens.rs` | Stand-ins for the engine mirror, navigator, shell and theme, replaced as those land |
-| `library/bench.rs` | `KOAN_GUI_BENCH=albums`: scrolls the grid with synthesised trackpad input and prints frame and blank-tile figures |
+| `library/bench.rs` | What `benches/album_grid.rs` counts beside GPUI's frame timings: blank, placeholder and stand-in tiles, and how long tiles stayed blank. The bench scrolls the grid through GPUI's harness and headless renderer, nothing on screen |
 
-`just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library for the library pages.
+`just gui-library DIR [ALBUMS] [TRACKS]` generates and scans a large throwaway library; `KOAN_CONFIG_DIR=DIR/config cargo bench -p koan-gui --bench album_grid` scrolls the album grid over it.
 
 ### koan-server (`crates/koan-server/src/`)
 
