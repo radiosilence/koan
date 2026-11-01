@@ -23,7 +23,17 @@ smallvec = "1"
 [dev-dependencies]
 gpui-kit = { version = "0.8.1", features = ["test-support"] }
 
-# Reduce Motion and Low Power Mode, which GPUI does not read.
+# Reduce Motion and Low Power Mode, which GPUI does not read, and the
+# notifications that say when either changes.
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+futures = "0.3"
+objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", features = ["NSAccessibility", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", features = ["NSProcessInfo"] }
+objc2-foundation = { version = "0.3.2", features = [
+  "NSNotification",
+  "NSOperation",
+  "NSProcessInfo",
+  "NSString",
+  "block2",
+] }

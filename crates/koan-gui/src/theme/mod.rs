@@ -48,8 +48,7 @@ pub struct KoanTheme {
     pub text_size: u32,
     /// "Show icons": glyphs beside the labels that carry them.
     pub icons: bool,
-    /// Low Power Mode as last read on activation, so that its being lifted
-    /// while the wash is at rest, drawing no frames, redraws the windows.
+    /// Low Power Mode, as the system last said.
     low_power: bool,
     /// Windows held to one appearance whatever the system's, as the theme
     /// sheet holds its two.
@@ -88,31 +87,18 @@ pub fn init(cx: &mut App) {
     });
     cx.set_global(AccentHandle(feed));
     read_motion_settings(cx);
+    #[cfg(target_os = "macos")]
+    watch_motion_settings(cx);
     sync_components(is_dark(cx.window_appearance()), cx);
 }
 
 /// Keeps a window drawn in its appearance: redrawn when the system's
-/// changes, and Reduce Motion read again whenever the window comes forward.
-/// The setting is changed in System Settings, so coming back to koan is an
-/// activation; only the accessibility shortcut panel can toggle it while koan
-/// stays frontmost, and that change lands on the next activation. Every
-/// window's root calls this, so any window coming forward re-reads it. Hold
-/// the returned subscriptions as long as the window.
-pub fn follow_appearance<V: 'static>(
-    window: &mut Window,
-    cx: &mut Context<V>,
-) -> [Subscription; 2] {
-    [
-        cx.observe_window_appearance(window, |_, window, cx| {
-            sync_components(Look::of(window, cx).dark, cx);
-            window.refresh();
-        }),
-        cx.observe_window_activation(window, |_, window, cx| {
-            if window.is_window_active() {
-                read_motion_settings(cx);
-            }
-        }),
-    ]
+/// changes. Hold the returned subscription as long as the window.
+pub fn follow_appearance<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> Subscription {
+    cx.observe_window_appearance(window, |_, window, cx| {
+        sync_components(Look::of(window, cx).dark, cx);
+        window.refresh();
+    })
 }
 
 fn is_dark(appearance: WindowAppearance) -> bool {
@@ -126,14 +112,14 @@ fn is_dark(appearance: WindowAppearance) -> bool {
 /// but no platform sets it, and has no word for the second. Linux has
 /// neither to read, and keeps motion on. A change redraws every window, as
 /// `set_reduce_motion` does for its own, so a wash at rest, which draws no
-/// frames, sees it.
+/// frames, sees one lifted, and a drifting one stops at once.
 fn read_motion_settings(cx: &mut App) {
     #[cfg(target_os = "macos")]
     {
         let reduce =
             objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
         cx.set_reduce_motion(reduce);
-        let low_power = low_power();
+        let low_power = objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
         if cx.global::<KoanTheme>().low_power != low_power {
             cx.global_mut::<KoanTheme>().low_power = low_power;
             cx.refresh_windows();
@@ -143,12 +129,67 @@ fn read_motion_settings(cx: &mut App) {
     let _ = cx;
 }
 
-fn low_power() -> bool {
-    #[cfg(target_os = "macos")]
-    return objc2_foundation::NSProcessInfo::processInfo().isLowPowerModeEnabled();
-    #[cfg(not(target_os = "macos"))]
-    false
+/// Reads the motion settings again whenever the system says one changed:
+/// Low Power Mode through `NSProcessInfoPowerStateDidChangeNotification`,
+/// which is posted on whatever thread changed it, and Reduce Motion through
+/// the workspace's `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`.
+/// Each observer only wakes a task on the main thread, which reads them.
+#[cfg(target_os = "macos")]
+fn watch_motion_settings(cx: &mut App) {
+    use std::ptr::NonNull;
+
+    use block2::RcBlock;
+    use futures::StreamExt as _;
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification};
+    use objc2_foundation::{
+        NSNotification, NSNotificationCenter, NSNotificationName,
+        NSProcessInfoPowerStateDidChangeNotification,
+    };
+
+    let (changed, mut changes) = futures::channel::mpsc::unbounded::<()>();
+    let observe = |center: &NSNotificationCenter, name: &NSNotificationName| {
+        let changed = changed.clone();
+        let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+            changed.unbounded_send(()).ok();
+        });
+        // SAFETY: no object is given, the block runs on the poster's thread,
+        // and it holds only a channel sender, which is Send and Sync.
+        unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block) }
+    };
+    // SAFETY: both names are immutable framework constants.
+    let (power, display) = unsafe {
+        (
+            NSProcessInfoPowerStateDidChangeNotification,
+            NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+        )
+    };
+    let observers = [
+        observe(&NSNotificationCenter::defaultCenter(), power),
+        observe(
+            &NSWorkspace::sharedWorkspace().notificationCenter(),
+            display,
+        ),
+    ];
+    cx.set_global(MotionObservers(observers));
+    cx.spawn(async move |cx| {
+        while changes.next().await.is_some() {
+            cx.update(read_motion_settings);
+        }
+    })
+    .detach();
 }
+
+/// The notification observers, held for the life of the app: the centres
+/// keep calling a block only while its observer is retained.
+#[cfg(target_os = "macos")]
+struct MotionObservers(
+    #[allow(dead_code)]
+    [objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>>;
+        2],
+);
+
+#[cfg(target_os = "macos")]
+impl Global for MotionObservers {}
 
 /// Holds a window to one appearance whatever the system's, or lets it follow
 /// the system again with `None`.
@@ -201,11 +242,9 @@ fn sync_components(dark: bool, cx: &mut App) {
 
 impl KoanTheme {
     /// Whether the system lets things move for their own sake: Reduce
-    /// Motion and Low Power Mode off. Low Power Mode is read live, since it
-    /// often comes on while koan is in front. The wash asks as it draws, and
-    /// at rest it draws nothing.
+    /// Motion and Low Power Mode off, as the system last said.
     pub fn motion_allowed(cx: &App) -> bool {
-        !cx.reduce_motion() && !low_power()
+        !cx.reduce_motion() && !cx.global::<KoanTheme>().low_power
     }
 
     /// Moves the accent to a record's. `ease` is false for a colour already

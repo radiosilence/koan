@@ -26,7 +26,7 @@ use crate::theme::{
 pub struct ThemeSheet {
     wash: Entity<Wash>,
     content: Entity<SheetContent>,
-    _appearance: [Subscription; 2],
+    _appearance: Subscription,
 }
 
 impl ThemeSheet {
