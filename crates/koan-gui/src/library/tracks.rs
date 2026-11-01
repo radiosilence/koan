@@ -11,9 +11,9 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::covers::{Art, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
@@ -511,7 +511,7 @@ impl Render for TrackBrowser {
                     .pt(px(10.0))
                     .relative()
                     .child(body)
-                    .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
+                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
                 window,
                 cx,

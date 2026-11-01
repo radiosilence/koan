@@ -2,14 +2,14 @@
 //! the evidence a change to the theme is checked against. No window is shown
 //! and nothing on the screen is read; GPUI's headless renderer draws it.
 //!
-//! cargo run -p koan-gui --example theme_sheet -- target/theme-sheet.png
+//! cargo run -p koan-kit --example theme_sheet -- target/theme-sheet.png
 
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::{AppContext, HeadlessAppContext, px, size};
-use koan_gui::{sheet::ThemeSheet, theme};
+use koan_kit::{sheet::ThemeSheet, theme};
 
 const WIDTH: f32 = 1180.0;
 const HEIGHT: f32 = 1500.0;

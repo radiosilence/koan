@@ -1,0 +1,1 @@
+- **GUI packages never hold up or fail a release.** The release goes out without waiting for the kōan GUI app's packages; whichever built are attached afterwards.

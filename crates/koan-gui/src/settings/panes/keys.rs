@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
-use gpui_kit::component::input::InputState;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{KoanEngine, KoanError};
+use koan_kit::raw::component::input::InputState;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, day, item, section, text};

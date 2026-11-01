@@ -12,9 +12,9 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{AlbumSort, BrowseFilter};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -835,7 +835,7 @@ impl Render for AlbumGrid {
                     .on_scroll(cx.listener(|this, e: &ScrollEvent, _, _| this.scrolled(e)))
                     .child(measure)
                     .child(body)
-                    .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
+                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                 cx.weak_entity(),
                 window,
                 cx,
@@ -855,7 +855,7 @@ impl Render for AlbumGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
     use crate::theme::tokens::Scale;
     use core::prelude::v1::test;
 

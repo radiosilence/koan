@@ -1886,7 +1886,7 @@ gui-run *ARGS:
         mkdir -p "$KOAN_CONFIG_DIR"
         [ -f "$KOAN_CONFIG_DIR/config.toml" ] || printf '[library]\nfolders = []\n' > "$KOAN_CONFIG_DIR/config.toml"
     fi
-    cargo run -p koan-gui -- {{ARGS}}
+    cargo run --profile gui-dev -p koan-gui -- {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,
 # on Linux an AppImage and a .deb, all under target/gui.
@@ -1920,8 +1920,8 @@ _gui-macos:
     <dict>
         <key>CFBundleExecutable</key><string>koan-gui</string>
         <key>CFBundleIdentifier</key><string>{{gui_id}}</string>
-        <key>CFBundleName</key><string>kōan desktop</string>
-        <key>CFBundleDisplayName</key><string>kōan desktop</string>
+        <key>CFBundleName</key><string>kōan</string>
+        <key>CFBundleDisplayName</key><string>kōan</string>
         <key>CFBundlePackageType</key><string>APPL</string>
         <key>CFBundleShortVersionString</key><string>${version}</string>
         <key>CFBundleVersion</key><string>${version}</string>

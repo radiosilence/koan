@@ -10,8 +10,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::engine::engine;
 

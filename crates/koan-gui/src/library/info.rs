@@ -2,9 +2,9 @@
 //! made from with that source's own fields, and its ReplayGain. A dense view,
 //! in `meta` and `fine`, names leading and values trailing.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{InfoField, TrackDetails};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::format;
 use super::tokens::{Paint, Type, Typeset};

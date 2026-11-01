@@ -11,9 +11,9 @@ pub mod rows;
 
 use std::collections::HashSet;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{EntryStatus, QueueItem};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::components::{KoanContextMenu, Menu, MenuEntry};
 use crate::covers::{self, CoversHandle};
@@ -924,7 +924,7 @@ impl Render for QueueView {
                             })
                             .size_full(),
                         )
-                        .child(gpui_kit::base::Scrollbar::vertical(&self.list)),
+                        .child(koan_kit::raw::base::Scrollbar::vertical(&self.list)),
                 )
             })
             .koan_context_menu("queue-menu", window, cx, {

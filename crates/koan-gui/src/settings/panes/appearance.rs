@@ -5,8 +5,8 @@
 use crate::components::{Slider, Toggle};
 use crate::theme::tokens::{TEXT_SIZE_STEP, TEXT_SIZES};
 use crate::theme::{KoanTheme, Look};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::settings::Ctx;
 use crate::settings::form::{Row, page, section};

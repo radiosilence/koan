@@ -6,6 +6,7 @@ pub mod account;
 mod appearance;
 mod cache;
 mod devices;
+mod eq;
 pub mod integrations;
 mod keys;
 mod library;
@@ -16,7 +17,7 @@ mod server;
 mod share;
 
 use crate::theme::Icon;
-use gpui_kit::*;
+use koan_kit::raw::*;
 
 use super::Ctx;
 
@@ -27,6 +28,7 @@ pub enum Tab {
     Account,
     People,
     Playback,
+    Eq,
     Devices,
     Integrations,
     Appearance,
@@ -40,6 +42,7 @@ impl Tab {
             Tab::Account => "Account",
             Tab::People => "People",
             Tab::Playback => "Playback",
+            Tab::Eq => "EQ",
             Tab::Devices => "Devices",
             Tab::Integrations => "Integrations",
             Tab::Appearance => "Appearance",
@@ -53,6 +56,7 @@ impl Tab {
             Tab::Account => Icon::Account,
             Tab::People => Icon::People,
             Tab::Playback => Icon::Speaker,
+            Tab::Eq => Icon::Tuning,
             Tab::Devices => Icon::Devices,
             Tab::Integrations => Icon::Extensions,
             Tab::Appearance => Icon::Appearance,
@@ -84,6 +88,7 @@ impl Pane {
                 None => cx.new(|cx| library::LibraryPane::new(ctx, cx)).into(),
             },
             Tab::Playback => cx.new(|cx| playback::PlaybackPane::new(ctx, cx)).into(),
+            Tab::Eq => cx.new(|cx| eq::EqPane::new(ctx, cx)).into(),
             Tab::Devices => cx
                 .new(|cx| devices::DevicesPane::new(ctx, window, cx))
                 .into(),

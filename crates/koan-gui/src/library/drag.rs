@@ -3,11 +3,11 @@
 //! it to the engine as `TrackSet`s, which resolve to tracks on the engine's
 //! command lane, so a drop never waits on reading a record's tracks first.
 
-use gpui_kit::prelude::*;
+use koan_kit::raw::prelude::*;
 use std::sync::Arc;
 
-use gpui_kit::*;
 use koan_ffi::TrackSet;
+use koan_kit::raw::*;
 
 use super::tokens::{Paint, Type, Typeset};
 use crate::theme::Space;
@@ -97,7 +97,7 @@ impl Render for DragPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `gpui_kit::*` brings GPUI's own `test` attribute in with it.
+    // `koan_kit::raw::*` brings GPUI's own `test` attribute in with it.
     use core::prelude::v1::test;
 
     #[test]

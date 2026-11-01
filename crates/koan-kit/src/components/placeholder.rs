@@ -15,7 +15,7 @@ pub const ENSO: &str = "koan/enso.svg";
 
 /// The ensō traced from the app icon, in its 512-point space: every fourth
 /// of the trace's points, as the Mac's `EnsoShape` keeps them.
-const TRACE: &str = "M230.3 401.8 L222.0 399.7 L213.9 397.3 L205.8 394.6 L198.0 391.4 L190.3 387.7 L182.8 383.8\
+pub(crate) const TRACE: &str = "M230.3 401.8 L222.0 399.7 L213.9 397.3 L205.8 394.6 L198.0 391.4 L190.3 387.7 L182.8 383.8\
 L175.2 380.0 L167.3 376.2 L159.4 372.4 L151.7 367.8 L145.0 362.1 L139.7 355.0 L135.7 347.0\
 L132.6 338.6 L129.7 330.4 L126.3 322.6 L123.0 314.9 L120.2 307.1 L118.3 298.9 L117.2 290.6\
 L116.3 282.4 L114.8 274.3 L112.2 266.3 L108.8 258.1 L105.7 249.4 L103.9 240.6 L104.0 231.7\

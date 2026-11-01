@@ -4,10 +4,10 @@
 
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Assistants, ScrobblingConnection};
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::settings::form::{Row, buttons, copyable, note, page, section, text};
 use crate::settings::model::{count, describe};

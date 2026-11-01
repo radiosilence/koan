@@ -1,7 +1,7 @@
 //! The kōan theme as the library pages draw it: the app's `Paint`, one value
 //! per render, and setting text in a role.
 
-use gpui_kit::*;
+use koan_kit::raw::*;
 
 use crate::theme::{KoanStyled, TypeRole, tokens as theme};
 

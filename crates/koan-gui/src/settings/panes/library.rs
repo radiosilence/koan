@@ -2,8 +2,8 @@
 
 use crate::components::{Button, ButtonKind};
 use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, page, section, text};

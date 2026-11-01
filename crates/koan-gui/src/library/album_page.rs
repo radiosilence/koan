@@ -6,9 +6,9 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{Album, Track};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve};
 use super::drag::{Playable, PlayableDrag};
@@ -526,7 +526,7 @@ impl Render for AlbumPage {
                                 .pb(grid.margin)
                                 .size_full(),
                             )
-                            .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
+                            .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
                         cx.weak_entity(),
                         window,
                         cx,

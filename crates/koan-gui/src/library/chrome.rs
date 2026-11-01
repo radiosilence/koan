@@ -3,11 +3,11 @@
 //! select toggle and the bar a pick acts through. Drawn in the kōan look:
 //! square, flat, lowercase, one hairline where a region needs one.
 
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::popover::Popover;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::BrowseChoices;
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::component::popover::Popover;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::browse::{self, Browse};
 use super::drag::Playable;
@@ -146,7 +146,7 @@ impl Trigger {
     }
 }
 
-impl gpui_kit::base::Selectable for Trigger {
+impl koan_kit::raw::base::Selectable for Trigger {
     fn selected(mut self, selected: bool) -> Self {
         self.open = selected;
         self

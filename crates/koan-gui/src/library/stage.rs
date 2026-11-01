@@ -1,8 +1,8 @@
 //! The library's part of the shell's stage: the page the navigator is on,
 //! and a track's details over it.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::Lib;
 use super::albums::AlbumGrid;

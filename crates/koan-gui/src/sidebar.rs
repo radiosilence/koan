@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::Playlist;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
@@ -299,7 +299,7 @@ impl Render for Sidebar {
                     .flex_1()
                     .min_h(px(0.))
                     .child(body)
-                    .child(gpui_kit::base::Scrollbar::vertical(&self.scroll)),
+                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
             )
             // Scans, rebuilds and syncs running; nothing while idle.
             .child(

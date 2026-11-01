@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use gpui_kit::*;
+use koan_kit::raw::*;
 
 const FILE: &str = "desktop-window";
 

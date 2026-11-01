@@ -11,13 +11,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use koan_ffi::{DspBand, DspPoint};
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::FluentBuilder;
+use koan_kit::raw::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
-use koan_ffi::{DspBand, DspPoint};
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};
@@ -165,10 +165,9 @@ impl Fields {
             })),
             fields: HashMap::new(),
         });
-        let typing = row
-            .fields
-            .values()
-            .any(|f| gpui_kit::Focusable::focus_handle(f.input.read(cx), cx).is_focused(window));
+        let typing = row.fields.values().any(|f| {
+            koan_kit::raw::Focusable::focus_handle(f.input.read(cx), cx).is_focused(window)
+        });
         let state = row.state.clone();
         let mut s = state.borrow_mut();
         let read_since = s.settled.is_none_or(|at| stamp >= at);
@@ -252,7 +251,7 @@ impl Fields {
         }
         let field = row.fields.get_mut(&part).expect("made above");
         let focused =
-            gpui_kit::Focusable::focus_handle(field.input.read(cx), cx).is_focused(window);
+            koan_kit::raw::Focusable::focus_handle(field.input.read(cx), cx).is_focused(window);
         if field.reset != reset || (*field.shown.borrow() != text && !focused) {
             field.reset = reset;
             *field.shown.borrow_mut() = text.clone();
