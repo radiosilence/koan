@@ -150,7 +150,7 @@ impl AlbumGrid {
                 this.lib.covers.update(cx, |c, _| c.release(id));
             }),
         ];
-        let rewinds = lib.nav.read(cx).rewinds(Page::Albums);
+        let rewinds = lib.nav.read(cx).rewinds(Page::Albums, cx);
         let restore = lib.nav.read(cx).offset(Page::Albums);
         let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
@@ -724,7 +724,7 @@ impl Render for AlbumGrid {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
         self.scale.set(window.scale_factor());
-        let rewinds = self.lib.nav.read(cx).rewinds(Page::Albums);
+        let rewinds = self.lib.nav.read(cx).rewinds(Page::Albums, cx);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
             self.scroll

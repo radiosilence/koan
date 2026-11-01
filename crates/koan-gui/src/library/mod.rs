@@ -17,10 +17,10 @@ pub mod info;
 pub mod nav;
 pub mod rows;
 pub mod selection;
+pub mod stage;
 pub mod tile;
 pub mod tokens;
 pub mod tracks;
-pub mod window;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -53,16 +53,18 @@ pub struct Lib {
 }
 
 impl Lib {
-    /// `browse` is read from disk by the caller, off the main thread.
+    /// `browse` is read from disk by the caller, off the main thread;
+    /// `navigator` is the window's.
     pub fn new(
         engine: Arc<KoanEngine>,
         browse: browse::Browse,
+        navigator: Entity<crate::navigator::Navigator>,
         bench: Option<bench::Shared>,
         cx: &mut App,
     ) -> Self {
         let feed = cx.new(|cx| feed::Feed::new(engine.clone(), cx));
         let covers = cx.new(|cx| covers::Covers::new(engine.clone(), cx));
-        let nav = cx.new(|_| nav::Nav::default());
+        let nav = cx.new(|cx| nav::Nav::new(navigator, cx));
         let browse = cx.new(|_| browse);
 
         // The artwork follows the library and the connection: a change to
@@ -105,8 +107,6 @@ gpui_kit::actions!(
         SelectAll,
         /// Leave the selection mode, or close what is open.
         Dismiss,
-        GoBack,
-        GoForward,
     ]
 );
 
@@ -114,13 +114,11 @@ gpui_kit::actions!(
 /// Ctrl elsewhere.
 pub fn bind_keys(cx: &mut App) {
     #[cfg(target_os = "macos")]
-    let [all, back, forward] = ["cmd-a", "cmd-[", "cmd-]"];
+    let all = "cmd-a";
     #[cfg(not(target_os = "macos"))]
-    let [all, back, forward] = ["ctrl-a", "ctrl-[", "ctrl-]"];
+    let all = "ctrl-a";
     cx.bind_keys([
         KeyBinding::new(all, SelectAll, Some("Library")),
         KeyBinding::new("escape", Dismiss, Some("Library")),
-        KeyBinding::new(back, GoBack, Some("Library")),
-        KeyBinding::new(forward, GoForward, Some("Library")),
     ]);
 }

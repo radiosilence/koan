@@ -91,7 +91,7 @@ impl TrackBrowser {
                 this.lib.covers.update(cx, |c, _| c.release(id));
             }),
         ];
-        let rewinds = lib.nav.read(cx).rewinds(Page::Tracks);
+        let rewinds = lib.nav.read(cx).rewinds(Page::Tracks, cx);
         let restore = lib.nav.read(cx).offset(Page::Tracks);
         let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), false, window, cx));
@@ -408,7 +408,7 @@ impl Render for TrackBrowser {
         }) {
             window.request_animation_frame();
         }
-        let rewinds = self.lib.nav.read(cx).rewinds(Page::Tracks);
+        let rewinds = self.lib.nav.read(cx).rewinds(Page::Tracks, cx);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
             self.scroll

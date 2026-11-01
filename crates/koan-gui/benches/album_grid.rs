@@ -41,7 +41,16 @@ fn grid(cx: &mut BenchAppContext) -> (gpui::Entity<AlbumGrid>, Rc<RefCell<Record
     });
     let engine = engine();
     let recorder = Rc::new(RefCell::new(Recorder::default()));
-    let lib = cx.update(|cx| library::Lib::new(engine, Browse::load(), Some(recorder.clone()), cx));
+    let lib = cx.update(|cx| {
+        let navigator = cx.new(|_| koan_gui::navigator::Navigator::default());
+        library::Lib::new(
+            engine,
+            Browse::load(),
+            navigator,
+            Some(recorder.clone()),
+            cx,
+        )
+    });
     let mut window = cx.add_empty_window();
     // 4K: 1920 × 1080 points at the test window's scale of 2, 3840 × 2160
     // pixels, the size the Mac grid's figures are quoted at.

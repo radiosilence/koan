@@ -72,7 +72,7 @@ impl ArtistBrowser {
                     .update(cx, |nav, _| nav.remember_offset(Page::Artists, offset));
             }),
         ];
-        let rewinds = lib.nav.read(cx).rewinds(Page::Artists);
+        let rewinds = lib.nav.read(cx).rewinds(Page::Artists, cx);
         let restore = lib.nav.read(cx).offset(Page::Artists);
         let search = cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
@@ -327,7 +327,7 @@ impl actions::Menus for ArtistBrowser {
 impl Render for ArtistBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
-        let rewinds = self.lib.nav.read(cx).rewinds(Page::Artists);
+        let rewinds = self.lib.nav.read(cx).rewinds(Page::Artists, cx);
         if rewinds != self.rewinds {
             self.rewinds = rewinds;
             self.scroll

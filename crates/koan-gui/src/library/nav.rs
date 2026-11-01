@@ -1,26 +1,13 @@
-//! Where the library window is: one page, the pages visited, and where each
-//! listing was scrolled to. A stand-in for the app's navigator, with the same
-//! shape: any page from any page, back and forward through what was visited.
+//! What the library pages keep beside the app's navigator: where each listing
+//! was scrolled to, and the track whose details are open. Moves go to the
+//! navigator, which the pages reach through this.
 
 use std::collections::HashMap;
 
 use gpui_kit::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Page {
-    Albums,
-    Artists,
-    Tracks,
-    Album(i64),
-    Artist(i64),
-}
-
-impl Page {
-    /// The library's own pages, which the tabs choose between.
-    pub fn is_root(self) -> bool {
-        matches!(self, Page::Albums | Page::Artists | Page::Tracks)
-    }
-}
+use crate::navigator::Navigator;
+pub use crate::navigator::Route as Page;
 
 /// A place on a page that survives the page being laid out again: the item
 /// at the top of the screen, named by what it shows, and how far into it.
@@ -55,73 +42,40 @@ pub enum Heading {
 }
 
 pub struct Nav {
-    history: Vec<Page>,
-    cursor: usize,
+    navigator: Entity<Navigator>,
     /// How far down each page was scrolled when it was left, put back when
     /// it is shown again.
     offsets: HashMap<Page, Pixels>,
     /// The same, for pages laid out in items of different heights.
     anchors: HashMap<Page, Anchor>,
-    /// Bumped when a tab is chosen while its page is already showing: the
-    /// page goes back to its top.
-    rewinds: HashMap<Page, u64>,
     /// The track whose details are open over the page.
     pub info: Option<i64>,
-}
-
-impl Default for Nav {
-    fn default() -> Self {
-        Self {
-            history: vec![Page::Albums],
-            cursor: 0,
-            offsets: HashMap::new(),
-            anchors: HashMap::new(),
-            rewinds: HashMap::new(),
-            info: None,
-        }
-    }
+    _navigator: Subscription,
 }
 
 impl Nav {
-    pub fn current(&self) -> Page {
-        self.history[self.cursor]
+    pub fn new(navigator: Entity<Navigator>, cx: &mut Context<Self>) -> Self {
+        // Pages observe this, so a move or a rewind reaches them through it.
+        let watch = cx.observe(&navigator, |_, _, cx| cx.notify());
+        Self {
+            navigator,
+            offsets: HashMap::new(),
+            anchors: HashMap::new(),
+            info: None,
+            _navigator: watch,
+        }
+    }
+
+    pub fn current(&self, cx: &App) -> Page {
+        self.navigator.read(cx).current()
     }
 
     pub fn open(&mut self, page: Page, cx: &mut Context<Self>) {
-        if page == self.current() {
-            if page.is_root() {
-                *self.rewinds.entry(page).or_default() += 1;
-                self.offsets.remove(&page);
+        self.navigator.update(cx, |nav, cx| {
+            if nav.go(page) {
                 cx.notify();
             }
-            return;
-        }
-        self.history.truncate(self.cursor + 1);
-        self.history.push(page);
-        self.cursor += 1;
-        cx.notify();
-    }
-
-    pub fn can_go_back(&self) -> bool {
-        self.cursor > 0
-    }
-
-    pub fn can_go_forward(&self) -> bool {
-        self.cursor + 1 < self.history.len()
-    }
-
-    pub fn back(&mut self, cx: &mut Context<Self>) {
-        if self.can_go_back() {
-            self.cursor -= 1;
-            cx.notify();
-        }
-    }
-
-    pub fn forward(&mut self, cx: &mut Context<Self>) {
-        if self.can_go_forward() {
-            self.cursor += 1;
-            cx.notify();
-        }
+        });
     }
 
     pub fn offset(&self, page: Page) -> Option<Pixels> {
@@ -141,8 +95,10 @@ impl Nav {
         self.anchors.insert(page, anchor);
     }
 
-    pub fn rewinds(&self, page: Page) -> u64 {
-        self.rewinds.get(&page).copied().unwrap_or(0)
+    /// How many times the page has been sent back to its top from the
+    /// sidebar; a page goes to its top when this moves.
+    pub fn rewinds(&self, page: Page, cx: &App) -> u64 {
+        u64::from(self.navigator.read(cx).rewinds(page))
     }
 
     pub fn show_info(&mut self, track: i64, cx: &mut Context<Self>) {
