@@ -922,7 +922,7 @@ fn track(
             .justify_end()
             .text_role(TypeRole::Meta, &p.look)
             .text_color(if playing { p.accent_text } else { p.muted })
-            .child(rows::place(item, numbering.by_disc))
+            .child(rows::track_place(item, numbering.by_disc))
             .into_any_element()
     } else {
         sleeve.unwrap_or_else(|| div().into_any_element())

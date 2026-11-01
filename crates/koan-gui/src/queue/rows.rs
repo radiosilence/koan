@@ -35,7 +35,7 @@ pub fn disc_records(items: &[QueueItem]) -> std::collections::HashSet<i64> {
 
 /// A track's place on its record: its number, or `disc.NN` on a record that
 /// numbers by disc.
-pub fn place(item: &QueueItem, by_disc: bool) -> String {
+pub fn track_place(item: &QueueItem, by_disc: bool) -> String {
     let Some(number) = item.track_number else {
         return String::new();
     };
@@ -198,11 +198,11 @@ mod tests {
         items[3].disc = Some(1);
         let discs = disc_records(&items);
         assert_eq!(discs, std::collections::HashSet::from([1]));
-        assert_eq!(place(&items[0], true), "1.01");
-        assert_eq!(place(&items[1], true), "2.02");
-        assert_eq!(place(&items[3], false), "4");
+        assert_eq!(track_place(&items[0], true), "1.01");
+        assert_eq!(track_place(&items[1], true), "2.02");
+        assert_eq!(track_place(&items[3], false), "4");
         items[2].track_number = None;
-        assert_eq!(place(&items[2], true), "");
+        assert_eq!(track_place(&items[2], true), "");
     }
 
     #[test]
