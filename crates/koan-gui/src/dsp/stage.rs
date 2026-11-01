@@ -30,6 +30,8 @@ pub struct StagePicker {
     overview: Option<DspOverview>,
     targets: Option<DspTargets>,
     loaded: Option<(u64, u64)>,
+    /// The read under way; a newer one drops it.
+    _load: Option<gpui_kit::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -51,6 +53,7 @@ impl StagePicker {
             overview: None,
             targets: None,
             loaded: None,
+            _load: None,
             _subscriptions: subscriptions,
         };
         picker.load(cx);
@@ -65,7 +68,7 @@ impl StagePicker {
         self.loaded = Some(stamp);
         let engine = self.dsp.read(cx).engine();
         let device = self.device.clone();
-        cx.spawn(async move |this, cx| {
+        self._load = Some(cx.spawn(async move |this, cx| {
             let o = engine.clone().dsp_overview_for(Some(device)).await;
             let targets = match &o.active {
                 Some(name) => engine.dsp_targets(name.clone()).await,
@@ -77,8 +80,7 @@ impl StagePicker {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        }));
     }
 
     fn close(&self, cx: &mut App) {
@@ -604,8 +606,8 @@ impl NewEq {
         let subscriptions = vec![cx.subscribe_in(
             &name,
             window,
-            |this: &mut Self, _, e: &InputEvent, _, cx| match e {
-                InputEvent::PressEnter { .. } => this.create(cx),
+            |this: &mut Self, _, e: &InputEvent, window, cx| match e {
+                InputEvent::PressEnter { .. } => this.create(window, cx),
                 InputEvent::Change => cx.notify(),
                 _ => {}
             },
@@ -626,44 +628,40 @@ impl NewEq {
         self.name.read(cx).value().trim().to_owned()
     }
 
-    fn create(&mut self, cx: &mut Context<Self>) {
+    fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.trimmed(cx);
         if name.is_empty() || self.saving {
             return;
         }
         self.saving = true;
         let starter = STARTERS[self.starter].1;
-        let device = self.device.clone();
         let this = cx.weak_entity();
         let made = name.clone();
+        let window = window.window_handle();
         self.dsp.update(cx, |dsp, cx| {
             dsp.act_then(
                 cx,
-                move |engine| async move {
-                    engine.clone().dsp_create_eq(made.clone(), starter).await?;
-                    if let Some(device) = device {
-                        let mut chain = engine
-                            .clone()
-                            .dsp_overview_for(Some(device.clone()))
-                            .await
-                            .chain;
-                        chain.push(DspTuningEntry {
-                            name: made,
-                            on: true,
-                        });
-                        engine.dsp_set_tunings(device, chain).await?;
-                    }
-                    Ok(())
-                },
+                move |engine| engine.dsp_create_eq(made, starter),
                 move |taken, cx| {
-                    this.update(cx, |n, cx| n.made(taken.is_some(), name.clone(), cx))
-                        .ok();
+                    this.update(cx, |n, cx| {
+                        n.made(taken.is_some(), name.clone(), window, cx)
+                    })
+                    .ok();
                 },
             )
         });
     }
 
-    fn made(&mut self, taken: bool, name: String, cx: &mut Context<Self>) {
+    /// Made: it goes on the end of the device's filters, a write of its
+    /// own, so a failure there is said as that and the EQ is kept; and it
+    /// opens to edit, in the window it was made from.
+    fn made(
+        &mut self,
+        taken: bool,
+        name: String,
+        window: gpui_kit::AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
         self.saving = false;
         if !taken {
             self.refusal = self.dsp.read(cx).last_error.clone();
@@ -671,27 +669,31 @@ impl NewEq {
             return;
         }
         let (dsp, sheets, device) = (self.dsp.clone(), self.sheets.clone(), self.device.clone());
-        sheets.update(cx, |s, cx| s.pop(cx));
-        cx.defer(move |cx| {
-            let Some(window) = cx.active_window() else {
-                return;
-            };
-            window
-                .update(cx, |_, window, cx| {
-                    let view = cx.new(|cx| {
-                        super::profile::ProfilePage::new(
-                            dsp,
-                            sheets.clone(),
-                            name,
-                            device,
-                            window,
-                            cx,
-                        )
-                    });
-                    sheets.update(cx, |s, cx| s.view(view, cx));
+        if let Some(device) = device.clone() {
+            let added = name.clone();
+            dsp.update(cx, |d, cx| {
+                d.act(cx, move |e| async move {
+                    let mut chain = e.clone().dsp_overview_for(Some(device.clone())).await.chain;
+                    if !chain.iter().any(|entry| entry.name == added) {
+                        chain.push(DspTuningEntry {
+                            name: added,
+                            on: true,
+                        });
+                    }
+                    e.dsp_set_tunings(device, chain).await
                 })
-                .ok();
-        });
+            });
+        }
+        let me = cx.entity_id();
+        sheets.update(cx, |s, cx| s.close(me, cx));
+        window
+            .update(cx, |_, window, cx| {
+                let view = cx.new(|cx| {
+                    super::profile::ProfilePage::new(dsp, sheets.clone(), name, device, window, cx)
+                });
+                sheets.update(cx, |s, cx| s.view(view, cx));
+            })
+            .ok();
     }
 }
 
@@ -709,8 +711,8 @@ impl Render for NewEq {
             .disabled(empty || self.saving)
             .on_click({
                 let this = this.clone();
-                move |_, _, cx| {
-                    this.update(cx, |n, cx| n.create(cx)).ok();
+                move |_, window, cx| {
+                    this.update(cx, |n, cx| n.create(window, cx)).ok();
                 }
             });
         div()

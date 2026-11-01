@@ -11,16 +11,11 @@ use gpui_kit::{
 use koan_ffi::DspRole;
 
 use super::model::{Dsp, RATES, RoleAsk, Stage, khz};
-use super::sheet::{Sheets, body, choice_row, head, note, panel, section};
+use super::sheet::{body, choice_row, head, note, panel, section};
 use crate::components::{Button, ButtonKind, SectionHeader, TextField};
 use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
-pub fn render(
-    dsp: &Entity<Dsp>,
-    sheets: &Entity<Sheets>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<AnyElement> {
+pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let d = dsp.read(cx);
     let look = Look::of(window, cx);
     let shown = if d.pending_import.is_some() {
@@ -28,7 +23,7 @@ pub fn render(
     } else if d.needs_rate.is_some() {
         rate(dsp, &look)
     } else {
-        let ask = d.ask_role.clone().filter(|_| sheets.read(cx).is_empty())?;
+        let ask = d.ask_role.clone()?;
         role(dsp, ask, &look, cx)
     };
     Some(

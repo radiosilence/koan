@@ -120,6 +120,9 @@ struct Drag {
     /// The filter as it was when the drag began.
     band: DspBand,
     started: Point<Pixels>,
+    /// Where Option went down in this drag, and the Q then: a Q drag
+    /// measures from there.
+    alt_from: Option<(Pixels, f64)>,
     step: Option<Commit>,
     saved_at: Instant,
 }
@@ -135,9 +138,9 @@ enum Edit {
     Settled((u64, u64)),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Grab {
-    Band { start_q: f64, kind: &'static str },
+    Band { kind: String },
     Paint,
 }
 
@@ -161,7 +164,7 @@ pub struct Graph {
     /// A preview is being drawn; the newest step asked meanwhile waits.
     previewing: bool,
     /// Filters read again while a drag was held, applied once it ends.
-    queued: Option<Vec<DspBand>>,
+    queued: Option<Option<Editing>>,
     cache: Rc<RefCell<Cache>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -193,8 +196,17 @@ const SAVE_EVERY: Duration = Duration::from_millis(250);
 const PAINT_SLOP: f32 = 4.0;
 
 impl Graph {
-    pub fn new(response: DspResponse, cx: &mut Context<Self>) -> Self {
+    pub fn new(response: DspResponse, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut subscriptions = vec![observe_accent(cx)];
+        // A window put away under a drag never sees its button come up:
+        // the drag ends there.
+        subscriptions.push(
+            cx.observe_window_activation(window, |g: &mut Graph, window, cx| {
+                if !window.is_window_active() {
+                    g.let_go(cx);
+                }
+            }),
+        );
         subscriptions.push(cx.on_release(|graph: &mut Graph, cx| graph.release(cx)));
         Self {
             shown: Shown::Eq,
@@ -296,17 +308,12 @@ impl Graph {
     /// drawing. Filters read again while an edit is under way wait for it
     /// to end, so the handles are not re-indexed under the pointer.
     pub fn set_editing(&mut self, editing: Option<Editing>, cx: &mut Context<Self>) {
-        let busy = matches!(self.edit, Edit::Dragging(_) | Edit::Settling(_));
-        match (busy, self.editing.as_mut(), editing) {
-            (true, Some(now), Some(new)) if now.name == new.name => {
-                self.queued = Some(new.bands);
-            }
-            (true, _, _) => {}
-            (false, _, editing) => {
-                self.editing = editing;
-                cx.notify();
-            }
+        if matches!(self.edit, Edit::Dragging(_) | Edit::Settling(_)) {
+            self.queued = Some(editing);
+            return;
         }
+        self.editing = editing;
+        cx.notify();
     }
 
     /// Where band `index`'s handle was last drawn, in the window: for a
@@ -545,17 +552,22 @@ impl Curve {
     }
 }
 
-/// Paths built at the plot's origin, kept while their curve, the plot's
-/// size, the scale and the range are unchanged.
+/// Paths built at the plot's origin, relative to the level the curves sit
+/// at, kept while their curve, the plot's size, the scale and the range
+/// around the level are unchanged: a preamp that moves with an edit moves
+/// the level and nothing else, so it rebuilds nothing.
 #[derive(Default)]
 struct Cache {
     plot: Option<(Size, f32, (f64, f64), usize)>,
-    paths: Vec<(Curve, Option<Path<Pixels>>)>,
+    paths: Vec<(Curve, Option<Rc<Path<Pixels>>>)>,
     /// Where each handle was last drawn, in the window.
     handles: Vec<(usize, Point<Pixels>)>,
 }
 
 type Size = gpui_kit::Size<Pixels>;
+
+/// A curve's path and how it is drawn.
+type Drawn = (Option<Stroke>, Rc<Path<Pixels>>);
 
 impl Cache {
     fn paths(
@@ -564,26 +576,31 @@ impl Cache {
         freqs: &[f64],
         plot: Size,
         scale: f32,
-        domain: (f64, f64),
-    ) -> Vec<(Curve, Option<Path<Pixels>>)> {
+        (lo, hi): (f64, f64),
+        level: f64,
+    ) -> Vec<Drawn> {
+        let domain = (lo - level, hi - level);
         let key = (plot, scale, domain, freqs.len());
         if self.plot != Some(key) {
             self.plot = Some(key);
             self.paths.clear();
         }
         let mut kept = std::mem::take(&mut self.paths);
-        let built: Vec<_> = curves
+        self.paths = curves
             .into_iter()
-            .map(|curve| {
+            .map(|mut curve| {
+                curve.shift -= level;
                 if let Some(at) = kept.iter().position(|(c, _)| c == &curve) {
                     return kept.swap_remove(at);
                 }
-                let path = build(&curve, freqs, plot, domain);
+                let path = build(&curve, freqs, plot, domain).map(Rc::new);
                 (curve, path)
             })
             .collect();
-        self.paths = built.clone();
-        built
+        self.paths
+            .iter()
+            .filter_map(|(c, p)| p.clone().map(|p| (c.stroke, p)))
+            .collect()
     }
 }
 
@@ -639,7 +656,8 @@ struct Frame {
     plot: Bounds<Pixels>,
     domain: (f64, f64),
     level: f64,
-    paths: Vec<(Curve, Option<Path<Pixels>>)>,
+    paths: Vec<Drawn>,
+    hitbox: gpui_kit::Hitbox,
     handles: Vec<Handle>,
     held: Option<usize>,
     showing_eq: bool,
@@ -693,12 +711,15 @@ impl Render for Graph {
                         plot.size,
                         window.scale_factor(),
                         domain,
+                        level,
                     );
+                    let hitbox = window.insert_hitbox(plot, gpui_kit::HitboxBehavior::Normal);
                     Frame {
                         plot,
                         domain,
                         level,
                         paths,
+                        hitbox,
                         handles,
                         held,
                         showing_eq,
@@ -1005,9 +1026,8 @@ fn paint_chart(bounds: Bounds<Pixels>, f: &Frame, look: &Look, window: &mut Wind
     }
 
     window.with_content_mask(Some(gpui_kit::ContentMask { bounds: plot }), |window| {
-        for (curve, path) in &f.paths {
-            let Some(path) = path else { continue };
-            let color = match curve.stroke {
+        for (stroke, path) in &f.paths {
+            let color = match stroke {
                 Some(stroke) => stroke.color(look),
                 None => muted.opacity(0.15),
             };
@@ -1043,6 +1063,7 @@ fn listen(this: WeakEntity<Graph>, f: &Frame, window: &mut Window) {
     let plot = f.plot;
     let (domain, level) = (f.domain, f.level);
     let handles = f.handles.clone();
+    let hitbox = f.hitbox.clone();
     let geometry = Geometry {
         plot,
         domain,
@@ -1050,10 +1071,10 @@ fn listen(this: WeakEntity<Graph>, f: &Frame, window: &mut Window) {
     };
     {
         let this = this.clone();
-        window.on_mouse_event(move |e: &MouseDownEvent, phase, _window, cx| {
+        window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble
                 || e.button != MouseButton::Left
-                || !plot.contains(&e.position)
+                || !hitbox.is_hovered(window)
             {
                 return;
             }
@@ -1148,14 +1169,10 @@ impl Graph {
                 let Some(band) = e.bands.get(h.index) else {
                     return;
                 };
-                let Some(kind) = static_kind(&band.kind) else {
-                    return;
-                };
                 (
                     h.index,
                     Grab::Band {
-                        start_q: band.q,
-                        kind,
+                        kind: band.kind.clone(),
                     },
                 )
             }
@@ -1173,6 +1190,7 @@ impl Graph {
             kind,
             band,
             started: at,
+            alt_from: None,
             step: None,
             saved_at: Instant::now(),
         }));
@@ -1202,8 +1220,8 @@ impl Graph {
             hz.clamp(bounds.hz_min, bounds.hz_max),
             db.clamp(bounds.db_min, bounds.db_max),
         );
-        let step = match drag.kind {
-            Grab::Band { start_q, kind } => {
+        let step = match drag.kind.clone() {
+            Grab::Band { kind } => {
                 let (freq, gain_db, q) = match &drag.step {
                     Some(Commit::Band {
                         freq, gain_db, q, ..
@@ -1211,18 +1229,20 @@ impl Graph {
                     _ => (drag.band.freq, drag.band.gain_db, drag.band.q),
                 };
                 // Option-drag widens or narrows the band where it is: up for
-                // a higher Q.
+                // a higher Q, measured from where Option went down.
                 let (freq, gain_db, q) = if modifiers.alt {
-                    let dy = f32::from(at.y - drag.started.y) as f64;
-                    (freq, gain_db, koan_ffi::dsp_drag_q(start_q, dy))
+                    let (from_y, from_q) = *drag.alt_from.get_or_insert((at.y, q));
+                    let dy = f32::from(at.y - from_y) as f64;
+                    (freq, gain_db, koan_ffi::dsp_drag_q(from_q, dy))
                 } else {
+                    drag.alt_from = None;
                     (hz, db, q)
                 };
                 Commit::Band {
                     name: e.name.clone(),
                     index: drag.index as u32,
                     expected: drag.band.clone(),
-                    kind: kind.into(),
+                    kind,
                     freq,
                     gain_db,
                     q,
@@ -1299,6 +1319,9 @@ impl Graph {
         if !ours {
             return;
         }
+        if let Some(e) = &self.editing {
+            e.dsp.update(cx, |d, _| d.forget(id));
+        }
         self.apply_queued();
         if ended.outcome == Outcome::Saved {
             self.edit = Edit::Settled(ended.stamp);
@@ -1313,8 +1336,8 @@ impl Graph {
     }
 
     fn apply_queued(&mut self) {
-        if let (Some(bands), Some(e)) = (self.queued.take(), self.editing.as_mut()) {
-            e.bands = bands;
+        if let Some(editing) = self.queued.take() {
+            self.editing = editing;
         }
     }
 
@@ -1365,7 +1388,10 @@ impl Graph {
                 let Edit::Dragging(drag) = &g.edit else {
                     return;
                 };
+                // A preview for an older drag: the drag now under way may
+                // have a step waiting on it.
                 if drag.edit != id {
+                    g.preview(cx);
                     return;
                 }
                 if let Some(drawn) = drawn {
@@ -1409,24 +1435,6 @@ fn same_step(a: &Commit, b: &Commit) -> bool {
         }
         _ => false,
     }
-}
-
-/// The core's band type ids, as the static strings a drag holds.
-fn static_kind(id: &str) -> Option<&'static str> {
-    koan_core_kinds().iter().copied().find(|k| *k == id)
-}
-
-fn koan_core_kinds() -> &'static [&'static str] {
-    &[
-        "peaking",
-        "low_shelf",
-        "high_shelf",
-        "low_pass",
-        "high_pass",
-        "notch",
-        "band_pass",
-        "all_pass",
-    ]
 }
 
 #[cfg(test)]

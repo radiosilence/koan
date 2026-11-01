@@ -154,6 +154,8 @@ pub struct AutoEqSearch {
     query: Entity<InputState>,
     /// A maker opened, and its models once read.
     maker: Option<(String, Vec<AutoEqEntry>)>,
+    /// Why the makers or a maker's models could not be read.
+    problem: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -193,6 +195,7 @@ impl AutoEqSearch {
             sheets,
             query: input,
             maker: None,
+            problem: None,
             _subscriptions: subscriptions,
         }
     }
@@ -207,7 +210,7 @@ impl AutoEqSearch {
                 if s.maker.as_ref().is_some_and(|(m, _)| *m == maker) {
                     match models {
                         Ok(models) => s.maker = Some((maker, models)),
-                        Err(e) => s.dsp.update(cx, |d, _| d.last_error = Some(describe(&e))),
+                        Err(e) => s.problem = Some(describe(&e)),
                     }
                     cx.notify();
                 }
@@ -290,6 +293,7 @@ impl Render for AutoEqSearch {
             }
         } else if d.autoeq_results.is_empty() {
             let (dsp, sheets, q) = (self.dsp.clone(), self.sheets.clone(), query.clone());
+            let search = cx.entity_id();
             rows.push(
                 EmptyState::new(Icon::Search, "Not in AutoEQ")
                     .detail(format!("AutoEQ has nothing for “{query}”. A measurement of your headphones works too: kōan builds the correction from it."))
@@ -301,6 +305,7 @@ impl Render for AutoEqSearch {
                     .on_click(move |_, window, cx| {
                         let view = cx.new(|cx| {
                             MeasurementFlow::new(dsp.clone(), sheets.clone(), q.clone(), window, cx)
+                                .closing(search)
                         });
                         sheets.update(cx, |s, cx| s.view(view, cx));
                     })
@@ -318,6 +323,7 @@ impl Render for AutoEqSearch {
             .child(
                 body("autoeq-body", &look)
                     .child(TextField::new(&self.query))
+                    .children(self.problem.clone().map(|p| note(p, Tone::Bad, &look)))
                     .children(rows),
             )
     }
@@ -357,7 +363,6 @@ pub struct MeasurementFlow {
     targets: Vec<DspTargetOption>,
     target: Option<String>,
     graph: Entity<Graph>,
-    previewed: bool,
     name: Entity<InputState>,
     problem: Option<SharedString>,
     reading: Option<DspMeasurementReading>,
@@ -370,10 +375,22 @@ pub struct MeasurementFlow {
     fetched: Option<SquigHit>,
     fetch_problem: Option<(SquigHit, SharedString)>,
     _search: Option<Task<()>>,
+    /// The step's check or a result's fetch under way: Back, or choosing
+    /// something else, drops it.
+    _step: Option<Task<()>>,
+    _fetch: Option<Task<()>>,
+    /// A sheet this one was opened from, closed with it once a correction
+    /// is saved: AutoEQ's search, which found nothing.
+    closing: Option<gpui_kit::EntityId>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl MeasurementFlow {
+    pub fn closing(mut self, sheet: gpui_kit::EntityId) -> Self {
+        self.closing = Some(sheet);
+        self
+    }
+
     pub fn new(
         dsp: Entity<Dsp>,
         sheets: Entity<Sheets>,
@@ -392,7 +409,8 @@ impl MeasurementFlow {
                 .placeholder(label("Search…"))
                 .default_value(name.clone())
         });
-        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), cx).open_on(Shown::Measured));
+        let graph =
+            cx.new(|cx| Graph::new(Graph::flat_response(), window, cx).open_on(Shown::Measured));
         let subscriptions = vec![
             cx.subscribe_in(&squig, window, |m: &mut Self, _, e: &InputEvent, _, cx| {
                 if let InputEvent::Change = e {
@@ -412,7 +430,6 @@ impl MeasurementFlow {
             targets: Vec::new(),
             target: None,
             graph,
-            previewed: false,
             name: name_input,
             problem: None,
             reading: None,
@@ -425,6 +442,9 @@ impl MeasurementFlow {
             fetched: None,
             fetch_problem: None,
             _search: None,
+            _step: None,
+            _fetch: None,
+            closing: None,
             _subscriptions: subscriptions,
         }
     }
@@ -495,8 +515,7 @@ impl MeasurementFlow {
         self.fetch_problem = None;
         cx.notify();
         let engine = self.dsp.read(cx).engine();
-        let _ = window;
-        cx.spawn_in(window, async move |this, cx| {
+        self._fetch = Some(cx.spawn_in(window, async move |this, cx| {
             let fetched = engine
                 .dsp_squig_fetch(hit.site.clone(), hit.file.clone())
                 .await;
@@ -521,14 +540,16 @@ impl MeasurementFlow {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        }));
     }
 
     /// Reads the chosen files as one text, off the main thread: a speaker's
     /// two planes are read together, and one plane of an Audio Science
     /// Review export brings its sibling along where it can be read.
     fn choose_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A file chosen wins over a result still being fetched.
+        self._fetch = None;
+        self.picking = None;
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -568,6 +589,7 @@ impl MeasurementFlow {
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
+        self._step = None;
         self.problem = None;
         self.step = match self.step {
             Step::Learn | Step::File => Step::Learn,
@@ -585,7 +607,7 @@ impl MeasurementFlow {
         let engine = self.dsp.read(cx).engine();
         let (step, text, in_ear, target) =
             (self.step, self.text(cx), self.in_ear, self.target.clone());
-        cx.spawn(async move |this, cx| {
+        self._step = Some(cx.spawn(async move |this, cx| {
             match step {
                 Step::Learn => {
                     this.update(cx, |m, cx| m.go(Step::File, cx)).ok();
@@ -656,7 +678,6 @@ impl MeasurementFlow {
                         Ok(r) => {
                             let stamp = m.dsp.read(cx).stamp();
                             m.graph.update(cx, |g, cx| g.set_response(r, stamp, cx));
-                            m.previewed = true;
                             m.go(Step::Review, cx);
                         }
                         Err(e) => {
@@ -668,8 +689,7 @@ impl MeasurementFlow {
                 }
                 Step::Review => {}
             }
-        })
-        .detach();
+        }));
     }
 
     fn go(&mut self, step: Step, cx: &mut Context<Self>) {
@@ -699,13 +719,19 @@ impl MeasurementFlow {
         );
         let this = cx.weak_entity();
         let sheets = self.sheets.clone();
+        let (me, closing) = (cx.entity_id(), self.closing);
         self.dsp.update(cx, |d, cx| {
             d.act_then(
                 cx,
                 move |e| e.dsp_save_measured(name, text, ear, target, source),
                 move |saved, cx| {
                     if saved.is_some() {
-                        sheets.update(cx, |s, cx| s.pop(cx));
+                        sheets.update(cx, |s, cx| {
+                            s.close(me, cx);
+                            if let Some(from) = closing {
+                                s.close(from, cx);
+                            }
+                        });
                     } else {
                         this.update(cx, |m, cx| {
                             m.saving = false;
@@ -983,7 +1009,11 @@ impl Render for MeasurementFlow {
         let mut actions = vec![
             Button::new("measure-cancel", ButtonKind::Standard)
                 .label("Cancel")
-                .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.pop(cx)))
+                .disabled(self.saving)
+                .on_click({
+                    let me = cx.entity_id();
+                    move |_, _, cx| sheets.update(cx, |s, cx| s.close(me, cx))
+                })
                 .into_any_element(),
         ];
         if self.step != Step::Learn {
@@ -1060,10 +1090,10 @@ impl SplitFlow {
         dsp: Entity<Dsp>,
         sheets: Entity<Sheets>,
         name: String,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), cx));
+        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), window, cx));
         let mut flow = Self {
             dsp,
             sheets,
@@ -1084,6 +1114,8 @@ impl SplitFlow {
     }
 
     fn load_targets(&mut self, cx: &mut Context<Self>) {
+        self.preview = None;
+        self._refresh = None;
         let engine = self.dsp.read(cx).engine();
         let in_ear = self.in_ear;
         cx.spawn(async move |this, cx| {
@@ -1125,6 +1157,9 @@ impl SplitFlow {
             cx.notify();
             return;
         };
+        // What was drawn is for the last measurement or target: Split waits
+        // for this one.
+        self.preview = None;
         let engine = self.dsp.read(cx).engine();
         let name = self.name.clone();
         self._refresh = Some(cx.spawn(async move |this, cx| {
@@ -1195,13 +1230,14 @@ impl SplitFlow {
         let (name, in_ear) = (self.name.clone(), self.in_ear);
         let this = cx.weak_entity();
         let sheets = self.sheets.clone();
+        let me = cx.entity_id();
         self.dsp.update(cx, |d, cx| {
             d.act_then(
                 cx,
                 move |e| e.dsp_split_baked(name, text, in_ear, target),
                 move |made, cx| {
                     if made.is_some() {
-                        sheets.update(cx, |s, cx| s.pop(cx));
+                        sheets.update(cx, |s, cx| s.close(me, cx));
                     } else {
                         this.update(cx, |f, cx| {
                             f.saving = false;
@@ -1222,9 +1258,11 @@ impl Render for SplitFlow {
         let this = cx.weak_entity();
         let sheets = self.sheets.clone();
         let name = self.name.clone();
+        let me = cx.entity_id();
         let cancel = Button::new("split-cancel", ButtonKind::Standard)
             .label("Cancel")
-            .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.pop(cx)));
+            .disabled(self.saving)
+            .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.close(me, cx)));
         let go = Button::new("split-go", ButtonKind::Standard)
             .label("Split")
             .disabled(self.preview.is_none() || self.saving)

@@ -88,6 +88,13 @@ pub fn menu(
     let look = Look::of(window, cx);
     let open = window.use_keyed_state(id.clone(), cx, |_, _| false);
     let is_open = *open.read(cx);
+    // A press on the trigger while the menu is open is the trigger's to
+    // close: the panel's press-outside leaves it alone.
+    let over_trigger = window.use_keyed_state(
+        gpui_kit::ElementId::NamedChild(std::sync::Arc::new(id.clone()), "over".into()),
+        cx,
+        |_, _| false,
+    );
     let toggle = {
         let open = open.clone();
         move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
@@ -113,6 +120,10 @@ pub fn menu(
             Trigger::Word => d
                 .text_color(look.text_color(Tone::Muted))
                 .hover(|d| d.text_color(look.palette.ink.hsla())),
+        })
+        .on_hover({
+            let over = over_trigger.clone();
+            move |hovered, _, cx| over.update(cx, |o, _| *o = *hovered)
         })
         .on_click(toggle)
         .child(div().whitespace_nowrap().child(shown.into()))
@@ -168,12 +179,40 @@ pub fn menu(
                     .occlude()
                     .max_h(gpui_kit::px(420.0))
                     .overflow_y_scroll()
-                    .on_mouse_down_out(move |_, _, cx| {
-                        close.update(cx, |o, cx| {
-                            *o = false;
-                            cx.notify();
-                        })
+                    .on_mouse_down_out({
+                        let close = close.clone();
+                        move |_, _, cx| {
+                            if *over_trigger.read(cx) {
+                                return;
+                            }
+                            close.update(cx, |o, cx| {
+                                *o = false;
+                                cx.notify();
+                            })
+                        }
                     })
+                    // Escape closes it, heard while it is drawn.
+                    .child(
+                        gpui_kit::canvas(
+                            |_, _, _| (),
+                            move |_, _, window, _| {
+                                let close = close.clone();
+                                window.on_key_event(
+                                    move |e: &gpui_kit::KeyDownEvent, phase, _, cx| {
+                                        if phase == gpui_kit::DispatchPhase::Bubble
+                                            && e.keystroke.key == "escape"
+                                        {
+                                            close.update(cx, |o, cx| {
+                                                *o = false;
+                                                cx.notify();
+                                            });
+                                        }
+                                    },
+                                );
+                            },
+                        )
+                        .size_0(),
+                    )
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(MenuPanel::new().children(rows)),
             ),

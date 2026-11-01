@@ -1863,18 +1863,45 @@ pub fn set_stereo(name: &str, stereo: bool, keep: u16) -> Result<(), String> {
 
 /// Take filter `index` out of `name`.
 pub fn remove_filter(name: &str, index: usize) -> Result<(), String> {
+    remove_edited(name, index, None::<fn(&crate::config::DspFilter) -> bool>).map(|_| ())
+}
+
+/// `remove_filter`, unless filter `index` is no longer the one `expected`
+/// recognises, as `edit_band` is: an index names a place in the list, and
+/// removing by it after a filter before it went would remove another. A
+/// test rather than a filter, so a caller holding a delay or a mix as it
+/// reads one can name it. Says what it removed.
+pub fn remove_edited(
+    name: &str,
+    index: usize,
+    expected: Option<impl Fn(&crate::config::DspFilter) -> bool>,
+) -> Result<Edited, String> {
+    if expected.is_some() && !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Ok(Edited::Changed);
+    }
     may_edit(name)?;
-    let mut found = Err(format!("{name} has no filter {}", index + 1));
+    let mut found: Option<Result<crate::config::DspFilter, ()>> = None;
     persist(|cfg| {
-        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name)
-            && index < p.filters.len()
-        {
-            p.filters.remove(index);
-            found = Ok(());
+        let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) else {
+            return;
+        };
+        let Some(filter) = p.filters.get(index) else {
+            return;
+        };
+        if expected.as_ref().is_some_and(|e| !e(filter)) {
+            found = Some(Err(()));
+            return;
         }
-    })
-    .map_err(|e| e.to_string())?;
-    found
+        found = Some(Ok(p.filters.remove(index)));
+    })?;
+    match (found, expected) {
+        (Some(Ok(filter)), _) => Ok(Edited::Stored {
+            filter,
+            changed: true,
+        }),
+        (_, Some(_)) => Ok(Edited::Changed),
+        (_, None) => Err(format!("{name} has no filter {}", index + 1)),
+    }
 }
 
 /// What a profile does to the sound, for drawing: every curve on AutoEQ's
@@ -4701,6 +4728,20 @@ mod tests {
             Ok(Edited::Changed)
         );
         assert!(edit_band("Nobody", 0, None, "peaking", 100.0, 0.0, 1.0).is_err());
+        // Removing names the filter too.
+        let is = |f: &DspFilter| move |g: &DspFilter| g == f;
+        assert_eq!(
+            remove_edited("Mine", 0, Some(is(&last))),
+            Ok(Edited::Changed)
+        );
+        assert!(matches!(
+            remove_edited("Mine", 0, Some(is(&now))),
+            Ok(Edited::Stored { changed: true, .. })
+        ));
+        assert_eq!(
+            remove_edited("Mine", 0, Some(is(&now))),
+            Ok(Edited::Changed)
+        );
     }
 
     /// A preview draws an edit without saving it; saving as a copy keeps the

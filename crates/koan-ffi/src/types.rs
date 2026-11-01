@@ -1961,7 +1961,7 @@ impl From<DspStarter> for koan_core::audio::dsp::profiles::Starter {
 }
 
 /// One of a profile's filters, in the order they run.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspBand {
     /// A band — `peaking`, `low_shelf`, `high_shelf`, `low_pass`,
     /// `high_pass`, `notch`, `band_pass`, `all_pass`, `gain`, or one of the
@@ -1981,13 +1981,13 @@ pub struct DspBand {
     pub curve: Vec<DspPoint>,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspMixOutput {
     /// `(channel, linear gain)` summed into this output. Empty is silence.
     pub sources: Vec<DspMixSource>,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspMixSource {
     pub channel: u16,
     pub gain: f64,
@@ -2001,7 +2001,7 @@ pub struct DspSavedCopy {
     pub placed: bool,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspPoint {
     pub hz: f64,
     pub db: f64,

@@ -59,6 +59,18 @@ impl Sheets {
         self.push(Sheet::Confirm(confirm), cx);
     }
 
+    /// Closes the sheet showing `view`, wherever it is in the stack: what
+    /// finishes after the person has moved on closes itself and nothing
+    /// above or below it.
+    pub fn close(&mut self, view: gpui_kit::EntityId, cx: &mut Context<Self>) {
+        let before = self.stack.len();
+        self.stack
+            .retain(|s| !matches!(s, Sheet::View(v) if v.entity_id() == view));
+        if self.stack.len() != before {
+            cx.notify();
+        }
+    }
+
     /// Closes the sheet on top.
     pub fn pop(&mut self, cx: &mut Context<Self>) {
         if self.stack.pop().is_some() {
@@ -106,13 +118,12 @@ impl Sheets {
     }
 }
 
-/// A sheet's panel: square, `bg`, a hairline `rule`, at most 640 wide.
+/// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
 pub fn panel(look: &Look) -> gpui_kit::Div {
     div()
         .flex()
         .flex_col()
         .w(px(560.0))
-        .max_w(px(640.0))
         .max_h(gpui_kit::relative(0.85))
         .bg(look.palette.bg.hsla())
         .border(HAIRLINE)

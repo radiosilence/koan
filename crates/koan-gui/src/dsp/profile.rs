@@ -29,6 +29,10 @@ use crate::components::{
 };
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
+/// The graph's room at the top of the page: the chart, its legend and the
+/// brushes, held to one height so the graph can be cached.
+const GRAPH_H: f32 = 320.0;
+
 pub struct ProfilePage {
     dsp: Entity<Dsp>,
     sheets: Entity<Sheets>,
@@ -59,6 +63,8 @@ pub struct ProfilePage {
     /// The graphic curve whose points are shown, by its index.
     curve: Option<usize>,
     name_input: Entity<InputState>,
+    /// The window the page is in, for its fields.
+    window: gpui_kit::AnyWindowHandle,
     copy_input: Option<Entity<InputState>>,
     loaded: Option<((u64, u64), String)>,
     _load: Option<Task<()>>,
@@ -74,7 +80,7 @@ impl ProfilePage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), cx).height(px(220.0)));
+        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), window, cx).height(px(220.0)));
         let name_input = cx.new(|cx| InputState::new(window, cx).default_value(name.clone()));
         let subscriptions = vec![
             cx.observe(&dsp, |p: &mut Self, _, cx| p.load(cx)),
@@ -82,8 +88,12 @@ impl ProfilePage {
                 &name_input,
                 window,
                 |p: &mut Self, _, e: &InputEvent, _, cx| {
-                    if matches!(e, InputEvent::PressEnter { .. } | InputEvent::Blur) {
-                        p.rename(cx);
+                    // Renamed on Return; left without it, the field shows the
+                    // name again.
+                    match e {
+                        InputEvent::PressEnter { .. } => p.rename(cx),
+                        InputEvent::Blur => p.show_name(cx),
+                        _ => {}
                     }
                 },
             ),
@@ -110,6 +120,7 @@ impl ProfilePage {
             graph,
             curve: None,
             name_input,
+            window: window.window_handle(),
             copy_input: None,
             loaded: None,
             _load: None,
@@ -129,10 +140,14 @@ impl ProfilePage {
         self.loaded = Some(key);
         let engine = self.dsp.read(cx).engine();
         let (name, device) = (self.name.clone(), self.device.clone());
-        let edits = self.dsp.read(cx).edits(&name);
         self._load = Some(cx.spawn(async move |this, cx| {
             let e = || engine.clone();
             let snapshot = e().dsp_snapshot(name.clone()).await;
+            // Counted once the snapshot is in: an edit made since is in
+            // neither, one made before is in both.
+            let Ok(edits) = this.read_with(cx, |p, cx| p.dsp.read(cx).edits(&name)) else {
+                return;
+            };
             let detail = e().dsp_detail(name.clone()).await;
             let response = e().dsp_response(name.clone(), GRAPH_RATE).await;
             let targets = e().dsp_targets(name.clone()).await;
@@ -177,11 +192,27 @@ impl ProfilePage {
                     p.fields.keep(&d.bands);
                 }
                 p.detail = detail;
+                p.notice = None;
+                p.show_name(cx);
                 p.sync_graph(response, stamp, cx);
                 cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// Puts the profile's name back in its field, unless it is being typed
+    /// in.
+    fn show_name(&mut self, cx: &mut Context<Self>) {
+        let name = self.name.clone();
+        let input = self.name_input.clone();
+        self.window
+            .update(cx, |_, window, cx| {
+                if input.read(cx).value() != name.as_str() {
+                    input.update(cx, |i, cx| i.set_value(name, window, cx));
+                }
+            })
+            .ok();
     }
 
     pub fn graph(&self) -> Entity<Graph> {
@@ -285,15 +316,17 @@ impl ProfilePage {
                             cx,
                             move |e| e.dsp_rename(from, to),
                             move |taken, cx| {
-                                if taken.is_some() {
-                                    this.update(cx, |p, cx| {
+                                this.update(cx, |p, cx| {
+                                    if taken.is_some() {
                                         p.name = renamed.clone();
                                         p.fields.rename(renamed.clone());
                                         p.loaded = None;
                                         p.load(cx);
-                                    })
-                                    .ok();
-                                }
+                                    } else {
+                                        p.show_name(cx);
+                                    }
+                                })
+                                .ok();
                             },
                         )
                     });
@@ -463,7 +496,11 @@ impl Render for ProfilePage {
                 .into_any_element();
         };
         if let Some(index) = self.curve {
-            return self.curve_page(index, &d, window, cx);
+            if d.bands.get(index).is_some_and(|b| b.kind == "graphic") {
+                return self.curve_page(index, &d, window, cx);
+            }
+            // The curve is gone, removed elsewhere: back to the profile.
+            self.curve = None;
         }
         let mut s: Vec<AnyElement> = Vec::new();
         s.push(summary(&d, &look));
@@ -599,7 +636,12 @@ impl Render for ProfilePage {
                     .py(look.space(Space::M))
                     .border_b(crate::theme::HAIRLINE)
                     .border_color(look.palette.rule.hsla())
-                    .child(self.graph.clone()),
+                    .child(
+                        div().h(px(GRAPH_H)).child(
+                            gpui_kit::AnyView::from(self.graph.clone())
+                                .cached(gpui_kit::StyleRefinement::default().size_full()),
+                        ),
+                    ),
             )
             .child(
                 body("profile-body", &look)
@@ -842,14 +884,13 @@ impl ProfilePage {
         );
         let (over, in_ear, added) = target_groups(&self.over, &self.in_ear);
         let first = self.dsp.read(cx).overview.as_ref().and_then(|o| o.in_ear);
-        let groups = |unknown: bool| {
+        let groups = || {
             let mut g: Vec<(&str, &Vec<DspTargetOption>)> = match first {
                 Some(true) => vec![("In-ear", &in_ear), ("Other", &over), ("Added", &added)],
                 Some(false) => vec![("Over-ear", &over), ("Other", &in_ear), ("Added", &added)],
                 None => vec![("Over-ear", &over), ("In-ear", &in_ear), ("Added", &added)],
             };
             g.retain(|(_, v)| !v.is_empty());
-            let _ = unknown;
             g
         };
         let target_menu = |id: &'static str,
@@ -864,7 +905,7 @@ impl ProfilePage {
                     save(None, cx)
                 })
             }];
-            for (heading, ts) in groups(true) {
+            for (heading, ts) in groups() {
                 items.push(Item::Heading(label(heading)));
                 for t in ts {
                     let (save, id) = (save.clone(), t.id.clone());
@@ -912,9 +953,17 @@ impl ProfilePage {
                     .values()
                     .flatten()
                     .fold(6.0f64, |m, v| m.max(v.abs()));
-                let thumbs = self
-                    .previews
-                    .iter()
+                // In the menu's order, Unknown first.
+                let unknown = String::new();
+                let order: Vec<&String> = std::iter::once(&unknown)
+                    .chain(over.iter().chain(&in_ear).chain(&added).map(|t| &t.id))
+                    .collect();
+                let mut previews: Vec<(&String, &Vec<f64>)> = self.previews.iter().collect();
+                previews.sort_by_key(|(id, _)| {
+                    order.iter().position(|o| o == id).unwrap_or(usize::MAX)
+                });
+                let thumbs = previews
+                    .into_iter()
                     .filter(|(_, db)| db.len() > 1)
                     .map(|(id, db)| {
                         let name = if id.is_empty() {
@@ -1408,26 +1457,28 @@ impl ProfilePage {
                 .ok();
             });
             let (dsp, sheets, name) = (self.dsp.clone(), self.sheets.clone(), d.name.clone());
-            let bands_now = d.bands.clone();
-            let remove: bands::RowAction = Rc::new(move |i, _, cx| {
+            let remove: bands::RemoveAction = Rc::new(move |i, position, band, _, cx| {
                 let (dsp, n) = (dsp.clone(), name.clone());
-                let what = bands_now
-                    .get(i)
-                    .map(|b| format!("{} {}", bands::kind_name(b), bands::values(b)))
-                    .unwrap_or_default();
+                let what = format!("{} {}", bands::kind_name(&band), bands::values(&band));
                 sheets.update(cx, |s, cx| {
                     s.confirm(
                         Confirm {
-                            title: format!("Remove band {}?", i + 1).into(),
-                            message: format!("{what} is taken out of {n}, which plays without it.")
-                                .into(),
+                            title: format!("Remove filter {position}?", position = position + 1).into(),
+                            message: format!("{what} is taken out of {n}, which plays without it.").into(),
                             action: "Remove".into(),
                             destructive: true,
                             also: None,
                             run: Rc::new(move |_, cx| {
-                                let n = n.clone();
+                                let (n, band) = (n.clone(), band.clone());
                                 dsp.update(cx, |d, cx| {
-                                    d.act(cx, move |e| e.dsp_remove_filter(n, i as u32))
+                                    d.act(cx, move |e| async move {
+                                        match e.dsp_remove_edited(n, i as u32, band).await? {
+                                            koan_ffi::DspEdited::Changed => Err(koan_ffi::KoanError::Refused {
+                                                message: "The filters changed since they were shown, so nothing was removed. They are shown again as they are now.".into(),
+                                            }),
+                                            koan_ffi::DspEdited::Stored { .. } => Ok(()),
+                                        }
+                                    })
                                 });
                             }),
                         },
@@ -1515,10 +1566,7 @@ impl ProfilePage {
                 })
                 .ok();
             });
-        let Some(band) = d.bands.get(index).filter(|b| b.kind == "graphic").cloned() else {
-            self.curve = None;
-            return div().into_any_element();
-        };
+        let band = d.bands[index].clone();
         let points = bands::points(&mut self.fields, index, &band, window, cx);
         let mut s = vec![SectionHeader::new("Points").into_any_element(), points];
         if d.can_revert && d.edited {

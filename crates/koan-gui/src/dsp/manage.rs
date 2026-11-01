@@ -31,13 +31,15 @@ pub struct ManageEq {
     chain: Vec<DspTuningEntry>,
     active: Option<String>,
     /// A rename or a copy being named: which, of what, and the field.
-    naming: Option<(Naming, String, Entity<InputState>)>,
+    naming: Option<(Naming, String, Entity<InputState>, Subscription)>,
     /// EQs the server keeps after deletion: none until the first read
     /// answers, and the last list kept while another is read.
     deleted: Option<Vec<DeletedDsp>>,
     restoring: Option<String>,
     restore_error: Option<SharedString>,
     loaded: Option<((u64, u64), bool)>,
+    /// The read under way; a newer one drops it.
+    _load: Option<gpui_kit::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -67,14 +69,18 @@ impl ManageEq {
             restoring: None,
             restore_error: None,
             loaded: None,
+            _load: None,
             _subscriptions: subscriptions,
         };
         manage.load(cx);
         manage
     }
 
+    /// Recently deleted is the server's, so it is shown only while one that
+    /// keeps them is in reach.
     fn offered(&self, cx: &App) -> bool {
-        self.dsp.read(cx).offers(DELETED_EXTENSION)
+        let d = self.dsp.read(cx);
+        d.offers(DELETED_EXTENSION) && !d.offline
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -86,7 +92,7 @@ impl ManageEq {
         self.loaded = Some(key);
         let engine = self.dsp.read(cx).engine();
         let (device, offered) = (self.device.clone(), key.1);
-        cx.spawn(async move |this, cx| {
+        self._load = Some(cx.spawn(async move |this, cx| {
             let chain = match &device {
                 Some(d) => Some(engine.clone().dsp_overview_for(Some(d.clone())).await),
                 None => None,
@@ -110,8 +116,7 @@ impl ManageEq {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        }));
     }
 
     fn open(&self, name: String, window: &mut Window, cx: &mut App) {
@@ -135,18 +140,17 @@ impl ManageEq {
                 _ => {}
             },
         );
-        self._subscriptions.push(sub);
-        self.naming = Some((naming, of, input));
+        self.naming = Some((naming, of, input, sub));
         cx.notify();
     }
 
     fn finish_naming(&mut self, cx: &mut Context<Self>) {
-        let Some((naming, of, input)) = self.naming.take() else {
+        let Some((naming, of, input, _)) = self.naming.take() else {
             return;
         };
         let new = input.read(cx).value().trim().to_owned();
         cx.notify();
-        if new.is_empty() || (naming == Naming::Rename && new == of) {
+        if naming == Naming::Rename && (new.is_empty() || new == of) {
             return;
         }
         // Renaming changes what every device and preset holding it names;
@@ -178,30 +182,35 @@ impl ManageEq {
                 });
             }
             Naming::Copy => {
+                // Unnamed, the copy is "<name> copy".
+                let new = (!new.is_empty()).then_some(new);
                 self.dsp.update(cx, |d, cx| {
                     d.act(cx, move |e| async move {
-                        e.dsp_duplicate(of, Some(new)).await.map(|_| ())
+                        e.dsp_duplicate(of, new).await.map(|_| ())
                     })
                 });
             }
         }
     }
 
+    /// Adds `names` to the end of the device's filters, as they are when
+    /// the write runs rather than as this page last read them.
     fn add_to_filters(&self, names: &[String], cx: &mut App) {
         let Some(device) = self.device.clone() else {
             return;
         };
-        let mut chain = self.chain.clone();
-        for n in names {
-            if !chain.iter().any(|e| &e.name == n) {
-                chain.push(DspTuningEntry {
-                    name: n.clone(),
-                    on: true,
-                });
-            }
-        }
-        self.dsp
-            .update(cx, |d, cx| d.set_tunings(chain, device, cx));
+        let names = names.to_vec();
+        self.dsp.update(cx, |d, cx| {
+            d.act(cx, move |e| async move {
+                let mut chain = e.clone().dsp_overview_for(Some(device.clone())).await.chain;
+                for n in names {
+                    if !chain.iter().any(|entry| entry.name == n) {
+                        chain.push(DspTuningEntry { name: n, on: true });
+                    }
+                }
+                e.dsp_set_tunings(device, chain).await
+            })
+        });
     }
 
     fn actions(&self, p: &DspProfileSummary, cx: &mut Context<Self>) -> Vec<Item> {
@@ -217,13 +226,22 @@ impl ManageEq {
         if let Some(device) = self.device.clone() {
             let shown = dsp.label(&device);
             if p.preset {
-                let (page_dsp, name, device) = (self.dsp.clone(), p.name.clone(), device.clone());
+                let (dsp, sheets, name, device) = (
+                    self.dsp.clone(),
+                    self.sheets.clone(),
+                    p.name.clone(),
+                    device.clone(),
+                );
                 items.push(Item::action(
                     format!("{} {shown}", label("Use on")),
                     move |_, cx| {
-                        page_dsp.update(cx, |d, cx| {
-                            d.apply_preset(Some(name.clone()), device.clone(), cx)
-                        });
+                        super::page::set_from_preset(
+                            &dsp,
+                            &sheets,
+                            &device,
+                            Some(name.clone()),
+                            cx,
+                        );
                     },
                 ));
             } else if p.role == DspRole::Tuning
@@ -622,7 +640,11 @@ impl Render for ManageEq {
             .on_click(move |_, _, cx| sheets.update(cx, |s, cx| s.pop(cx)));
         let o = self.dsp.read(cx).overview.clone();
         let mut sections: Vec<AnyElement> = Vec::new();
-        if let Some((naming, of, input)) = self.naming.clone() {
+        if let Some((naming, of, input)) = self
+            .naming
+            .as_ref()
+            .map(|(n, o, i, _)| (*n, o.clone(), i.clone()))
+        {
             let this = cx.weak_entity();
             let cancel = this.clone();
             sections.push(

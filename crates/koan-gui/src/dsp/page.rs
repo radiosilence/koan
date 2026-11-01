@@ -14,7 +14,7 @@ use gpui_kit::{
     ParentElement, PathPromptOptions, Render, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Task, Window, canvas, div, point, px,
 };
-use koan_ffi::{AutoEqOffer, DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
+use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 
 use super::graph::{Graph, Part, Stroke};
 use super::menu::{Item, Trigger, menu};
@@ -34,12 +34,14 @@ pub struct EqPage {
     overview: Option<DspOverview>,
     /// The curve each stage draws alone, by profile name.
     curves: HashMap<String, Vec<f64>>,
+    /// This machine's output devices.
+    outputs: Vec<String>,
     graph: Entity<Graph>,
     /// What the overview was last read at, and the read under way.
     loaded: Option<((u64, u64), Option<String>)>,
     _load: Option<Task<()>>,
     /// A name being asked for a new preset, and why the last was refused.
-    naming: Option<(SharedString, Entity<InputState>)>,
+    naming: Option<(SharedString, Entity<InputState>, Subscription)>,
     refusal: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -52,19 +54,19 @@ impl EqPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), cx).height(px(220.0)));
+        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), window, cx).height(px(220.0)));
         let sheets = Sheets::new(cx);
         let subscriptions = vec![
             cx.observe(&dsp, |page: &mut EqPage, _, cx| page.follow(cx)),
             cx.observe(&sheets, |_, _, cx| cx.notify()),
         ];
-        let _ = window;
         let mut page = Self {
             dsp,
             sheets,
             picked: device,
             overview: None,
             curves: HashMap::new(),
+            outputs: Vec::new(),
             graph,
             loaded: None,
             _load: None,
@@ -118,6 +120,13 @@ impl EqPage {
                 }
                 None => None,
             };
+            // This machine's outputs, so one with no EQ yet can be picked.
+            let outputs: Vec<String> = engine
+                .clone()
+                .devices()
+                .await
+                .map(|d| d.into_iter().map(|d| d.name).collect())
+                .unwrap_or_default();
             let mut curves = HashMap::new();
             for name in o.active.iter().chain(o.chain.iter().map(|e| &e.name)) {
                 if let Some(r) = engine
@@ -146,6 +155,7 @@ impl EqPage {
                 });
                 page.overview = Some(o);
                 page.curves = curves;
+                page.outputs = outputs;
                 cx.notify();
             })
             .ok();
@@ -185,14 +195,13 @@ impl EqPage {
                 page.save_named(cx);
             }
         });
-        self._subscriptions.push(sub);
-        self.naming = Some((title.to_owned().into(), input));
+        self.naming = Some((title.to_owned().into(), input, sub));
         self.refusal = None;
         cx.notify();
     }
 
     fn save_named(&mut self, cx: &mut Context<Self>) {
-        let Some((_, input)) = &self.naming else {
+        let Some((_, input, _)) = &self.naming else {
             return;
         };
         let name = input.read(cx).value().trim().to_owned();
@@ -217,19 +226,40 @@ impl EqPage {
         }
         self.refusal = None;
         self.naming = None;
-        let this = cx.weak_entity();
-        self.dsp.update(cx, |dsp, cx| {
-            dsp.act_then(
-                cx,
-                move |engine| async move { engine.dsp_save_preset(device, name).await },
-                move |taken, cx| {
-                    if taken.is_none() {
-                        this.update(cx, |_, cx| cx.notify()).ok();
-                    }
+        cx.notify();
+        let dsp = self.dsp.clone();
+        let label_of = dsp.read(cx).label(&device);
+        let save = {
+            let (name, device) = (name.clone(), device.clone());
+            Rc::new(move |cx: &mut App| {
+                let (name, device) = (name.clone(), device.clone());
+                dsp.update(cx, |d, cx| {
+                    d.act(cx, move |e| async move {
+                        e.dsp_save_preset(device, name).await.map(|_| ())
+                    })
+                });
+            })
+        };
+        if !over {
+            save(cx);
+            return;
+        }
+        self.sheets.update(cx, |s, cx| {
+            s.confirm(
+                Confirm {
+                    title: format!("Save over {name}?").into(),
+                    message: format!(
+                        "{name} becomes {label_of}'s correction and filters as they are now, and what it held is replaced. Any device set from {name} keeps what it plays until it is set from it again."
+                    )
+                    .into(),
+                    action: "Save".into(),
+                    destructive: true,
+                    also: None,
+                    run: Rc::new(move |_, cx| save(cx)),
                 },
+                cx,
             )
         });
-        cx.notify();
     }
 }
 
@@ -352,7 +382,12 @@ impl Render for EqPage {
                     .flex_col()
                     .gap(look.space(Space::L))
                     .child(head)
-                    .child(div().h(px(290.0)).child(self.graph.clone()))
+                    .child(
+                        div().h(px(290.0)).child(
+                            gpui_kit::AnyView::from(self.graph.clone())
+                                .cached(gpui_kit::StyleRefinement::default().size_full()),
+                        ),
+                    )
                     .child(chain)
                     .child(note(
                         sentence(&o, &self.dsp.read(cx).label(&device)),
@@ -368,7 +403,7 @@ impl Render for EqPage {
         };
         let foot = self.foot(window, cx);
         let sheets = Sheets::render(&self.sheets, window, cx);
-        let prompts = prompts::render(&self.dsp, &self.sheets, window, cx);
+        let prompts = prompts::render(&self.dsp, window, cx);
         let dsp = self.dsp.clone();
         let device = self.device();
         div()
@@ -397,8 +432,8 @@ impl Render for EqPage {
                         .child(foot),
                 ),
             )
-            .children(prompts)
             .children(sheets)
+            .children(prompts)
     }
 }
 
@@ -424,6 +459,9 @@ impl EqPage {
         };
         add(in_use.as_ref());
         add(Some(&device.to_owned()));
+        for d in &self.outputs {
+            add(Some(d));
+        }
         for p in o.profiles.iter().filter(|p| !p.preset) {
             for d in &p.devices {
                 add(Some(d));
@@ -465,9 +503,9 @@ impl EqPage {
             Some(p) => p.clone(),
         };
         let mut preset_items = vec![{
-            let (dsp, device) = (self.dsp.clone(), device.to_owned());
+            let (dsp, sheets, device) = (self.dsp.clone(), self.sheets.clone(), device.to_owned());
             Item::choice(label("Flat"), selected == FLAT, move |_, cx| {
-                dsp.update(cx, |d, cx| d.apply_preset(None, device.clone(), cx));
+                set_from_preset(&dsp, &sheets, &device, None, cx);
             })
         }];
         if o.preset.is_none() && !flat {
@@ -594,7 +632,7 @@ impl EqPage {
                     .into_any_element(),
             );
         }
-        if let Some((title, input)) = &self.naming {
+        if let Some((title, input, _)) = &self.naming {
             let this = cx.weak_entity();
             let cancel = this.clone();
             rows.push(
@@ -661,48 +699,11 @@ impl EqPage {
             .into_any_element()
     }
 
-    /// Choosing a preset replaces the device's correction and filters; where
-    /// they hold changes no preset has, that is said first.
     fn choose_preset(&mut self, name: String, cx: &mut Context<Self>) {
-        let (Some(device), Some(o)) = (self.device(), &self.overview) else {
+        let Some(device) = self.device() else {
             return;
         };
-        let dsp = self.dsp.clone();
-        let apply = {
-            let (name, device) = (name.clone(), device.clone());
-            move |_: &mut Window, cx: &mut App| {
-                dsp.update(cx, |d, cx| {
-                    d.apply_preset(Some(name.clone()), device.clone(), cx)
-                });
-            }
-        };
-        let unsaved = (o.preset.is_none() && !self.flat()) || o.preset_edited;
-        if !unsaved {
-            let dsp = self.dsp.clone();
-            dsp.update(cx, |d, cx| d.apply_preset(Some(name), device, cx));
-            return;
-        }
-        let what = match &o.preset {
-            Some(p) if o.preset_edited => format!("the changes made since {p} was set"),
-            _ => "a correction and filters no preset holds".to_owned(),
-        };
-        let label_of = self.dsp.read(cx).label(&device);
-        self.sheets.update(cx, |s, cx| {
-            s.confirm(
-                Confirm {
-                    title: format!("Set {label_of} from {name}?").into(),
-                    message: format!(
-                        "{label_of} plays {what}. Setting it from {name} replaces them; save them as a preset first to keep them."
-                    )
-                    .into(),
-                    action: "Set".into(),
-                    destructive: true,
-                    also: None,
-                    run: Rc::new(apply),
-                },
-                cx,
-            )
-        });
+        set_from_preset(&self.dsp, &self.sheets, &device, Some(name), cx);
     }
 
     /// The suggestion, what the last import did, the last error, and Manage EQ.
@@ -1317,15 +1318,64 @@ pub fn thumb(db: Vec<f64>, stroke: Stroke, range: Option<f64>) -> impl IntoEleme
     .flex_none()
 }
 
-/// What an offer of AutoEQ's profile says. Kept here so the page can test
-/// it without a window.
-pub fn offer_line(offer: &AutoEqOffer) -> String {
-    match offer {
-        AutoEqOffer::Profile { entry } => {
-            format!("AutoEQ has a correction for {}. Use it?", entry.name)
+/// Sets `device` from the preset `name`, or flat with none. That replaces
+/// its correction and filters; where they hold changes no preset has, what
+/// is lost is said first.
+pub fn set_from_preset(
+    dsp: &Entity<Dsp>,
+    sheets: &Entity<Sheets>,
+    device: &str,
+    name: Option<String>,
+    cx: &mut App,
+) {
+    let d = dsp.read(cx);
+    let state = d
+        .overview
+        .as_ref()
+        .and_then(|o| o.outputs.iter().find(|s| s.device == device).cloned());
+    let label_of = d.label(device);
+    let apply = {
+        let (dsp, name, device) = (dsp.clone(), name.clone(), device.to_owned());
+        move |cx: &mut App| {
+            let (name, device) = (name.clone(), device.clone());
+            dsp.update(cx, |d, cx| d.apply_preset(name, device, cx));
         }
-        AutoEqOffer::Search { query } => format!("Find {query} in AutoEQ…"),
-    }
+    };
+    let what = match &state {
+        Some(s) if s.preset.is_some() && s.preset_edited => Some(format!(
+            "the changes made since {} was set",
+            s.preset.clone().unwrap_or_default()
+        )),
+        Some(s) if s.preset.is_none() && !s.flat => {
+            Some("a correction and filters no preset holds".to_owned())
+        }
+        _ => None,
+    };
+    let Some(what) = what else {
+        apply(cx);
+        return;
+    };
+    let to = name.clone().unwrap_or_else(|| "Flat".into());
+    let title = match &name {
+        Some(n) => format!("Set {label_of} from {n}?"),
+        None => format!("Make {label_of} flat?"),
+    };
+    sheets.update(cx, |s, cx| {
+        s.confirm(
+            Confirm {
+                title: title.into(),
+                message: format!(
+                    "{label_of} plays {what}. Setting it to {to} replaces them; save them as a preset first to keep them."
+                )
+                .into(),
+                action: if name.is_some() { "Set".into() } else { "Make Flat".into() },
+                destructive: true,
+                also: None,
+                run: Rc::new(move |_, cx| apply(cx)),
+            },
+            cx,
+        )
+    });
 }
 
 #[cfg(test)]

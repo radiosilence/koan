@@ -102,25 +102,32 @@ pub struct Dsp {
     pub bounds: DspBandBounds,
     /// Moves on every change made here.
     version: u64,
+    /// Overview reads started, and the newest one applied.
+    reads: u64,
+    applied: u64,
     /// Edits made here, by profile.
     edits: HashMap<String, u64>,
     /// The saves of each edit under way, by its number.
     lanes: HashMap<u64, Lane>,
     /// Edits refused or failed, whose later steps go nowhere.
     closed: HashSet<u64>,
+    /// The filter each finished edit last stored, for its next step.
+    stored: HashMap<u64, DspBand>,
     edit_count: u64,
     /// The library's version, which moves when profiles sync from another
     /// device.
     library: u64,
-    /// The extensions the signed-in server lists.
+    /// The extensions the signed-in server lists, and whether it is out
+    /// of reach.
     extensions: Vec<String>,
+    pub offline: bool,
     _observe: Task<()>,
 }
 
 /// What a stand-in for the app's engine mirror tells the model.
 enum Heard {
     Library(u64),
-    Extensions(Vec<String>),
+    Connection(Vec<String>, bool),
 }
 
 impl Dsp {
@@ -142,12 +149,16 @@ impl Dsp {
                 _autoeq: None,
                 bounds: koan_ffi::dsp_band_bounds(),
                 version: 0,
+                reads: 0,
+                applied: 0,
                 edits: HashMap::new(),
                 lanes: HashMap::new(),
                 closed: HashSet::new(),
+                stored: HashMap::new(),
                 edit_count: 0,
                 library: 0,
                 extensions: Vec::new(),
+                offline: false,
                 _observe: observe,
             };
             dsp.reload(cx);
@@ -166,8 +177,9 @@ impl Dsp {
                 for slice in batch {
                     let heard = match slice {
                         StateSlice::Library { version } => Heard::Library(version),
-                        StateSlice::Connection { connection } => Heard::Extensions(
+                        StateSlice::Connection { connection } => Heard::Connection(
                             connection.extensions.into_iter().map(|e| e.name).collect(),
+                            connection.offline,
                         ),
                         _ => continue,
                     };
@@ -185,8 +197,11 @@ impl Dsp {
                         dsp.library = version;
                         dsp.reload(cx);
                     }
-                    Heard::Extensions(extensions) if extensions != dsp.extensions => {
+                    Heard::Connection(extensions, offline)
+                        if extensions != dsp.extensions || offline != dsp.offline =>
+                    {
                         dsp.extensions = extensions;
+                        dsp.offline = offline;
                         cx.notify();
                     }
                     _ => {}
@@ -214,33 +229,49 @@ impl Dsp {
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.read(false, cx, |_, _| {});
+    }
+
+    /// Reads the overview, moving `version` once it lands if `bump`, and
+    /// tells `then` the stamp. Reads run in parallel, so one that lands
+    /// after a newer one has is dropped: a read started before a write
+    /// never puts the overview from before it back.
+    fn read(
+        &mut self,
+        bump: bool,
+        cx: &mut Context<Self>,
+        then: impl FnOnce((u64, u64), &mut App) + 'static,
+    ) {
+        self.reads += 1;
+        let read = self.reads;
         let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {
             let overview = engine.clone().dsp_overview().await;
+            // What AutoEQ offers follows what the output plays, so it is read
+            // with it.
             let suggestion = engine.autoeq_suggestion().await;
-            this.update(cx, |dsp, cx| {
-                dsp.overview = Some(overview);
-                dsp.suggestion = suggestion;
+            let Ok(stamp) = this.update(cx, |dsp, cx| {
+                if read > dsp.applied {
+                    dsp.applied = read;
+                    dsp.overview = Some(overview);
+                    dsp.suggestion = suggestion;
+                }
+                if bump {
+                    dsp.version += 1;
+                }
                 cx.notify();
-            })
-            .ok();
+                dsp.stamp()
+            }) else {
+                return;
+            };
+            cx.update(|cx| then(stamp, cx));
         })
         .detach();
     }
 
     /// The overview read again after a change, and `version` moved.
     fn changed(&mut self, cx: &mut Context<Self>) {
-        let engine = self.engine.clone();
-        cx.spawn(async move |this, cx| {
-            let overview = engine.dsp_overview().await;
-            this.update(cx, |dsp, cx| {
-                dsp.overview = Some(overview);
-                dsp.version += 1;
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        self.read(true, cx, |_, _| {});
     }
 
     /// Runs a write, says why it failed if it did, and reads the overview
@@ -250,16 +281,7 @@ impl Dsp {
         F: FnOnce(Arc<KoanEngine>) -> Fut,
         Fut: Future<Output = Result<(), KoanError>> + 'static,
     {
-        let job = run(self.engine.clone());
-        cx.spawn(async move |this, cx| {
-            let result = job.await;
-            this.update(cx, |dsp, cx| {
-                dsp.last_error = result.err().map(|e| describe(&e));
-                dsp.changed(cx);
-            })
-            .ok();
-        })
-        .detach();
+        self.act_then(cx, run, |_, _| {});
     }
 
     /// As `act`, telling `done` whether it took once the overview is read
@@ -275,25 +297,17 @@ impl Dsp {
         T: 'static,
     {
         let job = run(self.engine.clone());
-        let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {
             let result = job.await;
-            let overview = engine.dsp_overview().await;
-            let taken = this
-                .update(cx, |dsp, cx| {
-                    let (taken, error) = match result {
-                        Ok(t) => (Some(t), None),
-                        Err(e) => (None, Some(describe(&e))),
-                    };
-                    dsp.last_error = error;
-                    dsp.overview = Some(overview);
-                    dsp.version += 1;
-                    cx.notify();
-                    taken
-                })
-                .ok()
-                .flatten();
-            cx.update(|cx| done(taken, cx));
+            this.update(cx, |dsp, cx| {
+                let (taken, error) = match result {
+                    Ok(t) => (Some(t), None),
+                    Err(e) => (None, Some(describe(&e))),
+                };
+                dsp.last_error = error;
+                dsp.read(true, cx, move |_, cx| done(taken, cx));
+            })
+            .ok();
         })
         .detach();
     }
@@ -635,8 +649,9 @@ impl Dsp {
         if self.closed.contains(&edit) {
             return;
         }
+        let stored = self.stored.remove(&edit);
         let lane = self.lanes.entry(edit).or_insert_with(|| Lane {
-            expected: step.expected().clone(),
+            expected: stored.unwrap_or_else(|| step.expected().clone()),
             saving: false,
             next: None,
         });
@@ -703,30 +718,36 @@ impl Dsp {
                 self.last_error = None;
                 Outcome::Saved
             }
-            Ok(DspEdited::Changed) => Outcome::Changed,
+            Ok(DspEdited::Changed) => {
+                self.last_error = Some(
+                    "The filters changed since they were shown, so that edit was not saved. They are shown again as they are now."
+                        .into(),
+                );
+                Outcome::Changed
+            }
             Err(e) => {
                 self.last_error = Some(describe(&e));
                 Outcome::Failed
             }
         };
-        self.lanes.remove(&edit);
+        if let Some(lane) = self.lanes.remove(&edit)
+            && outcome == Outcome::Saved
+        {
+            // An edit that goes on after this save, such as a row of the
+            // band table still being typed in, names what it stored.
+            self.stored.insert(edit, lane.expected);
+        }
         if outcome != Outcome::Saved {
             self.closed.insert(edit);
         }
-        let engine = self.engine.clone();
-        cx.spawn(async move |this, cx| {
-            let overview = engine.dsp_overview().await;
-            let Ok(stamp) = this.update(cx, |dsp, cx| {
-                dsp.overview = Some(overview);
-                dsp.version += 1;
-                cx.notify();
-                dsp.stamp()
-            }) else {
-                return;
-            };
-            cx.update(|cx| done(outcome.at(stamp), cx));
-        })
-        .detach();
+        self.read(true, cx, move |stamp, cx| done(outcome.at(stamp), cx));
+    }
+
+    /// The edit `edit` is over, as its owner heard: nothing more of it
+    /// will be sent.
+    pub fn forget(&mut self, edit: u64) {
+        self.closed.remove(&edit);
+        self.stored.remove(&edit);
     }
 
     /// A new edit's number, for `edit` to keep its saves in order by.

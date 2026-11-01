@@ -3717,6 +3717,30 @@ impl KoanEngine {
         .await
     }
 
+    /// `dsp_remove_filter`, unless filter `index` is no longer `expected`,
+    /// the filter as the caller last read it, as `dsp_edit_band` is.
+    pub async fn dsp_remove_edited(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        expected: DspBand,
+    ) -> Result<DspEdited, KoanError> {
+        offload::sequenced(move || {
+            let is = |f: &koan_core::config::DspFilter| DspBand::from(f.clone()) == expected;
+            let removed =
+                koan_core::audio::dsp::profiles::remove_edited(&name, index as usize, Some(is))
+                    .map_err(|message| KoanError::BadArgument { message })?;
+            if matches!(
+                removed,
+                koan_core::audio::dsp::profiles::Edited::Stored { .. }
+            ) {
+                self.send_local(PlayerCommand::ReloadDsp)?;
+            }
+            Ok(removed.into())
+        })
+        .await
+    }
+
     /// What the output in use plays: its correction, and the tuning on top
     /// adjusted to the correction's target.
     pub async fn dsp_output_response(self: Arc<Self>, rate: u32) -> Option<DspResponse> {

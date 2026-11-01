@@ -4,7 +4,8 @@
 //! time it runs on a configuration, so there is a chain to draw.
 //!
 //! It opens a real engine, so it refuses to run without a throwaway
-//! `KOAN_CONFIG_DIR` whose `config.toml` names no library folders.
+//! `KOAN_CONFIG_DIR` whose `config.toml` says `folders = []`, and refuses
+//! the user's own.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- target/eq.png
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example eq -- --window
@@ -13,8 +14,9 @@
 //!
 //! `--measure` opens Warm's page offscreen, drags its third band's handle
 //! across the graph in 600 steps, each delivered to the window as a mouse
-//! move and followed by a draw, and prints the draw times: what a frame of
-//! a drag costs on the main thread, previews landing included.
+//! move, and prints how long each step took on the main thread: the move's
+//! handling and the frame drawn after it, with whatever previews landed
+//! since the last step applied before it.
 
 use std::error::Error;
 use std::sync::Arc;
@@ -37,6 +39,47 @@ Filter 3: ON PK Fc 2416 Hz Gain 3.4 dB Q 1.93
 Filter 4: ON PK Fc 3400 Hz Gain -2.5 dB Q 4.00
 Filter 5: ON PK Fc 5426 Hz Gain -4.3 dB Q 3.79
 Filter 6: ON HSC Fc 10000 Hz Gain -2.4 dB Q 0.70";
+
+/// Refuses a configuration that is not a throwaway one: unset, the user's
+/// own, or one naming library folders, which a scan would read.
+fn throwaway() -> Result<(), Box<dyn Error>> {
+    let dir = std::env::var_os("KOAN_CONFIG_DIR")
+        .ok_or("set KOAN_CONFIG_DIR to a throwaway configuration")?;
+    let dir = std::path::PathBuf::from(dir);
+    if let Some(home) = std::env::var_os("HOME")
+        && dir.canonicalize().ok()
+            == std::path::Path::new(&home)
+                .join(".config/koan")
+                .canonicalize()
+                .ok()
+    {
+        return Err("KOAN_CONFIG_DIR is your own configuration; use a throwaway one".into());
+    }
+    let config = std::fs::read_to_string(dir.join("config.toml")).unwrap_or_default();
+    if !config.contains("folders = []") {
+        return Err(
+            "the throwaway configuration's config.toml must say `folders = []` under [library]"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Runs the app until the engine's answers have all landed: each await on
+/// the engine is woken from its own threads, so the loop sleeps between
+/// turns.
+fn settle(
+    cx: &mut HeadlessAppContext,
+    window: gpui_kit::AnyWindowHandle,
+) -> Result<(), Box<dyn Error>> {
+    for _ in 0..40 {
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    cx.update_window(window, |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    Ok(())
+}
 
 fn seed(engine: &Arc<KoanEngine>) -> Result<(), Box<dyn Error>> {
     use futures::executor::block_on as block;
@@ -97,9 +140,7 @@ fn seed(engine: &Arc<KoanEngine>) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    if std::env::var_os("KOAN_CONFIG_DIR").is_none() {
-        return Err("set KOAN_CONFIG_DIR to a throwaway configuration".into());
-    }
+    throwaway()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let window_mode = args.iter().any(|a| a == "--window");
     let measure = args.iter().any(|a| a == "--measure");
@@ -185,12 +226,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             theme::pin_appearance(Some(dark), window, cx)
         })?;
         cx.allow_parking();
-        for _ in 0..3 {
-            cx.run_until_parked();
-            std::thread::sleep(Duration::from_millis(400));
-            cx.update_window(window.into(), |_, window, _| window.refresh())?;
-        }
-        cx.run_until_parked();
+        settle(&mut cx, window.into())?;
         shots.push(cx.capture_screenshot(window.into())?);
     }
     let (w, h) = (shots[0].width(), shots[0].height());
@@ -227,14 +263,8 @@ fn drag(cx: &mut HeadlessAppContext, dsp: gpui_kit::Entity<Dsp>) -> Result<(), B
     })?;
     let graph = graph.expect("the profile page has a graph");
     cx.allow_parking();
-    for _ in 0..3 {
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(300));
-        cx.update_window(window.into(), |_, window, cx| {
-            window.refresh();
-            window.draw(cx).clear(cx);
-        })?;
-    }
+    settle(cx, window.into())?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     let start = cx
         .update(|cx| graph.read(cx).handle_position(2))
         .ok_or("Warm's third band has no handle")?;
@@ -258,8 +288,9 @@ fn drag(cx: &mut HeadlessAppContext, dsp: gpui_kit::Entity<Dsp>) -> Result<(), B
                 px(200.0 * (t * std::f32::consts::TAU).sin()),
                 px(-60.0 * (t * 2.0 * std::f32::consts::TAU).sin()),
             );
+        let began = std::time::Instant::now();
         cx.run_until_parked();
-        let took = cx.update_window(window.into(), |_, window, cx| {
+        cx.update_window(window.into(), |_, window, cx| {
             window.dispatch_event(
                 PlatformInput::MouseMove(MouseMoveEvent {
                     position: at,
@@ -268,10 +299,9 @@ fn drag(cx: &mut HeadlessAppContext, dsp: gpui_kit::Entity<Dsp>) -> Result<(), B
                 }),
                 cx,
             );
-            let began = std::time::Instant::now();
             window.draw(cx).clear(cx);
-            began.elapsed()
         })?;
+        let took = began.elapsed();
         times.push(took);
         std::thread::sleep(Duration::from_millis(7));
     }

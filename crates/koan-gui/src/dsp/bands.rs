@@ -7,7 +7,7 @@
 //! when the text in its field was changed: a field left as shown never
 //! writes back a rounded value, so a band keeps every digit its file gave it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -69,19 +69,29 @@ pub fn typed(text: &str, shown: &str) -> Option<f64> {
 
 struct Field {
     input: Entity<InputState>,
-    /// The text the field was last given, and the filter as last read,
-    /// which a save names.
+    /// The text the field was last given.
     shown: Rc<RefCell<String>>,
-    band: Rc<RefCell<DspBand>>,
     _subscription: Subscription,
 }
 
-/// The fields of one profile's table, kept between renders and given the
-/// filters' figures when they change and the field is not being typed in.
+/// A row of the table: the filter as last read, which every figure of the
+/// row saves against, and the edit its saves chain through while the row
+/// is being typed in, so a figure typed before the last one's save has been
+/// read back names what that save stored.
+struct Row {
+    band: Rc<RefCell<DspBand>>,
+    edit: Rc<Cell<Option<u64>>>,
+    fields: HashMap<Part, Field>,
+}
+
+/// The fields of one profile's table, kept between renders. A row takes the
+/// filters' figures as read only while none of its fields is being typed
+/// in: while one is, the filter it was read as is the one its saves name,
+/// and one that has changed since is refused rather than written over.
 pub struct Fields {
     dsp: Entity<Dsp>,
     profile: String,
-    fields: HashMap<(usize, Part), Field>,
+    rows: HashMap<usize, Row>,
 }
 
 impl Fields {
@@ -89,27 +99,49 @@ impl Fields {
         Self {
             dsp,
             profile,
-            fields: HashMap::new(),
+            rows: HashMap::new(),
         }
     }
 
     pub fn rename(&mut self, profile: String) {
         if profile != self.profile {
             self.profile = profile;
-            self.fields.clear();
+            self.rows.clear();
         }
     }
 
-    /// Drops the fields of filters that are gone.
+    /// Drops the rows of filters that are gone.
     pub fn keep(&mut self, bands: &[DspBand]) {
-        self.fields
-            .retain(|(i, part), _| match (bands.get(*i), part) {
-                (Some(b), Part::PointHz(p) | Part::PointDb(p)) => {
-                    b.kind == "graphic" && *p < b.curve.len()
-                }
-                (Some(b), _) => b.kind != "graphic",
-                (None, _) => false,
+        self.rows.retain(|i, row| {
+            let Some(b) = bands.get(*i) else {
+                return false;
+            };
+            row.fields.retain(|part, _| match part {
+                Part::PointHz(p) | Part::PointDb(p) => b.kind == "graphic" && *p < b.curve.len(),
+                _ => b.kind != "graphic",
             });
+            true
+        });
+    }
+
+    /// Takes the filters as read into each row nobody is typing in.
+    fn refresh(&mut self, index: usize, band: &DspBand, window: &Window, cx: &mut App) {
+        let row = self.rows.entry(index).or_insert_with(|| Row {
+            band: Rc::new(RefCell::new(band.clone())),
+            edit: Rc::new(Cell::new(None)),
+            fields: HashMap::new(),
+        });
+        let typing = row
+            .fields
+            .values()
+            .any(|f| gpui_kit::Focusable::focus_handle(f.input.read(cx), cx).is_focused(window));
+        if typing {
+            return;
+        }
+        *row.band.borrow_mut() = band.clone();
+        if let Some(id) = row.edit.take() {
+            self.dsp.update(cx, |d, _| d.forget(id));
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -117,46 +149,51 @@ impl Fields {
         &mut self,
         index: usize,
         part: Part,
-        value: f64,
         band: &DspBand,
         width: f32,
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> AnyElement {
-        let text = figure(value, part.digits());
-        let key = (index, part);
-        if !self.fields.contains_key(&key) {
+        self.refresh(index, band, window, cx);
+        let (dsp, profile) = (self.dsp.clone(), self.profile.clone());
+        let row = self.rows.get_mut(&index).expect("made by refresh");
+        let text = figure(value_of(&row.band.borrow(), part), part.digits());
+        if !row.fields.contains_key(&part) {
             let input = cx.new(|cx| InputState::new(window, cx).default_value(text.clone()));
-            let (dsp, profile) = (self.dsp.clone(), self.profile.clone());
             let shown = Rc::new(RefCell::new(text.clone()));
-            let held = Rc::new(RefCell::new(band.clone()));
             let sub = {
-                let (shown, held) = (shown.clone(), held.clone());
-                cx.subscribe(&input, move |_, input, e: &InputEvent, cx| {
-                    if !matches!(e, InputEvent::Blur | InputEvent::PressEnter { .. }) {
-                        return;
-                    }
-                    let text = input.read(cx).value().to_string();
-                    let Some(v) = typed(&text, &shown.borrow()) else {
-                        return;
-                    };
-                    *shown.borrow_mut() = text.trim().to_owned();
-                    let band = held.borrow().clone();
-                    commit(&dsp, &profile, index, &band, part, v, cx);
-                })
+                let (shown, held, edit) = (shown.clone(), row.band.clone(), row.edit.clone());
+                cx.subscribe_in(
+                    &input,
+                    window,
+                    move |_, input, e: &InputEvent, window, cx| {
+                        if !matches!(e, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                            return;
+                        }
+                        let text = input.read(cx).value().trim().to_owned();
+                        let Some(v) = typed(&text, &shown.borrow()) else {
+                            // Not a number: the field goes back to what it showed.
+                            let back = shown.borrow().clone();
+                            if text != back {
+                                input.update(cx, |i, cx| i.set_value(back, window, cx));
+                            }
+                            return;
+                        };
+                        *shown.borrow_mut() = text;
+                        commit(&dsp, &profile, index, &held, &edit, part, v, cx);
+                    },
+                )
             };
-            self.fields.insert(
-                key,
+            row.fields.insert(
+                part,
                 Field {
                     input,
                     shown,
-                    band: held,
                     _subscription: sub,
                 },
             );
         }
-        let field = self.fields.get_mut(&key).expect("made above");
-        *field.band.borrow_mut() = band.clone();
+        let field = row.fields.get_mut(&part).expect("made above");
         let focused =
             gpui_kit::Focusable::focus_handle(field.input.read(cx), cx).is_focused(window);
         if *field.shown.borrow() != text && !focused {
@@ -173,47 +210,84 @@ impl Fields {
     }
 }
 
-/// Saves one typed figure, the band's other figures as they were, naming the
-/// band as it was read.
+fn value_of(band: &DspBand, part: Part) -> f64 {
+    match part {
+        Part::Freq => band.freq,
+        Part::Gain => band.gain_db,
+        Part::Q => band.q,
+        Part::PointHz(p) => band.curve.get(p).map_or(0.0, |p| p.hz),
+        Part::PointDb(p) => band.curve.get(p).map_or(0.0, |p| p.db),
+    }
+}
+
+/// Saves one typed figure, the row's other figures as it holds them, naming
+/// the filter the row was read as, through the row's edit. The row takes
+/// the figure at once, so the next one typed carries it.
+#[allow(clippy::too_many_arguments)]
 fn commit(
     dsp: &Entity<Dsp>,
     profile: &str,
     index: usize,
-    band: &DspBand,
+    held: &Rc<RefCell<DspBand>>,
+    edit: &Rc<Cell<Option<u64>>>,
     part: Part,
     v: f64,
     cx: &mut App,
 ) {
+    let expected = held.borrow().clone();
+    let mut band = expected.clone();
+    match part {
+        Part::Freq => band.freq = v,
+        Part::Gain => band.gain_db = v,
+        Part::Q => band.q = v,
+        Part::PointHz(p) | Part::PointDb(p) => {
+            let Some(point) = band.curve.get_mut(p) else {
+                return;
+            };
+            if let Part::PointHz(_) = part {
+                point.hz = v;
+            } else {
+                point.db = v;
+            }
+        }
+    }
     let step = match part {
         Part::Freq | Part::Gain | Part::Q => Commit::Band {
             name: profile.to_owned(),
             index: index as u32,
-            expected: band.clone(),
+            expected,
             kind: band.kind.clone(),
-            freq: if part == Part::Freq { v } else { band.freq },
-            gain_db: if part == Part::Gain { v } else { band.gain_db },
-            q: if part == Part::Q { v } else { band.q },
+            freq: band.freq,
+            gain_db: band.gain_db,
+            q: band.q,
         },
-        Part::PointHz(p) | Part::PointDb(p) => {
-            let mut points = band.curve.clone();
-            let Some(point) = points.get_mut(p) else {
-                return;
-            };
-            match part {
-                Part::PointHz(_) => point.hz = v,
-                _ => point.db = v,
-            }
-            Commit::Curve {
-                name: profile.to_owned(),
-                index: index as u32,
-                expected: band.clone(),
-                points,
-            }
-        }
+        Part::PointHz(_) | Part::PointDb(_) => Commit::Curve {
+            name: profile.to_owned(),
+            index: index as u32,
+            expected,
+            points: band.curve.clone(),
+        },
     };
+    *held.borrow_mut() = band;
+    let edit = edit.clone();
     dsp.update(cx, |d, cx| {
-        let edit = d.next_edit();
-        d.edit(edit, step, true, Rc::new(|_, _| {}), cx);
+        let id = match edit.get() {
+            Some(id) => id,
+            None => {
+                let id = d.next_edit();
+                edit.set(Some(id));
+                id
+            }
+        };
+        let ended = edit.clone();
+        let done: super::model::Done = Rc::new(move |e: super::model::Ended, _| {
+            // Refused or failed: the row's next figure starts a new edit
+            // against the filters read again.
+            if e.outcome != super::model::Outcome::Saved && ended.get() == Some(id) {
+                ended.set(None);
+            }
+        });
+        d.edit(id, step, true, done, cx);
     });
 }
 
@@ -249,6 +323,10 @@ const Q_W: f32 = 50.0;
 /// What a row's control does to filter `index`.
 pub type RowAction = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
+/// Removing a row: the filter's index, its place in the rows shown, and the
+/// filter as the row shows it, which the removal names.
+pub type RemoveAction = Rc<dyn Fn(usize, usize, DspBand, &mut Window, &mut App)>;
+
 /// The table: a header, then a row per filter on the channel shown, each
 /// with its index among all the filters.
 #[allow(clippy::too_many_arguments)]
@@ -258,7 +336,7 @@ pub fn table<V: 'static>(
     read_only: bool,
     channel: Option<u16>,
     open_curve: RowAction,
-    remove: RowAction,
+    remove: RemoveAction,
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> AnyElement {
@@ -323,8 +401,10 @@ pub fn table<V: 'static>(
                         })
                     })
                     .chain([Item::Rule, {
-                        let remove = remove.clone();
-                        Item::destructive("Remove", move |window, cx| remove(index, window, cx))
+                        let (remove, band) = (remove.clone(), band.clone());
+                        Item::destructive("Remove", move |window, cx| {
+                            remove(index, position, band.clone(), window, cx)
+                        })
                     }])
                     .collect();
                 row.child(div().flex_1().child(menu(
@@ -335,17 +415,9 @@ pub fn table<V: 'static>(
                     window,
                     cx,
                 )))
-                .child(fields.field(index, Part::Freq, band.freq, band, HZ_W, window, cx))
-                .child(fields.field(index, Part::Gain, band.gain_db, band, DB_W, window, cx))
-                .child(fields.field(
-                    index,
-                    Part::Q,
-                    band.q,
-                    band,
-                    Q_W,
-                    window,
-                    cx,
-                ))
+                .child(fields.field(index, Part::Freq, band, HZ_W, window, cx))
+                .child(fields.field(index, Part::Gain, band, DB_W, window, cx))
+                .child(fields.field(index, Part::Q, band, Q_W, window, cx))
             }
             _ if band.kind == "graphic" && !read_only => {
                 let open = open_curve.clone();
@@ -378,6 +450,23 @@ pub fn table<V: 'static>(
                     ),
             ),
         };
+        // Delays, mixes and curves are removed from a menu of their own.
+        let row = if kind.is_none() && !read_only {
+            let (remove, band) = (remove.clone(), band.clone());
+            let items = vec![Item::destructive("Remove", move |window, cx| {
+                remove(index, position, band.clone(), window, cx)
+            })];
+            row.child(menu(
+                ("band-options", index),
+                "···",
+                Trigger::Word,
+                items,
+                window,
+                cx,
+            ))
+        } else {
+            row
+        };
         rows.push(row.into_any_element());
     }
     div().flex().flex_col().children(rows).into_any_element()
@@ -405,7 +494,7 @@ pub fn points<V: 'static>(
         .curve
         .iter()
         .enumerate()
-        .map(|(i, p): (usize, &DspPoint)| {
+        .map(|(i, _): (usize, &DspPoint)| {
             div()
                 .flex()
                 .items_center()
@@ -419,8 +508,8 @@ pub fn points<V: 'static>(
                         .child(format!("{}", i + 1)),
                 )
                 .child(div().flex_1())
-                .child(fields.field(index, Part::PointHz(i), p.hz, band, 80.0, window, cx))
-                .child(fields.field(index, Part::PointDb(i), p.db, band, 64.0, window, cx))
+                .child(fields.field(index, Part::PointHz(i), band, 80.0, window, cx))
+                .child(fields.field(index, Part::PointDb(i), band, 64.0, window, cx))
                 .into_any_element()
         });
     div()
