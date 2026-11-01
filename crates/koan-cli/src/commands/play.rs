@@ -10,6 +10,7 @@ use owo_colors::OwoColorize;
 
 use koan_tui::app::PickerAction;
 use koan_tui::enqueue::enqueue_playlist;
+use koan_tui::play::SESSION;
 use koan_tui::play::TuiCallbacks;
 
 use super::{install_terminal_panic_hook, open_db, parse_dropped_paths, playlist_items_from_paths};
@@ -88,11 +89,11 @@ pub fn cmd_play(
 
     if let Ok(db) = koan_core::db::pool::shared().get() {
         if clear_queue {
-            let _ = queries::clear_playback_state(&db.conn);
+            let _ = queries::clear_playback_state(&db.conn, SESSION);
         }
         // Before any queue: the mode is the player's, kept with or without
         // one, and a queue arriving under shuffle is shuffled.
-        if let Ok(mode) = queries::load_play_mode(&db.conn) {
+        if let Ok(mode) = queries::load_play_mode(&db.conn, SESSION) {
             tx.send(PlayerCommand::RestorePlayMode(mode))
                 .expect("player thread died");
         }
@@ -160,7 +161,7 @@ pub fn cmd_play(
         );
     } else if !clear_queue
         && let Ok(db) = koan_core::db::pool::shared().get()
-        && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn)
+        && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn, SESSION)
     {
         let items: Vec<_> = persisted
             .items

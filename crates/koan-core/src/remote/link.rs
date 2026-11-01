@@ -934,6 +934,9 @@ pub struct LinkIdentity {
 }
 
 impl LinkIdentity {
+    /// The terminal UI's `files`.
+    pub const TERMINAL_FILES: &'static str = "terminal-";
+
     /// This machine, named `name` or else by its hostname.
     pub fn this_device(name: Option<String>) -> Self {
         let (platform, label) = if cfg!(target_os = "ios") {
@@ -964,7 +967,7 @@ impl LinkIdentity {
     /// processes under one id would each take the other's place on the
     /// server and the network.
     pub fn terminal() -> Option<Self> {
-        const FILES: &str = "terminal-";
+        const FILES: &str = LinkIdentity::TERMINAL_FILES;
         // Held for as long as the process runs; the system lets go of it
         // however the process ends.
         static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();

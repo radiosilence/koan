@@ -705,8 +705,13 @@ impl MutationRoot {
 
     // -- Playback state persistence --
 
+    /// Save the queue, cursor, position and play mode as the saved session of
+    /// the device whose player this server runs on, for it to restore on its
+    /// next start. Refused by a server that keeps no session, such as a
+    /// headless `koan serve`.
     async fn save_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let device = session(ctx)?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
 
         let (items, cursor) = state.snapshot_playlist();
@@ -727,10 +732,10 @@ impl MutationRoot {
 
         with_db(ctx, move |db| {
             if persisted.is_empty() {
-                queries::playback_state::clear_playback_state(&db.conn)
+                queries::playback_state::clear_playback_state(&db.conn, device)
                     .and_then(|()| {
                         queries::playback_state::save_playback_position(
-                            &db.conn, mode, None, 0, false,
+                            &db.conn, device, mode, None, 0, false,
                         )
                     })
                     .map_err(|e| super::internal_error("db", e))?;
@@ -738,6 +743,7 @@ impl MutationRoot {
             }
             queries::playback_state::save_playback_state(
                 &db.conn,
+                device,
                 &persisted,
                 mode,
                 cursor_path.as_deref(),
@@ -750,10 +756,14 @@ impl MutationRoot {
         .await
     }
 
+    /// Clear the saved queue and position of the device whose player this
+    /// server runs on, keeping its play mode. Refused by a server that keeps
+    /// no session.
     async fn clear_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        with_db(ctx, |db| {
-            queries::playback_state::clear_playback_state(&db.conn)
+        let device = session(ctx)?;
+        with_db(ctx, move |db| {
+            queries::playback_state::clear_playback_state(&db.conn, device)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(GqlStatus::success("playback state cleared"))
         })
@@ -1649,4 +1659,12 @@ fn invite_server(server: Option<String>) -> async_graphql::Result<String> {
         .filter(|s| !s.is_empty())
         .or_else(|| Config::cached().server_url())
         .ok_or_else(|| "pass `server` or set server.url: this server has no address".into())
+}
+
+/// The device whose saved session this server's player is. A server whose
+/// player nothing restores, such as `koan serve`, keeps none.
+fn session(ctx: &Context<'_>) -> async_graphql::Result<&'static str> {
+    ctx.data_opt::<super::Session>()
+        .map(|s| s.0)
+        .ok_or_else(|| "this server keeps no saved session".into())
 }
