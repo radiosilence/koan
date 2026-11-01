@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use koan_ffi::KoanEngine;
 use koan_gui::library::{self, albums::AlbumGrid, browse::Browse};
 use koan_gui::theme;
-use koan_kit::raw::{AppContext, AppContext as _, Entity, HeadlessAppContext, px, size};
+use koan_kit::raw::{AppContext as _, Entity, HeadlessAppContext, px, size};
 
 /// 2560 × 1600 points: about a hundred tiles at the grid's sizes.
 const WIDTH: f32 = 2560.0;
