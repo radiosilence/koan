@@ -146,8 +146,9 @@ struct Queue {
     failed: HashSet<Art>,
     generation: HashMap<Art, u64>,
     /// Evicted, with the file still being unlinked: not fetched, and its file
-    /// not trusted, until that is done.
-    evicting: HashSet<Art>,
+    /// not trusted, until that is done. Counted: a second eviction of the
+    /// same id can land before the first one's unlink has run.
+    evicting: HashMap<Art, u32>,
     /// The first eviction sweep has been tried, so fetches may start.
     fetches_allowed: bool,
     /// The first eviction sweep has landed, so a file found on disk belongs to
@@ -168,7 +169,7 @@ impl Queue {
             && !self.fetching.contains(&key.art)
             && !self.absent.contains(&key.art)
             && !self.failed.contains(&key.art)
-            && !self.evicting.contains(&key.art)
+            && !self.evicting.contains_key(&key.art)
     }
 
     fn decodable(&self, key: &Key) -> bool {
@@ -664,7 +665,7 @@ impl Covers {
                 queue.on_disk.remove(art);
                 queue.absent.remove(art);
                 queue.failed.remove(art);
-                queue.evicting.insert(*art);
+                *queue.evicting.entry(*art).or_default() += 1;
                 queue.decoded.retain(|k| k.art != *art);
             }
         }
@@ -679,7 +680,12 @@ impl Covers {
                     drop(disk);
                     let mut queue = shared.queue.lock();
                     for art in &arts {
-                        queue.evicting.remove(art);
+                        if let Some(n) = queue.evicting.get_mut(art) {
+                            *n -= 1;
+                            if *n == 0 {
+                                queue.evicting.remove(art);
+                            }
+                        }
                     }
                     // What is on screen under those ids is the new record's.
                     let fetches = queue
@@ -803,7 +809,7 @@ fn fetch_lane(
         let file = dir.join(art.filename());
         let usable = |queue: &Queue| {
             queue.disk_trusted
-                && !queue.evicting.contains(&art)
+                && !queue.evicting.contains_key(&art)
                 && queue.generation(art) == generation
         };
         let disk = shared.disk.lock();
