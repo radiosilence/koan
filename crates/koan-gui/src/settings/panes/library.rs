@@ -1,14 +1,14 @@
 //! Library: the folders scanned, scanning them, and clearing the index.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use crate::components::{Button, ButtonKind};
 use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 
+use crate::settings::Ctx;
 use crate::settings::form::{buttons, page, section, text};
 use crate::settings::model::{Uses, count};
 use crate::settings::sheet::{Action, Sheet};
-use crate::settings::Ctx;
 
 pub struct LibraryPane {
     ctx: Ctx,
@@ -34,7 +34,9 @@ impl LibraryPane {
         });
         let model = self.ctx.model.clone();
         self.choosing = Some(cx.spawn(async move |_, cx| {
-            let Ok(Ok(Some(paths))) = chosen.await else { return };
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
             let paths = paths
                 .into_iter()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -102,8 +104,13 @@ impl Render for LibraryPane {
         let mut folders: Vec<AnyElement> = Vec::new();
         if settings.library_folders.is_empty() {
             folders.push(
-                text("No folders yet — kōan has nothing to scan.", TypeRole::Meta, Tone::Muted, &look)
-                    .into_any_element(),
+                text(
+                    "No folders yet — kōan has nothing to scan.",
+                    TypeRole::Meta,
+                    Tone::Muted,
+                    &look,
+                )
+                .into_any_element(),
             );
         }
         for (index, folder) in settings.library_folders.iter().enumerate() {
@@ -125,13 +132,20 @@ impl Render for LibraryPane {
                             .truncate()
                             .child(folder.path.clone()),
                     )
-                    .child(text(format!("{} tracks", count(folder.tracks)), TypeRole::Fine, Tone::Muted, &look))
+                    .child(text(
+                        format!("{} tracks", count(folder.tracks)),
+                        TypeRole::Fine,
+                        Tone::Muted,
+                        &look,
+                    ))
                     .child(
                         Button::new(("remove-folder", index), ButtonKind::Icon)
                             .label("Stop scanning this folder")
                             .icon(Icon::Remove)
                             .on_click(move |_, window, cx| {
-                                entity.read(cx).remove(path.clone(), tracks, window, cx)
+                                entity.update(cx, |this, cx| {
+                                    this.remove(path.clone(), tracks, window, cx)
+                                })
                             }),
                     )
                     .into_any_element(),
@@ -179,7 +193,9 @@ impl Render for LibraryPane {
                     .label("Clear Library Index…")
                     .destructive(true)
                     .disabled(whole)
-                    .on_click(move |_, window, cx| entity.read(cx).rebuild(window, cx))
+                    .on_click(move |_, window, cx| {
+                        entity.update(cx, |this, cx| this.rebuild(window, cx))
+                    })
                     .into_any_element(),
             ],
             &look,

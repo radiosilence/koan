@@ -2,12 +2,12 @@
 //! assistants over MCP, and scrobbling to ListenBrainz. Each where the
 //! server has it.
 
+use crate::components::{Button, ButtonKind, FormRow, TextField};
+use crate::theme::{Icon, Look, Tone, TypeRole};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{Assistants, ScrobblingConnection};
-use crate::components::{Button, ButtonKind, FormRow, TextField};
-use crate::theme::{Icon, Look, Tone, TypeRole};
 
 use crate::settings::form::{buttons, copyable, note, page, section, text};
 use crate::settings::model::{count, describe};
@@ -116,7 +116,7 @@ impl IntegrationsPane {
                 pane.busy = false;
                 match connected {
                     Ok(connection) => {
-                        pane.scrobbling = Some(Ok(Some(connection)));
+                        pane.scrobbling = Some(Ok(connection));
                         pane.scrobbling_error = None;
                         pane.token.update(cx, |s, cx| s.set_value("", window, cx));
                     }
@@ -158,7 +158,9 @@ impl IntegrationsPane {
                 })
                 .destructive(),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn assistants_section(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
@@ -172,21 +174,29 @@ impl IntegrationsPane {
                 let connect = assistants.connect_url.clone();
                 rows.push(
                     FormRow::new("Address")
-                        .control(copyable("copy-mcp", url.clone(), self.copied, move |cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
-                            entity.update(cx, |pane, cx| {
-                                pane.copied = true;
-                                cx.notify();
-                            })
-                        }, look))
+                        .control(copyable(
+                            "copy-mcp",
+                            url.clone(),
+                            self.copied,
+                            move |cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                                entity.update(cx, |pane, cx| {
+                                    pane.copied = true;
+                                    cx.notify();
+                                })
+                            },
+                            look,
+                        ))
                         .into_any_element(),
                 );
                 rows.push(buttons(
-                    vec![Button::new("how-to-connect", ButtonKind::Link)
-                        .label("How to Connect an Assistant")
-                        .icon(Icon::OpenExternal)
-                        .on_click(move |_, _, cx| cx.open_url(&connect))
-                        .into_any_element()],
+                    vec![
+                        Button::new("how-to-connect", ButtonKind::Link)
+                            .label("How to Connect an Assistant")
+                            .icon(Icon::OpenExternal)
+                            .on_click(move |_, _, cx| cx.open_url(&connect))
+                            .into_any_element(),
+                    ],
                     look,
                 ));
             }
@@ -194,7 +204,9 @@ impl IntegrationsPane {
                 footer = error.clone();
                 tone = Tone::Ink;
             }
-            None => rows.push(text("Loading…", TypeRole::Body, Tone::Muted, look).into_any_element()),
+            None => {
+                rows.push(text("Loading…", TypeRole::Body, Tone::Muted, look).into_any_element())
+            }
         }
         div()
             .child(section(Some("Assistants"), rows, None, look))
@@ -207,32 +219,58 @@ impl IntegrationsPane {
         let mut rows = Vec::new();
         match &self.scrobbling {
             Some(Ok(Some(c))) => {
-                rows.push(text(format!("Scrobbling to ListenBrainz as {}", c.account), TypeRole::Body, Tone::Ink, look).into_any_element());
+                rows.push(
+                    text(
+                        format!("Scrobbling to ListenBrainz as {}", c.account),
+                        TypeRole::Body,
+                        Tone::Ink,
+                        look,
+                    )
+                    .into_any_element(),
+                );
                 if let Some(refused) = &c.error {
                     rows.push(note(refused.clone(), Icon::Warning, Tone::Bad, look));
                     rows.push(text("Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.", TypeRole::Meta, Tone::Muted, look).into_any_element());
                 } else if c.pending > 0 {
                     let plays = if c.pending == 1 { "play" } else { "plays" };
-                    rows.push(text(format!("{} {plays} waiting to be sent", count(c.pending as u64)), TypeRole::Meta, Tone::Muted, look).into_any_element());
+                    rows.push(
+                        text(
+                            format!("{} {plays} waiting to be sent", count(c.pending as u64)),
+                            TypeRole::Meta,
+                            Tone::Muted,
+                            look,
+                        )
+                        .into_any_element(),
+                    );
                 }
                 rows.push(buttons(
-                    vec![Button::new("disconnect-scrobbling", ButtonKind::Bordered)
-                        .label("Disconnect…")
-                        .destructive(true)
-                        .disabled(self.busy)
-                        .on_click(move |_, window, cx| entity.update(cx, |pane, cx| pane.disconnect(window, cx)))
-                        .into_any_element()],
+                    vec![
+                        Button::new("disconnect-scrobbling", ButtonKind::Bordered)
+                            .label("Disconnect…")
+                            .destructive(true)
+                            .disabled(self.busy)
+                            .on_click(move |_, window, cx| {
+                                entity.update(cx, |pane, cx| pane.disconnect(window, cx))
+                            })
+                            .into_any_element(),
+                    ],
                     look,
                 ));
             }
-            None => rows.push(text("Checking…", TypeRole::Body, Tone::Muted, look).into_any_element()),
+            None => {
+                rows.push(text("Checking…", TypeRole::Body, Tone::Muted, look).into_any_element())
+            }
             // The server could not say whether the account is connected, so
             // neither state is shown.
             Some(Err(_)) => rows.push(buttons(
-                vec![Button::new("scrobbling-again", ButtonKind::Bordered)
-                    .label("Try Again")
-                    .on_click(move |_, _, cx| entity.update(cx, |pane, cx| pane.load_scrobbling(cx)))
-                    .into_any_element()],
+                vec![
+                    Button::new("scrobbling-again", ButtonKind::Bordered)
+                        .label("Try Again")
+                        .on_click(move |_, _, cx| {
+                            entity.update(cx, |pane, cx| pane.load_scrobbling(cx))
+                        })
+                        .into_any_element(),
+                ],
                 look,
             )),
             Some(Ok(None)) => {
@@ -251,7 +289,9 @@ impl IntegrationsPane {
                         Button::new("connect-scrobbling", ButtonKind::Prominent)
                             .label("Connect")
                             .disabled(!ready)
-                            .on_click(move |_, window, cx| entity.update(cx, |pane, cx| pane.connect(window, cx)))
+                            .on_click(move |_, window, cx| {
+                                entity.update(cx, |pane, cx| pane.connect(window, cx))
+                            })
                             .into_any_element(),
                     ],
                     look,

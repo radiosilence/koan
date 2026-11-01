@@ -1,7 +1,7 @@
 //! A QR code as quads: the code and its runs of dark modules worked out once
 //! per link, then painted as one quad per run.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -11,7 +11,7 @@ use gpui_kit::*;
 #[derive(Clone)]
 pub struct Code {
     side: usize,
-    runs: Rc<[(u16, u16, u16)]>,
+    runs: Arc<[(u16, u16, u16)]>,
 }
 
 impl Code {
@@ -27,7 +27,7 @@ impl Code {
 
     /// The code drawn `size` across, dark on a light quiet zone of
     /// `margin`, as phones read best whatever the window's appearance.
-    pub fn element(&self, size: Pixels, margin: Pixels) -> impl IntoElement + use<> {
+    pub fn element(&self, side: Pixels, margin: Pixels) -> impl IntoElement + use<> {
         let code = self.clone();
         canvas(
             |_, _, _| (),
@@ -44,7 +44,7 @@ impl Code {
                 }
             },
         )
-        .size(size)
+        .size(side)
     }
 }
 
@@ -71,7 +71,7 @@ fn runs(dark: &[bool], side: usize) -> Vec<(u16, u16, u16)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::runs;
 
     #[test]
     fn runs_cover_every_dark_module_once() {

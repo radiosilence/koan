@@ -15,8 +15,8 @@ mod playback;
 mod server;
 mod share;
 
-use gpui_kit::*;
 use crate::theme::Icon;
+use gpui_kit::*;
 
 use super::Ctx;
 
@@ -73,9 +73,7 @@ impl Pane {
         let ctx = ctx.clone();
         Pane(match tab {
             Tab::Library => cx.new(|cx| library::LibraryPane::new(ctx, cx)).into(),
-            Tab::Server => cx
-                .new(|cx| server::ServerPane::new(ctx, window, cx))
-                .into(),
+            Tab::Server => cx.new(|cx| server::ServerPane::new(ctx, window, cx)).into(),
             Tab::Account => cx
                 .new(|cx| account::AccountPane::new(ctx, window, cx))
                 .into(),

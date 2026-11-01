@@ -65,7 +65,8 @@ impl WindowRoot {
         let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
         if wash_tint != self.wash_tint {
             self.wash_tint = wash_tint;
-            self.wash.update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
+            self.wash
+                .update(cx, |wash, cx| wash.set_hold(wash_tint, cx));
         }
         if record_colours != self.record_colours {
             self.record_colours = record_colours;

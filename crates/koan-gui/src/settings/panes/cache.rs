@@ -46,10 +46,7 @@ pub fn limit_gb(limit: &str) -> String {
 
 fn places(value: f64) -> String {
     let shown = format!("{value:.2}");
-    shown
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_owned()
+    shown.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// A typed limit in gigabytes as the config writes it ("50GB"), or why it
@@ -98,7 +95,9 @@ pub fn ahead_options(set: Option<u32>) -> Vec<(String, Option<u32>)> {
 pub fn downloads_note(ahead: Option<u32>, keeping: Keeping) -> String {
     let mut lines = Vec::new();
     if ahead == Some(0) {
-        lines.push("Nothing plays gaplessly, and each track waits for its download before it starts.");
+        lines.push(
+            "Nothing plays gaplessly, and each track waits for its download before it starts.",
+        );
     }
     match keeping {
         Keeping::Off => lines.push("Tracks are deleted once played. Downloads you ask for and favourite records stay."),
@@ -127,7 +126,7 @@ mod tests {
         assert_eq!(parse_limit("  "), None);
         assert_eq!(parse_limit("50"), Some(Ok("50GB".into())));
         assert_eq!(parse_limit("2,5"), Some(Ok("2.5GB".into())));
-        assert_eq!(parse_limit("0.001").unwrap().is_err(), true);
+        assert!(parse_limit("0.001").unwrap().is_err());
         assert!(parse_limit("lots").unwrap().is_err());
     }
 

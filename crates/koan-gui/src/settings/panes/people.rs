@@ -7,12 +7,12 @@
 
 use std::sync::Arc;
 
+use crate::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
+use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
-use crate::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
-use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 
 use crate::settings::form::{buttons, item, page, section, text};
 use crate::settings::model::describe;
@@ -36,7 +36,9 @@ fn role_label(role: AccountRole) -> &'static str {
 fn role_detail(role: AccountRole) -> &'static str {
     match role {
         AccountRole::Readonly => "They can listen, and no longer change playlists or favourites.",
-        AccountRole::User => "They can listen and change their playlists and favourites, but not manage the server.",
+        AccountRole::User => {
+            "They can listen and change their playlists and favourites, but not manage the server."
+        }
         AccountRole::Admin => "They can manage the server and everyone's accounts, as you can.",
     }
 }
@@ -115,7 +117,12 @@ pub struct PeoplePane {
 }
 
 impl PeoplePane {
-    pub fn new(ctx: Ctx, people: Entity<People>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        ctx: Ctx,
+        people: Entity<People>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let username = cx.new(|cx| InputState::new(window, cx).placeholder("Username"));
         Self {
             _subscriptions: vec![
@@ -162,7 +169,8 @@ impl PeoplePane {
         if name.is_empty() {
             return;
         }
-        self.username.update(cx, |s, cx| s.set_value("", window, cx));
+        self.username
+            .update(cx, |s, cx| s.set_value("", window, cx));
         let (engine, role) = (self.people.read(cx).engine.clone(), self.role);
         let shown = self.show_invite(window.window_handle());
         self.people.update(cx, |people, cx| {
@@ -172,16 +180,21 @@ impl PeoplePane {
 
     fn set_role(&self, account: String, role: AccountRole, window: &mut Window, cx: &mut App) {
         let people = self.people.clone();
-        let sheet = Sheet::new(format!("Make {account} {}?", role_label(role).to_lowercase()))
-            .message(role_detail(role))
-            .action(Action::new("Change", move |_, _, cx| {
-                let account = account.clone();
-                people.update(cx, |people, cx| {
-                    let engine = people.engine.clone();
-                    people.attempt(cx, engine.set_server_account_role(account, role), |_, _| {})
-                })
-            }));
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        let sheet = Sheet::new(format!(
+            "Make {account} {}?",
+            role_label(role).to_lowercase()
+        ))
+        .message(role_detail(role))
+        .action(Action::new("Change", move |_, _, cx| {
+            let account = account.clone();
+            people.update(cx, |people, cx| {
+                let engine = people.engine.clone();
+                people.attempt(cx, engine.set_server_account_role(account, role), |_, _| {})
+            })
+        }));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn invite(&self, account: String, reset: bool, window: &mut Window, cx: &mut App) {
@@ -199,13 +212,17 @@ impl PeoplePane {
         }
         let run = std::cell::RefCell::new(Some(run));
         let sheet = Sheet::new("Give them a new password?")
-            .message("The invite carries the new password. Their devices will have to sign in again.")
+            .message(
+                "The invite carries the new password. Their devices will have to sign in again.",
+            )
             .action(Action::new("New Password", move |_, _, cx| {
                 if let Some(run) = run.borrow_mut().take() {
                     run(cx)
                 }
             }));
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn set_password(&self, account: String, window: &mut Window, cx: &mut App) {
@@ -219,12 +236,18 @@ impl PeoplePane {
                     let (account, password) = (account.clone(), values[0].clone());
                     people.update(cx, |people, cx| {
                         let engine = people.engine.clone();
-                        people.attempt(cx, engine.set_server_account_password(account, password), |_, _| {})
+                        people.attempt(
+                            cx,
+                            engine.set_server_account_password(account, password),
+                            |_, _| {},
+                        )
                     })
                 })
                 .ready(|values| !values[0].is_empty()),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn delete(&self, account: String, window: &mut Window, cx: &mut App) {
@@ -241,7 +264,9 @@ impl PeoplePane {
                 })
                 .destructive(),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 }
 
@@ -263,13 +288,26 @@ impl Render for PeoplePane {
             let picker = {
                 let entity = entity.clone();
                 let name = name.clone();
-                Picker::new(("role", index), ROLES.map(role_label), ROLES.iter().position(|r| *r == role))
-                    .on_change(move |index, window, cx| {
-                        let role = ROLES[*index];
-                        entity.read(cx).set_role(name.clone(), role, window, cx)
-                    })
+                Picker::new(
+                    ("role", index),
+                    ROLES.map(role_label),
+                    ROLES.iter().position(|r| *r == role),
+                )
+                .on_change(move |index, window, cx| {
+                    let role = ROLES[*index];
+                    entity.update(cx, |this, cx| this.set_role(name.clone(), role, window, cx))
+                })
             };
-            let menu = more_menu(index, &name, name == me, passwords, &entity, &look, window, cx);
+            let menu = more_menu(
+                index,
+                &name,
+                name == me,
+                passwords,
+                &entity,
+                &look,
+                window,
+                cx,
+            );
             rows.push(item(
                 name.clone(),
                 (name == me).then(|| "you".into()),
@@ -281,23 +319,32 @@ impl Render for PeoplePane {
         let role = self.role;
         rows.push(buttons(
             vec![
-                div().w(px(200.)).child(TextField::new(&self.username)).into_any_element(),
-                Picker::new("new-role", ROLES.map(role_label), ROLES.iter().position(|r| *r == role))
-                    .on_change({
-                        let entity = entity.clone();
-                        move |index, _, cx| {
-                            let role = ROLES[*index];
-                            entity.update(cx, |pane, cx| {
-                                pane.role = role;
-                                cx.notify();
-                            })
-                        }
-                    })
+                div()
+                    .w(px(200.))
+                    .child(TextField::new(&self.username))
                     .into_any_element(),
+                Picker::new(
+                    "new-role",
+                    ROLES.map(role_label),
+                    ROLES.iter().position(|r| *r == role),
+                )
+                .on_change({
+                    let entity = entity.clone();
+                    move |index, _, cx| {
+                        let role = ROLES[*index];
+                        entity.update(cx, |pane, cx| {
+                            pane.role = role;
+                            cx.notify();
+                        })
+                    }
+                })
+                .into_any_element(),
                 Button::new("add-person", ButtonKind::Bordered)
                     .label("Add")
                     .disabled(!ready)
-                    .on_click(move |_, window, cx| entity.update(cx, |pane, cx| pane.add(window, cx)))
+                    .on_click(move |_, window, cx| {
+                        entity.update(cx, |pane, cx| pane.add(window, cx))
+                    })
                     .into_any_element(),
             ],
             &look,
@@ -305,7 +352,11 @@ impl Render for PeoplePane {
         let footer = error.clone().unwrap_or_else(|| {
             "Adding someone makes their invite: one link that sets kōan up with the account.".into()
         });
-        let tone = if error.is_some() { Tone::Bad } else { Tone::Muted };
+        let tone = if error.is_some() {
+            Tone::Bad
+        } else {
+            Tone::Muted
+        };
         page(
             "people",
             &look,
@@ -335,12 +386,15 @@ fn more_menu(
     let shown = *open.read(cx);
     let set = |open: &Entity<bool>, to: bool| {
         let open = open.clone();
-        move |cx: &mut App| open.update(cx, |o, cx| {
-            *o = to;
-            cx.notify();
-        })
+        move |cx: &mut App| {
+            open.update(cx, |o, cx| {
+                *o = to;
+                cx.notify();
+            })
+        }
     };
-    let row = |id: &'static str, text: &str, run: Box<dyn Fn(&mut Window, &mut App)>| {
+    type Run = Box<dyn Fn(&mut Window, &mut App)>;
+    let row = |id: &'static str, text: &str, run: Run| {
         let close = set(&open, false);
         MenuRow::new(id, text).on_click(move |_, window, cx| {
             close(cx);
@@ -350,26 +404,48 @@ fn more_menu(
     let mut panel = MenuPanel::new();
     {
         let (pane, account) = (pane.clone(), account.to_owned());
-        panel = panel.child(row("invite", "Invite", Box::new(move |window, cx| {
-            pane.read(cx).invite(account.clone(), false, window, cx)
-        })));
+        panel = panel.child(row(
+            "invite",
+            "Invite",
+            Box::new(move |window, cx| {
+                pane.update(cx, |this, cx| {
+                    this.invite(account.clone(), false, window, cx)
+                })
+            }),
+        ));
     }
     if !me {
         if passwords {
             let (pane, account) = (pane.clone(), account.to_owned());
-            panel = panel.child(row("set-password", "Set Password…", Box::new(move |window, cx| {
-                pane.read(cx).set_password(account.clone(), window, cx)
-            })));
+            panel = panel.child(row(
+                "set-password",
+                "Set Password…",
+                Box::new(move |window, cx| {
+                    pane.update(cx, |this, cx| {
+                        this.set_password(account.clone(), window, cx)
+                    })
+                }),
+            ));
         }
         let (pane2, account2) = (pane.clone(), account.to_owned());
-        panel = panel.child(row("reset", "New Password and Invite…", Box::new(move |window, cx| {
-            pane2.read(cx).invite(account2.clone(), true, window, cx)
-        })));
+        panel = panel.child(row(
+            "reset",
+            "New Password and Invite…",
+            Box::new(move |window, cx| {
+                pane2.update(cx, |this, cx| {
+                    this.invite(account2.clone(), true, window, cx)
+                })
+            }),
+        ));
         let (pane3, account3) = (pane.clone(), account.to_owned());
         panel = panel.child(
-            row("delete", "Delete…", Box::new(move |window, cx| {
-                pane3.read(cx).delete(account3.clone(), window, cx)
-            }))
+            row(
+                "delete",
+                "Delete…",
+                Box::new(move |window, cx| {
+                    pane3.update(cx, |this, cx| this.delete(account3.clone(), window, cx))
+                }),
+            )
             .destructive(true),
         );
     }
@@ -386,13 +462,15 @@ fn more_menu(
         .when(shown, |this| {
             this.child(
                 deferred(
-                    anchored().snap_to_window_with_margin(look.space(Space::S)).child(
-                        div()
-                            .id(("people-menu", index))
-                            .occlude()
-                            .on_mouse_down_out(move |_, _, cx| closer(cx))
-                            .child(panel),
-                    ),
+                    anchored()
+                        .snap_to_window_with_margin(look.space(Space::S))
+                        .child(
+                            div()
+                                .id(("people-menu", index))
+                                .occlude()
+                                .on_mouse_down_out(move |_, _, cx| closer(cx))
+                                .child(panel),
+                        ),
                 )
                 .with_priority(1),
             )
@@ -409,7 +487,11 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
         .message(message)
         .done();
     sheet = sheet.content(move |look, _, _| {
-        let (link, text_body, mailto) = (invite.link.clone(), invite.email_text.clone(), invite.mailto.clone());
+        let (link, text_body, mailto) = (
+            invite.link.clone(),
+            invite.email_text.clone(),
+            invite.mailto.clone(),
+        );
         let mut column = div()
             .flex()
             .flex_col()
@@ -423,7 +505,12 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .items_center()
                     .gap(look.space(Space::Xs))
                     .child(code.element(px(168.), px(12.)))
-                    .child(text("Scan with a phone's camera to open it there.", TypeRole::Fine, Tone::Muted, look))
+                    .child(text(
+                        "Scan with a phone's camera to open it there.",
+                        TypeRole::Fine,
+                        Tone::Muted,
+                        look,
+                    ))
             }))
             .child(
                 Button::new("open-mail", ButtonKind::Link)
@@ -435,13 +522,17 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                 Button::new("copy-email", ButtonKind::Bordered)
                     .label("Copy Email")
                     .icon(Icon::Copy)
-                    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text_body.clone()))),
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text_body.clone()))
+                    }),
             )
             .child(
                 Button::new("copy-invite", ButtonKind::Bordered)
                     .label("Copy Link")
                     .icon(Icon::Share)
-                    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))),
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))
+                    }),
             );
         if let Some(password) = &invite.password {
             column = column.child(
@@ -449,11 +540,36 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .flex()
                     .flex_col()
                     .pt(look.space(Space::S))
-                    .child(text("For other Subsonic apps", TypeRole::Fine, Tone::Ink, look))
-                    .child(text(format!("Server URL  {}", invite.server), TypeRole::Meta, Tone::Ink, look))
-                    .child(text(format!("Username    {}", invite.username), TypeRole::Meta, Tone::Ink, look))
-                    .child(text(format!("Password    {password}"), TypeRole::Meta, Tone::Ink, look))
-                    .child(text("Shown this once: the server keeps only its hash.", TypeRole::Fine, Tone::Muted, look)),
+                    .child(text(
+                        "For other Subsonic apps",
+                        TypeRole::Fine,
+                        Tone::Ink,
+                        look,
+                    ))
+                    .child(text(
+                        format!("Server URL  {}", invite.server),
+                        TypeRole::Meta,
+                        Tone::Ink,
+                        look,
+                    ))
+                    .child(text(
+                        format!("Username    {}", invite.username),
+                        TypeRole::Meta,
+                        Tone::Ink,
+                        look,
+                    ))
+                    .child(text(
+                        format!("Password    {password}"),
+                        TypeRole::Meta,
+                        Tone::Ink,
+                        look,
+                    ))
+                    .child(text(
+                        "Shown this once: the server keeps only its hash.",
+                        TypeRole::Fine,
+                        Tone::Muted,
+                        look,
+                    )),
             );
         }
         column.into_any_element()

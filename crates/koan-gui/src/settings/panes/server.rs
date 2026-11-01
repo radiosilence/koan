@@ -4,21 +4,20 @@
 
 use std::time::Duration;
 
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
-use koan_ffi::{ConnectionInfo, Settings};
 use crate::components::{
     Button, ButtonKind, FormRow, Picker, Segmented, Stepper, TextField, Toggle,
 };
 use crate::theme::{Icon, Look, Tone, TypeRole};
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
+use koan_ffi::{ConnectionInfo, Settings};
 
 use super::cache::{self, Keeping};
-use super::link::LinkDevice;
 use crate::mirror::{Mirror, Slice};
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, copyable, note, page, section, text};
-use crate::settings::model::{Uses, bytes, count, describe};
+use crate::settings::model::{Uses, bytes, count};
 use crate::settings::sheet::{Action, Sheet};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,7 +38,7 @@ const SYNC_EVERY: [(&str, u64); 5] = [
 const COPIED: Duration = Duration::from_millis(1500);
 
 pub struct ServerPane {
-    ctx: Ctx,
+    pub(super) ctx: Ctx,
     /// Which side is showing. Starts on what this device is doing; only
     /// choosing changes it.
     mode: Mode,
@@ -54,14 +53,18 @@ pub struct ServerPane {
     cache: Entity<Slice<u64>>,
     copied: Option<&'static str>,
     copy_reset: Option<Task<()>>,
-    share: super::share::ShareForm,
+    pub(super) share: super::share::ShareForm,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ServerPane {
     pub fn new(ctx: Ctx, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = ctx.model.read(cx).settings().cloned();
-        let field = |placeholder: &'static str, secret: bool, value: String, window: &mut Window, cx: &mut Context<Self>| {
+        let field = |placeholder: &'static str,
+                     secret: bool,
+                     value: String,
+                     window: &mut Window,
+                     cx: &mut Context<Self>| {
             cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder(placeholder)
@@ -92,22 +95,34 @@ impl ServerPane {
             cx.observe(&cache, |_, _, cx| cx.notify()),
             // An invite, or an address with the account in it, pasted where
             // the address goes.
-            cx.subscribe_in(&url, window, |pane, state, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let typed = state.read(cx).value().to_string();
-                    pane.join(&typed, true, window, cx);
-                }
-            }),
-            cx.subscribe_in(&secret, window, |pane, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    pane.sign_in(window, cx);
-                }
-            }),
-            cx.subscribe_in(&cache_limit, window, |pane, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
-                    pane.commit_cache_limit(window, cx);
-                }
-            }),
+            cx.subscribe_in(
+                &url,
+                window,
+                |pane, state, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        let typed = state.read(cx).value().to_string();
+                        pane.join(&typed, true, window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &secret,
+                window,
+                |pane, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        pane.sign_in(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &cache_limit,
+                window,
+                |pane, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                        pane.commit_cache_limit(window, cx);
+                    }
+                },
+            ),
         ];
         let mode = if settings.is_some_and(|s| s.share_enabled) {
             Mode::Share
@@ -181,9 +196,11 @@ impl ServerPane {
             });
             return;
         }
-        let Some(settings) = model.read(cx).settings() else { return };
-        let elsewhere = settings.remote_url != invite.server
-            || settings.remote_username != invite.username;
+        let Some(settings) = model.read(cx).settings() else {
+            return;
+        };
+        let elsewhere =
+            settings.remote_url != invite.server || settings.remote_username != invite.username;
         if settings.remote_signed_in && elsewhere {
             let current = host_of(settings);
             let join = {
@@ -199,7 +216,9 @@ impl ServerPane {
                     "kōan is signed in to {current}. Signing in here signs out of it: its tracks, favourites, history, playlists and downloads are removed from this device. Local files stay."
                 ))
                 .action(Action::new("Sign In", join));
-            self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+            self.ctx
+                .sheets
+                .update(cx, |s, cx| s.show(sheet, window, cx));
         } else {
             model.update(cx, |m, cx| m.join_invite(invite, cx));
         }
@@ -207,7 +226,9 @@ impl ServerPane {
 
     fn sign_out(&self, window: &mut Window, cx: &mut App) {
         let model = self.ctx.model.clone();
-        let Some(settings) = model.read(cx).settings() else { return };
+        let Some(settings) = model.read(cx).settings() else {
+            return;
+        };
         let sheet = Sheet::new(format!("Sign out of {}?", settings.remote_url))
             .message(format!(
                 "Its {} tracks, and the account's favourites, history, playlists and downloads, are removed from this device. Signing in again brings them back. Local files stay.",
@@ -219,11 +240,15 @@ impl ServerPane {
                 })
                 .destructive(),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn keep(&mut self, choice: Keeping, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(settings) = self.ctx.model.read(cx).settings() else { return };
+        let Some(settings) = self.ctx.model.read(cx).settings() else {
+            return;
+        };
         let keeping = Keeping::of(&settings.cache_limit);
         if choice == Keeping::Limited {
             self.choosing_limit = keeping != Keeping::Limited;
@@ -258,16 +283,28 @@ impl ServerPane {
     }
 
     /// Asks before downloads are deleted, saying how much is stored.
-    fn confirm_limit(&self, limit: String, stored: u64, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm_limit(
+        &self,
+        limit: String,
+        stored: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let title = if limit == "0" {
             "Keep only what plays next?".to_owned()
         } else {
             format!("Lower the limit to {limit}?")
         };
         let message = if limit == "0" {
-            format!("{} of downloads are stored. Tracks fetched to play that are not in the queue ahead are deleted now. Downloads you asked for and favourite records stay.", bytes(stored))
+            format!(
+                "{} of downloads are stored. Tracks fetched to play that are not in the queue ahead are deleted now. Downloads you asked for and favourite records stay.",
+                bytes(stored)
+            )
         } else {
-            format!("{} of downloads are stored. Those over the limit are deleted now, the tracks played longest ago first. Favourite records stay.", bytes(stored))
+            format!(
+                "{} of downloads are stored. Those over the limit are deleted now, the tracks played longest ago first. Favourite records stay.",
+                bytes(stored)
+            )
         };
         let pane = cx.entity();
         let sheet = Sheet::new(title).message(message).action(
@@ -277,12 +314,16 @@ impl ServerPane {
             })
             .destructive(),
         );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     fn commit_cache_limit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let typed = self.cache_limit.read(cx).value().to_string();
-        let Some(settings) = self.ctx.model.read(cx).settings() else { return };
+        let Some(settings) = self.ctx.model.read(cx).settings() else {
+            return;
+        };
         if typed.trim() == cache::limit_gb(&settings.cache_limit) {
             return;
         }
@@ -315,14 +356,20 @@ impl ServerPane {
             let server = settings.remote_url.clone();
             let mut rows = vec![
                 FormRow::new("Server")
-                    .control(copyable("copy-server", server, self.copied == Some("server"), {
-                        let entity = entity.clone();
-                        let server = settings.remote_url.clone();
-                        move |cx| {
-                            let server = server.clone();
-                            entity.update(cx, |pane, cx| pane.copy("server", server, cx))
-                        }
-                    }, look))
+                    .control(copyable(
+                        "copy-server",
+                        server,
+                        self.copied == Some("server"),
+                        {
+                            let entity = entity.clone();
+                            let server = settings.remote_url.clone();
+                            move |cx| {
+                                let server = server.clone();
+                                entity.update(cx, |pane, cx| pane.copy("server", server, cx))
+                            }
+                        },
+                        look,
+                    ))
                     .into_any_element(),
                 FormRow::new("User")
                     .value(settings.remote_username.clone())
@@ -356,7 +403,9 @@ impl ServerPane {
                         .destructive(true)
                         .on_click({
                             let entity = entity.clone();
-                            move |_, window, cx| entity.read(cx).sign_out(window, cx)
+                            move |_, window, cx| {
+                                entity.update(cx, |this, cx| this.sign_out(window, cx))
+                            }
                         })
                         .into_any_element(),
                 ],
@@ -416,7 +465,9 @@ impl ServerPane {
                                         .read_from_clipboard()
                                         .and_then(|item| item.text())
                                         .unwrap_or_default();
-                                    entity.update(cx, |pane, cx| pane.join(&pasted, false, window, cx))
+                                    entity.update(cx, |pane, cx| {
+                                        pane.join(&pasted, false, window, cx)
+                                    })
                                 }
                             })
                             .into_any_element(),
@@ -476,20 +527,31 @@ impl ServerPane {
     fn downloads(&self, settings: &Settings, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let entity = cx.entity();
         let keeping = Keeping::of(&settings.cache_limit);
-        let shown = if self.choosing_limit { Keeping::Limited } else { keeping };
+        let shown = if self.choosing_limit {
+            Keeping::Limited
+        } else {
+            keeping
+        };
         let ahead = cache::ahead_options(settings.download_ahead);
-        let ahead_index = ahead.iter().position(|(_, v)| *v == settings.download_ahead);
+        let ahead_index = ahead
+            .iter()
+            .position(|(_, v)| *v == settings.download_ahead);
         let stored = self.cache.read(cx).0;
         let clearing = self.ctx.model.read(cx).conflicts(Uses::DOWNLOADS);
 
         let workers = {
             let model = self.ctx.model.clone();
-            Stepper::new("workers", "Parallel downloads", settings.download_workers as i64, 1..=16)
-                .shown(settings.download_workers.to_string())
-                .on_change(move |n, _, cx| {
-                    let n = *n as u32;
-                    model.update(cx, |m, cx| m.edit(cx, move |s| s.download_workers = n))
-                })
+            Stepper::new(
+                "workers",
+                "Parallel downloads",
+                settings.download_workers as i64,
+                1..=16,
+            )
+            .shown(settings.download_workers.to_string())
+            .on_change(move |n, _, cx| {
+                let n = *n as u32;
+                model.update(cx, |m, cx| m.edit(cx, move |s| s.download_workers = n))
+            })
         };
         let ahead_picker = {
             let model = self.ctx.model.clone();
@@ -516,8 +578,12 @@ impl ServerPane {
 
         let mut rows = vec![
             workers.into_any_element(),
-            FormRow::new("Download ahead").control(ahead_picker).into_any_element(),
-            FormRow::new("Keep downloads").control(keeping_picker).into_any_element(),
+            FormRow::new("Download ahead")
+                .control(ahead_picker)
+                .into_any_element(),
+            FormRow::new("Keep downloads")
+                .control(keeping_picker)
+                .into_any_element(),
         ];
         if shown == Keeping::Limited {
             rows.push(
@@ -562,7 +628,9 @@ impl ServerPane {
                 })
                 .destructive(),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 }
 
@@ -614,7 +682,11 @@ fn offers(connection: &Option<ConnectionInfo>, look: &Look) -> AnyElement {
                     .value(if c.open_subsonic { "Yes" } else { "No" })
                     .into_any_element(),
             );
-            rows.push(FormRow::new("Your devices").value(devices).into_any_element());
+            rows.push(
+                FormRow::new("Your devices")
+                    .value(devices)
+                    .into_any_element(),
+            );
             for e in &c.extensions {
                 let versions = e
                     .versions
@@ -622,10 +694,16 @@ fn offers(connection: &Option<ConnectionInfo>, look: &Look) -> AnyElement {
                     .map(|v| format!("v{v}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                rows.push(FormRow::data(e.name.clone()).value(versions).into_any_element());
+                rows.push(
+                    FormRow::data(e.name.clone())
+                        .value(versions)
+                        .into_any_element(),
+                );
             }
         }
-        _ => rows.push(text("Not reached yet", TypeRole::Body, Tone::Muted, look).into_any_element()),
+        _ => {
+            rows.push(text("Not reached yet", TypeRole::Body, Tone::Muted, look).into_any_element())
+        }
     }
     section(
         Some("What the server offers"),
@@ -678,7 +756,7 @@ impl Render for ServerPane {
             &look,
         )];
         match mode {
-            Mode::Share => sections.extend(self.share.sections(&self.ctx, &settings, &look, window, cx)),
+            Mode::Share => sections.extend(self.share.sections(&self.ctx, &settings, &look, cx)),
             Mode::Connect if settings.share_enabled => sections.push(section(
                 None,
                 vec![text(
@@ -708,15 +786,38 @@ pub enum ModeLabel {
 impl ModeLabel {
     pub fn render(&self, look: &Look) -> AnyElement {
         match self {
-            ModeLabel::Sharing(port) => note(format!("Sharing on port {port}"), Icon::Server, Tone::Muted, look),
-            ModeLabel::NotSharing(why) => note(format!("Not sharing: {why}"), Icon::Warning, Tone::Bad, look),
-            ModeLabel::Connected(host) => note(format!("Connected to {host}"), Icon::Server, Tone::Muted, look),
-            ModeLabel::Own => note("Playing this device's own library", Icon::Library, Tone::Muted, look),
+            ModeLabel::Sharing(port) => note(
+                format!("Sharing on port {port}"),
+                Icon::Server,
+                Tone::Muted,
+                look,
+            ),
+            ModeLabel::NotSharing(why) => note(
+                format!("Not sharing: {why}"),
+                Icon::Warning,
+                Tone::Bad,
+                look,
+            ),
+            ModeLabel::Connected(host) => note(
+                format!("Connected to {host}"),
+                Icon::Server,
+                Tone::Muted,
+                look,
+            ),
+            ModeLabel::Own => note(
+                "Playing this device's own library",
+                Icon::Library,
+                Tone::Muted,
+                look,
+            ),
         }
     }
 }
 
-pub fn mode_label(sharing: &crate::settings::sharing::Sharing, connection: &Option<ConnectionInfo>) -> ModeLabel {
+pub fn mode_label(
+    sharing: &crate::settings::sharing::Sharing,
+    connection: &Option<ConnectionInfo>,
+) -> ModeLabel {
     if let Some(serving) = &sharing.serving {
         ModeLabel::Sharing(serving.port)
     } else if let Some(failure) = &sharing.failure {
@@ -730,7 +831,7 @@ pub fn mode_label(sharing: &crate::settings::sharing::Sharing, connection: &Opti
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::host;
 
     #[test]
     fn reads_a_host() {

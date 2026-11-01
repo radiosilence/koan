@@ -11,18 +11,18 @@ mod form;
 pub mod model;
 mod panes;
 mod qr;
-mod sheet;
 pub mod sharing;
+mod sheet;
 
 use std::sync::Arc;
 
+use crate::theme::{
+    self, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole, label,
+};
 use gpui_kit::base::Root;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{ConnectionInfo, KoanEngine};
-use crate::theme::{
-    self, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole, label,
-};
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
@@ -77,15 +77,15 @@ pub fn resume(cx: &mut App) {
 
 /// Opens the Settings window, or brings the open one forward.
 pub fn open(cx: &mut App) {
-    let settings = cx.global::<Settings>();
-    if let Some(handle) = settings.window
+    let held = cx.global::<Settings>().window;
+    if let Some(handle) = held
         && handle
             .update(cx, |_, window, _| window.activate_window())
             .is_ok()
     {
         return;
     }
-    let model = settings.model.clone();
+    let model = cx.global::<Settings>().model.clone();
     // Activation is not reported by every Linux compositor, so the file is
     // read again on opening as well.
     model.update(cx, |model, cx| model.reload(cx));
@@ -161,8 +161,8 @@ impl SettingsWindow {
                 }
             }),
             cx.on_release(|_, cx| {
-                if let Some(settings) = cx.try_global_mut::<Settings>() {
-                    settings.window = None;
+                if cx.has_global::<Settings>() {
+                    cx.global_mut::<Settings>().window = None;
                 }
             }),
         ];
@@ -241,7 +241,10 @@ impl SettingsWindow {
         tabs.extend([Tab::Playback, Tab::Devices]);
         if signed
             && connection.as_ref().is_some_and(|c| {
-                c.scrobbling || c.extensions.iter().any(|e| e.name == panes::integrations::MCP)
+                c.scrobbling
+                    || c.extensions
+                        .iter()
+                        .any(|e| e.name == panes::integrations::MCP)
             })
         {
             tabs.push(Tab::Integrations);
@@ -266,7 +269,11 @@ impl SettingsWindow {
 }
 
 impl Render for SettingsWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> impl IntoElement {
         KoanTheme::drive(window, cx);
         let look = Look::of(window, cx);
         let tabs = self.tabs(cx);
@@ -284,14 +291,13 @@ impl Render for SettingsWindow {
             .pb(look.space(Space::Xs))
             .children(tabs.into_iter().map(|tab| {
                 let entity = entity.clone();
-                tab_item(tab, tab == self.tab, &look).on_click(
-                    move |_, window, cx| {
-                        entity.update(cx, |this, cx| this.choose(tab, window, cx))
-                    },
-                )
+                tab_item(tab, tab == self.tab, &look).on_click(move |_, window, cx| {
+                    entity.update(cx, |this, cx| this.choose(tab, window, cx))
+                })
             }));
         let status = status_line(self.ctx.model.read(cx), &look);
-        let sheet = self.ctx.sheets.read(cx).render(&self.ctx.sheets, &look, window, cx);
+        let sheets = self.ctx.sheets.clone();
+        let sheet = Sheets::render(&sheets, &look, window, cx);
         let fill = || {
             let mut style = StyleRefinement::default();
             style.size.width = Some(relative(1.0).into());

@@ -2,14 +2,14 @@
 //! look, so no theme to choose. Each is saved by the engine in the
 //! background (`[appearance]`) and applied here from the app's own copy.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use crate::components::{FormRow, Slider, Toggle};
 use crate::theme::tokens::{TEXT_SIZE_STEP, TEXT_SIZES};
 use crate::theme::{KoanTheme, Look};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 
-use crate::settings::form::{page, section};
 use crate::settings::Ctx;
+use crate::settings::form::{page, section};
 
 pub struct AppearancePane {
     ctx: Ctx,
@@ -29,16 +29,28 @@ impl AppearancePane {
     }
 
     fn commit_text_size(&mut self, cx: &mut Context<Self>) {
-        let Some(percent) = self.text_size.take() else { return };
+        let Some(percent) = self.text_size.take() else {
+            return;
+        };
         KoanTheme::set_text_size(percent, cx);
-        self.ctx.model.read(cx).engine().set_text_size(percent as u16);
+        self.ctx
+            .model
+            .read(cx)
+            .engine()
+            .set_text_size(percent as u16);
         cx.notify();
     }
 
     fn commit_wash_tint(&mut self, cx: &mut Context<Self>) {
-        let Some(percent) = self.wash_tint.take() else { return };
+        let Some(percent) = self.wash_tint.take() else {
+            return;
+        };
         KoanTheme::set_wash_tint(percent, cx);
-        self.ctx.model.read(cx).engine().set_wash_tint(percent as u8);
+        self.ctx
+            .model
+            .read(cx)
+            .engine()
+            .set_wash_tint(percent as u8);
         cx.notify();
     }
 }
@@ -169,7 +181,7 @@ impl Render for AppearancePane {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{fraction, snapped};
 
     #[test]
     fn a_slider_lands_on_steps() {

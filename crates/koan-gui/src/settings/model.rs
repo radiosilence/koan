@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use std::rc::Rc;
 
-use gpui_kit::{AppContext, Context, SharedString, Subscription, Task};
+use gpui_kit::{Context, SharedString, Subscription, Task};
 use koan_ffi::{KoanEngine, KoanError, Settings};
 
 use crate::mirror::{Mirror, Slice};
@@ -156,8 +156,16 @@ impl SettingsModel {
             _tasks: cx.observe(&tasks, |model, tasks, cx| {
                 let Slice(tasks) = *tasks.read(cx);
                 let busy = Uses::NONE
-                    .with(if tasks.scanning { Uses::LOCAL_LIBRARY } else { Uses::NONE })
-                    .with(if tasks.syncing { Uses::REMOTE_TRACKS } else { Uses::NONE });
+                    .with(if tasks.scanning {
+                        Uses::LOCAL_LIBRARY
+                    } else {
+                        Uses::NONE
+                    })
+                    .with(if tasks.syncing {
+                        Uses::REMOTE_TRACKS
+                    } else {
+                        Uses::NONE
+                    });
                 if busy != model.engine_busy {
                     model.engine_busy = busy;
                     cx.notify();
@@ -235,7 +243,9 @@ impl SettingsModel {
             }
             let result = engine.update_settings(settings.clone()).await;
             this.update(cx, |model, cx| {
-                let Some(draft) = &mut model.draft else { return };
+                let Some(draft) = &mut model.draft else {
+                    return;
+                };
                 let more = match result {
                     Ok(()) => {
                         model.last_error = None;
@@ -371,7 +381,10 @@ impl SettingsModel {
             |engine| engine.rebuild_index(),
             |model, result, cx| match result {
                 Ok(s) => model.done(
-                    format!("Removed {} tracks — scan or sync to rebuild", count(s.tracks)),
+                    format!(
+                        "Removed {} tracks — scan or sync to rebuild",
+                        count(s.tracks)
+                    ),
                     cx,
                 ),
                 Err(e) => model.report(describe(&e), cx),
@@ -394,9 +407,7 @@ impl SettingsModel {
             cx,
             move |engine| async move {
                 if with_key {
-                    engine
-                        .sign_in_remote_with_key(url, username, secret)
-                        .await
+                    engine.sign_in_remote_with_key(url, username, secret).await
                 } else {
                     engine.sign_in_remote(url, username, secret).await
                 }
@@ -423,7 +434,9 @@ impl SettingsModel {
                     model.done(format!("Signed in to {host}"), cx);
                     model.load_library(cx);
                 }
-                Err(e) => model.report(format!("Could not sign in to {host}: {}", describe(&e)), cx),
+                Err(e) => {
+                    model.report(format!("Could not sign in to {host}: {}", describe(&e)), cx)
+                }
             },
         );
     }
@@ -475,8 +488,8 @@ impl SettingsModel {
                 Ok(s) => model.done(
                     format!(
                         "{} tracks across {} albums",
-                        count(s.tracks),
-                        count(s.albums)
+                        count(s.tracks.into()),
+                        count(s.albums.into())
                     ),
                     cx,
                 ),
@@ -554,7 +567,7 @@ pub fn count(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             out.push(',');
         }
         out.push(digit);

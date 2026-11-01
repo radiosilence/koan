@@ -5,15 +5,16 @@
 
 use std::rc::Rc;
 
+use crate::components::{Button, ButtonKind, TextField};
+use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
 use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use crate::components::{Button, ButtonKind, TextField};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
 
 type Run = Rc<dyn Fn(&[String], &mut Window, &mut App)>;
 type Content = Rc<dyn Fn(&Look, &mut Window, &mut App) -> AnyElement>;
+type Ready = Rc<dyn Fn(&[String]) -> bool>;
 
 /// A sheet's action. It closes the sheet, then runs with what the fields
 /// hold.
@@ -21,7 +22,7 @@ pub struct Action {
     label: SharedString,
     destructive: bool,
     /// Whether it can run with what the fields hold.
-    ready: Option<Rc<dyn Fn(&[String]) -> bool>>,
+    ready: Option<Ready>,
     run: Run,
 }
 
@@ -101,7 +102,12 @@ impl Sheet {
 }
 
 /// A field for a sheet's prompt.
-pub fn field(placeholder: &str, secret: bool, window: &mut Window, cx: &mut App) -> Entity<InputState> {
+pub fn field(
+    placeholder: &str,
+    secret: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
     let placeholder = SharedString::from(placeholder.to_owned());
     cx.new(|cx| {
         InputState::new(window, cx)
@@ -148,15 +154,18 @@ impl Sheets {
         self.open.is_some()
     }
 
+    /// The sheet up, over its scrim, if one is.
     pub(super) fn render(
-        &self,
         this: &Entity<Self>,
         look: &Look,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let sheet = self.open.as_ref()?;
-        let focus = self.focus.clone()?;
+        let focus = this.read(cx).focus.clone()?;
+        let content = this.read(cx).open.as_ref()?.content.clone();
+        let extra = content.map(|content| content(look, window, cx));
+        let sheets = this.read(cx);
+        let sheet = sheets.open.as_ref()?;
         let values: Vec<String> = sheet
             .fields
             .iter()
@@ -254,7 +263,7 @@ impl Sheets {
                     )
                     .child(TextField::new(state))
             }))
-            .children(sheet.content.as_ref().map(|content| content(look, window, cx)))
+            .children(extra)
             .child(buttons)
             .focus_trap("sheet-trap", &focus);
 

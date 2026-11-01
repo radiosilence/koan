@@ -10,7 +10,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use gpui_kit::{App, AppContext, Context, SharedString, Task};
+use gpui_kit::{App, Context, SharedString, Task};
 use koan_ffi::{InviteTo, KoanEngine, ShareStatus, Sharing as Serving};
 
 use super::model::describe;

@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
+use crate::components::{Button, ButtonKind, TextField};
+use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{KoanEngine, KoanError};
-use crate::components::{Button, ButtonKind, TextField};
-use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, day, item, section, text};
@@ -141,12 +141,18 @@ impl Keys {
                 keys.load(cx);
                 made.ok()
             });
-            let Ok(Some((name, secret))) = made else { return };
+            let Ok(Some((name, secret))) = made else {
+                return;
+            };
             handle
                 .update(cx, |_, window, cx| {
-                    this.update(cx, |keys, cx| keys.name.update(cx, |s, cx| s.set_value("", window, cx)))
-                        .ok();
-                    sheets.update(cx, |s, cx| s.show(shown_once(kind, name, secret), window, cx));
+                    this.update(cx, |keys, cx| {
+                        keys.name.update(cx, |s, cx| s.set_value("", window, cx))
+                    })
+                    .ok();
+                    sheets.update(cx, |s, cx| {
+                        s.show(shown_once(kind, name, secret), window, cx)
+                    });
                 })
                 .ok();
         })
@@ -177,7 +183,9 @@ impl Keys {
                 })
                 .destructive(),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 }
 
@@ -209,10 +217,14 @@ fn shown_once(kind: Kind, name: String, secret: String) -> Sheet {
 
 fn detail(row: &Row) -> String {
     let made = row.created.map(|at| format!("Made {}", day(at)));
-    let used = row
-        .last_used
-        .map_or_else(|| "never used".to_owned(), |at| format!("last used {}", day(at)));
-    made.into_iter().chain([used]).collect::<Vec<_>>().join(" · ")
+    let used = row.last_used.map_or_else(
+        || "never used".to_owned(),
+        |at| format!("last used {}", day(at)),
+    );
+    made.into_iter()
+        .chain([used])
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 impl Render for Keys {
@@ -225,7 +237,8 @@ impl Render for Keys {
                 for (index, row) in list.iter().enumerate() {
                     let control = if row.this_device {
                         // Revoking it is signing out, which Sign Out does properly.
-                        text(label("This device"), TypeRole::Control, Tone::Muted, &look).into_any_element()
+                        text(label("This device"), TypeRole::Control, Tone::Muted, &look)
+                            .into_any_element()
                     } else {
                         let entity = entity.clone();
                         let row = row.clone();
@@ -238,7 +251,12 @@ impl Render for Keys {
                             })
                             .into_any_element()
                     };
-                    rows.push(item(row.name.clone(), Some(detail(row).into()), vec![control], &look));
+                    rows.push(item(
+                        row.name.clone(),
+                        Some(detail(row).into()),
+                        vec![control],
+                        &look,
+                    ));
                 }
                 let ready = !self.name.read(cx).value().trim().is_empty();
                 let new_label = match self.kind {
@@ -247,7 +265,10 @@ impl Render for Keys {
                 };
                 rows.push(buttons(
                     vec![
-                        div().w(px(260.)).child(TextField::new(&self.name)).into_any_element(),
+                        div()
+                            .w(px(260.))
+                            .child(TextField::new(&self.name))
+                            .into_any_element(),
                         Button::new("new-secret", ButtonKind::Bordered)
                             .label(new_label)
                             .disabled(!ready)
@@ -274,10 +295,18 @@ impl Render for Keys {
                 "For Subsonic apps that sign in only with a token and salt, and so cannot use an API key. Changing your password revokes them all.",
             ),
         };
-        let footer: SharedString = self.error.clone().unwrap_or_else(|| about.to_owned()).into();
-        let tone = if self.error.is_some() { Tone::Bad } else { Tone::Muted };
-        div().child(section(Some(header), rows, None, &look)).child(
-            text(footer, TypeRole::Fine, tone, &look).pt(look.space(Space::Xs)),
-        )
+        let footer: SharedString = self
+            .error
+            .clone()
+            .unwrap_or_else(|| about.to_owned())
+            .into();
+        let tone = if self.error.is_some() {
+            Tone::Bad
+        } else {
+            Tone::Muted
+        };
+        div()
+            .child(section(Some(header), rows, None, &look))
+            .child(text(footer, TypeRole::Fine, tone, &look).pt(look.space(Space::Xs)))
     }
 }

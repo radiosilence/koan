@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Corner, ElementId, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
+    Anchor, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
 
 use super::{Handler, MenuPanel, MenuRow, child, focus, ring};
@@ -88,7 +88,11 @@ impl RenderOnce for Picker {
             .text_role(TypeRole::Control, &look)
             .text_color(color)
             .child(div().whitespace_nowrap().child(shown))
-            .child(KoanIcon::new(Icon::Choose).role(TypeRole::Control).color(color));
+            .child(
+                KoanIcon::new(Icon::Choose)
+                    .role(TypeRole::Control)
+                    .color(color),
+            );
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
@@ -131,7 +135,7 @@ impl RenderOnce for Picker {
             ));
             deferred(
                 anchored()
-                    .anchor(Corner::TopLeft)
+                    .anchor(Anchor::TopLeft)
                     .snap_to_window_with_margin(look.space(Space::S))
                     .child(
                         div()

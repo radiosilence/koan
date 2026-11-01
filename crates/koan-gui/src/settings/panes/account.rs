@@ -2,10 +2,10 @@
 //! by QR code, its password, the API keys apps sign in with, and app
 //! passwords for apps that cannot use a key. Each where the server lists it.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use crate::components::{Button, ButtonKind, FormRow};
 use crate::theme::Look;
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 
 use super::keys::{Keys, Kind};
 use super::link::LinkDevice;
@@ -34,7 +34,9 @@ impl AccountPane {
             _subscriptions: vec![
                 cx.observe(&ctx.model, |_, _, cx| cx.notify()),
                 cx.observe(&ctx.sharing, |_, _, cx| cx.notify()),
-                cx.observe_in(&ctx.connection, window, |pane, _, window, cx| pane.follow(window, cx)),
+                cx.observe_in(&ctx.connection, window, |pane, _, window, cx| {
+                    pane.follow(window, cx)
+                }),
             ],
             ctx,
             account: None,
@@ -68,7 +70,8 @@ impl AccountPane {
         let engine = self.ctx.model.read(cx).engine().clone();
         self.link = match (&account, offers(&connection, people::EXTENSION)) {
             (Some(account), true) => self.link.take().or_else(|| {
-                let (engine, account, connection) = (engine.clone(), account.clone(), self.ctx.connection.clone());
+                let (engine, account, connection) =
+                    (engine.clone(), account.clone(), self.ctx.connection.clone());
                 Some(cx.new(|cx| LinkDevice::new(engine, account, connection, cx)))
             }),
             _ => None,
@@ -106,7 +109,9 @@ impl AccountPane {
                 })
                 .ready(|values| !values[0].is_empty() && !values[1].is_empty()),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 }
 
@@ -121,7 +126,11 @@ impl Render for AccountPane {
         if let Some(link) = &self.link {
             sections.push(link.clone().into_any_element());
         }
-        if let Some(account) = self.account.clone().filter(|_| offers(connection, PASSWORDS) && !sharing) {
+        if let Some(account) = self
+            .account
+            .clone()
+            .filter(|_| offers(connection, PASSWORDS) && !sharing)
+        {
             let entity = cx.entity();
             sections.push(section(
                 Some("Password"),
@@ -130,7 +139,7 @@ impl Render for AccountPane {
                     .control(
                         Button::new("change-password", ButtonKind::Bordered)
                             .label("Change Password…")
-                            .on_click(move |_, window, cx| entity.read(cx).change_password(window, cx)),
+                            .on_click(move |_, window, cx| entity.update(cx, |this, cx| this.change_password(window, cx))),
                     )
                     .into_any_element()],
                 Some("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.".into()),
@@ -138,7 +147,11 @@ impl Render for AccountPane {
             ));
         }
         sections.extend(self.api_keys.clone().map(IntoElement::into_any_element));
-        sections.extend(self.app_passwords.clone().map(IntoElement::into_any_element));
+        sections.extend(
+            self.app_passwords
+                .clone()
+                .map(IntoElement::into_any_element),
+        );
         page("account", &look, sections)
     }
 }

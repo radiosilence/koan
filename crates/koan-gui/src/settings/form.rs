@@ -1,10 +1,10 @@
 //! The pieces every pane is laid out from: the Mac's `KoanForm` sections in
 //! the theme, square and stacked with no cards.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use crate::components::SectionHeader;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 
 /// A pane's page: sections down a column that scrolls, held to a readable
 /// width.
@@ -35,7 +35,9 @@ pub fn section(
         .flex_col()
         .children(header.map(SectionHeader::new))
         .child(div().flex().flex_col().children(rows))
-        .children(footer.map(|footer| text(footer, TypeRole::Fine, Tone::Muted, look).pt(look.space(Space::Xs))))
+        .children(footer.map(|footer| {
+            text(footer, TypeRole::Fine, Tone::Muted, look).pt(look.space(Space::Xs))
+        }))
         .into_any_element()
 }
 
@@ -117,7 +119,11 @@ pub fn copyable(
         .text_color(look.palette.muted.hsla())
         .hover(move |s| s.text_color(ink))
         .truncate()
-        .child(if copied { crate::theme::label("Copied") } else { value.into() })
+        .child(if copied {
+            crate::theme::label("Copied")
+        } else {
+            value.into()
+        })
         .tooltip(|window, cx| crate::components::Tooltip::view("copy".into(), window, cx))
         .on_click(move |_, _, cx| on_click(cx))
 }

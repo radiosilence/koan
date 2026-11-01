@@ -4,12 +4,12 @@
 //! server: approving a device that signs in by code, and keeping the queue
 //! on the server.
 
+use crate::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
+use crate::theme::{Icon, Look, Tone, TypeRole};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{ConnectedInfo, ServerQueue};
-use crate::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
-use crate::theme::{Icon, Look, Tone, TypeRole};
 
 use super::server::host;
 use crate::settings::Ctx;
@@ -45,29 +45,41 @@ impl DevicesPane {
             cx.observe(&grantee, |_, _, cx| cx.notify()),
             // The code reads as the device shows it, however it is typed or
             // pasted.
-            cx.subscribe_in(&code, window, |pane, state, event: &InputEvent, window, cx| match event {
-                InputEvent::Change => {
-                    let typed = state.read(cx).value().to_string();
-                    let shown = koan_ffi::format_pair_code(typed.clone());
-                    if shown != typed {
-                        state.update(cx, |s, cx| s.set_value(shown, window, cx));
+            cx.subscribe_in(
+                &code,
+                window,
+                |pane, state, event: &InputEvent, window, cx| match event {
+                    InputEvent::Change => {
+                        let typed = state.read(cx).value().to_string();
+                        let shown = koan_ffi::format_pair_code(typed.clone());
+                        if shown != typed {
+                            state.update(cx, |s, cx| s.set_value(shown, window, cx));
+                        }
+                        cx.notify();
                     }
-                    cx.notify();
-                }
-                InputEvent::PressEnter { .. } => pane.approve(window, cx),
-                _ => {}
-            }),
-            cx.subscribe_in(&address, window, |pane, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    pane.add_address(window, cx);
-                }
-            }),
-            cx.subscribe_in(&grantee, window, |pane, state, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    let name = state.read(cx).value().trim().to_owned();
-                    pane.share(name, true, window, cx);
-                }
-            }),
+                    InputEvent::PressEnter { .. } => pane.approve(window, cx),
+                    _ => {}
+                },
+            ),
+            cx.subscribe_in(
+                &address,
+                window,
+                |pane, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        pane.add_address(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &grantee,
+                window,
+                |pane, state, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        let name = state.read(cx).value().trim().to_owned();
+                        pane.share(name, true, window, cx);
+                    }
+                },
+            ),
         ];
         Self {
             ctx,
@@ -242,12 +254,20 @@ impl DevicesPane {
                 })
                 .destructive(),
             );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
     /// Hangs up a device connected on the network; refusing it as well
     /// keeps its address out for good.
-    fn end(&self, connection: ConnectedInfo, refuse: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn end(
+        &self,
+        connection: ConnectedInfo,
+        refuse: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let model = self.ctx.model.clone();
         let (title, message, label) = if refuse {
             (
@@ -280,7 +300,9 @@ impl DevicesPane {
             })
             .destructive(),
         );
-        self.ctx.sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+        self.ctx
+            .sheets
+            .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 }
 
@@ -316,8 +338,10 @@ impl Render for DevicesPane {
         let model = self.ctx.model.clone();
         let mut sections = Vec::new();
 
-        if settings.remote_signed_in || self.ctx.sharing.read(cx).serving.is_some() {
-            if connection.as_ref().is_some_and(|c| c.pairing) {
+        if (settings.remote_signed_in || self.ctx.sharing.read(cx).serving.is_some())
+            && connection.as_ref().is_some_and(|c| c.pairing)
+        {
+            {
                 let ready = !self.code.read(cx).value().trim().is_empty();
                 let pane = entity.clone();
                 sections.push(section(
@@ -356,12 +380,16 @@ impl Render for DevicesPane {
         let mut this_device = vec![
             {
                 let model = model.clone();
-                Toggle::new("discoverable", "Discoverable on this network", settings.devices_discoverable)
-                    .on_change(move |on, _, cx| {
-                        let on = *on;
-                        model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_discoverable = on))
-                    })
-                    .into_any_element()
+                Toggle::new(
+                    "discoverable",
+                    "Discoverable on this network",
+                    settings.devices_discoverable,
+                )
+                .on_change(move |on, _, cx| {
+                    let on = *on;
+                    model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_discoverable = on))
+                })
+                .into_any_element()
             },
             {
                 let model = model.clone();
@@ -370,18 +398,26 @@ impl Render for DevicesPane {
                         Picker::new(
                             "nearby-control",
                             NEARBY.map(|(label, _)| label),
-                            NEARBY.iter().position(|(_, v)| *v == settings.devices_nearby_control),
+                            NEARBY
+                                .iter()
+                                .position(|(_, v)| *v == settings.devices_nearby_control),
                         )
                         .on_change(move |index, _, cx| {
                             let value = NEARBY[*index].1;
-                            model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_nearby_control = value.into()))
+                            model.update(cx, |m, cx| {
+                                m.edit(cx, move |s| s.devices_nearby_control = value.into())
+                            })
                         }),
                     )
                     .into_any_element()
             },
         ];
         if let Some(port) = connection.as_ref().and_then(|c| c.listening_port) {
-            this_device.push(FormRow::new("Listening on port").value(port.to_string()).into_any_element());
+            this_device.push(
+                FormRow::new("Listening on port")
+                    .value(port.to_string())
+                    .into_any_element(),
+            );
         }
         if connection.as_ref().is_some_and(|c| c.local_network_blocked) {
             this_device.push(note(
@@ -399,8 +435,14 @@ impl Render for DevicesPane {
         ));
 
         // Who is connected, each with a way to end it where this device can.
-        let connections = connection.as_ref().map(|c| c.connections.clone()).unwrap_or_default();
-        let held = connection.as_ref().map(|c| c.held.clone()).unwrap_or_default();
+        let connections = connection
+            .as_ref()
+            .map(|c| c.connections.clone())
+            .unwrap_or_default();
+        let held = connection
+            .as_ref()
+            .map(|c| c.held.clone())
+            .unwrap_or_default();
         let refused = settings.devices_refused.clone();
         if !connections.is_empty() || !held.is_empty() || !refused.is_empty() {
             let mut rows = Vec::new();
@@ -431,7 +473,12 @@ impl Render for DevicesPane {
                             .into_any_element(),
                     );
                 }
-                rows.push(item(c.name.clone(), Some(detail(&c).into()), controls, &look));
+                rows.push(item(
+                    c.name.clone(),
+                    Some(detail(&c).into()),
+                    controls,
+                    &look,
+                ));
             }
             for (index, h) in held.into_iter().enumerate() {
                 let engine = model.read(cx).engine().clone();
@@ -439,10 +486,12 @@ impl Render for DevicesPane {
                 rows.push(item(
                     h.name.clone().unwrap_or_else(|| h.addr.clone()),
                     Some("Disconnected until allowed back".into()),
-                    vec![Button::new(("allow-held", index), ButtonKind::Compact)
-                        .label("Allow")
-                        .on_click(move |_, _, _| engine.allow_held(addr.clone()))
-                        .into_any_element()],
+                    vec![
+                        Button::new(("allow-held", index), ButtonKind::Compact)
+                            .label("Allow")
+                            .on_click(move |_, _, _| engine.allow_held(addr.clone()))
+                            .into_any_element(),
+                    ],
                     &look,
                 ));
             }
@@ -452,13 +501,17 @@ impl Render for DevicesPane {
                 rows.push(item(
                     addr,
                     Some("Refused".into()),
-                    vec![Button::new(("allow-refused", index), ButtonKind::Compact)
-                        .label("Allow")
-                        .on_click(move |_, _, cx| {
-                            let allowed = allowed.clone();
-                            model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_refused.retain(|a| *a != allowed)))
-                        })
-                        .into_any_element()],
+                    vec![
+                        Button::new(("allow-refused", index), ButtonKind::Compact)
+                            .label("Allow")
+                            .on_click(move |_, _, cx| {
+                                let allowed = allowed.clone();
+                                model.update(cx, |m, cx| {
+                                    m.edit(cx, move |s| s.devices_refused.retain(|a| *a != allowed))
+                                })
+                            })
+                            .into_any_element(),
+                    ],
                     &look,
                 ));
             }
@@ -485,14 +538,20 @@ impl Render for DevicesPane {
                 item(
                     addr.clone(),
                     None,
-                    vec![Button::new(("remove-address", index), ButtonKind::Compact)
-                        .label("Remove")
-                        .destructive(true)
-                        .on_click(move |_, _, cx| {
-                            let removed = removed.clone();
-                            model.update(cx, |m, cx| m.edit(cx, move |s| s.devices_addresses.retain(|a| *a != removed)))
-                        })
-                        .into_any_element()],
+                    vec![
+                        Button::new(("remove-address", index), ButtonKind::Compact)
+                            .label("Remove")
+                            .destructive(true)
+                            .on_click(move |_, _, cx| {
+                                let removed = removed.clone();
+                                model.update(cx, |m, cx| {
+                                    m.edit(cx, move |s| {
+                                        s.devices_addresses.retain(|a| *a != removed)
+                                    })
+                                })
+                            })
+                            .into_any_element(),
+                    ],
                     &look,
                 )
             })
@@ -501,11 +560,16 @@ impl Render for DevicesPane {
         let pane = entity.clone();
         addresses.push(buttons(
             vec![
-                div().w(px(260.)).child(TextField::new(&self.address)).into_any_element(),
+                div()
+                    .w(px(260.))
+                    .child(TextField::new(&self.address))
+                    .into_any_element(),
                 Button::new("add-address", ButtonKind::Bordered)
                     .label("Add")
                     .disabled(!ready)
-                    .on_click(move |_, window, cx| pane.update(cx, |p, cx| p.add_address(window, cx)))
+                    .on_click(move |_, window, cx| {
+                        pane.update(cx, |p, cx| p.add_address(window, cx))
+                    })
                     .into_any_element(),
             ],
             &look,
@@ -527,14 +591,18 @@ impl Render for DevicesPane {
                     item(
                         account.clone(),
                         None,
-                        vec![Button::new(("stop-sharing", index), ButtonKind::Compact)
-                            .label("Stop Sharing…")
-                            .destructive(true)
-                            .on_click(move |_, window, cx| {
-                                let account = account2.clone();
-                                pane.update(cx, |p, cx| p.confirm_stop_sharing(account, window, cx))
-                            })
-                            .into_any_element()],
+                        vec![
+                            Button::new(("stop-sharing", index), ButtonKind::Compact)
+                                .label("Stop Sharing…")
+                                .destructive(true)
+                                .on_click(move |_, window, cx| {
+                                    let account = account2.clone();
+                                    pane.update(cx, |p, cx| {
+                                        p.confirm_stop_sharing(account, window, cx)
+                                    })
+                                })
+                                .into_any_element(),
+                        ],
                         &look,
                     )
                 })
@@ -545,14 +613,22 @@ impl Render for DevicesPane {
             let suggestions: Vec<String> = c
                 .share_accounts
                 .iter()
-                .filter(|a| !shared.contains(a) && !typed.is_empty() && a.to_lowercase().starts_with(&typed) && a.to_lowercase() != typed)
+                .filter(|a| {
+                    !shared.contains(a)
+                        && !typed.is_empty()
+                        && a.to_lowercase().starts_with(&typed)
+                        && a.to_lowercase() != typed
+                })
                 .take(5)
                 .cloned()
                 .collect();
             let pane = entity.clone();
             rows.push(buttons(
                 vec![
-                    div().w(px(260.)).child(TextField::new(&self.grantee)).into_any_element(),
+                    div()
+                        .w(px(260.))
+                        .child(TextField::new(&self.grantee))
+                        .into_any_element(),
                     Button::new("share-device", ButtonKind::Bordered)
                         .label("Share")
                         .disabled(typed.is_empty())
@@ -595,7 +671,7 @@ impl Render for DevicesPane {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ConnectedInfo, detail};
 
     fn connection(via_server: bool, inbound: bool, own: bool) -> ConnectedInfo {
         ConnectedInfo {
@@ -613,7 +689,10 @@ mod tests {
     #[test]
     fn says_what_a_connection_is() {
         assert_eq!(detail(&connection(true, false, false)), "Your server");
-        assert_eq!(detail(&connection(true, true, true)), "Your device, through the server");
+        assert_eq!(
+            detail(&connection(true, true, true)),
+            "Your device, through the server"
+        );
         assert_eq!(
             detail(&connection(false, true, true)),
             "Can control this device on this network, your device"

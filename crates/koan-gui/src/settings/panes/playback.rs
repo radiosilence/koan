@@ -1,15 +1,19 @@
 //! Playback: the output device, the transport's fade, and loudness.
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use crate::components::{FormRow, Picker, Stepper, Toggle};
 use crate::theme::Look;
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 
 use crate::mirror::{Mirror, Outputs};
 use crate::settings::Ctx;
 use crate::settings::form::{page, section};
 
-const REPLAYGAIN: [(&str, &str); 3] = [("Off", "off"), ("Per track", "track"), ("Per album", "album")];
+const REPLAYGAIN: [(&str, &str); 3] = [
+    ("Off", "off"),
+    ("Per track", "track"),
+    ("Per album", "album"),
+];
 
 pub struct PlaybackPane {
     ctx: Ctx,
@@ -114,7 +118,9 @@ impl Render for PlaybackPane {
                     Picker::new(
                         "replaygain",
                         REPLAYGAIN.map(|(label, _)| label),
-                        REPLAYGAIN.iter().position(|(_, v)| *v == settings.replaygain),
+                        REPLAYGAIN
+                            .iter()
+                            .position(|(_, v)| *v == settings.replaygain),
                     )
                     .on_change(move |index, _, cx| {
                         let mode = REPLAYGAIN[*index].1;

@@ -1,20 +1,20 @@
 //! Server → Shares its library: the first account, sharing on and off, the
 //! port, and where invites send phones away from home.
 
+use crate::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
+use crate::theme::{Icon, Look, Tone, TypeRole};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use koan_ffi::{InviteTo, Settings};
-use crate::components::{Button, ButtonKind, FormRow, Picker, TextField, Toggle};
-use crate::theme::{Icon, Look, Tone, TypeRole};
 
 use super::link::LinkDevice;
 use super::server::ServerPane;
 use crate::settings::Ctx;
 use crate::settings::form::{buttons, copyable, note, section, text};
-use crate::settings::sheet::{self, Action, Sheet};
 use crate::settings::model::SettingsModel;
-use crate::settings::sharing::{Landed, Sharing};
+use crate::settings::sharing::Landed;
+use crate::settings::sheet::{self, Action, Sheet};
 
 pub struct ShareForm {
     username: Entity<InputState>,
@@ -32,8 +32,15 @@ pub struct ShareForm {
 
 impl ShareForm {
     pub fn new(ctx: &Ctx, window: &mut Window, cx: &mut Context<ServerPane>) -> Self {
-        let field = |placeholder: &'static str, secret: bool, window: &mut Window, cx: &mut Context<ServerPane>| {
-            cx.new(|cx| InputState::new(window, cx).placeholder(placeholder).masked(secret))
+        let field = |placeholder: &'static str,
+                     secret: bool,
+                     window: &mut Window,
+                     cx: &mut Context<ServerPane>| {
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(placeholder)
+                    .masked(secret)
+            })
         };
         let username = field("Username", false, window, cx);
         let password = field("Password", true, window, cx);
@@ -84,7 +91,8 @@ impl ShareForm {
     /// again, so the switch never reads as sharing beside the reason it is
     /// not; launch still retries a setting left on.
     pub fn set_sharing(ctx: &Ctx, on: bool, cx: &mut App) {
-        ctx.model.update(cx, |m, cx| m.edit(cx, move |s| s.share_enabled = on));
+        ctx.model
+            .update(cx, |m, cx| m.edit(cx, move |s| s.share_enabled = on));
         let port = ctx
             .model
             .read(cx)
@@ -105,7 +113,12 @@ impl ShareForm {
     /// being written. A start stops the running server first, so a failed
     /// one leaves nothing serving and the switch says so.
     fn restart_if_sharing(ctx: &Ctx, port: u16, cx: &mut App) {
-        if !ctx.model.read(cx).settings().is_some_and(|s| s.share_enabled) {
+        if !ctx
+            .model
+            .read(cx)
+            .settings()
+            .is_some_and(|s| s.share_enabled)
+        {
             return;
         }
         let model = ctx.model.clone();
@@ -116,17 +129,20 @@ impl ShareForm {
 
     fn commit_port(&mut self, ctx: &Ctx, cx: &mut Context<ServerPane>) {
         let typed = self.port.read(cx).value().trim().to_owned();
-        let Some(current) = ctx.model.read(cx).settings().map(|s| s.share_port) else { return };
+        let Some(current) = ctx.model.read(cx).settings().map(|s| s.share_port) else {
+            return;
+        };
         match typed.parse::<u16>() {
             Ok(port) if port > 0 => {
                 if port != current {
-                    ctx.model.update(cx, |m, cx| m.edit(cx, move |s| s.share_port = port));
+                    ctx.model
+                        .update(cx, |m, cx| m.edit(cx, move |s| s.share_port = port));
                     Self::restart_if_sharing(ctx, port, cx);
                 }
             }
-            _ => ctx
-                .model
-                .update(cx, |m, cx| m.report("A port is a number from 1 to 65535.", cx)),
+            _ => ctx.model.update(cx, |m, cx| {
+                m.report("A port is a number from 1 to 65535.", cx)
+            }),
         }
     }
 
@@ -136,7 +152,9 @@ impl ShareForm {
     /// address's among them, so a running one starts again.
     fn commit_address(&mut self, ctx: &Ctx, cx: &mut Context<ServerPane>) {
         let typed = self.address.read(cx).value().trim().to_owned();
-        let Some(settings) = ctx.model.read(cx).settings() else { return };
+        let Some(settings) = ctx.model.read(cx).settings() else {
+            return;
+        };
         if typed == settings.share_url {
             return;
         }
@@ -215,7 +233,6 @@ impl ShareForm {
         ctx: &Ctx,
         settings: &Settings,
         look: &Look,
-        window: &mut Window,
         cx: &mut Context<ServerPane>,
     ) -> Vec<AnyElement> {
         if settings.remote_signed_in {
@@ -235,20 +252,21 @@ impl ShareForm {
                 look,
             )];
         }
-        let sharing = ctx.sharing.read(cx);
-        let Some(account) = sharing.account.clone() else {
+        let Some(account) = ctx.sharing.read(cx).account.clone() else {
             return vec![self.create_account(ctx, look, cx)];
         };
-        let mut sections = vec![self.running(ctx, sharing, settings, &account, look, cx)];
+        let mut sections = vec![self.running(ctx, settings, &account, look, cx)];
         if settings.share_enabled {
-            sections.push(away_from_home(ctx, ctx.sharing.read(cx), settings, &self.address, look, window, cx));
+            sections.push(away_from_home(ctx, settings, &self.address, look, cx));
         }
         if ctx.sharing.read(cx).serving.is_some() {
             let link = match &self.link {
                 Some((who, link)) if *who == account => link.clone(),
                 _ => {
                     let engine = ctx.model.read(cx).engine().clone();
-                    let link = cx.new(|cx| LinkDevice::new(engine, account.clone(), ctx.connection.clone(), cx));
+                    let link = cx.new(|cx| {
+                        LinkDevice::new(engine, account.clone(), ctx.connection.clone(), cx)
+                    });
                     self.link = Some((account.clone(), link.clone()));
                     link
                 }
@@ -264,13 +282,20 @@ impl ShareForm {
         let name = self.username.read(cx).value();
         let password = self.password.read(cx).value();
         let again = self.again.read(cx).value();
-        let ready = !self.creating && !name.trim().is_empty() && !password.is_empty() && password == again;
+        let ready =
+            !self.creating && !name.trim().is_empty() && !password.is_empty() && password == again;
         let pane = cx.entity();
         let ctx = ctx.clone();
         let mut rows = vec![
-            FormRow::new("Username").control(div().w(px(260.)).child(TextField::new(&self.username))).into_any_element(),
-            FormRow::new("Password").control(div().w(px(260.)).child(TextField::new(&self.password))).into_any_element(),
-            FormRow::new("Again").control(div().w(px(260.)).child(TextField::new(&self.again))).into_any_element(),
+            FormRow::new("Username")
+                .control(div().w(px(260.)).child(TextField::new(&self.username)))
+                .into_any_element(),
+            FormRow::new("Password")
+                .control(div().w(px(260.)).child(TextField::new(&self.password)))
+                .into_any_element(),
+            FormRow::new("Again")
+                .control(div().w(px(260.)).child(TextField::new(&self.again)))
+                .into_any_element(),
         ];
         if let Some(error) = &self.account_error {
             rows.push(note(error.clone(), Icon::Warning, Tone::Bad, look));
@@ -298,41 +323,53 @@ impl ShareForm {
     fn running(
         &self,
         ctx: &Ctx,
-        sharing: &Sharing,
         settings: &Settings,
         account: &str,
         look: &Look,
         cx: &mut Context<ServerPane>,
     ) -> AnyElement {
         let pane = cx.entity();
+        let sharing = ctx.sharing.read(cx);
         let mut rows = vec![{
             let ctx = ctx.clone();
-            Toggle::new("share", "Share this device's library", settings.share_enabled)
-                .disabled(sharing.busy())
-                .on_change(move |on, _, cx| ShareForm::set_sharing(&ctx, *on, cx))
-                .into_any_element()
+            Toggle::new(
+                "share",
+                "Share this device's library",
+                settings.share_enabled,
+            )
+            .disabled(sharing.busy())
+            .on_change(move |on, _, cx| ShareForm::set_sharing(&ctx, *on, cx))
+            .into_any_element()
         }];
         if let Some(url) = sharing.serving.as_ref().and_then(|s| s.lan_url.clone()) {
             let pane = pane.clone();
             let copy = url.clone();
             rows.push(
                 FormRow::new("On your network")
-                    .control(copyable("copy-lan", url, self.copied, move |cx| {
-                        let copy = copy.clone();
-                        pane.update(cx, |pane, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(copy));
-                            pane.share.copied = true;
-                            cx.notify();
-                            pane.share.copy_reset = Some(cx.spawn(async move |this, cx| {
-                                cx.background_executor().timer(std::time::Duration::from_millis(1500)).await;
-                                this.update(cx, |pane, cx| {
-                                    pane.share.copied = false;
-                                    cx.notify();
-                                })
-                                .ok();
-                            }));
-                        })
-                    }, look))
+                    .control(copyable(
+                        "copy-lan",
+                        url,
+                        self.copied,
+                        move |cx| {
+                            let copy = copy.clone();
+                            pane.update(cx, |pane, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copy));
+                                pane.share.copied = true;
+                                cx.notify();
+                                pane.share.copy_reset = Some(cx.spawn(async move |this, cx| {
+                                    cx.background_executor()
+                                        .timer(std::time::Duration::from_millis(1500))
+                                        .await;
+                                    this.update(cx, |pane, cx| {
+                                        pane.share.copied = false;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }));
+                            })
+                        },
+                        look,
+                    ))
                     .into_any_element(),
             );
         }
@@ -370,13 +407,12 @@ impl ShareForm {
 /// through Tailscale Funnel, or a tunnel's address.
 fn away_from_home(
     ctx: &Ctx,
-    sharing: &Sharing,
     settings: &Settings,
     address: &Entity<InputState>,
     look: &Look,
-    _window: &mut Window,
-    _cx: &mut Context<ServerPane>,
+    cx: &App,
 ) -> AnyElement {
+    let sharing = ctx.sharing.read(cx);
     // From the engine's last reading, with the address beside it, so the
     // two never show different moments.
     let choice = sharing
@@ -387,17 +423,27 @@ fn away_from_home(
     let serving = sharing.serving.is_some();
     let tailscale = sharing.status.as_ref().and_then(|s| s.tailscale.clone());
     let checked = sharing.status.is_some();
-    let options = invite_options(tailscale.as_ref().map(|t| t.funnel_allowed), checked, choice, serving);
-    let mut rows = vec![FormRow::new("Tailscale")
-        .value(match (&tailscale, checked) {
-            (Some(t), _) => format!("Detected · {}", t.name),
-            (None, true) => "Not detected".to_owned(),
-            (None, false) => "Looking…".to_owned(),
-        })
-        .into_any_element()];
+    let options = invite_options(
+        tailscale.as_ref().map(|t| t.funnel_allowed),
+        checked,
+        choice,
+        serving,
+    );
+    let mut rows = vec![
+        FormRow::new("Tailscale")
+            .value(match (&tailscale, checked) {
+                (Some(t), _) => format!("Detected · {}", t.name),
+                (None, true) => "Not detected".to_owned(),
+                (None, false) => "Looking…".to_owned(),
+            })
+            .into_any_element(),
+    ];
     let values: Vec<InviteTo> = options.iter().map(|(_, v)| *v).collect();
     let picker_ctx = ctx.clone();
-    let funnel_host = tailscale.as_ref().map(|t| t.name.clone()).unwrap_or_default();
+    let funnel_host = tailscale
+        .as_ref()
+        .map(|t| t.name.clone())
+        .unwrap_or_default();
     rows.push(
         FormRow::new("Invite phones to")
             .control(
@@ -459,7 +505,12 @@ fn away_from_home(
     if let Some(error) = &sharing.funnel_error {
         rows.push(note(error.clone(), Icon::Warning, Tone::Bad, look));
     }
-    section(Some("Away from home"), rows, Some(invite_note(choice).into()), look)
+    section(
+        Some("Away from home"),
+        rows,
+        Some(invite_note(choice).into()),
+        look,
+    )
 }
 
 fn invite_options(
@@ -473,7 +524,12 @@ fn invite_options(
     if running || choice == InviteTo::Tailnet {
         let missing = !running && checked;
         options.push((
-            if missing { "Your tailnet (Tailscale not running)" } else { "Your tailnet" }.to_owned(),
+            if missing {
+                "Your tailnet (Tailscale not running)"
+            } else {
+                "Your tailnet"
+            }
+            .to_owned(),
             InviteTo::Tailnet,
         ));
     }
@@ -488,33 +544,15 @@ fn invite_options(
 fn invite_note(choice: InviteTo) -> &'static str {
     match choice {
         InviteTo::Network => "Phones reach this device on your network only.",
-        InviteTo::Tailnet => "Phones with Tailscale reach this device from anywhere, encrypted, and nothing is on the internet.",
-        InviteTo::Funnel => "On the internet over HTTPS, for phones without Tailscale. Taken down when this device stops sharing, and put back when it starts.",
-        InviteTo::Custom => "A tunnel's HTTPS address, such as Cloudflare Tunnel's. Empty, invites use the address shown.",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn values(options: Vec<(String, InviteTo)>) -> Vec<InviteTo> {
-        options.into_iter().map(|(_, v)| v).collect()
-    }
-
-    #[test]
-    fn offers_what_tailscale_allows() {
-        use InviteTo::*;
-        assert_eq!(values(invite_options(None, true, Network, true)), [Network, Custom]);
-        assert_eq!(
-            values(invite_options(Some(true), true, Network, true)),
-            [Network, Tailnet, Funnel, Custom]
-        );
-        // Funnel needs a server running to publish.
-        assert_eq!(values(invite_options(Some(true), true, Network, false)), [Network, Tailnet, Custom]);
-        // A choice already made stays offered, Tailscale gone or not.
-        assert_eq!(values(invite_options(None, true, Funnel, false)), [Network, Funnel, Custom]);
-        assert_eq!(invite_options(None, true, Tailnet, true)[1].0, "Your tailnet (Tailscale not running)");
+        InviteTo::Tailnet => {
+            "Phones with Tailscale reach this device from anywhere, encrypted, and nothing is on the internet."
+        }
+        InviteTo::Funnel => {
+            "On the internet over HTTPS, for phones without Tailscale. Taken down when this device stops sharing, and put back when it starts."
+        }
+        InviteTo::Custom => {
+            "A tunnel's HTTPS address, such as Cloudflare Tunnel's. Empty, invites use the address shown."
+        }
     }
 }
 
@@ -531,4 +569,40 @@ fn after_start(model: Entity<SettingsModel>) -> Landed {
             }
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InviteTo, invite_options};
+
+    fn values(options: Vec<(String, InviteTo)>) -> Vec<InviteTo> {
+        options.into_iter().map(|(_, v)| v).collect()
+    }
+
+    #[test]
+    fn offers_what_tailscale_allows() {
+        use InviteTo::*;
+        assert_eq!(
+            values(invite_options(None, true, Network, true)),
+            [Network, Custom]
+        );
+        assert_eq!(
+            values(invite_options(Some(true), true, Network, true)),
+            [Network, Tailnet, Funnel, Custom]
+        );
+        // Funnel needs a server running to publish.
+        assert_eq!(
+            values(invite_options(Some(true), true, Network, false)),
+            [Network, Tailnet, Custom]
+        );
+        // A choice already made stays offered, Tailscale gone or not.
+        assert_eq!(
+            values(invite_options(None, true, Funnel, false)),
+            [Network, Funnel, Custom]
+        );
+        assert_eq!(
+            invite_options(None, true, Tailnet, true)[1].0,
+            "Your tailnet (Tailscale not running)"
+        );
+    }
 }
