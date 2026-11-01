@@ -75,8 +75,14 @@ pub fn text_button(id: impl Into<ElementId>, label: &str) -> Button {
 pub fn select_toggle(
     active: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> Button {
-    text_button("select", if active { "done" } else { "select" }).on_click(on_click)
+) -> ToolbarButton {
+    ToolbarButton::new(
+        "select",
+        if active { Icon::Selecting } else { Icon::Select },
+        if active { "done" } else { "select" },
+    )
+    .selected(active)
+    .on_click(on_click)
 }
 
 /// The filter field: the sidebar's search field's look, no box, the glyph and
@@ -207,8 +213,9 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     Popover::new("album-sort")
         .appearance(false)
         .arrow(false)
-        .trigger(Trigger::new(
+        .trigger(ToolbarButton::new(
             "album-sort-trigger",
+            Icon::Sort,
             format!("sort: {}", browse::album_sort_label(current)),
         ))
         .content(move |_, _, cx| {
@@ -237,14 +244,11 @@ pub fn album_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
 /// Shuffle again, under the random order: its own button beside the sort,
 /// since a new deal is something tried until one is liked, and a menu makes
 /// each try two clicks.
-pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<Button> {
+pub fn reshuffle_button(lib: &Lib, cx: &App) -> Option<ToolbarButton> {
     let random = lib.browse.read(cx).effective_album_sort() == koan_ffi::AlbumSort::Random;
     let browse = lib.browse.clone();
     random.then(|| {
-        Button::new("album-reshuffle", ButtonKind::Text)
-            .icon(crate::theme::Icon::Reshuffle)
-            .label("shuffle again")
-            .on_click(move |_, _, cx| browse.update(cx, |b, cx| b.reshuffle(cx)))
+        ToolbarButton::new("album-reshuffle", Icon::Reshuffle, "shuffle again").on_click(move |_, _, cx| browse.update(cx, |b, cx| b.reshuffle(cx)))
     })
 }
 
@@ -254,8 +258,9 @@ pub fn track_sort_button(lib: &Lib, cx: &App) -> impl IntoElement {
     Popover::new("track-sort")
         .appearance(false)
         .arrow(false)
-        .trigger(Trigger::new(
+        .trigger(ToolbarButton::new(
             "track-sort-trigger",
+            Icon::Sort,
             format!("sort: {}", browse::track_sort_label(current)),
         ))
         .content(move |_, _, cx| {
@@ -281,8 +286,9 @@ pub fn filter_button(panel: &Entity<FilterPanel>, lib: &Lib, cx: &App) -> impl I
     Popover::new("filters")
         .appearance(false)
         .arrow(false)
-        .trigger(Trigger::new(
+        .trigger(ToolbarButton::new(
             "filters-trigger",
+            Icon::Filters,
             if active > 0 {
                 format!("filters ({active})")
             } else {

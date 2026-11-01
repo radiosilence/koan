@@ -16,7 +16,7 @@ use super::covers::Sleeve;
 use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
-use super::tokens::{Paint, Type, Typeset};
+use super::tokens::{Paint, Type};
 use crate::components::{Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow};
 use crate::theme::{Icon, KoanIcon};
 

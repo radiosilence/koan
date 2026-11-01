@@ -107,6 +107,7 @@ impl RenderOnce for Toolbar {
 #[derive(IntoElement)]
 pub struct ToolbarButton {
     button: Button,
+    selected: bool,
 }
 
 impl ToolbarButton {
@@ -114,6 +115,7 @@ impl ToolbarButton {
     pub fn new(id: impl Into<ElementId>, icon: Icon, label: impl AsRef<str>) -> Self {
         Self {
             button: Button::new(id, ButtonKind::Toolbar).icon(icon).label(label),
+            selected: false,
         }
     }
 
@@ -122,8 +124,11 @@ impl ToolbarButton {
         self
     }
 
+    /// Drawn pressed: a toggle that is on, or a menu or panel it opened
+    /// that is showing.
     pub fn selected(mut self, selected: bool) -> Self {
         self.button = self.button.selected(selected);
+        self.selected = selected;
         self
     }
 
@@ -133,6 +138,17 @@ impl ToolbarButton {
     ) -> Self {
         self.button = self.button.on_click(handler);
         self
+    }
+}
+
+/// A popover's trigger: drawn pressed while what it opened shows.
+impl gpui_kit::base::Selectable for ToolbarButton {
+    fn selected(self, selected: bool) -> Self {
+        ToolbarButton::selected(self, selected)
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
     }
 }
 
