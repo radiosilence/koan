@@ -502,7 +502,7 @@ impl ArtistPage {
                     gathered: true,
                     transfer: feed.transfers.get(&track.id).copied(),
                     drag,
-                    height: rows::art_height(p),
+                    kind: crate::components::RowKind::Art,
                 };
                 rows::track_row(p, track, index, state, sleeve, Some(self.artist_id), cx)
             }
@@ -602,7 +602,9 @@ impl ArtistPage {
                     ))
                 }
                 Sleeve::Colour(colour) => photo = photo.bg(colour),
-                Sleeve::Waiting | Sleeve::None => {}
+                Sleeve::Waiting | Sleeve::None => {
+                    photo = photo.child(crate::components::Placeholder::new(grid.side))
+                }
             }
         }
         let favourite = self.lib.feed.read(cx).is_favourite(item);

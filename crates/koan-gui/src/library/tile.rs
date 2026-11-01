@@ -310,7 +310,9 @@ impl<V: TileHost> Render for TileView<V> {
                 art = art.child(img(ImageSource::Render(image.clone())).size_full())
             }
             Sleeve::Colour(colour) => art = art.bg(*colour),
-            Sleeve::Waiting | Sleeve::None => {}
+            Sleeve::Waiting | Sleeve::None => {
+                art = art.child(crate::components::Placeholder::new(side))
+            }
         }
         if let Some(codec) = &record.codec {
             // The codec only: at tile size a rate is unreadable, and the codec

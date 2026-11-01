@@ -1,0 +1,1 @@
+- **The desktop app's design system.** Covers without art show the ensō, loading shows it drawing itself, Settings is spaced as on the Mac, menus carry their glyphs, and the output menu lists each device under how it is connected. Pages now build from koan-kit's page, toolbar, form, table and menu, which decide the spacing.

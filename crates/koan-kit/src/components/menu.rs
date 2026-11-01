@@ -11,7 +11,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{MenuPanel, MenuRow, MenuSeparator};
-use crate::theme::{Icon, Look, Space};
+use crate::theme::{Icon, KoanStyled, Look, Space};
 
 type Run = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 type Build = Rc<dyn Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu>;
@@ -79,8 +79,11 @@ impl MenuEntry {
 enum Entry {
     Item(MenuEntry),
     Separator,
+    /// A section's name over its entries, chosen by nothing.
+    Heading(SharedString),
     Submenu {
         label: SharedString,
+        icon: Option<Icon>,
         build: Build,
         open: Option<Entity<Menu>>,
     },
@@ -137,15 +140,48 @@ impl Menu {
         self
     }
 
+    /// A section: a rule, then its name in `fine`, `muted`, over the
+    /// entries that follow.
+    pub fn section(self, title: impl AsRef<str>) -> Self {
+        let mut menu = self.separator();
+        menu.entries
+            .push(Entry::Heading(crate::theme::label(title)));
+        menu
+    }
+
     pub fn submenu(
-        mut self,
+        self,
         text: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Menu>,
+        build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
+    ) -> Self {
+        self.submenu_inner(text.into(), None, window, cx, build)
+    }
+
+    /// A submenu with the glyph the Mac's menu gives it.
+    pub fn submenu_icon(
+        self,
+        text: impl Into<SharedString>,
+        icon: Icon,
+        window: &mut Window,
+        cx: &mut Context<Menu>,
+        build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
+    ) -> Self {
+        self.submenu_inner(text.into(), Some(icon), window, cx, build)
+    }
+
+    fn submenu_inner(
+        mut self,
+        label: SharedString,
+        icon: Option<Icon>,
         _: &mut Window,
         _: &mut Context<Menu>,
         build: impl Fn(Menu, &mut Window, &mut Context<Menu>) -> Menu + 'static,
     ) -> Self {
         self.entries.push(Entry::Submenu {
-            label: text.into(),
+            label,
+            icon,
             build: Rc::new(build),
             open: None,
         });
@@ -156,7 +192,7 @@ impl Menu {
         match &self.entries[index] {
             Entry::Item(item) => !item.disabled && item.run.is_some(),
             Entry::Submenu { .. } => true,
-            Entry::Separator => false,
+            Entry::Separator | Entry::Heading(_) => false,
         }
     }
 
@@ -284,6 +320,14 @@ impl Render for Menu {
             };
             panel = match entry {
                 Entry::Separator => panel.child(MenuSeparator),
+                Entry::Heading(title) => panel.child(
+                    div()
+                        .px(look.space(Space::M))
+                        .pt(look.space(Space::Xs))
+                        .text_role(crate::theme::TypeRole::Fine, &look)
+                        .text_color(look.palette.muted.hsla())
+                        .child(title.clone()),
+                ),
                 Entry::Item(item) => {
                     let mut row = if item.data {
                         MenuRow::data(("entry", index), item.label.clone())
@@ -305,10 +349,15 @@ impl Render for Menu {
                     });
                     panel.child(div().id(("hover", index)).on_hover(hovered).child(row))
                 }
-                Entry::Submenu { label, open, .. } => {
-                    let row = MenuRow::new(("entry", index), label)
+                Entry::Submenu {
+                    label, icon, open, ..
+                } => {
+                    let mut row = MenuRow::new(("entry", index), label)
                         .highlighted(highlighted)
                         .opens(true);
+                    if let Some(icon) = icon {
+                        row = row.icon(*icon);
+                    }
                     panel.child(
                         div()
                             .id(("hover", index))

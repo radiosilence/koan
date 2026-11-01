@@ -44,6 +44,13 @@ impl LibraryStage {
         )
     }
 
+    /// The page's controls for the window's toolbar: its filter field and
+    /// buttons, drawn in the toolbar's trailing items. None until the pages
+    /// provide them.
+    pub fn toolbar(&self) -> Option<AnyView> {
+        None
+    }
+
     fn page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyView> {
         let current = self.lib.nav.read(cx).current(cx);
         if let Some((page, view)) = &self.page

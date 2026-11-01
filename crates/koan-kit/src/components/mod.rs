@@ -2,6 +2,11 @@
 //! Geist Mono. docs/design/koan-theme.md#components describes each; the
 //! comments here say only where GPUI asks for something the spec does not.
 //!
+//! Containers (`Page`, `Toolbar`, `Form`, `Menu`, the table's rows) own the
+//! spacing and metrics, and pages declare only content. The design, what
+//! each piece owns and the map from the Swift roles to these, is
+//! docs/design/koan-kit.md.
+//!
 //! Every component is a `RenderOnce` element that reads the window's `Look`
 //! as it renders. Interactive ones take an id, under which they keep what
 //! the pointer is doing and the state of their transitions.
@@ -10,17 +15,24 @@ mod badge;
 mod button;
 mod empty;
 mod field;
+mod filter_field;
 mod form;
 mod menu;
+mod metrics;
+mod page;
 mod panel;
 mod picker;
+pub(crate) mod placeholder;
 mod rows;
 mod scroll;
 mod segmented;
 mod slider;
 mod spinner;
+mod split;
 mod stepper;
+mod table;
 mod toggle;
+mod toolbar;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,17 +46,26 @@ pub use badge::{Badge, Chip};
 pub use button::{Button, ButtonKind};
 pub use empty::EmptyState;
 pub use field::TextField;
-pub use form::{FormRow, SectionHeader};
+pub use filter_field::FilterField;
+pub use form::{
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
+};
 pub use menu::{KoanContextMenu, Menu, MenuEntry};
+pub use metrics::{RowKind, RowMetrics};
+pub use page::{Page, PageHeader};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
+pub use placeholder::Placeholder;
 pub use rows::{ListRow, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
 pub use slider::Slider;
 pub use spinner::Spinner;
+pub use split::SplitView;
 pub use stepper::Stepper;
+pub use table::TableRow;
 pub use toggle::{IconToggle, Toggle};
+pub use toolbar::{TOOLBAR_HEIGHT, Toolbar, ToolbarButton};
 
 use crate::theme::{Look, MARK, Motion};
 
