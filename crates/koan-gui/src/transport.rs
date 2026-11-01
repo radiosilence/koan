@@ -12,7 +12,9 @@ use koan_ffi::{
 use koan_kit::raw::prelude::*;
 use koan_kit::raw::*;
 
-use crate::components::{Button, ButtonKind, Menu as ThemeMenu, MenuEntry, MenuSlot};
+use crate::components::{
+    Button, ButtonKind, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider, TransportMetrics,
+};
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
@@ -22,9 +24,8 @@ use crate::platform::actions::ShowEq;
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
-pub const HEIGHT: Pixels = px(68.);
-const COVER: Pixels = px(40.);
-const SLIDER_HIT: Pixels = px(20.);
+pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
+const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
     playback: Entity<Playback>,
@@ -531,9 +532,15 @@ fn control(
         Some(false) => (p.muted, None),
         None => (p.ink, None),
     };
+    // 44 points to hit, as the spec asks, but only the glyph's width in the
+    // layout: the rest of the hit area reaches into the gaps beside it, so
+    // the glyphs sit as far apart as the Mac's.
+    let glyph = px(crate::theme::icons::side(p.look.points(TypeRole::Body)));
+    let reach = (theme::HIT - glyph) / 2.;
     div()
         .id(id)
-        .min_w(theme::HIT)
+        .w(theme::HIT)
+        .mx(-reach)
         .h(theme::HIT)
         .flex()
         .items_center()
@@ -650,37 +657,24 @@ impl Render for Transport {
                     })),
             );
 
-        let play_pause = div()
-            .id("play-pause")
-            .w(px(36.))
-            .h(px(28.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .border_1()
-            .border_color(p.ink)
-            .cursor_pointer()
-            .text_role(TypeRole::Control, &p.look)
-            .text_color(p.ink)
-            .hover(|s| s.bg(p.hover))
-            .child(if playing {
-                glyph_or_label(Icon::Pause, "pause", TypeRole::Body, p.ink, &p)
-            } else {
-                glyph_or_label(Icon::Play, "play", TypeRole::Body, p.ink, &p)
-            })
+        // The one control reached for without looking: outlined, as the
+        // Mac's is.
+        let play_pause = Button::new("play-pause", ButtonKind::IconOutlined)
+            .icon(if playing { Icon::Pause } else { Icon::Play })
+            .label(if playing { "pause" } else { "play" })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
         let centre = div()
-            .w(px(520.))
+            .w(TransportMetrics::CENTRE)
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(2.))
+            .gap(TransportMetrics::row_gap(&p.look))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(p.space(Space::S))
+                    .gap(TransportMetrics::control_gap(&p.look))
                     .child(
                         control("shuffle", Icon::Shuffle, "shuffle", Some(shuffle), &p).on_click(
                             move |_, _, cx| {
@@ -714,9 +708,11 @@ impl Render for Transport {
             // that hold it (the bar, the shell), whose other cached children
             // replay their last frame rather than laying out again.
             .child(
-                self.seek
-                    .clone()
-                    .cached(StyleRefinement::default().w_full().h(SLIDER_HIT)),
+                self.seek.clone().cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(TransportMetrics::SEEK),
+                ),
             );
 
         let right = div()
@@ -795,11 +791,11 @@ pub struct Seek {
     /// Whether the window shows: hidden, no timer runs.
     visible: bool,
     tick: Option<Task<()>>,
-    /// Where the slider was last laid out, for turning a pointer into a
-    /// position and the duration into a step.
-    bounds: Bounds<Pixels>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
+    /// The slider's width as last painted, for when its fill next moves a
+    /// pixel.
+    width: std::rc::Rc<std::cell::Cell<f32>>,
     _subscriptions: [Subscription; 4],
 }
 
@@ -823,8 +819,8 @@ impl Seek {
             playhead: mirror.playhead,
             playback: mirror.playback,
             tick: None,
-            bounds: Bounds::default(),
             dragging: None,
+            width: Default::default(),
         };
         seek.schedule(cx);
         seek
@@ -851,7 +847,7 @@ impl Seek {
             return;
         }
         let to_second = 1000 - position % 1000;
-        let width = f32::from(self.bounds.size.width);
+        let width = self.width.get();
         let to_pixel = if width > 0.0 {
             (duration as f32 / width).ceil() as u64
         } else {
@@ -864,14 +860,6 @@ impl Seek {
             cx.background_executor().timer(wait).await;
             this.update(cx, |this, cx| this.moved(cx)).ok();
         }));
-    }
-
-    fn share_at(&self, x: Pixels) -> f32 {
-        let width = f32::from(self.bounds.size.width);
-        if width <= 0.0 {
-            return 0.0;
-        }
-        (f32::from(x - self.bounds.origin.x) / width).clamp(0.0, 1.0)
     }
 
     fn commit(&mut self, cx: &mut Context<Self>) {
@@ -908,105 +896,29 @@ impl Render for Seek {
         let shown = self
             .dragging
             .map_or(position, |s| (s as f64 * duration as f64) as u64);
-        let held = self.dragging.is_some();
-        let view = cx.entity();
-
-        let slider = div()
-            .id("seek")
-            .group("seek")
-            .relative()
-            .flex_1()
-            .h(SLIDER_HIT)
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    if this.duration_ms(cx) > 0 {
-                        this.dragging = Some(this.share_at(event.position.x));
-                        cx.notify();
-                    }
-                }),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(SLIDER_HIT / 2. - theme::HAIRLINE / 2.)
-                    .h(theme::HAIRLINE)
-                    .bg(p.rule),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top(SLIDER_HIT / 2. - px(1.5))
-                    .h(px(3.))
-                    .w(relative(share))
-                    .bg(p.accent),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(SLIDER_HIT / 2. - px(4.))
-                    .left(relative(share))
-                    .ml(px(-4.))
-                    .size(px(8.))
-                    .bg(p.ink)
-                    .when(!held, |d| {
-                        d.opacity(0.).group_hover("seek", |s| s.opacity(1.))
-                    }),
-            )
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, (), window, cx| {
-                        view.update(cx, |this, _| this.bounds = bounds);
-                        // While held, the pointer is followed past the
-                        // slider's edges and let go of anywhere. Listened for
-                        // on every frame, not only once a frame has drawn the
-                        // thumb held: a tap's release can arrive before that.
-                        let moved = view.clone();
-                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Bubble
-                                && event.pressed_button == Some(MouseButton::Left)
-                            {
-                                moved.update(cx, |this, cx| {
-                                    if this.dragging.is_some() {
-                                        this.dragging = Some(this.share_at(event.position.x));
-                                        cx.notify();
-                                    }
-                                });
-                            }
-                        });
-                        let released = view.clone();
-                        window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Bubble {
-                                released.update(cx, |this, cx| this.commit(cx));
-                            }
-                        });
-                    },
-                )
-                .absolute()
-                .size_full(),
-            );
-
-        let time = |ms: u64| {
-            div()
-                .w(px(48.))
-                .flex_shrink_0()
-                .text_role(TypeRole::Fine, &p.look)
-                .text_color(p.muted)
-                .child(clock(ms))
-        };
-
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .gap(p.space(Space::S))
-            .child(time(shown).flex().justify_end())
-            .child(slider)
-            .child(time(duration))
+        let (change, commit) = (cx.entity(), cx.entity());
+        let _ = p;
+        // The playhead the slider shows comes from the engine, which holds a
+        // seek's target until it lands there (koan-ffi's pending seek), so a
+        // click never shows the old place again before the new one.
+        let width = self.width.clone();
+        let measure = canvas(
+            move |bounds, _, _| width.set(f32::from(bounds.size.width)),
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let slider = Slider::new("seek", share)
+            .compact()
+            .ends(clock(shown), clock(duration))
+            .disabled(duration == 0)
+            .on_change(move |share, _, cx| {
+                change.update(cx, |this, cx| {
+                    this.dragging = Some(*share);
+                    cx.notify();
+                })
+            })
+            .on_commit(move |_, _, cx| commit.update(cx, |this, cx| this.commit(cx)));
+        div().relative().w_full().child(slider).child(measure)
     }
 }

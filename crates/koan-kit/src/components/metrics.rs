@@ -24,6 +24,29 @@ pub enum RowKind {
 
 pub struct RowMetrics;
 
+/// The transport bar's figures, the spec's: 68 tall, a 40-point cover, the
+/// controls 22 apart over the seek bar.
+pub struct TransportMetrics;
+
+impl TransportMetrics {
+    pub const HEIGHT: Pixels = px(68.0);
+    pub const COVER: Pixels = px(40.0);
+    /// The middle column, the controls over the seek bar.
+    pub const CENTRE: Pixels = px(520.0);
+    /// The seek bar's height: a compact slider's.
+    pub const SEEK: Pixels = px(20.0);
+
+    /// Between the controls' glyphs, as the Mac spaces them.
+    pub fn control_gap(look: &Look) -> Pixels {
+        look.spaced(22.0)
+    }
+
+    /// Between the controls and the seek bar.
+    pub fn row_gap(look: &Look) -> Pixels {
+        look.spaced(2.0)
+    }
+}
+
 /// A record heading's sleeve at 100 %, the Mac queue's.
 const HEADING_SLEEVE: f32 = 52.0;
 
