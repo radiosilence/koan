@@ -118,9 +118,6 @@ number = 2
 ["settings/sheet.rs"]
 number = 1
 
-["sidebar.rs"]
-number = 8
-
 ["transport.rs"]
 number = 16
 
