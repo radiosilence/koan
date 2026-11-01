@@ -67,6 +67,8 @@ pub struct ProfilePage {
     window: gpui_kit::AnyWindowHandle,
     copy_input: Option<Entity<InputState>>,
     loaded: Option<((u64, u64), String)>,
+    /// The stamp the detail shown was read at, as its read started.
+    read: Option<(u64, u64)>,
     _load: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -123,6 +125,7 @@ impl ProfilePage {
             window: window.window_handle(),
             copy_input: None,
             loaded: None,
+            read: None,
             _load: None,
             _subscriptions: subscriptions,
         };
@@ -192,6 +195,7 @@ impl ProfilePage {
                     p.fields.keep(&d.bands);
                 }
                 p.detail = detail;
+                p.read = Some(stamp);
                 p.notice = None;
                 p.show_name(cx);
                 p.sync_graph(response, stamp, cx);
@@ -213,6 +217,11 @@ impl ProfilePage {
                 }
             })
             .ok();
+    }
+
+    /// The stamp the filters shown were read at.
+    fn read_at(&self) -> (u64, u64) {
+        self.read.unwrap_or_default()
     }
 
     pub fn graph(&self) -> Entity<Graph> {
@@ -1487,11 +1496,13 @@ impl ProfilePage {
                 });
             });
             let channel = self.stereo_channel();
+            let read_at = self.read_at();
             let table = bands::table(
                 &mut self.fields,
                 &d.bands,
                 d.read_only,
                 channel,
+                read_at,
                 open,
                 remove,
                 window,
@@ -1567,7 +1578,8 @@ impl ProfilePage {
                 .ok();
             });
         let band = d.bands[index].clone();
-        let points = bands::points(&mut self.fields, index, &band, window, cx);
+        let read_at = self.read_at();
+        let points = bands::points(&mut self.fields, index, &band, read_at, window, cx);
         let mut s = vec![SectionHeader::new("Points").into_any_element(), points];
         if d.can_revert && d.edited {
             let (dsp, sheets, name, source) = (

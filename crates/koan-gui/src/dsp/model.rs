@@ -113,6 +113,8 @@ pub struct Dsp {
     closed: HashSet<u64>,
     /// The filter each finished edit last stored, for its next step.
     stored: HashMap<u64, DspBand>,
+    /// Edits forgotten while a save of theirs was in flight.
+    forgotten: HashSet<u64>,
     edit_count: u64,
     /// The library's version, which moves when profiles sync from another
     /// device.
@@ -155,6 +157,7 @@ impl Dsp {
                 lanes: HashMap::new(),
                 closed: HashSet::new(),
                 stored: HashMap::new(),
+                forgotten: HashSet::new(),
                 edit_count: 0,
                 library: 0,
                 extensions: Vec::new(),
@@ -730,17 +733,26 @@ impl Dsp {
                 Outcome::Failed
             }
         };
-        if let Some(lane) = self.lanes.remove(&edit)
-            && outcome == Outcome::Saved
-        {
-            // An edit that goes on after this save, such as a row of the
-            // band table still being typed in, names what it stored.
-            self.stored.insert(edit, lane.expected);
+        let band = self
+            .lanes
+            .remove(&edit)
+            .filter(|_| outcome == Outcome::Saved)
+            .map(|lane| lane.expected);
+        // Forgotten while this save was in flight: nothing more of it is
+        // kept.
+        if !self.forgotten.remove(&edit) {
+            match &band {
+                // An edit that goes on after this save, such as a row of the
+                // band table still being typed in, names what it stored.
+                Some(stored) => {
+                    self.stored.insert(edit, stored.clone());
+                }
+                None => {
+                    self.closed.insert(edit);
+                }
+            }
         }
-        if outcome != Outcome::Saved {
-            self.closed.insert(edit);
-        }
-        self.read(true, cx, move |stamp, cx| done(outcome.at(stamp), cx));
+        self.read(true, cx, move |stamp, cx| done(outcome.at(stamp, band), cx));
     }
 
     /// The edit `edit` is over, as its owner heard: nothing more of it
@@ -748,6 +760,9 @@ impl Dsp {
     pub fn forget(&mut self, edit: u64) {
         self.closed.remove(&edit);
         self.stored.remove(&edit);
+        if self.lanes.contains_key(&edit) {
+            self.forgotten.insert(edit);
+        }
     }
 
     /// A new edit's number, for `edit` to keep its saves in order by.
@@ -793,18 +808,22 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    fn at(self, stamp: (u64, u64)) -> Ended {
+    fn at(self, stamp: (u64, u64), band: Option<DspBand>) -> Ended {
         Ended {
             outcome: self,
             stamp,
+            band,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Ended {
     pub outcome: Outcome,
     pub stamp: (u64, u64),
+    /// Saved, the filter as stored: held to the ranges, which is what the
+    /// editor shows next.
+    pub band: Option<DspBand>,
 }
 
 /// A step of an edit made on a graph or in the band table, to save.

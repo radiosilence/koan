@@ -7,7 +7,7 @@
 //! when the text in its field was changed: a field left as shown never
 //! writes back a rounded value, so a band keeps every digit its file gave it.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -69,25 +69,41 @@ pub fn typed(text: &str, shown: &str) -> Option<f64> {
 
 struct Field {
     input: Entity<InputState>,
-    /// The text the field was last given.
+    /// The text the field was last given, and the row's reset it last
+    /// took.
     shown: Rc<RefCell<String>>,
+    reset: u64,
     _subscription: Subscription,
 }
 
-/// A row of the table: the filter as last read, which every figure of the
-/// row saves against, and the edit its saves chain through while the row
-/// is being typed in, so a figure typed before the last one's save has been
-/// read back names what that save stored.
+/// What a row holds between renders: the filter as it last read or saved
+/// it, which every figure of the row saves against, and the edit those
+/// saves chain through.
+struct RowState {
+    band: DspBand,
+    edit: Option<u64>,
+    /// Saves of the row under way.
+    saving: usize,
+    /// The stamp the row's last save was read back at: until the page has
+    /// read the filters at or after it, what it read is older than the row.
+    settled: Option<(u64, u64)>,
+    /// A save was refused as stale: the row takes the filters as read at
+    /// once, even while it is being typed in.
+    stale: bool,
+    /// Moves each time the row is put back, so a field being typed in is
+    /// put back too.
+    reset: u64,
+}
+
 struct Row {
-    band: Rc<RefCell<DspBand>>,
-    edit: Rc<Cell<Option<u64>>>,
+    state: Rc<RefCell<RowState>>,
     fields: HashMap<Part, Field>,
 }
 
-/// The fields of one profile's table, kept between renders. A row takes the
-/// filters' figures as read only while none of its fields is being typed
-/// in: while one is, the filter it was read as is the one its saves name,
-/// and one that has changed since is refused rather than written over.
+/// The fields of one profile's table, kept between renders. A row takes
+/// the filters as read only when nobody is typing in it, none of its saves
+/// is under way and the read is at least as new as its last save; a save
+/// refused because the filter changed puts the row back at once.
 pub struct Fields {
     dsp: Entity<Dsp>,
     profile: String,
@@ -124,24 +140,49 @@ impl Fields {
         });
     }
 
-    /// Takes the filters as read into each row nobody is typing in.
-    fn refresh(&mut self, index: usize, band: &DspBand, window: &Window, cx: &mut App) {
+    /// Takes `band`, the filter as read at `stamp`, into its row when the
+    /// row may take it, and gives back the row.
+    fn row(
+        &mut self,
+        index: usize,
+        band: &DspBand,
+        stamp: (u64, u64),
+        window: &Window,
+        cx: &mut App,
+    ) -> Rc<RefCell<RowState>> {
         let row = self.rows.entry(index).or_insert_with(|| Row {
-            band: Rc::new(RefCell::new(band.clone())),
-            edit: Rc::new(Cell::new(None)),
+            state: Rc::new(RefCell::new(RowState {
+                band: band.clone(),
+                edit: None,
+                saving: 0,
+                settled: None,
+                stale: false,
+                reset: 0,
+            })),
             fields: HashMap::new(),
         });
         let typing = row
             .fields
             .values()
             .any(|f| gpui_kit::Focusable::focus_handle(f.input.read(cx), cx).is_focused(window));
-        if typing {
-            return;
+        let state = row.state.clone();
+        let mut s = state.borrow_mut();
+        let take = if s.stale {
+            s.stale = false;
+            s.reset += 1;
+            true
+        } else {
+            !typing && s.saving == 0 && s.settled.is_none_or(|at| stamp >= at)
+        };
+        if take {
+            s.band = band.clone();
+            s.settled = None;
+            if let Some(id) = s.edit.take() {
+                self.dsp.update(cx, |d, _| d.forget(id));
+            }
         }
-        *row.band.borrow_mut() = band.clone();
-        if let Some(id) = row.edit.take() {
-            self.dsp.update(cx, |d, _| d.forget(id));
-        }
+        drop(s);
+        state
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -150,19 +191,23 @@ impl Fields {
         index: usize,
         part: Part,
         band: &DspBand,
+        stamp: (u64, u64),
         width: f32,
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> AnyElement {
-        self.refresh(index, band, window, cx);
+        let state = self.row(index, band, stamp, window, cx);
         let (dsp, profile) = (self.dsp.clone(), self.profile.clone());
-        let row = self.rows.get_mut(&index).expect("made by refresh");
-        let text = figure(value_of(&row.band.borrow(), part), part.digits());
-        if !row.fields.contains_key(&part) {
+        let row = self.rows.get_mut(&index).expect("made by row");
+        let (text, reset) = {
+            let s = state.borrow();
+            (figure(value_of(&s.band, part), part.digits()), s.reset)
+        };
+        if let std::collections::hash_map::Entry::Vacant(vacant) = row.fields.entry(part) {
             let input = cx.new(|cx| InputState::new(window, cx).default_value(text.clone()));
             let shown = Rc::new(RefCell::new(text.clone()));
             let sub = {
-                let (shown, held, edit) = (shown.clone(), row.band.clone(), row.edit.clone());
+                let (shown, state) = (shown.clone(), state.clone());
                 cx.subscribe_in(
                     &input,
                     window,
@@ -180,23 +225,29 @@ impl Fields {
                             return;
                         };
                         *shown.borrow_mut() = text;
-                        commit(&dsp, &profile, index, &held, &edit, part, v, cx);
+                        commit(
+                            &dsp,
+                            &profile,
+                            index,
+                            &state,
+                            move |band| set(band, part, v),
+                            cx,
+                        );
                     },
                 )
             };
-            row.fields.insert(
-                part,
-                Field {
-                    input,
-                    shown,
-                    _subscription: sub,
-                },
-            );
+            vacant.insert(Field {
+                input,
+                shown,
+                reset,
+                _subscription: sub,
+            });
         }
         let field = row.fields.get_mut(&part).expect("made above");
         let focused =
             gpui_kit::Focusable::focus_handle(field.input.read(cx), cx).is_focused(window);
-        if *field.shown.borrow() != text && !focused {
+        if field.reset != reset || (*field.shown.borrow() != text && !focused) {
+            field.reset = reset;
             *field.shown.borrow_mut() = text.clone();
             field
                 .input
@@ -220,39 +271,63 @@ fn value_of(band: &DspBand, part: Part) -> f64 {
     }
 }
 
-/// Saves one typed figure, the row's other figures as it holds them, naming
-/// the filter the row was read as, through the row's edit. The row takes
-/// the figure at once, so the next one typed carries it.
-#[allow(clippy::too_many_arguments)]
-fn commit(
-    dsp: &Entity<Dsp>,
-    profile: &str,
-    index: usize,
-    held: &Rc<RefCell<DspBand>>,
-    edit: &Rc<Cell<Option<u64>>>,
-    part: Part,
-    v: f64,
-    cx: &mut App,
-) {
-    let expected = held.borrow().clone();
-    let mut band = expected.clone();
+fn set(band: &mut DspBand, part: Part, v: f64) {
     match part {
         Part::Freq => band.freq = v,
         Part::Gain => band.gain_db = v,
         Part::Q => band.q = v,
-        Part::PointHz(p) | Part::PointDb(p) => {
-            let Some(point) = band.curve.get_mut(p) else {
-                return;
-            };
-            if let Part::PointHz(_) = part {
+        Part::PointHz(p) => {
+            if let Some(point) = band.curve.get_mut(p) {
                 point.hz = v;
-            } else {
+            }
+        }
+        Part::PointDb(p) => {
+            if let Some(point) = band.curve.get_mut(p) {
                 point.db = v;
             }
         }
     }
-    let step = match part {
-        Part::Freq | Part::Gain | Part::Q => Commit::Band {
+}
+
+/// Saves a change to a row's filter, its other figures as the row holds
+/// them, naming the filter the row last read or saved, through the row's
+/// edit. The row takes the change at once, so the next figure typed
+/// carries it, and takes the filter as stored once the last save under way
+/// lands: held to the ranges, so the row never shows what the save changed.
+fn commit(
+    dsp: &Entity<Dsp>,
+    profile: &str,
+    index: usize,
+    state: &Rc<RefCell<RowState>>,
+    change: impl FnOnce(&mut DspBand),
+    cx: &mut App,
+) {
+    let (expected, band, id) = {
+        let mut s = state.borrow_mut();
+        let expected = s.band.clone();
+        let mut band = expected.clone();
+        change(&mut band);
+        s.band = band.clone();
+        s.saving += 1;
+        let id = match s.edit {
+            Some(id) => id,
+            None => {
+                let id = dsp.update(cx, |d, _| d.next_edit());
+                s.edit = Some(id);
+                id
+            }
+        };
+        (expected, band, id)
+    };
+    let step = if band.kind == "graphic" {
+        Commit::Curve {
+            name: profile.to_owned(),
+            index: index as u32,
+            expected,
+            points: band.curve.clone(),
+        }
+    } else {
+        Commit::Band {
             name: profile.to_owned(),
             index: index as u32,
             expected,
@@ -260,59 +335,31 @@ fn commit(
             freq: band.freq,
             gain_db: band.gain_db,
             q: band.q,
-        },
-        Part::PointHz(_) | Part::PointDb(_) => Commit::Curve {
-            name: profile.to_owned(),
-            index: index as u32,
-            expected,
-            points: band.curve.clone(),
-        },
+        }
     };
-    *held.borrow_mut() = band;
-    let edit = edit.clone();
-    dsp.update(cx, |d, cx| {
-        let id = match edit.get() {
-            Some(id) => id,
-            None => {
-                let id = d.next_edit();
-                edit.set(Some(id));
-                id
+    let row = state.clone();
+    let done: super::model::Done = Rc::new(move |e: super::model::Ended, _| {
+        let mut s = row.borrow_mut();
+        s.saving = s.saving.saturating_sub(1);
+        if s.edit != Some(id) {
+            return;
+        }
+        match (e.outcome, e.band) {
+            (super::model::Outcome::Saved, Some(stored)) => {
+                // The save held a figure to its range: the row shows that.
+                if s.saving == 0 && stored != s.band {
+                    s.band = stored;
+                    s.reset += 1;
+                }
+                s.settled = Some(e.stamp);
             }
-        };
-        let ended = edit.clone();
-        let done: super::model::Done = Rc::new(move |e: super::model::Ended, _| {
-            // Refused or failed: the row's next figure starts a new edit
-            // against the filters read again.
-            if e.outcome != super::model::Outcome::Saved && ended.get() == Some(id) {
-                ended.set(None);
+            _ => {
+                s.edit = None;
+                s.stale = true;
             }
-        });
-        d.edit(id, step, true, done, cx);
+        }
     });
-}
-
-/// A band's type changed from its menu: the figures as they were.
-fn retype(
-    dsp: &Entity<Dsp>,
-    profile: &str,
-    index: usize,
-    band: &DspBand,
-    kind: &str,
-    cx: &mut App,
-) {
-    let step = Commit::Band {
-        name: profile.to_owned(),
-        index: index as u32,
-        expected: band.clone(),
-        kind: kind.to_owned(),
-        freq: band.freq,
-        gain_db: band.gain_db,
-        q: band.q,
-    };
-    dsp.update(cx, |d, cx| {
-        let edit = d.next_edit();
-        d.edit(edit, step, true, Rc::new(|_, _| {}), cx);
-    });
+    dsp.update(cx, |d, cx| d.edit(id, step, true, done, cx));
 }
 
 const NUMBER_W: f32 = 22.0;
@@ -335,6 +382,7 @@ pub fn table<V: 'static>(
     bands: &[DspBand],
     read_only: bool,
     channel: Option<u16>,
+    stamp: (u64, u64),
     open_curve: RowAction,
     remove: RemoveAction,
     window: &mut Window,
@@ -389,14 +437,19 @@ pub fn table<V: 'static>(
             .child(number);
         let row = match (kind, read_only) {
             (Some(kind), false) => {
+                // A type chosen goes through the row's saves, as a typed
+                // figure does.
+                let state = fields.row(index, band, stamp, window, cx);
                 let items = kinds
                     .iter()
                     .map(|k| {
-                        let (dsp, profile, band, id) =
-                            (dsp.clone(), profile.clone(), band.clone(), k.id.clone());
-                        Item::choice(k.name.clone(), k.id == band.kind, move |_, cx| {
-                            if id != band.kind {
-                                retype(&dsp, &profile, index, &band, &id, cx);
+                        let (dsp, profile, state, id) =
+                            (dsp.clone(), profile.clone(), state.clone(), k.id.clone());
+                        let current = state.borrow().band.kind.clone();
+                        Item::choice(k.name.clone(), k.id == current, move |_, cx| {
+                            if state.borrow().band.kind != id {
+                                let id = id.clone();
+                                commit(&dsp, &profile, index, &state, move |b| b.kind = id, cx);
                             }
                         })
                     })
@@ -415,9 +468,17 @@ pub fn table<V: 'static>(
                     window,
                     cx,
                 )))
-                .child(fields.field(index, Part::Freq, band, HZ_W, window, cx))
-                .child(fields.field(index, Part::Gain, band, DB_W, window, cx))
-                .child(fields.field(index, Part::Q, band, Q_W, window, cx))
+                .child(fields.field(index, Part::Freq, band, stamp, HZ_W, window, cx))
+                .child(fields.field(index, Part::Gain, band, stamp, DB_W, window, cx))
+                .child(fields.field(
+                    index,
+                    Part::Q,
+                    band,
+                    stamp,
+                    Q_W,
+                    window,
+                    cx,
+                ))
             }
             _ if band.kind == "graphic" && !read_only => {
                 let open = open_curve.clone();
@@ -477,6 +538,7 @@ pub fn points<V: 'static>(
     fields: &mut Fields,
     index: usize,
     band: &DspBand,
+    stamp: (u64, u64),
     window: &mut Window,
     cx: &mut Context<V>,
 ) -> AnyElement {
@@ -508,8 +570,8 @@ pub fn points<V: 'static>(
                         .child(format!("{}", i + 1)),
                 )
                 .child(div().flex_1())
-                .child(fields.field(index, Part::PointHz(i), band, 80.0, window, cx))
-                .child(fields.field(index, Part::PointDb(i), band, 64.0, window, cx))
+                .child(fields.field(index, Part::PointHz(i), band, stamp, 80.0, window, cx))
+                .child(fields.field(index, Part::PointDb(i), band, stamp, 64.0, window, cx))
                 .into_any_element()
         });
     div()

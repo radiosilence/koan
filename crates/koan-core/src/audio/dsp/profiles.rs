@@ -4729,7 +4729,10 @@ mod tests {
         );
         assert!(edit_band("Nobody", 0, None, "peaking", 100.0, 0.0, 1.0).is_err());
         // Removing names the filter too.
-        let is = |f: &DspFilter| move |g: &DspFilter| g == f;
+        let is = |f: &DspFilter| {
+            let f = f.clone();
+            move |g: &DspFilter| *g == f
+        };
         assert_eq!(
             remove_edited("Mine", 0, Some(is(&last))),
             Ok(Edited::Changed)

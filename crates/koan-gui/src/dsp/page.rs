@@ -1341,7 +1341,12 @@ pub fn set_from_preset(
             dsp.update(cx, |d, cx| d.apply_preset(name, device, cx));
         }
     };
+    // Every output the EQ names is in the overview's outputs; one missing
+    // from a read overview plays untouched, with nothing to lose. Before
+    // the overview is read, what it plays is not known, so it is asked.
+    let read = d.overview.is_some();
     let what = match &state {
+        None if !read => Some("what it plays now".to_owned()),
         Some(s) if s.preset.is_some() && s.preset_edited => Some(format!(
             "the changes made since {} was set",
             s.preset.clone().unwrap_or_default()
