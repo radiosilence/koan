@@ -49,8 +49,9 @@ fn main() {
                     return;
                 }
             };
+            let restored = cx.update(|cx| platform::init(&engine, opening, cx));
+            restored.await;
             cx.update(|cx| {
-                platform::init(&engine, opening, cx);
                 gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Shell))
                     .expect("failed to open the window");
             });

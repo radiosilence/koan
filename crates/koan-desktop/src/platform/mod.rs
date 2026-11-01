@@ -34,10 +34,16 @@ static RESTORED: AtomicBool = AtomicBool::new(false);
 /// session with the native app, so a process that never read it must not
 /// write it: quitting would leave the other app this one's queue, empty or
 /// not, in place of its own.
-async fn restore_session(engine: &Arc<KoanEngine>) {
+async fn restore_session(engine: &Arc<KoanEngine>) -> Option<u32> {
     match engine.clone().restore_session().await {
-        Ok(_) => RESTORED.store(true, Ordering::Relaxed),
-        Err(e) => log::warn!("could not restore the session: {e}"),
+        Ok(count) => {
+            RESTORED.store(true, Ordering::Relaxed);
+            Some(count)
+        }
+        Err(e) => {
+            log::warn!("could not restore the session: {e}");
+            None
+        }
     }
 }
 
@@ -54,7 +60,17 @@ impl Global for Links {}
 /// from the command line, a later launch and the platform's open requests;
 /// they are taken once the saved session is restored, so a launch's files
 /// land after the queue it left rather than before it.
-pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx: &mut App) {
+///
+/// Resolves to how many tracks the session restored, or `None` when it could
+/// not be read. The player has not necessarily loaded them yet when it does.
+/// The shell must not restore the session itself: a second restore appends
+/// the saved queue again. Its own saves of the session (an autosave) are for
+/// `Some` alone, as the save on quit here is.
+pub fn init(
+    engine: &Arc<KoanEngine>,
+    mut opened: UnboundedReceiver<Opened>,
+    cx: &mut App,
+) -> impl Future<Output = Option<u32>> + 'static {
     actions::register(engine, cx);
     shortcuts_sheet::bind(cx);
     menus::set(cx);
@@ -84,8 +100,9 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
     })
     .detach();
     let engine = engine.clone();
+    let (restored, restoring) = futures_channel::oneshot::channel();
     cx.spawn(async move |cx: &mut AsyncApp| {
-        restore_session(&engine).await;
+        let _ = restored.send(restore_session(&engine).await);
         while let Some(next) = opened.next().await {
             cx.update(|cx| {
                 to_front(cx);
@@ -97,6 +114,7 @@ pub fn init(engine: &Arc<KoanEngine>, mut opened: UnboundedReceiver<Opened>, cx:
         }
     })
     .detach();
+    async move { restoring.await.ok().flatten() }
 }
 
 /// Save the session and the server's queue, waiting at most `QUIT_SAVE_FOR`.
