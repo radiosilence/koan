@@ -17,7 +17,7 @@ use super::selection::Selection;
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome, rows};
 use crate::components::{ROW_GROUP, RowKind, RowNumber, TableRow};
-use crate::theme::{Icon, KoanIcon, Space};
+use crate::theme::Icon;
 
 const TYPING: Duration = Duration::from_millis(80);
 
