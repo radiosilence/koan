@@ -4,8 +4,8 @@
 
 use crate::components::{Button, ButtonKind};
 use crate::theme::Look;
-use gpui_kit::prelude::*;
-use gpui_kit::*;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::keys::{Keys, Kind};
 use super::link::LinkDevice;

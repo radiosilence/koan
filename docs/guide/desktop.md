@@ -4,7 +4,7 @@ kōan's desktop app runs on macOS and Linux. It is drawn with GPUI and links the
 
 ## Installing
 
-Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it installs as **kōan desktop**, beside the native app rather than over it.
+Each release carries a DMG for macOS 26 or later on Apple silicon, and an AppImage and a `.deb` for Linux on x86-64 and ARM64, which need glibc 2.35 or later (Ubuntu 22.04, Debian 12 and their successors). On a Mac it is called kōan, as the native app is, and installs beside it rather than over it, as `kōan desktop.app`.
 
 ## Beside the other apps
 
@@ -22,7 +22,7 @@ The app shows what is playing in the system's controls, cover included, and take
 
 ## The Dock
 
-On macOS the Dock's menu for kōan desktop shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here. Its icon has a stand beneath the circle, so it is told apart from the Mac app in the Dock and the app switcher.
+On macOS the desktop app's Dock menu shows what is playing, with its heart, and has repeat, shuffle, play and pause, next and previous, the sleep timer and Play On, which lists the devices you can control from here. Its icon has a spindle at the circle's centre, so it is told apart from the Mac app in the Dock and the app switcher.
 
 ## Keys
 

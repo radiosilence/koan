@@ -6,13 +6,13 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use koan_ffi::{DeletedDsp, DspOverview, DspProfileSummary, DspRole, DspTuningEntry};
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::FluentBuilder;
+use koan_kit::raw::{
     AnyElement, App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
-use koan_ffi::{DeletedDsp, DspOverview, DspProfileSummary, DspRole, DspTuningEntry};
 
 use super::flows;
 use super::menu::{Item, Trigger, menu};
@@ -39,7 +39,7 @@ pub struct ManageEq {
     restore_error: Option<SharedString>,
     loaded: Option<((u64, u64), bool)>,
     /// The read under way; a newer one drops it.
-    _load: Option<gpui_kit::Task<()>>,
+    _load: Option<koan_kit::raw::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 

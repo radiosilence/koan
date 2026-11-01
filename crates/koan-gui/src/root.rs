@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use crate::theme::wash::{Sleeve, Wash};
 use crate::theme::{self, Accent, KoanTheme};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::PlayState;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::engine::engine;
 use crate::mirror::{Mirror, Playback};

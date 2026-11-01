@@ -27,8 +27,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::*;
 use koan_ffi::KoanEngine;
+use koan_kit::raw::*;
 
 /// A listener on `view` that outlives the borrow of its context: what
 /// `cx.listener` gives, for a handler made inside a closure over that context.
@@ -101,7 +101,7 @@ impl Lib {
     }
 }
 
-gpui_kit::actions!(
+koan_kit::raw::actions!(
     library,
     [
         /// Tick everything the page shows.

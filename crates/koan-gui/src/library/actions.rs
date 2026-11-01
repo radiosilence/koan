@@ -6,8 +6,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::components::{KoanContextMenu, Menu, MenuEntry};
-use gpui_kit::*;
 use koan_ffi::Placement;
+use koan_kit::raw::*;
 
 use super::Lib;
 use super::drag::{Playable, sources};

@@ -10,11 +10,11 @@
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::KoanEngine;
 use koan_gui::settings::{SettingsWindow, Tab};
 use koan_gui::{app, theme};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 const TABS: [Tab; 5] = [
     Tab::Library,
@@ -47,14 +47,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::env::set_var("KOAN_DEVICES__DISCOVERABLE", "false");
     }
     let engine = futures::executor::block_on(KoanEngine::open(None))?;
-    let text_system = gpui_kit::platform::current_platform(true).text_system();
+    let text_system = koan_kit::raw::platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
         text_system,
         std::sync::Arc::new(theme::icons::Assets),
-        gpui_kit::platform::current_headless_renderer,
+        koan_kit::raw::platform::current_headless_renderer,
     );
     cx.update(|cx| {
-        gpui_kit::init(cx);
+        koan_kit::raw::init(cx);
         theme::init(cx);
         app::install(&engine, cx);
     });
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let window = cx.open_window(size(px(900.), px(820.)), move |window, cx| {
         let view = cx.new(|cx| SettingsWindow::new(Tab::Library, window, cx));
         held.set(Some(view.clone()));
-        cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+        cx.new(|cx| koan_kit::raw::base::Root::new(view, window, cx))
     })?;
     let view = made.take().expect("the window was made");
     let window: AnyWindowHandle = window.into();

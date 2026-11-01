@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use gpui_kit::*;
+use koan_kit::raw::*;
 
 use crate::navigator::Navigator;
 pub use crate::navigator::Route as Page;

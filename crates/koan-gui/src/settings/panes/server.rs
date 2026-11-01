@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use crate::components::{Button, ButtonKind, Picker, Segmented, Stepper, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::{ConnectionInfo, Settings};
+use koan_kit::raw::component::input::{InputEvent, InputState};
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};

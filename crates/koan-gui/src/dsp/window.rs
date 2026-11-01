@@ -2,7 +2,7 @@
 //! output in use, or on a device a preset menu names, and brought to the
 //! front when it is open already.
 
-use gpui_kit::{
+use koan_kit::raw::{
     App, AppContext, Bounds, Global, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
     px, size,
 };
@@ -15,8 +15,8 @@ use crate::root::WindowRoot;
 /// The EQ model, made the first time EQ is opened, and its window while it
 /// is open.
 struct EqWindow {
-    dsp: gpui_kit::Entity<Dsp>,
-    window: Option<(WindowHandle<WindowRoot>, gpui_kit::Entity<EqPage>)>,
+    dsp: koan_kit::raw::Entity<Dsp>,
+    window: Option<(WindowHandle<WindowRoot>, koan_kit::raw::Entity<EqPage>)>,
 }
 
 impl Global for EqWindow {}

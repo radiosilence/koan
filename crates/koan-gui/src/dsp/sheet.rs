@@ -4,8 +4,8 @@
 
 use std::rc::Rc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use koan_kit::raw::prelude::FluentBuilder;
+use koan_kit::raw::{
     AnyElement, AnyView, App, AppContext, Context, Entity, InteractiveElement, IntoElement,
     MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
@@ -62,7 +62,7 @@ impl Sheets {
     /// Closes the sheet showing `view`, wherever it is in the stack: what
     /// finishes after the person has moved on closes itself and nothing
     /// above or below it.
-    pub fn close(&mut self, view: gpui_kit::EntityId, cx: &mut Context<Self>) {
+    pub fn close(&mut self, view: koan_kit::raw::EntityId, cx: &mut Context<Self>) {
         let before = self.stack.len();
         self.stack
             .retain(|s| !matches!(s, Sheet::View(v) if v.entity_id() == view));
@@ -119,12 +119,12 @@ impl Sheets {
 }
 
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
-pub fn panel(look: &Look) -> gpui_kit::Div {
+pub fn panel(look: &Look) -> koan_kit::raw::Div {
     div()
         .flex()
         .flex_col()
         .w(px(560.0))
-        .max_h(gpui_kit::relative(0.85))
+        .max_h(koan_kit::raw::relative(0.85))
         .bg(look.palette.bg.hsla())
         .border(HAIRLINE)
         .border_color(look.palette.rule.hsla())
@@ -161,7 +161,10 @@ pub fn head_data(
 }
 
 /// A sheet's scrolling body.
-pub fn body(id: impl Into<gpui_kit::ElementId>, look: &Look) -> gpui_kit::Stateful<gpui_kit::Div> {
+pub fn body(
+    id: impl Into<koan_kit::raw::ElementId>,
+    look: &Look,
+) -> koan_kit::raw::Stateful<koan_kit::raw::Div> {
     div()
         .id(id.into())
         .flex()
@@ -177,13 +180,13 @@ pub fn body(id: impl Into<gpui_kit::ElementId>, look: &Look) -> gpui_kit::Statef
 fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoElement {
     let cancel = {
         let sheets = sheets.clone();
-        move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
+        move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
             sheets.update(cx, |s, cx| s.pop(cx));
         }
     };
     let go = |run: Run| {
         let sheets = sheets.clone();
-        move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+        move |_: &koan_kit::raw::ClickEvent, window: &mut Window, cx: &mut App| {
             sheets.update(cx, |s, cx| s.pop(cx));
             run(window, cx);
         }
@@ -232,7 +235,7 @@ fn confirm_body(c: Confirm, sheets: Entity<Sheets>, look: &Look) -> impl IntoEle
 }
 
 /// A line of `fine` text in a tone, for footers and notes.
-pub fn note(text: impl Into<SharedString>, tone: Tone, look: &Look) -> gpui_kit::Div {
+pub fn note(text: impl Into<SharedString>, tone: Tone, look: &Look) -> koan_kit::raw::Div {
     div()
         .text_role(TypeRole::Fine, look)
         .text_color(look.text_color(tone))
@@ -259,12 +262,12 @@ pub fn section(
 
 /// A row a click acts on: what it is, a line beneath, and what trails.
 pub fn choice_row(
-    id: impl Into<gpui_kit::ElementId>,
+    id: impl Into<koan_kit::raw::ElementId>,
     title: impl Into<SharedString>,
     detail: Option<SharedString>,
     trailing: Option<AnyElement>,
     look: &Look,
-    on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+    on_click: impl Fn(&koan_kit::raw::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     div()
         .id(id.into())

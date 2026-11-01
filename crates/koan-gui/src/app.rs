@@ -7,9 +7,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui_kit::prelude::*;
-use gpui_kit::*;
 use koan_ffi::KoanEngine;
+use koan_kit::raw::prelude::*;
+use koan_kit::raw::*;
 
 use crate::covers::Covers;
 use crate::engine::Engine;
@@ -150,7 +150,7 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         app_id: Some("koan-gui".into()),
         ..Default::default()
     };
-    let opened = gpui_kit::open_window(options, cx, |window, cx| {
+    let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
         window.on_window_should_close(cx, |window, cx| {
             window_state::save(window.window_bounds(), cx);
             true

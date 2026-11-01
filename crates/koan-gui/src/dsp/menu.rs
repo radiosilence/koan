@@ -4,8 +4,8 @@
 
 use std::rc::Rc;
 
-use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{
+use koan_kit::raw::prelude::FluentBuilder;
+use koan_kit::raw::{
     AnyElement, App, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
     SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
@@ -91,13 +91,13 @@ pub fn menu(
     // A press on the trigger while the menu is open is the trigger's to
     // close: the panel's press-outside leaves it alone.
     let over_trigger = window.use_keyed_state(
-        gpui_kit::ElementId::NamedChild(std::sync::Arc::new(id.clone()), "over".into()),
+        koan_kit::raw::ElementId::NamedChild(std::sync::Arc::new(id.clone()), "over".into()),
         cx,
         |_, _| false,
     );
     let toggle = {
         let open = open.clone();
-        move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
+        move |_: &koan_kit::raw::ClickEvent, _: &mut Window, cx: &mut App| {
             open.update(cx, |o, cx| {
                 *o = !*o;
                 cx.notify();
@@ -172,12 +172,12 @@ pub fn menu(
         deferred(
             anchored().snap_to_window().child(
                 div()
-                    .id(gpui_kit::ElementId::NamedChild(
+                    .id(koan_kit::raw::ElementId::NamedChild(
                         std::sync::Arc::new(id.clone()),
                         "panel".into(),
                     ))
                     .occlude()
-                    .max_h(gpui_kit::px(420.0))
+                    .max_h(koan_kit::raw::px(420.0))
                     .overflow_y_scroll()
                     .on_mouse_down_out({
                         let close = close.clone();
@@ -193,13 +193,13 @@ pub fn menu(
                     })
                     // Escape closes it, heard while it is drawn.
                     .child(
-                        gpui_kit::canvas(
+                        koan_kit::raw::canvas(
                             |_, _, _| (),
                             move |_, _, window, _| {
                                 let close = close.clone();
                                 window.on_key_event(
-                                    move |e: &gpui_kit::KeyDownEvent, phase, _, cx| {
-                                        if phase == gpui_kit::DispatchPhase::Bubble
+                                    move |e: &koan_kit::raw::KeyDownEvent, phase, _, cx| {
+                                        if phase == koan_kit::raw::DispatchPhase::Bubble
                                             && e.keystroke.key == "escape"
                                         {
                                             close.update(cx, |o, cx| {
