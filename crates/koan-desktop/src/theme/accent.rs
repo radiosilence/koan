@@ -167,10 +167,29 @@ fn shade(hue: f64, chroma: f64, band: (f64, f64), dark: bool, tokens: Palette) -
 /// dark but still coloured.
 ///
 /// The sleeve is first reduced to 32 pixels square, as the Apple apps'
-/// thumbnail is.
+/// thumbnail is, with its colour premultiplied by its alpha: Swift draws the
+/// thumbnail into a premultiplied context, so a transparent part of a sleeve
+/// reads as black and falls under the black floor.
 pub fn dominant(rgba: &[u8], width: u32, height: u32) -> Option<[f64; 3]> {
     const SIDE: u32 = 32;
-    let image = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(width, height, rgba)?;
+    if rgba.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+    let premultiplied;
+    let pixels = if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+        rgba
+    } else {
+        premultiplied = rgba
+            .chunks_exact(4)
+            .flat_map(|p| {
+                let a = p[3] as u32;
+                let scale = |c: u8| ((c as u32 * a + 127) / 255) as u8;
+                [scale(p[0]), scale(p[1]), scale(p[2]), p[3]]
+            })
+            .collect::<Vec<u8>>();
+        &premultiplied[..]
+    };
+    let image = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(width, height, pixels)?;
     let small = image::imageops::resize(&image, SIDE, SIDE, image::imageops::FilterType::Triangle);
 
     let (mut x, mut y, mut saturation, mut total) = (0.0, 0.0, 0.0, 0.0);
@@ -424,6 +443,28 @@ mod tests {
         // saturation clamped to 0.85, value 0.8.
         let colour = dominant(&solid(0, 0, 200), 64, 64).unwrap();
         assert_eq!(hex(colour), 0x1F1FCC);
+    }
+
+    #[test]
+    fn transparent_parts_of_a_sleeve_read_as_black() {
+        // Transparent red over the left half, opaque blue on the right. Drawn
+        // premultiplied, as Swift draws it, the red is black and only the
+        // blue counts.
+        let side = 64;
+        let mut rgba = Vec::with_capacity(side * side * 4);
+        for _ in 0..side {
+            for x in 0..side {
+                rgba.extend(if x < side / 2 {
+                    [220, 20, 20, 0]
+                } else {
+                    [0, 0, 200, 255]
+                });
+            }
+        }
+        let colour = dominant(&rgba, side as u32, side as u32).unwrap();
+        let (_, _, hue) = oklch::from_srgb(colour);
+        let blue = oklch::from_srgb(dominant(&solid(0, 0, 200), 64, 64).unwrap()).2;
+        assert!((hue - blue).abs() < 1.0, "hue {hue}, blue {blue}");
     }
 
     #[test]
