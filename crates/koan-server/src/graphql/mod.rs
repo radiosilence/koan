@@ -1266,7 +1266,13 @@ mod tests {
 
         for mutation in [save, "mutation { clearPlaybackState { success } }"] {
             let resp = schema(None).execute(mutation).await;
-            assert!(!resp.errors.is_empty(), "{mutation} was not refused");
+            assert!(
+                resp.errors
+                    .iter()
+                    .any(|e| e.message.contains("keeps no saved session")),
+                "{mutation}: {:?}",
+                resp.errors
+            );
         }
         assert!(
             queries::playback_state::load_playback_state(&db.conn, "terminal-")
