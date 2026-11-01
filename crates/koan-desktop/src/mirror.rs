@@ -3,9 +3,15 @@
 //! The engine publishes whole slices and this holds the latest of each. GPUI
 //! invalidates per entity, so the slices are cut into entities by rate of
 //! change, as `EngineMirror.swift` cuts them into observed properties: the
-//! playhead and the queue's row patches move often and live apart, so a view
-//! that draws neither never hears from them. Nothing here decides what a
-//! change means; a slice arrives only when it differs, and Rust decided that.
+//! playhead moves often and lives apart, so a view that does not draw it
+//! never hears from it. A queue patch notifies the queue's observers, which
+//! redraw only the rows on screen. Nothing here decides what a change means;
+//! a slice arrives only when it differs, and the engine decides that.
+//!
+//! The main thread only swaps finished values in. Reading the stream (which
+//! copies each slice out), indexing a queue sent whole and laying out its
+//! rows happen on the background executor, and so does dropping the queue a
+//! new one replaces.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,6 +19,8 @@ use std::time::Instant;
 
 use gpui_kit::{App, AppContext, Entity, Global};
 use koan_ffi::{KoanEngine, NowPlaying, OutputsInfo, QueueItem, StateSlice};
+
+use crate::queue::rows::{self, Row};
 
 /// Everything a transport bar shows other than the position.
 pub struct Playback(pub NowPlaying);
@@ -63,24 +71,59 @@ pub struct Queue {
     pub whole: u64,
     /// Where each queue item is in `items`.
     pub at: HashMap<String, usize>,
+    /// The queue laid out as rows: record headings and tracks.
+    pub rows: Vec<Row>,
+    /// The track row of each queue item.
+    pub track_rows: HashMap<String, usize>,
     /// The rows the latest patch changed, put back from `base` before the
     /// next is applied, since each patch is relative to the base.
     patched: Vec<usize>,
+    /// The queue this one replaced, kept until the next is sent so a view can
+    /// find the row it was scrolled to in the new layout.
+    pub previous: Option<Box<Queue>>,
 }
 
 impl Queue {
-    fn replace(&mut self, items: Vec<QueueItem>, version: u64) {
-        self.at = items
+    /// Everything about a queue sent whole that takes time, done where it
+    /// does not hold up a frame.
+    fn prepare(items: Vec<QueueItem>, version: u64) -> Self {
+        let at = items
             .iter()
             .enumerate()
             .rev()
             .map(|(row, item)| (item.queue_item_id.clone(), row))
             .collect();
-        self.items = items.clone();
-        self.base = items;
-        self.version = version;
-        self.whole = self.whole.wrapping_add(1);
-        self.patched.clear();
+        let rows = rows::build(&items);
+        let track_rows = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(row, r)| match r {
+                Row::Track { ix, .. } => Some((items[*ix].queue_item_id.clone(), row)),
+                Row::Heading { .. } => None,
+            })
+            .collect();
+        Self {
+            items: items.clone(),
+            base: items,
+            version,
+            whole: 0,
+            at,
+            rows,
+            track_rows,
+            patched: Vec::new(),
+            previous: None,
+        }
+    }
+
+    /// Takes the prepared queue's place, keeping the one it replaces as
+    /// `previous` and returning the one before that, for dropping off the
+    /// main thread.
+    fn replace(&mut self, mut next: Queue) -> Option<Queue> {
+        next.whole = self.whole.wrapping_add(1);
+        let mut old = std::mem::replace(self, next);
+        let older = old.previous.take();
+        self.previous = Some(Box::new(old));
+        older.map(|queue| *queue)
     }
 
     /// Whether the patch changed anything. A patch to a queue sent whole since
@@ -138,17 +181,54 @@ impl Mirror {
         };
         let stream = engine.observe();
         let held = mirror.clone();
+        let background = cx.background_executor().clone();
         cx.spawn(async move |cx| {
-            while let Some(batch) = stream.next().await {
-                cx.update(|cx| held.apply(batch, cx));
+            loop {
+                let stream = stream.clone();
+                let batch = background
+                    .spawn(async move {
+                        Some(
+                            stream
+                                .next()
+                                .await?
+                                .into_iter()
+                                .map(Prepared::from)
+                                .collect(),
+                        )
+                    })
+                    .await;
+                let Some(batch) = batch else { break };
+                let replaced = cx.update(|cx| held.apply(batch, cx));
+                if !replaced.is_empty() {
+                    background.spawn(async move { drop(replaced) }).detach();
+                }
             }
         })
         .detach();
         mirror
     }
 
-    fn apply(&self, batch: Vec<StateSlice>, cx: &mut App) {
+    /// Returns the queues replaced, for dropping elsewhere.
+    fn apply(&self, batch: Vec<Prepared>, cx: &mut App) -> Vec<Queue> {
+        let mut replaced = Vec::new();
         for slice in batch {
+            let slice = match slice {
+                Prepared::Queue(next) => {
+                    self.queue.update(cx, |queue, cx| {
+                        replaced.extend(queue.replace(next));
+                        cx.notify();
+                    });
+                    continue;
+                }
+                Prepared::Playhead(next) => {
+                    self.playhead.update(cx, |held, cx| {
+                        *held = next;
+                        cx.notify();
+                    });
+                    continue;
+                }
+                Prepared::Other(slice) => slice,
+            };
             match slice {
                 StateSlice::Playback { now_playing } => {
                     self.playback.update(cx, |held, cx| {
@@ -156,27 +236,8 @@ impl Mirror {
                         cx.notify();
                     });
                 }
-                StateSlice::Playhead {
-                    position_ms,
-                    seekable_ms,
-                    playing,
-                } => {
-                    self.playhead.update(cx, |held, cx| {
-                        *held = Playhead {
-                            position_ms,
-                            seekable_ms,
-                            playing,
-                            at: Instant::now(),
-                        };
-                        cx.notify();
-                    });
-                }
-                StateSlice::Queue { items, version } => {
-                    self.queue.update(cx, |queue, cx| {
-                        queue.replace(items, version);
-                        cx.notify();
-                    });
-                }
+                // Prepared above.
+                StateSlice::Playhead { .. } | StateSlice::Queue { .. } => {}
                 StateSlice::QueuePatch { base, items } => {
                     self.queue.update(cx, |queue, cx| {
                         if queue.patch(base, items) {
@@ -208,6 +269,36 @@ impl Mirror {
                 | StateSlice::Connection { .. }
                 | StateSlice::Renderers { .. } => {}
             }
+        }
+        replaced
+    }
+}
+
+/// A slice as the main thread applies it. Made once per slice that changed,
+/// so the size of the largest variant costs nothing worth boxing for.
+#[allow(clippy::large_enum_variant)]
+enum Prepared {
+    Queue(Queue),
+    /// Stamped as it is read from the stream, which is when the engine said.
+    Playhead(Playhead),
+    Other(StateSlice),
+}
+
+impl From<StateSlice> for Prepared {
+    fn from(slice: StateSlice) -> Self {
+        match slice {
+            StateSlice::Queue { items, version } => Prepared::Queue(Queue::prepare(items, version)),
+            StateSlice::Playhead {
+                position_ms,
+                seekable_ms,
+                playing,
+            } => Prepared::Playhead(Playhead {
+                position_ms,
+                seekable_ms,
+                playing,
+                at: Instant::now(),
+            }),
+            other => Prepared::Other(other),
         }
     }
 }

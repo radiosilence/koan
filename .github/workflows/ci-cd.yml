@@ -153,7 +153,7 @@ jobs:
           touches() { printf '%s\n' "$files" | grep -E "$1" | grep -qvE '\.md$'; }
           if [ "$state" != "OPEN" ]; then
             echo "pull request #$PR is no longer open -- skipping everything"
-            rust=false web=false deps=false docker=false package=false apple=false apple_apps=false android=false release=false
+            rust=false web=false deps=false docker=false package=false apple=false apple_apps=false android=false desktop=false release=false
           elif [ "$EVENT" != "workflow_dispatch" ] && [ -n "$base" ] && files=$(git diff --name-only "$base" HEAD); then
             echo "changes since $(git rev-parse --short "$base"):"
             printf '%s\n' "$files" | sed 's/^/  /'
@@ -218,13 +218,14 @@ jobs:
               android=true
             fi
 
-            # koan-desktop on macOS: the Linux job checks it with the rest of
-            # the workspace, and main's Apple job does on macOS. A pull request
-            # holds a macOS runner for it only when it touches the app or the
-            # FFI it links.
-            desktop=$rust
-            if [ "$EVENT" = "pull_request" ]; then
-              touches '^crates/koan-desktop/|^crates/koan-ffi/|^Cargo\.lock$|^\.github/' || desktop=false
+            # koan-desktop on macOS. The Linux job checks it with the rest of
+            # the workspace, and on main the Apple job's clippy covers macOS,
+            # so this runs for pull requests only, and only when they touch
+            # the app, the FFI it links, or what decides how it compiles.
+            desktop=false
+            if [ "$EVENT" = "pull_request" ] \
+              && touches '^crates/koan-desktop/|^crates/koan-ffi/|^Cargo\.(toml|lock)$|^rust-toolchain|^\.cargo/|^\.github/'; then
+              desktop=true
             fi
           fi
           {

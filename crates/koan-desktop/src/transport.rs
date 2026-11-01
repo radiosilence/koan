@@ -438,7 +438,9 @@ impl Seek {
         } else {
             to_second
         };
-        let wait = Duration::from_millis(to_second.min(to_pixel).max(8));
+        // No more often than a 60 Hz frame: a short track on a wide slider
+        // would otherwise step its fill faster than the display shows it.
+        let wait = Duration::from_millis(to_second.min(to_pixel).max(16));
         self.tick = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(wait).await;
             this.update(cx, |this, cx| this.moved(cx)).ok();
@@ -541,11 +543,10 @@ impl Render for Seek {
                     |_, _, _| (),
                     move |bounds, (), window, cx| {
                         view.update(cx, |this, _| this.bounds = bounds);
-                        if !held {
-                            return;
-                        }
                         // While held, the pointer is followed past the
-                        // slider's edges and let go of anywhere.
+                        // slider's edges and let go of anywhere. Listened for
+                        // on every frame, not only once a frame has drawn the
+                        // thumb held: a tap's release can arrive before that.
                         let moved = view.clone();
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
                             if phase == DispatchPhase::Bubble

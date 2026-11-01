@@ -23,6 +23,7 @@ pages=(
   "Playback|docs/guide/terminal-ui.md"
   "Playback|docs/guide/devices.md"
   "Playback|docs/guide/apple-tv.md"
+  "Playback|docs/guide/desktop.md"
   "Playback|docs/guide/android.md"
   "Playback|docs/guide/shuffle-and-repeat.md"
   "Playback|docs/guide/dsp.md"

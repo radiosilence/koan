@@ -2,8 +2,10 @@
 //!
 //! Keyed by album rather than track: every row of a record shares one image.
 //! A view that draws sleeves observes `Covers` and is redrawn as they land.
+//! Each is decoded to the renderer's pixel format on the background executor,
+//! so drawing one is a texture upload and never a decode on the main thread.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use gpui_kit::prelude::*;
@@ -13,14 +15,26 @@ use crate::engine::engine;
 use crate::theme;
 
 enum Held {
+    /// Asked for and waiting its turn, or being fetched.
     Loading,
-    Ready(Arc<Image>),
+    Ready(Arc<RenderImage>),
     Missing,
 }
+
+/// How many sleeves are fetched at once. Each fetch holds one of the
+/// engine's blocking threads and, on a remote library, an HTTP request.
+const IN_FLIGHT: usize = 4;
+/// How many asks wait their turn. A list scrolled fast asks for more than
+/// it shows; past this the oldest asks are forgotten, and asked again if
+/// their rows are drawn again.
+const WAITING: usize = 48;
 
 #[derive(Default)]
 pub struct Covers {
     held: HashMap<(i64, u32), Held>,
+    /// Newest first: what is on screen now goes before what scrolled past.
+    waiting: VecDeque<(i64, u32)>,
+    running: usize,
 }
 
 #[derive(Clone)]
@@ -35,36 +49,67 @@ impl Covers {
     }
 
     /// The sleeve, if it has landed; asks for it otherwise.
-    fn get(this: &Entity<Self>, album_id: i64, size: u32, cx: &mut App) -> Option<Arc<Image>> {
-        match this.read(cx).held.get(&(album_id, size)) {
+    fn get(
+        this: &Entity<Self>,
+        album_id: i64,
+        size: u32,
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
+        let key = (album_id, size);
+        match this.read(cx).held.get(&key) {
             Some(Held::Ready(image)) => return Some(image.clone()),
             Some(Held::Loading | Held::Missing) => return None,
             None => {}
         }
-        this.update(cx, |covers, _| {
-            covers.held.insert((album_id, size), Held::Loading)
+        this.update(cx, |covers, cx| {
+            covers.held.insert(key, Held::Loading);
+            covers.waiting.push_front(key);
+            if covers.waiting.len() > WAITING
+                && let Some(forgotten) = covers.waiting.pop_back()
+            {
+                covers.held.remove(&forgotten);
+            }
+            covers.pump(cx);
         });
-        let fetch = engine(cx).album_cover_art(album_id, Some(size));
-        let this = this.downgrade();
-        cx.spawn(async move |cx| {
-            let held = match fetch.await {
-                Ok(Some(art)) => {
-                    Held::Ready(Arc::new(Image::from_bytes(format(&art.mime), art.data)))
-                }
-                Ok(None) => Held::Missing,
-                Err(e) => {
-                    log::info!("cover for album {album_id}: {e}");
-                    Held::Missing
-                }
-            };
-            this.update(cx, |covers, cx| {
-                covers.held.insert((album_id, size), held);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
         None
+    }
+
+    /// Starts the newest waiting fetches while there is room.
+    fn pump(&mut self, cx: &mut Context<Self>) {
+        while self.running < IN_FLIGHT {
+            let Some((album_id, size)) = self.waiting.pop_front() else {
+                return;
+            };
+            self.running += 1;
+            let fetch = engine(cx).album_cover_art(album_id, Some(size));
+            let renderer = cx.svg_renderer();
+            let background = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| {
+                let decoded = background
+                    .spawn(async move {
+                        let art = fetch.await.map_err(|e| e.to_string())?.ok_or("no cover")?;
+                        Image::from_bytes(format(&art.mime), art.data)
+                            .to_image_data(renderer)
+                            .map_err(|e| e.to_string())
+                    })
+                    .await;
+                let held = match decoded {
+                    Ok(image) => Held::Ready(image),
+                    Err(e) => {
+                        log::debug!("cover for album {album_id}: {e}");
+                        Held::Missing
+                    }
+                };
+                this.update(cx, |covers, cx| {
+                    covers.running -= 1;
+                    covers.held.insert((album_id, size), held);
+                    covers.pump(cx);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
     }
 }
 

@@ -21,6 +21,9 @@ crates/
 ├── koan-ffi/      staticlib + cdylib. uniffi bindings exposing koan-core
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
+├── koan-desktop/  Binary crate. The GPUI desktop app for macOS and Linux.
+│                  Links koan-ffi as a Rust library. Not published.
+│
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
                    Depends on koan-core, koan-tui and koan-server.
@@ -34,7 +37,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); nothing depends on `koan-ffi`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together, and `koan-desktop` a GPUI app on the third. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`). `koan-desktop` alone depends on `koan-ffi`, linking it as a Rust library rather than through bindings, so the desktop app drives the same facade as the Swift and Kotlin apps. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 

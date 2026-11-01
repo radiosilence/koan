@@ -7,9 +7,9 @@
 //! their item as it is now. A patch never changes a row's height or place, so
 //! the list keeps its measurements across one.
 
-mod rows;
+pub mod rows;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use gpui_kit::component::menu::ContextMenuExt;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
@@ -61,8 +61,8 @@ pub fn bindings() -> Vec<KeyBinding> {
 /// line, a track standing alone carries its own sleeve.
 const PADDING: Pixels = px(4.);
 const TRACK: Pixels = px(34. + 8.);
-const HEADING_SLEEVE: Pixels = px(32.);
-const HEADING: Pixels = px(32. + 12. + 8.);
+const HEADING_SLEEVE: Pixels = px(52.);
+const HEADING: Pixels = px(52. + 12. + 8.);
 const SINGLE_SLEEVE: Pixels = px(40.);
 const SINGLE: Pixels = px(40. + 8. + 8.);
 
@@ -106,10 +106,7 @@ pub struct QueueView {
     queue: Entity<Queue>,
     focus: FocusHandle,
     list: ListState,
-    rows: Vec<Row>,
-    /// The track row of each queue item, for finding a `RowRef` again.
-    track_rows: HashMap<String, usize>,
-    /// The `Queue::whole` the rows were laid out from.
+    /// The `Queue::whole` the list was last reset for.
     whole: u64,
     /// Picked queue items. A heading reads as picked when its whole run is.
     selected: HashSet<String>,
@@ -137,8 +134,6 @@ impl QueueView {
             queue,
             focus: cx.focus_handle(),
             list: ListState::new(0, ListAlignment::Top, px(400.)),
-            rows: Vec::new(),
-            track_rows: HashMap::new(),
             whole: 0,
             selected: HashSet::new(),
             anchor: None,
@@ -149,50 +144,78 @@ impl QueueView {
         view
     }
 
+    /// The queue was sent whole: its rows were laid out off the main thread
+    /// (`Queue::prepare`); what is left here is keeping the pick and the list.
     fn lay_out(&mut self, cx: &mut Context<Self>) {
         let queue = self.queue.read(cx);
         self.whole = queue.whole;
-        self.rows = rows::build(&queue.base);
-        self.track_rows = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter_map(|(row, r)| match r {
-                Row::Track { ix, .. } => Some((queue.base[*ix].queue_item_id.clone(), row)),
-                Row::Heading { .. } => None,
-            })
-            .collect();
         self.selected.retain(|id| queue.at.contains_key(id));
-        self.list.reset(self.rows.len());
+        // Where the list was scrolled to, as a row of the queue it showed.
+        let top = self.list.logical_scroll_top();
+        let top_ref = queue.previous.as_ref().and_then(|previous| {
+            let row = *previous.rows.get(top.item_ix)?;
+            let item = |ix: usize| previous.base[ix].queue_item_id.clone();
+            Some(match row {
+                Row::Heading { first, .. } => RowRef {
+                    item: item(first),
+                    heading: true,
+                },
+                Row::Track { ix, .. } => RowRef {
+                    item: item(ix),
+                    heading: false,
+                },
+            })
+        });
+        // A hint for the rows not yet measured, so the scrollbar is sized for
+        // the whole queue from the first frame.
+        self.list.reset_with_uniform_height(queue.rows.len(), TRACK);
+        let landing = match top_ref.and_then(|r| self.row_of(&r, cx)) {
+            Some(row) => ListOffset {
+                item_ix: row,
+                offset_in_item: top.offset_in_item,
+            },
+            // The row is gone: stay at the same place in the list.
+            None => ListOffset {
+                item_ix: top.item_ix,
+                offset_in_item: px(0.),
+            },
+        };
+        self.list.scroll_to(landing);
         if self
             .anchor
             .as_ref()
-            .is_some_and(|r| self.row_of(r).is_none())
+            .is_some_and(|r| self.row_of(r, cx).is_none())
         {
             self.anchor = None;
         }
         if self
             .cursor
             .as_ref()
-            .is_some_and(|r| self.row_of(r).is_none())
+            .is_some_and(|r| self.row_of(r, cx).is_none())
         {
             self.cursor = None;
         }
     }
 
-    fn row_of(&self, r: &RowRef) -> Option<usize> {
-        let track = *self.track_rows.get(&r.item)?;
+    fn rows<'a>(&self, cx: &'a App) -> &'a [Row] {
+        &self.queue.read(cx).rows
+    }
+
+    fn row_of(&self, r: &RowRef, cx: &App) -> Option<usize> {
+        let queue = self.queue.read(cx);
+        let track = *queue.track_rows.get(&r.item)?;
         if !r.heading {
             return Some(track);
         }
         let above = track.checked_sub(1)?;
-        matches!(self.rows[above], Row::Heading { first, .. } if self.rows[track] == (Row::Track { ix: first, grouped: true }))
+        matches!(queue.rows[above], Row::Heading { first, .. } if queue.rows[track] == (Row::Track { ix: first, grouped: true }))
             .then_some(above)
     }
 
     fn row_ref(&self, row: usize, cx: &App) -> RowRef {
-        let base = &self.queue.read(cx).base;
-        match self.rows[row] {
+        let queue = self.queue.read(cx);
+        let base = &queue.base;
+        match queue.rows[row] {
             Row::Heading { first, .. } => RowRef {
                 item: base[first].queue_item_id.clone(),
                 heading: true,
@@ -204,31 +227,31 @@ impl QueueView {
         }
     }
 
-    fn row_items<'a>(&self, row: usize, base: &'a [QueueItem]) -> impl Iterator<Item = &'a String> {
-        self.rows[row].items().map(|ix| &base[ix].queue_item_id)
+    fn row_items<'a>(&self, row: usize, cx: &'a App) -> impl Iterator<Item = &'a String> {
+        let queue = self.queue.read(cx);
+        queue.rows[row]
+            .items()
+            .map(|ix| &queue.base[ix].queue_item_id)
     }
 
     fn is_selected(&self, row: usize, cx: &App) -> bool {
         if self.selected.is_empty() {
             return false;
         }
-        let base = &self.queue.read(cx).base;
-        self.row_items(row, base)
-            .all(|id| self.selected.contains(id))
+        self.row_items(row, cx).all(|id| self.selected.contains(id))
     }
 
-    /// The picked queue items, in queue order.
+    /// The picked queue items, in queue order. Ordered by their indexes
+    /// rather than by walking the queue, so it costs the pick's size.
     fn selected_ids(&self, cx: &App) -> Vec<String> {
-        if self.selected.is_empty() {
-            return Vec::new();
-        }
-        self.queue
-            .read(cx)
-            .base
+        let at = &self.queue.read(cx).at;
+        let mut picked: Vec<(usize, &String)> = self
+            .selected
             .iter()
-            .filter(|item| self.selected.contains(&item.queue_item_id))
-            .map(|item| item.queue_item_id.clone())
-            .collect()
+            .filter_map(|id| Some((*at.get(id)?, id)))
+            .collect();
+        picked.sort_unstable_by_key(|(ix, _)| *ix);
+        picked.into_iter().map(|(_, id)| id.clone()).collect()
     }
 
     /// The queue items a row action applies to: the selection when the row
@@ -237,14 +260,12 @@ impl QueueView {
         if self.is_selected(row, cx) {
             self.selected_ids(cx)
         } else {
-            let base = &self.queue.read(cx).base;
-            self.row_items(row, base).cloned().collect()
+            self.row_items(row, cx).cloned().collect()
         }
     }
 
     fn select_only(&mut self, row: usize, cx: &App) {
-        let base = &self.queue.read(cx).base;
-        self.selected = self.row_items(row, base).cloned().collect();
+        self.selected = self.row_items(row, cx).cloned().collect();
         let r = self.row_ref(row, cx);
         self.anchor = Some(r.clone());
         self.cursor = Some(r);
@@ -254,11 +275,10 @@ impl QueueView {
         let from = self
             .anchor
             .as_ref()
-            .and_then(|r| self.row_of(r))
+            .and_then(|r| self.row_of(r, cx))
             .unwrap_or(to);
-        let base = &self.queue.read(cx).base;
         self.selected = (from.min(to)..=from.max(to))
-            .flat_map(|row| self.row_items(row, base).cloned())
+            .flat_map(|row| self.row_items(row, cx).cloned())
             .collect();
         if self.anchor.is_none() {
             self.anchor = Some(self.row_ref(to, cx));
@@ -267,8 +287,7 @@ impl QueueView {
     }
 
     fn toggle(&mut self, row: usize, cx: &App) {
-        let base = &self.queue.read(cx).base;
-        let ids: Vec<String> = self.row_items(row, base).cloned().collect();
+        let ids: Vec<String> = self.row_items(row, cx).cloned().collect();
         if ids.iter().all(|id| self.selected.contains(id)) {
             for id in &ids {
                 self.selected.remove(id);
@@ -296,8 +315,7 @@ impl QueueView {
     }
 
     fn play_row(&self, row: usize, cx: &App) {
-        let base = &self.queue.read(cx).base;
-        let Some(id) = self.row_items(row, base).next().cloned() else {
+        let Some(id) = self.row_items(row, cx).next().cloned() else {
             return;
         };
         command(cx, "play", move |e| e.play(id));
@@ -326,10 +344,10 @@ impl QueueView {
     }
 
     fn step(&mut self, by: isize, extend: bool, cx: &mut Context<Self>) {
-        let Some(last) = self.rows.len().checked_sub(1) else {
+        let Some(last) = self.rows(cx).len().checked_sub(1) else {
             return;
         };
-        let to = match self.cursor.as_ref().and_then(|r| self.row_of(r)) {
+        let to = match self.cursor.as_ref().and_then(|r| self.row_of(r, cx)) {
             Some(row) => row.saturating_add_signed(by).min(last),
             None if by < 0 => last,
             None => 0,
@@ -377,12 +395,14 @@ impl QueueView {
     /// the one on screen: the engine puts items whose target it cannot find
     /// at the end of the queue, so a stale target would move them there.
     fn drop_rows(&mut self, dragged: &DraggedRows, dest: usize, cx: &mut Context<Self>) {
-        if dragged.whole != self.whole || dragged.row >= self.rows.len() {
+        let queue = self.queue.read(cx);
+        if dragged.whole != queue.whole || dragged.row >= queue.rows.len() {
             return;
         }
         let moving = self.acting_on(dragged.row, cx);
-        let base = &self.queue.read(cx).base;
-        let Some((target, after)) = rows::drop_target(&self.rows, dest, &moving, base) else {
+        let queue = self.queue.read(cx);
+        let Some((target, after)) = rows::drop_target(&queue.rows, dest, &moving, &queue.base)
+        else {
             return;
         };
         command(cx, "move in queue", move |e| {
@@ -391,29 +411,34 @@ impl QueueView {
     }
 
     fn drag_label(&self, row: usize, cx: &App) -> SharedString {
-        let base = &self.queue.read(cx).base;
+        let queue = self.queue.read(cx);
         let count = if self.is_selected(row, cx) {
             self.selected.len()
         } else {
-            self.rows[row].items().len()
+            queue.rows[row].items().len()
         };
         if count == 1 {
-            base[self.rows[row].items().start].title.clone().into()
+            queue.base[queue.rows[row].items().start]
+                .title
+                .clone()
+                .into()
         } else {
             format!("{count} tracks").into()
         }
     }
 
     fn render_row(&mut self, row: usize, cx: &mut Context<Self>) -> AnyElement {
-        if row >= self.rows.len() {
+        if row >= self.rows(cx).len() {
             return div().into_any_element();
         }
         let p = theme::palette(cx);
         let selected = self.is_selected(row, cx);
-        let (height, line) = match self.rows[row] {
-            Row::Heading { first, .. } => {
-                let item = self.queue.read(cx).items[first].clone();
-                (HEADING, heading(&item, &p, cx))
+        let (height, line) = match self.rows(cx)[row] {
+            Row::Heading { first, len } => {
+                let queue = self.queue.read(cx);
+                let run = &queue.items[first..first + len];
+                let (item, detail) = (run[0].clone(), detail(run));
+                (HEADING, heading(&item, detail, &p, cx))
             }
             Row::Track { ix, grouped } => {
                 let item = self.queue.read(cx).items[ix].clone();
@@ -423,7 +448,7 @@ impl QueueView {
         };
         let dragged = DraggedRows {
             row,
-            whole: self.whole,
+            whole: self.queue.read(cx).whole,
             label: self.drag_label(row, cx),
         };
         let view = cx.entity();
@@ -457,21 +482,25 @@ impl QueueView {
 
 fn row_menu(menu: PopupMenu, view: &Entity<QueueView>, row: usize, cx: &mut App) -> PopupMenu {
     let this = view.read(cx);
-    if row >= this.rows.len() {
+    if row >= this.rows(cx).len() {
         return menu;
     }
     let ids = this.acting_on(row, cx);
-    let heading =
-        matches!(this.rows[row], Row::Heading { .. }) && ids.len() == this.rows[row].items().len();
+    let heading = matches!(this.rows(cx)[row], Row::Heading { .. })
+        && ids.len() == this.rows(cx)[row].items().len();
     let remove_label = match (heading, ids.len()) {
         (true, _) => "remove record".to_string(),
         (false, 1) => "remove".to_string(),
         (false, n) => format!("remove {n} tracks"),
     };
-    let play = view.clone();
+    // Named when the menu opens, as the rows it acts on are: the queue can be
+    // sent whole while the menu is open.
+    let first = this.row_items(row, cx).next().cloned();
     let remove = view.clone();
     menu.item(PopupMenuItem::new("play").on_click(move |_, _, cx| {
-        play.read(cx).play_row(row, cx);
+        if let Some(id) = first.clone() {
+            command(cx, "play", move |e| e.play(id));
+        }
     }))
     .item(PopupMenuItem::new(remove_label).on_click(move |_, _, cx| {
         let ids = ids.clone();
@@ -491,15 +520,35 @@ fn line(content: impl Into<SharedString>, size: Pixels, color: Hsla) -> Div {
         .child(content.into())
 }
 
-fn heading(first: &QueueItem, p: &Palette, cx: &mut App) -> Div {
+/// A record's run as its heading sums it up: the year, how many tracks, how
+/// long, and the codec where the run has one.
+fn detail(run: &[QueueItem]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(year) = run[0].year.as_ref().filter(|y| !y.is_empty()) {
+        parts.push(year.clone());
+    }
+    parts.push(match run.len() {
+        1 => "1 track".into(),
+        n => format!("{n} tracks"),
+    });
+    let total: u64 = run.iter().filter_map(|item| item.duration_ms).sum();
+    if total > 0 {
+        parts.push(crate::time::clock(total));
+    }
+    let mut codecs = run.iter().filter_map(|item| item.codec.as_deref());
+    if let Some(codec) = codecs.next()
+        && codecs.all(|c| c == codec)
+    {
+        parts.push(codec.to_uppercase());
+    }
+    parts.join(" · ")
+}
+
+fn heading(first: &QueueItem, detail: String, p: &Palette, cx: &mut App) -> Div {
     let artist = if first.album_artist.is_empty() {
         &first.artist
     } else {
         &first.album_artist
-    };
-    let detail = match &first.year {
-        Some(year) => format!("{artist} · {year}"),
-        None => artist.clone(),
     };
     div()
         .flex()
@@ -514,7 +563,8 @@ fn heading(first: &QueueItem, p: &Palette, cx: &mut App) -> Div {
                 .flex_col()
                 .min_w(px(0.))
                 .child(line(first.album.clone(), text::BODY, p.strong))
-                .child(line(detail, text::META, p.muted)),
+                .child(line(artist.clone(), text::META, p.ink))
+                .child(line(detail, text::FINE, p.muted)),
         )
 }
 
@@ -618,7 +668,7 @@ impl Focusable for QueueView {
 impl Render for QueueView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = theme::palette(cx);
-        let count = self.rows.len();
+        let count = self.rows(cx).len();
         let view = cx.entity();
         div()
             .id("queue")

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "kōan's desktop app for macOS, Linux and Windows, drawn with GPUI."
+description = "kōan's desktop app for macOS and Linux, drawn with GPUI."
 publish = false
 
 [[bin]]

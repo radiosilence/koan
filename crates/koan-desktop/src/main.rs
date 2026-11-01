@@ -1,4 +1,4 @@
-//! kōan on the desktop: macOS, Linux and Windows, drawn with GPUI.
+//! kōan on the desktop: macOS and Linux, drawn with GPUI.
 //!
 //! A thin client over koan-ffi's `KoanEngine`, linked in-process as the Mac
 //! app links it, so the UI sits on the audio engine with no daemon between.
@@ -95,7 +95,7 @@ fn start(engine: Arc<KoanEngine>, cx: &mut App) {
     })
     .detach();
 
-    // One window: closing it quits, as Linux and Windows would otherwise
+    // One window: closing it quits, as Linux would otherwise
     // keep the process (and the music) running with nothing on screen.
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {
@@ -135,8 +135,9 @@ fn start(engine: Arc<KoanEngine>, cx: &mut App) {
     cx.activate(true);
 }
 
-/// On macOS the toolbar runs under the window's buttons; elsewhere the
-/// system draws the title bar.
+/// On macOS the toolbar runs under the window's buttons. Elsewhere the
+/// system draws the title bar where the compositor offers one; where it
+/// leaves decorations to the app, the toolbar carries the buttons.
 fn titlebar() -> TitlebarOptions {
     if cfg!(target_os = "macos") {
         TitlebarOptions {

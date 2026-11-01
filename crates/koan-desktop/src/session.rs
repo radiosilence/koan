@@ -17,8 +17,10 @@ use crate::mirror::{Mirror, Playhead, Queue};
 pub struct Session {
     playhead: Entity<Playhead>,
     queue: Entity<Queue>,
-    /// The queue version last written whole.
-    saved_version: u64,
+    /// The queue version last written whole. `None` until the first queue
+    /// arrives, which is the one restored from the last save, so it is
+    /// adopted rather than written again.
+    saved_version: Option<u64>,
     playing: bool,
     autosave: Option<Task<()>>,
     _subscriptions: [Subscription; 2],
@@ -32,23 +34,20 @@ impl Global for Kept {}
 impl Session {
     pub fn follow(cx: &mut App) {
         let mirror = cx.global::<Mirror>().clone();
-        let session = cx.new(|cx| {
-            let saved_version = mirror.queue.read(cx).version;
-            Self {
-                _subscriptions: [
-                    cx.observe(&mirror.playhead, |this: &mut Session, _, cx| {
-                        this.playhead_moved(cx)
-                    }),
-                    cx.observe(&mirror.queue, |this: &mut Session, _, cx| {
-                        this.queue_moved(cx)
-                    }),
-                ],
-                playhead: mirror.playhead,
-                queue: mirror.queue,
-                saved_version,
-                playing: false,
-                autosave: None,
-            }
+        let session = cx.new(|cx| Self {
+            _subscriptions: [
+                cx.observe(&mirror.playhead, |this: &mut Session, _, cx| {
+                    this.playhead_moved(cx)
+                }),
+                cx.observe(&mirror.queue, |this: &mut Session, _, cx| {
+                    this.queue_moved(cx)
+                }),
+            ],
+            playhead: mirror.playhead,
+            queue: mirror.queue,
+            saved_version: None,
+            playing: false,
+            autosave: None,
         });
         cx.set_global(Kept(session));
     }
@@ -75,27 +74,35 @@ impl Session {
     }
 
     fn queue_moved(&mut self, cx: &mut Context<Self>) {
-        if !self.playing && self.queue.read(cx).version != self.saved_version {
-            self.save(cx);
+        let version = self.queue.read(cx).version;
+        match self.saved_version {
+            None => self.saved_version = Some(version),
+            Some(saved) if !self.playing && saved != version => self.save(cx),
+            Some(_) => {}
         }
     }
 
+    /// The version is marked written only once the write succeeds, so a
+    /// failed one is tried again by the next save.
     fn save(&mut self, cx: &mut Context<Self>) {
         let version = self.queue.read(cx).version;
+        let whole = self.saved_version.is_some_and(|saved| saved != version);
         let engine = engine(cx);
-        let whole = version != self.saved_version;
-        self.saved_version = version;
-        cx.background_executor()
-            .spawn(async move {
-                let written = if whole {
-                    engine.save_session().await
-                } else {
-                    engine.save_position().await
-                };
-                if let Err(e) = written {
-                    log::warn!("session: not saved: {e}");
+        cx.spawn(async move |this, cx| {
+            let written = if whole {
+                engine.save_session().await
+            } else {
+                engine.save_position().await
+            };
+            match written {
+                Ok(()) if whole => {
+                    this.update(cx, |this, _| this.saved_version = Some(version))
+                        .ok();
                 }
-            })
-            .detach();
+                Ok(()) => {}
+                Err(e) => log::warn!("session: not saved: {e}"),
+            }
+        })
+        .detach();
     }
 }

@@ -100,7 +100,7 @@ impl Shell {
         command(cx, "play/pause", |e| e.toggle_play_pause());
     }
 
-    fn toolbar(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn toolbar(&self, p: &Palette, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let button = |id: &'static str, label: &'static str, enabled: bool| {
             let surface = p.surface;
             let hover = p.hover;
@@ -143,22 +143,6 @@ impl Shell {
             .gap(space::XS)
             .border_b(HAIRLINE)
             .border_color(p.rule)
-            .window_control_area(WindowControlArea::Drag)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.moving_window = true),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.moving_window = false),
-            )
-            .on_mouse_down_out(cx.listener(|this, _, _, _| this.moving_window = false))
-            .on_mouse_move(cx.listener(|this, _, window, _| {
-                if std::mem::take(&mut this.moving_window) {
-                    window.start_window_move();
-                }
-            }))
-            .on_double_click(|_, window, _| window.titlebar_double_click())
             .child(
                 button("back", "←", self.nav.can_go_back())
                     .on_click(cx.listener(|this, _, window, cx| this.back(&GoBack, window, cx))),
@@ -168,18 +152,69 @@ impl Shell {
                     cx.listener(|this, _, window, cx| this.forward(&GoForward, window, cx)),
                 ),
             )
+            // The toolbar's bare space moves the window, and its buttons do
+            // not: a press that wobbles on back is still a click.
             .child(
                 div()
+                    .id("toolbar-drag")
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_center()
                     .pl(space::M)
                     .text_size(text::CONTROL)
                     .text_color(p.ink)
+                    .window_control_area(WindowControlArea::Drag)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.moving_window = true),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.moving_window = false),
+                    )
+                    .on_mouse_down_out(cx.listener(|this, _, _, _| this.moving_window = false))
+                    .on_mouse_move(cx.listener(|this, _, window, _| {
+                        if std::mem::take(&mut this.moving_window) {
+                            window.start_window_move();
+                        }
+                    }))
+                    .on_double_click(|_, window, _| {
+                        if cfg!(target_os = "macos") {
+                            window.titlebar_double_click();
+                        } else {
+                            window.zoom_window();
+                        }
+                    })
                     .child(title),
+            )
+            // Where the compositor leaves decorations to the app (GNOME on
+            // Wayland), the toolbar carries the window's buttons.
+            .when(
+                matches!(window.window_decorations(), Decorations::Client { .. }),
+                |d| {
+                    d.child(
+                        button("minimise", "–", true)
+                            .window_control_area(WindowControlArea::Min)
+                            .on_click(|_, window, _| window.minimize_window()),
+                    )
+                    .child(
+                        button("maximise", "□", true)
+                            .window_control_area(WindowControlArea::Max)
+                            .on_click(|_, window, _| window.zoom_window()),
+                    )
+                    .child(
+                        button("close", "×", true)
+                            .window_control_area(WindowControlArea::Close)
+                            .on_click(|_, window, _| window.remove_window()),
+                    )
+                },
             )
     }
 }
 
 impl Render for Shell {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = theme::palette(cx);
         let stage = match self.nav.current() {
             Page::Queue => self.queue.clone().into_any_element(),
@@ -212,7 +247,7 @@ impl Render for Shell {
             .flex_col()
             .bg(p.bg)
             .text_color(p.ink)
-            .child(self.toolbar(&p, cx))
+            .child(self.toolbar(&p, window, cx))
             .child(
                 div()
                     .flex_1()

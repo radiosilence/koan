@@ -15,7 +15,8 @@ fn path() -> PathBuf {
 }
 
 /// The bounds last saved, where they still fit on a display. Wayland neither
-/// reports nor sets a window's position, so there only the size is kept.
+/// reports nor sets a window's position: the origin saved there is zero and
+/// the compositor places the window, so only the size carries over.
 pub fn restore(cx: &App) -> Option<WindowBounds> {
     let text = std::fs::read_to_string(path()).ok()?;
     let mut fields = text.split_whitespace();
