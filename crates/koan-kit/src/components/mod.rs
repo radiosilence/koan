@@ -16,6 +16,7 @@ mod button;
 mod cover;
 mod dense;
 mod empty;
+mod fade;
 mod field;
 mod filter_field;
 mod form;
@@ -53,6 +54,7 @@ pub use button::{Button, ButtonKind};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use empty::EmptyState;
+pub use fade::FadeIn;
 pub use field::TextField;
 pub use filter_field::FilterField;
 pub use form::{

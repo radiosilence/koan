@@ -23,8 +23,9 @@ use crate::remote::wikimedia::{self, WikimediaError};
 
 const REFRESH_AFTER_SECS: i64 = 30 * 24 * 60 * 60;
 
-/// Wide enough for a header at 2×; Commons serves the nearest standard size.
-const IMAGE_WIDTH: u32 = 800;
+/// Wide enough for a header at 2×, and one of Commons' standard thumbnail
+/// widths: it refuses others.
+const IMAGE_WIDTH: u32 = 960;
 
 #[derive(Debug, Error)]
 pub enum ArtistInfoError {
@@ -83,12 +84,23 @@ pub fn cached(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<Arti
 /// waiting on MusicBrainz's rate limit, and a connection held through them is
 /// one every other reader goes without.
 pub fn fetch(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistInfoError> {
+    fetch_since(pool, artist_id, false)
+}
+
+/// `fetch`, looking the artist up again even while the cache is fresh when
+/// `again` is set.
+fn fetch_since(
+    pool: &Pool,
+    artist_id: i64,
+    again: bool,
+) -> Result<Option<ArtistInfo>, ArtistInfoError> {
     let now = crate::clock::unix_secs();
     let (held, subject) = {
         let db = pool.get()?;
         (cached(&db.conn, artist_id)?, subject(&db.conn, artist_id)?)
     };
     if let Some(held) = &held
+        && !again
         && !held.is_stale(now)
     {
         return Ok(Some(held.clone()));
@@ -138,12 +150,28 @@ pub fn fetch(pool: &Pool, artist_id: i64) -> Result<Option<ArtistInfo>, ArtistIn
 /// The photograph's bytes. Network, every time: the front end caches images,
 /// and the database is no place for them. No connection is held while it
 /// downloads.
+///
+/// A stored address Commons refuses (it serves only its standard thumbnail
+/// widths, and files are renamed) is looked up again once, and the new one
+/// downloaded.
 pub fn image(pool: &Pool, artist_id: i64) -> Result<Option<Vec<u8>>, ArtistInfoError> {
     let url = cached(&pool.get()?.conn, artist_id)?.and_then(|info| info.image_url);
     let Some(url) = url else {
         return Ok(None);
     };
-    Ok(Some(wikimedia::download(&wikimedia::client(), &url)?))
+    let http = wikimedia::client();
+    match wikimedia::download(&http, &url) {
+        Err(e) if e.refused() => {
+            log::info!("artist {artist_id}'s photo was refused ({e}); looking it up again");
+            let fresh = fetch_since(pool, artist_id, true)?.and_then(|info| info.image_url);
+            match fresh {
+                Some(fresh) if fresh != url => Ok(Some(wikimedia::download(&http, &fresh)?)),
+                Some(_) => Err(e.into()),
+                None => Ok(None),
+            }
+        }
+        found => Ok(Some(found?)),
+    }
 }
 
 /// What a lookup needs from the database, read before it goes to the network.

@@ -1775,20 +1775,21 @@ impl KoanEngine {
     }
 
     /// The artist's photograph. Hits the network; the caller caches it.
+    /// `None` only when the artist has no photograph: a download that failed
+    /// is an error, worth asking for again.
     pub async fn artist_image(
         self: Arc<Self>,
         artist_id: i64,
     ) -> Result<Option<CoverArt>, KoanError> {
         offload::offload(move || {
-            Ok(
-                koan_core::artist_info::image(koan_core::db::pool::shared(), artist_id)
-                    .ok()
-                    .flatten()
-                    .map(|data| CoverArt {
-                        mime: sniff_mime(&data).to_string(),
-                        data,
-                    }),
-            )
+            let data = koan_core::artist_info::image(koan_core::db::pool::shared(), artist_id)
+                .map_err(|e| KoanError::Remote {
+                    message: e.to_string(),
+                })?;
+            Ok(data.map(|data| CoverArt {
+                mime: sniff_mime(&data).to_string(),
+                data,
+            }))
         })
         .await
     }

@@ -142,6 +142,8 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 `Spinner::new(side)`, and `.reserving(size)` to hold exactly the room of what is loading, so nothing moves when it arrives.
 
+`FadeIn::new(id, element)`: what arrives after its page (a photograph, a biography) fading in over `Motion::NORMAL`, or appearing under Reduce Motion. It takes no size of its own, so the element lays out as it would unwrapped: a wrapper that fills its parent takes the whole header row from the title beside a photo.
+
 `EmptyState::new(icon, title).detail(…)` (Mac: `KoanUnavailable`), centred by the page's body.
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)

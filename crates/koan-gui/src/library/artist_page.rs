@@ -24,7 +24,7 @@ use super::selection::Selection;
 use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
-use crate::components::{Cover, CoverArt, RowMetrics};
+use crate::components::{Cover, CoverArt, FadeIn, RowMetrics};
 use crate::theme::Space;
 
 /// A biography longer than this opens clamped, with "more" under it.
@@ -80,8 +80,6 @@ pub struct ArtistPage {
     /// What the list's context menu acts on: the row last right-clicked.
     menu: Option<actions::MenuTarget>,
     starting: HashSet<i64>,
-    /// Whether the header drew the photo, to measure it again when it comes.
-    photo_shown: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -139,7 +137,6 @@ impl ArtistPage {
             tiles: Tiles::default(),
             menu: None,
             starting: HashSet::new(),
-            photo_shown: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -382,7 +379,7 @@ impl ArtistPage {
                     ranked.push((
                         Key::new(
                             Art::Artist(self.artist_id),
-                            RowMetrics::header_art(&p.look),
+                            RowMetrics::artist_photo(&p.look),
                             scale,
                         ),
                         priority,
@@ -610,12 +607,14 @@ impl ArtistPage {
             .as_ref()
             .map(|a| a.name.clone())
             .unwrap_or_default();
-        // No box until there is a photo to put in it: the header starts at
-        // the page's edge, and the photo fades in once it is found.
-        let side = RowMetrics::header_art(&p.look);
-        let photo = self
-            .photo(side, scale, cx)
-            .map(|art| fade_in(("artist-photo", id as u64), Cover::new(art, side), cx));
+        // No box until the artist is known to have a photo: the header
+        // starts at the page's edge. Once known, the box holds its place with
+        // the placeholder in it, so the photo landing moves nothing.
+        let side = RowMetrics::artist_photo(&p.look);
+        let photo = self.info.as_ref().is_some_and(|i| i.has_image).then(|| {
+            let art = self.photo(side, scale, cx).unwrap_or(CoverArt::Missing);
+            FadeIn::new(("artist-photo", id as u64), Cover::new(art, side))
+        });
         let albums = record.albums.len() as u64;
         let mut header = super::header::playable_header(&self.lib, item, name, cx)
             .detail(chrome::count(albums, "album", "albums"));
@@ -663,7 +662,7 @@ impl ArtistPage {
                 .when_some(info.image_credit.clone(), |d, credit| {
                     d.child(format!("photo: {credit}"))
                 });
-            header = header.body(fade_in(
+            header = header.body(FadeIn::new(
                 ("artist-bio", id as u64),
                 div()
                     .flex()
@@ -671,7 +670,6 @@ impl ArtistPage {
                     .gap(p.space(Space::S))
                     .child(text)
                     .child(links),
-                cx,
             ));
         }
         div()
@@ -705,24 +703,6 @@ impl ArtistPage {
             cx.notify();
         }
     }
-}
-
-/// What arrives after the page, the photograph and the biography, fades in
-/// rather than appearing; with Reduce Motion or Low Power Mode it appears.
-fn fade_in(id: impl Into<ElementId>, element: impl IntoElement, cx: &App) -> AnyElement {
-    use crate::theme::{KoanTheme, tokens::Motion};
-    if !KoanTheme::motion_allowed(cx) {
-        return element.into_any_element();
-    }
-    div()
-        .size_full()
-        .child(element)
-        .with_animation(
-            id,
-            Animation::new(Motion::NORMAL).with_easing(Motion::quick_out),
-            |el, delta| el.opacity(delta),
-        )
-        .into_any_element()
 }
 
 /// The sections of an artist's records, in page order, as (section, start,
@@ -872,13 +852,6 @@ impl chrome::Picking for ArtistPage {
 impl Render for ArtistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
-        // The photo arriving changes the header's height.
-        let side = RowMetrics::header_art(&p.look);
-        let shown = self.photo(side, window.scale_factor(), cx).is_some();
-        if shown != self.photo_shown {
-            self.photo_shown = shown;
-            self.list.remeasure_items(0..1);
-        }
         let width = self.width.clone();
         let entity = cx.entity_id();
         let measure = canvas(
