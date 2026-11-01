@@ -55,6 +55,12 @@ impl RowMetrics {
         px(points + 8.0)
     }
 
+    /// A page header's cover or photo, square: the grid's largest tile,
+    /// whatever the window's width, so a resize never moves it.
+    pub fn header_art(look: &Look) -> Pixels {
+        px((210.0 * look.scale.size).round())
+    }
+
     /// A record heading's sleeve, square.
     pub fn heading_sleeve(look: &Look) -> Pixels {
         px((HEADING_SLEEVE * look.scale.size).round())

@@ -69,13 +69,6 @@ impl Grid {
     }
 }
 
-/// A page header's cover: the grid's largest tile, whatever the window's
-/// width, so a resize never moves it and nothing it lays out feeds back into
-/// its size.
-pub fn header_side(scale: &Scale) -> Pixels {
-    px(MAX_SIDE * scale.size)
-}
-
 pub fn caption_height(scale: &Scale) -> Pixels {
     let line = |role: Type| role.points() * scale.text * role.line_height();
     px(CAPTION_GAP + line(Type::Meta) + CAPTION_GAP + line(Type::Fine))

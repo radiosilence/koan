@@ -382,7 +382,7 @@ impl ArtistPage {
                     ranked.push((
                         Key::new(
                             Art::Artist(self.artist_id),
-                            super::tile::header_side(&p.look.scale),
+                            RowMetrics::header_art(&p.look),
                             scale,
                         ),
                         priority,
@@ -600,7 +600,7 @@ impl ArtistPage {
             .unwrap_or_default();
         // No box until there is a photo to put in it: the header starts at
         // the page's edge, and the photo fades in once it is found.
-        let side = super::tile::header_side(&p.look.scale);
+        let side = RowMetrics::header_art(&p.look);
         let photo = self
             .photo(side, scale, cx)
             .map(|art| fade_in(("artist-photo", id as u64), Cover::new(art, side), cx));
@@ -861,7 +861,7 @@ impl Render for ArtistPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
         // The photo arriving changes the header's height.
-        let side = super::tile::header_side(&p.look.scale);
+        let side = RowMetrics::header_art(&p.look);
         let shown = self.photo(side, window.scale_factor(), cx).is_some();
         if shown != self.photo_shown {
             self.photo_shown = shown;

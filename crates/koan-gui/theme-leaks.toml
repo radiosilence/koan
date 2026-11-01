@@ -39,7 +39,6 @@ number = 2
 
 ["library/album_page.rs"]
 number = 1
-container = 1
 
 ["library/albums.rs"]
 number = 10
@@ -47,10 +46,9 @@ number = 10
 ["library/artist_page.rs"]
 number = 10
 fixed = 1
-container = 1
 
 ["library/artists.rs"]
-number = 3
+number = 2
 
 ["library/chrome.rs"]
 number = 4

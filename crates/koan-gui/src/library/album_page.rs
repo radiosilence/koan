@@ -270,7 +270,7 @@ impl AlbumPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let album = self.album.clone();
-        let side = super::tile::header_side(&p.look.scale);
+        let side = RowMetrics::header_art(&p.look);
         let key = Key::new(Art::Album(self.album_id), side, window.scale_factor());
         let owner = cx.entity_id();
         let sleeve = self.lib.covers.update(cx, |c: &mut Covers, _| {
