@@ -19,9 +19,9 @@ use crate::components::sheet as ask;
 use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, Back, Bigger, ClearDownloadedFiles, Forward, ShowAlbums, ShowArtists,
-    ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller,
-    ToggleLyrics, ToggleSidebar,
+    self, ActualSize, Back, Bigger, ClearArtworkCache, ClearDownloadedFiles, Forward, ShowAlbums,
+    ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts,
+    ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -204,6 +204,54 @@ impl Shell {
         window_state::SIDEBAR.store(self.sidebar_shown, std::sync::atomic::Ordering::Relaxed);
         window_state::save(window.window_bounds(), cx);
         cx.notify();
+    }
+
+    /// Asks before forgetting every cover kept on this device, saying how
+    /// many and how much, then fetches what is on screen again.
+    fn clear_artwork(
+        &mut self,
+        _: &ClearArtworkCache,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(covers) = self.library.as_ref().map(|l| l.read(cx).covers()) else {
+            return;
+        };
+        let dir = covers.read(cx).dir();
+        let window = window.window_handle();
+        cx.spawn(async move |_, cx| {
+            let (count, bytes) = cx
+                .background_executor()
+                .spawn(async move { crate::library::covers::Covers::on_disk(&dir) })
+                .await;
+            window
+                .update(cx, |_, window, cx| {
+                    ask::confirm(
+                        ask::Confirm {
+                            title: "clear artwork cache".into(),
+                            verb: "clear".into(),
+                            destructive: true,
+                            lines: vec![
+                                format!(
+                                    "{} kept on this device are deleted: {}.",
+                                    crate::library::chrome::count(count as u64, "cover", "covers"),
+                                    crate::time::bytes(bytes)
+                                )
+                                .into(),
+                            ],
+                            note: Some(
+                                "Covers are fetched again as they are shown, the ones on screen at once."
+                                    .into(),
+                            ),
+                        },
+                        window,
+                        cx,
+                        move |cx| covers.update(cx, |c, cx| c.clear(None, cx)),
+                    );
+                })
+                .ok();
+        })
+        .detach();
     }
 
     /// Asks before throwing away every file downloaded from the server,
@@ -398,6 +446,7 @@ impl Render for Shell {
             }))
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
             .on_action(cx.listener(Self::clear_downloads))
+            .on_action(cx.listener(Self::clear_artwork))
             .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
             .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))
             .on_action(|_: &ActualSize, _, cx| theme::KoanTheme::set_text_size(100, cx))

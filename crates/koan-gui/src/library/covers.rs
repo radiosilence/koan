@@ -843,6 +843,76 @@ impl Covers {
         .detach();
     }
 
+    /// What the artwork directory holds: how many covers and their bytes.
+    /// Reads the directory: call it off the main thread.
+    pub fn on_disk(dir: &Path) -> (usize, u64) {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| is_cover(&e.file_name().to_string_lossy()))
+            .filter_map(|e| e.metadata().ok())
+            .fold((0, 0), |(n, bytes), m| (n + 1, bytes + m.len()))
+    }
+
+    pub fn dir(&self) -> PathBuf {
+        self.dir.clone()
+    }
+
+    /// Forgets every cover: the files, the bitmaps and their GPU images,
+    /// the colours, what was found to have no art and what failed. Fetches
+    /// in flight land on a moved generation and are dropped. The disk is not
+    /// trusted until the files are gone, then what is on screen is fetched
+    /// again.
+    pub fn clear(&mut self, mut window: Option<&mut Window>, cx: &mut Context<Self>) {
+        {
+            let mut queue = self.shared.queue.lock();
+            let known: HashSet<Art> = queue
+                .on_disk
+                .iter()
+                .chain(&queue.fetching)
+                .chain(&queue.absent)
+                .chain(&queue.failed)
+                .copied()
+                .chain(queue.decoded.iter().map(|k| k.art))
+                .chain(self.memory.keys().map(|k| k.art))
+                .chain(self.colours.keys().copied())
+                .collect();
+            for art in known {
+                *queue.generation.entry(art).or_default() += 1;
+            }
+            queue.on_disk.clear();
+            queue.absent.clear();
+            queue.failed.clear();
+            queue.decoded.clear();
+            queue.disk_trusted = false;
+        }
+        self.staged.clear();
+        self.colours.clear();
+        let keys: Vec<Key> = self.memory.keys().copied().collect();
+        for key in keys {
+            self.forget(key, window.as_deref_mut(), cx);
+        }
+        let (dir, shared) = (self.dir.clone(), self.shared.clone());
+        cx.background_executor()
+            .spawn(async move {
+                let disk = shared.disk.lock();
+                for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    if is_cover(&entry.file_name().to_string_lossy()) {
+                        std::fs::remove_file(entry.path()).ok();
+                    }
+                }
+                drop(disk);
+                let mut queue = shared.queue.lock();
+                queue.disk_trusted = true;
+                let fetches = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
+                drop(queue);
+                shared.wake(fetches, 0);
+            })
+            .detach();
+        cx.notify();
+    }
+
     fn allow_fetches(&mut self, trust_disk: bool) {
         let mut queue = self.shared.queue.lock();
         queue.disk_trusted |= trust_disk;
@@ -986,6 +1056,11 @@ fn prepare_directory(dir: &Path) -> i64 {
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0)
+}
+
+/// A record's cover file, as `Art::filename` names them.
+fn is_cover(name: &str) -> bool {
+    name.starts_with("album-") || name.starts_with("artist-")
 }
 
 fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -1276,6 +1351,17 @@ mod tests {
         assert_eq!((i32::from(size.width), i32::from(size.height)), (100, 100));
         assert_eq!(&image.as_bytes(0).unwrap()[..4], &[0, 0, 255, 255]);
         assert!(decode(b"junk", 100).is_none());
+    }
+
+    /// What clearing would delete: the covers, not the directory's own record
+    /// of where the evictions got to.
+    #[test]
+    fn the_cache_is_measured_by_its_covers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("album-1"), [0; 100]).unwrap();
+        std::fs::write(dir.path().join("artist-2"), [0; 50]).unwrap();
+        std::fs::write(dir.path().join("evictions-seq"), b"9").unwrap();
+        assert_eq!(Covers::on_disk(dir.path()), (2, 150));
     }
 
     /// Hits and misses together, as a server answers a mix of covers it
