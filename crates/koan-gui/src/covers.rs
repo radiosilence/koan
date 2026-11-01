@@ -5,8 +5,10 @@
 //! Each is decoded to the renderer's pixel format on the background executor,
 //! so drawing one is a texture upload and never a decode on the main thread.
 
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -17,8 +19,13 @@ use crate::theme;
 enum Held {
     /// Asked for and waiting its turn, or being fetched.
     Loading,
-    Ready(Arc<RenderImage>),
+    /// Decoded, with when it was last drawn, by `Covers::tick`.
+    Ready(Arc<RenderImage>, Cell<u64>),
+    /// The record has no cover, or it would not decode.
     Missing,
+    /// The engine failed to fetch it, a server out of reach say: asked
+    /// again when drawn after `RETRY`.
+    Failed(Instant),
 }
 
 /// How many sleeves are fetched at once. Each fetch holds one of the
@@ -28,6 +35,10 @@ const IN_FLIGHT: usize = 4;
 /// it shows; past this the oldest asks are forgotten, and asked again if
 /// their rows are drawn again.
 const WAITING: usize = 48;
+/// How many decoded sleeves are kept. Past this the one drawn longest ago
+/// is dropped, its texture with it, and fetched again if drawn again.
+const KEPT: usize = 400;
+const RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct Covers {
@@ -35,6 +46,8 @@ pub struct Covers {
     /// Newest first: what is on screen now goes before what scrolled past.
     waiting: VecDeque<(i64, u32)>,
     running: usize,
+    ready: usize,
+    tick: Cell<u64>,
 }
 
 #[derive(Clone)]
@@ -56,10 +69,17 @@ impl Covers {
         cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
         let key = (album_id, size);
-        match this.read(cx).held.get(&key) {
-            Some(Held::Ready(image)) => return Some(image.clone()),
+        let covers = this.read(cx);
+        match covers.held.get(&key) {
+            Some(Held::Ready(image, drawn)) => {
+                let tick = covers.tick.get() + 1;
+                covers.tick.set(tick);
+                drawn.set(tick);
+                return Some(image.clone());
+            }
             Some(Held::Loading | Held::Missing) => return None,
-            None => {}
+            Some(Held::Failed(at)) if at.elapsed() < RETRY => return None,
+            Some(Held::Failed(_)) | None => {}
         }
         this.update(cx, |covers, cx| {
             covers.held.insert(key, Held::Loading);
@@ -74,6 +94,28 @@ impl Covers {
         None
     }
 
+    /// Drops the sleeve drawn longest ago, and its texture, once more than
+    /// `KEPT` are held.
+    fn evict(&mut self, cx: &mut Context<Self>) {
+        if self.ready <= KEPT {
+            return;
+        }
+        let oldest = self
+            .held
+            .iter()
+            .filter_map(|(key, held)| match held {
+                Held::Ready(_, drawn) => Some((drawn.get(), *key)),
+                _ => None,
+            })
+            .min();
+        if let Some((_, key)) = oldest
+            && let Some(Held::Ready(image, _)) = self.held.remove(&key)
+        {
+            self.ready -= 1;
+            cx.drop_image(image, None);
+        }
+    }
+
     /// Starts the newest waiting fetches while there is room.
     fn pump(&mut self, cx: &mut Context<Self>) {
         while self.running < IN_FLIGHT {
@@ -85,23 +127,32 @@ impl Covers {
             let renderer = cx.svg_renderer();
             let background = cx.background_executor().clone();
             cx.spawn(async move |this, cx| {
-                let decoded = background
+                let held = background
                     .spawn(async move {
-                        let art = fetch.await.map_err(|e| e.to_string())?.ok_or("no cover")?;
-                        Image::from_bytes(format(&art.mime), art.data)
-                            .to_image_data(renderer)
-                            .map_err(|e| e.to_string())
+                        let art = match fetch.await {
+                            Ok(Some(art)) => art,
+                            Ok(None) => return Held::Missing,
+                            Err(e) => {
+                                log::debug!("cover for album {album_id}: {e}");
+                                return Held::Failed(Instant::now());
+                            }
+                        };
+                        match Image::from_bytes(format(&art.mime), art.data).to_image_data(renderer)
+                        {
+                            Ok(image) => Held::Ready(image, Cell::new(0)),
+                            Err(e) => {
+                                log::debug!("cover for album {album_id}: {e}");
+                                Held::Missing
+                            }
+                        }
                     })
                     .await;
-                let held = match decoded {
-                    Ok(image) => Held::Ready(image),
-                    Err(e) => {
-                        log::debug!("cover for album {album_id}: {e}");
-                        Held::Missing
-                    }
-                };
                 this.update(cx, |covers, cx| {
                     covers.running -= 1;
+                    if matches!(held, Held::Ready(..)) {
+                        covers.ready += 1;
+                        covers.evict(cx);
+                    }
                     covers.held.insert((album_id, size), held);
                     covers.pump(cx);
                     cx.notify();

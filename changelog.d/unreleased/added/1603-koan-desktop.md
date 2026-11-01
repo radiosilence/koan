@@ -1,1 +1,0 @@
-- **A desktop app for macOS and Linux, drawn with GPUI.** Its first part: the window with the sidebar, the transport and the queue, grouped by record, with selection, keyboard control, drag to reorder and undo. It links the engine as the Mac app does; the library pages follow. Windows follows once the core builds there.

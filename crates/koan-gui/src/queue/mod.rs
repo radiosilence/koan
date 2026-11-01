@@ -50,9 +50,9 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", SelectNext, ctx),
         KeyBinding::new("shift-up", ExtendPrevious, ctx),
         KeyBinding::new("shift-down", ExtendNext, ctx),
-        KeyBinding::new("secondary-a", SelectAll, ctx),
-        KeyBinding::new("secondary-z", Undo, ctx),
-        KeyBinding::new("secondary-shift-z", Redo, ctx),
+        KeyBinding::new(secondary!("a"), SelectAll, ctx),
+        KeyBinding::new(secondary!("z"), Undo, ctx),
+        KeyBinding::new(secondary!("shift-z"), Redo, ctx),
     ]
 }
 
@@ -114,6 +114,10 @@ pub struct QueueView {
     /// move from.
     anchor: Option<RowRef>,
     cursor: Option<RowRef>,
+    /// The row at the top of the list and its index then, kept as the list
+    /// scrolls and as the view draws, so a queue sent whole can be shown from
+    /// the same row.
+    top: Option<(RowRef, usize)>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -130,14 +134,23 @@ impl QueueView {
             }),
             cx.observe(&covers, |_, _, cx| cx.notify()),
         ];
+        // The list calls this as it scrolls, with its own state held, so the
+        // handler reads the queue and never the list.
+        let list = ListState::new(0, ListAlignment::Top, px(400.));
+        let weak = cx.weak_entity();
+        list.set_scroll_handler(move |event: &ListScrollEvent, _, cx| {
+            weak.update(cx, |this, cx| this.keep_top(event.visible_range.start, cx))
+                .ok();
+        });
         let mut view = Self {
             queue,
             focus: cx.focus_handle(),
-            list: ListState::new(0, ListAlignment::Top, px(400.)),
+            list,
             whole: 0,
             selected: HashSet::new(),
             anchor: None,
             cursor: None,
+            top: None,
             _subscriptions: subscriptions,
         };
         view.lay_out(cx);
@@ -150,29 +163,21 @@ impl QueueView {
         let queue = self.queue.read(cx);
         self.whole = queue.whole;
         self.selected.retain(|id| queue.at.contains_key(id));
-        // Where the list was scrolled to, as a row of the queue it showed.
         let top = self.list.logical_scroll_top();
-        let top_ref = queue.previous.as_ref().and_then(|previous| {
-            let row = *previous.rows.get(top.item_ix)?;
-            let item = |ix: usize| previous.base[ix].queue_item_id.clone();
-            Some(match row {
-                Row::Heading { first, .. } => RowRef {
-                    item: item(first),
-                    heading: true,
-                },
-                Row::Track { ix, .. } => RowRef {
-                    item: item(ix),
-                    heading: false,
-                },
-            })
-        });
         // A hint for the rows not yet measured, so the scrollbar is sized for
         // the whole queue from the first frame.
         self.list.reset_with_uniform_height(queue.rows.len(), TRACK);
-        let landing = match top_ref.and_then(|r| self.row_of(&r, cx)) {
-            Some(row) => ListOffset {
+        let kept = self.top.take();
+        let landing = match kept.and_then(|(r, at)| Some((self.row_of(&r, cx)?, at))) {
+            Some((row, at)) => ListOffset {
                 item_ix: row,
-                offset_in_item: top.offset_in_item,
+                // The offset into the row belongs to it only if it is still
+                // the row the list was at.
+                offset_in_item: if at == top.item_ix {
+                    top.offset_in_item
+                } else {
+                    px(0.)
+                },
             },
             // The row is gone: stay at the same place in the list.
             None => ListOffset {
@@ -194,6 +199,12 @@ impl QueueView {
             .is_some_and(|r| self.row_of(r, cx).is_none())
         {
             self.cursor = None;
+        }
+    }
+
+    fn keep_top(&mut self, row: usize, cx: &App) {
+        if row < self.rows(cx).len() {
+            self.top = Some((self.row_ref(row, cx), row));
         }
     }
 
@@ -668,6 +679,8 @@ impl Focusable for QueueView {
 impl Render for QueueView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = theme::palette(cx);
+        let top = self.list.logical_scroll_top().item_ix;
+        self.keep_top(top, cx);
         let count = self.rows(cx).len();
         let view = cx.entity();
         div()

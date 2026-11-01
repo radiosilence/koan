@@ -17,8 +17,8 @@ use crate::mirror::{Mirror, Playhead, Queue};
 pub struct Session {
     playhead: Entity<Playhead>,
     queue: Entity<Queue>,
-    /// The queue version last written whole. `None` until the first queue
-    /// arrives, which is the one restored from the last save, so it is
+    /// The queue version last written whole. `None` until a queue arrives,
+    /// and the first is the one restored from the last save, so it is
     /// adopted rather than written again.
     saved_version: Option<u64>,
     playing: bool,
@@ -34,6 +34,10 @@ impl Global for Kept {}
 impl Session {
     pub fn follow(cx: &mut App) {
         let mirror = cx.global::<Mirror>().clone();
+        // The queue already in the mirror is the one restored from the last
+        // save; it is adopted as written.
+        let queue = mirror.queue.read(cx);
+        let saved_version = (queue.whole > 0).then_some(queue.version);
         let session = cx.new(|cx| Self {
             _subscriptions: [
                 cx.observe(&mirror.playhead, |this: &mut Session, _, cx| {
@@ -45,10 +49,12 @@ impl Session {
             ],
             playhead: mirror.playhead,
             queue: mirror.queue,
-            saved_version: None,
+            saved_version,
             playing: false,
             autosave: None,
         });
+        // Playing already when the window opens: start keeping it saved.
+        session.update(cx, |session, cx| session.playhead_moved(cx));
         cx.set_global(Kept(session));
     }
 

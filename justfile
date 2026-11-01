@@ -8,6 +8,16 @@ build:
 cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
+# Build and run the kōan GUI app. Against a throwaway config unless
+# KOAN_CONFIG_DIR names one: a build from main can migrate the library
+# database past what the released apps read.
+gui-run:
+    KOAN_CONFIG_DIR="${KOAN_CONFIG_DIR:-$(mktemp -d)}" cargo run --release -p koan-gui
+
+# Build the kōan GUI app's release binary
+gui-build:
+    cargo build --release -p koan-gui
+
 # Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
 # `isolate_config_for_tests` would otherwise open the real library and run the

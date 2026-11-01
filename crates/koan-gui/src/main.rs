@@ -3,11 +3,25 @@
 //! A thin client over koan-ffi's `KoanEngine`, linked in-process as the Mac
 //! app links it, so the UI sits on the audio engine with no daemon between.
 
+/// A key with the platform's command modifier: ⌘ on macOS, Ctrl elsewhere.
+/// GPUI's own `secondary-` needs the OS when the binding is parsed, which
+/// `KeyBinding::new` does not pass.
+macro_rules! secondary {
+    ($key:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $key)
+        } else {
+            concat!("ctrl-", $key)
+        }
+    };
+}
+
 mod covers;
 mod engine;
 mod mirror;
 mod navigator;
 mod queue;
+mod root;
 mod session;
 mod shell;
 mod sidebar;
@@ -25,7 +39,8 @@ use koan_ffi::KoanEngine;
 
 use crate::covers::Covers;
 use crate::engine::Engine;
-use crate::mirror::Mirror;
+use crate::mirror::{Mirror, Queue};
+use crate::root::WindowRoot;
 use crate::session::Session;
 use crate::shell::Shell;
 
@@ -42,7 +57,7 @@ fn main() {
         theme::Theme::follow(cx.window_appearance(), cx);
         cx.bind_keys(shell::bindings());
         cx.bind_keys(queue::bindings());
-        cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
+        cx.bind_keys([KeyBinding::new(secondary!("q"), Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.set_menus([Menu::new("kōan").items([MenuItem::action("quit kōan", Quit)])]);
 
@@ -55,23 +70,66 @@ fn main() {
                     return;
                 }
             };
-            // Before the window opens, so its first frame is the queue that
-            // was left rather than an empty one filling in.
-            if let Err(e) = engine.clone().restore_session().await {
-                log::warn!("session not restored: {e}");
-            }
-            cx.update(|cx| start(engine, cx));
+            let restored = match engine.clone().restore_session().await {
+                Ok(count) => Some(count),
+                Err(e) => {
+                    log::warn!("session not restored: {e}");
+                    None
+                }
+            };
+            cx.update(|cx| start(engine, restored, cx));
         })
         .detach();
     });
 }
 
-fn start(engine: Arc<KoanEngine>, cx: &mut App) {
+/// How long the window waits for the restored queue to arrive.
+const RESTORE_WAIT: Duration = Duration::from_millis(500);
+
+/// Opens the window once the restored queue is in the mirror, so its first
+/// frame is the queue that was left rather than an empty one filling in.
+/// `restore_session` answers once the player has the queue to load, not once
+/// it has loaded it, so the wait is for the mirror to hold `restored` rows,
+/// woken by the queue arriving and given up after `RESTORE_WAIT`.
+///
+/// `restored` is `None` when the session could not be restored. The saved
+/// session is shared by every koan app on a configuration directory, so this
+/// one then never writes it: it would replace a session it never read.
+fn start(engine: Arc<KoanEngine>, restored: Option<u32>, cx: &mut App) {
     let mirror = Mirror::follow(&engine, cx);
+    let queue = mirror.queue.clone();
     cx.set_global(mirror);
     cx.set_global(Engine(engine));
     Covers::install(cx);
-    Session::follow(cx);
+
+    let rows = restored.unwrap_or(0) as usize;
+    let arrived = move |queue: &Queue| queue.items.len() >= rows;
+    let (ready, waiting) = futures::channel::oneshot::channel::<()>();
+    let mut ready = Some(ready);
+    let watch = (!arrived(queue.read(cx))).then(|| {
+        cx.observe(&queue, move |queue, cx| {
+            if arrived(queue.read(cx))
+                && let Some(ready) = ready.take()
+            {
+                ready.send(()).ok();
+            }
+        })
+    });
+    let timeout = cx.background_executor().timer(RESTORE_WAIT);
+    cx.spawn(async move |cx| {
+        if watch.is_some() {
+            futures::future::select(waiting, timeout).await;
+        }
+        drop(watch);
+        cx.update(|cx| open(restored.is_some(), cx));
+    })
+    .detach();
+}
+
+fn open(keeps_session: bool, cx: &mut App) {
+    if keeps_session {
+        Session::follow(cx);
+    }
 
     cx.on_app_quit(move |cx| {
         // Inside the closure, not the future it returns: GPUI gives that
@@ -84,14 +142,20 @@ fn start(engine: Arc<KoanEngine>, cx: &mut App) {
                 .ok();
         }
         let engine = engine::engine(cx);
-        let executor = cx.foreground_executor().clone();
-        if let Err(e) = executor
-            .block_with_timeout(SAVE_ON_QUIT, engine.clone().save_session())
-            .unwrap_or(Ok(()))
-        {
-            log::warn!("session not saved on quit: {e}");
+        if keeps_session {
+            let executor = cx.foreground_executor().clone();
+            if let Err(e) = executor
+                .block_with_timeout(SAVE_ON_QUIT, engine.clone().save_session())
+                .unwrap_or(Ok(()))
+            {
+                log::warn!("session not saved on quit: {e}");
+            }
         }
-        async move { engine.save_server_queue_now().await }
+        async move {
+            if keeps_session {
+                engine.save_server_queue_now().await;
+            }
+        }
     })
     .detach();
 
@@ -112,7 +176,8 @@ fn start(engine: Arc<KoanEngine>, cx: &mut App) {
         window_min_size: Some(shell::MIN_SIZE),
         titlebar: Some(titlebar()),
         app_owns_titlebar_drag: cfg!(target_os = "macos"),
-        app_id: Some("rocks.koan.desktop".into()),
+        // The `.desktop` file's StartupWMClass.
+        app_id: Some("koan-gui".into()),
         ..Default::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
@@ -126,7 +191,8 @@ fn start(engine: Arc<KoanEngine>, cx: &mut App) {
             window_state::save(window.window_bounds());
             true
         });
-        cx.new(|cx| Shell::new(window, cx))
+        let shell = cx.new(|cx| Shell::new(window, cx));
+        cx.new(|_| WindowRoot::new(shell))
     });
     if let Err(e) = opened {
         log::error!("the window did not open: {e}");

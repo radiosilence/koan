@@ -327,7 +327,13 @@ impl Render for Transport {
                         }),
                     ),
             )
-            .child(self.seek.clone());
+            // Its own cached view: the playhead's ticks redraw the slider and
+            // what holds it, never the rest of the bar's layout.
+            .child(
+                self.seek
+                    .clone()
+                    .cached(StyleRefinement::default().w_full().h(SLIDER_HIT)),
+            );
 
         let right = div()
             .flex_1()

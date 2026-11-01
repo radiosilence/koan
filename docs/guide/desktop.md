@@ -1,10 +1,12 @@
 # The desktop app
 
-`koan-desktop` is kōan for macOS and Linux, drawn with GPUI in the kōan look on every platform. It links the engine in the same process, as the Mac app does, and shares its library and configuration (`~/.config/koan`, or `KOAN_CONFIG_DIR`). It is in progress: the queue and the transport are there, and the library pages follow. Windows follows once the core builds there.
+`koan-gui`, the kōan GUI app, is kōan for macOS and Linux, drawn with GPUI in the kōan look on every platform. It links the engine in the same process, as the Mac app does, and shares its library and configuration (`~/.config/koan`, or `KOAN_CONFIG_DIR`). It is in progress: the queue and the transport are there, and the library pages follow. Windows follows once the core builds there.
 
 ```bash
-cargo run --release -p koan-desktop
+KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui
 ```
+
+A build from `main` can move the library database to a newer schema than the released apps read, after which they refuse it; a throwaway `KOAN_CONFIG_DIR`, with `folders` in its `config.toml` pointed at some music, keeps your own library out of it.
 
 On Linux it needs the xkbcommon, fontconfig and freetype libraries, and a Vulkan driver.
 

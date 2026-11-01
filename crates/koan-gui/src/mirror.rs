@@ -78,9 +78,6 @@ pub struct Queue {
     /// The rows the latest patch changed, put back from `base` before the
     /// next is applied, since each patch is relative to the base.
     patched: Vec<usize>,
-    /// The queue this one replaced, kept until the next is sent so a view can
-    /// find the row it was scrolled to in the new layout.
-    pub previous: Option<Box<Queue>>,
 }
 
 impl Queue {
@@ -111,19 +108,14 @@ impl Queue {
             rows,
             track_rows,
             patched: Vec::new(),
-            previous: None,
         }
     }
 
-    /// Takes the prepared queue's place, keeping the one it replaces as
-    /// `previous` and returning the one before that, for dropping off the
-    /// main thread.
-    fn replace(&mut self, mut next: Queue) -> Option<Queue> {
+    /// Takes the prepared queue's place, returning the one it replaces for
+    /// dropping off the main thread.
+    fn replace(&mut self, mut next: Queue) -> Queue {
         next.whole = self.whole.wrapping_add(1);
-        let mut old = std::mem::replace(self, next);
-        let older = old.previous.take();
-        self.previous = Some(Box::new(old));
-        older.map(|queue| *queue)
+        std::mem::replace(self, next)
     }
 
     /// Whether the patch changed anything. A patch to a queue sent whole since
@@ -215,7 +207,7 @@ impl Mirror {
             let slice = match slice {
                 Prepared::Queue(next) => {
                     self.queue.update(cx, |queue, cx| {
-                        replaced.extend(queue.replace(next));
+                        replaced.push(queue.replace(next));
                         cx.notify();
                     });
                     continue;

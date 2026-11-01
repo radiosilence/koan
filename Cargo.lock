@@ -4932,6 +4932,7 @@ dependencies = [
 name = "koan-desktop"
 version = "0.69.2"
 dependencies = [
+ "futures",
  "gpui-kit",
  "koan-ffi",
  "log",

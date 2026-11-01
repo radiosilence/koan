@@ -1,5 +1,9 @@
 //! The window: a toolbar across the top, the sidebar beside the stage, and
 //! the transport along the foot under both.
+//!
+//! Each region is a cached view, so a region that changes (the playhead's
+//! slider, a row of the queue) redraws itself and the views that hold it,
+//! and the others are reused as they were.
 
 use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::prelude::*;
@@ -8,9 +12,10 @@ use gpui_kit::*;
 use crate::engine::command;
 use crate::navigator::{Navigator, Page};
 use crate::queue::QueueView;
-use crate::sidebar::Sidebar;
+use crate::sidebar::{self, Sidebar};
 use crate::theme::{self, HAIRLINE, Palette, space, text};
-use crate::transport::Transport;
+use crate::transport::{self, Transport};
+use crate::window_state;
 
 actions!(koan, [GoBack, GoForward, TogglePlay]);
 
@@ -20,8 +25,8 @@ pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(CONTEXT);
     vec![
         KeyBinding::new("space", TogglePlay, ctx),
-        KeyBinding::new("secondary-[", GoBack, ctx),
-        KeyBinding::new("secondary-]", GoForward, ctx),
+        KeyBinding::new(secondary!("["), GoBack, ctx),
+        KeyBinding::new(secondary!("]"), GoForward, ctx),
     ]
 }
 
@@ -206,7 +211,12 @@ impl Shell {
                     .child(
                         button("close", "×", true)
                             .window_control_area(WindowControlArea::Close)
-                            .on_click(|_, window, _| window.remove_window()),
+                            // Removing the window skips the close request, so
+                            // its bounds are saved here rather than there.
+                            .on_click(|_, window, _| {
+                                window_state::save(window.window_bounds());
+                                window.remove_window();
+                            }),
                     )
                 },
             )
@@ -217,7 +227,11 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = theme::palette(cx);
         let stage = match self.nav.current() {
-            Page::Queue => self.queue.clone().into_any_element(),
+            Page::Queue => self
+                .queue
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
             _ => div()
                 .size_full()
                 .flex()
@@ -253,7 +267,14 @@ impl Render for Shell {
                     .flex_1()
                     .min_h(px(0.))
                     .flex()
-                    .child(self.sidebar.clone())
+                    .child(
+                        self.sidebar.clone().cached(
+                            StyleRefinement::default()
+                                .w(sidebar::WIDTH)
+                                .h_full()
+                                .flex_shrink_0(),
+                        ),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -264,7 +285,14 @@ impl Render for Shell {
                             .child(stage),
                     ),
             )
-            .child(self.transport.clone())
+            .child(
+                self.transport.clone().cached(
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(transport::HEIGHT)
+                        .flex_shrink_0(),
+                ),
+            )
     }
 }
 
