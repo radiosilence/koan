@@ -83,7 +83,7 @@ pub fn select_toggle(
 /// a lowercase prompt in `muted`. Narrows the listing as it is typed.
 pub struct SearchField {
     input: Entity<InputState>,
-    _subscription: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 impl SearchField {
@@ -100,9 +100,13 @@ impl SearchField {
                 browse.update(cx, |b, cx| b.set_search(value, cx));
             }
         });
+        // The pages are cached views: the field redraws (focus, caret, each
+        // keystroke) only when it is marked dirty, which takes its own view
+        // noticing the input change, not only the input.
+        let redraw = cx.observe(&input, |_, _, cx| cx.notify());
         Self {
             input,
-            _subscription: subscription,
+            _subscriptions: [subscription, redraw],
         }
     }
 }
@@ -345,6 +349,9 @@ impl FilterPanel {
         let subscriptions = vec![
             watch(&year_from, true, cx),
             watch(&year_to, false, cx),
+            // Redrawn as the fields are, as `SearchField` is.
+            cx.observe(&year_from, |_, _, cx| cx.notify()),
+            cx.observe(&year_to, |_, _, cx| cx.notify()),
             cx.observe(&lib.browse, |_, _, cx| cx.notify()),
         ];
         let engine = lib.engine.clone();
