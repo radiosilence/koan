@@ -13,9 +13,10 @@ path = "src/main.rs"
 
 [dependencies]
 gpui-kit = "0.8.1"
-# Decoding sleeves for the accent and the wash, and the frames GPUI draws;
-# the version GPUI itself builds against.
-image = { version = "0.25.1", default-features = false, features = ["png", "jpeg"] }
+# Resizing sleeves for the accent and the wash, and the frames GPUI draws,
+# in the version GPUI itself builds against; PNG for the theme sheet's
+# offscreen render.
+image = { version = "0.25.1", default-features = false, features = ["png"] }
 parking_lot = "0.13"
 smallvec = "1"
 

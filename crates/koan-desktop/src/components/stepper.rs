@@ -2,14 +2,17 @@ use std::sync::Arc;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div,
+    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Button, ButtonKind, Handler, child};
-use crate::theme::{DISABLED_OPACITY, HIT, Icon, KoanStyled, Look, Space, TypeRole, label};
+use super::{Handler, child, focus, ring};
+use crate::theme::{
+    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
+};
 
 /// A value moved a step at a time: the title leading in `body`, `ink`, and
-/// two compact glyph buttons trailing, each disabled at its end of the range.
+/// two square buttons trailing, each disabled at its end of the range.
 #[derive(IntoElement)]
 pub struct Stepper {
     id: ElementId,
@@ -69,16 +72,19 @@ impl Stepper {
 impl RenderOnce for Stepper {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let disabled = self.disabled;
         let button = |name: &'static str, icon: Icon, text: &str, to: i64, allowed: bool| {
-            let on_change = self.on_change.clone().filter(|_| !self.disabled);
-            let mut button = Button::new(child(&self.id, name), ButtonKind::Icon)
-                .icon(icon)
-                .label(text)
-                .disabled(!allowed);
-            if let Some(on_change) = on_change {
-                button = button.on_click(move |_, window, cx| on_change(&to, window, cx));
+            StepButton {
+                id: child(&self.id, name),
+                icon,
+                label: label(text),
+                to,
+                allowed,
+                // The row dims itself when disabled; the buttons only stop
+                // taking the pointer and the keyboard.
+                inert: disabled || !allowed,
+                on_change: self.on_change.clone(),
             }
-            button
         };
         let down = (self.value - self.step).max(self.min);
         let up = (self.value + self.step).min(self.max);
@@ -109,5 +115,55 @@ impl RenderOnce for Stepper {
                 self.value > self.min,
             ))
             .child(button("up", Icon::Add, "more", up, self.value < self.max))
+    }
+}
+
+/// One of a stepper's buttons, as the Mac draws them: the glyph at 11
+/// points in `ink`, in a 28-point square with a hairline `muted` outline,
+/// which is also the whole of its target.
+#[derive(IntoElement)]
+struct StepButton {
+    id: ElementId,
+    icon: Icon,
+    label: SharedString,
+    to: i64,
+    allowed: bool,
+    inert: bool,
+    on_change: Option<Handler<i64>>,
+}
+
+impl RenderOnce for StepButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let handle = focus(&self.id, window, cx);
+        let label = self.label.clone();
+        let to = self.to;
+        div()
+            .id(self.id)
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(28.0))
+            .border(HAIRLINE)
+            .border_color(look.palette.muted.hsla())
+            .when(!self.allowed, |button| button.opacity(DISABLED_OPACITY))
+            .child(
+                KoanIcon::new(self.icon)
+                    .points(11.0)
+                    .color(look.palette.ink.hsla()),
+            )
+            .tooltip(move |window, cx| super::Tooltip::view(label.clone(), window, cx))
+            .when_some(
+                self.on_change.filter(|_| !self.inert),
+                |button, on_change| {
+                    button
+                        .track_focus(&handle)
+                        .cursor_pointer()
+                        .on_click(move |_, window, cx| on_change(&to, window, cx))
+                },
+            )
+            .children(ring(&handle, &look, window))
     }
 }

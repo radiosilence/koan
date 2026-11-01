@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         cx.update_window(window.into(), |_, window, cx| {
             theme::pin_appearance(Some(dark), window, cx)
         })?;
-        // The sleeve is decoded and baked on the background executor, and the
+        // The sleeve is worked out and baked on the background executor, and the
         // wash dissolves in over two seconds of wall time.
         cx.allow_parking();
         for _ in 0..3 {
