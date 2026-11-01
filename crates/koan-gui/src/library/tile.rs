@@ -292,6 +292,11 @@ impl<V: TileHost> TileView<V> {
 impl<V: TileHost> Render for TileView<V> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &Paint::of(window, cx);
+        // A tile scrolled under a still pointer: the part under it is found
+        // again here, since no move tells the tile so.
+        if self.hovered.is_some() {
+            self.hovered = self.part_at(window.mouse_position(), window, cx);
+        }
         let (record, state) = (&self.record, &self.state);
         let id = record.id;
         let side = state.side;
@@ -455,10 +460,12 @@ impl<V: TileHost> Render for TileView<V> {
                 }
             }))
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                // While picking, any part ticks the tile: the host takes it.
+                // While picking, or starting a pick with ⌘, any part ticks the
+                // tile, the gaps between its lines included: the host takes it.
+                let picks = this.state.selecting || e.modifiers().secondary(cx);
                 let part = this
                     .part_at(e.position(), window, cx)
-                    .or(this.state.selecting.then_some(Part::Sleeve));
+                    .or(picks.then_some(Part::Sleeve));
                 let Some(part) = part else { return };
                 cx.stop_propagation();
                 let modifiers = e.modifiers();
