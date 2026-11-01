@@ -21,9 +21,10 @@ crates/
 ├── koan-ffi/      staticlib + cdylib. uniffi bindings exposing koan-core
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
-├── koan-gui/      Binary + library crate. The kōan GUI app, in GPUI: the
-│                  kōan theme (`theme/`), its components (`components/`).
-│                  Not published.
+├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for
+│                  macOS and Linux: the kōan theme (`theme/`), its components
+│                  (`components/`) and `platform/`. Links koan-ffi as a Rust
+│                  library. Not published.
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
@@ -38,7 +39,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); nothing depends on `koan-ffi`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
@@ -50,7 +51,7 @@ Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` 
 | Audio owned by | The UI's own process | A separate `koan` process |
 | State updates | State slices from `observe()` | GraphQL subscriptions |
 | Auth | None needed | JWT, cookies, CORS |
-| For | macOS, iOS, tvOS and Android apps | Web UI, jukebox remotes |
+| For | macOS, iOS, tvOS and Android apps, the kōan GUI app | Web UI, jukebox remotes |
 
 **Nothing over the FFI blocks its caller.** koan-core is synchronous — rusqlite has no async form, and the audio path is dedicated threads on purpose — so the boundary is where the hop happens: an exported call that can block is `async` and runs on a worker thread, and the handful that stay synchronous read one atomic. Queue mutations, transport commands and playlist edits go down a single lane so they reach the player and the database in the order the user gave them; a playlist edit and the snapshot undo restores are one transaction. A call joins the lane on its first poll, so the apps make that poll on the thread that made the call: the Swift bindings are built with `NonisolatedNonsendingByDefault`, so a call from the main actor polls there, and Android's `EngineMirror.launch` starts undispatched. Neither waits for one command to finish before sending the next. A command that acts on an album, an artist or a playlist names it (`TrackSet`) and the engine reads its tracks on the lane, and one placed relative to the playing track (`Placement::Next`, `AppendAndPlay`) is placed by the player as it applies it, so no client reads before it sends. Appearance settings are queued and written on a lane of their own, and the setter returns at once, so changing the look never waits on the disk; changes made while a write waits join it (`offload::Batches`). Two synchronous calls can wait: `appearance()` writes anything still queued before it reads, so a read after a change sees it (the Mac and iOS read it at launch, Android off the main thread), and `flush_settings` waits at most two seconds for the lane, as the app is told it is terminating or, on Android, as its task is removed. See `koan-ffi/src/offload.rs`.
 
