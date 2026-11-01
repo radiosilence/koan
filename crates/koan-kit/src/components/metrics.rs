@@ -108,6 +108,11 @@ impl RowMetrics {
         px((210.0 * look.scale.size).round())
     }
 
+    /// An artist's photo in their page's header, the Mac's.
+    pub fn artist_photo(look: &Look) -> Pixels {
+        px((112.0 * look.scale.size).round())
+    }
+
     /// A record heading's sleeve, square.
     pub fn heading_sleeve(look: &Look) -> Pixels {
         px((HEADING_SLEEVE * look.scale.size).round())

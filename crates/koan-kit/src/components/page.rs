@@ -112,13 +112,16 @@ impl RenderOnce for PageHeader {
                                 .children(self.lead),
                         )
                     })
-                    .child(
-                        div()
+                    .child({
+                        let title = div()
                             .text_role(TypeRole::Title, &look)
                             .text_color(p.strong.hsla())
                             .line_clamp(2)
-                            .child(self.title),
-                    )
+                            .child(self.title);
+                        #[cfg(test)]
+                        let title = title.debug_selector(|| "page-header-title".into());
+                        title
+                    })
                     .children(self.detail.map(|detail| {
                         div()
                             .text_role(TypeRole::Control, &look)
@@ -330,5 +333,55 @@ impl RenderOnce for Page {
                     .child(header)
             }))
             .child(div().relative().flex_1().min_h_0().children(self.body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{AppContext, Context, Render, TestAppContext, VisualTestContext};
+
+    use super::*;
+    use crate::components::{Cover, CoverArt, FadeIn};
+    use core::prelude::v1::test;
+
+    struct Header {
+        photo: bool,
+    }
+
+    impl Render for Header {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let side = RowMetrics::artist_photo(&Look::of(window, cx));
+            let header = PageHeader::data("2manydjs").detail("12 albums");
+            let header = if self.photo {
+                header.art(FadeIn::new("photo", Cover::new(CoverArt::Missing, side)))
+            } else {
+                header
+            };
+            div().w(px(800.)).child(header)
+        }
+    }
+
+    /// A photo arriving takes its square beside the title and nothing more:
+    /// the title keeps the rest of the row, before the photo and after.
+    #[gpui_kit::test]
+    fn a_photo_fading_in_leaves_the_title_its_room(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (header, cx) = cx.add_window_view(|_, _| Header { photo: false });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let before = cx.debug_bounds("page-header-title").expect("title drawn");
+        assert!(before.size.width > px(600.), "{before:?}");
+        header.update(cx, |h, cx| {
+            h.photo = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let after = cx.debug_bounds("page-header-title").expect("title drawn");
+        assert!(after.size.width > px(500.), "{after:?}");
+        assert!(after.size.height < px(80.), "{after:?}");
+        assert!(after.origin.x > before.origin.x);
     }
 }

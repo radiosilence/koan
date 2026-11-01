@@ -1,0 +1,1 @@
+- **Artist photos on the desktop app.** A photo arriving no longer pushes the artist's name, count and buttons out of the header, and a photo whose stored address Wikimedia Commons now refuses is looked up again rather than never shown.
