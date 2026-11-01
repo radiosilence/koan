@@ -625,6 +625,15 @@ impl AlbumGrid {
         self.records.len()
     }
 
+    /// How many tiles are on screen.
+    pub fn on_screen(&self) -> usize {
+        let Some(grid) = self.grid else { return 0 };
+        let visible = self.heading.borrow().visible.clone();
+        visible
+            .map(|row| ((row + 1) * grid.columns).min(self.records.len()) - row * grid.columns)
+            .sum()
+    }
+
     /// Jumps to the top, or to the end.
     pub fn jump(&mut self, to_end: bool, cx: &mut Context<Self>) {
         let handle = self.scroll.0.borrow().base_handle.clone();
