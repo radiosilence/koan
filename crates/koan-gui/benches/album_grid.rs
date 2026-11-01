@@ -66,24 +66,24 @@ fn scroll_at(points_per_second: f32, cx: &mut BenchAppContext) {
     eprintln!("album_grid {points_per_second} pt/s: {report}");
 }
 
-#[gpui::bench]
+#[gpui::bench(fps = 144)]
 fn album_grid_1000(cx: &mut BenchAppContext) {
     scroll_at(1000.0, cx);
 }
 
-#[gpui::bench]
+#[gpui::bench(fps = 144)]
 fn album_grid_3000(cx: &mut BenchAppContext) {
     scroll_at(3000.0, cx);
 }
 
-#[gpui::bench]
+#[gpui::bench(fps = 144)]
 fn album_grid_8000(cx: &mut BenchAppContext) {
     scroll_at(8000.0, cx);
 }
 
 /// A jump from the top to the end and back, a frame each: every row new,
 /// every sleeve far from anything ranked ahead.
-#[gpui::bench]
+#[gpui::bench(fps = 144)]
 fn album_grid_jump(cx: &mut BenchAppContext) {
     let (grid, recorder) = grid(cx);
     let mut to_end = false;
