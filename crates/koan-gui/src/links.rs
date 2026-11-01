@@ -69,7 +69,7 @@ pub fn credit(
 pub fn names(children: Vec<AnyElement>, role: TypeRole, color: Hsla, p: &Paint) -> Div {
     div()
         .flex()
-        .min_w(px(0.))
+        .min_w_0()
         .overflow_hidden()
         .whitespace_nowrap()
         .text_role(role, &p.look)

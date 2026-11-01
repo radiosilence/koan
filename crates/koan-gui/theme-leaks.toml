@@ -87,7 +87,7 @@ number = 27
 fixed = 8
 
 ["queue/mod.rs"]
-number = 19
+number = 1
 
 ["settings/mod.rs"]
 number = 6
