@@ -1,0 +1,1 @@
+- **The GUI app's playing bars move with the music.** The queue's playing row and the library's playing record show three bars driven by the analyser, read only while a bar is on screen and painted over the page so a frame redraws nothing beneath them.
