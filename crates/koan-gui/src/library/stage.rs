@@ -20,7 +20,15 @@ pub struct LibraryStage {
 
 impl LibraryStage {
     pub fn new(lib: Lib, _: &mut Window, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe(&lib.nav, |_, _, cx| cx.notify())];
+        // A page is dropped when the shell shows a page of its own, so a
+        // hidden grid neither reloads nor keeps its sleeves ranked on screen;
+        // its place comes back from the navigator's offsets.
+        let subscriptions = vec![cx.observe(&lib.nav, |this: &mut Self, nav, cx| {
+            if !Self::draws(nav.read(cx).current(cx)) {
+                this.page = None;
+            }
+            cx.notify();
+        })];
         Self {
             lib,
             page: None,

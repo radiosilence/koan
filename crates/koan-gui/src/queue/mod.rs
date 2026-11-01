@@ -448,26 +448,44 @@ impl QueueView {
         });
     }
 
-    /// Queues what was dragged from the library before row `dest`, or at
-    /// the end past the last row: appended, then moved before the row's
-    /// first item, since the engine places only after an item.
+    /// Queues what was dragged from the library before row `dest`: after
+    /// the last item of the row above, or appended past the last row.
     fn drop_library(&mut self, dragged: &PlayableDrag, dest: usize, cx: &mut Context<Self>) {
+        use koan_ffi::Placement;
         self.drop_at = None;
         cx.notify();
         let queue = self.queue.read(cx);
-        let target = queue
-            .rows
-            .get(dest)
-            .and_then(|row| queue.base.get(row.items().start))
-            .map(|item| item.queue_item_id.clone());
+        let id = |ix: usize| queue.base.get(ix).map(|item| item.queue_item_id.clone());
         let sets = dragged.sets.to_vec();
-        command(cx, "queue from the library", move |e| async move {
-            let added = e.clone().queue(sets, koan_ffi::Placement::Append).await?;
-            match target {
-                Some(target) if !added.is_empty() => e.move_in_queue(added, target, false).await,
-                _ => Ok(()),
-            }
-        });
+        if dest >= queue.rows.len() {
+            command(cx, "queue from the library", move |e| {
+                e.queue(sets, Placement::Append)
+            });
+        } else if dest > 0 {
+            let Some(after) = id(queue.rows[dest - 1].items().end - 1) else {
+                return;
+            };
+            command(cx, "queue from the library", move |e| {
+                e.queue(
+                    sets,
+                    Placement::After {
+                        queue_item_id: after,
+                    },
+                )
+            });
+        } else {
+            // Nothing to place after: appended, then moved to the top.
+            let Some(first) = id(queue.rows[0].items().start) else {
+                return;
+            };
+            command(cx, "queue from the library", move |e| async move {
+                let added = e.clone().queue(sets, Placement::Append).await?;
+                if added.is_empty() {
+                    return Ok(());
+                }
+                e.move_in_queue(added, first, false).await
+            });
+        }
     }
 
     fn drag_label(&self, row: usize, cx: &App) -> SharedString {
@@ -821,6 +839,9 @@ impl Render for QueueView {
         self.keep_top(top, cx);
         let count = self.rows(cx).len();
         let view = cx.entity();
+        if self.drop_at.is_some() && !cx.has_active_drag() {
+            self.drop_at = None;
+        }
         div()
             .id("queue")
             .key_context(CONTEXT)
@@ -863,6 +884,16 @@ impl Render for QueueView {
                     this.menu_row = None;
                 }
             }))
+            // A library drag that leaves the queue takes its insertion line
+            // with it, so a drag released elsewhere leaves none behind.
+            .on_drag_move::<PlayableDrag>(cx.listener(
+                |this, event: &DragMoveEvent<PlayableDrag>, _, cx| {
+                    if this.drop_at.is_some() && !event.bounds.contains(&event.event.position) {
+                        this.drop_at = None;
+                        cx.notify();
+                    }
+                },
+            ))
             // Below the last row: the end of the queue.
             .on_drop(cx.listener(move |this, dragged: &DraggedRows, _, cx| {
                 let dest = this.drop_at.unwrap_or(count);
