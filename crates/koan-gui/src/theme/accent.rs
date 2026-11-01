@@ -176,11 +176,12 @@ pub fn dominant(rgba: &[u8], width: u32, height: u32) -> Option<[f64; 3]> {
         return None;
     }
     let premultiplied;
-    let pixels = if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+    let (samples, _) = rgba.as_chunks::<4>();
+    let pixels = if samples.iter().all(|p| p[3] == 255) {
         rgba
     } else {
-        premultiplied = rgba
-            .chunks_exact(4)
+        premultiplied = samples
+            .iter()
             .flat_map(|p| {
                 let a = p[3] as u32;
                 let scale = |c: u8| ((c as u32 * a + 127) / 255) as u8;

@@ -5328,18 +5328,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "koan-gui"
-version = "0.69.2"
-dependencies = [
- "gpui-kit",
- "image",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "parking_lot 0.13.0",
- "smallvec",
-]
-
-[[package]]
 name = "koan-ffi"
 version = "0.69.2"
 dependencies = [
@@ -5363,6 +5351,18 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "uniffi",
  "uuid",
+]
+
+[[package]]
+name = "koan-gui"
+version = "0.69.2"
+dependencies = [
+ "gpui-kit",
+ "image",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "parking_lot 0.13.0",
+ "smallvec",
 ]
 
 [[package]]
