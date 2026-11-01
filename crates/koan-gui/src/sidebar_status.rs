@@ -3,6 +3,7 @@
 //! alone) and how much the library holds, as the Mac's sidebar shows it.
 
 use koan_ffi::Stats;
+// The entity, its context and Render are GPUI's app model, which koan-kit does not wrap.
 use koan_kit::raw::*;
 
 use crate::components::StatusBlock;

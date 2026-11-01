@@ -7,7 +7,6 @@
 //! read from the engine's `Tasks` and `Sync` slices.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_channel::mpsc;
 use futures_util::StreamExt;
@@ -306,7 +305,7 @@ fn grouped(n: u64) -> String {
 }
 
 impl Render for Activity {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.rows(cx);
         if rows.is_empty() && self.problem.is_none() {
             return div().into_any_element();

@@ -1,0 +1,1 @@
+- **The desktop app's EQ and sidebar foot on koan-kit.** The EQ's band and point tables use koan-kit's dense table and its sheets koan-kit's sheet parts; the sidebar's activity rows are koan-kit progress rows with room below the bar, and the sidebar again ends with the connection and library counts, as the Mac app's does.

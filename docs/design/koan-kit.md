@@ -146,7 +146,15 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
-Promoted from koan-gui's `dsp/sheet.rs`: the square panel, its head with the title and trailing actions, its scrolling body. Every question a write asks first (`collections::Asking`) and every sheet uses it.
+`sheet::{panel, head, head_data, body, note}`: the square panel, its head with the title and trailing actions, its scrolling body. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.
+
+### DenseTable (Mac: the EQ's band table)
+
+`DenseTable::new(columns).header(…).rows(…)` with `Column::fixed(width)` or `Column::flex()` and an `Align` each: the compact table an editor shows, where every cell may be a field. A `DenseRow` can `span` cells (a graphic EQ's curve across four columns) and carries a `trailing` menu. Columns, gutters and row height are the table's; rows declare cells.
+
+### ProgressRow and StatusBlock (Mac: `ActivityIndicator`, `SidebarView`'s foot)
+
+`ProgressRow::new(title).counts(…).detail(…).fraction(Some(f))` with an optional `on_stop`: one running task, its bar determinate or not, padded so the bar never meets the next row. `StatusBlock` is a sidebar's foot under a row rule: `line(icon, text, tone)` for what the device is connected to, `figure(text)` for each count beneath it.
 
 ## Swift roles and their GPUI components
 
@@ -173,7 +181,9 @@ Promoted from koan-gui's `dsp/sheet.rs`: the square panel, its head with the tit
 | `KoanUnavailable` | `EmptyState` |
 | `EnsoPlaceholder`, `AlbumArtwork`'s ground | `Placeholder` |
 | `ProgressView` in the theme | `Spinner` |
-| `koanSheet`, `KoanSheetAction` | `Sheet` (promoted from `dsp/sheet.rs`) |
+| `koanSheet`, `KoanSheetAction` | `sheet` parts, `Asking` |
+| `ActivityIndicator` | `ProgressRow`, `ProgressBar` |
+| `SidebarView`'s status foot | `StatusBlock` |
 | `koanPopover` | `MenuPanel` as a popover (gap) |
 | `KoanTabItem` (Settings tabs) | `settings/sheet.rs`'s tabs; a `Tabs` component (gap) |
 
