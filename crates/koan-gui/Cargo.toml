@@ -12,7 +12,12 @@ name = "koan-gui"
 path = "src/main.rs"
 
 [dependencies]
+# The engine, linked as a Rust library: the facade the Swift and Kotlin apps
+# drive through uniffi, without the bindings.
+koan-ffi = { path = "../koan-ffi" }
 gpui-kit = "0.8.1"
+# Channels from the engine's state stream onto the main thread.
+futures = "0.3"
 # Resizing sleeves for the accent and the wash, and the frames GPUI draws,
 # in the version GPUI itself builds against; PNG for the theme sheet's
 # offscreen render.
