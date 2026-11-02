@@ -1,8 +1,9 @@
 //! What the browsers are narrowed and ordered by. The filter and the search
 //! are shared by the album, artist and track browsers, as the Mac's are; each
-//! listing keeps its own sort. Kept in `gui-state.json` beside the
-//! configuration: these are one front end's preferences, not engine settings,
-//! so they stay out of `config.toml`.
+//! listing keeps its own sort. Kept in `gui-state.json` in the configuration's
+//! state directory (`places::state`): these are one front end's runtime
+//! state, not engine settings, so they stay out of `config.toml` and out of
+//! the config directory.
 
 use std::path::PathBuf;
 
@@ -200,8 +201,11 @@ impl Writer {
     }
 }
 
+/// The file, in this configuration's state directory (`places::state`).
+pub const STATE: &str = "gui-state.json";
+
 fn path() -> PathBuf {
-    koan_ffi::config_dir().join("gui-state.json")
+    koan_core::places::state().join(STATE)
 }
 
 fn seed() -> i64 {

@@ -1,0 +1,1 @@
+- **Album tiles keep their size while the desktop app's window is resized.** The room between and beside them takes the change, until a column fits or no longer does.

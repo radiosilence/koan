@@ -134,6 +134,11 @@ pub enum PlayerCommand {
     TrackFailed(QueueItemId),
     /// Fetch these tracks into the cache, with no queue entry to play them.
     CacheTracks(Vec<i64>),
+    /// Stop fetching these tracks: see `DownloadQueue::cancel`.
+    CancelDownloads(Vec<i64>),
+    /// Fetch these tracks again after a failure or a cancel: see
+    /// `DownloadQueue::retry`.
+    RetryDownloads(Vec<i64>),
     /// Decode thread exhausted the playlist — auto-advance or stop. Carries
     /// the session it came from, so one sent just before a play or seek is
     /// recognised as stale.

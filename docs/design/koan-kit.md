@@ -160,6 +160,10 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 `EmptyState::new(icon, title).detail(…)` (Mac: `KoanUnavailable`), centred by the page's body.
 
+### AvailabilityMark (Mac: `AvailabilityMark`, `TransferMeter`)
+
+`AvailabilityMark::new(Some(Availability::…))`, `.picked(selected)`: where a track's file is (kept on the server, downloaded from it, a local file) or how its download is going (next, queued, failed, a ring filling as the bytes land), `fine`-sized and right-aligned, a word where the look hides icons. A transferring mark is handed a `ProgressReader` and reads it each frame it is drawn, asking for the next; one off screen reads nothing. Every row that says where a track is draws this one mark: the queue, the library's track rows, playlists.
+
 ### SelectionBar (Mac: iOS's `SelectionBar`, the Mac's menu on a multi-selection)
 
 `SelectionBar::new("3 picked").verb(id, text, run).element(trigger).on_done(run)`: along the foot of a page while picking, the count leading and the verbs trailing as `Text` buttons, then done. One bar for every page that picks, so its verbs read the same everywhere.
