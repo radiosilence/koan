@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use koan_ffi::KoanEngine;
 use koan_kit::app::{Action, App, KeyBinding, actions};
+use koan_kit::components::list_actions as list;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::KeyBindingContextPredicate;
 // the platform's menu bar and Dock menu, which koan-kit does not draw.
@@ -77,6 +78,10 @@ actions!(
         ShowShortcuts,
         ZoomCover,
         ClearSelection,
+        FocusNext,
+        FocusPrevious,
+        NextRegion,
+        PreviousRegion,
         // Edit.
         Undo,
         Redo,
@@ -121,15 +126,18 @@ pub enum Group {
     View,
     Edit,
     Library,
+    /// Inside a list: the sidebar, the queue's neighbours, a page of tracks.
+    Lists,
 }
 
 impl Group {
-    pub const ALL: [Group; 5] = [
+    pub const ALL: [Group; 6] = [
         Group::Playback,
         Group::Navigation,
         Group::View,
         Group::Edit,
         Group::Library,
+        Group::Lists,
     ];
 
     pub fn title(self) -> &'static str {
@@ -139,6 +147,7 @@ impl Group {
             Group::View => "view",
             Group::Edit => "edit",
             Group::Library => "library",
+            Group::Lists => "in a list",
         }
     }
 }
@@ -250,7 +259,60 @@ pub const HOTKEYS: &[Shortcut] = &[
     shortcut!("Clear selection", ["escape"], View, ClearSelection),
     shortcut!("Delete", ["backspace", "delete"], Edit, bare::Delete),
     shortcut!("This list", ["?"], View, ShowShortcuts),
+    shortcut!("Next control", ["tab"], View, FocusNext),
+    shortcut!("Previous control", ["shift-tab"], View, FocusPrevious),
+    shortcut!(
+        "Sidebar, page and transport in turn",
+        ["f6"],
+        View,
+        NextRegion
+    ),
+    shortcut!("The same, backwards", ["shift-f6"], View, PreviousRegion),
 ];
+
+/// Inside a list that holds the keyboard, koan-kit's list keys
+/// (`components::list_keys`): bound in the `List` context, outside a text
+/// field, so a list's own keys win over the window's.
+pub const LISTS: &[Shortcut] = &[
+    shortcut!("The row above or below", ["up", "down"], Lists, list::Down),
+    shortcut!(
+        "The pick, extended up or down",
+        ["shift-up", "shift-down"],
+        Lists,
+        list::ExtendDown
+    ),
+    shortcut!("The first or last row", ["home", "end"], Lists, list::Last),
+    shortcut!(
+        "A screenful up or down",
+        ["pageup", "pagedown"],
+        Lists,
+        list::PageDown
+    ),
+    shortcut!("Play or open the row", ["enter"], Lists, list::Activate),
+    shortcut!(
+        "Add the row to the pick, or take it out",
+        ["ctrl-space"],
+        Lists,
+        list::Pick
+    ),
+];
+
+/// What each list key binds to: a line of `LISTS` can name two keys, one
+/// for each way.
+fn list_binding(key: &str) -> Box<dyn Action> {
+    match key {
+        "up" => Box::new(list::Up),
+        "shift-up" => Box::new(list::ExtendUp),
+        "shift-down" => Box::new(list::ExtendDown),
+        "home" => Box::new(list::First),
+        "end" => Box::new(list::Last),
+        "pageup" => Box::new(list::PageUp),
+        "pagedown" => Box::new(list::PageDown),
+        "enter" => Box::new(list::Activate),
+        "ctrl-space" => Box::new(list::Pick),
+        _ => Box::new(list::Down),
+    }
+}
 
 /// A button's tooltip as the Mac's buttons say it: what it does, then the
 /// keys that do the same, "back (⌘[)", from the shortcut tables. Just what it
@@ -360,6 +422,29 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
                 key,
                 (shortcut.action)(),
                 Some(bare.clone()),
+                cx,
+            );
+        }
+    }
+    // Tab and F6 move between controls in a text field too, where the field
+    // has no use for them; the bare table binds them outside fields only.
+    for (key, action) in [
+        ("tab", FocusNext.boxed_clone()),
+        ("shift-tab", FocusPrevious.boxed_clone()),
+        ("f6", NextRegion.boxed_clone()),
+        ("shift-f6", PreviousRegion.boxed_clone()),
+    ] {
+        push(&mut bindings, key, action, Some(window.clone()), cx);
+    }
+    let lists =
+        Rc::new(KeyBindingContextPredicate::parse("List && !Input").expect("a valid context"));
+    for shortcut in LISTS {
+        for key in shortcut.keys {
+            push(
+                &mut bindings,
+                key,
+                list_binding(key),
+                Some(lists.clone()),
                 cx,
             );
         }

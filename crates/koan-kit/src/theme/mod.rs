@@ -330,10 +330,23 @@ impl KoanTheme {
         cx.refresh_windows();
     }
 
-    /// Whoever draws the wash observes the global for these two; nothing
-    /// else reads them.
+    /// Whoever draws the wash observes the global for these two. The
+    /// record's colours also decide whether the wash runs under the whole
+    /// window (`washes_window`), whose layout every window then redraws.
     pub fn set_record_colours(on: bool, cx: &mut App) {
+        let before = Self::washes_window(cx);
         cx.global_mut::<KoanTheme>().record_colours = on;
+        if Self::washes_window(cx) != before {
+            cx.refresh_windows();
+        }
+    }
+
+    /// Whether the wash runs under the whole window: "wash the whole
+    /// window" on, and a wash to run, which "colours from the record" off
+    /// takes away.
+    pub fn washes_window(cx: &App) -> bool {
+        let theme = cx.global::<KoanTheme>();
+        theme.wash_window && theme.record_colours
     }
 
     pub fn set_wash_tint(percent: u32, cx: &mut App) {

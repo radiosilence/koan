@@ -44,6 +44,8 @@ pub struct TableRow {
     base: Stateful<Div>,
     kind: RowKind,
     selected: bool,
+    /// Under the keyboard's cursor while its list holds the keyboard.
+    cursor: bool,
     leading: Vec<Cell>,
     title: Option<AnyElement>,
     lines: Vec<AnyElement>,
@@ -56,6 +58,7 @@ impl TableRow {
             base: div().id(id),
             kind,
             selected: false,
+            cursor: false,
             leading: Vec::new(),
             title: None,
             lines: Vec::new(),
@@ -111,6 +114,14 @@ impl TableRow {
     /// that colours its cells does by `on_selection` too.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Under the keyboard's cursor: its list holds the keyboard and the
+    /// arrows have come to it. Drawn with the focus ring while the keyboard
+    /// was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
         self
     }
 }
@@ -281,6 +292,7 @@ impl RenderOnce for TableRow {
         };
         self.base
             .group(ROW_GROUP)
+            .relative()
             .h(RowMetrics::height(self.kind, &look))
             .w_full()
             .flex()
@@ -313,5 +325,9 @@ impl RenderOnce for TableRow {
                     .text_role(TypeRole::Meta, &look)
                     .text_color(if selected { on } else { p.muted.hsla() })
             }))
+            .children(
+                (self.cursor && window.last_input_was_keyboard())
+                    .then(|| super::cursor_ring(&look)),
+            )
     }
 }

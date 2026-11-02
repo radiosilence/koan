@@ -10,6 +10,9 @@ use gpui_kit::{
 use super::{Handler, accessible, answers_click, child, fade, fill, transition};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
 
+/// The hover group a nav row's glyph brightens by.
+const NAV_ROW: &str = "koan-nav-row";
+
 /// A navigation row, as the sidebar's: the label in `body`, `muted`, after
 /// its glyph when icons are on; where you are, in the accent with a 2-point
 /// accent rule on the leading edge, and no fill.
@@ -26,6 +29,8 @@ pub struct NavRow {
     art: Option<AnyElement>,
     detail: Option<SharedString>,
     selected: bool,
+    /// Under the keyboard's cursor while its list holds the keyboard.
+    cursor: bool,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -53,8 +58,17 @@ impl NavRow {
             art: None,
             detail: None,
             selected: false,
+            cursor: false,
             on_click: None,
         }
+    }
+
+    /// Under the keyboard's cursor: its list holds the keyboard and the
+    /// arrows have come to it. Drawn with the focus ring while the keyboard
+    /// was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
+        self
     }
 
     /// The place's own face, square, before the label: a playlist's sleeve.
@@ -113,9 +127,11 @@ impl RenderOnce for NavRow {
             .whitespace_nowrap()
             .text_ellipsis()
             .child(self.label);
+        let selected = self.selected;
         // A link to a screen reader: to its place, selected where it is.
         accessible(self.base, gpui_kit::Role::Link, Some(name))
-            .aria_selected(self.selected)
+            .aria_selected(selected)
+            .group(NAV_ROW)
             .relative()
             .flex()
             .flex_none()
@@ -140,7 +156,16 @@ impl RenderOnce for NavRow {
             .children(
                 self.icon
                     .filter(|_| look.icons && self.art.is_none())
-                    .map(|icon| KoanIcon::new(icon).color(color)),
+                    // A glyph draws in its own colour: it brightens with the
+                    // label under the pointer by the row's group.
+                    .map(|icon| {
+                        let glyph = KoanIcon::new(icon).color(color);
+                        if selected {
+                            glyph
+                        } else {
+                            glyph.hover_color(NAV_ROW, ink)
+                        }
+                    }),
             )
             .children(self.art)
             .map(|row| match self.detail {
@@ -163,6 +188,10 @@ impl RenderOnce for NavRow {
                     .cursor_pointer()
                     .on_click(move |event, window, cx| on_click(event, window, cx))
             })
+            .children(
+                (self.cursor && window.last_input_was_keyboard())
+                    .then(|| super::cursor_ring(&look)),
+            )
     }
 }
 

@@ -429,3 +429,9 @@ impl Render for ArtistBrowser {
             ))
     }
 }
+
+impl Focusable for ArtistBrowser {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
