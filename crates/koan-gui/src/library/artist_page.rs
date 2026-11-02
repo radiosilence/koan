@@ -117,7 +117,7 @@ impl ArtistPage {
                         .nav
                         .update(cx, |nav, _| nav.remember_anchor(page, anchor));
                 }
-                this.lib.covers.update(cx, |c, _| c.release(id));
+                this.lib.covers.update(cx, |c, cx| c.release(id, cx));
             }),
         ];
         let restore = lib.nav.read(cx).anchor(Page::Artist(artist_id));
