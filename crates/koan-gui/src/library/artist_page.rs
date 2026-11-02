@@ -276,10 +276,10 @@ impl ArtistPage {
         // Headed even when there is one section, so a discography of albums
         // alone still says what it is.
         for (section, start, len) in sections(&record.albums) {
+            // In the release's own words; the heading puts them in the
+            // theme's case.
             items.push(Item::Heading(
-                koan_ffi::release_section_title(section)
-                    .to_lowercase()
-                    .into(),
+                koan_ffi::release_section_title(section).into(),
                 Heading::Section(section),
             ));
             rows(&mut items, false, start, len);
