@@ -34,7 +34,17 @@ struct Query {
 const HEART: f32 = 20.0;
 const COUNT: f32 = 110.0;
 
+/// The browser's listing as it last stood, for the next visit (`Lib::kept`).
+struct KeptArtists {
+    artists: Vec<Artist>,
+    order: Vec<Playable>,
+    loaded: (Query, u64),
+}
+
 pub struct ArtistBrowser {
+    /// A load failed before any landed: the page draws its header and empty
+    /// state rather than staying held, so the query can still be changed.
+    failed: bool,
     lib: Lib,
     artists: Vec<Artist>,
     order: Vec<Playable>,
@@ -57,6 +67,17 @@ pub struct ArtistBrowser {
 }
 
 impl ArtistBrowser {
+    /// Back to where the last visit left the list, once.
+    fn restore_scroll(&mut self) {
+        if let Some(y) = self.restore.take() {
+            self.scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(point(px(0.0), -y));
+        }
+    }
+
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
@@ -74,6 +95,13 @@ impl ArtistBrowser {
                 cx.notify();
             }),
             cx.on_release(|this, cx| {
+                if let Some(loaded) = this.loaded.take() {
+                    this.lib.kept.put(KeptArtists {
+                        artists: std::mem::take(&mut this.artists),
+                        order: std::mem::take(&mut this.order),
+                        loaded,
+                    });
+                }
                 let offset = -this.scroll.0.borrow().base_handle.offset().y;
                 this.lib
                     .nav
@@ -85,11 +113,16 @@ impl ArtistBrowser {
         let search =
             cx.new(|cx| chrome::SearchField::new(lib.browse.clone(), "filter artists", window, cx));
         let filters = cx.new(|cx| chrome::FilterPanel::new(lib.clone(), true, window, cx));
+        let (artists, order, loaded) = match lib.kept.take::<KeptArtists>() {
+            Some(k) => (k.artists, k.order, Some(k.loaded)),
+            None => (Vec::new(), Vec::new(), None),
+        };
         let mut this = Self {
             lib,
-            artists: Vec::new(),
-            order: Vec::new(),
-            loaded: None,
+            artists,
+            order,
+            loaded,
+            failed: false,
             loading: None,
             request: 0,
             _load: None,
@@ -105,6 +138,10 @@ impl ArtistBrowser {
             filters,
             _subscriptions: subscriptions,
         };
+        // A kept listing draws at once, where the last visit left it.
+        if this.loaded.is_some() {
+            this.restore_scroll();
+        }
         this.reload(cx);
         this
     }
@@ -149,15 +186,12 @@ impl ArtistBrowser {
                         this.order = artists.iter().map(|a| Playable::Artist(a.id)).collect();
                         this.artists = artists;
                         this.loaded = Some(wanted);
-                        if let Some(y) = this.restore.take() {
-                            this.scroll
-                                .0
-                                .borrow()
-                                .base_handle
-                                .set_offset(point(px(0.0), -y));
-                        }
+                        this.restore_scroll();
                     }
-                    Err(e) => log::warn!("artists: {e}"),
+                    Err(e) => {
+                        log::warn!("artists: {e}");
+                        this.failed = true;
+                    }
                 }
                 cx.notify();
             })
@@ -336,7 +370,12 @@ impl Render for ArtistBrowser {
             chrome::count(self.artists.len() as u64, "artist", "artists"),
             div(),
         );
-        let body = if self.artists.is_empty() && self.loaded.is_some() {
+        // Until its first listing lands the page draws nothing, then header,
+        // total and rows together.
+        let held = self.loaded.is_none() && !self.failed;
+        let body = if held {
+            div().into_any_element()
+        } else if self.artists.is_empty() {
             chrome::empty_state(
                 crate::theme::Icon::Artist,
                 if narrowed {
@@ -373,7 +412,7 @@ impl Render for ArtistBrowser {
             .flex()
             .flex_col()
             .typeset(p, Type::Body, p.ink)
-            .child(header)
+            .when(!held, |d| d.child(header))
             .child(actions::list_menu(
                 div()
                     .id("artist-list")

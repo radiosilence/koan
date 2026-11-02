@@ -4,6 +4,7 @@
 pub mod app;
 pub mod covers;
 pub mod devices;
+pub mod downloads;
 pub mod dsp;
 pub mod engine;
 pub mod levels;
@@ -24,6 +25,7 @@ pub mod shell;
 pub mod sidebar;
 pub mod sidebar_status;
 pub mod time;
+pub mod transfers;
 pub mod transport;
 pub mod window_state;
 

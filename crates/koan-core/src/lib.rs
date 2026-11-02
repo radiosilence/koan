@@ -11,6 +11,7 @@ pub mod index;
 pub mod invite;
 pub mod lyrics;
 pub mod organize;
+pub mod places;
 pub mod player;
 pub mod playlists;
 pub mod quiet;
