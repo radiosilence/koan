@@ -819,6 +819,7 @@ impl AlbumGrid {
                     }
                     cx.notify();
                 }),
+                cx,
             ))
             .into_any_element()
     }

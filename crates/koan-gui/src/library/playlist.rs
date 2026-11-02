@@ -483,103 +483,142 @@ impl PlaylistPage {
     }
 
     fn ask_rename(&self, window: &mut Window, cx: &mut App) {
-        let Some(playlist) = self.playlist.clone() else {
-            return;
-        };
-        let id = self.id;
-        let old = playlist.name.clone();
-        let synced = playlist.remote_id.is_some();
-        name(
-            "rename playlist",
-            "rename",
-            &playlist.name,
-            move |typed| {
-                let mut lines: Vec<SharedString> = if typed.is_empty() || typed == old {
-                    vec!["Type the new name.".into()]
-                } else {
-                    vec![format!("“{old}” becomes “{typed}”.").into()]
-                };
-                if synced {
-                    lines.push("It is renamed on the server too.".into());
-                }
-                lines
-            },
-            window,
-            cx,
-            move |name, cx| command(cx, "rename playlist", move |e| e.rename_playlist(id, name)),
-        );
+        if let Some(playlist) = &self.playlist {
+            ask_rename(playlist, window, cx);
+        }
     }
 
     fn ask_delete(&self, window: &mut Window, cx: &mut App) {
-        let Some(playlist) = self.playlist.clone() else {
-            return;
-        };
-        let (id, nav) = (self.id, self.lib.nav.clone());
-        let mut lines: Vec<SharedString> = vec![
-            format!(
-                "“{}” and its {} go.",
-                playlist.name,
-                count(playlist.track_count.into(), "entry", "entries")
-            )
-            .into(),
-        ];
-        if playlist.remote_id.is_some() {
-            lines.push("It is deleted on the server too, for every device.".into());
+        if let Some(playlist) = &self.playlist {
+            ask_delete(playlist, self.lib.nav.read(cx).navigator(), window, cx);
         }
-        if playlist.from_file {
-            lines.push("Its file in the library stays, and a rescan reads it again.".into());
-        }
-        confirm(
-            Confirm {
-                title: "delete playlist".into(),
-                verb: "delete".into(),
-                destructive: true,
-                lines,
-                note: Some("The tracks stay in the library. This cannot be undone.".into()),
-            },
-            window,
+    }
+
+    /// Writes the playlist out as an M3U8, saying under the header how it
+    /// went.
+    fn export(&mut self, cx: &mut Context<Self>) {
+        let page = cx.weak_entity();
+        export(
+            self.lib.engine.clone(),
+            self.id,
+            self.name(),
             cx,
-            move |cx| {
-                nav.update(cx, |nav, cx| nav.open(Route::Queue, cx));
-                command(cx, "delete playlist", move |e| e.delete_playlist(id));
+            move |note, cx| {
+                page.update(cx, |this, cx| {
+                    this.note = Some(note.into());
+                    cx.notify();
+                })
+                .ok();
             },
         );
     }
+}
 
-    /// Writes the playlist out as an M3U8 where the person chooses, saying
-    /// what could not go in: a track never downloaded has no file to name.
-    fn export(&mut self, cx: &mut Context<Self>) {
-        let file = format!("{}.m3u8", self.name());
-        let home = dirs::home_dir().unwrap_or_default();
-        let chosen = cx.prompt_for_new_path(&home, Some(&file));
-        let (engine, id) = (self.lib.engine.clone(), self.id);
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(path))) = chosen.await else {
-                return;
+/// Asks for a playlist's new name, saying what changes, then renames it.
+pub fn ask_rename(playlist: &Playlist, window: &mut Window, cx: &mut App) {
+    let id = playlist.id;
+    let old = playlist.name.clone();
+    let synced = playlist.remote_id.is_some();
+    name(
+        "rename playlist",
+        "rename",
+        &playlist.name,
+        move |typed| {
+            let mut lines: Vec<SharedString> = if typed.is_empty() || typed == old {
+                vec!["Type the new name.".into()]
+            } else {
+                vec![format!("“{old}” becomes “{typed}”.").into()]
             };
-            let note = match engine
-                .export_playlist(id, path.to_string_lossy().into_owned())
-                .await
-            {
-                Ok(summary) if summary.skipped > 0 => format!(
-                    "Exported {}; {} not downloaded, so they have no file to name.",
-                    count(summary.written.into(), "track", "tracks"),
-                    summary.skipped
-                ),
-                Ok(summary) => format!(
-                    "Exported {}.",
-                    count(summary.written.into(), "track", "tracks")
-                ),
-                Err(e) => format!("Could not write the playlist: {e}"),
-            };
-            this.update(cx, |this, cx| {
-                this.note = Some(note.into());
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+            if synced {
+                lines.push("It is renamed on the server too.".into());
+            }
+            lines
+        },
+        window,
+        cx,
+        move |name, cx| command(cx, "rename playlist", move |e| e.rename_playlist(id, name)),
+    );
+}
+
+/// Asks before deleting a playlist, saying what goes and what stays. The
+/// queue shows in its place when it was the page showing.
+pub fn ask_delete(
+    playlist: &Playlist,
+    nav: Entity<crate::navigator::Navigator>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let id = playlist.id;
+    let mut lines: Vec<SharedString> = vec![
+        format!(
+            "“{}” and its {} go.",
+            playlist.name,
+            count(playlist.track_count.into(), "entry", "entries")
+        )
+        .into(),
+    ];
+    if playlist.remote_id.is_some() {
+        lines.push("It is deleted on the server too, for every device.".into());
     }
+    if playlist.from_file {
+        lines.push("Its file in the library stays, and a rescan reads it again.".into());
+    }
+    confirm(
+        Confirm {
+            title: "delete playlist".into(),
+            verb: "delete".into(),
+            destructive: true,
+            lines,
+            note: Some("The tracks stay in the library. This cannot be undone.".into()),
+        },
+        window,
+        cx,
+        move |cx| {
+            nav.update(cx, |nav, cx| {
+                if nav.current() == Route::Playlist(id) && nav.go(Route::Queue) {
+                    cx.notify();
+                }
+            });
+            command(cx, "delete playlist", move |e| e.delete_playlist(id));
+        },
+    );
+}
+
+/// Writes a playlist out as an M3U8 where the person chooses, and hands
+/// `said` what could not go in: a track never downloaded has no file to
+/// name.
+pub fn export(
+    engine: std::sync::Arc<koan_ffi::KoanEngine>,
+    id: i64,
+    name: String,
+    cx: &mut App,
+    said: impl FnOnce(String, &mut App) + 'static,
+) {
+    let file = format!("{name}.m3u8");
+    let home = dirs::home_dir().unwrap_or_default();
+    let chosen = cx.prompt_for_new_path(&home, Some(&file));
+    cx.spawn(async move |cx| {
+        let Ok(Ok(Some(path))) = chosen.await else {
+            return;
+        };
+        let note = match engine
+            .export_playlist(id, path.to_string_lossy().into_owned())
+            .await
+        {
+            Ok(summary) if summary.skipped > 0 => format!(
+                "Exported {}; {} not downloaded, so they have no file to name.",
+                count(summary.written.into(), "track", "tracks"),
+                summary.skipped
+            ),
+            Ok(summary) => format!(
+                "Exported {}.",
+                count(summary.written.into(), "track", "tracks")
+            ),
+            Err(e) => format!("Could not write the playlist: {e}"),
+        };
+        cx.update(|cx| said(note, cx));
+    })
+    .detach();
 }
 
 /// Entries with how a question names them: title and artist.
@@ -760,10 +799,12 @@ impl PlaylistPage {
             controls = controls
                 .child(
                     ToolbarButton::new("playlist-undo", Icon::Undo, "undo")
+                        .help(crate::platform::actions::help("undo", &Undo, cx))
                         .on_click(move |_, _, cx| command(cx, "undo", move |e| e.undo(Some(id)))),
                 )
                 .child(
                     ToolbarButton::new("playlist-redo", Icon::Redo, "redo")
+                        .help(crate::platform::actions::help("redo", &Redo, cx))
                         .on_click(move |_, _, cx| command(cx, "redo", move |e| e.redo(Some(id)))),
                 );
         }

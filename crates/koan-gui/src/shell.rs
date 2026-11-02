@@ -114,8 +114,9 @@ impl Shell {
             this.update_in(cx, |this, window, cx| {
                 let engine = crate::engine::engine(cx);
                 let lib = library::Lib::new(engine, browse, navigator, None, cx);
-                let feed = lib.feed.clone();
-                this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
+                let for_queue = lib.clone();
+                this.queue
+                    .update(cx, |queue, cx| queue.set_lib(for_queue, cx));
                 let covers = lib.covers.clone();
                 let search = lib.search.clone();
                 this.sidebar.update(cx, |sidebar, cx| {
