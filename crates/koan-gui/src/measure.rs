@@ -160,28 +160,33 @@ fn scroll(cx: &mut App) {
             let top = TOP.load(Ordering::Relaxed);
             println!("scrolled {pass}: top row {top} of {rows}");
         }
-        window
-            .update(cx, |_, window, _| {
-                let frames = window.frame_duration_snapshot();
-                let ms = |ns: u64| ns as f64 / 1e6;
-                for (name, histogram) in [
-                    ("draw", &frames.draw_duration_histogram),
-                    ("dirty to present", &frames.dirty_to_present_histogram),
-                ] {
-                    println!(
-                        "{name}: {} frames, p50 {:.2} ms, p95 {:.2} ms, p99 {:.2} ms, max {:.2} ms",
-                        histogram.len(),
-                        ms(histogram.value_at_quantile(0.5)),
-                        ms(histogram.value_at_quantile(0.95)),
-                        ms(histogram.value_at_quantile(0.99)),
-                        ms(histogram.max()),
-                    );
-                }
-            })
-            .ok();
+        frame_times(window, cx);
         cx.update(|cx| cx.quit());
     })
     .detach();
+}
+
+/// GPUI's frame histograms for the window so far.
+fn frame_times(window: AnyWindowHandle, cx: &mut AsyncApp) {
+    window
+        .update(cx, |_, window, _| {
+            let frames = window.frame_duration_snapshot();
+            let ms = |ns: u64| ns as f64 / 1e6;
+            for (name, histogram) in [
+                ("draw", &frames.draw_duration_histogram),
+                ("dirty to present", &frames.dirty_to_present_histogram),
+            ] {
+                println!(
+                    "{name}: {} frames, p50 {:.2} ms, p95 {:.2} ms, p99 {:.2} ms, max {:.2} ms",
+                    histogram.len(),
+                    ms(histogram.value_at_quantile(0.5)),
+                    ms(histogram.value_at_quantile(0.95)),
+                    ms(histogram.value_at_quantile(0.99)),
+                    ms(histogram.max()),
+                );
+            }
+        })
+        .ok();
 }
 
 /// The window's centre, where the synthetic wheel events land.
@@ -255,6 +260,7 @@ fn fling(cx: &mut App) {
             settle(3).await;
             println!("flung to the {pass}: {}", footprint());
         }
+        frame_times(window, cx);
         dispatch(Box::new(crate::platform::actions::ShowQueue), cx);
         settle(5).await;
         println!("back on the queue: {}", footprint());
