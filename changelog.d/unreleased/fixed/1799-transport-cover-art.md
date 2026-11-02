@@ -1,0 +1,1 @@
+- **The desktop app builds again.** The transport bar waits for its sleeve as a `CoverArt` image, after two changes to the cover type met on main.
