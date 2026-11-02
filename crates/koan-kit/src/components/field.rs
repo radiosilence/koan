@@ -1,4 +1,9 @@
 use gpui_kit::component::input::{Input, InputState};
+
+/// What a `TextField` edits and what it reports: the page owns the state,
+/// made with `cx.new(|cx| InputState::new(window, cx))`, and subscribes to
+/// its `InputEvent`s.
+pub use gpui_kit::component::input::{InputEvent, InputState as FieldState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{App, Entity, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px};
 

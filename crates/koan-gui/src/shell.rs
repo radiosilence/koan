@@ -529,6 +529,10 @@ impl Render for Shell {
             )
             .when(washed, |d| d.child(transport()))
             .children(
+                ask::presented(window, cx)
+                    .map(|s| deferred(div().absolute().inset_0().child(s)).with_priority(2)),
+            )
+            .children(
                 ask::overlay(window, cx)
                     .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),
             )

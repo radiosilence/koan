@@ -14,6 +14,7 @@ pub mod measure;
 pub mod mirror;
 pub mod navigator;
 pub mod notice;
+pub mod organize;
 pub mod paint;
 pub mod platform;
 pub mod queue;
