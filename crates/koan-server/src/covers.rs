@@ -19,6 +19,10 @@
 //! runs on a few threads of its own. A grid opening asks for hundreds of covers
 //! at once; on the blocking pool each request would decode on its own thread,
 //! and the allocator keeps what every one of those threads used.
+//!
+//! What the cache holds, what the warm is doing and what the last sweep
+//! removed are reported (`usage`, `report`) for the web UI's Library page and
+//! GraphQL's `serverCaches`, with `subscribe` ringing as they move.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -38,7 +42,7 @@ pub(crate) const LARGE: u32 = 1200;
 /// What the warm makes for every album: the desktop's and the web UI's grid,
 /// and the phones' thumbnails. The Apple apps' 1200 is made as asked: a
 /// library's worth of them would outgrow `BUDGET`.
-const WARMED: [u32; 2] = [300, GRID];
+pub(crate) const WARMED: [u32; 2] = [300, GRID];
 
 /// How many of an album's tracks are opened looking for art before giving up.
 const TRACKS_TRIED: usize = 3;
@@ -63,7 +67,7 @@ static DECODE: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 });
 
 /// What the cover directory may hold before the least recently read go.
-const BUDGET: u64 = 4 * 1024 * 1024 * 1024;
+pub(crate) const BUDGET: u64 = 4 * 1024 * 1024 * 1024;
 /// Writes between looks at the directory's size.
 const SWEEP_EVERY: u64 = 256;
 /// A hit moves a cover's mtime, which is its place in line for eviction, no
@@ -74,7 +78,7 @@ const TOUCH_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 
 const EVICTED: &str = ".evicted";
 /// How often the warm looks for albums without a cover ready, besides when
 /// the library changes: albums added by a scan evict nothing.
-const WARM_EVERY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+pub(crate) const WARM_EVERY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// A temporary file older than this was left by a write that never finished.
 const TMP_LEFT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
@@ -89,6 +93,89 @@ pub struct Covers {
     evicted: parking_lot::Mutex<Option<i64>>,
     /// Wakes the warm when the library has changed.
     warm: (parking_lot::Mutex<bool>, parking_lot::Condvar),
+    report: std::sync::Arc<parking_lot::Mutex<Report>>,
+    /// Moves whenever the report does, or covers are cleared.
+    changed: std::sync::Arc<tokio::sync::watch::Sender<u64>>,
+}
+
+/// What the warm is doing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WarmState {
+    /// Not started: an app sharing its own library makes covers as asked.
+    Off,
+    Running,
+    /// Stopped with the directory at its budget; requests still write.
+    AtBudget,
+    Idle,
+}
+
+/// The warm's pass in progress, or its last.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Warm {
+    pub state: WarmState,
+    /// Records looked at so far, of how many there are with files.
+    pub done: usize,
+    pub total: usize,
+    /// Records the pass has made covers for, the rest being ready already.
+    pub made: usize,
+    pub started: Option<std::time::SystemTime>,
+    pub finished: Option<std::time::SystemTime>,
+}
+
+impl Warm {
+    /// When the next pass runs unless the library changes first.
+    pub(crate) fn next(&self) -> Option<std::time::SystemTime> {
+        match self.state {
+            WarmState::Idle | WarmState::AtBudget => self.finished.map(|t| t + WARM_EVERY),
+            WarmState::Off | WarmState::Running => None,
+        }
+    }
+}
+
+/// What a sweep held the directory to its budget by removing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Sweep {
+    pub at: std::time::SystemTime,
+    pub removed: usize,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Report {
+    pub warm: Warm,
+    /// The last sweep that found the directory over its budget, since start.
+    pub sweep: Option<Sweep>,
+}
+
+/// The covers kept at one size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SizeUsage {
+    pub size: u32,
+    /// Covers kept, remembered misses included.
+    pub covers: usize,
+    pub bytes: u64,
+    /// Records or files remembered to have no art.
+    pub misses: usize,
+}
+
+/// What the cover directory holds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Usage {
+    pub bytes: u64,
+    pub budget: u64,
+    pub sizes: Vec<SizeUsage>,
+    /// Records with files that lack a cover ready at one of `WARMED`.
+    pub unwarmed: usize,
+}
+
+impl Usage {
+    pub(crate) fn covers(&self) -> usize {
+        self.sizes.iter().map(|s| s.covers).sum()
+    }
+
+    pub(crate) fn misses(&self) -> usize {
+        self.sizes.iter().map(|s| s.misses).sum()
+    }
 }
 
 impl Covers {
@@ -103,7 +190,122 @@ impl Covers {
             sweeping: Default::default(),
             evicted: parking_lot::Mutex::new(evicted),
             warm: Default::default(),
+            report: std::sync::Arc::new(parking_lot::Mutex::new(Report {
+                warm: Warm {
+                    state: WarmState::Off,
+                    done: 0,
+                    total: 0,
+                    made: 0,
+                    started: None,
+                    finished: None,
+                },
+                sweep: None,
+            })),
+            changed: std::sync::Arc::new(tokio::sync::watch::Sender::new(0)),
         }
+    }
+
+    pub(crate) fn report(&self) -> Report {
+        *self.report.lock()
+    }
+
+    /// Wakes whenever the report moves or the covers are cleared.
+    pub(crate) fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    fn ring(&self) {
+        ring(&self.changed);
+    }
+
+    fn set_warm(&self, change: impl FnOnce(&mut Warm)) {
+        change(&mut self.report.lock().warm);
+        self.ring();
+    }
+
+    /// What the directory holds, by size, and how many of the library's
+    /// records lack a warmed cover. Lists the directory: blocking.
+    pub(crate) fn usage(&self, conn: &rusqlite::Connection) -> Usage {
+        let mut sizes: Vec<SizeUsage> = SIZES
+            .into_iter()
+            .map(|size| SizeUsage {
+                size,
+                ..Default::default()
+            })
+            .collect();
+        let mut bytes = 0;
+        // Records with an entry at each warmed size, by bit.
+        let mut warmed: std::collections::HashMap<i64, u8> = Default::default();
+        if let Ok(read) = std::fs::read_dir(&self.dir) {
+            for entry in read.flatten() {
+                let len = entry.metadata().map_or(0, |m| m.len());
+                bytes += len;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some((album, size)) = parse(&name) else {
+                    continue;
+                };
+                if let Some(at) = sizes.iter_mut().find(|s| s.size == size) {
+                    at.covers += 1;
+                    at.bytes += len;
+                    at.misses += usize::from(len == 0);
+                }
+                if let (Some(album), Some(bit)) = (album, WARMED.iter().position(|s| *s == size)) {
+                    *warmed.entry(album).or_default() |= 1 << bit;
+                }
+            }
+        }
+        let all = (1u8 << WARMED.len()) - 1;
+        let unwarmed = conn
+            .prepare(
+                "SELECT DISTINCT album_id FROM tracks
+                  WHERE path IS NOT NULL AND album_id IS NOT NULL",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map([], |r| r.get::<_, i64>(0)).map(|ids| {
+                    ids.flatten()
+                        .filter(|id| warmed.get(id) != Some(&all))
+                        .count()
+                })
+            })
+            .unwrap_or(0);
+        Usage {
+            bytes,
+            budget: self.budget,
+            sizes,
+            unwarmed,
+        }
+    }
+
+    /// Removes every cover kept, misses included, and wakes the warm to make
+    /// the grid sizes again. What was removed: files and bytes. Blocking.
+    pub(crate) fn clear(&self) -> (usize, u64) {
+        let (mut files, mut bytes) = (0, 0);
+        if let Ok(read) = std::fs::read_dir(&self.dir) {
+            for entry in read.flatten() {
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                let len = entry.metadata().map_or(0, |m| m.len());
+                if std::fs::remove_file(entry.path()).is_ok() {
+                    files += 1;
+                    bytes += len;
+                }
+            }
+        }
+        log::info!("covers: cleared {files} covers ({} MB)", bytes >> 20);
+        self.ring();
+        self.poke();
+        (files, bytes)
+    }
+
+    /// Starts a warm pass now rather than at the next change or interval.
+    /// Whether a warm runs to start.
+    pub(crate) fn warm_now(&self) -> bool {
+        if self.report().warm.state == WarmState::Off {
+            return false;
+        }
+        self.poke();
+        true
     }
 
     /// An album's cover at `size` from the album's own entry: one small file
@@ -185,6 +387,7 @@ impl Covers {
             .name("koan-covers-warm".into())
             .spawn(move || {
                 prune(&covers.dir);
+                covers.set_warm(|w| w.state = WarmState::Idle);
                 loop {
                     covers.warm_pass(&pool);
                     let mut poked = covers.warm.0.lock();
@@ -205,6 +408,10 @@ impl Covers {
         // again: the warm stops at the budget, and requests still write.
         let mut used = dir_bytes(&self.dir);
         if used >= self.budget {
+            self.set_warm(|w| {
+                w.state = WarmState::AtBudget;
+                w.finished = Some(std::time::SystemTime::now());
+            });
             return;
         }
         let albums: Vec<i64> = {
@@ -221,20 +428,35 @@ impl Covers {
                 .map(|rows| rows.flatten().collect())
                 .unwrap_or_default()
         };
+        let total = albums.len();
+        self.set_warm(|w| {
+            *w = Warm {
+                state: WarmState::Running,
+                done: 0,
+                total,
+                made: 0,
+                started: Some(std::time::SystemTime::now()),
+                finished: w.finished,
+            }
+        });
         let mut made = 0usize;
-        for album in albums {
+        let mut state = WarmState::Idle;
+        for (done, album) in albums.into_iter().enumerate() {
             let wanted: Vec<u32> = WARMED
                 .into_iter()
                 .filter(|size| !self.dir.join(album_key(album, *size)).exists())
                 .collect();
             if wanted.is_empty() {
+                // Ready already: counted without a ring per record, which
+                // would wake every follower thousands of times a pass.
+                self.report.lock().warm.done = done + 1;
                 continue;
             }
             let tracks = match pool.get() {
                 Ok(db) => {
                     koan_core::db::queries::tracks_for_album(&db.conn, album).unwrap_or_default()
                 }
-                Err(_) => return,
+                Err(_) => break,
             };
             if tracks.is_empty() {
                 continue;
@@ -247,11 +469,23 @@ impl Covers {
                 self.write_disk(&album_key(album, size), art.as_deref());
             }
             made += 1;
+            self.set_warm(|w| {
+                w.done = done + 1;
+                w.made = made;
+            });
             if used >= self.budget {
                 log::info!("covers: the cover directory has reached its budget; warming stops");
+                state = WarmState::AtBudget;
                 break;
             }
         }
+        self.set_warm(|w| {
+            w.state = state;
+            if state == WarmState::Idle {
+                w.done = total;
+            }
+            w.finished = Some(std::time::SystemTime::now());
+        });
         if made > 0 {
             log::info!("covers: {made} albums' covers made ready");
         }
@@ -341,8 +575,16 @@ impl Covers {
         let n = self.writes.fetch_add(1, Ordering::Relaxed);
         if n.is_multiple_of(SWEEP_EVERY) && !self.sweeping.swap(true, Ordering::AcqRel) {
             let (dir, budget, sweeping) = (self.dir.clone(), self.budget, self.sweeping.clone());
+            let (report, changed) = (self.report.clone(), self.changed.clone());
             std::thread::spawn(move || {
-                sweep(&dir, budget);
+                if let Some((removed, bytes)) = sweep(&dir, budget) {
+                    report.lock().sweep = Some(Sweep {
+                        at: std::time::SystemTime::now(),
+                        removed,
+                        bytes,
+                    });
+                    ring(&changed);
+                }
                 sweeping.store(false, Ordering::Release);
             });
         }
@@ -383,24 +625,26 @@ fn prune(dir: &Path) {
     }
 }
 
+fn ring(changed: &tokio::sync::watch::Sender<u64>) {
+    changed.send_modify(|n| *n = n.wrapping_add(1));
+}
+
 /// Whether `name` is something this version keeps: a dot file, a write in
 /// progress, or a cover at a size it serves, kept by album or by source.
 fn current(name: &str) -> bool {
-    if name.starts_with('.') || name.ends_with(".tmp") {
-        return true;
+    name.starts_with('.') || name.ends_with(".tmp") || parse(name).is_some()
+}
+
+/// A cover's record, when it is kept by record, and size; `None` for
+/// anything that is not a cover at a size this version serves.
+fn parse(name: &str) -> Option<(Option<i64>, u32)> {
+    let (head, size) = name.strip_suffix(".jpg")?.rsplit_once('-')?;
+    let size = size.parse().ok().filter(|size| SIZES.contains(size))?;
+    match head.strip_prefix("album-") {
+        Some(id) => Some((Some(id.parse().ok()?), size)),
+        None => (head.len() == 32 && head.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then_some((None, size)),
     }
-    let Some(stem) = name.strip_suffix(".jpg") else {
-        return false;
-    };
-    let Some((head, size)) = stem.rsplit_once('-') else {
-        return false;
-    };
-    let served = size.parse().is_ok_and(|size: u32| SIZES.contains(&size));
-    let keyed = match head.strip_prefix("album-") {
-        Some(id) => id.parse::<i64>().is_ok(),
-        None => head.len() == 32 && head.bytes().all(|b| b.is_ascii_hexdigit()),
-    };
-    served && keyed
 }
 
 /// What the covers in `dir` take up.
@@ -417,11 +661,10 @@ fn dir_bytes(dir: &Path) -> u64 {
 
 /// Hold `dir` to `budget` bytes, removing the covers read least recently
 /// until it is a tenth under, and every temporary file older than `TMP_LEFT`.
-fn sweep(dir: &Path, budget: u64) {
+/// Covers removed and their bytes, when it was over the budget.
+fn sweep(dir: &Path, budget: u64) -> Option<(usize, u64)> {
     let now = std::time::SystemTime::now();
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return;
-    };
+    let read = std::fs::read_dir(dir).ok()?;
     let mut kept: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
     for entry in read.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
@@ -440,18 +683,22 @@ fn sweep(dir: &Path, budget: u64) {
     }
     let mut total: u64 = kept.iter().map(|(_, len, _)| len).sum();
     if total <= budget {
-        return;
+        return None;
     }
     kept.sort_by_key(|(modified, _, _)| *modified);
     let target = budget - budget / 10;
+    let (mut removed, mut bytes) = (0, 0);
     for (_, len, path) in kept {
         if total <= target {
             break;
         }
         if std::fs::remove_file(&path).is_ok() {
             total -= len;
+            removed += 1;
+            bytes += len;
         }
     }
+    Some((removed, bytes))
 }
 
 /// Where a cover is read from.
@@ -679,6 +926,69 @@ mod tests {
         );
     }
 
+    /// The report counts each size, its misses, and the records still
+    /// lacking a warmed size; a clear empties all but the eviction mark.
+    #[test]
+    fn usage_counts_sizes_and_records_left_to_warm_and_a_clear_empties_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE tracks (id INTEGER PRIMARY KEY, album_id INTEGER, path TEXT);
+             INSERT INTO tracks (album_id, path) VALUES (1, '/a'), (2, '/b'), (3, NULL);",
+        )
+        .unwrap();
+        let covers = Covers::new(dir.path().to_path_buf());
+        let hash = "0123456789abcdef0123456789abcdef";
+        for (name, len) in [
+            ("album-1-300.jpg", 100),
+            ("album-1-600.jpg", 0),
+            ("album-2-600.jpg", 400),
+            (&format!("{hash}-1200.jpg") as &str, 1000),
+            (".evicted", 2),
+        ] {
+            std::fs::write(dir.path().join(name), vec![0u8; len]).unwrap();
+        }
+        let u = covers.usage(&conn);
+        assert_eq!(u.bytes, 1502);
+        assert_eq!(u.budget, BUDGET);
+        let at = |size| *u.sizes.iter().find(|s| s.size == size).unwrap();
+        assert_eq!(at(150).covers, 0);
+        assert_eq!((at(300).covers, at(300).bytes, at(300).misses), (1, 100, 0));
+        assert_eq!((at(600).covers, at(600).bytes, at(600).misses), (2, 400, 1));
+        assert_eq!(at(1200).covers, 1);
+        assert_eq!((u.covers(), u.misses()), (4, 1));
+        assert_eq!(u.unwarmed, 1, "record 2 lacks its 300; 3 has no files");
+
+        let changed = covers.subscribe();
+        assert_eq!(covers.clear(), (4, 1500));
+        assert!(changed.has_changed().unwrap());
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [".evicted"]);
+        assert_eq!(covers.usage(&conn).unwarmed, 2);
+    }
+
+    /// A warm reports its pass as it goes and when it ends; one not
+    /// started refuses to be woken.
+    #[test]
+    fn the_warm_reports_its_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let covers = Covers::new(dir.path().join("covers"));
+        assert_eq!(covers.report().warm.state, WarmState::Off);
+        assert!(!covers.warm_now());
+        let db = dir.path().join("koan.db");
+        koan_core::db::connection::Database::open(&db).unwrap();
+        let pool = koan_core::db::pool::Pool::new(db);
+        covers.warm_pass(&pool);
+        let warm = covers.report().warm;
+        assert_eq!(warm.state, WarmState::Idle);
+        assert_eq!((warm.done, warm.total, warm.made), (0, 0, 0));
+        assert!(warm.started.is_some() && warm.finished.is_some());
+        assert_eq!(warm.next(), Some(warm.finished.unwrap() + WARM_EVERY));
+    }
+
     #[test]
     fn requests_snap_up_to_a_served_size() {
         assert_eq!(snap(Some(1)), 150);
@@ -761,7 +1071,7 @@ mod tests {
         }
         put("c0-400.jpg.1-2.tmp", 10, 2);
         put("c9-400.jpg.1-3.tmp", 10, 0);
-        sweep(dir.path(), 5600);
+        assert_eq!(sweep(dir.path(), 5600), Some((5, 5000)));
         let mut left: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

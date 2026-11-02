@@ -34,6 +34,8 @@ pub(crate) struct Job {
     pub total: Option<u64>,
     /// What started a scan the library watch ran: see [`WatchScan::Started`].
     pub reason: Option<&'static str>,
+    pub started: std::time::SystemTime,
+    pub finished: Option<std::time::SystemTime>,
 }
 
 /// Jobs started by this process, newest last. Bounded so a long-lived server
@@ -92,6 +94,8 @@ impl JobRegistry {
             done: None,
             total: None,
             reason,
+            started: std::time::SystemTime::now(),
+            finished: None,
         };
         jobs.insert(job.id.clone(), job.clone());
         drop(jobs);
@@ -104,6 +108,7 @@ impl JobRegistry {
         if let Some(job) = jobs.get_mut(id) {
             job.state = state;
             job.message = message;
+            job.finished = Some(std::time::SystemTime::now());
         }
         drop(jobs);
         self.ring();
@@ -196,6 +201,16 @@ impl JobRegistry {
             .filter(|j| j.state == JobState::Running)
             .min_by(|a, b| a.id.cmp(&b.id))
             .or_else(|| of_kind().max_by(|a, b| a.id.cmp(&b.id)))
+            .cloned()
+    }
+
+    /// The job of any of `kinds` that ended last.
+    pub(crate) fn last_finished(&self, kinds: &[&str]) -> Option<Job> {
+        self.inner
+            .lock()
+            .values()
+            .filter(|j| kinds.contains(&j.kind) && j.finished.is_some())
+            .max_by_key(|j| j.finished)
             .cloned()
     }
 

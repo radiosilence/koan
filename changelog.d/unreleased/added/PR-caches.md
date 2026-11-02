@@ -1,0 +1,1 @@
+- **The web UI shows the server's caches.** Admins see the cover cache by size against its budget, the warm's progress and the last sweep, the download cache and the last scan on the Library page, updating as they move, and can warm or clear the covers; GraphQL has the same as `serverCaches`, `warmCovers` and `clearCoverCache`.
