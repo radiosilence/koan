@@ -20,7 +20,7 @@ use koan_kit::app::*;
 use koan_kit::raw::{px, size};
 
 use crate::mirror::Slice;
-use crate::settings::form::{section, text};
+use crate::settings::form::{Copied, section, text};
 use crate::settings::qr::Code;
 
 const RETRY_AFTER: Duration = Duration::from_secs(30);
@@ -41,7 +41,7 @@ pub struct LinkDevice {
     connection: Entity<Slice<Option<ConnectionInfo>>>,
     invite: Option<(Invite, Code)>,
     gone: Option<Gone>,
-    copied: bool,
+    copied: Copied,
     asking: Option<Task<()>>,
     _connection: Subscription,
 }
@@ -77,7 +77,7 @@ impl LinkDevice {
             connection,
             invite: None,
             gone: None,
-            copied: false,
+            copied: Copied::default(),
             asking: None,
         };
         link.ask(cx);
@@ -187,17 +187,19 @@ impl Render for LinkDevice {
                 .child(
                     div().when(!ready, |d| d.invisible()).child(
                         Button::new("copy-link", ButtonKind::Bordered)
-                            .label(if self.copied { "Copied" } else { "Copy Link" })
+                            .label(if self.copied.is("link") {
+                                "Copied"
+                            } else {
+                                "Copy Link"
+                            })
                             .icon(Icon::Copy)
                             .disabled(!ready)
                             .on_click(move |_, _, cx| {
                                 let Some(link) = link.clone() else {
                                     return;
                                 };
-                                cx.write_to_clipboard(ClipboardItem::new_string(link));
-                                entity.update(cx, |link, cx| {
-                                    link.copied = true;
-                                    cx.notify();
+                                entity.update(cx, |pane, cx| {
+                                    Copied::copy(pane, |pane| &mut pane.copied, "link", link, cx)
                                 })
                             }),
                     ),
