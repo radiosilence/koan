@@ -804,15 +804,17 @@ impl Render for Transport {
                             e.album_id.map(|id| (id, e.album.clone(), e.artist.clone()))
                         }),
                         |d, (album, title, artist)| {
-                            d.cursor_pointer().on_click(move |_, window, cx| {
-                                crate::artwork::show(
-                                    album,
-                                    title.clone(),
-                                    Some(artist.clone().into()),
-                                    window,
-                                    cx,
-                                )
-                            })
+                            d.cursor_pointer()
+                                .tooltip(tip("show artwork".to_owned()))
+                                .on_click(move |_, window, cx| {
+                                    crate::artwork::show(
+                                        album,
+                                        title.clone(),
+                                        Some(artist.clone().into()),
+                                        window,
+                                        cx,
+                                    )
+                                })
                         },
                     )
                     .child(Cover::new(self.cover.clone(), COVER).id("transport-cover")),
