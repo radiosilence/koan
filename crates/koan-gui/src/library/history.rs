@@ -525,7 +525,6 @@ impl HistoryPage {
 
 impl Render for HistoryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = Paint::of(window, cx);
         if self.lib.covers.update(cx, |c, cx| {
             c.admit(UPLOAD_BYTES_PER_FRAME, Some(window), cx)
         }) {

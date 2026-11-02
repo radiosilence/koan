@@ -17,8 +17,6 @@ use koan_kit::raw::{Image, ImageFormat, RenderImage};
 use crate::components::CoverArt;
 use crate::engine::engine;
 
-use crate::theme::Hsla;
-
 enum Held {
     /// Asked for and waiting its turn, or being fetched.
     Loading,

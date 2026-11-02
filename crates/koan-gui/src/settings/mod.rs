@@ -16,7 +16,7 @@ mod sheet;
 
 use std::sync::Arc;
 
-use crate::theme::{self, Icon, KoanStyled, KoanTheme, Look, Space, Tone};
+use crate::theme::{self, Icon, KoanTheme, Look, Space, Tone};
 use koan_ffi::{ConnectionInfo, KoanEngine};
 use koan_kit::app::*;
 // gpui-component's focus and click extensions, for the shell's own handling.

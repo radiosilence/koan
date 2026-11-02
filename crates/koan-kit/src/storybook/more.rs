@@ -586,7 +586,7 @@ fn sample_code() -> QrCode {
     finder(&mut dark, SIDE - 7, 0);
     for y in 0..SIDE {
         for x in 0..SIDE {
-            let free = !((y < 8 && (x < 8 || x >= SIDE - 8)) || (y >= SIDE - 8 && x < 8));
+            let free = !((y < 8 && !(8..SIDE - 8).contains(&x)) || (y >= SIDE - 8 && x < 8));
             if free && (x * 7 + y * 13 + x * y) % 5 < 2 {
                 dark[y * SIDE + x] = true;
             }

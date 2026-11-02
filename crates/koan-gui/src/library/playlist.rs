@@ -871,7 +871,7 @@ impl PlaylistPage {
         });
         let feed = self.lib.feed.clone();
         let nav = self.lib.nav.read(cx).navigator();
-        let (row_frame, id) = match r {
+        let (row_frame, _) = match r {
             Row::Heading { first, len } => {
                 let run = &self.items[first..first + len];
                 let id = SharedString::from(format!("h:{}", run[0].queue_item_id));

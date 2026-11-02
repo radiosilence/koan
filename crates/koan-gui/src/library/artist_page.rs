@@ -27,7 +27,7 @@ use super::drag::{Playable, PlayableDrag};
 use super::nav::{Anchor, Anchored, Heading, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
-use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
+use super::tile::{Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, FadeIn, Reveal, RowMetrics, SectionHeading, Spinner};
@@ -1116,6 +1116,7 @@ mod tests {
                 Item::FeaturesHeading => "[features]".into(),
                 Item::Tiles { range, .. } => format!("{}..{}", range.start, range.end),
                 Item::Track(i) => format!("track {i}"),
+                Item::About => "about".into(),
             })
             .collect();
         assert_eq!(
@@ -1128,7 +1129,8 @@ mod tests {
                 "[live]",
                 "4..5",
                 "[features]",
-                "0..1"
+                "0..1",
+                "about"
             ]
         );
         // Albums alone are headed too.
