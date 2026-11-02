@@ -5061,6 +5061,20 @@ impl KoanEngine {
         .await
     }
 
+    /// Stop fetching these tracks. Queue entries waiting on them fail as
+    /// cancelled and are skipped until retried; a transfer running stops and
+    /// leaves no row.
+    pub async fn cancel_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || self.send_local(PlayerCommand::CancelDownloads(track_ids))).await
+    }
+
+    /// Fetch these tracks again after a failure or a cancel: queue entries
+    /// that failed for them wait again, and a track no entry wants is
+    /// fetched into the cache.
+    pub async fn retry_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || self.send_local(PlayerCommand::RetryDownloads(track_ids))).await
+    }
+
     /// Rescans every configured library folder, saying how far it has got.
     /// Minutes, on a large library.
     pub async fn scan_reporting(

@@ -2613,6 +2613,16 @@ impl Player {
                     downloads.cache(ids);
                 }
             }
+            PlayerCommand::CancelDownloads(ids) => {
+                if let Some(downloads) = &self.downloads {
+                    downloads.cancel(&ids);
+                }
+            }
+            PlayerCommand::RetryDownloads(ids) => {
+                if let Some(downloads) = &self.downloads {
+                    downloads.retry(&ids);
+                }
+            }
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
             PlayerCommand::BeginUndoBatch => {

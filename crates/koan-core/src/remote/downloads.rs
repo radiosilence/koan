@@ -201,6 +201,9 @@ struct Entry {
     waiters: HashSet<QueueItemId>,
     /// Wanted in the cache for its own sake, whatever the playlist does.
     keep: bool,
+    /// Let go of by the person: withdrawn, it settles as failed with
+    /// [`CANCELLED`] rather than leaving no row, so it can be retried.
+    cancelled: bool,
 }
 
 impl Entry {
@@ -226,8 +229,14 @@ fn join_in(entries: &mut [Entry], track_id: i64, waiter: Option<QueueItemId>) ->
         }
         None => entry.keep = true,
     }
+    // Wanted again before its worker withdrew it: it carries on.
+    entry.cancelled = false;
     true
 }
+
+/// Why a transfer the person cancelled, and the queue entries that waited on
+/// it, do not play.
+pub const CANCELLED: &str = "download cancelled";
 
 /// How a transfer ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +348,7 @@ impl DownloadStore {
                 listed: false,
                 waiters: waiter.into_iter().collect(),
                 keep: waiter.is_none(),
+                cancelled: false,
             },
         );
         drop(entries);
@@ -490,6 +500,9 @@ impl DownloadStore {
             Outcome::Failed(reason) if listed => {
                 entry.download.state = DownloadState::Failed(reason)
             }
+            Outcome::Withdrawn if listed && entry.cancelled => {
+                entry.download.state = DownloadState::Failed(CANCELLED.into())
+            }
             _ => {
                 entries.remove(ix);
             }
@@ -575,6 +588,36 @@ impl DownloadStore {
             .iter()
             .filter(|e| e.listed && e.is_live())
             .count()
+    }
+
+    /// Want nothing from the live transfer for `track_id`, as the person
+    /// asked: it is abandoned, and its worker withdraws it when it next asks,
+    /// leaving its row failed as cancelled. It stays live until then, so a
+    /// retry meanwhile joins it rather than starting a second transfer to the
+    /// same file. Returns the queue entries that were waiting on it.
+    pub fn let_go(&self, track_id: i64) -> Vec<QueueItemId> {
+        let mut entries = self.entries.write();
+        let Some(entry) = entries
+            .iter_mut()
+            .find(|e| e.download.track_id == track_id && e.is_live())
+        else {
+            return Vec::new();
+        };
+        entry.keep = false;
+        entry.cancelled = true;
+        std::mem::take(&mut entry.waiters).into_iter().collect()
+    }
+
+    /// Drop the settled rows for these tracks, as they are fetched again.
+    pub fn forget_settled(&self, track_ids: &[i64]) {
+        let mut entries = self.entries.write();
+        let before = entries.len();
+        entries.retain(|e| e.is_live() || !track_ids.contains(&e.download.track_id));
+        let changed = entries.len() != before;
+        drop(entries);
+        if changed {
+            self.bump();
+        }
     }
 
     /// Drop everything that has already settled. The running ones are not this
@@ -808,6 +851,69 @@ mod tests {
             PathBuf::from(format!("/cache/{title}.opus")),
         );
         (track_id, waiter, feed)
+    }
+
+    #[test]
+    fn letting_go_abandons_the_transfer_and_hands_back_its_waiters() {
+        let store = DownloadStore::new();
+        let (track_id, first, _) = running(&store, 1, "train");
+        let again = QueueItemId::new();
+        store.join(track_id, Some(again));
+        store.join(track_id, None);
+
+        let waiters: HashSet<_> = store.let_go(track_id).into_iter().collect();
+        assert_eq!(waiters, HashSet::from([first, again]));
+        assert!(store.abandoned(track_id), "kept for its own sake no longer");
+        assert!(store.let_go(99).is_empty());
+    }
+
+    #[test]
+    fn a_cancelled_transfer_leaves_a_row_to_retry() {
+        let store = DownloadStore::new();
+        let (track_id, _, _) = running(&store, 1, "train");
+        store.let_go(track_id);
+        assert!(
+            store.in_flight(track_id),
+            "live until its worker withdraws it"
+        );
+        let _ = withdraw(&store, track_id);
+        let row = &store.all()[0];
+        assert_eq!(row.state, DownloadState::Failed(CANCELLED.into()));
+
+        // Retried: the row goes, and the next claim starts afresh.
+        store.forget_settled(&[track_id]);
+        assert!(store.all().is_empty());
+        assert!(store.claim(track_id, Some(QueueItemId::new())));
+    }
+
+    #[test]
+    fn wanted_again_before_withdrawal_it_carries_on() {
+        let store = DownloadStore::new();
+        let (track_id, _, _) = running(&store, 1, "train");
+        store.let_go(track_id);
+        store.join(track_id, Some(QueueItemId::new()));
+        assert!(!store.abandoned(track_id));
+        let _ = store.end(track_id, Outcome::Withdrawn);
+        assert!(
+            store.all().is_empty(),
+            "a withdrawal after a retry leaves no cancelled row"
+        );
+    }
+
+    #[test]
+    fn a_retried_track_loses_its_settled_row_and_no_other() {
+        let store = DownloadStore::new();
+        let (failed, _, _) = running(&store, 1, "failed");
+        store.end(failed, Outcome::Failed("404".into()));
+        let (done, _, _) = running(&store, 2, "done");
+        store.end(done, Outcome::Done);
+        let (live, _, _) = running(&store, 3, "live");
+
+        let version = store.version();
+        store.forget_settled(&[failed, live]);
+        assert!(store.version() > version);
+        let left: Vec<i64> = store.all().iter().map(|d| d.track_id).collect();
+        assert_eq!(left, vec![live, done], "a live transfer is not settled");
     }
 
     #[test]
