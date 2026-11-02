@@ -45,6 +45,31 @@ pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     crate::dsp::window::init(cx);
     // Reads the mirror set up above.
     crate::library::activity::init(cx);
+    // Invites and pairing links opened from outside: Settings answers them.
+    // Any waiting from the launch itself are answered now.
+    cx.observe_global::<crate::platform::Links>(answer_links)
+        .detach();
+    answer_links(cx);
+}
+
+/// Hands each link waiting to Settings, as an invite or a pairing; anything
+/// else is not koan's and is dropped.
+fn answer_links(cx: &mut App) {
+    for link in crate::platform::Links::take(cx) {
+        let engine = crate::engine::engine(cx);
+        let incoming = if let Some(pairing) = engine.parse_pairing_link(link.clone()) {
+            settings::Incoming::Pairing {
+                server: pairing.server,
+                id: pairing.id,
+            }
+        } else if engine.parse_invite(link.clone()).is_some() {
+            settings::Incoming::Invite(link)
+        } else {
+            log::info!("ignoring a link that is not koan's");
+            continue;
+        };
+        settings::answer(incoming, cx);
+    }
 }
 
 /// Opens the window once the restored session is in the mirror, and keeps
