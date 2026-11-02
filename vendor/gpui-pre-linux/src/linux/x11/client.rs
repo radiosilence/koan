@@ -130,6 +130,10 @@ enum RefreshState {
 /// KOAN: how many refreshes no one asked for before the timer parks.
 const IDLE_FRAMES: u32 = 3;
 
+/// KOAN: how long after input the refresh timer stays up, as long as GPUI
+/// keeps presenting after high-rate input (`InputRateTracker`).
+const INPUT_SUSTAIN: Duration = Duration::from_secs(1);
+
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum EventHandlerError {
@@ -2116,8 +2120,14 @@ impl X11ClientState {
         x_window: xproto::Window,
         refresh_rate: Duration,
     ) -> RegistrationToken {
-        // KOAN: refreshes in a row that no one asked for.
+        // KOAN: refreshes in a row that no one asked for, and this timer's
+        // place among the window's.
         let mut idle_frames = 0;
+        let timer = self.windows.get(&x_window).map(|w| {
+            let timer = w.window.refresh_timer.get() + 1;
+            w.window.refresh_timer.set(timer);
+            timer
+        });
         self.loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
                 let this = self.this.clone();
@@ -2139,7 +2149,11 @@ impl X11ClientState {
                             });
                             // KOAN: a few refreshes no one asked for: nothing
                             // to draw. The frame waker restarts the timer.
-                            if window.woken.replace(false) {
+                            let recent_input = window
+                                .last_input
+                                .get()
+                                .is_some_and(|at| at.elapsed() < INPUT_SUSTAIN);
+                            if window.woken.replace(false) || recent_input {
                                 idle_frames = 0;
                             } else {
                                 idle_frames += 1;
@@ -2149,9 +2163,18 @@ impl X11ClientState {
                     };
                     client.process_x11_events(&xcb_connection).log_err();
                     if idle_frames >= IDLE_FRAMES {
-                        if let Some(window) = client.0.borrow_mut().windows.get_mut(&x_window)
-                            && let Some(RefreshState::PeriodicRefresh { refresh_rate, .. }) =
-                                window.refresh_state
+                        let mut state = client.0.borrow_mut();
+                        let Some(window) = state.windows.get_mut(&x_window) else {
+                            return calloop::timer::TimeoutAction::Drop;
+                        };
+                        // KOAN: replaced by another timer while this one ran
+                        // (the window hidden and shown again): the state is
+                        // that timer's to park.
+                        if Some(window.window.refresh_timer.get()) != timer {
+                            return calloop::timer::TimeoutAction::Drop;
+                        }
+                        if let Some(RefreshState::PeriodicRefresh { refresh_rate, .. }) =
+                            window.refresh_state
                         {
                             window.refresh_state = Some(RefreshState::Parked { refresh_rate });
                             return calloop::timer::TimeoutAction::Drop;

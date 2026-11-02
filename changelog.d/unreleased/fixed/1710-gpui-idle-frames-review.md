@@ -1,0 +1,1 @@
+- **The desktop app no longer risks a crash closing a window.** A frame wake queued as a window closed could run after its view was released. Windows also keep drawing for a second after input, as GPUI asks, so a display does not drop its refresh rate between scroll events.
