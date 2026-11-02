@@ -31,6 +31,9 @@ pub struct LyricsPanel {
     loaded: Option<(i64, Option<Lyrics>)>,
     /// The track LRCLIB is being asked about.
     fetching: Option<i64>,
+    /// The track `_load` reads for. Replacing the load drops the one before,
+    /// its fetch included, so a track left and come back to is read again.
+    loading: Option<i64>,
     /// The line being sung.
     active: Option<usize>,
     _load: Option<Task<()>>,
@@ -53,6 +56,7 @@ impl LyricsPanel {
             playhead: mirror.playhead,
             loaded: None,
             fetching: None,
+            loading: None,
             active: None,
             _load: None,
             _follow: None,
@@ -79,13 +83,17 @@ impl LyricsPanel {
         let Some(track) = self.track(cx) else {
             self.loaded = None;
             self._load = None;
+            self.loading = None;
+            self.fetching = None;
             self._follow = None;
             cx.notify();
             return;
         };
-        if self.loaded.as_ref().is_some_and(|(t, _)| *t == track) || self.fetching == Some(track) {
+        if self.loading == Some(track) {
             return;
         }
+        self.loading = Some(track);
+        self.fetching = None;
         self.active = None;
         self._follow = None;
         let engine = engine(cx);
