@@ -101,19 +101,34 @@ pub fn sync_remote(
         library
     };
     cancelled()?;
+    // The apps show all of these as the sync's last phase, so each is timed:
+    // a slow finish in the log says which step it was.
+    let step = std::time::Instant::now();
     let favourites =
         reconcile_favourites(db, client).map_err(crate::db::connection::DbError::from)?;
+    let favourites_took = step.elapsed();
     cancelled()?;
+    let step = std::time::Instant::now();
     let playlists = crate::playlists::reconcile_playlists(db, client, url, username);
+    let playlists_took = step.elapsed();
     cancelled()?;
+    let step = std::time::Instant::now();
     let history = crate::remote::history::reconcile(db, client, url, username);
+    let history_took = step.elapsed();
     cancelled()?;
+    let step = std::time::Instant::now();
+    let dsp = crate::remote::dsp_sync::reconcile(db, client, url);
+    log::info!(
+        "sync after the library: favourites {favourites_took:?}, playlists {playlists_took:?}, \
+         history {history_took:?}, EQ {:?}",
+        step.elapsed()
+    );
     crate::remote::covers::synced();
     Ok(Synced {
         library,
         favourites,
         playlists,
         history,
-        dsp: crate::remote::dsp_sync::reconcile(db, client, url),
+        dsp,
     })
 }
