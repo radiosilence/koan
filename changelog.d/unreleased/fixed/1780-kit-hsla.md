@@ -1,0 +1,1 @@
+- **koan-kit builds again.** The theme imported its colour type twice.
