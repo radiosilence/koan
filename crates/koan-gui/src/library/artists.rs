@@ -10,7 +10,7 @@ use std::time::Duration;
 use koan_ffi::{Artist, BrowseFilter};
 use koan_kit::app::*;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px};
+use koan_kit::raw::point;
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use koan_kit::raw::{UniformListScrollHandle, uniform_list};
 
