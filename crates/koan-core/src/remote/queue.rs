@@ -134,9 +134,6 @@ fn retry_server_now() {
 }
 
 /// The track under the cursor, when it still has to be fetched.
-/// Why a queue entry whose download was cancelled does not play.
-pub const CANCELLED: &str = "download cancelled";
-
 fn cursor_download(state: &SharedPlayerState) -> Option<(i64, QueueItemId)> {
     let id = state.cursor()?;
     let item = state.get_item(id)?;
@@ -260,23 +257,16 @@ impl DownloadQueue {
         let state = &self.inner.state;
         let store = state.downloads();
         let mut q = self.inner.queue.lock();
-        let mut failed: Vec<QueueItemId> = Vec::new();
-        q.pending.retain(|&(track, id)| {
-            let keep = !track_ids.contains(&track);
-            if !keep {
-                failed.push(id);
-            }
-            keep
-        });
+        q.pending.retain(|(track, _)| !track_ids.contains(track));
         q.cache.retain(|track| !track_ids.contains(track));
         for &track in track_ids {
-            failed.extend(store.let_go(track));
+            store.let_go(track);
         }
-        // Under the queue's lock, as settling is: no sync can see an entry
-        // between losing its transfer and failing.
-        for &id in &failed {
-            state.update_item_state(id, ItemState::Failed(CANCELLED.into()));
-        }
+        // Every entry still waiting for one of them, in the window or past
+        // it, a duplicate included: one left waiting would be fetched by the
+        // next sync. Under the queue's lock, as settling is, so no sync sees
+        // an entry between losing its transfer and failing.
+        let failed = state.fail_pending(track_ids, downloads::CANCELLED);
         drop(q);
         let tell: Vec<_> = failed
             .into_iter()

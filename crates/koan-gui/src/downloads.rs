@@ -252,7 +252,7 @@ fn ask_cancel(id: i64, title: &str, window: &mut Window, cx: &mut App) {
             destructive: false,
             lines: vec![format!("“{title}” stops downloading.").into()],
             note: Some(
-                "In the queue it is skipped until it is retried here or played again.".into(),
+                "It stays here as cancelled, and the queue skips it, until it is retried.".into(),
             ),
         },
         window,
