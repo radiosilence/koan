@@ -80,7 +80,6 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
     });
 }
 
-/// Resolves the pick to its tracks, in order, and opens organise over them.
 /// The tracks `items` name, in order, each once: what a verb over records
 /// and artists acts on.
 pub async fn track_ids_of(engine: Arc<koan_ffi::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {

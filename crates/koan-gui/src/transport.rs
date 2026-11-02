@@ -694,14 +694,14 @@ fn trailing_item(p: &Paint) -> Div {
 /// The group a text button's glyph follows the pointer by.
 const TEXT_BUTTON: &str = "transport-text-button";
 
-/// A transport control: `on` for the two that toggle, underlined in the
-/// accent while on and `muted` while off, as an icon toggle is.
 /// A transport control's tooltip.
 fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text = SharedString::from(text);
     move |window, cx| crate::components::Tooltip::view(text.clone(), window, cx)
 }
 
+/// A transport control: `on` for the two that toggle, underlined in the
+/// accent while on and `muted` while off, as an icon toggle is.
 fn control(
     id: &'static str,
     icon: Icon,
