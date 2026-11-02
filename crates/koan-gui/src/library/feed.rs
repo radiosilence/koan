@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use koan_ffi::{KoanEngine, PlayState, TransferState};
+use koan_ffi::{KoanEngine, TransferState};
 use koan_kit::app::*;
 
 use super::drag::Playable;
@@ -20,8 +20,6 @@ pub struct Feed {
     pub library_version: Option<u64>,
     pub playing_album: Option<i64>,
     pub playing_track: Option<i64>,
-    /// The track under the cursor is playing rather than paused or waiting.
-    pub playing: bool,
     /// The tracks still arriving, by record, for a tile's download bar.
     pub arriving: HashMap<i64, Vec<i64>>,
     /// Each track with a transfer, and where it is: a row's availability.
@@ -53,12 +51,10 @@ impl Feed {
                 feed.library(version, cx);
             }),
             cx.observe(&mirror.playback, |feed, playback, cx| {
-                let now = &playback.read(cx).0;
-                let entry = now.entry.as_ref();
+                let entry = playback.read(cx).0.entry.as_ref();
                 let playing = (
                     entry.and_then(|e| e.album_id),
                     entry.and_then(|e| e.track_id),
-                    now.state == PlayState::Playing && !now.waiting,
                 );
                 feed.playback(playing, cx);
             }),
@@ -80,7 +76,6 @@ impl Feed {
             library_version: None,
             playing_album: None,
             playing_track: None,
-            playing: false,
             arriving: HashMap::new(),
             transfers: HashMap::new(),
             connection_epoch: 0,
@@ -95,16 +90,12 @@ impl Feed {
         // after its first report has landed.
         let library = mirror.library.read(cx);
         feed.library(library.known.then_some(library.version), cx);
-        let now = &mirror.playback.read(cx).0;
-        let entry = now.entry.as_ref();
-        feed.playback(
-            (
-                entry.and_then(|e| e.album_id),
-                entry.and_then(|e| e.track_id),
-                now.state == PlayState::Playing && !now.waiting,
-            ),
-            cx,
+        let entry = mirror.playback.read(cx).0.entry.as_ref();
+        let playing = (
+            entry.and_then(|e| e.album_id),
+            entry.and_then(|e| e.track_id),
         );
+        feed.playback(playing, cx);
         let derived = Self::by_track(&mirror.transfers.read(cx).0);
         feed.transfers(derived, cx);
         feed
@@ -119,9 +110,9 @@ impl Feed {
         }
     }
 
-    fn playback(&mut self, playing: (Option<i64>, Option<i64>, bool), cx: &mut Context<Self>) {
-        if playing != (self.playing_album, self.playing_track, self.playing) {
-            (self.playing_album, self.playing_track, self.playing) = playing;
+    fn playback(&mut self, playing: (Option<i64>, Option<i64>), cx: &mut Context<Self>) {
+        if playing != (self.playing_album, self.playing_track) {
+            (self.playing_album, self.playing_track) = playing;
             cx.notify();
         }
     }

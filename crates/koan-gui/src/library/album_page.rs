@@ -250,7 +250,6 @@ impl AlbumPage {
             lead: number,
             lead_width,
             current: feed.playing_track == Some(id),
-            playing: feed.playing,
             favourite: feed.is_favourite(item),
             selected,
             gathered: false,

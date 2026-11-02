@@ -33,6 +33,7 @@ const RESTORE_LIMIT: Duration = Duration::from_secs(10);
 pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     let mirror = Mirror::follow(engine, cx);
     cx.set_global(mirror);
+    crate::notice::install(cx);
     cx.set_global(Engine(engine.clone()));
     Covers::install(cx);
     crate::levels::install(cx);

@@ -502,7 +502,6 @@ impl ArtistPage {
                     lead: (index + 1).to_string().into(),
                     lead_width: rows::lead_width(p, record.appearances.len(), window),
                     current: feed.playing_track == Some(track.id),
-                    playing: feed.playing,
                     favourite: feed.is_favourite(item),
                     selected,
                     gathered: true,
