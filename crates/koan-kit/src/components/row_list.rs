@@ -63,10 +63,13 @@ impl RowListState {
     }
 }
 
+/// Makes row `ix` as it comes on screen.
+type MakeRow = Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>;
+
 #[derive(IntoElement)]
 pub struct RowList {
     state: RowListState,
-    row: Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>,
+    row: MakeRow,
 }
 
 impl RowList {
