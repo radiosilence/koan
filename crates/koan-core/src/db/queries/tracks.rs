@@ -1399,6 +1399,28 @@ mod tests {
         Database { conn }
     }
 
+    /// A record's cover is asked of the server only where none of its
+    /// tracks has a file here, by the track a cover lookup would choose.
+    #[test]
+    fn remote_covers_are_the_records_with_no_file_here() {
+        let db = test_db();
+        let remote = |title: &str, album: &str, n: i32| {
+            let mut meta = sample_meta(title, "Artist", album);
+            meta.path = None;
+            meta.source = "remote".into();
+            meta.remote_id = Some(format!("song-{title}"));
+            meta.album_remote_id = Some(format!("album-{album}"));
+            meta.track_number = Some(n);
+            upsert_track(&db.conn, &meta).unwrap()
+        };
+        remote("b", "Server", 2);
+        remote("a", "Server", 1);
+        let mut local = sample_meta("c", "Artist", "Here");
+        local.path = Some("/music/c.flac".into());
+        upsert_track(&db.conn, &local).unwrap();
+        assert_eq!(remote_cover_ids(&db.conn).unwrap(), ["song-a"]);
+    }
+
     /// A walk reads every track once, in id order, and one removed mid-walk
     /// moves none of the rest out of reach; an offset no walk reached is read
     /// as an offset.

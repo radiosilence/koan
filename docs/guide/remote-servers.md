@@ -89,7 +89,14 @@ Played tracks are kept, so they play again from disk, until the cache limit need
 cache_limit = "50GB"           # max cache size; bounds queue prefetch too; "0" keeps no cache (default: unlimited)
 download_ahead = 3             # tracks past the playing one to fetch (default: the whole queue)
 cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cache)
+preload_covers = true          # fetch every record's cover ahead (default: on)
 ```
+
+### Covers
+
+A remote library has no files to read covers from, so each one is a request to the server. The apps ask for the size they draw: 600 pixels for grids, lists and headers on a phone or a computer, which a kōan server keeps ready; 1200 for a large screen (Now Playing and record headers on an iPad, an Apple TV, Android's full-screen player); the original only for the artwork viewer, which the server reads from the music file. A large cover shows the 600 one first and sharpens in place.
+
+Every cover fetched is kept in the cache's `artwork` directory, so any page asking for it again reads it from disk, and with **Fetch every record's cover ahead** (Settings → Server, on by default) the apps fetch the rest in the background after a sync: one at a time, only while no cover a page asked for is waiting, and only while the app is in the foreground. Its progress shows as an activity row with a stop button; stopping keeps what was fetched and carries on at the next launch or when the setting is turned on again. Kept covers count against `cache_limit` with the downloads and are trimmed, oldest first, once no download can go; clearing the cache removes them too.
 
 ## Favourites and playlists
 
@@ -131,6 +138,7 @@ download_workers = 5             # parallel download threads
 cache_limit = "50GB"             # max cache size (LRU eviction)
 download_ahead = 3               # tracks fetched past the playing one
 cache_dir = "/custom/path"       # cache directory
+preload_covers = true            # fetch every record's cover ahead
 ```
 
 ## Checking status

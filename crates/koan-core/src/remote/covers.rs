@@ -291,3 +291,61 @@ fn pass() {
     // Held to the cache limit with the downloads, the playback window kept.
     crate::remote::queue::cache_limit_changed();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(dir: &Path) -> Config {
+        let mut cfg = Config::default();
+        cfg.remote.cache_dir = Some(dir.to_path_buf());
+        cfg
+    }
+
+    #[test]
+    fn a_kept_cover_serves_its_size_and_every_smaller_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        assert_eq!(kept(&cfg, "al-1", Some(600)), None);
+        keep(&cfg, "al-1", Some(600), b"six hundred");
+        assert_eq!(
+            kept(&cfg, "al-1", Some(600)).as_deref(),
+            Some(&b"six hundred"[..])
+        );
+        assert_eq!(
+            kept(&cfg, "al-1", Some(300)).as_deref(),
+            Some(&b"six hundred"[..])
+        );
+        assert_eq!(kept(&cfg, "al-1", Some(1200)), None, "never scaled up");
+        assert_eq!(kept(&cfg, "al-1", None), None, "the original is not kept");
+        assert_eq!(kept(&cfg, "al-2", Some(600)), None, "another record's");
+        keep(&cfg, "al-1", Some(300), b"three");
+        assert_eq!(
+            kept(&cfg, "al-1", Some(150)).as_deref(),
+            Some(&b"three"[..]),
+            "the smallest that fits"
+        );
+    }
+
+    #[test]
+    fn nothing_is_kept_of_an_empty_answer_or_the_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        keep(&cfg, "al-1", Some(600), b"");
+        keep(&cfg, "al-1", None, b"original");
+        assert_eq!(bytes(&cfg), 0);
+    }
+
+    #[test]
+    fn trimming_removes_the_oldest_until_enough_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        keep(&cfg, "old", Some(600), &[0; 100]);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        keep(&cfg, "new", Some(600), &[0; 100]);
+        assert_eq!(bytes(&cfg), 200);
+        assert_eq!(trim(&cfg, 50), 100);
+        assert!(kept(&cfg, "old", Some(600)).is_none());
+        assert!(kept(&cfg, "new", Some(600)).is_some());
+    }
+}
