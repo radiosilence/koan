@@ -550,7 +550,10 @@ impl Wash {
     /// Where the texture is this frame: its scale over the overscan, and its
     /// travel across the page from -1 to 1.
     fn pose(&self, now: Instant) -> (f32, f32) {
-        let t = now.duration_since(self.epoch).as_secs_f32();
+        // Reduced to the cycle in f64 before narrowing, as the shader's clock
+        // is: in f32, a window open for days counts time in steps a frame
+        // long.
+        let t = (now.duration_since(self.epoch).as_secs_f64() % CYCLE as f64) as f32;
         pose_at(t, self.amplitude.at(now))
     }
 

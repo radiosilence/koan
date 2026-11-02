@@ -14,19 +14,21 @@
 mod animated;
 mod availability;
 mod badge;
-mod bars;
 mod banner;
+mod bars;
 mod button;
 pub mod choice;
 mod collection;
 mod cover;
 mod dense;
+mod details;
 mod drag;
 mod empty;
 mod fade;
 mod field;
 mod filter_field;
 mod form;
+mod inspector;
 mod level;
 mod menu;
 mod metrics;
@@ -53,6 +55,7 @@ mod suggestions;
 mod table;
 mod toggle;
 mod toolbar;
+mod viewer;
 mod window;
 
 use std::sync::Arc;
@@ -66,20 +69,22 @@ use gpui_kit::{
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
 pub use availability::{Availability, AvailabilityMark, ProgressReader};
 pub use badge::{Badge, Chip};
-pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use banner::Banner;
+pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
+pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
-pub use fade::FadeIn;
+pub use fade::{FadeIn, Reveal};
 pub use field::{FieldState, InputEvent, TextField};
 pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
 };
+pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
@@ -110,6 +115,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, WINDOW_BUTTONS,
 };
+pub use viewer::Viewer;
 pub use window::SecondaryWindow;
 
 use crate::theme::{Look, MARK, Motion};
