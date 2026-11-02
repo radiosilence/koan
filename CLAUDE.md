@@ -152,7 +152,7 @@ just android-run [ABIS] # build, install and open the Android app on the device 
 just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 just android-walk [AVD] [SEARCH] # every page, both looks and appearances, on an emulator against a generated library, into target/android-walk
 just gui-run    # the kōan GUI app from source, against target/gui-config unless KOAN_CONFIG_DIR is set; Metal shaders compiled at startup (runtime-shaders), so no Xcode
-just vendor-gpui VER # the vendored GPUI crates rebuilt from release VER + vendor/patches; fails loudly on a hunk that does not apply
+just vendor-gpui VER [KIT] # the vendored GPUI crates rebuilt from release VER (gpui-base from gpui-kit's KIT) + vendor/patches; fails loudly on a hunk that does not apply
 just vendor-gpui-patches # vendor/patches written from the vendored copies, after editing one
 just gui-walk   # every GUI page headlessly: PNGs dark and light, scroll frame times, fails over 6.9 ms at p95
 just gui-compare # the SwiftUI app's offscreen renders beside the walk's, edges that disagree marked
@@ -378,7 +378,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `platform/runtime_files.rs` | The app's runtime files (window and browse state, the desktop device's id and devices, locks, Now Playing's covers) outside the config directory, in `koan_core::places`; files an earlier version left there are moved on start-up, once |
 | `platform/logging.rs` | `koan.log`, in every front end's format, and stderr |
 
-The workspace's `vendor/` holds patched copies of GPUI (`[patch.crates-io]` in the root `Cargo.toml`): its macOS and Linux backends, so an idle window stops waking at every display refresh (#1609), and its core and renderers, for shader quads whose uniforms are read at present (#1641); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
+The workspace's `vendor/` holds patched copies of GPUI (`[patch.crates-io]` in the root `Cargo.toml`): its macOS and Linux backends, so an idle window stops waking at every display refresh (#1609), its core and renderers, for shader quads whose uniforms are read at present (#1641), and gpui-kit's gpui-base, whose text caret is such a quad so its blink redraws nothing (#1786); every change is marked `KOAN:`, and `vendor/README.md` says how to move them to a new GPUI release.
 
 `LinkIdentity::desktop` (koan-core) and `KoanEngine::open_desktop` (koan-ffi) make it a device of its own beside the Mac app and the terminal UI on one config directory. `just gui-run`, `gui-build` and `gui-bundle` (a signed `.app` and DMG on macOS, an AppImage and `.deb` on Linux) build and package it; `packaging/` holds the Linux desktop entry and the app icons.
 

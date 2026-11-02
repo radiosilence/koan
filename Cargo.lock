@@ -3427,8 +3427,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d862bc8f2e27710039013d075ac4995892e9687ff207fa530f880cbcd513936f"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -5505,6 +5503,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "parking_lot 0.13.0",
+ "serde_json",
  "smallvec",
 ]
 
