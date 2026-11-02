@@ -111,6 +111,10 @@ pub struct PlaylistPage {
     /// What the last export had to say.
     note: Option<SharedString>,
     focus: FocusHandle,
+    /// The keyboard's place in the list, by row.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
     _loading: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -176,6 +180,8 @@ impl PlaylistPage {
             moving: playhead.read(cx).playing,
             note: None,
             focus: cx.focus_handle(),
+            cursor: Default::default(),
+            keyed: false,
             _loading: None,
             _subscriptions: subscriptions,
         };
@@ -961,6 +967,7 @@ impl PlaylistPage {
         };
         row_frame
             .selected(selected)
+            .cursor(self.keyed && self.cursor.at == Some(row))
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
             })
@@ -973,6 +980,9 @@ impl PlaylistPage {
             )
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
+                // The keyboard carries on from the row clicked.
+                this.cursor.at = Some(row);
+                this.cursor.anchor = Some(row);
                 this.click(row, event, cx);
             }))
             .on_drag(drag, |drag: &PlayableDrag, at, _, cx| drag.preview(at, cx))
@@ -1099,73 +1109,122 @@ impl Render for PlaylistPage {
             })
             .into_any_element()
         };
-        div()
-            .id("playlist")
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|this, _: &super::SelectAll, _, cx| {
-                this.selected = this.items.iter().map(|i| i.queue_item_id.clone()).collect();
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &super::Dismiss, _, cx| {
-                this.selected.clear();
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
-                this.selected.clear();
-                cx.notify();
-            }))
-            .when(fillable, |d| {
-                let id = self.id;
-                d.on_action(cx.listener(Self::ask_remove_selected))
-                    .on_action(move |_: &Undo, _, cx| {
-                        command(cx, "undo", move |e| e.undo(Some(id)))
-                    })
-                    .on_action(move |_: &Redo, _, cx| {
-                        command(cx, "redo", move |e| e.redo(Some(id)))
-                    })
-                    // Below the last row: the end of the playlist.
-                    .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
-                        let dest = this.drop_at.unwrap_or(count);
-                        this.dropped(dragged, dest, cx);
-                    }))
-                    .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
-                        let dest = this.drop_at.unwrap_or(count);
-                        this.dropped(&dragged.as_library(), dest, cx);
-                    }))
-                    // Files from outside: indexed where they lie and appended.
-                    .on_drop(cx.listener(move |_, paths: &ExternalPaths, _, cx| {
-                        drop::add_files_to_playlist(
-                            &crate::engine::engine(cx),
-                            id,
-                            paths.paths().to_vec(),
-                            cx,
-                        )
-                    }))
-                    // A drag that leaves the list takes its insertion line with it.
-                    .on_drag_move::<PlayableDrag>(cx.listener(
-                        |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
-                            if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
-                                this.drop_at = None;
-                                cx.notify();
-                            }
-                        },
-                    ))
-            })
-            .size_full()
-            .flex()
-            .flex_col()
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, _| {
-                if event.button == MouseButton::Right {
-                    this.menu_row = None;
-                }
-            }))
-            .child(Page::new(header).body(body))
-            .koan_context_menu("playlist-menu", window, cx, {
-                let view = view.clone();
-                move |menu, window, cx| row_menu(menu, &view, window, cx)
-            })
-            .into_any_element()
+        self.keyed = self.focus.is_focused(window);
+        self.cursor.clamp(self.rows.len());
+        super::keys::keyed(
+            div()
+                .id("playlist")
+                .key_context("Library List")
+                .track_focus(&self.focus),
+            cx,
+        )
+        .on_action(cx.listener(|this, _: &super::SelectAll, _, cx| {
+            this.selected = this.items.iter().map(|i| i.queue_item_id.clone()).collect();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &super::Dismiss, _, cx| {
+            this.selected.clear();
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
+            this.selected.clear();
+            cx.notify();
+        }))
+        .when(fillable, |d| {
+            let id = self.id;
+            d.on_action(cx.listener(Self::ask_remove_selected))
+                .on_action(move |_: &Undo, _, cx| command(cx, "undo", move |e| e.undo(Some(id))))
+                .on_action(move |_: &Redo, _, cx| command(cx, "redo", move |e| e.redo(Some(id))))
+                // Below the last row: the end of the playlist.
+                .on_drop(cx.listener(move |this, dragged: &PlayableDrag, _, cx| {
+                    let dest = this.drop_at.unwrap_or(count);
+                    this.dropped(dragged, dest, cx);
+                }))
+                .on_drop(cx.listener(move |this, dragged: &PlaylistDrag, _, cx| {
+                    let dest = this.drop_at.unwrap_or(count);
+                    this.dropped(&dragged.as_library(), dest, cx);
+                }))
+                // Files from outside: indexed where they lie and appended.
+                .on_drop(cx.listener(move |_, paths: &ExternalPaths, _, cx| {
+                    drop::add_files_to_playlist(
+                        &crate::engine::engine(cx),
+                        id,
+                        paths.paths().to_vec(),
+                        cx,
+                    )
+                }))
+                // A drag that leaves the list takes its insertion line with it.
+                .on_drag_move::<PlayableDrag>(cx.listener(
+                    |this, e: &DragMoveEvent<PlayableDrag>, _, cx| {
+                        if this.drop_at.is_some() && !e.bounds.contains(&e.event.position) {
+                            this.drop_at = None;
+                            cx.notify();
+                        }
+                    },
+                ))
+        })
+        .size_full()
+        .flex()
+        .flex_col()
+        .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, _| {
+            if event.button == MouseButton::Right {
+                this.menu_row = None;
+            }
+        }))
+        .child(Page::new(header).body(body))
+        .koan_context_menu("playlist-menu", window, cx, {
+            let view = view.clone();
+            move |menu, window, cx| row_menu(menu, &view, window, cx)
+        })
+        .into_any_element()
+    }
+}
+
+impl super::keys::KeyedList for PlaylistPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let entries = self.rows[from].items().start..self.rows[to].items().end;
+        self.selected = self.items[entries]
+            .iter()
+            .map(|i| i.queue_item_id.clone())
+            .collect();
+        if from == to {
+            self.anchor = self.row_items(from).next().map(|i| i.queue_item_id.clone());
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let ids: Vec<String> = self
+            .row_items(ix)
+            .map(|i| i.queue_item_id.clone())
+            .collect();
+        if ids.iter().all(|id| self.selected.contains(id)) {
+            for id in &ids {
+                self.selected.remove(id);
+            }
+        } else {
+            self.selected.extend(ids);
+        }
+    }
+
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        self.list.reveal(ix);
+    }
+
+    /// Return plays the playlist from the row, as a double click does.
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let entry = self
+            .row_items(ix)
+            .next()
+            .and_then(|i| i.queue_item_id.parse().ok());
+        self.play_from(entry, false, cx);
     }
 }
 
