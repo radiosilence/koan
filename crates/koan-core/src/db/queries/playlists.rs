@@ -206,18 +206,16 @@ pub fn reorder_playlists(conn: &Connection, ids: &[i64]) -> Result<(), DbError> 
 pub fn merge_order<T: Eq + std::hash::Hash + Clone>(current: &[T], wanted: &[T]) -> Vec<T> {
     let present: HashSet<&T> = current.iter().collect();
     let mut seen = HashSet::new();
-    let mut named = wanted
+    let named: Vec<&T> = wanted
         .iter()
         .filter(|item| present.contains(item) && seen.insert(*item))
-        .cloned();
+        .collect();
+    let mut named = named.into_iter();
     current
         .iter()
-        .map(|item| {
-            if seen.contains(item) {
-                named.next().expect("one named member per place")
-            } else {
-                item.clone()
-            }
+        .map(|item| match seen.contains(item) {
+            true => named.next().expect("one named member per place").clone(),
+            false => item.clone(),
         })
         .collect()
 }
