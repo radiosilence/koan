@@ -146,7 +146,10 @@ pub struct QueueView {
     following: bool,
     /// The queue item last brought into view while following.
     followed: Option<String>,
-    _subscriptions: [Subscription; 5],
+    /// The transport is playing: the cursor's row moves its bars only then,
+    /// and shows the play mark while paused or stopped.
+    playing: bool,
+    _subscriptions: [Subscription; 6],
 }
 
 impl QueueView {
@@ -154,7 +157,16 @@ impl QueueView {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
         let lock = cx.global::<Mirror>().lock.clone();
+        let playhead = cx.global::<Mirror>().playhead.clone();
         let subscriptions = [
+            // Redrawn only when playing starts or stops, not for every anchor.
+            cx.observe(&playhead, |this, playhead, cx| {
+                let playing = playhead.read(cx).playing;
+                if playing != this.playing {
+                    this.playing = playing;
+                    cx.notify();
+                }
+            }),
             // What the queue follows names the header.
             cx.observe(&lock, |_, _, cx| cx.notify()),
             cx.observe(&queue, |this, queue, cx| {
@@ -203,6 +215,7 @@ impl QueueView {
             feed: None,
             following: false,
             followed: None,
+            playing: cx.global::<Mirror>().playhead.read(cx).playing,
             _subscriptions: subscriptions,
         };
         // The queue can arrive before the window's saved layout is read.
@@ -656,6 +669,7 @@ impl QueueView {
                         favourite,
                         feed,
                         availability,
+                        playing: self.playing,
                     },
                     &look,
                 );
@@ -673,7 +687,6 @@ impl QueueView {
         let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
         let view = cx.entity();
         row_frame
-            .group(id)
             .selected(selected)
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
@@ -952,6 +965,8 @@ pub(crate) struct Extras {
     pub feed: Option<Entity<Feed>>,
     /// Where its file is, or its transfer's glide.
     pub availability: Option<Availability>,
+    /// The transport is playing.
+    pub playing: bool,
 }
 
 fn link(
@@ -1058,7 +1073,18 @@ pub(crate) fn track(
     let mark = div()
         .text_role(TypeRole::Fine, &p.look)
         .map(|d| match item.status {
-            EntryStatus::Playing => d.child(crate::levels::bars(p.accent_text)),
+            // Bars only while the music moves them, and in the look that
+            // draws glyphs; the play mark, or its word, otherwise.
+            EntryStatus::Playing if extras.playing && p.look.icons => {
+                d.child(crate::levels::bars(p.accent_text))
+            }
+            EntryStatus::Playing => d.child(glyph(
+                Icon::PlayMark,
+                "playing",
+                TypeRole::Fine,
+                p.accent_text,
+                p,
+            )),
             EntryStatus::Played => {
                 d.child(glyph(Icon::Check, "played", TypeRole::Fine, p.muted, p))
             }
@@ -1132,13 +1158,14 @@ fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
     else {
         return slot.into_any_element();
     };
-    let row = look.row.clone();
     slot.child(
         div()
             .id(look.id("heart", 0))
             .cursor_pointer()
             .when(!favourite, |d| {
-                d.invisible().group_hover(row, |s| s.visible())
+                // The row's own group, which `TableRow` names for every row.
+                d.invisible()
+                    .group_hover(crate::components::ROW_GROUP, |s| s.visible())
             })
             .on_click(move |_, _, cx| {
                 cx.stop_propagation();

@@ -28,6 +28,10 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
             .query_row(sql, [], |r| r.get::<_, i64>(0))
             .unwrap_or(0) as u64
     };
+    // A scan under way would re-read files into what this clears: it is
+    // stopped, and the delete waits for its last commit.
+    crate::index::lane::cancel_all();
+    let _lane = crate::index::lane::wait();
     let summary = RebuildSummary {
         tracks: count("SELECT COUNT(*) FROM tracks"),
         albums: count("SELECT COUNT(*) FROM albums"),

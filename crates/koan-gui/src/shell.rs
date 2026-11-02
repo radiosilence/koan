@@ -69,10 +69,16 @@ pub struct Shell {
     _activation: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
+    /// The lyrics beside the page, while they show. Dropped when hidden, so
+    /// a closed panel follows no song.
+    lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
     /// ⇧⌘K's picker, while it is open.
     picker: Option<(Entity<crate::search::picker::PickerSheet>, Subscription)>,
     /// Watches the window's one question host, which draws over everything.
     _asking: Subscription,
+    /// Watches the artwork viewer, and while it shows, the sleeve it waits
+    /// for.
+    _artwork: [Subscription; 2],
 }
 
 impl Shell {
@@ -142,9 +148,28 @@ impl Shell {
             _activation: activation,
             shortcuts: None,
             picker: None,
+            lyrics: None,
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
+            },
+            _artwork: {
+                let viewer = crate::artwork::artwork(cx);
+                let sleeves = crate::artwork::sleeves(cx);
+                [
+                    // Closed, the page it was over takes the keys again.
+                    cx.observe_in(&viewer, window, |this, _, window, cx| {
+                        if !crate::artwork::is_showing(cx) {
+                            this.refocus(window, cx);
+                        }
+                        cx.notify();
+                    }),
+                    cx.observe(&sleeves, |_, _, cx| {
+                        if crate::artwork::is_showing(cx) {
+                            cx.notify();
+                        }
+                    }),
+                ]
             },
         }
     }
@@ -205,6 +230,15 @@ impl Shell {
         });
         window.focus(&sheet.focus_handle(cx), cx);
         self.shortcuts = Some((sheet, dismissed));
+        cx.notify();
+    }
+
+    /// ⌥⌘L, `L` and the toolbar's button: the lyrics beside the page, or not.
+    fn toggle_lyrics(&mut self, _: &ToggleLyrics, _: &mut Window, cx: &mut Context<Self>) {
+        self.lyrics = match self.lyrics.take() {
+            Some(_) => None,
+            None => Some(cx.new(crate::lyrics::LyricsPanel::new)),
+        };
         cx.notify();
     }
 
@@ -296,7 +330,12 @@ impl Shell {
                         },
                         window,
                         cx,
-                        move |cx| covers.update(cx, |c, cx| c.clear(None, cx)),
+                        // Run once the window is handed back, so the
+                        // sleeves' textures leave its atlas with them.
+                        move |cx| {
+                            let covers = covers.clone();
+                            cx.defer(move |cx| covers.update(cx, |c, cx| c.clear(None, cx)))
+                        },
                     );
                 })
                 .ok();
@@ -427,6 +466,7 @@ impl Shell {
             .when_some(page, |toolbar, page| toolbar.trailing(page))
             .trailing(
                 ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics")
+                    .selected(self.lyrics.is_some())
                     .help(help("lyrics panel", &ToggleLyrics, cx))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(ToggleLyrics.boxed_clone(), cx)
@@ -544,8 +584,8 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
-            .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::search))
+            .on_action(cx.listener(Self::toggle_lyrics))
             .on_action(cx.listener(Self::add_music))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
@@ -601,7 +641,21 @@ impl Render for Shell {
                             .flex_col()
                             .child(self.toolbar(window, cx))
                             .child(self.banner.clone())
-                            .child(div().flex_1().min_h_0().child(stage))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .flex()
+                                    .child(div().flex_1().min_w_0().h_full().child(stage))
+                                    .children(self.lyrics.clone().map(|lyrics| {
+                                        lyrics.cached(
+                                            StyleRefinement::default()
+                                                .w(RowMetrics::inspector(&p.look))
+                                                .h_full()
+                                                .flex_none(),
+                                        )
+                                    })),
+                            )
                             .when(!washed, |d| d.child(transport())),
                     )
                     .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
@@ -625,6 +679,10 @@ impl Render for Shell {
             .children(
                 ask::overlay(window, cx)
                     .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),
+            )
+            .children(
+                crate::artwork::overlay(window, cx)
+                    .map(|v| deferred(div().absolute().inset_0().child(v)).with_priority(2)),
             )
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
