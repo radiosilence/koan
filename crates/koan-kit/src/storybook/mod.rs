@@ -49,10 +49,11 @@ pub enum Story {
     Lists,
     Panels,
     Motion,
+    Rainbow,
 }
 
 impl Story {
-    pub const ALL: [Story; 16] = [
+    pub const ALL: [Story; 17] = [
         Story::Type,
         Story::Buttons,
         Story::Icons,
@@ -69,6 +70,7 @@ impl Story {
         Story::Lists,
         Story::Panels,
         Story::Motion,
+        Story::Rainbow,
     ];
 
     /// Its name in the sidebar, and its PNG's.
@@ -90,6 +92,7 @@ impl Story {
             Story::Lists => "tables and lists",
             Story::Panels => "panels and sheets",
             Story::Motion => "motion and drag",
+            Story::Rainbow => "rainbow",
         }
     }
 
@@ -357,7 +360,7 @@ impl StoryContent {
                 .gap(look.space(Space::M))
         };
         match self.story {
-            Story::Collections | Story::Lists | Story::Panels | Story::Motion => {
+            Story::Collections | Story::Lists | Story::Panels | Story::Motion | Story::Rainbow => {
                 self.more(look, window, cx)
             }
             Story::Type => {

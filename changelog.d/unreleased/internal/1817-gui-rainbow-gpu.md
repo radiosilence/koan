@@ -1,0 +1,1 @@
+- **koan-gui: the hidden appearance on the GPU.** koan-kit's prism: a layer over the wash moving with the music, the beat at the window's edges, a mirror ball, rainbow bars and seek trail, shimmering tiles and title, confetti and a sweep between records; nothing mounted while it is off, nothing moving under Reduce Motion.

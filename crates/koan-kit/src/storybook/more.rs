@@ -7,13 +7,14 @@ use gpui_kit::*;
 
 use super::{Story, StoryContent, text};
 use crate::components::{
-    Align, BarLevels, Collection, CollectionSection, CollectionWidth, Column, CopyButton, CopyText,
-    CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget, EmptyState, FadeIn,
-    FilterField, Form, FormRow, FormSection, Inspector, KoanContextMenu, MenuEntry, Mosaic,
-    NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars, QrCode, Reveal,
-    RowKind, RowList, RowListState, SectionHeader, SectionHeading, ShuffleButton, SplitView,
-    SuggestionHeading, SuggestionPanel, SuggestionRow, SyncedLines, TableRow, TileArt, TileGrid,
-    TileSleeve, Viewer, link_action, link_text, name_line, plain_text, table_list,
+    Align, BarLevels, Burst, Collection, CollectionSection, CollectionWidth, Column, CopyButton,
+    CopyText, CoverArt, DenseRow, DenseTable, DetailGroup, DragChip, DropTarget, EmptyState,
+    FadeIn, FilterField, Form, FormRow, FormSection, Glide, Inspector, KoanContextMenu, MenuEntry,
+    Mosaic, NavHeading, NavNote, NavRow, PageHeader, Pill, PlayButton, PlayingBars, Prism, QrCode,
+    Reveal, RowKind, RowList, RowListState, SectionHeader, SectionHeading, Sheen, ShuffleButton,
+    Slider, SplitView, SuggestionHeading, SuggestionPanel, SuggestionRow, SyncedLines, TableRow,
+    TileArt, TileGrid, TileSleeve, Viewer, link_action, link_text, name_line, plain_text,
+    table_list,
 };
 use crate::theme::{HAIRLINE, Icon, Look, Space, Tone, TypeRole};
 
@@ -30,6 +31,10 @@ pub struct State {
     viewing: bool,
     bars: BarLevels,
     qr: QrCode,
+    prism: Prism,
+    confetti: Burst,
+    sweep: Burst,
+    glide: Glide,
 }
 
 impl State {
@@ -50,6 +55,14 @@ impl State {
             viewing: false,
             bars,
             qr: sample_code(),
+            prism: Prism::new(),
+            confetti: Burst::confetti(),
+            sweep: Burst::sweep(),
+            glide: {
+                let glide = Glide::new();
+                glide.set(0.62, 0.0, std::time::Instant::now());
+                glide
+            },
         }
     }
 }
@@ -544,6 +557,110 @@ impl StoryContent {
                                     .on_click(|_, _, _| {}),
                             )
                         })
+                        .into_any_element(),
+                ]
+            }
+            Story::Rainbow => {
+                let prism = self.more.prism.clone();
+                prism.run(true);
+                prism.style(look.dark, false, window.scale_factor());
+                let bars = self.more.bars.clone();
+                let side = look.spaced(96.0);
+                let stage = look.spaced(340.0);
+                let middle = point(look.spaced(300.0), stage / 2.0);
+                let fire = |burst: &Burst, label: &'static str, id: &'static str| {
+                    let burst = burst.clone();
+                    crate::components::Button::new(id, crate::components::ButtonKind::Bordered)
+                        .label(label)
+                        .on_click(move |_, window, _| {
+                            burst.fire(middle, window.scale_factor(), false)
+                        })
+                };
+                let beat = {
+                    let prism = prism.clone();
+                    crate::components::Button::new(
+                        "story-beat",
+                        crate::components::ButtonKind::Bordered,
+                    )
+                    .label("beat")
+                    .on_click(move |_, _, _| {
+                        prism.hear([0.1, 0.4, 0.5]);
+                        prism.hear([1.0, 0.7, 0.9]);
+                    })
+                };
+                let overlay =
+                    |quad: AnyElement| div().absolute().top_0().left_0().size_full().child(quad);
+                vec![
+                    SectionHeader::new("The prism over a page").into_any_element(),
+                    frame(340.0)
+                        .relative()
+                        .overflow_hidden()
+                        .child(overlay(prism.wash().size_full().into_any_element()))
+                        .child(overlay(prism.pulse().size_full().into_any_element()))
+                        .child(
+                            div()
+                                .absolute()
+                                .top(look.spaced(24.0))
+                                .right(look.spaced(24.0))
+                                .size(look.spaced(64.0))
+                                .child(prism.ball().size_full()),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .left(look.spaced(24.0))
+                                .bottom(look.spaced(24.0))
+                                .flex()
+                                .gap(look.space(Space::L))
+                                .items_end()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .child(crate::components::Cover::new(
+                                            CoverArt::Colour(WARM),
+                                            side,
+                                        ))
+                                        .child(Sheen::new("story-sheen")),
+                                )
+                                .child(
+                                    div()
+                                        .relative()
+                                        .child(crate::components::Cover::new(
+                                            CoverArt::Colour(COOL),
+                                            side,
+                                        ))
+                                        .child(Sheen::new("story-sheen-brat").brat(true)),
+                                )
+                                .child(
+                                    PlayingBars::new(look.accent.hsla(), move |_, _, _| {
+                                        Some(bars.clone())
+                                    })
+                                    .prism(Some(false)),
+                                ),
+                        )
+                        .child(overlay(
+                            self.more.sweep.element().size_full().into_any_element(),
+                        ))
+                        .child(overlay(
+                            self.more.confetti.element().size_full().into_any_element(),
+                        ))
+                        .into_any_element(),
+                    div()
+                        .flex()
+                        .gap(look.space(Space::M))
+                        .child(beat)
+                        .child(fire(&self.more.confetti, "confetti", "story-confetti"))
+                        .child(fire(&self.more.sweep, "sweep", "story-sweep"))
+                        .into_any_element(),
+                    SectionHeader::new("The seek bar's trail").into_any_element(),
+                    div()
+                        .w(look.spaced(420.0))
+                        .child(
+                            Slider::new("story-trail", 0.62)
+                                .compact()
+                                .glide(&self.more.glide)
+                                .prism(true),
+                        )
                         .into_any_element(),
                 ]
             }
