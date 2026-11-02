@@ -1,0 +1,1 @@
+- **The server builds again.** The cover warm read its source image through a type the compiler could not size.
