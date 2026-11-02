@@ -7,7 +7,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::Handler;
-use crate::theme::{HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// The tabs, centred: each its glyph over its label in `fine`, lowercase,
 /// `muted`, and the chosen one in the accent and underlined. The glyph only

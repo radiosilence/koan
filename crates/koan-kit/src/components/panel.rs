@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::Handler;
-use crate::theme::{HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// The theme's popover and menu: a square `bg` panel in a hairline `rule`,
 /// with no arrow, no shadow and no material. What it holds is its own; a

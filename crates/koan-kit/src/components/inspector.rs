@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{RowMetrics, ScrollArea};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
+use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
 
 #[derive(IntoElement)]
 pub struct Inspector {

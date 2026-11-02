@@ -11,7 +11,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind, TextField};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
+use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
 pub fn panel(look: &Look) -> Stateful<Div> {

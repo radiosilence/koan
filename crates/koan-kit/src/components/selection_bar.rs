@@ -6,7 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind, Handler, RowMetrics};
-use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole};
+use crate::theme::{KoanStyled, Look, Space, TypeRole};
 
 /// The count in `meta`, `ink`, leading; the verbs trailing, `Text` buttons
 /// or anything drawn as one (a menu's trigger), then "done". On `bg` with a

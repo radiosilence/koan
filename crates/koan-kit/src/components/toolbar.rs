@@ -6,7 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind};
-use crate::theme::{HAIRLINE, Icon, KoanStyled, KoanTheme, Look};
+use crate::theme::{Icon, KoanStyled, KoanTheme, Look};
 
 /// The toolbar's figures, the Mac's unified toolbar measured at 2x: 52
 /// tall, its buttons 36-point cells. Gaps are fixed points, as AppKit's.

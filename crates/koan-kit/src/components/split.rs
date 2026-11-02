@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::child;
-use crate::theme::{HAIRLINE, Look};
+use crate::theme::Look;
 
 type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
 

@@ -6,9 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{Button, ButtonKind, Handler};
-use crate::theme::{
-    HAIRLINE, Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole,
-};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole};
 
 /// The glyph and message in `tone`, `fine`, on the page's ground with a rule
 /// beneath; an action at the far edge where there is something to do about

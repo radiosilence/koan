@@ -10,8 +10,8 @@ use super::{
     transition,
 };
 use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space,
-    TOOLBAR_BUTTON, Tone, TypeRole, label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TOOLBAR_BUTTON, Tone,
+    TypeRole, label,
 };
 
 /// A button's weight and shape. The rules for which a screen uses are the

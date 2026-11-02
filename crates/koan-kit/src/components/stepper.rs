@@ -8,7 +8,7 @@ use gpui_kit::{
 
 use super::{Handler, accessible, child, focus, ring};
 use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
 };
 
 /// A value moved a step at a time: the title leading in `body`, `ink`, and

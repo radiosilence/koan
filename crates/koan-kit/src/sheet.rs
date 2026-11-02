@@ -19,7 +19,7 @@ use crate::components::{
     Toggle, Tooltip,
 };
 use crate::theme::{
-    self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
+    self, Accent, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
     wash::{Sleeve, Wash},
 };
 

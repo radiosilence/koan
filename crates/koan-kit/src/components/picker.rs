@@ -7,9 +7,7 @@ use gpui_kit::{
 };
 
 use super::{Handler, MenuPanel, MenuRow, accessible, answers_click, child, focus, ring};
-use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
-};
+use crate::theme::{DISABLED_OPACITY, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label};
 
 /// A pop-up picker: the chosen option in `control`, `ink`, with a chevron, in
 /// the theme's bordered button, as the Mac's `KoanPicker` is; it opens the

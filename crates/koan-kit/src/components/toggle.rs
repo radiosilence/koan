@@ -8,8 +8,7 @@ use gpui_kit::{
 
 use super::{Handler, accessible, answers_click, child, fade, focus, ring, toggled};
 use crate::theme::{
-    DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole,
-    label,
+    DISABLED_OPACITY, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole, label,
 };
 
 /// A square box at the row's trailing edge, the label leading: a `muted`

@@ -7,7 +7,7 @@ use gpui_kit::{
 };
 
 use super::Handler;
-use crate::theme::{HAIRLINE, KoanStyled, Look, Tone, TypeRole};
+use crate::theme::{KoanStyled, Look, Tone, TypeRole};
 
 /// A small fact set apart, such as a format: `fine` in `ink` in a square
 /// `rule` outline, or in the accent where the fact is a match.
