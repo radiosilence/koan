@@ -36,6 +36,9 @@ pub const NOTHING_TO_PLAY: &str = "Nothing there kōan can play.";
 pub struct Imports {
     pub running: usize,
     problem: Option<String>,
+    /// Held by the import placing its tracks, so imports land in the order
+    /// they were asked for, a large folder's before a file opened after it.
+    turn: std::sync::Arc<futures::lock::Mutex<()>>,
 }
 
 impl Global for Imports {}
@@ -83,17 +86,17 @@ pub fn add_files_to_playlist(
 }
 
 fn import(engine: &Arc<KoanEngine>, paths: Vec<PathBuf>, into: Into, cx: &mut App) {
-    let paths: Vec<String> = paths
-        .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
     if paths.is_empty() {
         return;
     }
-    cx.default_global::<Imports>().running += 1;
+    let imports = cx.default_global::<Imports>();
+    imports.running += 1;
+    // Taken now, in the order asked, before anything is awaited.
+    let turn = imports.turn.clone().lock_owned();
     let engine = engine.clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let problem = match engine.clone().import_files(paths).await {
+        let _turn = turn.await;
+        let problem = match engine.clone().import_paths(paths).await {
             // As the Mac app says it: an import that fails is a drop with
             // nothing to play in it. The log has the reason.
             Err(e) => {

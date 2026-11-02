@@ -963,6 +963,30 @@ impl KoanEngine {
 /// Calls for front ends that link the engine as a Rust library, not reached
 /// through uniffi.
 impl KoanEngine {
+    /// `import_files` with paths as the platform names them: a drop or an
+    /// argument on Linux may not be UTF-8, and a string would change it.
+    pub async fn import_paths(
+        self: Arc<Self>,
+        paths: Vec<PathBuf>,
+    ) -> Result<ImportSummary, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let result = koan_core::index::scanner::import_paths(&db, &paths);
+            self.bump_library();
+            Ok(ImportSummary {
+                track_ids: result.track_ids,
+                added: result.added as u32,
+                updated: result.updated as u32,
+                errors: result
+                    .errors
+                    .into_iter()
+                    .map(|(p, e)| format!("{}: {e}", p.display()))
+                    .collect(),
+            })
+        })
+        .await
+    }
+
     /// `album_cover_art`, with a remote cover's request cancelled when the
     /// returned future is dropped: the desktop app drops it as the cover
     /// scrolls out of view, so the request stops on its connection and its
@@ -5320,23 +5344,8 @@ impl KoanEngine {
         self: Arc<Self>,
         paths: Vec<String>,
     ) -> Result<ImportSummary, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-            let result = koan_core::index::scanner::import_paths(&db, &paths);
-            self.bump_library();
-            Ok(ImportSummary {
-                track_ids: result.track_ids,
-                added: result.added as u32,
-                updated: result.updated as u32,
-                errors: result
-                    .errors
-                    .into_iter()
-                    .map(|(p, e)| format!("{}: {e}", p.display()))
-                    .collect(),
-            })
-        })
-        .await
+        self.import_paths(paths.into_iter().map(PathBuf::from).collect())
+            .await
     }
 
     /// Where the library folders point. Shown in settings.
