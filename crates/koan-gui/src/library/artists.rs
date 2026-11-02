@@ -273,7 +273,17 @@ impl ArtistBrowser {
             }))
             .child(artist.name.clone());
         let play = cx.weak_entity();
+        let count = self.artists.len();
+        let scroll = self.scroll.clone();
         TableRow::new(("artist", id as u64), RowKind::Line)
+            .spoken(crate::components::spoken([
+                artist.name.as_str(),
+                chrome::count(artist.album_count.max(0) as u64, "album", "albums").as_str(),
+                chrome::count(artist.track_count.max(0) as u64, "track", "tracks").as_str(),
+                if favourite { "favourite" } else { "" },
+            ]))
+            .place(index, count)
+            .on_reveal(move |_, _| crate::components::reveal_around(&scroll, index))
             .selected(selected)
             // Exactly the glyph's width, so it starts on the header's edge.
             .lead_exact(
@@ -401,6 +411,11 @@ impl Render for ArtistBrowser {
             )
             .track_scroll(&self.scroll)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("artists-list", "artists")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element()
         };
         div()

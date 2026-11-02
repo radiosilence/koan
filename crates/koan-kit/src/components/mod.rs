@@ -105,7 +105,8 @@ pub use level::Level;
 pub use link_text::{link_action, link_text, name_line};
 pub use lists::{
     List, ListAlignment, ListOffset, ListState, OVERDRAW, ScrollStrategy, UniformList,
-    UniformListScrollHandle, list, list_scrollbar, offset_down, uniform_list, width_probe,
+    UniformListScrollHandle, list, list_scrollbar, offset_down, reveal_around, spoken_list,
+    uniform_list, width_probe,
 };
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{
@@ -433,6 +434,42 @@ pub(crate) fn accessible<E: StatefulInteractiveElement>(
 }
 
 /// Answers a screen reader's click as a pointer's would, with `handler`.
+/// A row's or a tile's parts as a screen reader says them: the non-empty
+/// ones, in order, between commas. What `TableRow::spoken` takes.
+pub fn spoken<S: AsRef<str>>(parts: impl IntoIterator<Item = S>) -> SharedString {
+    parts
+        .into_iter()
+        .filter(|part| !part.as_ref().is_empty())
+        .map(|part| part.as_ref().to_owned())
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into()
+}
+
+/// Something the app says on its own, read out as it appears without
+/// moving focus: politely, or at once when something went wrong.
+pub(crate) fn announced<E: StatefulInteractiveElement>(
+    element: E,
+    text: SharedString,
+    tone: crate::theme::Tone,
+) -> E {
+    let alarm = tone == crate::theme::Tone::Bad;
+    accessible(
+        element,
+        if alarm {
+            gpui_kit::Role::Alert
+        } else {
+            gpui_kit::Role::Status
+        },
+        Some(text),
+    )
+    .aria_live(if alarm {
+        gpui_kit::accesskit::Live::Assertive
+    } else {
+        gpui_kit::accesskit::Live::Polite
+    })
+}
+
 /// A checked state as AccessKit has it.
 pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
     if on {

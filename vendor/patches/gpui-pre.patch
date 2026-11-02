@@ -190,10 +190,10 @@ index 7890ed3..60a11e5 100644
  version = "0.24.0"
  features = ["enumn"]
 diff --git a/src/elements/div.rs b/src/elements/div.rs
-index 11f0b72..1c2dfc5 100644
+index 11f0b72..2c5b9ec 100644
 --- a/src/elements/div.rs
 +++ b/src/elements/div.rs
-@@ -1437,6 +1437,13 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+@@ -1437,6 +1437,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
          self
      }
  
@@ -204,22 +204,35 @@ index 11f0b72..1c2dfc5 100644
 +        self
 +    }
 +
++    /// KOAN: announce changes to this element's subtree, politely or at
++    /// once, without moving focus (#1778).
++    fn aria_live(mut self, live: accesskit::Live) -> Self {
++        self.interactivity().aria.live = Some(live);
++        self
++    }
++
      /// Set the selected state for this element.
      fn aria_selected(mut self, selected: bool) -> Self {
          self.interactivity().aria.selected = Some(selected);
-@@ -2161,6 +2168,8 @@ pub(crate) struct AriaProperties {
+@@ -2161,6 +2175,10 @@ pub(crate) struct AriaProperties {
      pub(crate) selected: Option<bool>,
      pub(crate) expanded: Option<bool>,
      pub(crate) toggled: Option<accesskit::Toggled>,
++    // KOAN: a region whose changes are announced (#1778).
++    pub(crate) live: Option<accesskit::Live>,
 +    // KOAN: a control that takes no input is reported as such (#1776).
 +    pub(crate) disabled: bool,
      pub(crate) numeric_value: Option<f64>,
      pub(crate) min_numeric_value: Option<f64>,
      pub(crate) max_numeric_value: Option<f64>,
-@@ -3608,6 +3617,10 @@ impl Interactivity {
+@@ -3608,6 +3626,14 @@ impl Interactivity {
          if let Some(toggled) = self.aria.toggled {
              node.set_toggled(toggled);
          }
++        // KOAN: live regions (#1778).
++        if let Some(live) = self.aria.live {
++            node.set_live(live);
++        }
 +        // KOAN: disabled (#1776).
 +        if self.aria.disabled {
 +            node.set_disabled();
@@ -857,16 +870,20 @@ index 0000000..c799f78
 +    }
 +}
 diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
-index ae98aa5..3cfea63 100644
+index ae98aa5..ea0f6a4 100644
 --- a/src/window/a11y/debug.rs
 +++ b/src/window/a11y/debug.rs
-@@ -268,6 +268,10 @@ fn node_to_json(
+@@ -268,6 +268,14 @@ fn node_to_json(
      if let Some(v) = node.toggled() {
          aria.insert("toggled".into(), json!(format!("{v:?}")));
      }
 +    // KOAN: disabled (#1776).
 +    if node.is_disabled() {
 +        aria.insert("disabled".into(), json!(true));
++    }
++    // KOAN: live regions (#1778).
++    if let Some(v) = node.live() {
++        aria.insert("live".into(), json!(format!("{v:?}")));
 +    }
      if let Some(v) = node.orientation() {
          aria.insert("orientation".into(), json!(format!("{v:?}")));

@@ -10,6 +10,7 @@
 
 use koan_ffi::{Track, TransferState};
 use koan_kit::app::*;
+use std::rc::Rc;
 // text measured or shaped at runtime.
 use koan_kit::raw::font;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
@@ -89,6 +90,11 @@ pub struct RowState {
     pub note: Option<(crate::theme::Icon, &'static str)>,
     /// Under the list's keyboard cursor.
     pub cursor: bool,
+    /// Its place in the list, of how many, for a screen reader.
+    pub place: Option<(usize, usize)>,
+    /// What scrolls it and its neighbours on screen when a screen reader
+    /// moves to it, in a list that draws only what is on screen.
+    pub reveal: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -189,7 +195,33 @@ pub fn track_row<V: TrackList>(
         )
     });
 
+    let length = track
+        .duration_ms
+        .filter(|ms| *ms > 0)
+        .map(|ms| crate::time::clock(ms as u64))
+        .unwrap_or_default();
+    let spoken = crate::components::spoken([
+        track.title.as_str(),
+        if names_artist {
+            track.artist_name.as_str()
+        } else {
+            ""
+        },
+        if state.gathered {
+            track.album_title.as_str()
+        } else {
+            ""
+        },
+        length.as_str(),
+        if state.current { "playing" } else { "" },
+        if state.favourite { "favourite" } else { "" },
+    ]);
     TableRow::new(("row", id as u64), state.kind)
+        .spoken(spoken)
+        .when_some(state.place, |row, (ix, count)| row.place(ix, count))
+        .when_some(state.reveal, |row, reveal| {
+            row.on_reveal(move |window, cx| reveal(window, cx))
+        })
         .selected(state.selected)
         .cursor(state.cursor)
         .lead_exact(state.lead_width, lead)

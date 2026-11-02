@@ -557,6 +557,8 @@ impl ArtistPage {
                     kind: crate::components::RowKind::Art,
                     note: None,
                     cursor: false,
+                    place: Some((index, record.appearances.len())),
+                    reveal: None,
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()

@@ -7,6 +7,7 @@
 //! the account through the engine.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use chrono::{Local, TimeZone};
 use koan_ffi::PlayHistoryEntry;
@@ -326,6 +327,11 @@ impl HistoryPage {
                     kind: RowKind::Art,
                     note: elsewhere.then_some((Icon::Renderer, "Scrobbled by another client")),
                     cursor: self.keyed && self.cursor.at == Some(ix),
+                    place: Some((ix, self.entries.len())),
+                    reveal: Some({
+                        let list = self.list.clone();
+                        Rc::new(move |_: &mut Window, _: &mut App| list.reveal_around(i))
+                    }),
                 };
                 let row = rows::track_row(p, &track, ix, state, sleeve, None, cx);
                 let plays: Vec<i64> = self.acting_on(ix).iter().map(|e| e.id).collect();

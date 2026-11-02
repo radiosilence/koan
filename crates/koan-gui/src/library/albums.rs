@@ -720,6 +720,15 @@ impl actions::Menus for AlbumGrid {
 }
 
 impl TileHost for AlbumGrid {
+    fn revealed(&mut self, album: i64, _: &mut Context<Self>) {
+        if let (Some(grid), Some(ix)) = (
+            self.grid,
+            self.records.iter().position(|record| record.id == album),
+        ) {
+            crate::components::reveal_around(&self.scroll, ix / grid.columns.max(1));
+        }
+    }
+
     fn clicked(
         &mut self,
         album: i64,
@@ -871,6 +880,11 @@ impl Render for AlbumGrid {
             .pt(grid.margin)
             .pb(grid.margin)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("albums-list", "albums")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element(),
             None => div().into_any_element(),
         };

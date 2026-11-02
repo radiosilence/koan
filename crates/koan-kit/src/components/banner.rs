@@ -46,7 +46,7 @@ impl RenderOnce for Banner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let color = look.text_color(self.tone);
-        div()
+        super::announced(div().id("banner"), self.message.clone(), self.tone)
             .flex()
             .items_center()
             .gap(look.space(Space::M))

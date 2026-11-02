@@ -1444,6 +1444,13 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// KOAN: announce changes to this element's subtree, politely or at
+    /// once, without moving focus (#1778).
+    fn aria_live(mut self, live: accesskit::Live) -> Self {
+        self.interactivity().aria.live = Some(live);
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().aria.selected = Some(selected);
@@ -2168,6 +2175,8 @@ pub(crate) struct AriaProperties {
     pub(crate) selected: Option<bool>,
     pub(crate) expanded: Option<bool>,
     pub(crate) toggled: Option<accesskit::Toggled>,
+    // KOAN: a region whose changes are announced (#1778).
+    pub(crate) live: Option<accesskit::Live>,
     // KOAN: a control that takes no input is reported as such (#1776).
     pub(crate) disabled: bool,
     pub(crate) numeric_value: Option<f64>,
@@ -3616,6 +3625,10 @@ impl Interactivity {
         }
         if let Some(toggled) = self.aria.toggled {
             node.set_toggled(toggled);
+        }
+        // KOAN: live regions (#1778).
+        if let Some(live) = self.aria.live {
+            node.set_live(live);
         }
         // KOAN: disabled (#1776).
         if self.aria.disabled {

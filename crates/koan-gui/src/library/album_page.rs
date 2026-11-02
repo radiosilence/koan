@@ -273,6 +273,13 @@ impl AlbumPage {
             kind,
             note: None,
             cursor: self.keyed && self.cursor.at == Some(index),
+            place: Some((index, self.tracks.len())),
+            reveal: Some({
+                let scroll = self.scroll.clone();
+                Rc::new(move |_: &mut Window, _: &mut App| {
+                    crate::components::reveal_around(&scroll, i)
+                })
+            }),
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -487,8 +494,7 @@ impl Render for AlbumPage {
                     .flex_col()
                     .child(self.header(p, grid, window, cx))
                     .child(actions::list_menu(
-                        div()
-                            .id("album-track-list")
+                        crate::components::spoken_list("album-track-list", "tracks")
                             .relative()
                             .flex_1()
                             .min_h_0()

@@ -833,7 +833,16 @@ impl Render for Transport {
                     .child(Cover::new(self.cover.clone(), COVER).id("transport-cover")),
             )
             .child(
+                // Announced, without moving focus, as the track changes.
                 div()
+                    .id("now-playing")
+                    .role(a11y::Role::Status)
+                    .aria_label(crate::components::spoken(
+                        entry
+                            .map(|e| [e.title.as_str(), e.artist.as_str(), e.album.as_str()])
+                            .unwrap_or(["nothing playing", "", ""]),
+                    ))
+                    .aria_live(a11y::Live::Polite)
                     .flex()
                     .flex_col()
                     .min_w(px(0.))

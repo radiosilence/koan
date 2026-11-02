@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 use std::ops::Range;
+use std::rc::Rc;
 use std::time::Duration;
 
 use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
@@ -369,6 +370,13 @@ impl TrackBrowser {
             note: None,
             cursor: self.keyed && self.cursor.at == Some(index),
             kind: crate::components::RowKind::Art,
+            place: Some((index, self.total as usize)),
+            reveal: Some({
+                let scroll = self.scroll.clone();
+                Rc::new(move |_: &mut Window, _: &mut App| {
+                    crate::components::reveal_around(&scroll, index)
+                })
+            }),
         };
         rows::track_row(p, &self.tracks[index], index, state, sleeve, None, cx)
     }
@@ -559,6 +567,11 @@ impl Render for TrackBrowser {
             )
             .track_scroll(&self.scroll)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("tracks-list", "tracks")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element()
         };
         self.keyed = self.focus.is_focused(window);

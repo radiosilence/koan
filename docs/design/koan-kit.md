@@ -287,10 +287,19 @@ Every koan-kit component reports itself to the accessibility tree GPUI builds ov
 | `ProgressRow` | ProgressIndicator, with its share and its counts |
 | `EmptyState` | Group, named by what it says |
 | sheets' `panel`, `Viewer` | Dialog |
+| `Toolbar` | Toolbar |
+| `TableRow` (`spoken`, `place`, `on_reveal`) | ListItem, or Heading for a record's heading, read as one line ("Cloudbusting, Kate Bush, Hounds of Love, 5:10, favourite"); its place in the list; selected. The links and the heart inside stay reachable as its children |
+| `RowList` (`named`), `spoken_list` around a `uniform_list` | List, named for what it holds |
+| `Banner`, `NavNote` | Status, announced politely as it appears; Alert, announced at once, where something went wrong |
+| `ProgressRow` | announced politely as it moves |
 
-A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions.
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions. Live regions are `aria_live`, another.
 
-`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click and an increment through `Window::dispatch_a11y_action` as a screen reader would.
+A virtual list draws only the rows on screen, and only rows drawn are in the tree. Each row says where it is (`place`: "row 412 of 5,000"), and when a reader moves to one it asks the list to bring it on screen (`ScrollIntoView`), which `on_reveal` answers by scrolling the row and its neighbours into view (`RowListState::reveal_around`, `reveal_around` for a `uniform_list`), so the next row is drawn before the reader reaches it.
+
+Pages say what no component says for them through `koan_kit::app::a11y`: the sidebar is navigation, the stage main, an album tile a link to its record, the transport's track line a polite live region.
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would.
 
 ## Swift roles and their GPUI components
 

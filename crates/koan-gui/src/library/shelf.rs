@@ -507,6 +507,8 @@ impl ShelfPage {
                 note: None,
                 cursor: false,
                 kind: RowKind::Art,
+                place: Some((index, s.tracks.len())),
+                reveal: None,
             };
             out.push(rows::track_row(p, track, index, state, sleeve, None, cx));
         }

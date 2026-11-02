@@ -217,6 +217,8 @@ impl RenderOnce for ProgressRow {
             gpui_kit::Role::ProgressIndicator,
             Some(self.title.clone()),
         )
+        // Its progress is announced as it moves, without taking focus.
+        .aria_live(gpui_kit::accesskit::Live::Polite)
         .when_some(self.fraction, |d, f| {
             d.aria_numeric_value(f as f64)
                 .aria_min_numeric_value(0.0)

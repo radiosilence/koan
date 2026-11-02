@@ -8,7 +8,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::{EntityId, IntoElement, Pixels, Point, Styled, canvas, px};
+use gpui_kit::{
+    Div, ElementId, EntityId, IntoElement, Pixels, Point, SharedString, Stateful, Styled, canvas,
+    div, px,
+};
 
 pub use gpui_kit::{
     List, ListAlignment, ListOffset, ListState, ScrollStrategy, UniformList,
@@ -26,6 +29,19 @@ where
     H: gpui_kit::base::ScrollbarHandle + Clone,
 {
     gpui_kit::base::Scrollbar::vertical(handle)
+}
+
+/// What a virtualised list sits in for a screen reader: a list named for
+/// what it holds, its rows (`TableRow::spoken`) its items.
+pub fn spoken_list(id: impl Into<ElementId>, name: impl Into<SharedString>) -> Stateful<Div> {
+    super::accessible(div().id(id), gpui_kit::Role::List, Some(name.into()))
+}
+
+/// Scrolls row `ix` of a `uniform_list` to the middle, with rows either side
+/// of it drawn: what a screen reader moving down the list needs, since only
+/// rows drawn are in the accessibility tree.
+pub fn reveal_around(handle: &UniformListScrollHandle, ix: usize) {
+    handle.scroll_to_item(ix, ScrollStrategy::Center);
 }
 
 /// A scroll offset `y` down from the top, as a list's handle takes it.
