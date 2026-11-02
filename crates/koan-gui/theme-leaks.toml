@@ -24,10 +24,6 @@ raw = 17
 ["dsp/manage.rs"]
 raw = 2
 
-["dsp/menu.rs"]
-number = 1
-raw = 5
-
 ["dsp/page.rs"]
 number = 20
 raw = 11

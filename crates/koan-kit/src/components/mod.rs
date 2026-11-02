@@ -15,6 +15,7 @@ mod availability;
 mod badge;
 mod banner;
 mod button;
+pub mod choice;
 mod cover;
 mod dense;
 mod drag;
