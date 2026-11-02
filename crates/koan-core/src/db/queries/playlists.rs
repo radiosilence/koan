@@ -199,6 +199,84 @@ pub fn reorder_playlists(conn: &Connection, ids: &[i64]) -> Result<(), DbError> 
     })
 }
 
+/// `current` with the members `wanted` names put in `wanted`'s order, each
+/// taking one of the places the named members held between them. The rest
+/// keep their places, so a playlist the other side has not heard of stays
+/// beside the neighbours it had. Names `current` lacks are ignored.
+pub fn merge_order<T: Eq + std::hash::Hash + Clone>(current: &[T], wanted: &[T]) -> Vec<T> {
+    let present: HashSet<&T> = current.iter().collect();
+    let mut seen = HashSet::new();
+    let mut named = wanted
+        .iter()
+        .filter(|item| present.contains(item) && seen.insert(*item))
+        .cloned();
+    current
+        .iter()
+        .map(|item| {
+            if seen.contains(item) {
+                named.next().expect("one named member per place")
+            } else {
+                item.clone()
+            }
+        })
+        .collect()
+}
+
+/// Set the order of `user`'s own playlists from `ids`, as [`merge_order`]
+/// merges it: a server keeping an account's order. Ids of playlists the
+/// account does not own are ignored, since their places are their owners'.
+pub fn set_account_playlist_order(
+    conn: &Connection,
+    user: i64,
+    ids: &[i64],
+) -> Result<(), DbError> {
+    super::atomically(conn, || {
+        let owned: Vec<i64> = conn
+            .prepare(
+                "SELECT id FROM playlists WHERE user_id = ?1
+                 ORDER BY sort_order, name COLLATE LIBRARY",
+            )?
+            .query_map([resolve_user(conn, user)?], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        reorder_playlists(conn, &merge_order(&owned, ids))
+    })
+}
+
+/// Put this device's playlists in the order a server lists them, by their
+/// server ids, as [`merge_order`] merges it. Whether anything moved.
+pub fn adopt_server_playlist_order(
+    conn: &Connection,
+    remote_ids: &[String],
+) -> Result<bool, DbError> {
+    super::atomically(conn, || {
+        let lists = list_playlists(conn, super::LOCAL_USER)?;
+        let current: Vec<i64> = lists.iter().map(|p| p.id).collect();
+        let by_remote: HashMap<&str, i64> = lists
+            .iter()
+            .filter_map(|p| Some((p.remote_id.as_deref()?, p.id)))
+            .collect();
+        let wanted: Vec<i64> = remote_ids
+            .iter()
+            .filter_map(|r| by_remote.get(r.as_str()).copied())
+            .collect();
+        let merged = merge_order(&current, &wanted);
+        if merged == current {
+            return Ok(false);
+        }
+        reorder_playlists(conn, &merged)?;
+        Ok(true)
+    })
+}
+
+/// This device's playlists that are on its server, by their server ids, in
+/// sidebar order: what a reorder sends.
+pub fn remote_playlist_order(conn: &Connection) -> Result<Vec<String>, DbError> {
+    Ok(list_playlists(conn, super::LOCAL_USER)?
+        .into_iter()
+        .filter_map(|p| p.remote_id)
+        .collect())
+}
+
 /// Remember how this playlist is looked at. `None` follows the app default.
 pub fn set_playlist_grouped(
     conn: &Connection,
@@ -1184,6 +1262,68 @@ mod tests {
             .map(|p| p.id)
             .collect();
         assert_eq!(order, vec![c, a, b]);
+    }
+
+    #[test]
+    fn a_merged_order_keeps_the_unnamed_where_they_were() {
+        assert_eq!(merge_order(&[1, 2, 3, 4], &[4, 2]), [1, 4, 3, 2]);
+        assert_eq!(merge_order(&[1, 2, 3], &[3, 2, 1]), [3, 2, 1]);
+        assert_eq!(merge_order(&[1, 2, 3], &[9, 3, 3, 1]), [3, 2, 1]);
+        assert_eq!(merge_order::<i64>(&[1, 2], &[]), [1, 2]);
+    }
+
+    #[test]
+    fn an_account_orders_only_its_own_playlists() {
+        use crate::auth::Role;
+        let conn = test_conn();
+        let me = super::super::auth::create_user(&conn, "me", "pw", Role::User).unwrap();
+        let them = super::super::auth::create_user(&conn, "them", "pw", Role::User).unwrap();
+        let a = create_playlist(&conn, me, "A", None).unwrap();
+        let b = create_playlist(&conn, me, "B", None).unwrap();
+        let c = create_playlist(&conn, me, "C", None).unwrap();
+        let theirs = create_playlist(&conn, them, "T", None).unwrap();
+        reorder_playlists(&conn, &[theirs]).unwrap();
+        let before = get_playlist(&conn, theirs).unwrap().unwrap().sort_order;
+
+        set_account_playlist_order(&conn, me, &[theirs, b, a]).unwrap();
+        let mine: Vec<i64> = list_playlists(&conn, me)
+            .unwrap()
+            .iter()
+            .filter(|p| p.user_id == me)
+            .map(|p| p.id)
+            .collect();
+        // C was named by no one and keeps the first place it held.
+        assert_eq!(mine, [c, b, a]);
+        assert_eq!(
+            get_playlist(&conn, theirs).unwrap().unwrap().sort_order,
+            before
+        );
+    }
+
+    #[test]
+    fn a_device_adopts_the_servers_order_around_its_local_playlists() {
+        let conn = test_conn();
+        let a = create_playlist(&conn, LOCAL_USER, "A", None).unwrap();
+        let local = create_playlist(&conn, LOCAL_USER, "Local", None).unwrap();
+        let b = create_playlist(&conn, LOCAL_USER, "B", None).unwrap();
+        reorder_playlists(&conn, &[a, local, b]).unwrap();
+        for (id, remote) in [(a, "ra"), (b, "rb")] {
+            set_playlist_remote(&conn, id, remote, None, false, "acct").unwrap();
+        }
+        assert_eq!(remote_playlist_order(&conn).unwrap(), ["ra", "rb"]);
+
+        let order = ["rb".to_string(), "unknown".into(), "ra".into()];
+        assert!(adopt_server_playlist_order(&conn, &order).unwrap());
+        let ids: Vec<i64> = list_playlists(&conn, LOCAL_USER)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(ids, [b, local, a]);
+        assert!(
+            !adopt_server_playlist_order(&conn, &order).unwrap(),
+            "nothing moved"
+        );
     }
 
     #[test]

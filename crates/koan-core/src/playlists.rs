@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::config::Config;
 use crate::db::connection::{Database, DbError};
@@ -14,7 +15,7 @@ use crate::db::queries;
 use crate::helpers::subsonic_client;
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{QueueItemId, SharedPlayerState};
-use crate::remote::client::{SubsonicClient, SubsonicError};
+use crate::remote::client::{SubsonicClient, SubsonicError, SubsonicPlaylist};
 
 /// Each playlist's earlier states, for undo and redo.
 ///
@@ -621,8 +622,93 @@ pub fn reconcile_playlists(
         }
     }
 
+    sync_order(db, client, &remote);
     fill_missing_songs(db);
     out
+}
+
+/// A reorder made here that the server has not had yet. In memory: a reorder
+/// made offline and then a restart before the next sync gives way to the
+/// server's order, as an edit from another device would.
+static ORDER_UNSENT: AtomicBool = AtomicBool::new(false);
+
+/// Held while the order goes either way, so a sync never adopts the server's
+/// order over a reorder on its way there, and two sends land in the order
+/// they were made.
+static ORDER_LANE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// The sidebar's order and the server's, on a server that keeps one
+/// (`koanPlaylistOrder`): a reorder not yet sent is sent, otherwise the
+/// listing's order is adopted. Playlists either side lacks keep their places.
+fn sync_order(db: &Database, client: &SubsonicClient, listing: &[SubsonicPlaylist]) {
+    let keeps_order = crate::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(crate::remote::profile::PLAYLIST_ORDER));
+    if !keeps_order {
+        return;
+    }
+    let _lane = ORDER_LANE.lock();
+    if ORDER_UNSENT.swap(false, Ordering::Relaxed) {
+        send_order(db, client);
+        return;
+    }
+    let order: Vec<String> = listing.iter().map(|p| p.id.clone()).collect();
+    match queries::adopt_server_playlist_order(&db.conn, &order) {
+        Ok(true) => queries::library_written(),
+        Ok(false) => {}
+        Err(e) => log::warn!("could not adopt the server's playlist order: {e}"),
+    }
+}
+
+/// Send the sidebar's order as it stands, under [`ORDER_LANE`]. A failure
+/// leaves it unsent for the next sync.
+fn send_order(db: &Database, client: &SubsonicClient) {
+    let sent = queries::remote_playlist_order(&db.conn)
+        .map_err(|e| e.to_string())
+        .and_then(|ids| client.set_playlist_order(&ids).map_err(|e| e.to_string()));
+    if let Err(e) = sent {
+        log::warn!("could not send the playlist order to the server: {e}");
+        ORDER_UNSENT.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Set where the playlists sit in the sidebar, in the order given, and send
+/// it to a server that keeps the account's order. What every app's reorder
+/// goes through.
+pub fn reorder(db: &Database, ids: &[i64]) -> Result<(), DbError> {
+    queries::reorder_playlists(&db.conn, ids)?;
+    push_order();
+    Ok(())
+}
+
+/// Send the sidebar's order to the server in the background, if it keeps one.
+/// The send reads the order when it goes, so a burst of reorders sends the
+/// last.
+pub fn push_order() {
+    let cfg = Config::cached();
+    if !cfg.remote.enabled {
+        return;
+    }
+    let Some(client) = subsonic_client(&cfg) else {
+        return;
+    };
+    ORDER_UNSENT.store(true, Ordering::Relaxed);
+    std::thread::Builder::new()
+        .name("koan-playlist-order".into())
+        .spawn(move || {
+            let keeps_order = crate::remote::profile::for_auth(client.auth())
+                .is_some_and(|p| p.offers(crate::remote::profile::PLAYLIST_ORDER));
+            if !keeps_order {
+                return;
+            }
+            let Ok(db) = crate::db::pool::shared().get() else {
+                return;
+            };
+            let _lane = ORDER_LANE.lock();
+            if ORDER_UNSENT.swap(false, Ordering::Relaxed) {
+                send_order(&db, &client);
+            }
+        })
+        .ok();
 }
 
 /// Put the songs a server copy named that the library lacked into their

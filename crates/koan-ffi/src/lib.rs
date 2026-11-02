@@ -2420,13 +2420,14 @@ impl KoanEngine {
         offload::offload(move || self.playlist_history.shuffles_on_top(playlist_id)).await
     }
 
-    /// Where the playlists sit in the sidebar, in the order given. Local only —
-    /// no server has anywhere to put it. On the command lane with the edits,
-    /// so two drags land in the order they were made.
+    /// Where the playlists sit in the sidebar, in the order given, sent on to
+    /// a server that keeps the account's order (`koanPlaylistOrder`). On the
+    /// command lane with the edits, so two drags land in the order they were
+    /// made.
     pub async fn reorder_playlists(self: Arc<Self>, ids: Vec<i64>) -> Result<(), KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            queries::reorder_playlists(&db.conn, &ids).map_err(db_err)?;
+            koan_core::playlists::reorder(&db, &ids).map_err(db_err)?;
             self.bump_library();
             Ok(())
         })
