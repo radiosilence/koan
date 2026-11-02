@@ -1131,6 +1131,28 @@ impl Focusable for Transport {
 
 /// How long the slider stands on a seek's target waiting for the engine.
 const LANDING: Duration = Duration::from_secs(1);
+/// How near the engine's playhead must come to a seek's target to be its
+/// answer.
+const NEAR_MS: u64 = 250;
+
+/// A seek sent and not yet heard back, however it was made (the slider, the
+/// skip keys, a lyric's line, the media keys): the playhead it sets. Until
+/// the engine reports a playhead there, the seek slider stands on it, so a
+/// seek lands at once with no frame at the old place.
+#[derive(Default)]
+pub struct Landing(Option<Playhead>);
+
+impl Global for Landing {}
+
+/// Called as a seek to `target_ms` is sent.
+pub fn land(target_ms: u64, cx: &mut App) {
+    let current = *cx.global::<Mirror>().playhead.read(cx);
+    cx.set_global(Landing(Some(Playhead {
+        position_ms: target_ms,
+        at: Instant::now(),
+        ..current
+    })));
+}
 
 /// The seek slider and the times either side of it.
 ///
@@ -1150,11 +1172,8 @@ pub struct Seek {
     tick: Option<Task<()>>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
-    /// A seek sent and not yet heard back: the playhead it sets, and the
-    /// anchor it replaces. Until the engine's next anchor arrives the slider
-    /// stands on the target, so a click lands at once with no frame at the
-    /// old place.
-    landing: Option<(Playhead, Instant)>,
+    /// Wakes the slider when a seek's target lapses unanswered.
+    lapse: Option<Task<()>>,
     /// The slider's width as last painted, for when its fill next moves a
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
@@ -1168,6 +1187,7 @@ impl Seek {
         let mut subscriptions = vec![
             cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
             cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
+            cx.observe_global::<Landing>(|this, cx| this.moved(cx)),
             // The fill is the accent.
             theme::observe_accent(cx),
             // Nothing draws the slider while the window is hidden, so
@@ -1189,7 +1209,7 @@ impl Seek {
             playback: mirror.playback,
             tick: None,
             dragging: None,
-            landing: None,
+            lapse: None,
             width: Default::default(),
             glide: Glide::new(),
         };
@@ -1206,20 +1226,51 @@ impl Seek {
         self.playback.read(cx).0.duration_ms
     }
 
-    /// The playhead the slider shows: a seek's target until the engine's
-    /// anchor moves on from the one it replaced, or a second has gone by
-    /// without it (a seek the engine did not take).
-    fn anchor(&mut self, cx: &App) -> Playhead {
+    /// The playhead the slider shows: the latest seek's target until the
+    /// engine reports a playhead there, or a second has gone by without it
+    /// (a seek the engine did not take). An anchor from an earlier seek,
+    /// arriving while a later one is on its way, is passed over.
+    fn shown(&self, cx: &App) -> (Playhead, bool) {
         let current = *self.playhead.read(cx);
-        match self.landing {
-            Some((target, replaced)) if current.at == replaced && target.at.elapsed() < LANDING => {
-                target
-            }
-            _ => {
-                self.landing = None;
-                current
-            }
+        let Some(target) = cx.try_global::<Landing>().and_then(|l| l.0) else {
+            return (current, false);
+        };
+        let now = Instant::now();
+        let duration = self.duration_ms(cx);
+        let arrived = current.at >= target.at
+            && current.at(now, duration).abs_diff(target.at(now, duration)) < NEAR_MS;
+        if arrived || target.at.elapsed() >= LANDING {
+            (current, true)
+        } else {
+            (target, false)
         }
+    }
+
+    /// `shown`, dropping a target that has landed or lapsed.
+    fn anchor(&mut self, cx: &mut Context<Self>) -> Playhead {
+        let (shown, settled) = self.shown(cx);
+        let Some(target) = cx.try_global::<Landing>().and_then(|l| l.0) else {
+            return shown;
+        };
+        if settled {
+            cx.set_global(Landing(None));
+            self.lapse = None;
+            return shown;
+        }
+        // Nothing else may draw the slider again when the target lapses
+        // (paused, a seek refused): a wake for that moment.
+        if self.lapse.is_none() {
+            let wait = LANDING.saturating_sub(target.at.elapsed());
+            self.lapse = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(wait).await;
+                this.update(cx, |this, cx| {
+                    this.lapse = None;
+                    this.moved(cx);
+                })
+                .ok();
+            }));
+        }
+        target
     }
 
     fn schedule(&mut self, cx: &mut Context<Self>) {
@@ -1277,15 +1328,7 @@ impl Seek {
         };
         let target = ((share as f64 * duration as f64) as u64).min(limit);
         if duration > 0 {
-            let current = *self.playhead.read(cx);
-            self.landing = Some((
-                Playhead {
-                    position_ms: target,
-                    at: Instant::now(),
-                    ..current
-                },
-                current.at,
-            ));
+            land(target, cx);
             command(cx, "seek", move |e| e.seek(target));
         }
         self.schedule(cx);
@@ -1297,7 +1340,7 @@ impl Render for Seek {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
-        let position = self.anchor(cx).at(Instant::now(), duration);
+        let position = self.shown(cx).0.at(Instant::now(), duration);
         let share = match self.dragging {
             Some(share) => share,
             None if duration > 0 => (position as f64 / duration as f64) as f32,
