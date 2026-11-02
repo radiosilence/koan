@@ -5576,6 +5576,8 @@ impl KoanEngine {
                     let target = koan_core::remote::devices::target();
                     if target != last_target {
                         last_target = target.clone();
+                        // A seek held for one device is not the next one's.
+                        *engine.remote_seek.lock() = None;
                         anchor = None;
                         last_seekable = u64::MAX;
                         last_queue = u64::MAX;
@@ -5830,11 +5832,29 @@ impl KoanEngine {
                         });
                     }
 
+                    // A seek held for the controlled device gives its
+                    // playhead back when its patience runs out, whether or
+                    // not the device says anything more by then.
+                    let held_until = engine
+                        .remote_seek
+                        .lock()
+                        .map(|seek| seek.at + REMOTE_SEEK_PATIENCE);
                     // Dropped before the wait: this thread holds the engine
                     // only for as long as it is reading it, so parking here
                     // cannot be what keeps koan open.
                     drop(engine);
-                    seen = wake.wait(seen);
+                    seen = match held_until {
+                        None => wake.wait(seen),
+                        Some(until) => {
+                            let left = until.saturating_duration_since(Instant::now());
+                            let woken = wake.wait_until(seen, left);
+                            if woken == seen {
+                                // Said again, without the held seek.
+                                last_devices = u64::MAX;
+                            }
+                            woken
+                        }
+                    };
                 }
             })
             .ok();
