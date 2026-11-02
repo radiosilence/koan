@@ -164,7 +164,7 @@ impl IntegrationsPane {
             .update(cx, |s, cx| s.show(sheet, window, cx));
     }
 
-    fn assistants_section(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+    fn assistants_section(&self, look: &Look, _cx: &mut Context<Self>) -> AnyElement {
         let mut rows = Vec::new();
         let mut footer = "Add the address to Claude or another assistant that speaks MCP as a custom connector. It signs in through your server, and can then search your library, make playlists and play music on your devices, as you.".to_owned();
         let mut tone = Tone::Muted;

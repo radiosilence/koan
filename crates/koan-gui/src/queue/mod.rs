@@ -586,7 +586,7 @@ impl QueueView {
         &mut self,
         row: usize,
         p: &Paint,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows(cx).len();
@@ -631,7 +631,7 @@ impl QueueView {
         }
         let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
         let queue = self.queue.read(cx);
-        let (row_frame, id) = match r {
+        let (row_frame, _) = match r {
             Row::Heading { first, len } => {
                 let run = &queue.items[first..first + len];
                 // Named by what the row is, so hover and drag state stay with
