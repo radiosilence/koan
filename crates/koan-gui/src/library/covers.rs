@@ -953,6 +953,9 @@ impl Covers {
         for key in keys {
             self.forget(key, window.as_deref_mut(), cx);
         }
+        // What was drawn from memory is wanted again: a page asking for the
+        // same covers asks nothing new, so the requests are published here.
+        self.publish();
         let (dir, shared) = (self.dir.clone(), self.shared.clone());
         cx.background_executor()
             .spawn(async move {
@@ -1120,9 +1123,12 @@ fn prepare_directory(dir: &Path) -> i64 {
         .unwrap_or(0)
 }
 
-/// A record's cover file, as `Art::filename` names them.
+/// A record's cover file, as `Art::filename` names them: not a write's
+/// temporary file on its way in.
 fn is_cover(name: &str) -> bool {
-    name.starts_with("album-") || name.starts_with("artist-")
+    name.strip_prefix("album-")
+        .or_else(|| name.strip_prefix("artist-"))
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -1399,6 +1405,15 @@ mod tests {
     use super::*;
     // Sizes for the keys the tests make.
     use koan_kit::raw::px;
+
+    #[test]
+    fn only_finished_covers_are_covers() {
+        assert!(is_cover("album-12"));
+        assert!(is_cover("artist-3"));
+        assert!(!is_cover("album-12.tmp-4012"));
+        assert!(!is_cover("album-"));
+        assert!(!is_cover("evictions-seq"));
+    }
 
     #[test]
     fn keys_round_up_to_a_bucket() {

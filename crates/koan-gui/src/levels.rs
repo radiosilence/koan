@@ -21,6 +21,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
+use futures_util::StreamExt as _;
+
 use koan_kit::app::*;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::{Hsla, point, px, size};
@@ -58,6 +60,10 @@ struct Slot {
 #[derive(Default)]
 struct Registry {
     slots: HashMap<u64, Slot>,
+    /// Rung as a slot goes, so the roots paint again without it: a slot
+    /// goes at the end of the first frame its row is not drawn in, which
+    /// that frame has already painted it into.
+    gone: Option<futures_channel::mpsc::UnboundedSender<()>>,
     next_id: u64,
     /// How high each bar stands, 0 to 1, low band to high: each band
     /// against its own recent range, so a record mastered quiet moves as
@@ -81,10 +87,17 @@ impl Global for Levels {}
 
 pub fn install(cx: &mut App) {
     let feed = cx.new(|_| Feed);
-    cx.set_global(Levels {
-        registry: Rc::default(),
-        feed,
-    });
+    let (gone, mut slots_gone) = futures_channel::mpsc::unbounded();
+    let registry: Rc<RefCell<Registry>> = Rc::default();
+    registry.borrow_mut().gone = Some(gone);
+    let repaint = feed.clone();
+    cx.spawn(async move |cx| {
+        while slots_gone.next().await.is_some() {
+            cx.update(|cx| repaint.update(cx, |_, cx| cx.notify()));
+        }
+    })
+    .detach();
+    cx.set_global(Levels { registry, feed });
 }
 
 /// The entity a window's root observes to paint the bars again; none where
@@ -103,7 +116,11 @@ struct SlotState {
 impl Drop for SlotState {
     fn drop(&mut self) {
         // The follow sees an empty registry at its next frame and ends.
-        self.registry.borrow_mut().slots.remove(&self.id);
+        let mut registry = self.registry.borrow_mut();
+        registry.slots.remove(&self.id);
+        if let Some(gone) = &registry.gone {
+            gone.unbounded_send(()).ok();
+        }
     }
 }
 

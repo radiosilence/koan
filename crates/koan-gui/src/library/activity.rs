@@ -85,7 +85,36 @@ pub fn init(cx: &mut App) {
     cx.on_action(move |_: &Rescan, cx| a.update(cx, |a, cx| a.scan(false, cx)));
     cx.on_action(move |_: &ForceRescan, cx| b.update(cx, |a, cx| a.scan(true, cx)));
     cx.on_action(move |_: &Sync, cx| c.update(cx, |a, cx| a.sync(cx)));
-    cx.on_action(move |_: &RebuildIndex, cx| d.update(cx, |a, cx| a.rebuild(cx)));
+    // Asked first, as Settings asks: what goes with the index is said. A
+    // global action runs while GPUI holds the window, so the question waits
+    // until it is handed back.
+    cx.on_action(move |_: &RebuildIndex, cx| {
+        let d = d.clone();
+        cx.defer(move |cx| {
+            let Some(window) = cx.active_window() else {
+                return;
+            };
+            window
+                .update(cx, |_, window, cx| {
+                    crate::components::sheet::confirm(
+                        crate::components::sheet::Confirm {
+                            title: "clear the library index".into(),
+                            verb: "clear".into(),
+                            destructive: true,
+                            lines: vec![
+                                "Every artist, album and track is forgotten, so the next scan or sync builds them again.".into(),
+                                "Play counts, lyrics and audio analysis go with them. Favourites are kept, and your music files are not touched.".into(),
+                            ],
+                            note: None,
+                        },
+                        window,
+                        cx,
+                        move |cx| d.update(cx, |a, cx| a.rebuild(cx)),
+                    )
+                })
+                .ok();
+        })
+    });
 }
 
 impl Activity {
@@ -176,7 +205,8 @@ impl Activity {
     }
 
     fn rebuild(&mut self, cx: &mut Context<Self>) {
-        if self.busy(cx) {
+        // Nor under a sync, whose pages it would delete as they land.
+        if self.busy(cx) || self.syncing || cx.global::<Mirror>().tasks.read(cx).0.syncing {
             return;
         }
         self.problem = None;
@@ -187,9 +217,14 @@ impl Activity {
             let result = rebuilding.await;
             this.update(cx, |this, cx| {
                 this.rebuilding = false;
-                if let Err(e) = result {
-                    log::warn!("rebuild: {e}");
-                    this.problem = Some(format!("rebuild failed: {e}").into());
+                match result {
+                    // Sleeves are kept by album id, which the rebuilt library
+                    // hands out from 1 again.
+                    Ok(_) => crate::covers::Covers::purge(cx),
+                    Err(e) => {
+                        log::warn!("rebuild: {e}");
+                        this.problem = Some(format!("rebuild failed: {e}").into());
+                    }
                 }
                 cx.notify();
             })

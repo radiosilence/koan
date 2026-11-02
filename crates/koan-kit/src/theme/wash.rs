@@ -457,14 +457,16 @@ impl Wash {
         if amplitude <= 0.0 {
             return (1.0, 0.0);
         }
-        let t = now.duration_since(self.epoch).as_secs_f32();
-        let swing = |t: f32, period: f32| {
-            let phase = (t / period) % 2.0;
+        // Reckoned in f64 and reduced to the swing before narrowing: in f32,
+        // a window open for days counts time in steps as long as a frame.
+        let t = now.duration_since(self.epoch).as_secs_f64();
+        let swing = |t: f64, period: f32| {
+            let phase = ((t / f64::from(period)) % 2.0) as f32;
             Motion::ease_in_out(if phase < 1.0 { phase } else { 2.0 - phase })
         };
         let scale = 1.0 + (FAR / NEAR - 1.0) * swing(t, SCALE_PERIOD);
         // Half a swing in, so the travel starts from the middle of the page.
-        let travel = 2.0 * swing(t + TRAVEL_PERIOD / 2.0, TRAVEL_PERIOD) - 1.0;
+        let travel = 2.0 * swing(t + f64::from(TRAVEL_PERIOD) / 2.0, TRAVEL_PERIOD) - 1.0;
         (1.0 + (scale - 1.0) * amplitude, travel * amplitude)
     }
 }
