@@ -190,7 +190,10 @@ impl RenderOnce for Collection {
                                 .children(tiles.by_ref().take(grid.columns)),
                         );
                     }
-                    inset(rows.into_any_element())
+                    // On the grid's own inset: the page's margin and a share of
+                    // the spare width, so the tiles keep their size as the
+                    // window resizes.
+                    div().w_full().px(grid.inset).child(rows)
                 }
                 Items::Rows(rows) => div().w_full().flex().flex_col().children(rows),
             });

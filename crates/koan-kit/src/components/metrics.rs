@@ -36,12 +36,14 @@ impl BarMetrics {
     pub const HEIGHT: Pixels = px(11.0);
 }
 
-/// The transport bar's figures, the spec's: 68 tall, a 40-point cover, the
+/// The transport bar's figures, the spec's: 64 tall, a 40-point cover, the
 /// controls 22 apart over the seek bar.
 pub struct TransportMetrics;
 
 impl TransportMetrics {
-    pub const HEIGHT: Pixels = px(68.0);
+    /// The Mac's: 9 points above and below a 46-point zone, the rule drawn
+    /// inside its top.
+    pub const HEIGHT: Pixels = px(64.0);
     pub const COVER: Pixels = px(40.0);
     /// The middle column, the controls over the seek bar.
     pub const CENTRE: Pixels = px(520.0);
@@ -60,12 +62,6 @@ impl TransportMetrics {
         look.spaced(12.0)
     }
 
-    /// From the bar's top rule to the play button's outline, the Mac's
-    /// measured at 2x.
-    pub fn controls_top(look: &Look) -> Pixels {
-        look.spaced(6.5)
-    }
-
     /// The play button's outline: an outlined icon button around a `body`
     /// glyph, its padding (the hairline drawn inside it) included.
     pub fn play_outline(look: &Look) -> Pixels {
@@ -74,10 +70,89 @@ impl TransportMetrics {
         )) + look.spaced(7.0) * 2.0
     }
 
-    /// From the play button's outline to the seek line's centre, the Mac's:
-    /// its stack puts 5 points between the controls and a 14-point seek row.
-    pub fn outline_to_track(look: &Look) -> Pixels {
-        look.spaced(12.0)
+    /// The seek row as the Mac lays it out: its line's reach, 14 points.
+    const SEEK_ROW: f32 = 14.0;
+    /// Between the controls and the seek row, the Mac's stack spacing.
+    const STACK_GAP: f32 = 5.0;
+
+    /// Where the centre column's two rows stand, from the bar's top (its
+    /// rule included): the play button's outline and the seek line's centre.
+    /// The controls, the gap and the seek row are centred in the bar, so the
+    /// space above the outline equals the space below the seek row, as the
+    /// Mac's transport measures at 2x (7.5 points each in its 64).
+    pub fn centre_rows(look: &Look) -> CentreRows {
+        let outline = Self::play_outline(look);
+        let gap = look.spaced(Self::STACK_GAP);
+        let row = look.spaced(Self::SEEK_ROW);
+        let margin = ((Self::HEIGHT - outline - gap - row) / 2.).max(px(0.));
+        CentreRows {
+            outline_top: margin,
+            outline,
+            track_centre: margin + outline + gap + row / 2.,
+        }
+    }
+
+    /// A trailing glyph (sleep, play on, output, EQ), the Mac's 17 points
+    /// at the chosen text size: larger than the `body` glyphs beside the
+    /// bar's text, as the Mac draws its device and output buttons.
+    pub fn trailing_icon(look: &Look) -> f32 {
+        17.0 * look.scale.size
+    }
+}
+
+/// The centre column's rows, from `TransportMetrics::centre_rows`.
+#[derive(Clone, Copy, Debug)]
+pub struct CentreRows {
+    pub outline_top: Pixels,
+    pub outline: Pixels,
+    pub track_centre: Pixels,
+}
+
+/// A grid of record tiles across a width: how many columns, how big each
+/// tile, and the room between and beside them.
+///
+/// The tiles keep one size whatever the width. A window being resized moves
+/// the tiles apart rather than growing them: the spare width is shared out
+/// equally among the gaps and the two side margins, so the grid's edge stays
+/// near the page's margin, and a column is added only once another tile fits
+/// at the least gap, or dropped once one no longer does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileColumns {
+    pub columns: usize,
+    pub side: Pixels,
+    pub gap: Pixels,
+    /// Each side's margin: the page's, and its share of the spare width.
+    pub inset: Pixels,
+}
+
+impl TileColumns {
+    /// A tile's side, in points.
+    pub const SIDE: f32 = 160.0;
+    /// The least gap between tiles in a row.
+    pub const MIN_GAP: f32 = 18.0;
+
+    /// The columns for a list `width` wide with `margin` at either side.
+    /// Narrower than one tile, the one tile shrinks to fit.
+    pub fn for_width(width: Pixels, margin: Pixels) -> Self {
+        let margin = f32::from(margin);
+        let usable = (f32::from(width) - 2.0 * margin).max(1.0);
+        let columns =
+            (((usable + Self::MIN_GAP) / (Self::SIDE + Self::MIN_GAP)).floor() as usize).max(1);
+        let side = Self::SIDE.min(usable.floor());
+        let spare =
+            (usable - side * columns as f32 - Self::MIN_GAP * (columns as f32 - 1.0)).max(0.0);
+        // The gaps between columns and the two margins share the spare width.
+        let share = spare / (columns as f32 + 1.0);
+        Self {
+            columns,
+            side: px(side),
+            gap: px(if columns > 1 {
+                Self::MIN_GAP + share
+            } else {
+                0.0
+            }),
+            inset: px(margin + if columns > 1 { share } else { spare / 2.0 }),
+        }
     }
 }
 
@@ -197,62 +272,38 @@ impl RowMetrics {
     }
 }
 
-/// A grid of record tiles: columns of at least 150 points sharing the width,
-/// up to 210 each, as the Mac's grid lays them out. Every tile is the same
-/// size, so nothing is measured.
+/// Record tiles in rows: `TileColumns` across the width, and each row's
+/// height with the caption under the sleeve and the gap below it. Every tile
+/// is the same size, so nothing is measured.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileGrid {
     pub columns: usize,
     pub side: Pixels,
-    /// Between tiles in a row: the spare width shared out, at least 18.
     pub gap: Pixels,
-    pub margin: Pixels,
+    /// Either side of a row: the margin asked for and a share of the spare
+    /// width.
+    pub inset: Pixels,
     /// A row's height, its spacing below included.
     pub row: Pixels,
 }
 
 impl TileGrid {
-    const MIN_SIDE: f32 = 150.0;
-    const MAX_SIDE: f32 = 210.0;
-    const MIN_GAP: f32 = 18.0;
     /// Below a row of tiles, before the next.
     pub const LINE_GAP: f32 = 22.0;
     /// Between sleeve, title and credit.
     pub const CAPTION_GAP: f32 = 7.0;
 
-    /// The grid for a list `width` wide, with captions on `scale`.
-    pub fn for_width(width: Pixels, scale: &Scale) -> Self {
-        // The page's margin, so the grid's edge is the header's and the
-        // rows'.
-        Self::inside(width, px(Space::Xxl.points() * scale.space), scale)
-    }
-
     /// The grid for a list `width` wide that keeps `margin` clear at each
-    /// side: a collection's, on the page's margin.
+    /// side, with captions on `scale`.
     pub fn inside(width: Pixels, margin: Pixels, scale: &Scale) -> Self {
-        let margin = f32::from(margin);
-        let usable = (f32::from(width) - 2.0 * margin).max(Self::MIN_SIDE);
-        let columns =
-            (((usable + Self::MIN_GAP) / (Self::MIN_SIDE + Self::MIN_GAP)).floor() as usize).max(1);
-        let side = ((usable - Self::MIN_GAP * (columns as f32 - 1.0)) / columns as f32)
-            .floor()
-            .min(Self::MAX_SIDE);
-        let gap = if columns > 1 {
-            (usable - side * columns as f32) / (columns as f32 - 1.0)
-        } else {
-            0.0
-        };
+        let columns = TileColumns::for_width(width, margin);
         Self {
-            columns,
-            side: px(side),
-            gap: px(gap),
-            margin: px(margin),
-            row: px(side) + Self::caption_height(scale) + px(Self::LINE_GAP),
+            columns: columns.columns,
+            side: columns.side,
+            gap: columns.gap,
+            inset: columns.inset,
+            row: columns.side + Self::caption_height(scale) + px(Self::LINE_GAP),
         }
-    }
-
-    pub fn rows(&self, items: usize) -> usize {
-        items.div_ceil(self.columns)
     }
 
     /// A tile's own height: its sleeve and caption, without the gap below.
@@ -268,20 +319,19 @@ impl TileGrid {
 }
 
 #[cfg(test)]
-mod tests {
+mod tile_grid_tests {
     use super::*;
 
     #[test]
-    fn columns_share_the_width_within_the_tile_bounds() {
-        let narrow = TileGrid::for_width(px(300.0), &Scale::of(100));
-        assert_eq!(narrow.columns, 1);
-        assert!(narrow.side <= px(TileGrid::MAX_SIDE));
-        let wide = TileGrid::for_width(px(1920.0), &Scale::of(100));
-        assert!(wide.side >= px(TileGrid::MIN_SIDE) && wide.side <= px(TileGrid::MAX_SIDE));
-        assert!(wide.gap >= px(TileGrid::MIN_GAP));
-        let used = wide.side * wide.columns as f32 + wide.gap * (wide.columns as f32 - 1.0);
-        assert!((f32::from(used) - (1920.0 - 2.0 * f32::from(wide.margin))).abs() < 1.0);
-        assert_eq!(wide.rows(0), 0);
-        assert_eq!(wide.rows(wide.columns + 1), 2);
+    fn rows_hold_the_columns_sleeve_and_caption() {
+        let scale = Scale::of(100);
+        let grid = TileGrid::inside(px(900.), px(16.), &scale);
+        let columns = TileColumns::for_width(px(900.), px(16.));
+        assert_eq!(grid.columns, columns.columns);
+        assert_eq!(grid.inset, columns.inset);
+        assert_eq!(
+            grid.tile_height(),
+            grid.side + TileGrid::caption_height(&scale)
+        );
     }
 }

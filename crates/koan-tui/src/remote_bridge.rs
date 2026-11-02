@@ -304,6 +304,8 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::PlayNext(_)
             | PlayerCommand::DecodeFinished(_)
             | PlayerCommand::RestorePlayMode(_)
+            | PlayerCommand::CancelDownloads(_)
+            | PlayerCommand::RetryDownloads(_)
             | PlayerCommand::TrackQueued => {
                 log::debug!("ignoring {:?} in remote mode", cmd);
                 Ok(())

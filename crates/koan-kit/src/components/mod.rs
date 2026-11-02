@@ -11,8 +11,11 @@
 //! as it renders. Interactive ones take an id, under which they keep what
 //! the pointer is doing and the state of their transitions.
 
+mod availability;
 mod badge;
+mod banner;
 mod button;
+pub mod choice;
 mod collection;
 mod cover;
 mod dense;
@@ -24,6 +27,7 @@ mod field;
 mod filter_field;
 mod form;
 mod inspector;
+mod level;
 mod menu;
 mod metrics;
 mod page;
@@ -32,10 +36,13 @@ mod picker;
 mod pill;
 pub(crate) mod placeholder;
 mod progress;
+mod qr;
 mod ring;
+mod row_list;
 mod rows;
 mod scroll;
 mod segmented;
+mod selection_bar;
 pub mod sheet;
 mod slider;
 mod spinner;
@@ -47,6 +54,7 @@ mod table;
 mod toggle;
 mod toolbar;
 mod viewer;
+mod window;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -56,7 +64,9 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
+pub use availability::{Availability, AvailabilityMark, ProgressReader};
 pub use badge::{Badge, Chip};
+pub use banner::Banner;
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use cover::{Cover, CoverArt, Mosaic};
@@ -65,37 +75,44 @@ pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
 pub use fade::FadeIn;
-pub use field::TextField;
+pub use field::{FieldState, InputEvent, TextField};
 pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
 };
 pub use inspector::{Inspector, SyncedLines, plain_text};
+pub use level::Level;
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
-pub use metrics::{BarMetrics, RowKind, RowMetrics, TileGrid, TransportMetrics};
+pub use metrics::{
+    BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
+};
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::Placeholder;
 pub use progress::{ProgressBar, ProgressRow};
+pub use qr::QrCode;
 pub use ring::ProgressRing;
+pub use row_list::{RowList, RowListState, RowOffset};
 pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
+pub use selection_bar::SelectionBar;
 pub use slider::Slider;
 pub use spinner::Spinner;
 pub use split::SplitView;
 pub use status::StatusBlock;
 pub use stepper::Stepper;
 pub use suggestions::{SuggestionHeading, SuggestionPanel, SuggestionRow};
-pub use table::{ROW_GROUP, RowNumber, TableRow};
+pub use table::{ROW_GROUP, RowNumber, TableRow, table_list};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, WINDOW_BUTTONS,
 };
 pub use viewer::Viewer;
+pub use window::SecondaryWindow;
 
 use crate::theme::{Look, MARK, Motion};
 

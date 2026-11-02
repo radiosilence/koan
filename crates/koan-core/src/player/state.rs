@@ -8,6 +8,24 @@ use uuid::Uuid;
 
 use crate::remote::downloads::{ByteFeed, DownloadStore};
 
+/// Kept back from the end of a track when seeking, so dragging the thumb all
+/// the way over lands in the last moment of it rather than in the next track.
+pub(crate) const SEEK_END_GUARD_MS: u64 = 500;
+/// How long a seek sent to the player is read as the playhead before it is
+/// given up on: long enough for a decoder to restart on a slow disk.
+const SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A seek on its way to the player.
+#[derive(Clone, Copy, Debug)]
+struct PendingSeek {
+    /// What the sender asked for, which names the command that takes it.
+    asked: u64,
+    position_ms: u64,
+    at: std::time::Instant,
+    /// The playhead was moving when it was asked for.
+    moving: bool,
+}
+
 /// Stable identity for a queue entry. UUIDv7 — time-ordered, unique across duplicates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueueItemId(pub Uuid);
@@ -888,6 +906,10 @@ pub struct SharedPlayerState {
     /// own clock: where it was last heard to be, and since when it has been
     /// running from there. Read in place of the timeline while set.
     renderer_clock: parking_lot::Mutex<Option<RendererClock>>,
+    /// A seek sent to the player and not yet taken by it. Read in place of
+    /// the playhead meanwhile, so the gap between asking and the decoder
+    /// restarting never reads as the old position (`request_seek`).
+    pending_seek: parking_lot::Mutex<Option<PendingSeek>>,
 
     /// The UPnP renderer playing in place of the local output, if one is.
     renderer: parking_lot::RwLock<Option<crate::upnp::Output>>,
@@ -939,6 +961,7 @@ impl SharedPlayerState {
             start_failure: parking_lot::RwLock::new(None),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
+            pending_seek: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
             play_mode: AtomicU8::new(0),
             sleep: parking_lot::RwLock::new(None),
@@ -992,6 +1015,9 @@ impl SharedPlayerState {
     /// Where the playhead is, read off the samples the output has played, so
     /// it is right whenever it is asked and nothing has to keep it up to date.
     pub fn position_ms(&self) -> u64 {
+        if let Some(seek) = self.pending_seek() {
+            return seek;
+        }
         let clock = *self.renderer_clock.lock();
         if let Some(clock) = clock {
             let at = clock.now_ms();
@@ -1004,6 +1030,68 @@ impl SharedPlayerState {
             return playhead.position_ms;
         }
         self.position_ms.load(Ordering::Acquire)
+    }
+
+    /// Where a seek on its way to the player lands, counting on from there
+    /// while the playhead was moving. One the player never took lapses after
+    /// `SEEK_PATIENCE`, giving the playhead back.
+    pub(crate) fn pending_seek(&self) -> Option<u64> {
+        let mut pending = self.pending_seek.lock();
+        let seek = (*pending)?;
+        let since = seek.at.elapsed();
+        if since >= SEEK_PATIENCE {
+            *pending = None;
+            return None;
+        }
+        Some(if seek.moving {
+            seek.position_ms + since.as_millis() as u64
+        } else {
+            seek.position_ms
+        })
+    }
+
+    /// Where a seek to `position_ms` lands: held inside what has arrived of
+    /// the track and short of its end, so it never falls into the next one.
+    /// `None` when nothing of the track can be reached yet, and the seek is
+    /// declined.
+    pub fn seek_target(&self, position_ms: u64) -> Option<u64> {
+        let seekable = self.seekable_ms();
+        if seekable == 0 {
+            return None;
+        }
+        let ceiling = seekable.min(self.duration_ms().saturating_sub(SEEK_END_GUARD_MS));
+        Some(position_ms.min(ceiling))
+    }
+
+    /// A seek to `position_ms` is about to be sent to the player: the
+    /// playhead reads as having landed from now, for every front end, until
+    /// the player takes it (`seek_taken`). Call it before sending
+    /// `PlayerCommand::Seek` to this device's own player, and `seek_taken`
+    /// if the send fails.
+    pub fn request_seek(&self, position_ms: u64) {
+        let Some(target) = self.seek_target(position_ms) else {
+            return;
+        };
+        let moving = self.playhead_moving();
+        *self.pending_seek.lock() = Some(PendingSeek {
+            asked: position_ms,
+            position_ms: target,
+            at: std::time::Instant::now(),
+            moving,
+        });
+        crate::signal::engine_changed().bump();
+    }
+
+    /// The player took the seek to `asked`, or it never reached the player:
+    /// the playhead is read from the timeline again. A newer seek asked for
+    /// meanwhile stays pending until the player takes that one.
+    pub fn seek_taken(&self, asked: u64) {
+        let mut pending = self.pending_seek.lock();
+        if pending.is_some_and(|p| p.asked == asked) {
+            *pending = None;
+            drop(pending);
+            crate::signal::engine_changed().bump();
+        }
     }
 
     /// The timeline the playhead is read from. Set once, by the player.
@@ -1818,6 +1906,49 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    /// Every item for one of `track_ids` still waiting for its file fails
+    /// with `reason`, so nothing fetches it. Returns the items failed.
+    pub fn fail_pending(&self, track_ids: &[i64], reason: &str) -> Vec<QueueItemId> {
+        let mut pl = self.playlist.write();
+        let mut failed = Vec::new();
+        for item in pl.items.iter_mut() {
+            if item.state == ItemState::Pending
+                && item.db_id.is_some_and(|track| track_ids.contains(&track))
+            {
+                item.state = ItemState::Failed(reason.to_owned());
+                failed.push(item.id);
+            }
+        }
+        drop(pl);
+        if !failed.is_empty() {
+            self.bump_version();
+        }
+        failed
+    }
+
+    /// Every item for one of `track_ids` that failed goes back to waiting for
+    /// its file, to be fetched again. Returns the tracks that had one.
+    pub fn retry_failed(&self, track_ids: &[i64]) -> Vec<i64> {
+        let mut pl = self.playlist.write();
+        let mut retried = Vec::new();
+        for item in pl.items.iter_mut() {
+            if let (ItemState::Failed(_), Some(track)) = (&item.state, item.db_id)
+                && track_ids.contains(&track)
+            {
+                item.state = ItemState::Pending;
+                if !retried.contains(&track) {
+                    retried.push(track);
+                }
+            }
+        }
+        drop(pl);
+        if !retried.is_empty() {
+            self.pending_version.fetch_add(1, Ordering::AcqRel);
+            self.bump_version();
+        }
+        retried
+    }
+
     /// An item's own state, without the rest of it.
     pub fn item_state(&self, id: QueueItemId) -> Option<ItemState> {
         let pl = self.playlist.read();
@@ -2580,6 +2711,73 @@ mod tests {
             state,
             played: false,
         }
+    }
+
+    // --- retrying ---
+
+    #[test]
+    fn a_retry_sends_only_failed_items_of_those_tracks_back_to_waiting() {
+        let state = SharedPlayerState::new();
+        let failed = PlaylistItem {
+            db_id: Some(1),
+            ..make_item("failed", ItemState::Failed("404".into()))
+        };
+        let other = PlaylistItem {
+            db_id: Some(2),
+            ..make_item("other", ItemState::Failed("404".into()))
+        };
+        let ready = PlaylistItem {
+            db_id: Some(1),
+            ..make_item("ready", ItemState::Ready)
+        };
+        let (failed_id, other_id, ready_id) = (failed.id, other.id, ready.id);
+        state.add_items(vec![failed, other, ready]);
+        let pending = state.pending_version();
+
+        assert_eq!(state.retry_failed(&[1, 3]), vec![1]);
+        assert!(
+            state.pending_version() > pending,
+            "the download queue hears of it"
+        );
+        assert!(matches!(
+            state.item_state(failed_id),
+            Some(ItemState::Pending)
+        ));
+        assert!(matches!(
+            state.item_state(other_id),
+            Some(ItemState::Failed(_))
+        ));
+        assert!(matches!(state.item_state(ready_id), Some(ItemState::Ready)));
+        assert!(state.retry_failed(&[3]).is_empty());
+    }
+
+    #[test]
+    fn a_cancel_fails_every_waiting_item_of_those_tracks() {
+        let state = SharedPlayerState::new();
+        let waiting = PlaylistItem {
+            db_id: Some(1),
+            ..make_item("waiting", ItemState::Pending)
+        };
+        let again = PlaylistItem {
+            db_id: Some(1),
+            ..make_item("again", ItemState::Pending)
+        };
+        let ready = PlaylistItem {
+            db_id: Some(1),
+            ..make_item("ready", ItemState::Ready)
+        };
+        let other = PlaylistItem {
+            db_id: Some(2),
+            ..make_item("other", ItemState::Pending)
+        };
+        let ids = [waiting.id, again.id, ready.id, other.id];
+        state.add_items(vec![waiting, again, ready, other]);
+
+        let failed = state.fail_pending(&[1], "download cancelled");
+        assert_eq!(failed, vec![ids[0], ids[1]]);
+        assert!(matches!(state.item_state(ids[2]), Some(ItemState::Ready)));
+        assert!(matches!(state.item_state(ids[3]), Some(ItemState::Pending)));
+        assert_eq!(state.retry_failed(&[1]), vec![1], "and a retry undoes it");
     }
 
     // --- missing files ---

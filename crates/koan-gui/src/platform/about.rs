@@ -135,13 +135,9 @@ fn show(_cx: &mut App) {
 /// its build, and the links.
 #[cfg(not(target_os = "macos"))]
 fn show(cx: &mut App) {
-    use koan_kit::app::{AppContext, Bounds, IntoElement, ParentElement, Render, Styled, div};
-    // the platform window and its options.
-    use koan_kit::raw::{TitlebarOptions, WindowBounds, WindowOptions};
-    // sizes and colours computed at runtime from measurements, not chosen from the theme.
-    use koan_kit::raw::{px, size};
+    use koan_kit::app::{AppContext, IntoElement, ParentElement, Render, Styled, div};
 
-    use crate::components::{Button, ButtonKind};
+    use crate::components::{Button, ButtonKind, SecondaryWindow};
     use crate::theme::{KoanStyled, Look, Space, Tone, TypeRole};
 
     struct AboutWindow;
@@ -191,20 +187,10 @@ fn show(cx: &mut App) {
         }
     }
 
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(360.), px(220.)),
-            cx,
-        ))),
-        titlebar: Some(TitlebarOptions {
-            title: Some("About kōan".into()),
-            ..Default::default()
-        }),
-        is_resizable: false,
-        app_id: Some("koan-gui".into()),
-        ..Default::default()
-    };
+    let options = SecondaryWindow::new("About kōan", crate::app::APP_ID)
+        .size(360.0, 220.0)
+        .fixed()
+        .options(cx);
     if let Err(e) = cx.open_window(options, |_, cx| cx.new(|_| AboutWindow)) {
         log::warn!("about: {e}");
     }

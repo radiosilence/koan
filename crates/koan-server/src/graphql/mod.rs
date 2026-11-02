@@ -381,15 +381,22 @@ pub(crate) fn build_schema_sharing(
 pub(crate) struct Session(pub &'static str);
 
 /// `build_schema` with `extension` running on every request.
+/// `session` as `build_schema_sharing` takes it, so the playback-state
+/// mutations write the same session through MCP as through `/graphql`.
 pub(crate) fn build_schema_extended(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     pool: Arc<Pool>,
+    session: Option<&'static str>,
     extension: impl async_graphql::extensions::ExtensionFactory,
 ) -> KoanSchema {
-    builder_with(DbHandle::new(pool), state, cmd_tx, None, Default::default())
-        .extension(extension)
-        .finish()
+    let builder = builder_with(DbHandle::new(pool), state, cmd_tx, None, Default::default())
+        .extension(extension);
+    match session {
+        Some(device) => builder.data(Session(device)),
+        None => builder,
+    }
+    .finish()
 }
 
 fn build_schema_with(

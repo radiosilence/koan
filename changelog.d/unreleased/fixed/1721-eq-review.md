@@ -1,0 +1,1 @@
+- **The desktop app's EQ page follows the output in use**, and a band table row no longer sticks on saving after another device changed the filters. Re-importing an impulse response over one of the same rate now reaches the account's other devices.

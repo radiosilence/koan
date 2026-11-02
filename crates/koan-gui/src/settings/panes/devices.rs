@@ -104,6 +104,12 @@ impl DevicesPane {
             return;
         }
         self.code.update(cx, |s, cx| s.set_value("", window, cx));
+        self.approve_pair(typed, window, cx);
+    }
+
+    /// The same question for `pair`, a pairing's id or a typed code: from
+    /// the field, or from a `koan.rocks/pair/` link opened from outside.
+    pub fn approve_pair(&mut self, typed: String, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.ctx.model.clone();
         let engine = model.read(cx).engine().clone();
         let sharing = self.ctx.sharing.read(cx);
@@ -141,6 +147,7 @@ impl DevicesPane {
                         .dismiss_with("Decline", move |_, cx| {
                             let (engine, pair, device) = (deny_engine.clone(), deny_pair.clone(), declined.clone());
                             deny_model.update(cx, |m, cx| {
+                                m.waiting_pairs.retain(|p| *p != pair);
                                 m.run(
                                     format!("Declining {device}"),
                                     crate::settings::model::Uses::NONE,
@@ -158,6 +165,7 @@ impl DevicesPane {
                             let (engine, pair, device, who) =
                                 (allow_engine.clone(), allow_pair.clone(), signed.clone(), who.clone());
                             allow_model.update(cx, |m, cx| {
+                                m.waiting_pairs.retain(|p| *p != pair);
                                 m.run(
                                     format!("Signing {device} in"),
                                     crate::settings::model::Uses::NONE,
@@ -170,6 +178,7 @@ impl DevicesPane {
                                 )
                             })
                         }));
+                    model.update(cx, |m, _| m.waiting_pairs.push(typed.clone()));
                     sheets.update(cx, |s, cx| s.show(sheet, window, cx));
                 }
             })

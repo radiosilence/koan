@@ -488,6 +488,38 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
     config::parse_size_bytes(&text)
 }
 
+/// Whether the music of the device in view can be moved to `to` (this
+/// device with `None`): `controlled` is the device controlled, `None` while
+/// this one is in view. Both ends must play from the same library, and there
+/// must be music to move: a queue here, or another device playing or paused
+/// and in reach. Moving to the device already in view moves nothing.
+#[uniffi::export]
+pub fn can_move_music(
+    to: Option<DeviceInfo>,
+    controlled: Option<DeviceInfo>,
+    has_queue: bool,
+) -> bool {
+    if to.as_ref().map(|d| d.id.as_str()) == controlled.as_ref().map(|d| d.id.as_str()) {
+        return false;
+    }
+    if to.as_ref().is_some_and(|d| d.problem.is_some()) {
+        return false;
+    }
+    match &controlled {
+        Some(source) => {
+            if !source.same_library
+                || source.state == PlayState::Stopped
+                || source.problem.is_some()
+            {
+                return false;
+            }
+        }
+        None if !has_queue => return false,
+        None => {}
+    }
+    to.is_none_or(|d| d.same_library)
+}
+
 /// A pairing code as it is being typed, as the device shows it: `XXXX-XXXX`
 /// in capitals. Applied to the field on every change, so typing and pasting
 /// read the same on every platform.
@@ -717,6 +749,9 @@ pub struct KoanEngine {
     /// prefix (`LinkIdentity::files`). Another device on the same config
     /// directory keeps a session of its own.
     session: &'static str,
+    /// A seek sent to the device being controlled, held as its playhead
+    /// until that device reports being near it (`remote_playhead`).
+    remote_seek: parking_lot::Mutex<Option<RemoteSeek>>,
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
@@ -755,6 +790,20 @@ struct CursorReading {
 /// told again. Two frames of a 60Hz seek bar: below this there is nothing on
 /// screen to correct.
 const PLAYHEAD_TOLERANCE_MS: u64 = 32;
+
+/// How near the controlled device's report must come to where a seek sent
+/// to it lands to count as having landed, and how long a report far from it
+/// is taken as from before the seek.
+const REMOTE_SEEK_NEAR_MS: u64 = 750;
+const REMOTE_SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A seek sent to the device being controlled.
+#[derive(Clone, Copy)]
+struct RemoteSeek {
+    position_ms: u64,
+    at: Instant,
+    playing: bool,
+}
 
 /// How long a playhead may read the same while playing before it is called
 /// held, when this thread next looks. The player wakes it when output should
@@ -931,6 +980,30 @@ impl KoanEngine {
 /// Calls for front ends that link the engine as a Rust library, not reached
 /// through uniffi.
 impl KoanEngine {
+    /// `import_files` with paths as the platform names them: a drop or an
+    /// argument on Linux may not be UTF-8, and a string would change it.
+    pub async fn import_paths(
+        self: Arc<Self>,
+        paths: Vec<PathBuf>,
+    ) -> Result<ImportSummary, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let result = koan_core::index::scanner::import_paths(&db, &paths);
+            self.bump_library();
+            Ok(ImportSummary {
+                track_ids: result.track_ids,
+                added: result.added as u32,
+                updated: result.updated as u32,
+                errors: result
+                    .errors
+                    .into_iter()
+                    .map(|(p, e)| format!("{}: {e}", p.display()))
+                    .collect(),
+            })
+        })
+        .await
+    }
+
     /// `album_cover_art`, with a remote cover's request cancelled when the
     /// returned future is dropped: the desktop app drops it as the cover
     /// scrolls out of view, so the request stops on its connection and its
@@ -956,14 +1029,22 @@ impl KoanEngine {
             let engine = self.clone();
             return offload::offload(move || engine.cover_art_of(Some(row), size)).await;
         };
-        let cfg = Config::cached();
-        if !cfg.remote.enabled {
+        // Building a client blocks (and panics inside a tokio runtime), so it
+        // is made off the caller's thread.
+        let client = offload::offload(|| {
+            let cfg = Config::cached();
+            if !cfg.remote.enabled {
+                return Ok(None);
+            }
+            koan_core::helpers::subsonic_client(&cfg)
+                .map(Some)
+                .ok_or_else(|| KoanError::Remote {
+                    message: koan_core::helpers::remote_unavailable(&cfg),
+                })
+        })
+        .await?;
+        let Some(client) = client else {
             return Ok(None);
-        }
-        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-            return Err(KoanError::Remote {
-                message: koan_core::helpers::remote_unavailable(&cfg),
-            });
         };
         let track_id = row.id;
         let answer = offload::cancellable(async move {
@@ -1142,13 +1223,31 @@ impl KoanEngine {
 
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
         // Every client's bar lands where it was asked to now, not when the
-        // player thread gets there; see `state::PendingSeek`.
-        let playing = self.state.playback_state()
-            == koan_core::player::state::PlaybackState::Playing
-            && self.state.playhead_moving();
-        self.out
-            .seek_requested(position_ms, self.state.seekable_ms(), playing);
-        offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await
+        // player thread, or the device being controlled, gets there.
+        let target = koan_core::remote::devices::target_device();
+        match &target {
+            None => self.state.request_seek(position_ms),
+            Some(device) => self.remote_seek_requested(device, position_ms),
+        }
+        let state = self.state.clone();
+        let engine = self.clone();
+        let sent = offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await;
+        if sent.is_err() {
+            match target {
+                None => state.seek_taken(position_ms),
+                // Lapsed rather than dropped, so the state thread's deadline
+                // says the device's own playhead again at once.
+                Some(_) => {
+                    if let Some(seek) = engine.remote_seek.lock().as_mut() {
+                        seek.at = Instant::now()
+                            .checked_sub(REMOTE_SEEK_PATIENCE)
+                            .unwrap_or(seek.at);
+                    }
+                    koan_core::signal::engine_changed().bump();
+                }
+            }
+        }
+        sent
     }
 
     // --- Observable state --------------------------------------------------
@@ -2420,13 +2519,14 @@ impl KoanEngine {
         offload::offload(move || self.playlist_history.shuffles_on_top(playlist_id)).await
     }
 
-    /// Where the playlists sit in the sidebar, in the order given. Local only —
-    /// no server has anywhere to put it. On the command lane with the edits,
-    /// so two drags land in the order they were made.
+    /// Where the playlists sit in the sidebar, in the order given, sent on to
+    /// a server that keeps the account's order (`koanPlaylistOrder`). On the
+    /// command lane with the edits, so two drags land in the order they were
+    /// made.
     pub async fn reorder_playlists(self: Arc<Self>, ids: Vec<i64>) -> Result<(), KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            queries::reorder_playlists(&db.conn, &ids).map_err(db_err)?;
+            koan_core::playlists::reorder(&db, &ids).map_err(db_err)?;
             self.bump_library();
             Ok(())
         })
@@ -2561,7 +2661,13 @@ impl KoanEngine {
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
             let content = self.state.saved_version();
-            if self.saved_content.load(Ordering::Acquire) == content {
+            // Unchanged, the queue is skipped, unless its row has gone:
+            // `clearPlaybackState` on this app's own server deletes it with
+            // the engine none the wiser, and a position alone restores
+            // nothing at the next launch.
+            if self.saved_content.load(Ordering::Acquire) == content
+                && queries::has_saved_queue(&db.conn, self.session).map_err(fav_err)?
+            {
                 return self.write_position(&db);
             }
             let (items, cursor) = self.state.snapshot_playlist();
@@ -2767,23 +2873,18 @@ impl KoanEngine {
     /// before; 0 the first time), for a cache keyed by their ids: SQLite reuses
     /// a freed id, and art cached under it would show for another record. Also
     /// those under a folder the library watcher rescanned, whose cover image
-    /// beside the tracks may have changed.
+    /// beside the tracks may have changed. With `purge`, `after` is older than
+    /// the entries kept or from another database, and the whole cache goes.
     pub async fn art_evictions(self: Arc<Self>, after: i64) -> Result<ArtEvictions, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows: Vec<(i64, String, i64)> = db
-                .conn
-                .prepare("SELECT seq, kind, id FROM art_evictions WHERE seq > ?1 ORDER BY seq")
-                .and_then(|mut s| {
-                    s.query_map([after], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                        .collect()
-                })
-                .map_err(db_err)?;
+            let since = queries::art_evictions_since(&db.conn, after).map_err(db_err)?;
             let mut out = ArtEvictions {
-                seq: rows.last().map_or(after, |r| r.0),
+                seq: since.seq,
+                purge: since.purge,
                 ..Default::default()
             };
-            for (_, kind, id) in rows {
+            for (kind, id) in since.named {
                 match kind.as_str() {
                     "album" => out.albums.push(id),
                     "artist" => out.artists.push(id),
@@ -4401,67 +4502,19 @@ impl KoanEngine {
     /// ReplayGain to `config.toml`. The password is not here; it goes through
     /// `sign_in_remote`.
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
-        offload::offload(move || {
-            let before = Config::cached();
-            let window_before = (
-                before.remote.cache_limit.clone(),
-                before.remote.download_ahead,
-            );
-            Config::persist(|cfg| {
-                cfg.library.folders = s
-                    .library_folders
-                    .iter()
-                    .map(|f| PathBuf::from(&f.path))
-                    .collect();
+        offload::offload(move || write_settings(None, &s)).await
+    }
 
-                cfg.remote.enabled = s.remote_enabled;
-                cfg.remote.url = s.remote_url.clone();
-                cfg.remote.username = s.remote_username.clone();
-                cfg.remote.download_workers = s.download_workers.max(1) as usize;
-                cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
-                cfg.remote.download_ahead = s.download_ahead;
-                cfg.remote.auto_sync = s.auto_sync;
-                cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
-
-                cfg.playback.replaygain = match s.replaygain.as_str() {
-                    "track" => config::ReplayGainMode::Track,
-                    "album" => config::ReplayGainMode::Album,
-                    _ => config::ReplayGainMode::Off,
-                };
-                cfg.playback.pre_amp_db = s.pre_amp_db;
-                cfg.playback.fade_on_pause = s.fade_on_pause;
-
-                cfg.devices.discoverable = s.devices_discoverable;
-                cfg.devices.nearby_control = match s.devices_nearby_control.as_str() {
-                    "playback" => config::NearbyControl::Playback,
-                    _ => config::NearbyControl::Full,
-                };
-                cfg.devices.keep_running = s.devices_keep_running;
-                cfg.share.enabled = s.share_enabled;
-                cfg.share.port = s.share_port;
-                cfg.devices.refused = s.devices_refused.clone();
-                cfg.devices.addresses = s
-                    .devices_addresses
-                    .iter()
-                    .map(|a| a.trim().to_string())
-                    .filter(|a| !a.is_empty())
-                    .collect();
-            })
-            .map_err(|e| KoanError::BadArgument {
-                message: e.to_string(),
-            })?;
-            koan_core::remote::nearby::reconfigure();
-            let after = Config::cached();
-            if (
-                after.remote.cache_limit.clone(),
-                after.remote.download_ahead,
-            ) != window_before
-            {
-                koan_core::remote::queue::cache_limit_changed();
-            }
-            Ok(())
-        })
-        .await
+    /// Write back what differs between `read`, the settings as the caller
+    /// read them, and `s`, the same with its edits made: a field nobody here
+    /// edited keeps whatever the file holds now, though a sign-in, another
+    /// window or the terminal UI wrote it after `read` was taken.
+    pub async fn update_settings_since(
+        self: Arc<Self>,
+        read: Settings,
+        s: Settings,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || write_settings(Some(&read), &s)).await
     }
 
     /// Ask the running library task to stop.
@@ -5029,6 +5082,20 @@ impl KoanEngine {
         .await
     }
 
+    /// Stop fetching these tracks. Queue entries waiting on them fail as
+    /// cancelled and are skipped until retried; a transfer running stops and
+    /// leaves no row.
+    pub async fn cancel_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || self.send_local(PlayerCommand::CancelDownloads(track_ids))).await
+    }
+
+    /// Fetch these tracks again after a failure or a cancel: queue entries
+    /// that failed for them wait again, and a track no entry wants is
+    /// fetched into the cache.
+    pub async fn retry_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || self.send_local(PlayerCommand::RetryDownloads(track_ids))).await
+    }
+
     /// Rescans every configured library folder, saying how far it has got.
     /// Minutes, on a large library.
     pub async fn scan_reporting(
@@ -5274,23 +5341,8 @@ impl KoanEngine {
         self: Arc<Self>,
         paths: Vec<String>,
     ) -> Result<ImportSummary, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-            let result = koan_core::index::scanner::import_paths(&db, &paths);
-            self.bump_library();
-            Ok(ImportSummary {
-                track_ids: result.track_ids,
-                added: result.added as u32,
-                updated: result.updated as u32,
-                errors: result
-                    .errors
-                    .into_iter()
-                    .map(|(p, e)| format!("{}: {e}", p.display()))
-                    .collect(),
-            })
-        })
-        .await
+        self.import_paths(paths.into_iter().map(PathBuf::from).collect())
+            .await
     }
 
     /// Where the library folders point. Shown in settings.
@@ -5509,6 +5561,8 @@ impl KoanEngine {
                     let target = koan_core::remote::devices::target();
                     if target != last_target {
                         last_target = target.clone();
+                        // A seek held for one device is not the next one's.
+                        *engine.remote_seek.lock() = None;
                         anchor = None;
                         last_seekable = u64::MAX;
                         last_queue = u64::MAX;
@@ -5763,11 +5817,29 @@ impl KoanEngine {
                         });
                     }
 
+                    // A seek held for the controlled device gives its
+                    // playhead back when its patience runs out, whether or
+                    // not the device says anything more by then.
+                    let held_until = engine
+                        .remote_seek
+                        .lock()
+                        .map(|seek| seek.at + REMOTE_SEEK_PATIENCE);
                     // Dropped before the wait: this thread holds the engine
                     // only for as long as it is reading it, so parking here
                     // cannot be what keeps koan open.
                     drop(engine);
-                    seen = wake.wait(seen);
+                    seen = match held_until {
+                        None => wake.wait(seen),
+                        Some(until) => {
+                            let left = until.saturating_duration_since(Instant::now());
+                            let woken = wake.wait_until(seen, left);
+                            if woken == seen {
+                                // Said again, without the held seek.
+                                last_devices = u64::MAX;
+                            }
+                            woken
+                        }
+                    };
                 }
             })
             .ok();
@@ -5908,6 +5980,56 @@ impl KoanEngine {
             .collect()
     }
 
+    /// A seek sent to `device`: its playhead reads as landed from now, held
+    /// until it reports being there, as this device's own is
+    /// (`SharedPlayerState::request_seek`).
+    fn remote_seek_requested(&self, device: &koan_core::remote::devices::Device, position_ms: u64) {
+        let st = device.state.as_ref();
+        let duration = st.map_or(0, |s| s.duration_ms);
+        let position_ms = if duration > 0 {
+            position_ms.min(duration)
+        } else {
+            position_ms
+        };
+        let playing = st.is_some_and(|s| s.playing);
+        *self.remote_seek.lock() = Some(RemoteSeek {
+            position_ms,
+            at: Instant::now(),
+            playing,
+        });
+        // The state thread waits no longer than the hold, which it learns of
+        // here, not from the device: one that never reports again still has
+        // its playhead given back.
+        koan_core::signal::engine_changed().bump();
+        self.out.publish(StateSlice::Playhead {
+            position_ms,
+            seekable_ms: duration,
+            playing,
+        });
+    }
+
+    /// The controlled device's playhead, `reported`, or where a seek sent to
+    /// it lands while that report is still from before it: one far from the
+    /// target is the old position, until the seek's patience runs out.
+    fn remote_playhead(&self, reported: u64) -> u64 {
+        let mut held = self.remote_seek.lock();
+        let Some(seek) = *held else {
+            return reported;
+        };
+        let since = seek.at.elapsed();
+        let landing = seek.position_ms
+            + if seek.playing {
+                since.as_millis() as u64
+            } else {
+                0
+            };
+        if since >= REMOTE_SEEK_PATIENCE || landing.abs_diff(reported) <= REMOTE_SEEK_NEAR_MS {
+            *held = None;
+            return reported;
+        }
+        landing
+    }
+
     /// Publish another device's playback, playhead and queue as the app's.
     fn publish_remote(&self, device: Option<&koan_core::remote::devices::Device>) {
         let none = koan_core::remote::link::LinkState::default();
@@ -5956,7 +6078,7 @@ impl KoanEngine {
             },
         });
         out.publish(StateSlice::Playhead {
-            position_ms: device.map_or(0, |d| d.position_ms()),
+            position_ms: self.remote_playhead(device.map_or(0, |d| d.position_ms())),
             seekable_ms: st.duration_ms,
             playing: st.playing,
         });
@@ -6368,6 +6490,7 @@ impl KoanEngine {
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             session: identity.files,
+            remote_seek: Default::default(),
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),
@@ -7404,6 +7527,112 @@ fn scrobbling_connection(
     }
 }
 
+/// `update_settings`' write: every field of `s`, or with `read`, only those
+/// `s` changes from it.
+fn write_settings(read: Option<&Settings>, s: &Settings) -> Result<(), KoanError> {
+    macro_rules! edited {
+        ($field:ident) => {
+            read.is_none_or(|r| r.$field != s.$field)
+        };
+    }
+    let before = Config::cached();
+    let window_before = (
+        before.remote.cache_limit.clone(),
+        before.remote.download_ahead,
+    );
+    Config::persist(|cfg| {
+        let paths = |s: &Settings| -> Vec<String> {
+            s.library_folders.iter().map(|f| f.path.clone()).collect()
+        };
+        if read.is_none_or(|r| paths(r) != paths(s)) {
+            cfg.library.folders = s
+                .library_folders
+                .iter()
+                .map(|f| PathBuf::from(&f.path))
+                .collect();
+        }
+        if edited!(remote_enabled) {
+            cfg.remote.enabled = s.remote_enabled;
+        }
+        if edited!(remote_url) {
+            cfg.remote.url = s.remote_url.clone();
+        }
+        if edited!(remote_username) {
+            cfg.remote.username = s.remote_username.clone();
+        }
+        if edited!(download_workers) {
+            cfg.remote.download_workers = s.download_workers.max(1) as usize;
+        }
+        if edited!(cache_limit) {
+            cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
+        }
+        if edited!(download_ahead) {
+            cfg.remote.download_ahead = s.download_ahead;
+        }
+        if edited!(auto_sync) {
+            cfg.remote.auto_sync = s.auto_sync;
+        }
+        if edited!(auto_sync_interval_mins) {
+            cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
+        }
+        if edited!(replaygain) {
+            cfg.playback.replaygain = match s.replaygain.as_str() {
+                "track" => config::ReplayGainMode::Track,
+                "album" => config::ReplayGainMode::Album,
+                _ => config::ReplayGainMode::Off,
+            };
+        }
+        if edited!(pre_amp_db) {
+            cfg.playback.pre_amp_db = s.pre_amp_db;
+        }
+        if edited!(fade_on_pause) {
+            cfg.playback.fade_on_pause = s.fade_on_pause;
+        }
+        if edited!(devices_discoverable) {
+            cfg.devices.discoverable = s.devices_discoverable;
+        }
+        if edited!(devices_nearby_control) {
+            cfg.devices.nearby_control = match s.devices_nearby_control.as_str() {
+                "playback" => config::NearbyControl::Playback,
+                _ => config::NearbyControl::Full,
+            };
+        }
+        if edited!(devices_keep_running) {
+            cfg.devices.keep_running = s.devices_keep_running;
+        }
+        if edited!(share_enabled) {
+            cfg.share.enabled = s.share_enabled;
+        }
+        if edited!(share_port) {
+            cfg.share.port = s.share_port;
+        }
+        if edited!(devices_refused) {
+            cfg.devices.refused = s.devices_refused.clone();
+        }
+        if edited!(devices_addresses) {
+            cfg.devices.addresses = s
+                .devices_addresses
+                .iter()
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect();
+        }
+    })
+    .map_err(|e| KoanError::BadArgument {
+        message: e.to_string(),
+    })?;
+    koan_core::remote::nearby::reconfigure();
+    let after = Config::cached();
+    if (
+        after.remote.cache_limit.clone(),
+        after.remote.download_ahead,
+    ) != window_before
+    {
+        koan_core::remote::queue::cache_limit_changed();
+    }
+    Ok(())
+}
+
 fn scrobbling_error(e: koan_core::remote::scrobbling::ScrobblingError) -> KoanError {
     use koan_core::remote::scrobbling::ScrobblingError;
     match e {
@@ -7730,5 +7959,66 @@ fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
             message: e.to_string(),
         },
         ImportError::Failed(message) => KoanError::BadArgument { message },
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    fn device(id: &str, same_library: bool, state: PlayState) -> DeviceInfo {
+        DeviceInfo {
+            id: id.into(),
+            name: id.into(),
+            platform: "macos".into(),
+            account: true,
+            owner: None,
+            nearby: false,
+            awake: true,
+            asleep: false,
+            wakeable: false,
+            tv_paired: false,
+            tv_pairable: false,
+            last_seen: None,
+            waking: None,
+            wake_failed: None,
+            same_library,
+            state,
+            title: None,
+            artist: None,
+            artist_credit: Vec::new(),
+            album: None,
+            track_id: None,
+            album_id: None,
+            position_ms: 0,
+            duration_ms: 0,
+            problem: None,
+        }
+    }
+
+    #[test]
+    fn music_moves_only_where_it_can_play() {
+        let tv = device("tv", true, PlayState::Stopped);
+        let phone = device("phone", true, PlayState::Playing);
+        let stranger = device("stranger", false, PlayState::Playing);
+        // From here: needs a queue, and a device on the same library.
+        assert!(can_move_music(Some(tv.clone()), None, true));
+        assert!(!can_move_music(Some(tv.clone()), None, false));
+        assert!(!can_move_music(Some(stranger.clone()), None, true));
+        // Nowhere to move to while this device is in view.
+        assert!(!can_move_music(None, None, true));
+        // From a device controlled: it must have music and share the library.
+        assert!(can_move_music(None, Some(phone.clone()), false));
+        assert!(can_move_music(Some(tv.clone()), Some(phone.clone()), false));
+        assert!(!can_move_music(None, Some(tv.clone()), true));
+        assert!(!can_move_music(None, Some(stranger), true));
+        assert!(!can_move_music(
+            Some(phone.clone()),
+            Some(phone.clone()),
+            true
+        ));
+        let mut away = tv;
+        away.problem = Some("out of reach".into());
+        assert!(!can_move_music(Some(away), Some(phone), true));
     }
 }

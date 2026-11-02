@@ -1,0 +1,1 @@
+- **Covers no longer show another record's sleeve after the library is rebuilt from scratch.** Each cover cache, on the server and in every app, empties itself when it has been away longer than the library remembers what it removed, or the database is new.
