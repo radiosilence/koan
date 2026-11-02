@@ -1,0 +1,1 @@
+- **The header's shuffle button says what it shuffles, and the queue's status marks say what they mean** (played, downloads next, couldn't be played, waiting for its download), in their tooltips.

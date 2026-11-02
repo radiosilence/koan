@@ -357,14 +357,19 @@ impl RenderOnce for PlayButton {
 #[derive(IntoElement)]
 pub struct ShuffleButton {
     id: ElementId,
+    /// What it shuffles, for its tooltip: "shuffle Hounds of Love".
+    name: SharedString,
     disabled: bool,
     on_click: Option<super::Handler<ClickEvent>>,
 }
 
 impl ShuffleButton {
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    /// `name` is what it shuffles, a record's or a playlist's, kept in its
+    /// own case.
+    pub fn new(id: impl Into<ElementId>, name: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
+            name: name.into(),
             disabled: false,
             on_click: None,
         }
@@ -408,7 +413,11 @@ impl RenderOnce for ShuffleButton {
                     .tone(crate::theme::Tone::Muted)
                     .when(!disabled, |i| i.hover_color(group, ink)),
             )
-            .tooltip(|window, cx| super::Tooltip::view(crate::theme::label("shuffle"), window, cx))
+            .tooltip({
+                let help: SharedString =
+                    format!("{} {}", crate::theme::label("shuffle"), self.name).into();
+                move |window, cx| super::Tooltip::view(help.clone(), window, cx)
+            })
             .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
                 d.on_click(move |event, window, cx| on_click(event, window, cx))
             })
