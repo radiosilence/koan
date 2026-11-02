@@ -1087,6 +1087,23 @@ pub enum SyncPhase {
     Finishing,
 }
 
+/// How far fetching covers ahead has got: records done of those found
+/// without one.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoverPreload {
+    pub done: u64,
+    pub total: u64,
+}
+
+impl From<koan_core::remote::covers::Preload> for CoverPreload {
+    fn from(p: koan_core::remote::covers::Preload) -> Self {
+        Self {
+            done: p.done,
+            total: p.total,
+        }
+    }
+}
+
 /// How far a remote sync has got. `total` is absent where the server gives no
 /// way to know it in advance.
 #[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
@@ -2419,6 +2436,8 @@ pub struct Settings {
     /// Read only here: turning it on or off goes through `set_server_queue`,
     /// which replaces or saves the queue as it does.
     pub play_queue: bool,
+    /// Fetch every record's cover ahead, in the background.
+    pub preload_covers: bool,
 
     /// `off`, `track` or `album`.
     pub replaygain: String,

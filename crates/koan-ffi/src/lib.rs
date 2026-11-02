@@ -966,8 +966,21 @@ impl KoanEngine {
             });
         };
         let track_id = row.id;
+        // A cover kept on this device, read off the engine's pool, before any
+        // request.
+        let kept = {
+            let (cfg, id) = (cfg.clone(), remote_id.clone());
+            offload::offload(move || koan_core::remote::covers::kept(&cfg, &id, size)).await
+        };
+        if let Some(data) = kept {
+            return Self::remote_cover(track_id, Ok(data));
+        }
         let answer = offload::cancellable(async move {
-            client.get_cover_art_cancellable(&remote_id, size).await
+            let answer = client.get_cover_art_cancellable(&remote_id, size).await;
+            if let Ok(data) = &answer {
+                koan_core::remote::covers::keep_later(remote_id, size, data.clone());
+            }
+            answer
         })
         .await
         .ok_or_else(|| KoanError::Remote {
@@ -1706,6 +1719,12 @@ impl KoanEngine {
             self.cover_art_of(row, size)
         })
         .await
+    }
+
+    /// Stop fetching covers ahead, keeping what was fetched, until the
+    /// setting is turned on again or the app starts again.
+    pub fn stop_cover_preload(&self) {
+        koan_core::remote::covers::stop();
     }
 
     /// How many cover requests to a server may run at once. The phone apps
@@ -4369,6 +4388,7 @@ impl KoanEngine {
                 auto_sync: cfg.remote.auto_sync,
                 auto_sync_interval_mins: cfg.remote.auto_sync_interval_mins,
                 play_queue: cfg.remote.play_queue,
+                preload_covers: cfg.remote.preload_covers,
 
                 replaygain: match cfg.playback.replaygain {
                     config::ReplayGainMode::Off => "off".into(),
@@ -4422,6 +4442,7 @@ impl KoanEngine {
                 cfg.remote.download_ahead = s.download_ahead;
                 cfg.remote.auto_sync = s.auto_sync;
                 cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
+                cfg.remote.preload_covers = s.preload_covers;
 
                 cfg.playback.replaygain = match s.replaygain.as_str() {
                     "track" => config::ReplayGainMode::Track,
@@ -4452,6 +4473,9 @@ impl KoanEngine {
             })?;
             koan_core::remote::nearby::reconfigure();
             let after = Config::cached();
+            if after.remote.preload_covers && !before.remote.preload_covers {
+                koan_core::remote::covers::resume();
+            }
             if (
                 after.remote.cache_limit.clone(),
                 after.remote.download_ahead,
@@ -5720,6 +5744,9 @@ impl KoanEngine {
                     out.publish(StateSlice::Sync {
                         progress: engine.sync_progress.get(),
                     });
+                    out.publish(StateSlice::Covers {
+                        progress: koan_core::remote::covers::progress().map(Into::into),
+                    });
 
                     // Both of the heavy reads, and both guarded. The queue is
                     // derived and joined against the library; the lock is two
@@ -5816,7 +5843,10 @@ impl KoanEngine {
         // The server answered and it has nothing: normal, and worth
         // remembering. A timeout or a dropped connection says nothing about
         // whether art exists, so it is reported, for the caller to ask again.
-        Self::remote_cover(track_id, client.get_cover_art(&remote_id, size))
+        Self::remote_cover(
+            track_id,
+            koan_core::remote::covers::cover(&client, &remote_id, size),
+        )
     }
 
     /// Turns a server's answer for a cover into what `album_cover_art`
@@ -6458,6 +6488,9 @@ impl KoanEngine {
             t_player,
             t0.elapsed()
         );
+        // Sleeps on the change signal until a remote library has covers to
+        // fetch ahead.
+        koan_core::remote::covers::start();
         Ok(engine)
     }
 

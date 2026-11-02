@@ -1198,6 +1198,27 @@ pub fn cover_track_for_album(
     rows.next().transpose().map_err(Into::into)
 }
 
+/// The server's cover id for every record whose cover is on the server only:
+/// the track `cover_track_for_album` would choose, where it has no file here.
+/// Newest records first, the ones a person is likeliest to look at.
+pub fn remote_cover_ids(conn: &Connection) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT remote_id FROM (
+             SELECT t.album_id, t.remote_id, t.path, t.cached_path,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.album_id
+                        ORDER BY (t.path IS NULL AND t.cached_path IS NULL), t.disc, t.track_number
+                    ) AS n
+             FROM tracks t WHERE t.album_id IS NOT NULL)
+         WHERE n = 1 AND path IS NULL AND cached_path IS NULL AND remote_id IS NOT NULL
+         ORDER BY album_id DESC",
+    )?;
+    let ids = stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(ids)
+}
+
 /// Get distinct genres for a batch of artist IDs in a single query.
 /// Returns a map from artist_id → set of lowercased genre strings.
 pub fn genres_by_artist_ids(

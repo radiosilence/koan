@@ -27,8 +27,10 @@ pub fn evict_cache(
     let Some(limit) = cfg.cache_limit_bytes().map(|l| l as i64) else {
         return 0;
     };
+    // Kept covers count with the downloads, and go once no download can.
+    let artwork = crate::remote::covers::bytes(cfg) as i64;
     let mut current = match queries::total_cache_size(&db.conn) {
-        Ok(s) => s,
+        Ok(s) => s + artwork,
         Err(e) => {
             log::warn!("cache eviction: failed to query cache size: {e}");
             return 0;
@@ -83,6 +85,11 @@ pub fn evict_cache(
     }
     if let Err(e) = queries::clear_cached_paths_for(&db.conn, &gone) {
         log::warn!("cache eviction: failed to clear DB: {e}");
+    }
+    if current > limit {
+        let covers = crate::remote::covers::trim(cfg, (current - limit) as u64) as i64;
+        current -= covers;
+        freed += covers;
     }
     remove_empty_dirs(&cfg.cache_dir());
     if freed > 0 {
@@ -177,7 +184,7 @@ pub fn measure_cache(cfg: &Config) -> u64 {
     bytes
 }
 
-pub(super) fn cache_grew(bytes: u64) {
+pub(crate) fn cache_grew(bytes: u64) {
     CACHE_BYTES.fetch_add(bytes, Ordering::Relaxed);
     crate::signal::engine_changed().bump();
 }

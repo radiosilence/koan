@@ -324,10 +324,32 @@ impl CoverSlots {
     }
 }
 
+/// Waits until no cover request is in flight: what background fetches do
+/// before each of theirs, so a page's covers never queue behind them.
+pub fn wait_for_idle_covers() {
+    let mut busy = COVERS_IN_FLIGHT.lock();
+    while *busy > 0 {
+        COVER_FREED.wait(&mut busy);
+    }
+}
+
 impl Drop for CoverSlots {
     fn drop(&mut self) {
         *COVERS_IN_FLIGHT.lock() -= 1;
-        COVER_FREED.notify_one();
+        // Every waiter: one taking a slot, and background work waiting for
+        // none to be in flight.
+        COVER_FREED.notify_all();
+    }
+}
+
+/// A cover request the caller bounds itself, counted in flight so background
+/// fetches wait for it, never refused.
+struct CoverInFlight;
+
+impl CoverInFlight {
+    fn enter() -> CoverSlots {
+        *COVERS_IN_FLIGHT.lock() += 1;
+        CoverSlots
     }
 }
 
@@ -502,6 +524,8 @@ impl SubsonicClient {
             params.insert("size".into(), cover_bucket(px).to_string());
         }
         let client = self.connections.read().cancellable.clone();
+        // Dropped with the future, so a cancelled request leaves the count.
+        let _in_flight = CoverInFlight::enter();
         let resp = client.get(&url).query(&params).send().await?;
         let is_document = resp
             .headers()

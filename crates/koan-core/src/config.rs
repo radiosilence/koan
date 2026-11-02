@@ -365,6 +365,11 @@ pub struct RemoteConfig {
     /// default: between kōan devices the queue already moves live over the
     /// link. Per device.
     pub play_queue: bool,
+    /// Fetch every record's cover from the server in the background, at the
+    /// size grids draw, so browsing never waits for one after the first sync.
+    /// Kept in the download cache and counted against its limit. Off removes
+    /// nothing already fetched. Per device.
+    pub preload_covers: bool,
 }
 
 impl Default for PlaybackConfig {
@@ -460,6 +465,7 @@ impl Default for RemoteConfig {
             auto_sync: true,
             auto_sync_interval_mins: 60,
             play_queue: false,
+            preload_covers: true,
         }
     }
 }
@@ -1520,6 +1526,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.download_ahead"
         // Whether this device follows the account's saved play queue.
         | "remote.play_queue"
+        // What this device keeps of the server's covers.
+        | "remote.preload_covers"
         // This machine's hardware.
         | "playback.output_device"
         | "playback.renderer"

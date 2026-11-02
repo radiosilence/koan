@@ -19,8 +19,8 @@ use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use crate::types::{
-    ConnectionInfo, DeviceInfo, DeviceReach, NowPlaying, OutputsInfo, QueueItem, QueueLock,
-    RendererInfo, RendererOutput, SyncProgress, Transfer, TransferFigure,
+    ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, NowPlaying, OutputsInfo, QueueItem,
+    QueueLock, RendererInfo, RendererOutput, SyncProgress, Transfer, TransferFigure,
 };
 
 /// One slice of engine state, whole.
@@ -107,6 +107,9 @@ pub enum StateSlice {
     /// hundred times in a first sync of a large library — and a reader that
     /// only draws whether a task is running should not wake for each.
     Sync { progress: Option<SyncProgress> },
+    /// How far fetching every record's cover ahead has got
+    /// (`remote.preload_covers`). `None` when it is not running.
+    Covers { progress: Option<CoverPreload> },
     /// The other devices koan can play on, and which one this app is
     /// controlling: `None` for this one. While it is another, `Playback`,
     /// `Playhead` and `Queue` describe that device rather than this one, so
@@ -151,12 +154,13 @@ enum Slot {
     Cache,
     Tasks,
     Sync,
+    Covers,
     Connection,
     Renderers,
     Outputs,
 }
 
-pub(crate) const SLOTS: usize = 16;
+pub(crate) const SLOTS: usize = 17;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -173,6 +177,7 @@ impl StateSlice {
             Self::Cache { .. } => Slot::Cache,
             Self::Tasks { .. } => Slot::Tasks,
             Self::Sync { .. } => Slot::Sync,
+            Self::Covers { .. } => Slot::Covers,
             Self::Devices { .. } => Slot::Devices,
             Self::Connection { .. } => Slot::Connection,
             Self::Renderers { .. } => Slot::Renderers,

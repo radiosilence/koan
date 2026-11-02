@@ -528,6 +528,24 @@ impl ServerPane {
             Some("Each sync asks the server only for what changed since the last.".into()),
             look,
         ));
+        sections.push(section(
+            Some("Covers"),
+            vec![{
+                let model = self.ctx.model.clone();
+                Toggle::new(
+                    "preload-covers",
+                    "Fetch every record's cover ahead",
+                    settings.preload_covers,
+                )
+                .on_change(move |on, _, cx| {
+                    let on = *on;
+                    model.update(cx, |m, cx| m.edit(cx, move |s| s.preload_covers = on))
+                })
+                .into_any_element()
+            }],
+            Some("Covers are fetched in the background, after what is on screen, so browsing never waits for one. They are kept with the downloads and count against the same limit. Turning this off removes nothing already fetched.".into()),
+            look,
+        ));
         sections.push(self.downloads(settings, look, cx));
         sections
     }
