@@ -85,14 +85,24 @@ fn name_of(config_dir: &Path) -> String {
 /// made, or the instance holding the lock does not answer.
 pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
     let config = koan_core::config::config_dir();
-    std::fs::create_dir_all(&config)?;
+    // An earlier version locks inside the config directory. While one runs
+    // it is the instance: its socket has the same name, so the hand-off
+    // meets it.
+    if let Some(mut earlier) = earlier_version_lock() {
+        hand(&mut earlier, paths)?;
+        return Ok(Launch::Handed);
+    }
+    // One lock per configuration, outside it: the config directory holds
+    // what a person chooses, not what the app writes as it runs.
+    let locks = koan_core::places::runtime();
+    std::fs::create_dir_all(&locks)?;
     let name = name_of(&config);
     let mut lock = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(config.join("gui-instance.lock"))?;
+        .open(locks.join("gui-instance.lock"))?;
     match lock.try_lock() {
         Ok(()) => {
             // An earlier holder's socket path goes first, so a launch reading
@@ -115,6 +125,23 @@ pub fn claim(paths: &[PathBuf]) -> std::io::Result<Launch> {
         Err(std::fs::TryLockError::Error(e)) => Err(e),
     }
 }
+
+/// The lock an earlier version takes in the config directory, while a
+/// running one holds it.
+pub fn earlier_version_lock() -> Option<File> {
+    let mut lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(koan_core::config::config_dir().join(EARLIER_LOCK))
+        .ok()?;
+    match lock.try_lock() {
+        Err(std::fs::TryLockError::WouldBlock) => Some(lock),
+        _ => None,
+    }
+}
+
+/// Where an earlier version kept the instance lock.
+pub const EARLIER_LOCK: &str = "gui-instance.lock";
 
 /// Listen at `socket`, connectable by this user alone from the moment it
 /// can be found: bound under a name of its own, made 0600, then moved into

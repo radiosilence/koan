@@ -245,6 +245,59 @@ impl DownloadQueue {
         wake_workers(&self.inner);
     }
 
+    /// Stop fetching these tracks, as the person asked. What is waiting is
+    /// dropped and what is running is left for its worker to withdraw, which
+    /// leaves no row. Every queue entry that wanted one fails as cancelled,
+    /// so the playlist's next sync does not fetch it again and the player
+    /// skips it, until it is retried.
+    pub fn cancel(&self, track_ids: &[i64]) {
+        if track_ids.is_empty() {
+            return;
+        }
+        let state = &self.inner.state;
+        let store = state.downloads();
+        let mut q = self.inner.queue.lock();
+        q.pending.retain(|(track, _)| !track_ids.contains(track));
+        q.cache.retain(|track| !track_ids.contains(track));
+        for &track in track_ids {
+            store.let_go(track);
+        }
+        // Every entry still waiting for one of them, in the window or past
+        // it, a duplicate included: one left waiting would be fetched by the
+        // next sync. Under the queue's lock, as settling is, so no sync sees
+        // an entry between losing its transfer and failing.
+        let failed = state.fail_pending(track_ids, downloads::CANCELLED);
+        drop(q);
+        let tell: Vec<_> = failed
+            .into_iter()
+            .filter(|id| state.is_cursor(*id))
+            .collect();
+        for id in tell {
+            self.inner.cmd_tx.send(PlayerCommand::TrackFailed(id)).ok();
+        }
+        crate::signal::engine_changed().bump();
+    }
+
+    /// Fetch these tracks again: the queue entries that failed for them go
+    /// back to waiting, which the playlist's next sync fetches, and a track
+    /// no entry waits on is fetched into the cache, as it was wanted before.
+    /// Their settled rows are dropped; a new transfer lists its own.
+    pub fn retry(&self, track_ids: &[i64]) {
+        if track_ids.is_empty() {
+            return;
+        }
+        let store = self.inner.state.downloads();
+        store.forget_settled(track_ids);
+        let waiting = self.inner.state.retry_failed(track_ids);
+        let cache: Vec<i64> = track_ids
+            .iter()
+            .copied()
+            .filter(|track| !waiting.contains(track))
+            .collect();
+        self.cache(cache);
+        wake_workers(&self.inner);
+    }
+
     /// Fetch nothing more: what is queued is dropped and what is running is
     /// left for its worker to withdraw. For signing out, after which none of
     /// it can be fetched.
