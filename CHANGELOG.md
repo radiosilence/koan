@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.69.6
+
+### Added
+
+- **The web UI shows the server's caches.** Admins see the cover cache by size against its budget, the warm's progress and the last sweep, the download cache and the last scan on the Library page, updating as they move, and can warm or clear the covers; GraphQL has the same as `serverCaches`, `warmCovers` and `clearCoverCache`.
+
+### Changed
+
+- **The desktop app's transport, as the Mac app's.** The play button sits as far below the bar's top as the Mac's, with the seek bar close beneath it, and with the wash under the whole window the wash runs under the transport too.
+
+### Fixed
+
+- **Covers follow every change to a record's art.** A re-tagged file and a cover image added, replaced or removed now refresh the record's cached covers whichever scan finds them, including the start-up and periodic scans of a library the folder watcher hears nothing from.
+- **The desktop app's Linux packages build.** The .deb step failed on a control file missing its architecture.
+
+### Internal
+
+- **The desktop app's DMG reaches the release whichever other packages built.** The attach job looked for it in one place only.
+
 ## 0.69.5
 
 ### Fixed
