@@ -112,8 +112,8 @@ fn command_of(event: MediaControlEvent, position_ms: u64) -> Option<Command> {
     })
 }
 
-/// What the covers handed to the system are called, in the configuration
-/// directory.
+/// What the covers handed to the system are called, in this configuration's
+/// cache directory (`places::cache`).
 const COVER_PREFIX: &str = "gui-cover-";
 
 /// This process's covers: named for it, so sweeping an earlier run's never
@@ -132,20 +132,22 @@ fn cover_path(generation: u64, mime: &str) -> PathBuf {
         "image/webp" => "webp",
         _ => "jpg",
     };
-    koan_core::config::config_dir().join(format!("{}{generation}.{ext}", own_prefix()))
+    koan_core::places::cache().join(format!("{}{generation}.{ext}", own_prefix()))
 }
 
-/// Remove the covers an earlier run left, which a crash or a kill does.
+/// Remove the covers an earlier run left, which a crash or a kill does,
+/// and any an earlier version left in the config directory.
 fn sweep_covers() {
-    let dir = koan_core::config::config_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return;
-    };
     let own = own_prefix();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with(COVER_PREFIX) && !name.starts_with(&own) {
-            let _ = std::fs::remove_file(entry.path());
+    for dir in [koan_core::places::cache(), koan_core::config::config_dir()] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(COVER_PREFIX) && !name.starts_with(&own) {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
     }
 }
@@ -167,6 +169,9 @@ fn file_url(path: &std::path::Path) -> String {
 
 /// Write `bytes` where the system will read them, whole or not at all.
 fn write_cover(path: &PathBuf, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let partial = path.with_extension("part");
     std::fs::write(&partial, bytes)?;
     std::fs::rename(&partial, path)

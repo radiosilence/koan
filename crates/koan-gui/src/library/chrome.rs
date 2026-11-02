@@ -35,8 +35,8 @@ pub fn count(n: u64, one: &str, many: &str) -> String {
     format!("{grouped} {}", if n == 1 { one } else { many })
 }
 
-/// A library page's header: its title with the count under it, and its
-/// actions trailing, top-aligned on the grid's margin.
+/// A library page's header: koan-kit's `PageHeader`, its title with the
+/// count under it and its actions trailing, at the grid's margin.
 pub fn page_header(
     p: &Paint,
     title: &'static str,
@@ -44,20 +44,13 @@ pub fn page_header(
     actions: impl IntoElement,
 ) -> Div {
     div()
-        .flex()
-        .items_start()
-        .justify_between()
         .px(crate::components::RowMetrics::page_margin(&p.look))
         .pt(p.space(Space::L))
-        .gap(p.space(Space::L))
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .child(div().typeset(p, Type::Title, p.strong).child(title))
-                .child(div().typeset(p, Type::Meta, p.muted).child(detail)),
+            crate::components::PageHeader::new(title)
+                .detail(detail)
+                .trailing(actions),
         )
-        .child(actions)
 }
 
 /// An empty listing, centred in the page.

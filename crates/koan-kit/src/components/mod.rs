@@ -67,7 +67,7 @@ pub use form::{
 };
 pub use level::Level;
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
-pub use metrics::{BarMetrics, CentreRows, RowKind, RowMetrics, TransportMetrics};
+pub use metrics::{BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TransportMetrics};
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;

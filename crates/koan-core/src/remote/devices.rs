@@ -468,8 +468,13 @@ impl Store {
 }
 
 fn saved_path() -> std::path::PathBuf {
-    let files = LOCAL.get().map_or("", |l| l.identity.files);
-    crate::config::config_dir().join(format!("{files}devices.json"))
+    match LOCAL.get() {
+        Some(local) => local
+            .identity
+            .home()
+            .join(format!("{}devices.json", local.identity.files)),
+        None => crate::config::config_dir().join("devices.json"),
+    }
 }
 
 /// The target and account devices as the last run left them.
