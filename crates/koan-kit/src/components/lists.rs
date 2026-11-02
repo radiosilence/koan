@@ -46,7 +46,10 @@ pub fn reveal_around(handle: &UniformListScrollHandle, ix: usize, count: usize) 
     if count == 0 {
         return;
     }
-    let target = if ix <= handle.logical_scroll_top_index() {
+    // The row at the top as last laid out: `logical_scroll_top_index` is
+    // GPUI's test support only.
+    let top = handle.0.borrow().base_handle.logical_scroll_top().0;
+    let target = if ix <= top {
         ix.saturating_sub(1)
     } else {
         (ix + 1).min(count - 1)
