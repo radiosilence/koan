@@ -13,7 +13,7 @@ use koan_kit::app::*;
 
 use crate::components::sheet as ask;
 use crate::components::{Button, ButtonKind, FieldState, InputEvent, Spinner, TextField};
-use crate::engine::{command, engine};
+use crate::engine::{engine, reported};
 use crate::paint::Paint;
 use crate::theme::{Space, Tone, TypeRole};
 
@@ -42,7 +42,7 @@ pub fn stop(id: String, name: String, window: &mut Window, cx: &mut App) {
         cx,
         move |cx| {
             let id = id.clone();
-            command(cx, "stop waking", move |e| e.forget_tv_pairing(id));
+            reported(cx, "stop waking", move |e| e.forget_tv_pairing(id));
         },
     );
 }
