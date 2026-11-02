@@ -14,6 +14,7 @@ pub mod menus;
 pub mod residency;
 pub mod runtime_files;
 pub mod shortcuts_sheet;
+pub mod startup_error;
 #[cfg(target_os = "macos")]
 pub mod status_item;
 

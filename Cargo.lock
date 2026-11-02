@@ -3427,8 +3427,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d862bc8f2e27710039013d075ac4995892e9687ff207fa530f880cbcd513936f"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -5466,6 +5464,7 @@ dependencies = [
  "block2 0.6.2",
  "chrono",
  "criterion",
+ "ctrlc",
  "dirs 7.0.0",
  "futures",
  "futures-channel",
@@ -5500,7 +5499,6 @@ dependencies = [
  "gpui-kit",
  "gpui-pre-platform",
  "image",
- "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",

@@ -20,10 +20,9 @@ gpui-kit = "0.8.1"
 # Named only for `runtime-shaders`: gpui-kit reaches it already.
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", optional = true }
 # The wash's bake and the accent's sampling, in the version GPUI builds
-# against; PNG for the theme sheet's offscreen render.
+# against; PNG for the storybook's offscreen render.
 image = { version = "0.25.1", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 futures = "0.3"
-log = "0.4"
 parking_lot = "0.13"
 smallvec = "1"
 

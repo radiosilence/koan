@@ -12,15 +12,15 @@ The Mac app got its consistency from SwiftUI's containers. `Form`, `Section`, `L
 gpui-kit  ->  koan-kit  ->  koan-gui
 ```
 
-**koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and its example is the theme sheet (today's `examples/theme_sheet.rs`), which draws every component offscreen.
+**koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and `cargo run -p koan-kit` opens its storybook: every component and container on a page of its own, in each state, with the appearance, the accent (a sample sleeve among them, for its tone mapping and the wash), the text size, Reduce Motion and Show icons to switch. `examples/storybook.rs` draws each page offscreen, dark and light, to a PNG.
 
 **koan-gui** builds pages from koan-kit only. It does not depend on `gpui-kit`: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles, gpui-component's widgets). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
 
 ## Beyond kōan
 
-koan-kit is written to be used by other projects (sbr, say) and published to crates.io later, so it stays project-agnostic: no koan-gui types, none of the app's wording, routes or data. Words a component draws come from its caller; a cover is `CoverArt`, never a library record. The kōan look is its default; an app supplies its own accent (the theme's `AccentFeed` takes any colour) and, in time, its own icon set through the asset source. It has a standalone example (the theme sheet, which draws every component), its own docs, and tests of its own.
+koan-kit is written to be used by other projects (sbr, say) and published to crates.io later, so it stays project-agnostic: no koan-gui types, none of the app's wording, routes or data. Words a component draws come from its caller; a cover is `CoverArt`, never a library record. The kōan look is its default; an app supplies its own accent (the theme's `AccentFeed` takes any colour) and, in time, its own icon set through the asset source. It has a standalone storybook, its own docs, and tests of its own.
 
-One thing does not travel: the GPUI patch that stops an idle window waking at every display refresh (#1614) is vendored in this workspace through `[patch.crates-io]`, which applies to this workspace alone. Another project using koan-kit gets GPUI as published. Upstreaming the patch is the real fix.
+One thing does not travel: the GPUI patch that stops an idle window waking at every display refresh (#1614) is vendored in this workspace through `[patch.crates-io]`, which applies to this workspace alone. Another project using koan-kit gets GPUI as published until the patch is taken upstream.
 
 ## Built without the Mac's glitches
 
@@ -38,13 +38,13 @@ The Swift app fixed its glitches one at a time: a seek bar that snapped back, me
 | Roles | `koan-kit/theme` | `text_role`, `Tone`, `label()` (app words lowercase), `KoanIcon` and the glyph set |
 | Controls | `koan-kit/components` | One interactive thing each: buttons, toggles, fields, sliders, steppers, pickers, badges, spinner, placeholder |
 | Containers | `koan-kit/components` | Layout: page, page header, toolbar, form, table and rows, menu, empty state, sheet, scroll area |
-| Pages | koan-gui: `library/`, `collections/`, `queue/`, `settings/`, `dsp/`, `shell.rs`, `sidebar.rs`, `transport.rs` | Content only, composed from containers and controls, and the engine's data |
+| Pages | koan-gui: `library/`, `search/`, `queue/`, `settings/`, `dsp/`, `shell.rs`, `sidebar.rs`, `transport.rs` | Content only, composed from containers and controls, and the engine's data |
 
 Each layer reads only the ones above it. A page never reaches into tokens for a number.
 
 ## How theme values reach components
 
-As SwiftUI's environment reaches a view: from one place, inherited, never passed by hand. Every component calls `Look::of(window, cx)` in its `render`. The window's appearance, the text size, "show icons" and the accent all live there. A component takes semantic parameters (a `Tone`, a `TypeRole`, a `RowKind`, a `ButtonKind`) and never a colour, a size in points or a font. A cached view that draws the accent calls `theme::observe_accent` so an accent change reaches it. Nothing in a page computes a size from the scale; the containers do (`RowMetrics`, `Look::space`, `Look::sized`).
+As SwiftUI's environment reaches a view: from one place, inherited, never passed by hand. Every component calls `Look::of(window, cx)` in its `render`. The window's appearance, the text size, "show icons" and the accent all live there. A component takes semantic parameters (a `Tone`, a `TypeRole`, a `RowKind`, a `ButtonKind`) and never a colour, a size in points or a font. A cached view that draws the accent calls `theme::observe_accent` so an accent change reaches it. Nothing in a page computes a size from the scale; the containers do (`RowMetrics`, `Look::space`, `Look::spaced`).
 
 ## What pages decide, and what they may not
 
@@ -71,7 +71,7 @@ Page::new(
         .detail("1,204 plays")                // control, muted
         .art(cover)                           // optional, top-aligned
         .lead(play_and_shuffle)               // optional, above the title
-        .actions(verbs)                       // optional, under the detail
+        .action(verb)                         // optional, under the detail
         .trailing(filter_and_sort),           // optional, far edge
 )
 .body(table)
@@ -287,10 +287,20 @@ Every koan-kit component reports itself to the accessibility tree GPUI builds ov
 | `ProgressRow` | ProgressIndicator, with its share and its counts |
 | `EmptyState` | Group, named by what it says |
 | sheets' `panel`, `Viewer` | Dialog |
+| `Toolbar` | Toolbar |
+| `TableRow` (`spoken`, `place`, `on_reveal`) | ListItem, or Heading for a record's heading, read as one line ("Cloudbusting, Kate Bush, Hounds of Love, 5:10, favourite"); its place in the list; selected. The links and the heart inside stay reachable as its children |
+| `RowList` (`named`), `spoken_list` around a `uniform_list` | List, named for what it holds |
+| `Banner`'s message, `NavNote` | Status, announced politely as it appears; Alert, announced at once, where something went wrong |
 
-A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions.
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions. Live regions are `aria_live`, another. An announcement carries its words as both name and value, since VoiceOver reads a live node's value and Orca its name, and sits on a leaf: a live region's descendants are live too, so a button or link inside it would be announced again. A progress row is not live; a reader reads its counts when it comes to it, rather than at every tick of a scan.
 
-`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click and an increment through `Window::dispatch_a11y_action` as a screen reader would.
+What only a reader reads, a row's spoken line, its place and its reveal, is worked out only while one is attached (`Window::is_a11y_active`; koan-gui's `Paint::a11y`), since a list's rows are made again at every scroll frame.
+
+A virtual list draws only the rows on screen, and only rows drawn are in the tree. Each row says where it is (`place`: "row 412 of 5,000"), and when a reader moves to one it asks the list to bring it on screen (`ScrollIntoView`), which `on_reveal` answers by scrolling the row's neighbours into view (`RowListState::reveal_around`; `reveal_around` for a `uniform_list`, which keeps one scroll and so asks for the neighbour the reader is heading for), so the next row is drawn before the reader reaches it.
+
+Pages say what no component says for them through `koan_kit::app::a11y`: the sidebar is navigation, the stage main, an album tile a link to its record, the transport's track line a polite live region.
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would; `Window::set_a11y_active_for_test` attaches one, since GPUI's test platform never does.
 
 ## Swift roles and their GPUI components
 
@@ -326,7 +336,7 @@ A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition 
 
 ## Where the spec and the Swift app disagree
 
-The spec wins, except where noted for the user's call.
+The spec wins, except for these, each a deliberate choice for the desktop.
 
 - **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`): 16, as the Swift lists use, and the tile grids take the same (`RowMetrics::page_margin_on`).
 - **Toggle and form rows: 24 points, a deliberate deviation for the desktop.** The spec gives a 44-point hit area; the Mac draws its toggles 24 tall (`KoanToggleStyle.hit`), and 44-point rows made Settings looser than the Mac. Rows are 24 at desktop density, the whole row's width taking the click. 44 stays the rule for touch platforms, should koan-kit ever reach one.
@@ -336,17 +346,10 @@ The spec wins, except where noted for the user's call.
 
 Two parts, the compiler first.
 
-**The crate boundary.** koan-gui cannot name `px`, `rgb`, `hsla`, fonts or gpui-component's widgets, because koan-kit does not re-export them. Sizes reach pages only as values the system computed (`RowMetrics`, `Look::space`), never as numbers.
+**The crate boundary.** Pages are written in `koan_kit::app`, which leaves out `px`, `rgb`, `hsla`, fonts and gpui-component's widgets. koan-gui still depends on gpui-kit itself, since GPUI's derive macros name `gpui::` paths, so the boundary is a convention the check below holds rather than a compile error. Sizes reach pages as values the system computed (`RowMetrics`, `Look::space`); where a component takes a figure in points (`TableRow::figure`, `Look::spaced`), it is a column's or a gap's width the component scales, and the check does not count it.
 
-**`just gui-theme-leaks`**, in CI's GUI job, for what the compiler cannot see: methods of the re-exported `Styled` trait that fix a size or colour (`.p_4()`, `.text_xs()`, `.w_64()`, `.text_color(` with anything but a `Look` colour, `.line_height(`), and hand-built containers in koan-gui (`TypeRole::Title` outside a `PageHeader`, `ButtonKind::Toolbar`, a `uniform_list(` whose rows are not `TableRow`s, a menu panel outside `Menu`).
+**`just gui-theme-leaks`**, in CI's GUI job: sizes and colours written as numbers (`px(`, `rgb(`, `hsla(` and the like), methods of the `Styled` trait that fix a size (`.p_4()`, `.text_xs()`, `.w_64()`, `.line_height(`), hand-built containers in koan-gui (`TypeRole::Title` outside a `PageHeader`, `ButtonKind::Toolbar`), `gpui::` named directly, and each name taken from `koan_kit::raw`.
 
 Pages are written in `koan_kit::app`: the app model (entities, contexts, views, events, actions, focus, globals, tasks), `div` with the traits that give it children, layout and listeners, and the platform services the app uses (the clipboard, dropped files, the file picker). Sizes, colours, fonts, images, canvases, lists, overlays and animation are not in it.
 
 What koan-kit does not cover yet is reached through `koan_kit::raw`, by name and never by glob, each import or path under a comment saying why koan-kit cannot cover it; the check refuses a raw use without one. `crates/koan-gui/theme-leaks.toml` holds each file's count of leaks, raw names among them. The check fails when a count grows or a new file appears; an area that has moved drops its entry, and once none is left `koan_kit::raw` is deleted. The baseline only ever shrinks.
-
-## Order of work
-
-1. This document, reviewed.
-2. The move: `src/theme` and `src/components` out of koan-gui into `crates/koan-kit`, mechanical, no behaviour change. koan-gui depends on koan-kit and, for now, on `koan_kit::raw` for everything it used from `gpui-kit` directly.
-3. In koan-kit, hal: tokens and roles audited against the spec, `Form`/`FormSection`/`FormRow`, `Menu` sections and icons, `Placeholder`, `Spinner`, `EmptyState`, `Sheet`, the leak check with its baseline, the role map kept here. carol: `Page`/`PageHeader`, `Toolbar`/`ToolbarButton`, `FilterField`, `TableRow`/`Column`/`RowMetrics`, and the library rows and the queue moved onto them.
-4. Everyone moves their area onto the foundation, driving their entries in the baseline and `koan_kit::raw` to nothing.

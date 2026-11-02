@@ -36,6 +36,8 @@ The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global m
 
 ## Configuration and the log
 
+If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
+
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 
 Settings → Devices → In the background keeps kōan running with its window closed, so your other devices can still see and control this computer: on macOS it moves from the Dock to the menu bar, whose item shows what is playing and opens the window again; on Linux, opening kōan again brings the window back. Open at login asks the system to start kōan when you log in (Login Items on macOS, which may ask for approval in System Settings; an autostart entry on Linux). A computer cannot be woken from another device, so a kōan that has quit is out of reach until it is opened again.
