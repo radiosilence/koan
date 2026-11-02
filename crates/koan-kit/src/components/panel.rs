@@ -41,7 +41,7 @@ impl ParentElement for MenuPanel {
 impl RenderOnce for MenuPanel {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
+        super::accessible(div().id("menu-panel"), gpui_kit::Role::Menu, None)
             .flex()
             .flex_col()
             .min_w(look.spaced(180.))
@@ -225,6 +225,8 @@ impl RenderOnce for MenuRow {
         let muted = look.palette.muted.hsla();
         let accent = look.color(Tone::Accent);
         let (label, detail, reach) = (self.label, self.detail, self.reach);
+        let spoken = label.clone();
+        let described = detail.as_ref().map(|(d, _)| d.clone());
         let name = div()
             .flex()
             .items_center()
@@ -252,8 +254,20 @@ impl RenderOnce for MenuRow {
             None => div().relative().flex_1().child(name),
         };
         let rich = self.rich;
-        let row = div()
-            .id(self.id)
+        // A menu item to a screen reader, a checkbox item where it ticks,
+        // with its second line as its description.
+        let role = if self.checked.is_some() {
+            gpui_kit::Role::MenuItemCheckBox
+        } else {
+            gpui_kit::Role::MenuItem
+        };
+        let row = super::accessible(div().id(self.id), role, Some(spoken))
+            .aria_disabled(self.disabled)
+            .when_some(self.checked, |row, checked| {
+                row.aria_toggled(super::toggled(checked))
+            })
+            .when_some(described, |row, d| row.aria_description(d))
+            .when(self.opens, |row| row.aria_expanded(false))
             .relative()
             .flex()
             .items_center()
@@ -332,7 +346,8 @@ impl RenderOnce for MenuRow {
             });
         let on_click = on_click.filter(|_| !self.disabled);
         row.when_some(on_click, |row, on_click| {
-            row.cursor_pointer()
+            super::answers_click(row, on_click.clone())
+                .cursor_pointer()
                 .on_click(move |event, window, cx| on_click(event, window, cx))
         })
     }

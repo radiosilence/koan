@@ -67,6 +67,7 @@ impl RenderOnce for Level {
         let fallback = self.value;
         let on_commit = self.on_commit;
         let slider = Slider::new(self.id.clone(), shown as f32 / max as f32)
+            .named("volume")
             .step(5.0 / max as f32)
             .compact()
             .on_change(move |fraction, _, cx| {
