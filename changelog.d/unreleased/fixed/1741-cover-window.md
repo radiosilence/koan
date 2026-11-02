@@ -1,0 +1,1 @@
+- **Covers on a slow server.** The kōan GUI app now asks a server that slows down for fewer covers at once rather than more, no longer sends hundreds of requests at once after a fast scroll, and stops re-requesting the covers where a flick lands.
