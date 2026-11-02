@@ -36,7 +36,7 @@ The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global m
 
 ## Configuration and the log
 
-If the library cannot be opened (a database written by a newer kōan, a configuration that does not parse), the app says so in a window, in the words every front end uses, and quits when it is closed.
+If the library cannot be opened (a database a newer kōan has upgraded, or another desktop app already running on the same configuration), the app says so in a window, with what to do about it, in the words every front end uses, and quits when it is closed.
 
 The app reads the configuration every kōan front end does, `~/.config/koan/` (or `KOAN_CONFIG_DIR`), and writes its log to `koan.log` there, and to stderr when started from a terminal. `KOAN_LOG=debug` adds kōan's debug lines, such as how many covers are being fetched at once.
 

@@ -1,1 +1,1 @@
-- **The desktop app says why it cannot open your library.** A database from a newer kōan or a configuration that does not parse is shown in a window, instead of the app quitting without a word.
+- **The desktop app says why it cannot open your library, and what to do.** A database a newer kōan has upgraded, or another desktop app already running on the configuration, is shown in a window instead of the app quitting without a word.

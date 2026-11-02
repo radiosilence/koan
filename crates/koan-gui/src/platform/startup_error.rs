@@ -1,9 +1,14 @@
-//! What the app shows when the engine cannot open (a database from a newer
-//! koan, a configuration that does not parse, a locked device): a window
-//! saying what failed and what to do, in the engine's own words, as the Mac
-//! app's `StartupErrorView` does. Closing it quits.
+//! What the app shows when the engine cannot open (a database a newer kōan
+//! has upgraded, another desktop app holding this configuration, a lock that
+//! cannot be taken): a window saying what failed and what to do about it,
+//! in the engine's own words, as the Mac app's `StartupErrorView` does.
+//! Closing it quits; opening kōan again brings it to the front.
 
+use futures::StreamExt as _;
+use futures_channel::mpsc::UnboundedReceiver;
 use koan_kit::app::*;
+
+use super::instance::Opened;
 
 use crate::components::{EmptyState, SecondaryWindow};
 use crate::theme::{Icon, Look};
@@ -24,8 +29,9 @@ impl Render for StartupError {
 }
 
 /// Opens the window for `message`, the engine's error, and quits once it
-/// is closed.
-pub fn show(message: String, cx: &mut App) {
+/// is closed. Another launch handed to this one (`opened`) brings it to the
+/// front: there is nothing else for it to open.
+pub fn show(message: String, mut opened: UnboundedReceiver<Opened>, cx: &mut App) {
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {
             cx.quit();
@@ -36,9 +42,24 @@ pub fn show(message: String, cx: &mut App) {
         .size(480.0, 300.0)
         .options(cx);
     let message = message.into();
-    if let Err(e) = cx.open_window(options, |_, cx| cx.new(|_| StartupError { message })) {
-        log::error!("could not show the startup error: {e}");
-        cx.quit();
+    match cx.open_window(options, |_, cx| cx.new(|_| StartupError { message })) {
+        Ok(window) => {
+            cx.spawn(async move |cx| {
+                while opened.next().await.is_some() {
+                    cx.update(|cx| {
+                        window
+                            .update(cx, |_, window, _| window.activate_window())
+                            .ok();
+                        cx.activate(true);
+                    });
+                }
+            })
+            .detach();
+        }
+        Err(e) => {
+            log::error!("could not show the startup error: {e}");
+            cx.quit();
+        }
     }
     cx.activate(true);
 }

@@ -51,7 +51,7 @@ fn main() {
                         .spawn(async { log::logger().flush() })
                         .await;
                     let message = e.to_string();
-                    cx.update(|cx| platform::startup_error::show(message, cx));
+                    cx.update(|cx| platform::startup_error::show(message, opening, cx));
                     return;
                 }
             };
