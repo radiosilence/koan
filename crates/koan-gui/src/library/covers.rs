@@ -652,7 +652,12 @@ impl Covers {
             self.publish();
             cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(RELEASE_AFTER).await;
-                this.update(cx, |covers, cx| covers.trim(None, cx)).ok();
+                this.update(cx, |covers, cx| {
+                    let asked = covers.asked();
+                    covers.drop_stale_staged(&asked);
+                    covers.trim(None, cx);
+                })
+                .ok();
             })
             .detach();
         }
@@ -812,21 +817,10 @@ impl Covers {
         if self.staged.is_empty() {
             return false;
         }
-        // Decoded for a list that has since scrolled past or gone: dropped
-        // rather than held, and decoded again if it is asked for again.
         let asked = self.asked();
-        let stale: Vec<Key> = self
-            .staged
-            .keys()
-            .filter(|k| !asked.contains_key(k))
-            .copied()
-            .collect();
-        if !stale.is_empty() {
-            let mut queue = self.shared.queue.lock();
-            for key in stale {
-                self.staged.remove(&key);
-                queue.decoded.remove(&key);
-            }
+        self.drop_stale_staged(&asked);
+        if self.staged.is_empty() {
+            return false;
         }
         let queue = self.shared.queue.lock();
         let mut ranked: Vec<(Key, Option<Priority>, u64)> = self
@@ -841,6 +835,7 @@ impl Covers {
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
+        let recent = Instant::now() - Duration::from_millis(500);
         let mut spent = 0;
         for (key, _, current) in ranked {
             if spent > 0 && spent >= budget {
@@ -870,7 +865,8 @@ impl Covers {
             }
             self.memory_bytes += bytes;
             // Its other sizes stood in while this one decoded; those nobody
-            // asks for and nothing draws go now.
+            // asks for, nothing holds and nothing drew in the last moment go
+            // now (see `trim`).
             let stand_ins: SmallVec<[u32; 4]> = self.sizes[&key.art]
                 .iter()
                 .copied()
@@ -884,7 +880,7 @@ impl Covers {
                         && self
                             .memory
                             .get(&other)
-                            .is_some_and(|h| Arc::strong_count(&h.image) == 1)
+                            .is_some_and(|h| h.used < recent && Arc::strong_count(&h.image) == 1)
                 })
                 .collect();
             for px in stand_ins {
@@ -895,6 +891,24 @@ impl Covers {
         }
         self.trim(window, cx);
         !self.staged.is_empty()
+    }
+
+    /// Decoded for a list that has since scrolled past or gone: dropped
+    /// rather than held, and decoded again if it is asked for again.
+    fn drop_stale_staged(&mut self, asked: &HashMap<Key, Priority>) {
+        let stale: Vec<Key> = self
+            .staged
+            .keys()
+            .filter(|k| !asked.contains_key(k))
+            .copied()
+            .collect();
+        if !stale.is_empty() {
+            let mut queue = self.shared.queue.lock();
+            for key in stale {
+                self.staged.remove(&key);
+                queue.decoded.remove(&key);
+            }
+        }
     }
 
     fn forget(&mut self, key: Key, window: Option<&mut Window>, cx: &mut Context<Self>) {
