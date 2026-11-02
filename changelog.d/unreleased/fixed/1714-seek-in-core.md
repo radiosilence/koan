@@ -1,0 +1,1 @@
+- **A seek lands at once from every device and never pulls the bar back.** A seek sent from another device, a remote or GraphQL settles the playhead where it asked, as one from the app does, and one the player clamps or declines shows where it really went.
