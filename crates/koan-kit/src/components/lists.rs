@@ -9,8 +9,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::{
-    Div, ElementId, EntityId, IntoElement, Pixels, Point, SharedString, Stateful, Styled, canvas,
-    div, px,
+    Div, ElementId, EntityId, InteractiveElement, IntoElement, Pixels, Point, SharedString,
+    Stateful, Styled, canvas, div, px,
 };
 
 pub use gpui_kit::{

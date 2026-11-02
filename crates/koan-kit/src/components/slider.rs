@@ -5,7 +5,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
-    SharedString, Styled, Window, canvas, div, px,
+    SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, px,
 };
 
 use super::{Animated, SHADED, ShaderProgram};

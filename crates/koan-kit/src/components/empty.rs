@@ -1,6 +1,6 @@
 use gpui_kit::{
-    App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
+    div, px,
 };
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, Tone, TypeRole, label};
