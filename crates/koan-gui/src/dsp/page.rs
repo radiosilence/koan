@@ -10,12 +10,11 @@ use std::rc::Rc;
 use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px};
 
 use super::graph::{Graph, Part, Stroke};
+
+/// The overview's graph, in points.
+const GRAPH_H: f32 = 220.0;
 use super::menu::{Item, Trigger, menu};
 use super::model::{Dsp, Placement, Stage, describe_profile, joined};
 use super::sheet::{Confirm, Sheets, note};
@@ -94,7 +93,7 @@ impl Render for EqPage {
             .child(
                 koan_kit::app::AnyView::from(self.body.clone())
                     // the bounds a cached view keeps between frames.
-                    .cached(koan_kit::raw::StyleRefinement::default().size_full()),
+                    .cached(StyleRefinement::default().size_full()),
             )
             .children(sheets)
             .children(prompts)
@@ -129,7 +128,8 @@ impl EqBody {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let graph = cx.new(|cx| Graph::new(Graph::flat_response(), window, cx).height(px(220.0)));
+        let graph = cx
+            .new(|cx| Graph::new(Graph::flat_response(), window, cx).height(Pixels::from(GRAPH_H)));
         let subscriptions = vec![
             cx.observe(&dsp, |page: &mut EqBody, _, cx| page.follow(cx)),
             observe_accent(cx),
@@ -466,10 +466,10 @@ impl Render for EqBody {
                     .gap(look.space(Space::L))
                     .child(head)
                     .child(
-                        div().h(px(290.0)).child(
+                        div().h(look.spaced(290.0)).child(
                             koan_kit::app::AnyView::from(self.graph.clone())
                                 // the bounds a cached view keeps between frames.
-                                .cached(koan_kit::raw::StyleRefinement::default().size_full()),
+                                .cached(StyleRefinement::default().size_full()),
                         ),
                     )
                     .child(chain)
@@ -492,7 +492,7 @@ impl Render for EqBody {
                 .flex()
                 .flex_col()
                 .gap(look.space(Space::L))
-                .max_w(px(720.0))
+                .max_w(look.spaced(720.0))
                 .mx_auto()
                 .p(look.space(Space::Xl))
                 .child(content)
@@ -852,9 +852,9 @@ impl EqBody {
         };
         let link = |look: &Look| {
             div()
-                .ml(px(18.0))
+                .ml(look.spaced(18.0))
                 .w(if matched { MARK } else { HAIRLINE })
-                .h(px(14.0))
+                .h(look.spaced(14.0))
                 .bg(if matched {
                     look.accent.hsla()
                 } else {
@@ -866,7 +866,7 @@ impl EqBody {
                 .flex()
                 .items_center()
                 .gap(look.space(Space::S))
-                .pl(px(8.0))
+                .pl(look.spaced(8.0))
                 .text_role(TypeRole::Meta, look)
                 .text_color(look.text_color(Tone::Muted))
                 .when(look.icons, |d| {
@@ -948,7 +948,7 @@ impl EqBody {
         }
         col.push(
             div()
-                .py(px(4.0))
+                .py(look.spaced(4.0))
                 .text_role(TypeRole::Fine, &look)
                 .text_color(look.text_color(Tone::Muted))
                 .child(label("Filters"))
@@ -1032,8 +1032,7 @@ impl EqBody {
         o: &DspOverview,
         device: &str,
         detail: Option<String>,
-        // geometry and colours computed at runtime, not chosen from the theme.
-        outline: koan_kit::raw::Hsla,
+        outline: crate::theme::Hsla,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1219,16 +1218,16 @@ impl EqBody {
             .relative()
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .py(px(4.0))
-            .min_h(px(14.0))
-            .pl(px(18.0) + look.space(Space::M))
+            .gap(look.spaced(2.0))
+            .py(look.spaced(4.0))
+            .min_h(look.spaced(14.0))
+            .pl(look.spaced(18.0) + look.space(Space::M))
             .child(
                 div()
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .left(px(18.0))
+                    .left(look.spaced(18.0))
                     .w(if matched { MARK } else { HAIRLINE })
                     .bg(if matched {
                         look.accent.hsla()
@@ -1262,8 +1261,7 @@ fn block(
     detail: Option<String>,
     db: Option<Vec<f64>>,
     stroke: Stroke,
-    // geometry and colours computed at runtime, not chosen from the theme.
-    outline: koan_kit::raw::Hsla,
+    outline: crate::theme::Hsla,
     look: &Look,
     on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
     controls: Vec<AnyElement>,
@@ -1291,7 +1289,7 @@ fn block(
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .gap(px(2.0))
+                        .gap(look.spaced(2.0))
                         .child(note(label(title), Tone::Muted, look))
                         .child(
                             div()
@@ -1316,8 +1314,7 @@ fn placeholder(
     id: &'static str,
     title: Option<&str>,
     prompt: &str,
-    // geometry and colours computed at runtime, not chosen from the theme.
-    outline: Option<koan_kit::raw::Hsla>,
+    outline: Option<crate::theme::Hsla>,
     look: &Look,
     on_click: impl Fn(&koan_kit::app::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
@@ -1325,7 +1322,7 @@ fn placeholder(
         .id(id)
         .flex()
         .flex_col()
-        .gap(px(2.0))
+        .gap(look.spaced(2.0))
         .p(look.space(Space::S))
         .border(HAIRLINE)
         .border_dashed()
@@ -1353,49 +1350,26 @@ fn placeholder(
 
 /// A curve as a small line, for a stage's block: 64 × 26, scaled to the
 /// curve's own peak (at least 6 dB) unless `range` shares one.
-pub fn thumb(db: Vec<f64>, stroke: Stroke, range: Option<f64>) -> impl IntoElement {
-    canvas(
-        |_, _, _| (),
-        move |bounds, _, window, cx| {
-            if db.len() < 2 {
-                return;
-            }
-            let look = Look::of(window, cx);
-            let range = range.unwrap_or_else(|| db.iter().fold(6.0f64, |m, v| m.max(v.abs())));
-            let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-            // painted and hit-tested by hand: drawing koan-kit has no component for.
-            let mut b = koan_kit::raw::PathBuilder::stroke(px(1.5));
-            if !stroke.dash.is_empty() {
-                let dash: Vec<_> = stroke.dash.iter().map(|d| px(*d)).collect();
-                b = b.dash_array(&dash);
-            }
-            // Two points a pixel is all a thumbnail can show.
-            let n = db.len();
-            let every = n.div_ceil((2.0 * w) as usize).max(1);
-            for (i, v) in db
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| i % every == 0 || *i == n - 1)
-            {
-                let p = bounds.origin
-                    + point(
-                        px(w * i as f32 / (n - 1) as f32),
-                        px(h / 2.0 - h / 2.0 * (*v / range) as f32),
-                    );
-                if i == 0 {
-                    b.move_to(p);
-                } else {
-                    b.line_to(p);
-                }
-            }
-            if let Ok(path) = b.build() {
-                window.paint_path(path, stroke.color(&look));
-            }
-        },
-    )
-    .w(px(64.0))
-    .h(px(26.0))
-    .flex_none()
+pub fn thumb(db: Vec<f64>, stroke: Stroke, range: Option<f64>) -> Thumb {
+    Thumb { db, stroke, range }
+}
+
+#[derive(IntoElement)]
+pub struct Thumb {
+    db: Vec<f64>,
+    stroke: Stroke,
+    range: Option<f64>,
+}
+
+impl RenderOnce for Thumb {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(window, cx);
+        let range = self
+            .range
+            .unwrap_or_else(|| self.db.iter().fold(6.0f64, |m, v| m.max(v.abs())));
+        crate::components::Sparkline::new(self.db, range, self.stroke.color(&look))
+            .dash(self.stroke.dash.to_vec())
+    }
 }
 
 /// Sets `device` from the preset `name`, or flat with none. That replaces

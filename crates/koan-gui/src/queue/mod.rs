@@ -220,7 +220,7 @@ impl QueueView {
         // The queue can arrive before the window's saved layout is read.
         let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         if view.queue.read(cx).grouped != grouped {
-            view.queue.update(cx, |queue, _| queue.regroup(grouped));
+            crate::mirror::regroup(&view.queue, grouped, cx);
         }
         view.lay_out(cx);
         view
@@ -230,10 +230,7 @@ impl QueueView {
     fn set_grouped(&mut self, grouped: bool, window: &mut Window, cx: &mut Context<Self>) {
         window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);
         window_state::save(window.window_bounds(), cx);
-        self.queue.update(cx, |queue, cx| {
-            queue.regroup(grouped);
-            cx.notify();
-        });
+        crate::mirror::regroup(&self.queue, grouped, cx);
     }
 
     /// The rows' hearts read and toggle the library's favourites.

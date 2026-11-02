@@ -12,8 +12,6 @@ use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
 use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 // overlays placed against another element.
 use koan_kit::raw::{anchored, deferred};
 
@@ -341,7 +339,7 @@ impl Render for PeoplePane {
         rows.push(buttons(
             vec![
                 div()
-                    .w(px(200.))
+                    .w(look.spaced(200.0))
                     .child(TextField::new(&self.username))
                     .into_any_element(),
                 Picker::new(
@@ -526,7 +524,7 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .w_full()
                     .items_center()
                     .gap(look.space(Space::Xs))
-                    .child(code.element(px(168.), px(12.)))
+                    .child(code.element(look.spaced(168.0), look.spaced(12.0)))
                     .child(text(
                         "Scan with a phone's camera to open it there.",
                         TypeRole::Fine,

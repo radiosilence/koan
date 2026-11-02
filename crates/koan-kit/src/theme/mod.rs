@@ -27,6 +27,8 @@ use gpui_kit::{
 };
 
 pub use accent::{Accent, AccentState, Shade};
+/// A colour as the theme hands it out, for passing a role's colour along.
+pub use gpui_kit::Hsla;
 pub use icons::{Icon, KoanIcon};
 pub use tokens::{
     DISABLED_OPACITY, FONT_FAMILY, HAIRLINE, HIT, MARK, Motion, Palette, ROW_HOVER_OPACITY,

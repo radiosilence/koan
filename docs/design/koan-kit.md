@@ -226,6 +226,18 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 `Banner::new(icon, message, tone).action(label, run)`: a line across the top of the page column for something true of every page until it is put right, the server this device cannot use. `fine` in its tone over a rule, two lines at most, the action a compact button at the far edge.
 
+### Record tile (Mac: `AlbumGridCell`, `AlbumCollection`'s tiles)
+
+`TileGrid::for_width(width, scale)` lays a record grid out: `TileColumns` across, the page's margin, each row's height with its caption, and the measures a tile's owner tells its parts apart by (`caption_lines`, `TileArt::on_heart`). `TileArt::new(side, sleeve)` is the sleeve and what lies over it: the codec and the release's badge, the play mark or the starting ellipsis over a dim, the playing bars, the share on this device as a bar along the foot, the heart on its disc, and while picking the tick and the picked outline. While a sleeve is on its way the ensō draws itself (`TileSleeve::Loading`); one that arrives fades in over the record's colour, or over that ensō where no colour stood in. The tile's one interactive element and its engine wiring stay with the page.
+
+### Lists (Mac: `KoanTable`, `NSCollectionView`)
+
+`uniform_list` and `list` with their handles, `list_scrollbar` over either, `offset_down` for a handle's offset, `OVERDRAW` for a `list`'s layout past the screen, and `width_probe`, which keeps a page's width and redraws it when it changes. A page of `TableRow`s takes `table_list`; one laying out tiles a row at a time takes these.
+
+### Names, tabs and status (Mac: `LinkText`, Settings' tabs, its status line)
+
+`link_text(id, text, ink, link_action(...))` is a name that leads somewhere, underlined under the pointer; `name_line` sets a line of them on one baseline, each ending in an ellipsis rather than cut mid-glyph. `TabStrip` is a window's tabs, glyph over label, the chosen one in the accent and underlined. `StatusLine` is the one line at a window's foot that says what is under way or how it went. `Sparkline` is a small line through a series of values, an EQ curve's thumbnail. `FormRow::compact()` takes an 80-point label column for a popover's rows. `SecondaryWindow::transparent_titlebar()` runs the content under the title bar, the window drawing its top `strip_height()` itself.
+
 ### Sheet (Mac: `koanSheet`, `KoanSheetAction`)
 
 `sheet::{panel, wide_panel, list_panel, head, head_data, search_head, band, body, foot, note, scrim}`: the square panel (`wide_panel` for a body ending in a table of paths, `list_panel` for a list to pick from), its head with the title and trailing actions, its scrolling body. `sheet::present(view)` shows a sheet that is a view of the app's own, one that lives while it shows (organise, previewing as it is typed), over the shell and under any question it asks; `sheet::close` takes it away. `sheet::Asking` is a window's one host for the question a write asks first (`confirm` with the lines that will change, `name`), drawn over the shell. Every sheet in koan-gui is built from these.

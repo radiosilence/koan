@@ -12,8 +12,6 @@ use koan_ffi::{
 use koan_kit::app::*;
 // gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
 use koan_kit::raw::component::input::{InputEvent, InputState, Textarea, TextareaState};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
 use super::graph::{Graph, Shown};
 use super::model::{Dsp, describe};
@@ -1388,6 +1386,6 @@ impl Render for SplitFlow {
                 &look,
             ))
             .child(body("split-body", &look).children(rows))
-            .child(div().h(px(0.0)))
+            .child(div().h(Pixels::ZERO))
     }
 }

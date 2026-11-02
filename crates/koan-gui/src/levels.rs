@@ -29,11 +29,11 @@ use std::time::Instant;
 use futures::StreamExt as _;
 use koan_kit::app::*;
 use koan_kit::components::{BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay};
-// the colour the caller's palette gives the bars.
-use koan_kit::raw::Hsla;
 use parking_lot::Mutex;
 
 use crate::engine::engine;
+
+use crate::theme::Hsla;
 
 /// A band below this is room tone: it never sets a ceiling, and silence is
 /// measured against it, so a quiet passage stays flat.

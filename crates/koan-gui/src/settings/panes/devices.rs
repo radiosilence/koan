@@ -9,8 +9,6 @@ use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{ConnectedInfo, ServerQueue};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
 use super::server::host;
 use crate::settings::Ctx;
@@ -596,7 +594,7 @@ impl Render for DevicesPane {
         addresses.push(buttons(
             vec![
                 div()
-                    .w(px(260.))
+                    .w(look.spaced(260.0))
                     .child(TextField::new(&self.address))
                     .into_any_element(),
                 Button::new("add-address", ButtonKind::Bordered)
@@ -661,7 +659,7 @@ impl Render for DevicesPane {
             rows.push(buttons(
                 vec![
                     div()
-                        .w(px(260.))
+                        .w(look.spaced(260.0))
                         .child(TextField::new(&self.grantee))
                         .into_any_element(),
                     Button::new("share-device", ButtonKind::Bordered)

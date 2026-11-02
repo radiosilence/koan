@@ -280,6 +280,8 @@ pub struct TileGrid {
     pub columns: usize,
     pub side: Pixels,
     pub gap: Pixels,
+    /// The margin asked for: above the first row and below the last.
+    pub margin: Pixels,
     /// Either side of a row: the margin asked for and a share of the spare
     /// width.
     pub inset: Pixels,
@@ -301,9 +303,49 @@ impl TileGrid {
             columns: columns.columns,
             side: columns.side,
             gap: columns.gap,
+            margin,
             inset: columns.inset,
             row: columns.side + Self::caption_height(scale) + px(Self::LINE_GAP),
         }
+    }
+
+    /// The grid of a page `width` wide: the page's margin clear at each
+    /// side, so the grid's edge is the header's and the rows'.
+    pub fn for_width(width: Pixels, scale: &Scale) -> Self {
+        Self::inside(width, px(Space::Xxl.points() * scale.space), scale)
+    }
+
+    /// Whether `other` places the rows as this does: the same columns and
+    /// row height, so a row is where it was and only the room between tiles
+    /// moved.
+    pub fn same_rows(&self, other: &TileGrid) -> bool {
+        self.columns == other.columns && self.row == other.row
+    }
+
+    pub fn rows(&self, items: usize) -> usize {
+        items.div_ceil(self.columns)
+    }
+
+    /// Between sleeve, title and credit, as laid out.
+    pub fn caption_gap() -> Pixels {
+        px(Self::CAPTION_GAP)
+    }
+
+    /// Where a tile's title and credit lines run, down from the sleeve's
+    /// top: what the tile's owner tells its parts apart by.
+    pub fn caption_lines(
+        look: &Look,
+        side: Pixels,
+    ) -> (std::ops::Range<f32>, std::ops::Range<f32>) {
+        let gap = Self::CAPTION_GAP;
+        let title = f32::from(look.line_height(TypeRole::Meta));
+        let credit = f32::from(look.line_height(TypeRole::Fine));
+        let title_top = f32::from(side) + gap;
+        let credit_top = title_top + title + gap;
+        (
+            title_top..title_top + title,
+            credit_top..credit_top + credit,
+        )
     }
 
     /// A tile's own height: its sleeve and caption, without the gap below.

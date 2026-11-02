@@ -20,11 +20,7 @@ use std::rc::Rc;
 use koan_ffi::{Album, AlbumSort, Artist, ArtistInfo, BrowseFilter, ReleaseSection, Track};
 use koan_kit::app::*;
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{ListAlignment, ListOffset, ListState, list};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
+use crate::components::{ListAlignment, ListOffset, ListState, list};
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -154,7 +150,7 @@ impl ArtistPage {
             width: Rc::new(Cell::new(None)),
             items: Rc::new(Vec::new()),
             grid: None,
-            list: ListState::new(0, ListAlignment::Top, px(400.0)),
+            list: ListState::new(0, ListAlignment::Top, crate::components::OVERDRAW),
             restore,
             selection: Selection::default(),
             pick: None,
@@ -310,7 +306,7 @@ impl ArtistPage {
             Item::Header => self
                 .list
                 .bounds_for_item(0)
-                .map_or(px(HEADER_GUESS), |b| b.size.height),
+                .map_or(Pixels::from(HEADER_GUESS), |b| b.size.height),
             Item::Heading(..) | Item::FeaturesHeading => Self::heading_height(p),
             Item::Tiles { .. } => grid.row,
             Item::Track(_) => rows::art_height(p),
@@ -383,7 +379,7 @@ impl ArtistPage {
             // was, rather than the top.
             None => ListOffset {
                 item_ix: anchor.item_ix.min(self.items.len().saturating_sub(1)),
-                offset_in_item: px(0.0),
+                offset_in_item: Pixels::ZERO,
             },
         }
     }
@@ -391,14 +387,14 @@ impl ArtistPage {
     /// How far down the page is scrolled, in points.
     fn offset(&self, p: &Paint) -> Pixels {
         let Some(grid) = self.grid else {
-            return px(0.0);
+            return Pixels::ZERO;
         };
         let top = self.list.logical_scroll_top();
         let above: f32 = self.items[..top.item_ix.min(self.items.len())]
             .iter()
             .map(|i| self.height(p, i, grid))
             .sum();
-        px(above) + top.offset_in_item
+        Pixels::from(above) + top.offset_in_item
     }
 
     /// Each item's distance from the screen, ranked as the grid ranks its
@@ -451,7 +447,7 @@ impl ArtistPage {
                 Item::Track(i) => {
                     if let Some(album) = record.appearances.get(*i).and_then(|t| t.album_id) {
                         ranked.push((
-                            Key::new(Art::Album(album), px(rows::SLEEVE), scale),
+                            Key::new(Art::Album(album), Pixels::from(rows::SLEEVE), scale),
                             priority,
                         ));
                     }
@@ -545,7 +541,7 @@ impl ArtistPage {
                     }
                 };
                 let sleeve = track.album_id.map(|album| {
-                    let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);
+                    let key = Key::new(Art::Album(album), Pixels::from(rows::SLEEVE), scale);
                     self.lib.covers.update(cx, |c, _| c.sleeve(key))
                 });
                 let feed = self.lib.feed.read(cx);
@@ -595,7 +591,7 @@ impl ArtistPage {
                 cx.notify();
             })
         }));
-        let height = grid.row - px(tile::LINE_GAP);
+        let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(albums.len());
         for album in albums {
             let record = self
@@ -946,17 +942,7 @@ impl Render for ArtistPage {
         let p = &Paint::of(window, cx);
         let width = self.width.clone();
         let entity = cx.entity_id();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if width.get() != Some(bounds.size.width) {
-                    width.set(Some(bounds.size.width));
-                    cx.notify(entity);
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
+        let measure = crate::components::width_probe(width, entity);
 
         // Cut again when the record or the columns change; the scroll goes
         // back to where it was left once there is content under it.
@@ -1021,7 +1007,7 @@ impl Render for ArtistPage {
                     .min_h_0()
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.list)),
+                    .child(crate::components::list_scrollbar(&self.list)),
                 cx.weak_entity(),
                 window,
                 cx,
@@ -1096,7 +1082,7 @@ mod tests {
             features: vec![album(9, ReleaseSection::Albums)],
             appearances: Vec::new(),
         };
-        let grid = Grid::for_width(px(560.0), &Scale::of(100));
+        let grid = Grid::for_width(Pixels::from(560.0), &Scale::of(100));
         assert_eq!(grid.columns, 3);
         let items = ArtistPage::cut(&record, grid);
         let shape: Vec<String> = items

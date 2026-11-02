@@ -9,8 +9,6 @@ use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use koan_ffi::{ConnectionInfo, Settings};
 use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::px;
 
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};
@@ -605,7 +603,11 @@ impl ServerPane {
         if shown == Keeping::Limited {
             rows.push(
                 Row::new("Limit in GB")
-                    .control(div().w(px(120.)).child(TextField::new(&self.cache_limit)))
+                    .control(
+                        div()
+                            .w(look.spaced(120.0))
+                            .child(TextField::new(&self.cache_limit)),
+                    )
                     .into_any_element(),
             );
         }
