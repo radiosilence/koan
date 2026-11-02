@@ -30,7 +30,9 @@ pub struct WindowRoot {
     wash_tint: u32,
     /// The sleeve on its way; replacing it drops the one before.
     fetching: Option<Task<()>>,
-    _subscriptions: [Subscription; 4],
+    /// The wash shows the rainbow's sheen.
+    rainbow: bool,
+    _subscriptions: [Subscription; 6],
     /// The playing bars moved: painted again over the cached content.
     /// This window's bars, where they are quads, and whether it shows.
     _levels: [Option<Subscription>; 2],
@@ -51,6 +53,7 @@ impl WindowRoot {
         let (record_colours, wash_tint) = (theme.record_colours, theme.wash_tint);
         let followed = playback.clone();
         let shown = playback.clone();
+        let painted = playback.clone();
         let mut root = Self {
             wash: cx.new(|_| Wash::new()),
             content: content.into(),
@@ -58,6 +61,7 @@ impl WindowRoot {
             record_colours,
             wash_tint,
             fetching: None,
+            rainbow: false,
             _subscriptions: [
                 cx.observe_global::<ShownRecord>(move |this, cx| this.follow(&shown, false, cx)),
                 theme::follow_appearance(window, cx),
@@ -65,6 +69,16 @@ impl WindowRoot {
                     this.follow(&playback, false, cx)
                 }),
                 cx.observe_global::<KoanTheme>(move |this, cx| this.restyle(&followed, cx)),
+                // The rainbow drawn or put away: its sheen, or the record's
+                // sleeve and accent back.
+                cx.observe_global::<crate::rainbow::Painted>(move |this, cx| {
+                    this.follow(&painted, true, cx)
+                }),
+                // Its accent cycles only while a window is in front.
+                cx.observe_window_activation(window, |_, _, cx| {
+                    let active = cx.active_window().is_some();
+                    crate::rainbow::set_active(active, cx);
+                }),
             ],
             _levels: [
                 crate::levels::feed(window.window_handle().window_id(), cx)
@@ -115,6 +129,21 @@ impl WindowRoot {
             .or_else(|| now.entry.as_ref().and_then(|entry| entry.album_id))
             .filter(|_| self.record_colours);
         self.wash.update(cx, |wash, cx| wash.drift(playing, cx));
+        // The rainbow paints over the record: its sheen in the wash, its
+        // accent its own. The record's is fetched again once it goes.
+        if crate::rainbow::Rainbow::drawn(cx) {
+            // Painted once on the way in, and again only when what is painted
+            // changes; a change to what plays leaves it be.
+            if !self.rainbow || again {
+                self.rainbow = true;
+                self.album = None;
+                self.fetching = None;
+                let sheen = crate::rainbow::Rainbow::sheen(cx);
+                self.wash.update(cx, |wash, cx| wash.set_sleeve(sheen, cx));
+            }
+            return;
+        }
+        self.rainbow = false;
         if album == self.album && !again {
             return;
         }
