@@ -960,7 +960,6 @@ impl PlaylistPage {
             }
         };
         row_frame
-            .group(id)
             .selected(selected)
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)

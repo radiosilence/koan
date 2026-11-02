@@ -129,7 +129,6 @@ impl Button {
         self
     }
 
-    /// In `bad`, for a compact or bordered button that destroys something.
     /// Its label and glyph in `tone` rather than the kind's: a favourite in
     /// the accent while it is on.
     pub fn tone(mut self, tone: Tone) -> Self {
@@ -137,6 +136,7 @@ impl Button {
         self
     }
 
+    /// In `bad`, for a compact or bordered button that destroys something.
     pub fn destructive(mut self, destructive: bool) -> Self {
         self.destructive = destructive;
         self

@@ -1,0 +1,1 @@
+- **Hearts appear again on the desktop app's queue rows under the pointer.** The output menu's EQ button opens that device's EQ, the sidebar's resize grip no longer covers the controls beside it, and copying a share link says whether it worked.
