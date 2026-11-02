@@ -62,33 +62,36 @@ impl TransportMetrics {
         look.spaced(12.0)
     }
 
-    /// The play button's outline: an outlined icon button around a `body`
-    /// glyph, its padding (the hairline drawn inside it) included.
-    pub fn play_outline(look: &Look) -> Pixels {
-        px(crate::theme::icons::side(
-            look.points(crate::theme::TypeRole::Body),
-        )) + look.spaced(7.0) * 2.0
-    }
-
     /// The seek row as the Mac lays it out: its line's reach, 14 points.
     const SEEK_ROW: f32 = 14.0;
     /// Between the controls and the seek row, the Mac's stack spacing.
     const STACK_GAP: f32 = 5.0;
 
-    /// Where the centre column's two rows stand, from the bar's top (its
-    /// rule included): the play button's outline and the seek line's centre.
-    /// The controls, the gap and the seek row are centred in the bar, so the
-    /// space above the outline equals the space below the seek row, as the
-    /// Mac's transport measures at 2x (7.5 points each in its 64).
+    /// Where the centre column's rows stand, measured from below the bar's
+    /// rule, which the column sits under: the play button's outline, the
+    /// controls' hit row and the seek row. The outline, the gap and the seek
+    /// line's row are centred in the bar, so the space above the outline
+    /// equals the space below the seek row, as the Mac's transport measures
+    /// at 2x (7.5 points each in its 64). The controls' hit row is centred on
+    /// the outline, as tall as `HIT` where there is room and never reaching
+    /// above the rule or into the seek row, so a click in it never seeks.
     pub fn centre_rows(look: &Look) -> CentreRows {
-        let outline = Self::play_outline(look);
+        let inner = Self::HEIGHT - crate::theme::HAIRLINE;
+        let outline = super::ButtonKind::IconOutlined.glyph_side(look);
         let gap = look.spaced(Self::STACK_GAP);
         let row = look.spaced(Self::SEEK_ROW);
-        let margin = ((Self::HEIGHT - outline - gap - row) / 2.).max(px(0.));
+        let margin = ((inner - outline - gap - row) / 2.).max(px(0.));
+        let track_centre = margin + outline + gap + row / 2.;
+        let seek_top = (track_centre - Self::SEEK / 2.).max(margin + outline);
+        let centre = margin + outline / 2.;
+        let half = (crate::theme::HIT / 2.).min(centre).min(seek_top - centre);
         CentreRows {
             outline_top: margin,
             outline,
-            track_centre: margin + outline + gap + row / 2.,
+            controls_top: centre - half,
+            controls_height: half * 2.,
+            seek_top,
+            track_centre,
         }
     }
 
@@ -100,11 +103,17 @@ impl TransportMetrics {
     }
 }
 
-/// The centre column's rows, from `TransportMetrics::centre_rows`.
+/// The centre column's rows, from `TransportMetrics::centre_rows`, below
+/// the bar's rule.
 #[derive(Clone, Copy, Debug)]
 pub struct CentreRows {
     pub outline_top: Pixels,
     pub outline: Pixels,
+    /// The controls' hit row: they fill it, their glyphs on its middle.
+    pub controls_top: Pixels,
+    pub controls_height: Pixels,
+    /// The seek row's top, `SEEK` tall.
+    pub seek_top: Pixels,
     pub track_centre: Pixels,
 }
 
@@ -231,9 +240,15 @@ impl RowMetrics {
 
     /// A page's margin on every side, and what a row's content is inset by
     /// so it lines up under the page's header. One figure, so the page's
-    /// edge is tuned in one place; 16 for now, where the spec gives 32.
+    /// edge is tuned in one place: 16, as the Swift lists use (the spec gives 32).
     pub fn page_margin(look: &Look) -> Pixels {
-        look.space(Space::L)
+        Self::page_margin_on(&look.scale)
+    }
+
+    /// `page_margin` for a layout that has the scale and not the look: a
+    /// tile grid working out its columns.
+    pub fn page_margin_on(scale: &Scale) -> Pixels {
+        px(Space::L.points() * scale.space)
     }
 
     /// Above a page's header: the page's margin, as the spec has it on
@@ -280,6 +295,8 @@ pub struct TileGrid {
     pub columns: usize,
     pub side: Pixels,
     pub gap: Pixels,
+    /// The margin asked for: above the first row and below the last.
+    pub margin: Pixels,
     /// Either side of a row: the margin asked for and a share of the spare
     /// width.
     pub inset: Pixels,
@@ -301,9 +318,49 @@ impl TileGrid {
             columns: columns.columns,
             side: columns.side,
             gap: columns.gap,
+            margin,
             inset: columns.inset,
             row: columns.side + Self::caption_height(scale) + px(Self::LINE_GAP),
         }
+    }
+
+    /// The grid of a page `width` wide: the page's margin clear at each
+    /// side, so the grid's edge is the header's and the rows'.
+    pub fn for_width(width: Pixels, scale: &Scale) -> Self {
+        Self::inside(width, RowMetrics::page_margin_on(scale), scale)
+    }
+
+    /// Whether `other` places the rows as this does: the same columns and
+    /// row height, so a row is where it was and only the room between tiles
+    /// moved.
+    pub fn same_rows(&self, other: &TileGrid) -> bool {
+        self.columns == other.columns && self.row == other.row
+    }
+
+    pub fn rows(&self, items: usize) -> usize {
+        items.div_ceil(self.columns)
+    }
+
+    /// Between sleeve, title and credit, as laid out.
+    pub fn caption_gap() -> Pixels {
+        px(Self::CAPTION_GAP)
+    }
+
+    /// Where a tile's title and credit lines run, down from the sleeve's
+    /// top: what the tile's owner tells its parts apart by.
+    pub fn caption_lines(
+        look: &Look,
+        side: Pixels,
+    ) -> (std::ops::Range<f32>, std::ops::Range<f32>) {
+        let gap = Self::CAPTION_GAP;
+        let title = f32::from(look.line_height(TypeRole::Meta));
+        let credit = f32::from(look.line_height(TypeRole::Fine));
+        let title_top = f32::from(side) + gap;
+        let credit_top = title_top + title + gap;
+        (
+            title_top..title_top + title,
+            credit_top..credit_top + credit,
+        )
     }
 
     /// A tile's own height: its sleeve and caption, without the gap below.
@@ -315,6 +372,61 @@ impl TileGrid {
     pub fn caption_height(scale: &Scale) -> Pixels {
         let line = |role: TypeRole| role.points() * scale.text * role.line_height();
         px(Self::CAPTION_GAP + line(TypeRole::Meta) + Self::CAPTION_GAP + line(TypeRole::Fine))
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use crate::theme::{Accent, Palette};
+
+    fn look(text_size: u32) -> Look {
+        Look {
+            dark: true,
+            palette: Palette::of(true),
+            accent: Accent::of(None).shade(true),
+            scale: Scale::of(text_size),
+            icons: true,
+        }
+    }
+
+    #[test]
+    fn the_rows_stay_in_the_bar_and_apart_at_every_text_size() {
+        for size in (*crate::theme::tokens::TEXT_SIZES.start()
+            ..=*crate::theme::tokens::TEXT_SIZES.end())
+            .step_by(5)
+        {
+            let look = look(size);
+            let rows = TransportMetrics::centre_rows(&look);
+            let inner = TransportMetrics::HEIGHT - crate::theme::HAIRLINE;
+            assert!(
+                rows.controls_top >= px(0.),
+                "{size}%: controls above the rule"
+            );
+            assert!(
+                rows.controls_top + rows.controls_height <= rows.seek_top + px(0.01),
+                "{size}%: the controls reach into the seek row"
+            );
+            assert!(
+                rows.seek_top + TransportMetrics::SEEK <= inner + px(0.01) || size > 120,
+                "{size}%: the seek row below the bar"
+            );
+            let centre = rows.outline_top + rows.outline / 2.;
+            assert!(
+                (rows.controls_top + rows.controls_height / 2. - centre).abs() < px(0.01),
+                "{size}%: the controls' glyphs off the outline's middle"
+            );
+        }
+    }
+
+    #[test]
+    fn at_100_percent_the_space_above_the_outline_equals_that_below_the_seek_row() {
+        let look = look(100);
+        let rows = TransportMetrics::centre_rows(&look);
+        let inner = TransportMetrics::HEIGHT - crate::theme::HAIRLINE;
+        let row = look.spaced(TransportMetrics::SEEK_ROW);
+        let below = inner - (rows.track_centre + row / 2.);
+        assert!((rows.outline_top - below).abs() < px(0.01));
     }
 }
 

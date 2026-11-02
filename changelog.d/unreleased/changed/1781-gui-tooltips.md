@@ -1,0 +1,1 @@
+- **Icon-only buttons in the kōan GUI app say what they do.** Removing a library folder, a person's menu, forgetting a device and waking an Apple TV are named in their tooltips, and koan-kit now makes a glyph-only button without one hard to write.

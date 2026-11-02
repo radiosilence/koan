@@ -147,7 +147,10 @@ pub struct QueueView {
     /// The transport is playing: the cursor's row moves its bars only then,
     /// and shows the play mark while paused or stopped.
     playing: bool,
-    _subscriptions: [Subscription; 6],
+    /// The rest of the queue can be shuffled in place: there is a rest, and
+    /// shuffle play is off (it keeps an order of its own beside the queue).
+    shufflable: bool,
+    _subscriptions: [Subscription; 7],
 }
 
 impl QueueView {
@@ -156,7 +159,16 @@ impl QueueView {
         let covers = cx.global::<CoversHandle>().0.clone();
         let lock = cx.global::<Mirror>().lock.clone();
         let playhead = cx.global::<Mirror>().playhead.clone();
+        let playback = cx.global::<Mirror>().playback.clone();
         let subscriptions = [
+            cx.observe(&playback, |this, playback, cx| {
+                let now = &playback.read(cx).0;
+                let shufflable = now.queue_shufflable && !now.shuffle;
+                if shufflable != this.shufflable {
+                    this.shufflable = shufflable;
+                    cx.notify();
+                }
+            }),
             // Redrawn only when playing starts or stops, not for every anchor.
             cx.observe(&playhead, |this, playhead, cx| {
                 let playing = playhead.read(cx).playing;
@@ -215,12 +227,16 @@ impl QueueView {
             followed: None,
             followed_row: None,
             playing: cx.global::<Mirror>().playhead.read(cx).playing,
+            shufflable: {
+                let now = &cx.global::<Mirror>().playback.read(cx).0;
+                now.queue_shufflable && !now.shuffle
+            },
             _subscriptions: subscriptions,
         };
         // The queue can arrive before the window's saved layout is read.
         let grouped = window_state::GROUPED.load(std::sync::atomic::Ordering::Relaxed);
         if view.queue.read(cx).grouped != grouped {
-            view.queue.update(cx, |queue, _| queue.regroup(grouped));
+            crate::mirror::regroup(&view.queue, grouped, cx);
         }
         view.lay_out(cx);
         view
@@ -230,10 +246,7 @@ impl QueueView {
     fn set_grouped(&mut self, grouped: bool, window: &mut Window, cx: &mut Context<Self>) {
         window_state::GROUPED.store(grouped, std::sync::atomic::Ordering::Relaxed);
         window_state::save(window.window_bounds(), cx);
-        self.queue.update(cx, |queue, cx| {
-            queue.regroup(grouped);
-            cx.notify();
-        });
+        crate::mirror::regroup(&self.queue, grouped, cx);
     }
 
     /// The rows' hearts read and toggle the library's favourites.
@@ -1068,7 +1081,24 @@ pub(crate) fn track(
     // plays, moving with the music; a tick once played; the pending square
     // while it waits; next in line to download, or failed.
     let quiet = if look.picked { p.on_selection } else { p.rule };
+    // What the mark means, said when the pointer rests on it.
+    let meaning = match item.status {
+        EntryStatus::Playing => Some("playing"),
+        EntryStatus::Played => Some("played"),
+        EntryStatus::PriorityPending => Some("downloads next"),
+        EntryStatus::Failed => Some("couldn't be played"),
+        EntryStatus::Queued | EntryStatus::Downloading if look.waiting => {
+            Some("waiting for its download")
+        }
+        EntryStatus::Queued | EntryStatus::Downloading => None,
+    };
     let mark = div()
+        .id(look.id("status", 0))
+        .when_some(meaning, |d, meaning| {
+            d.tooltip(move |window, cx| {
+                crate::components::Tooltip::view(crate::theme::label(meaning), window, cx)
+            })
+        })
         .text_role(TypeRole::Fine, &p.look)
         .map(|d| match item.status {
             // Bars only while the music moves them, and in the look that
@@ -1126,6 +1156,7 @@ pub(crate) fn track(
             AVAILABILITY_WORD
         },
         AvailabilityMark::new(extras.availability.clone())
+            .id(look.id("availability", 0))
             .picked(look.picked)
             .into_any_element(),
     )
@@ -1265,7 +1296,7 @@ impl QueueView {
         let queue = self.queue.read(cx);
         let count = queue.items.len() as u64;
         let grouped = queue.grouped;
-        let track_ids: Vec<i64> = queue.items.iter().filter_map(|i| i.track_id).collect();
+        let saveable = queue.items.iter().any(|i| i.track_id.is_some());
         let picked = self.selected.len();
         let view = cx.entity();
         let mut controls = ToolbarGroup::new();
@@ -1311,7 +1342,9 @@ impl QueueView {
                     Icon::Reshuffle,
                     "shuffle the rest of the queue",
                 )
-                .disabled(count < 2)
+                // As the Mac refuses it: nothing after the cursor, or shuffle
+                // play on, which keeps an order of its own.
+                .disabled(!self.shufflable)
                 .on_click(|_, _, cx| command(cx, "shuffle queue", |e| e.shuffle_queue())),
             )
             .child(
@@ -1330,26 +1363,34 @@ impl QueueView {
                 ToolbarButton::new("queue-redo", Icon::Redo, "redo")
                     .on_click(|_, _, cx| command(cx, "redo", |e| e.redo(None))),
             )
-            .child(more(count, track_ids))
+            .child(more(count, saveable))
             .into_any_element()
     }
 }
 
-/// The queue's ⋯: saving it as a playlist, and clearing it.
-fn more(count: u64, track_ids: Vec<i64>) -> impl IntoElement {
+/// The queue's ⋯: saving it as a playlist, and clearing it. Its tracks are
+/// read as "save" is chosen, not each time the toolbar draws.
+fn more(count: u64, saveable: bool) -> impl IntoElement {
     ToolbarMenu::new(
         "queue-more",
         ToolbarButton::new("queue-more-trigger", Icon::More, "more"),
         move |dismiss, _, _| {
-            let ids = track_ids.clone();
             let close = dismiss.clone();
             MenuPanel::new()
                 .child(
                     MenuRow::new("queue-save", "save as playlist…")
-                        .disabled(ids.is_empty())
+                        .disabled(!saveable)
                         .on_click(move |_, window, cx| {
                             close(window, cx);
-                            save(ids.clone(), window, cx);
+                            let ids: Vec<i64> = cx
+                                .global::<Mirror>()
+                                .queue
+                                .read(cx)
+                                .items
+                                .iter()
+                                .filter_map(|i| i.track_id)
+                                .collect();
+                            save(ids, window, cx);
                         }),
                 )
                 .child(

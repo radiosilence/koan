@@ -2,10 +2,10 @@
 //! per render, and setting text in a role.
 
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::Hsla;
 
 use crate::theme::{KoanStyled, TypeRole, tokens as theme};
+
+use crate::theme::Hsla;
 
 pub use crate::theme::TypeRole as Type;
 

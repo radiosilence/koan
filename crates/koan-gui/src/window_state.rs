@@ -12,8 +12,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use koan_kit::app::*;
 // the platform window and its options.
 use koan_kit::raw::WindowBounds;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px, size};
 
 pub const FILE: &str = "desktop-window";
 
@@ -52,7 +50,16 @@ pub fn read() -> Option<Saved> {
     }
     GROUPED.store(next().is_none_or(|on| on != 0.0), Ordering::Relaxed);
     Some(Saved {
-        bounds: Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
+        bounds: Bounds::new(
+            Point {
+                x: Pixels::from(x),
+                y: Pixels::from(y),
+            },
+            Size {
+                width: Pixels::from(w),
+                height: Pixels::from(h),
+            },
+        ),
         maximized,
     })
 }

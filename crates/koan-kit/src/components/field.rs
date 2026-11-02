@@ -5,7 +5,9 @@ use gpui_kit::component::input::{Input, InputState};
 /// its `InputEvent`s.
 pub use gpui_kit::component::input::{InputEvent, InputState as FieldState};
 use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{App, Entity, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px};
+use gpui_kit::{
+    App, Entity, Focusable, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
+};
 
 use crate::theme::{KoanStyled, Look, Space, TypeRole};
 

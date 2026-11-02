@@ -1,0 +1,1 @@
+- **The desktop app's transport controls never seek by mistake.** A click low on shuffle, previous, next or repeat seeked; the controls and the seek bar are now laid out apart at every text size.

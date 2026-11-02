@@ -433,7 +433,25 @@ impl Shell {
             )
             // The toolbar's bare space moves the window, and its buttons do
             // not: a press that wobbles on back is still a click.
-            .principal(Self::moves_window(div().id("toolbar-drag"), cx).size_full())
+            .principal(
+                Self::moves_window(div().id("toolbar-drag"), cx)
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    // With the sidebar hidden nothing else names the pages
+                    // with no header of their own.
+                    .children(
+                        (!self.sidebar_shown)
+                            .then(|| match route {
+                                Route::Queue => Some("queue"),
+                                Route::History => Some("history"),
+                                Route::Downloads => Some("downloads"),
+                                _ => None,
+                            })
+                            .flatten()
+                            .map(crate::components::ToolbarTitle::new),
+                    ),
+            )
             .when_some(page, |toolbar, page| toolbar.trailing(page))
             .trailing(
                 ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics")
@@ -485,7 +503,7 @@ impl Render for Shell {
             self.lyrics = None;
         }
         let p = Paint::of(window, cx);
-        let washed = cx.global::<theme::KoanTheme>().wash_window;
+        let washed = theme::KoanTheme::washes_window(cx);
         let transport = {
             let transport = self.transport.clone();
             move || {

@@ -5,7 +5,8 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Hsla, IntoElement, ParentElement, RenderOnce, Styled, Window, div,
+    AnyElement, App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 
 use super::{Glide, ProgressRing, SHADED};
@@ -13,7 +14,7 @@ use super::{Glide, ProgressRing, SHADED};
 /// A running transfer's glide in the colour its ring is drawn in: a glide
 /// carries its ring's colour, so a picked row's ring has its own.
 pub type RingGlide = Rc<dyn Fn(Hsla, &mut App) -> Glide>;
-use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole, label};
 
 #[derive(Clone)]
 pub enum Availability {
@@ -62,14 +63,22 @@ impl Availability {
 pub struct AvailabilityMark {
     state: Option<Availability>,
     picked: bool,
+    id: Option<ElementId>,
 }
 
 impl AvailabilityMark {
+    /// Names the mark, so it says what it means in a tooltip.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
     /// `None` draws an empty slot: a track with no file anywhere.
     pub fn new(state: Option<Availability>) -> Self {
         Self {
             state,
             picked: false,
+            id: None,
         }
     }
 
@@ -99,6 +108,7 @@ impl RenderOnce for AvailabilityMark {
                 div().text_color(color).child(word).into_any_element()
             }
         };
+        let help = self.state.as_ref().and_then(Availability::help);
         let inner = self.state.map(|state| match state {
             Availability::Pending => mark(Icon::Downloads, "next", accent),
             Availability::Queued => mark(Icon::Downloads, "queued", muted),
@@ -122,10 +132,17 @@ impl RenderOnce for AvailabilityMark {
                 (false, false) => div().into_any_element(),
             },
         });
-        div()
+        let mark = div()
             .flex()
             .justify_end()
             .text_role(TypeRole::Fine, &look)
-            .children(inner)
+            .children(inner);
+        match (self.id, help) {
+            (Some(id), Some(help)) => mark
+                .id(id)
+                .tooltip(move |window, cx| super::Tooltip::view(label(help), window, cx))
+                .into_any_element(),
+            _ => mark.into_any_element(),
+        }
     }
 }

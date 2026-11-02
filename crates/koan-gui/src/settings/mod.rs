@@ -16,19 +16,13 @@ mod sheet;
 
 use std::sync::Arc;
 
-use crate::theme::{
-    self, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole, label,
-};
+use crate::theme::{self, Icon, KoanStyled, KoanTheme, Look, Space, Tone};
 use koan_ffi::{ConnectionInfo, KoanEngine};
 use koan_kit::app::*;
 // gpui-component's focus and click extensions, for the shell's own handling.
 use koan_kit::raw::base::Root;
-// the bounds a cached view keeps between frames.
-use koan_kit::raw::StyleRefinement;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{px, relative, size};
-// the platform window and its options.
-use koan_kit::raw::{Decorations, TitlebarOptions, WindowBounds, WindowOptions};
+// whether the compositor leaves the window's decorations to the app.
+use koan_kit::raw::Decorations;
 
 use crate::mirror::{Mirror, Slice};
 use model::SettingsModel;
@@ -112,19 +106,11 @@ pub fn open(cx: &mut App) {
     // Activation is not reported by every Linux compositor, so the file is
     // read again on opening as well.
     model.update(cx, |model, cx| model.reload(cx));
-    let bounds = Bounds::centered(None, size(px(900.), px(820.)), cx);
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        window_min_size: Some(size(px(600.), px(480.))),
-        titlebar: Some(TitlebarOptions {
-            // Hidden on macOS; what task switchers show elsewhere.
-            title: Some("Settings".into()),
-            appears_transparent: true,
-            traffic_light_position: None,
-        }),
-        app_id: Some("koan-gui".into()),
-        ..Default::default()
-    };
+    let options = crate::components::SecondaryWindow::new("Settings", crate::app::APP_ID)
+        .size(900.0, 820.0)
+        .min(600.0, 480.0)
+        .transparent_titlebar()
+        .options(cx);
     let opened = cx.open_window(options, |window, cx| {
         let view = cx.new(|cx| SettingsWindow::new(Tab::Library, window, cx));
         cx.new(|cx| Root::new(view, window, cx))
@@ -447,27 +433,21 @@ impl Render for SettingsWindow {
         let look = Look::of(window, cx);
         let tabs = self.tabs(cx);
         let entity = cx.entity();
-        let row = div()
-            .flex()
-            .justify_center()
-            .gap(look.space(Space::L))
-            .px(look.space(Space::M))
-            .pb(look.space(Space::Xs))
-            .children(tabs.into_iter().map(|tab| {
+        let row = tabs
+            .into_iter()
+            .fold(crate::components::TabStrip::new(), |strip, tab| {
                 let entity = entity.clone();
-                tab_item(tab, tab == self.tab, &look).on_click(move |_, window, cx| {
-                    entity.update(cx, |this, cx| this.choose(tab, window, cx))
-                })
-            }));
-        let status = status_line(self.ctx.model.read(cx), &look);
+                strip.tab(
+                    tab.icon(),
+                    tab.title(),
+                    tab == self.tab,
+                    move |_, window, cx| entity.update(cx, |this, cx| this.choose(tab, window, cx)),
+                )
+            });
+        let status = status_line(self.ctx.model.read(cx));
         let sheets = self.ctx.sheets.clone();
         let sheet = Sheets::render(&sheets, &look, window, cx);
-        let fill = || {
-            let mut style = StyleRefinement::default();
-            style.size.width = Some(relative(1.0).into());
-            style.size.height = Some(relative(1.0).into());
-            style
-        };
+        let fill = || StyleRefinement::default().size_full();
         div()
             .relative()
             .size_full()
@@ -500,7 +480,7 @@ impl SettingsWindow {
             .flex()
             .justify_end()
             .items_center()
-            .h(px(if cfg!(target_os = "macos") { 30. } else { 28. }))
+            .h(crate::components::SecondaryWindow::strip_height())
             .px(look.space(Space::S))
             .on_mouse_down(
                 MouseButton::Left,
@@ -518,19 +498,14 @@ impl SettingsWindow {
             }))
             .when(client, |strip| {
                 strip.child(
-                    crate::components::Button::new(
-                        "settings-close",
-                        crate::components::ButtonKind::Toolbar,
-                    )
-                    .label("Close")
-                    .icon(Icon::Close)
-                    .on_click({
-                        let sheets = self.ctx.sheets.clone();
-                        move |_, window, cx| {
-                            answer_unanswered(&sheets, window, cx);
-                            window.remove_window();
-                        }
-                    }),
+                    crate::components::ToolbarButton::new("settings-close", Icon::Close, "close")
+                        .on_click({
+                            let sheets = self.ctx.sheets.clone();
+                            move |_, window, cx| {
+                                answer_unanswered(&sheets, window, cx);
+                                window.remove_window();
+                            }
+                        }),
                 )
             })
     }
@@ -558,44 +533,10 @@ fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App)
     }
 }
 
-/// A Settings tab, as the spec draws the Mac's: the label in `fine`,
-/// lowercase, under its glyph when icons are on; `muted`, and the chosen one
-/// `accent` and underlined.
-fn tab_item(tab: Tab, selected: bool, look: &Look) -> Stateful<Div> {
-    let id = ElementId::Name(tab.title().into());
-    let tone = if selected { Tone::Accent } else { Tone::Muted };
-    let color = look.text_color(tone);
-    div()
-        .id(id)
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(look.space(Space::Xs))
-        .px(look.space(Space::S))
-        .pt(look.space(Space::S))
-        .cursor_pointer()
-        .text_role(TypeRole::Fine, look)
-        .text_color(color)
-        .when(look.icons, |item| {
-            item.child(KoanIcon::new(tab.icon()).role(TypeRole::Title).color(color))
-        })
-        .child(
-            div()
-                .pb(px(5.))
-                .border_b(HAIRLINE)
-                .border_color(if selected {
-                    look.accent.hsla()
-                } else {
-                    look.accent.hsla().opacity(0.)
-                })
-                .child(label(tab.title())),
-        )
-}
-
 /// The result of the last action, or why it failed: one line, always in the
 /// same place, since an action that reports nothing looks like it did
 /// nothing.
-fn status_line(model: &SettingsModel, look: &Look) -> Div {
+fn status_line(model: &SettingsModel) -> crate::components::StatusLine {
     let running: Vec<&str> = model.running().map(SharedString::as_ref).collect();
     let (text, tone, icon) = match (&model.last_error, &model.last_result) {
         (Some(error), _) => (error.clone(), Tone::Bad, Some(Icon::WarningFilled)),
@@ -608,18 +549,5 @@ fn status_line(model: &SettingsModel, look: &Look) -> Div {
         (None, Some(result)) => (result.clone(), Tone::Muted, Some(Icon::Success)),
         (None, None) => (SharedString::default(), Tone::Muted, None),
     };
-    let color = look.text_color(tone);
-    div()
-        .flex()
-        .items_center()
-        .gap(look.space(Space::Xs))
-        .min_h(look.line_height(TypeRole::Fine) * 2. + look.space(Space::S) * 2.)
-        .px(look.space(Space::L))
-        .py(look.space(Space::S))
-        .border_t(HAIRLINE)
-        .border_color(look.palette.rule.hsla())
-        .text_role(TypeRole::Fine, look)
-        .text_color(color)
-        .children(icon.map(|icon| KoanIcon::new(icon).role(TypeRole::Fine).color(color)))
-        .child(div().line_clamp(2).child(text))
+    crate::components::StatusLine::new(text, tone, icon)
 }

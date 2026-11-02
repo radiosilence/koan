@@ -1,6 +1,7 @@
 //! A transport control (shuffle, previous, next, repeat): the glyph in
-//! `body`, or its word where the look hides icons, 44 points to hit but only
-//! the glyph's width in the layout, so the controls sit as far apart as the
+//! `body`, or its word where the look hides icons, 44 points wide to hit
+//! and as tall as the controls' row, but only the glyph's width in the
+//! layout, so the controls sit as far apart as the
 //! Mac's while the hit area reaches into the gaps. One that toggles is `ink`
 //! underlined in the accent while on and `muted` off. A press is answered
 //! with a ring.
@@ -84,7 +85,7 @@ impl RenderOnce for TransportControl {
             .relative()
             .w(HIT)
             .mx(-reach)
-            .h(HIT)
+            .h_full()
             .flex()
             .items_center()
             .justify_center()

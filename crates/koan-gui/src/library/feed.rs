@@ -197,9 +197,12 @@ impl Feed {
                 let now = answer
                     .inspect_err(|e| log::warn!("favourite {item:?}: {e}"))
                     .unwrap_or(!on);
-                feed.favourites.answered(item, now);
-                feed.favourites_revision += 1;
-                feed.reload_favourites(cx);
+                // Read again once the last click on this heart is answered:
+                // a sync or another device may have moved others since.
+                if feed.favourites.answered(item, now) {
+                    feed.favourites_revision += 1;
+                    feed.reload_favourites(cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -300,7 +303,10 @@ impl Feed {
 #[derive(Default)]
 struct Favourites {
     set: HashSet<Playable>,
-    pending: HashMap<Playable, bool>,
+    /// Hearts clicked and not yet answered: the state shown, and how many
+    /// toggles are in flight. Only the last answer is applied, since each
+    /// click toggles the engine again.
+    pending: HashMap<Playable, (bool, u32)>,
     edits: u64,
 }
 
@@ -321,17 +327,30 @@ impl Favourites {
     fn flip(&mut self, item: Playable) -> bool {
         let on = !self.contains(item);
         self.put(item, on);
-        self.pending.insert(item, on);
+        let pending = self.pending.entry(item).or_insert((on, 0));
+        *pending = (on, pending.1 + 1);
         self.edits += 1;
         on
     }
 
     /// The engine's answer: the state it wrote, or the state before the
-    /// click when the write failed.
-    fn answered(&mut self, item: Playable, now: bool) {
-        self.pending.remove(&item);
-        self.put(item, now);
+    /// click when the write failed. An earlier click's answer while a later
+    /// one is in flight leaves the later click's state shown. Whether this
+    /// was the last answer.
+    fn answered(&mut self, item: Playable, now: bool) -> bool {
+        let last = match self.pending.get_mut(&item) {
+            Some((_, in_flight)) if *in_flight > 1 => {
+                *in_flight -= 1;
+                false
+            }
+            _ => true,
+        };
+        if last {
+            self.pending.remove(&item);
+            self.put(item, now);
+        }
         self.edits += 1;
+        last
     }
 
     /// A read that started at `edits` landing. Whether it was applied.
@@ -340,7 +359,7 @@ impl Favourites {
             return false;
         }
         self.set = read;
-        let pending: Vec<_> = self.pending.iter().map(|(i, on)| (*i, *on)).collect();
+        let pending: Vec<_> = self.pending.iter().map(|(i, (on, _))| (*i, *on)).collect();
         for (item, on) in pending {
             self.put(item, on);
         }
@@ -378,6 +397,23 @@ mod tests {
         let started = f.edits;
         assert!(f.read_landed(started, [TRACK].into()));
         assert!(f.contains(TRACK));
+    }
+
+    #[test]
+    fn two_quick_clicks_keep_the_second_until_its_answer() {
+        let mut f = Favourites::default();
+        assert!(f.flip(TRACK));
+        assert!(!f.flip(TRACK));
+        // The first click's answer: the engine wrote it on, but the second
+        // click is still out, so the heart stays off.
+        assert!(!f.answered(TRACK, true));
+        assert!(!f.contains(TRACK));
+        // A read landing between the answers keeps the second click's state.
+        let started = f.edits;
+        assert!(f.read_landed(started, [TRACK].into()));
+        assert!(!f.contains(TRACK));
+        assert!(f.answered(TRACK, false));
+        assert!(!f.contains(TRACK));
     }
 
     #[test]

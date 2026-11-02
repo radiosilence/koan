@@ -192,7 +192,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `audio/replaygain.rs` | EBU R128 loudness scanning, gain application via lofty |
 | `audio/dsp/` | EQ and convolution per output device, on the decode thread. No profile, no chain: bit-perfect stays checkable. Delays trimmed and flushed so the timeline counts output time. `steps.rs` runs a profile's filters in order — bands, delays, mixes, graphic curves as minimum-phase FIRs — since a mix does not commute; `impulse.rs` is the routing matrix (Convolver's model; a WAV is its diagonal); `import.rs` sorts files, folders and zips into one profile through `convolver`, `camilla`, `apo` and `raw`; `profiles.rs` is what every front end calls; `edit.rs` the rules of an edit by hand (the ranges, the band types, the brush) every editor clamps and paints by |
 | `audio/viz.rs` | `VizBuffer` (ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI), `VizLevels` (the spectrum as three bands, for callers that poll often and draw little) |
-| `audio/analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Runs at configurable FPS |
+| `audio/analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Runs at configurable FPS. Its spectrum, VU and loudness show what the listener hears: fed after ReplayGain and DSP, and scaled by the gain the output last applied (`fade::heard_gain`: the pause fade, a sleep timer, mute) |
 | `audio/streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
 | `player/mod.rs` | `Player` struct, command loop (`run()`), `start_playback()`, `update_playback_state()` |
 | `player/commands.rs` | `PlayerCommand` enum, `CommandChannel` (bounded crossbeam) |
@@ -250,6 +250,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git p
 | `play.rs` | `run_tui()` — TUI event loop entry point, frame timing, input handling |
 | `app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
 | `ui.rs` | Render pipeline: layout → transport → content → overlays → hints |
+| `rainbow.rs` | The Mac's hidden appearance mode (`Support/Rainbow.swift`): the code that switches it, kept per device, the accent's palette cycle (a timer only while drawn, in front and with motion), the sheen the roots put in the wash through `Painted`, and the tracks that bring it out |
 | `transport.rs` | Transport bar widget: seek bar, track info, click-to-seek |
 | `queue.rs` | Album-grouped queue with status icons, selection, drag targets |
 | `nav.rs` | Where the TUI is: one page, the history of pages visited, a cursor — browser-like, as the apps' `Navigator` |

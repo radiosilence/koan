@@ -214,6 +214,7 @@ pub fn track_row<V: TrackList>(
                 track.on_disk,
                 state.transfer,
             ))
+            .id(("row-availability", track.id as u64))
             .picked(state.selected),
         )
         .figure(20.0, heart)

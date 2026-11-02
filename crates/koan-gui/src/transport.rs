@@ -17,8 +17,8 @@ use koan_kit::raw::StyleRefinement;
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
-    MenuSlot, SHADED, Slider, TransportControl, TransportMetrics,
+    Badge, Button, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
+    Slider, TransportControl, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -460,17 +460,19 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     let eq = |id: String, on: bool| {
         move |_: &mut Window, _: &mut App| {
             let device = id.clone();
-            Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
-                .icon(Icon::Filters)
-                .label("eq")
-                .when(on, |b| b.tone(Tone::Accent))
-                // The EQ of the device this row names, which need not be the
-                // one in use.
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    crate::dsp::window::open(Some(device.clone()), cx);
-                })
-                .into_any_element()
+            Button::icon_only(
+                ("output-eq", id_hash(&id)),
+                Icon::Filters,
+                theme::label("eq"),
+            )
+            .when(on, |b| b.tone(Tone::Accent))
+            // The EQ of the device this row names, which need not be the
+            // one in use.
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                crate::dsp::window::open(Some(device.clone()), cx);
+            })
+            .into_any_element()
         }
     };
     let preset = |o: &koan_ffi::OutputInfo| match (&o.preset, o.unsaved) {
@@ -763,15 +765,17 @@ impl Render for Transport {
                             e.album_id.map(|id| (id, e.album.clone(), e.artist.clone()))
                         }),
                         |d, (album, title, artist)| {
-                            d.cursor_pointer().on_click(move |_, window, cx| {
-                                crate::artwork::show(
-                                    album,
-                                    title.clone(),
-                                    Some(artist.clone().into()),
-                                    window,
-                                    cx,
-                                )
-                            })
+                            d.cursor_pointer()
+                                .tooltip(tip("show artwork".to_owned()))
+                                .on_click(move |_, window, cx| {
+                                    crate::artwork::show(
+                                        album,
+                                        title.clone(),
+                                        Some(artist.clone().into()),
+                                        window,
+                                        cx,
+                                    )
+                                })
                         },
                     )
                     .child(Cover::new(self.cover.clone(), COVER).id("transport-cover")),
@@ -833,22 +837,21 @@ impl Render for Transport {
 
         // The one control reached for without looking: outlined, as the
         // Mac's is.
-        let play_pause = Button::new("play-pause", ButtonKind::IconOutlined)
-            .icon(if playing { Icon::Pause } else { Icon::Play })
-            .label(if playing { "pause" } else { "play" })
-            .help(help(
+        let play_pause = Button::icon_outlined(
+            "play-pause",
+            if playing { Icon::Pause } else { Icon::Play },
+            help(
                 if playing { "pause" } else { "play" },
                 &crate::platform::actions::TogglePlayPause,
                 cx,
-            ))
-            .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
+            ),
+        )
+        .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
-        // The controls and the seek bar centred in the bar as the Mac's:
-        // as much space above the play button's outline as below the seek
-        // row. The rows' hit areas, taller than what they draw, may overlap.
+        // The controls and the seek bar placed by koan-kit's metrics: centred
+        // in the bar as the Mac's, the controls' hit row never reaching the
+        // seek row or above the rule.
         let rows = TransportMetrics::centre_rows(&p.look);
-        let controls_top = rows.outline_top - (theme::HIT - rows.outline) / 2.;
-        let seek_top = rows.track_centre - TransportMetrics::SEEK / 2.;
         let centre = div()
             .w(TransportMetrics::CENTRE)
             .h_full()
@@ -856,10 +859,10 @@ impl Render for Transport {
             .child(
                 div()
                     .absolute()
-                    .top(controls_top)
+                    .top(rows.controls_top)
                     .left_0()
                     .right_0()
-                    .h(theme::HIT)
+                    .h(rows.controls_height)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -914,7 +917,7 @@ impl Render for Transport {
             .child(
                 div()
                     .absolute()
-                    .top(seek_top)
+                    .top(rows.seek_top)
                     .left_0()
                     .right_0()
                     .h(TransportMetrics::SEEK)
