@@ -1196,7 +1196,8 @@ impl super::keys::KeyedList for PlaylistPage {
             .map(|i| i.queue_item_id.clone())
             .collect();
         if from == to {
-            self.anchor = self.row_items(from).next().map(|i| i.queue_item_id.clone());
+            let first = self.row_items(from).next().map(|i| i.queue_item_id.clone());
+            self.anchor = first;
         }
     }
 
