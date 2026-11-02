@@ -51,7 +51,7 @@ rtrb = "0.4"
 rusqlite = { workspace = true, features = ["collation", "functions"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = "1.0.129"
 # Content hashes of the EQ files synced through a kōan server
 sha2 = "0.11"
 # Opus decoding (Symphonia can demux but not decode Opus)
@@ -118,5 +118,5 @@ cpal = "0.18"
 [dev-dependencies]
 env_logger = "0.11"
 schemars = "1.2"
-serde_json = "1"
+serde_json = "1.0.129"
 tempfile = "3"

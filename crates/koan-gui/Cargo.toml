@@ -23,6 +23,8 @@ profiler = ["koan-kit/profiler"]
 runtime-shaders = ["koan-kit/runtime-shaders"]
 
 [dependencies]
+# Ctrl-C and SIGTERM from a terminal quit as ⌘Q does, saving what quitting saves.
+ctrlc = { version = "3", features = ["termination"] }
 # The engine, linked as a Rust library: the same facade the Swift and Kotlin
 # apps drive through uniffi, without the bindings.
 koan-ffi = { path = "../koan-ffi" }

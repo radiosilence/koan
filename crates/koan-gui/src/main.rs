@@ -3,6 +3,7 @@
 //! window.
 
 use futures_channel::mpsc;
+use futures_util::StreamExt as _;
 use koan_gui::{app, platform, theme};
 use koan_kit::app::*;
 use platform::instance::{self, Launch, Opened};
@@ -37,6 +38,7 @@ fn main() {
         // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
         koan_kit::raw::init(cx);
         theme::init(cx);
+        quit_on_signal(cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
             let engine = match koan_ffi::KoanEngine::open_desktop().await {
                 Ok(engine) => engine,
@@ -64,4 +66,29 @@ fn main() {
         })
         .detach();
     });
+}
+
+/// Ctrl-C or SIGTERM from a terminal quits as ⌘Q does, so the session, the
+/// queued settings writes and the window's bounds are saved; a second one
+/// while that runs ends the process at once.
+fn quit_on_signal(cx: &mut App) {
+    let (asked, mut asks) = mpsc::unbounded::<()>();
+    let again = std::sync::atomic::AtomicBool::new(false);
+    let set = ctrlc::set_handler(move || {
+        if again.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            std::process::exit(130);
+        }
+        let _ = asked.unbounded_send(());
+    });
+    if let Err(e) = set {
+        log::warn!("signals: {e}; Ctrl-C ends the app without saving");
+        return;
+    }
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        if asks.next().await.is_some() {
+            log::info!("quitting on a signal");
+            cx.update(|cx| cx.quit());
+        }
+    })
+    .detach();
 }

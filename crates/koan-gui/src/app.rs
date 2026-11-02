@@ -211,9 +211,10 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     crate::measure::start(cx);
 }
 
-/// On macOS the toolbar runs under the window's buttons. Elsewhere the
-/// system draws the title bar where the compositor offers one; where it
-/// leaves decorations to the app, the toolbar carries the buttons.
+/// On macOS the window's buttons sit at the top of the sidebar, on its
+/// ground. Elsewhere the system draws the title bar where the compositor
+/// offers one; where it leaves decorations to the app, the toolbar carries
+/// the buttons.
 fn titlebar() -> TitlebarOptions {
     if cfg!(target_os = "macos") {
         TitlebarOptions {
