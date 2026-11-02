@@ -9,13 +9,14 @@ use std::sync::Arc;
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement,
-    Styled, Subscription, Window, div, px,
+    AnyElement, AppContext, Context, Entity, IntoElement as _, IntoElement, ParentElement, Render,
+    StyleRefinement, Styled, Subscription, Window, div, px,
 };
 
 use crate::components::{
-    Badge, Button, ButtonKind, Chip, EmptyState, FormRow, IconToggle, ListRow, MenuPanel, MenuRow,
-    NavRow, SectionHeader, Segmented, Slider, Stepper, TextField, Toggle, Tooltip,
+    Badge, Button, ButtonKind, Chip, EmptyState, FormRow, IconToggle, Level, ListRow, Menu,
+    MenuEntry, MenuPanel, MenuRow, NavRow, SectionHeader, Segmented, Slider, Stepper, TextField,
+    Toggle, Tooltip,
 };
 use crate::theme::{
     self, Accent, HAIRLINE, Icon, KoanIcon, KoanStyled, KoanTheme, Look, Space, Tone, TypeRole,
@@ -101,6 +102,8 @@ pub struct SheetContent {
     empty_field: Entity<InputState>,
     /// A tooltip as it is drawn, held open for the sheet.
     tooltip: Entity<Tooltip>,
+    /// An output menu as it is drawn: rich rows, a control and a note.
+    outputs: Entity<Menu>,
     _accent: Subscription,
 }
 
@@ -120,6 +123,30 @@ impl SheetContent {
             field,
             empty_field,
             tooltip: cx.new(|_| Tooltip::new("add to queue")),
+            outputs: Menu::build(window, cx, |menu, _, _| {
+                menu.section("output")
+                    .item(
+                        MenuEntry::new("system default")
+                            .icon(Icon::Output)
+                            .rich("whatever the system plays through")
+                            .checked(false)
+                            .on_click(|_, _, _| {}),
+                    )
+                    .item(
+                        MenuEntry::data("Living room")
+                            .icon(Icon::Speaker)
+                            .reach(Icon::Wifi)
+                            .rich("WiiM Pro · upnp · flat")
+                            .checked(true)
+                            .on_click(|_, _, _| {}),
+                    )
+                    .control(|_, _| {
+                        Level::new("sheet-volume", 40, 100)
+                            .numbered()
+                            .into_any_element()
+                    })
+                    .note("Living room plays the original files. ReplayGain and fades don't apply.")
+            }),
             _accent: theme::observe_accent(cx),
         }
     }
@@ -437,7 +464,8 @@ impl Render for SheetContent {
                         ),
                 ),
             )
-            .child(self.tooltip.clone());
+            .child(self.tooltip.clone())
+            .child(div().w(px(340.0)).child(self.outputs.clone()));
 
         let badges = div()
             .flex()
