@@ -83,7 +83,18 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
     return float4(colour, u[14]);
 }
 "#,
-    wgsl: "",
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    let side = max(size.x, size.y) * u[1].w * u[3].x;
+    let centre = size * 0.5 + vec2<f32>(size.x * u[2].w, size.y * u[3].w) * u[3].y;
+    let uv = (position - (centre - side * 0.5)) / side;
+    let colour = koan_sample(tile, uv).rgb;
+    if (u[1].z > 0.5) {
+        return vec4<f32>(mix(u[2].xyz, colour, u[3].z), 1.0);
+    }
+    return vec4<f32>(colour, u[3].z);
+}
+"#,
     prepare: Some(prepare),
 };
 

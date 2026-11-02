@@ -41,8 +41,9 @@ pub use gpui_kit::{SHADER_UNIFORMS, ShaderProgram};
 
 use crate::theme::KoanTheme;
 
-/// Whether this platform's renderer draws shader quads.
-pub const SHADED: bool = cfg!(target_os = "macos");
+/// Whether this platform's renderer draws shader quads: Metal, and wgpu
+/// where it has storage buffers, as every desktop Linux driver does.
+pub const SHADED: bool = cfg!(any(target_os = "macos", target_os = "linux"));
 
 /// What moves an `AnimatedQuad`: its uniforms, written from any thread, and
 /// how it runs. Clones share it.
