@@ -140,9 +140,9 @@ Menu::build(window, cx, |m, window, cx| {
 })
 ```
 
-Built from entries, separators, sections and submenus; the panel, rows, glyph column, check, padding and keyboard handling are the menu's. Every verb carries the glyph the Mac's menu gives it.
+Built from entries, separators, sections and submenus; an entry's `keys` shows the keys that do the same at the row's end, for menus drawn where there is no menu bar; the panel, rows, glyph column, check, padding and keyboard handling are the menu's. Every verb carries the glyph the Mac's menu gives it.
 
-`control(make)` puts a control in a row of its own, in the rows' insets (a renderer's volume), and `note(text)` a sentence about the rows around it, wrapped at the Mac picker's width rather than widening the panel. A menu whose content arrives after it opens (renderers answering a search) is made again in place with `refill`, reached through `MenuSlot::menu(which)`; the highlight stays on its row while the row is there.
+`control(make)` puts a control in a row of its own, in the rows' insets (a renderer's volume), and `note(text)` a sentence about the rows around it, wrapped at the Mac picker's width rather than widening the panel. `MenuSlot::trigger` opens a menu above its button (the transport's), `trigger_below` below it (a toolbar's). A menu whose content arrives after it opens (renderers answering a search) is made again in place with `refill`, reached through `MenuSlot::menu(which)`; the highlight stays on its row while the row is there.
 
 ### Controls
 
