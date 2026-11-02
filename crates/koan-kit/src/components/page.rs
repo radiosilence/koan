@@ -388,22 +388,25 @@ impl RenderOnce for ShuffleButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let ink = look.palette.ink.hsla();
+        // A glyph draws in its own colour, so the hover reaches it through
+        // the button's group rather than the text colour.
+        let group = SharedString::from(format!("shuffle-{:?}", self.id));
+        let disabled = self.disabled;
         div()
             .id(self.id)
+            .group(group.clone())
             .size(crate::theme::HIT)
             .flex_none()
             .flex()
             .items_center()
             .justify_center()
-            .text_color(look.palette.muted.hsla())
-            .when(self.disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
-            .when(!self.disabled, |d| {
-                d.cursor_pointer().hover(move |s| s.text_color(ink))
-            })
+            .when(disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+            .when(!disabled, |d| d.cursor_pointer())
             .child(
                 crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
                     .points(SHUFFLE_GLYPH * look.scale.size)
-                    .tone(crate::theme::Tone::Muted),
+                    .tone(crate::theme::Tone::Muted)
+                    .when(!disabled, |i| i.hover_color(group, ink)),
             )
             .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
                 d.on_click(move |event, window, cx| on_click(event, window, cx))

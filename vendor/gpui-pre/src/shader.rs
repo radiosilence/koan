@@ -9,7 +9,7 @@
 #![allow(missing_docs)]
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Primitive, ScaledPixels};
@@ -26,7 +26,8 @@ pub const SHADER_UNIFORMS: usize = 16;
 ///   where `koan_sample(image, tile, uv)` reads the shader's image
 ///   (`Window::paint_shader_image`) at `uv`, 0 to 1 across it, filtered and
 ///   kept to its edge
-/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>) -> vec4<f32>`
+/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32>`,
+///   where `koan_sample(tile, uv)` reads the image the same way
 ///
 /// `position` is the pixel's centre within the quad and `size` the quad's
 /// size, both in device pixels; `time` is seconds since the uniforms' origin
@@ -82,6 +83,13 @@ pub struct ShaderUniforms {
     /// negative for an origin before it: an anchor can be older than the
     /// first shader.
     origin: AtomicI64,
+    /// Nanoseconds from [`shader_epoch`] after which `live` lapses by
+    /// itself; 0 for never. A transition is live for its length and no
+    /// longer, with nothing to stop it.
+    until: AtomicU64,
+    /// A lapse not yet presented: the present that lands a transition at
+    /// its end, however early the last refresh before it fell.
+    landing: AtomicBool,
 }
 
 impl ShaderUniforms {
@@ -125,6 +133,24 @@ impl ShaderUniforms {
 
     pub fn is_live(&self) -> bool {
         self.live.load(Ordering::Relaxed)
+            && (!self.lapsed() || self.landing.load(Ordering::Relaxed))
+    }
+
+    /// Whether a deadline was set and has passed.
+    fn lapsed(&self) -> bool {
+        let until = self.until.load(Ordering::Relaxed);
+        until != 0
+            && (Instant::now().saturating_duration_since(shader_epoch()).as_nanos() as u64) >= until
+    }
+
+    /// Live until `deadline` and no longer; `None` for as long as `live` is
+    /// set.
+    pub fn set_live_until(&self, deadline: Option<Instant>) {
+        let nanos = deadline.map_or(0, |d| {
+            (d.saturating_duration_since(shader_epoch()).as_nanos() as u64).max(1)
+        });
+        self.until.store(nanos, Ordering::Relaxed);
+        self.landing.store(deadline.is_some(), Ordering::Relaxed);
     }
 
     /// Presented on every refresh while live, for a shader moved by `time`.
@@ -136,7 +162,8 @@ impl ShaderUniforms {
     /// this was asked, or live and continuous.
     pub fn take_present(&self) -> bool {
         let changed = self.changed.swap(false, Ordering::Relaxed);
-        changed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
+        let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
+        changed || landed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
     }
 
     /// Every value, as a renderer copies them into a frame.

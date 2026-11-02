@@ -431,6 +431,8 @@ jobs:
           cache-on-failure: true
       # Pages built beside the design system rather than from it.
       - run: python3 scripts/gui-theme-leaks.py
+      # The vendored GPUI crates are their releases plus vendor/patches.
+      - run: scripts/vendor-gpui.sh --check
       - run: cargo clippy -p koan-gui -p koan-kit --all-targets -- -D warnings
       - if: ${{ !cancelled() && steps.cache.outcome == 'success' }}
         run: cargo test -p koan-gui -p koan-kit --all-targets

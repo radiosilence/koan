@@ -933,6 +933,7 @@ impl PlaylistPage {
                     Extras {
                         favourite,
                         feed: Some(feed.clone()),
+                        availability: crate::transfers::of_queue_item(item),
                         playing: self.moving,
                     },
                     &look,
@@ -960,7 +961,6 @@ impl PlaylistPage {
             }
         };
         row_frame
-            .group(id)
             .selected(selected)
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)

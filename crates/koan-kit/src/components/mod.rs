@@ -19,6 +19,7 @@ mod bars;
 mod button;
 pub mod choice;
 mod collection;
+mod copy;
 mod cover;
 mod dense;
 mod details;
@@ -62,27 +63,29 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, MouseButton, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
+    MouseButton, Pixels, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
-pub use availability::{Availability, AvailabilityMark, ProgressReader};
+pub use availability::{Availability, AvailabilityMark, RingGlide};
 pub use badge::{Badge, Chip};
 pub use banner::Banner;
 pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
+pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
-pub use fade::FadeIn;
+pub use fade::{FadeIn, Reveal};
 pub use field::{FieldState, InputEvent, TextField};
 pub use filter_field::FilterField;
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
+    form_text,
 };
 pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use level::Level;
@@ -91,7 +94,7 @@ pub use metrics::{
     BarMetrics, CentreRows, RowKind, RowMetrics, TileColumns, TileGrid, TransportMetrics,
 };
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
-pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
+pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
 pub use picker::Picker;
 pub use pill::Pill;
 pub use placeholder::Placeholder;
@@ -269,7 +272,103 @@ pub(crate) fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
     .into()
 }
 
-/// A fill under a control, faded in and out with its state.
-pub(crate) fn fill(color: Hsla, amount: f32) -> Div {
-    div().absolute().size_full().bg(color.opacity(amount))
+/// A fill or an outline faded in and out with a control's state by the GPU:
+/// the ramp is handed over when the state changes and eased at each present,
+/// running for the motion's length and then stopping by itself. Instant with
+/// Reduce Motion. Uniforms: 0 from, 1 to, 2 the start in seconds of shader
+/// time, 3 the length in seconds, 4..8 the colour, 8 the outline's width in
+/// device pixels (0 for a fill); `prepare` writes the amount (9).
+static TRANSITION: ShaderProgram = ShaderProgram {
+    name: "koan-transition",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    if (u[8] > 0.0) {
+        float2 edge = min(position, size - position);
+        if (min(edge.x, edge.y) > u[8]) {
+            return float4(0.0);
+        }
+    }
+    return float4(u[4], u[5], u[6], u[7] * u[9]);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    if (u[2].x > 0.0) {
+        let edge = min(position, size - position);
+        if (min(edge.x, edge.y) > u[2].x) {
+            return vec4<f32>(0.0);
+        }
+    }
+    return vec4<f32>(u[1].xyz, u[1].w * u[2].y);
+}
+"#,
+    prepare: Some(|u, time| {
+        let t = if u[3] > 0.0 {
+            ((time - u[2]) / u[3]).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        u[9] = u[0] + (u[1] - u[0]) * Motion::quick_out(t);
+    }),
+};
+
+/// A state's transition between off and on, kept under `key`: what draws it
+/// on the GPU. The first frame a control is drawn it stands where it is.
+pub(crate) fn transition(
+    key: ElementId,
+    on: bool,
+    duration: Duration,
+    window: &mut Window,
+    cx: &mut App,
+) -> Animated {
+    let now = Instant::now();
+    let reduce = cx.reduce_motion();
+    let state = window.use_keyed_state(key, cx, |_, _| {
+        let animated = Animated::new();
+        let at = if on { 1.0 } else { 0.0 };
+        animated.set_all(0, &[at, at, 0.0, 0.0]);
+        (
+            Fade {
+                on,
+                from: at,
+                started: None,
+                duration,
+            },
+            now,
+            animated,
+        )
+    });
+    state.update(cx, |(fade, origin, animated), _| {
+        if fade.on != on {
+            fade.from = fade.at(now);
+            fade.on = on;
+            fade.started = (!reduce).then_some(now);
+            let start = now.duration_since(*origin).as_secs_f32();
+            let length = if reduce { 0.0 } else { duration.as_secs_f32() };
+            animated.set_origin(*origin);
+            animated.set_all(0, &[fade.from, if on { 1.0 } else { 0.0 }, start, length]);
+            if !reduce {
+                animated.run_for(duration);
+            }
+        }
+        animated.clone()
+    })
+}
+
+/// A fill under a control, in `color`, faded with `transition`.
+pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
+    if !SHADED {
+        let amount = transition.get(1);
+        return div()
+            .absolute()
+            .size_full()
+            .bg(color.opacity(amount))
+            .into_any_element();
+    }
+    let rgba = color.to_rgb();
+    transition.set_all(4, &[rgba.r, rgba.g, rgba.b, rgba.a, 0.0]);
+    AnimatedQuad::new(&TRANSITION, transition)
+        .absolute()
+        .size_full()
+        .into_any_element()
 }

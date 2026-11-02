@@ -1,0 +1,1 @@
+- **The kōan GUI app on Linux draws its moving parts on the GPU too.** The playing bars, the seek bar and the wash are shader quads in the wgpu renderer, so they no longer redraw the window while playing.

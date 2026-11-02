@@ -2,7 +2,9 @@
 //! the desktop, is one, sharing its own library; and what it keeps of a
 //! server's library.
 
-use crate::components::{Button, ButtonKind, Picker, Segmented, Stepper, TextField, Toggle};
+use crate::components::{
+    Button, ButtonKind, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
+};
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use koan_ffi::{ConnectionInfo, Settings};
 use koan_kit::app::input::{InputEvent, InputState};
@@ -13,7 +15,7 @@ use koan_kit::raw::px;
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};
 use crate::settings::Ctx;
-use crate::settings::form::{Copied, Row, buttons, copyable, note, page, section, text};
+use crate::settings::form::{Row, buttons, note, page, section, text};
 use crate::settings::model::{Uses, bytes, count};
 use crate::settings::sheet::{Action, Sheet};
 
@@ -45,7 +47,6 @@ pub struct ServerPane {
     /// and nothing deleted, until there is a number.
     choosing_limit: bool,
     cache: Entity<Slice<u64>>,
-    copied: Copied,
     pub(super) share: super::share::ShareForm,
     _subscriptions: Vec<Subscription>,
 }
@@ -142,14 +143,9 @@ impl ServerPane {
             cache_limit,
             choosing_limit: false,
             cache,
-            copied: Copied::default(),
             share,
             _subscriptions: subscriptions,
         }
-    }
-
-    fn copy(&mut self, which: &'static str, value: String, cx: &mut Context<Self>) {
-        Copied::copy(self, |pane| &mut pane.copied, which, value, cx);
     }
 
     fn sign_in(&mut self, cx: &mut Context<Self>) {
@@ -370,20 +366,7 @@ impl ServerPane {
             let server = settings.remote_url.clone();
             let mut rows = vec![
                 Row::new("Server")
-                    .control(copyable(
-                        "copy-server",
-                        server,
-                        self.copied.is("server"),
-                        {
-                            let entity = entity.clone();
-                            let server = settings.remote_url.clone();
-                            move |cx| {
-                                let server = server.clone();
-                                entity.update(cx, |pane, cx| pane.copy("server", server, cx))
-                            }
-                        },
-                        look,
-                    ))
+                    .control(CopyText::new("copy-server", server))
                     .into_any_element(),
                 Row::new("User")
                     .value(settings.remote_username.clone())

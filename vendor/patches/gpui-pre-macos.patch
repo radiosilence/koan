@@ -1,0 +1,207 @@
+diff --git a/src/display_link.rs b/src/display_link.rs
+index 658b9f2..fb403c4 100644
+--- a/src/display_link.rs
++++ b/src/display_link.rs
+@@ -297,22 +297,31 @@ pub struct WindowFrameSource {
+     signal: Arc<PlatformFrameSignal>,
+ }
+ 
++/// A dispatch source that coalesces `merge_data` calls from any thread into
++/// one `callback(data)` on the main queue.
++pub fn main_queue_source(
++    data: *mut c_void,
++    callback: extern "C" fn(*mut c_void),
++) -> DispatchRetained<DispatchSource> {
++    unsafe {
++        let source = DispatchSource::new(
++            &raw const _dispatch_source_type_data_add as *mut _,
++            0,
++            0,
++            Some(DispatchQueue::main()),
++        );
++        source.set_context(data);
++        source.set_event_handler_f(callback);
++        // Resume before this source can ever be dropped: destroying a
++        // suspended dispatch source is undefined behavior (#50875).
++        source.resume();
++        source
++    }
++}
++
+ impl WindowFrameSource {
+     pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
+-        let frame_requests = unsafe {
+-            let frame_requests = DispatchSource::new(
+-                &raw const _dispatch_source_type_data_add as *mut _,
+-                0,
+-                0,
+-                Some(DispatchQueue::main()),
+-            );
+-            frame_requests.set_context(data);
+-            frame_requests.set_event_handler_f(callback);
+-            // Resume before this source can ever be dropped: destroying a
+-            // suspended dispatch source is undefined behavior (#50875).
+-            frame_requests.resume();
+-            frame_requests
+-        };
++        let frame_requests = main_queue_source(data, callback);
+         Self {
+             frame_requests,
+             registration: None,
+@@ -328,6 +337,11 @@ impl WindowFrameSource {
+         Ok(())
+     }
+ 
++    // KOAN: lets an idle window park its frames (window.rs `step`).
++    pub fn is_running(&self) -> bool {
++        self.registration.is_some()
++    }
++
+     pub fn take_signal(&self) -> Option<(Instant, FrameRequestSource)> {
+         self.signal.take()
+     }
+diff --git a/src/gpui_macos.rs b/src/gpui_macos.rs
+index 8732bad..3283755 100644
+--- a/src/gpui_macos.rs
++++ b/src/gpui_macos.rs
+@@ -1,4 +1,6 @@
+ #![cfg(target_os = "macos")]
++// KOAN: a vendored copy; upstream lints it under its own settings.
++#![allow(warnings, clippy::all)]
+ //! macOS platform implementation for GPUI.
+ //!
+ //! macOS screens have a y axis that goes up from the bottom of the screen and
+diff --git a/src/window.rs b/src/window.rs
+index f2208d3..317710f 100644
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -2,12 +2,12 @@ use crate::{
+     BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
+     TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
+     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
+-    ns_string, renderer,
++    main_queue_source, ns_string, renderer,
+ };
+ #[cfg(any(test, feature = "test-support"))]
+ use anyhow::Result;
+ use block2::RcBlock;
+-use dispatch2::DispatchQueue;
++use dispatch2::{DispatchQueue, DispatchRetained, DispatchSource};
+ use gpui::{
+     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
+     ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
+@@ -648,6 +648,16 @@ struct MacWindowState {
+     cursor_style: CursorStyle,
+     cursor_visible: Arc<AtomicBool>,
+     frame_source: Option<WindowFrameSource>,
++    // KOAN: an idle window stops its display link (`step`), and the frame
++    // waker starts it again, rather than waking every vsync to find nothing
++    // to draw. After herdr-app's patch for gpui-pre-macos 0.3.8.
++    wake_source: Option<DispatchRetained<DispatchSource>>,
++    /// A frame was asked for since the last `step`.
++    woken: bool,
++    /// `step`s in a row that no one asked for.
++    idle_frames: u32,
++    /// The display link was stopped for being idle, not for being hidden.
++    parked: bool,
+     renderer: renderer::Renderer,
+     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
+@@ -833,12 +843,26 @@ impl MacWindowState {
+             .get_or_insert_with(|| WindowFrameSource::new(data, step))
+             .start(display_id)
+             .log_err();
++        // KOAN: running again, by whoever started it.
++        self.parked = false;
++        self.idle_frames = 0;
++    }
++
++    // KOAN: the source `frame_waker` and `schedule_frame` signal.
++    fn wake_source(&mut self) -> DispatchRetained<DispatchSource> {
++        let data = self.native_view.as_ptr() as *mut c_void;
++        self.wake_source
++            .get_or_insert_with(|| main_queue_source(data, wake_frames))
++            .clone()
+     }
+ 
+     fn stop_display_link(&mut self) {
+         if let Some(frame_source) = self.frame_source.as_mut() {
+             frame_source.stop();
+         }
++        // KOAN: stopped by its owner (occlusion, a native frame), so a wake
++        // must not start it; `step` marks its own stop as parked afterwards.
++        self.parked = false;
+     }
+ 
+     fn is_maximized(&self) -> bool {
+@@ -1072,6 +1096,10 @@ impl MacWindow {
+                 cursor_style: CursorStyle::Arrow,
+                 cursor_visible,
+                 frame_source: None,
++                wake_source: None,
++                woken: false,
++                idle_frames: 0,
++                parked: false,
+                 renderer: renderer::new_renderer(
+                     renderer_context,
+                     native_window as *mut _,
+@@ -1997,6 +2025,19 @@ impl PlatformWindow for MacWindow {
+         self.0.as_ref().lock().request_frame_callback = Some(callback);
+     }
+ 
++    // KOAN: GPUI calls the waker when the window first needs a frame, and
++    // `schedule_frame` when a frame left work for the next one. Either can
++    // run while the window state is locked, so they only signal; `wake_frames`
++    // runs on the main queue and restarts a parked display link.
++    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
++        let source = self.0.as_ref().lock().wake_source();
++        Some(Rc::new(move || source.merge_data(1)))
++    }
++
++    fn schedule_frame(&self) {
++        self.0.as_ref().lock().wake_source().merge_data(1);
++    }
++
+     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
+         self.0.as_ref().lock().event_callback = Some(callback);
+     }
+@@ -3362,7 +3403,38 @@ extern "C" fn step(view: *mut c_void) {
+             signal_source,
+             ..Default::default()
+         });
+-        window_state.lock().request_frame_callback = Some(callback);
++        let mut lock = window_state.lock();
++        lock.request_frame_callback = Some(callback);
++        // KOAN: a few vsyncs with no one asking for a frame: nothing to draw.
++        // Every wake (a notify, input, an animation frame, a timer) restarts
++        // the link through the frame waker, so waiting longer only wakes for
++        // nothing.
++        if std::mem::take(&mut lock.woken) {
++            lock.idle_frames = 0;
++        } else {
++            lock.idle_frames += 1;
++            if lock.idle_frames >= IDLE_FRAMES
++                && lock.frame_source.as_ref().is_some_and(|f| f.is_running())
++            {
++                lock.stop_display_link();
++                lock.parked = true;
++            }
++        }
++    }
++}
++
++/// KOAN: how many frames no one asked for before the display link parks.
++const IDLE_FRAMES: u32 = 3;
++
++// KOAN: the window needs frames again.
++extern "C" fn wake_frames(view: *mut c_void) {
++    let view = view as *mut AnyObject;
++    let window_state = unsafe { get_window_state(&*view) };
++    let mut lock = window_state.lock();
++    lock.woken = true;
++    lock.idle_frames = 0;
++    if lock.parked {
++        lock.start_display_link();
+     }
+ }
+ 
