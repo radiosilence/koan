@@ -615,9 +615,13 @@ impl ArtistPage {
             let art = self.photo(side, scale, cx).unwrap_or(CoverArt::Missing);
             FadeIn::new(("artist-photo", id as u64), Cover::new(art, side))
         });
-        let albums = record.albums.len() as u64;
-        let mut header = super::header::playable_header(&self.lib, item, name, cx)
-            .detail(chrome::count(albums, "album", "albums"));
+        // An artist with no records of their own is counted by the tracks
+        // they appear on, which the page lists instead.
+        let detail = match record.albums.len() as u64 {
+            0 => chrome::count(record.appearances.len() as u64, "track", "tracks"),
+            albums => chrome::count(albums, "album", "albums"),
+        };
+        let mut header = super::header::playable_header(&self.lib, item, name, cx).detail(detail);
         if let Some(photo) = photo {
             header = header.art(photo);
         }

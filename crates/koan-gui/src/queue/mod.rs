@@ -665,7 +665,6 @@ impl QueueView {
         let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
         let view = cx.entity();
         row_frame
-            .group(id)
             .selected(selected)
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
@@ -1122,13 +1121,14 @@ fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
     else {
         return slot.into_any_element();
     };
-    let row = look.row.clone();
     slot.child(
         div()
             .id(look.id("heart", 0))
             .cursor_pointer()
             .when(!favourite, |d| {
-                d.invisible().group_hover(row, |s| s.visible())
+                // The row's own group, which `TableRow` names for every row.
+                d.invisible()
+                    .group_hover(crate::components::ROW_GROUP, |s| s.visible())
             })
             .on_click(move |_, _, cx| {
                 cx.stop_propagation();

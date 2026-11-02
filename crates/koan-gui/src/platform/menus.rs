@@ -135,6 +135,7 @@ pub fn menus() -> Vec<MenuDef> {
                 item::<Back>(),
                 item::<Forward>(),
                 Item::Separator,
+                item::<ToggleSidebar>(),
                 item::<ToggleLyrics>(),
                 Item::Separator,
                 item::<Bigger>(),

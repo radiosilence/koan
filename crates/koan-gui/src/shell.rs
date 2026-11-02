@@ -579,7 +579,6 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
-            .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::search))
             .on_action(cx.listener(Self::toggle_lyrics))
             .on_action(cx.listener(Self::add_music))
