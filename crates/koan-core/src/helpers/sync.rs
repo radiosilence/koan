@@ -108,6 +108,7 @@ pub fn sync_remote(
     cancelled()?;
     let history = crate::remote::history::reconcile(db, client, url, username);
     cancelled()?;
+    crate::remote::covers::synced();
     Ok(Synced {
         library,
         favourites,

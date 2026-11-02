@@ -2,8 +2,9 @@
 //!
 //! A remote library has no files to read art from, so each cover is an HTTP
 //! round trip. Fetched covers are kept in the download cache's `artwork`
-//! directory, one file per cover and size bucket, named by the server's own
-//! id for it, which never names another record. Every app reads through it
+//! directory, one file per cover and size bucket, named by the server and its
+//! id for the cover, so a sign-in elsewhere never shows another server's
+//! sleeve; signing out removes them (`forget`). Every app reads through it
 //! (`cover`), so a cover fetched once, by any page or by the preload, is a
 //! file read from then on. The files are counted with downloads against the
 //! cache limit and trimmed with them (`trim`).
@@ -12,11 +13,14 @@
 //! fetches it at the size grids draw, one at a time and only while no cover a
 //! page asked for is in flight, so it never holds up what is on screen. It
 //! sleeps on the engine's change signal while there is nothing to do, and
-//! starts again when the library, the settings or the connection move. It
+//! starts again when a sync finishes or the settings or the connection move.
+//! It stops short of the cache limit, never pushing out a download, and
+//! remembers the records the server has no cover for, so a pass asks the
+//! server only about what it has not asked before. It
 //! waits while the app is in the background, on a metered network, or while
 //! the device saves power (`set_constrained`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
@@ -32,23 +36,66 @@ pub fn directory(cfg: &Config) -> PathBuf {
     cfg.cache_dir().join("artwork")
 }
 
-/// A cover's file for `id` at `bucket`. The id is the server's, which may
-/// hold any character, so the file is named by its digest.
-fn file(dir: &Path, id: &str, bucket: u32) -> PathBuf {
-    dir.join(format!("{:x}-{bucket}", md5::compute(id.as_bytes())))
+/// A cover's file for `id` at `bucket`, on the configured server. Ids are
+/// the server's own and may be row numbers another server reuses, so the
+/// file is named by a digest of the server and the id together. Bucket 0 is
+/// the record's miss: the server had no cover for it.
+fn file(cfg: &Config, id: &str, bucket: u32) -> PathBuf {
+    let server = cfg.remote.url.trim_end_matches('/');
+    let digest = md5::compute(format!("{server}\0{id}").as_bytes());
+    directory(cfg).join(format!("{digest:x}-{bucket}"))
 }
+
+/// The bucket a miss is kept under.
+const MISS: u32 = 0;
 
 /// A kept cover for `id` at `size` or larger, smallest first: a client draws
 /// a larger one scaled down at no cost but the bytes, and never waits for a
 /// fetch it does not need. `None` for the original, which is not kept.
 pub fn kept(cfg: &Config, id: &str, size: Option<u32>) -> Option<Vec<u8>> {
     let wanted = cover_bucket(size?);
-    let dir = directory(cfg);
     crate::remote::client::COVER_SIZES
         .into_iter()
         .filter(|b| *b >= wanted)
-        .find_map(|b| std::fs::read(file(&dir, id, b)).ok())
-        .filter(|data| !data.is_empty())
+        .find_map(|b| {
+            std::fs::read(file(cfg, id, b))
+                .ok()
+                .filter(|d| !d.is_empty())
+        })
+}
+
+/// Whether the preload has nothing to ask about `id`: a cover is kept at
+/// its size or larger, or the server said it has none. Reads no file.
+fn settled(cfg: &Config, id: &str) -> bool {
+    std::iter::once(MISS)
+        .chain(
+            crate::remote::client::COVER_SIZES
+                .into_iter()
+                .filter(|b| *b >= PRELOAD_SIZE),
+        )
+        .any(|b| file(cfg, id, b).exists())
+}
+
+/// Remembers that the server has no cover for `id`, for the preload alone:
+/// a page asking still asks the server, and what it gets back replaces this.
+fn keep_miss(cfg: &Config, id: &str) {
+    let path = file(cfg, id, MISS);
+    if let Some(dir) = path.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+    {
+        std::fs::write(path, []).ok();
+    }
+}
+
+/// Removes every kept cover and miss: the server they came from is no
+/// longer this device's.
+pub fn forget(cfg: &Config) {
+    let dir = directory(cfg);
+    if dir.exists()
+        && let Err(e) = std::fs::remove_dir_all(&dir)
+    {
+        log::warn!("artwork {}: {e}", dir.display());
+    }
 }
 
 /// Keeps `data` as `id`'s cover at `size`. Written beside its name and
@@ -58,12 +105,13 @@ pub fn keep(cfg: &Config, id: &str, size: Option<u32>, data: &[u8]) {
     if data.is_empty() {
         return;
     }
-    let dir = directory(cfg);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+    let path = file(cfg, id, cover_bucket(size));
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
         log::warn!("artwork directory {}: {e}", dir.display());
         return;
     }
-    let path = file(&dir, id, cover_bucket(size));
     let tmp = path.with_extension("part");
     let written = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, &path));
     match written {
@@ -166,6 +214,18 @@ static STOPPED: AtomicBool = AtomicBool::new(false);
 static STARTED: AtomicBool = AtomicBool::new(false);
 /// Moves when the preload should look again: the person turned it back on.
 static NUDGES: AtomicU64 = AtomicU64::new(0);
+/// Moves when a sync with the server finishes: the records may have changed.
+static SYNCS: AtomicU64 = AtomicU64::new(0);
+
+/// A sync with the server finished: look for records without a cover.
+pub fn synced() {
+    SYNCS.fetch_add(1, Ordering::Relaxed);
+    crate::signal::engine_changed().bump();
+}
+
+/// Room left before the cache limit when the preload stops, so the next
+/// download is not the one that crosses it.
+const HEADROOM: u64 = 64 * 1024 * 1024;
 /// The network is metered, or the device is saving power, as the app says.
 static CONSTRAINED: AtomicBool = AtomicBool::new(false);
 
@@ -222,7 +282,7 @@ pub fn start() {
 /// settings that matter, the connection and a nudge.
 #[derive(PartialEq, Eq)]
 struct Seen {
-    library: u64,
+    syncs: u64,
     enabled: bool,
     url: String,
     reachable: bool,
@@ -233,7 +293,7 @@ struct Seen {
 fn seen() -> Seen {
     let cfg = Config::cached();
     Seen {
-        library: crate::db::queries::library_version(),
+        syncs: SYNCS.load(Ordering::Relaxed),
         enabled: cfg.remote.enabled && cfg.remote.preload_covers,
         url: cfg.remote.url.clone(),
         reachable: crate::helpers::server_unreachable().is_none(),
@@ -279,10 +339,12 @@ fn pass() {
         Ok(db) => crate::db::queries::remote_cover_ids(&db.conn).unwrap_or_default(),
         Err(_) => return,
     };
-    let missing: Vec<String> = ids
-        .into_iter()
-        .filter(|id| kept(&cfg, id, Some(PRELOAD_SIZE)).is_none())
-        .collect();
+    let limit = cfg.cache_limit_bytes();
+    // A cache kept to nothing keeps no covers ahead either.
+    if limit == Some(0) {
+        return;
+    }
+    let missing: Vec<String> = ids.into_iter().filter(|id| !settled(&cfg, id)).collect();
     if missing.is_empty() {
         return;
     }
@@ -294,11 +356,22 @@ fn pass() {
         if !may_run(&seen()) || !cfg.remote.preload_covers {
             break;
         }
+        // Never into the room downloads need: past it, keeping one more
+        // cover would push out music.
+        if cfg
+            .cache_limit_bytes()
+            .is_some_and(|limit| crate::helpers::cache_bytes() + HEADROOM >= limit)
+        {
+            log::info!("cover preload: stopped short of the cache limit");
+            break;
+        }
         crate::remote::client::wait_for_idle_covers();
         match client.get_cover_art(&id, Some(PRELOAD_SIZE)) {
+            Ok(data) if data.is_empty() => keep_miss(&cfg, &id),
             Ok(data) => keep(&cfg, &id, Some(PRELOAD_SIZE), &data),
-            // The server has none for this record: nothing to keep.
-            Err(SubsonicError::Api { .. } | SubsonicError::BadResponse) => {}
+            // The server has none for this record: remembered, so the next
+            // pass does not ask again.
+            Err(SubsonicError::Api { .. } | SubsonicError::BadResponse) => keep_miss(&cfg, &id),
             Err(e) => {
                 log::info!("cover preload paused: {e}");
                 break;
@@ -344,6 +417,41 @@ mod tests {
             Some(&b"three"[..]),
             "the smallest that fits"
         );
+    }
+
+    #[test]
+    fn covers_are_kept_per_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut one = config(dir.path());
+        one.remote.url = "https://one.example".into();
+        let mut two = config(dir.path());
+        two.remote.url = "https://two.example".into();
+        keep(&one, "al-12", Some(600), b"one's");
+        assert_eq!(
+            kept(&two, "al-12", Some(600)),
+            None,
+            "another server's al-12"
+        );
+        forget(&one);
+        assert_eq!(
+            kept(&one, "al-12", Some(600)),
+            None,
+            "forgotten at sign-out"
+        );
+    }
+
+    #[test]
+    fn a_miss_settles_the_preload_and_serves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(dir.path());
+        assert!(!settled(&cfg, "al-1"));
+        keep_miss(&cfg, "al-1");
+        assert!(settled(&cfg, "al-1"), "not asked again");
+        assert_eq!(kept(&cfg, "al-1", Some(300)), None, "a page still asks");
+        keep(&cfg, "al-2", Some(1200), b"large");
+        assert!(settled(&cfg, "al-2"));
+        keep(&cfg, "al-3", Some(300), b"small");
+        assert!(!settled(&cfg, "al-3"), "smaller than the preload's");
     }
 
     #[test]

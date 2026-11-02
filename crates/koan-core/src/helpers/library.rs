@@ -187,6 +187,7 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
         [],
     )?;
     tx.commit()?;
+    crate::remote::covers::forget(&crate::config::Config::cached());
     Ok(removed)
 }
 
