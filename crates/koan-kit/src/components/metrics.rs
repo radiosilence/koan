@@ -185,6 +185,12 @@ impl RowMetrics {
         height: px(420.),
     };
 
+    /// An inspector's width beside the page, the Mac's ideal for its
+    /// lyrics.
+    pub fn inspector(look: &Look) -> Pixels {
+        look.spaced(280.)
+    }
+
     /// Between columns of a row.
     pub fn column_gap(look: &Look) -> Pixels {
         look.space(Space::M)

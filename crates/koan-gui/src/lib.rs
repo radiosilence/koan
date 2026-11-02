@@ -2,12 +2,14 @@
 //! and Linux, for now.
 
 pub mod app;
+pub mod artwork;
 pub mod covers;
 pub mod dsp;
 pub mod engine;
 pub mod levels;
 pub mod library;
 pub mod links;
+pub mod lyrics;
 #[cfg(feature = "profiler")]
 pub mod measure;
 pub mod mirror;

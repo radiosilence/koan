@@ -606,7 +606,28 @@ impl Render for Transport {
             .flex()
             .items_center()
             .gap(p.space(Space::M))
-            .child(covers::draw(self.cover.clone(), COVER, p.surface))
+            .child(
+                div()
+                    .id("transport-cover")
+                    .flex_shrink_0()
+                    .when_some(
+                        entry.and_then(|e| {
+                            e.album_id.map(|id| (id, e.album.clone(), e.artist.clone()))
+                        }),
+                        |d, (album, title, artist)| {
+                            d.cursor_pointer().on_click(move |_, window, cx| {
+                                crate::artwork::show(
+                                    album,
+                                    title.clone(),
+                                    Some(artist.clone().into()),
+                                    window,
+                                    cx,
+                                )
+                            })
+                        },
+                    )
+                    .child(covers::draw(self.cover.clone(), COVER, p.surface)),
+            )
             .child(
                 div()
                     .flex()

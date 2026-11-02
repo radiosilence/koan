@@ -16,12 +16,14 @@ mod button;
 mod collection;
 mod cover;
 mod dense;
+mod details;
 mod drag;
 mod empty;
 mod fade;
 mod field;
 mod filter_field;
 mod form;
+mod inspector;
 mod menu;
 mod metrics;
 mod page;
@@ -44,6 +46,7 @@ mod suggestions;
 mod table;
 mod toggle;
 mod toolbar;
+mod viewer;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -58,6 +61,7 @@ pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
+pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
 pub use fade::FadeIn;
@@ -66,6 +70,7 @@ pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
 };
+pub use inspector::{Inspector, SyncedLines, plain_text};
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};
 pub use metrics::{BarMetrics, RowKind, RowMetrics, TileGrid, TransportMetrics};
 pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
@@ -90,6 +95,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, WINDOW_BUTTONS,
 };
+pub use viewer::Viewer;
 
 use crate::theme::{Look, MARK, Motion};
 
