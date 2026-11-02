@@ -93,6 +93,11 @@ impl RenderOnce for Cover {
                         a.waited && at.elapsed() < Motion::NORMAL
                     })
                 });
+                if fading {
+                    // Until it lands, so the spinner under it goes with the
+                    // render after; a burst of the motion's length.
+                    window.request_animation_frame();
+                }
                 match (fading, self.id) {
                     (true, Some(id)) => ground
                         .relative()

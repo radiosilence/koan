@@ -598,7 +598,7 @@ impl QueueView {
             };
             let art = covers::art(album, side, cx);
             Cover::new(art, side)
-                .id(("sleeve", album.map_or(u64::MAX, |a| a as u64)))
+                .id(("sleeve", row as u64))
                 .into_any_element()
         });
         // What a track row reads beyond its item: its heart. A transfer's

@@ -559,7 +559,10 @@ impl Covers {
         if let Some(colour) = self.colours.get(&key.art) {
             return Sleeve::Colour(*colour);
         }
-        if self.shared.queue.lock().absent.contains(&key.art) {
+        // A fetch that failed (a server out of reach) settles on the mark
+        // rather than turning on; asking again redraws it.
+        let queue = self.shared.queue.lock();
+        if queue.absent.contains(&key.art) || queue.failed.contains(&key.art) {
             Sleeve::None
         } else {
             Sleeve::Waiting
