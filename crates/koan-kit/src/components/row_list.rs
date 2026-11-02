@@ -53,6 +53,12 @@ impl RowListState {
         self.0.scroll_to_reveal_item(ix);
     }
 
+    /// Where row `ix` was drawn last frame, in the window; `None` while it
+    /// is off screen.
+    pub fn row_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.0.bounds_for_item(ix)
+    }
+
     /// Called as the list scrolls, with the first row on screen. The list's
     /// own state is held while it runs, so it reads the page, not the list.
     pub fn on_scroll(&self, f: impl Fn(usize, &mut Window, &mut App) + 'static) {
