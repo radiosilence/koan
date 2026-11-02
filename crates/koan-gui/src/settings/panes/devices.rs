@@ -435,6 +435,7 @@ impl Render for DevicesPane {
                                 .iter()
                                 .position(|(_, v)| *v == settings.devices_nearby_control),
                         )
+                        .named("devices on this network")
                         .on_change(move |index, _, cx| {
                             let value = NEARBY[*index].1;
                             model.update(cx, |m, cx| {

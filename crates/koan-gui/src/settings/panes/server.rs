@@ -501,6 +501,7 @@ impl ServerPane {
                                 .iter()
                                 .position(|(_, mins)| *mins == settings.auto_sync_interval_mins),
                         )
+                        .named("sync every")
                         .on_change(move |index, _, cx| {
                             let mins = SYNC_EVERY[*index].1;
                             model.update(cx, |m, cx| {
@@ -571,18 +572,19 @@ impl ServerPane {
         let ahead_picker = {
             let model = self.ctx.model.clone();
             let values: Vec<Option<u32>> = ahead.iter().map(|(_, v)| *v).collect();
-            Picker::new("ahead", ahead.iter().map(|(l, _)| l.as_str()), ahead_index).on_change(
-                move |index, _, cx| {
+            Picker::new("ahead", ahead.iter().map(|(l, _)| l.as_str()), ahead_index)
+                .named("download ahead")
+                .on_change(move |index, _, cx| {
                     let value = values[*index];
                     model.update(cx, |m, cx| m.edit(cx, move |s| s.download_ahead = value))
-                },
-            )
+                })
         };
         let keeping_picker = Picker::new(
             "keeping",
             Keeping::ALL.map(Keeping::label),
             Keeping::ALL.iter().position(|k| *k == shown),
         )
+        .named("keep downloads")
         .on_change({
             let entity = entity.clone();
             move |index, window, cx| {
@@ -754,6 +756,7 @@ impl Render for ServerPane {
                             ["Connects to a server", "Shares its library"],
                             Some(mode as usize),
                         )
+                        .named("this device")
                         .on_change(move |index, _, cx| {
                             let mode = if *index == 1 { Mode::Share } else { Mode::Connect };
                             entity.update(cx, |pane, cx| {

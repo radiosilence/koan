@@ -556,6 +556,7 @@ impl ArtistPage {
                     drag,
                     kind: crate::components::RowKind::Art,
                     note: None,
+                    cursor: false,
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()
@@ -1021,6 +1022,12 @@ impl Render for ArtistPage {
                     cx,
                 ))
             })
+    }
+}
+
+impl Focusable for ArtistPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

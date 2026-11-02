@@ -1,0 +1,1 @@
+- **The kōan GUI app from the keyboard.** Tab and Shift-Tab move between controls, F6 between the sidebar, the page and the transport; the sidebar, the track browser, a record's tracks and history move with the arrows, Home, End and Page Up and Down, play with Return and pick with Ctrl-Space, and the place the keyboard is on is outlined.

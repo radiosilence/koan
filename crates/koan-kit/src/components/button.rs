@@ -5,7 +5,10 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, child, fade, fill, focus, mix, pointer, ring, track, transition};
+use super::{
+    Handler, accessible, answers_click, child, fade, fill, focus, mix, pointer, ring, track,
+    transition,
+};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space,
     TOOLBAR_BUTTON, Tone, TypeRole, label,
@@ -266,8 +269,10 @@ impl RenderOnce for Button {
         );
         let role = kind.role();
 
-        let mut button = div()
-            .id(self.id.clone())
+        // Named by its label, or a glyph's by what its tooltip says it does.
+        let name = self.label.clone().or_else(|| self.help.clone());
+        let mut button = accessible(div().id(self.id.clone()), gpui_kit::Role::Button, name)
+            .aria_disabled(self.disabled)
             .relative()
             .flex()
             .flex_none()
@@ -294,12 +299,14 @@ impl RenderOnce for Button {
             if let Some(on_click) = self.on_click.clone() {
                 let (answers, accent) = (answers.clone(), look.accent.hsla());
                 let answer = kind.answer();
-                button = button.on_click(move |event, window, cx| {
+                let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
                     if let Some(answer) = answer {
                         answers.start(answer, accent, cx);
                     }
                     on_click(event, window, cx)
                 });
+                button = answers_click(button, press.clone());
+                button = button.on_click(move |event, window, cx| press(event, window, cx));
             }
         }
 

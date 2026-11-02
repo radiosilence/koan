@@ -6,7 +6,7 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
 
-use super::{Handler, MenuPanel, MenuRow, child, focus, ring};
+use super::{Handler, MenuPanel, MenuRow, accessible, answers_click, child, focus, ring};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
 };
@@ -21,6 +21,7 @@ pub struct Picker {
     id: ElementId,
     options: Vec<SharedString>,
     selected: Option<usize>,
+    name: Option<SharedString>,
     disabled: bool,
     on_change: Option<Handler<usize>>,
 }
@@ -35,6 +36,7 @@ impl Picker {
             id: id.into(),
             options: options.into_iter().map(label).collect(),
             selected,
+            name: None,
             disabled: false,
             on_change: None,
         }
@@ -51,9 +53,16 @@ impl Picker {
             id: id.into(),
             options: options.into_iter().map(Into::into).collect(),
             selected,
+            name: None,
             disabled: false,
             on_change: None,
         }
+    }
+
+    /// What the choice is of, for a screen reader: the form row's title.
+    pub fn named(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -80,31 +89,48 @@ impl RenderOnce for Picker {
             .unwrap_or_default();
 
         let toggle = open.clone();
-        let mut picker = div()
-            .id(self.id.clone())
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(look.space(Space::Xs))
-            // The theme's bordered button, as a form's dropdown is.
-            .py(look.spaced(6.))
-            .px(look.spaced(12.))
-            .border(HAIRLINE)
-            .border_color(look.palette.muted.hsla())
-            .text_role(TypeRole::Control, &look)
-            .text_color(color)
-            .child(div().whitespace_nowrap().child(shown))
-            .child(
-                KoanIcon::new(Icon::Choose)
-                    .role(TypeRole::Control)
-                    .color(color),
-            );
+        // A combo box to a screen reader: what is chosen is its value, and
+        // a click opens it as the pointer's does.
+        let mut picker = accessible(
+            div().id(self.id.clone()),
+            gpui_kit::Role::ComboBox,
+            self.name.clone(),
+        )
+        .aria_disabled(self.disabled)
+        .aria_value(shown.clone())
+        .aria_expanded(is_open)
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(look.space(Space::Xs))
+        // The theme's bordered button, as a form's dropdown is.
+        .py(look.spaced(6.))
+        .px(look.spaced(12.))
+        .border(HAIRLINE)
+        .border_color(look.palette.muted.hsla())
+        .text_role(TypeRole::Control, &look)
+        .text_color(color)
+        .child(div().whitespace_nowrap().child(shown))
+        .child(
+            KoanIcon::new(Icon::Choose)
+                .role(TypeRole::Control)
+                .color(color),
+        );
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {
             let (surface, pressed) = (look.palette.surface.hsla(), look.palette.hover.hsla());
-            picker = picker
+            let opens: Handler<gpui_kit::ClickEvent> = {
+                let toggle = open.clone();
+                std::sync::Arc::new(move |_, _, cx| {
+                    toggle.update(cx, |open, cx| {
+                        *open = true;
+                        cx.notify();
+                    })
+                })
+            };
+            picker = answers_click(picker, opens)
                 .cursor_pointer()
                 .hover(move |s| s.bg(surface))
                 .active(move |s| s.bg(pressed))

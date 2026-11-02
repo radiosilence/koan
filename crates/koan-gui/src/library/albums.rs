@@ -912,6 +912,12 @@ impl Render for AlbumGrid {
     }
 }
 
+impl Focusable for AlbumGrid {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

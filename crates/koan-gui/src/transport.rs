@@ -33,6 +33,9 @@ pub const HEIGHT: Pixels = TransportMetrics::HEIGHT;
 const COVER: Pixels = TransportMetrics::COVER;
 
 pub struct Transport {
+    /// Where F6 brings the keyboard: the bar, from which Tab reaches its
+    /// controls.
+    focus: FocusHandle,
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
     /// The renderer played to, for why its last track was skipped.
@@ -165,7 +168,7 @@ impl Transport {
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
                 cx.observe(&covers, |this, _, cx| {
-                    if this.cover.is_none() {
+                    if !matches!(this.cover, CoverArt::Image(_)) {
                         let album = this
                             .playback
                             .read(cx)
@@ -185,6 +188,7 @@ impl Transport {
                 cx.observe(&mirror.outputs, |this, _, cx| this.reload_eq(cx)),
                 cx.observe(&mirror.library, |this, _, cx| this.reload_eq(cx)),
             ],
+            focus: cx.focus_handle(),
             playback: mirror.playback,
             outputs: mirror.outputs,
             renderers: mirror.renderers,
@@ -974,7 +978,11 @@ impl Render for Transport {
                     .map(|eq| self.eq_button(&eq, &p, cx)),
             );
 
+        let ring = crate::components::focus_ring(&self.focus, window, cx);
         div()
+            .id("transport")
+            .relative()
+            .track_focus(&self.focus)
             .h(HEIGHT)
             .w_full()
             .flex_shrink_0()
@@ -988,6 +996,13 @@ impl Render for Transport {
             .child(left)
             .child(centre)
             .child(right)
+            .children(ring)
+    }
+}
+
+impl Focusable for Transport {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{Answer, Answerer, Handler, Tooltip};
+use super::{Answer, Answerer, Handler, Tooltip, accessible, answers_click, focus, ring, toggled};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, TypeRole, label};
 
 #[derive(IntoElement)]
@@ -78,35 +78,46 @@ impl RenderOnce for TransportControl {
             div().child(self.label.clone()).into_any_element()
         };
         let answers = Answerer::of(&self.id, window, cx);
+        // A stop in the window's Tab order, which Return and Space click.
+        let handle = focus(&self.id, window, cx);
         let accent = look.accent.hsla();
         let tip = self.help.clone();
-        div()
-            .id(self.id.clone())
-            .relative()
-            .w(HIT)
-            .mx(-reach)
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .text_role(TypeRole::Control, &look)
-            .text_color(color)
-            .hover(|s| s.opacity(0.8))
-            .tooltip(move |window, cx| Tooltip::view(tip.clone(), window, cx))
-            .child(
-                div()
-                    .relative()
-                    .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
-                    .child(face)
-                    // Off the glyph, not the hit area around it.
-                    .children(answers.layer(window, cx)),
-            )
-            .when_some(self.on_click, move |d, on_click| {
-                d.on_click(move |event, window, cx| {
-                    answers.start(Answer::Ring, accent, cx);
-                    on_click(event, window, cx)
-                })
-            })
+        let on = self.on;
+        accessible(
+            div().id(self.id.clone()),
+            gpui_kit::Role::Button,
+            Some(self.help.clone()),
+        )
+        .when_some(on, |d, on| d.aria_toggled(toggled(on)))
+        .relative()
+        .track_focus(&handle)
+        .w(HIT)
+        .mx(-reach)
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .text_role(TypeRole::Control, &look)
+        .text_color(color)
+        .hover(|s| s.opacity(0.8))
+        .tooltip(move |window, cx| Tooltip::view(tip.clone(), window, cx))
+        .child(
+            div()
+                .relative()
+                .when_some(underline, |d, accent| d.border_b_1().border_color(accent))
+                .child(face)
+                // Off the glyph, not the hit area around it.
+                .children(answers.layer(window, cx)),
+        )
+        .when_some(self.on_click, move |d, on_click| {
+            let press: Handler<ClickEvent> = Arc::new(move |event, window, cx| {
+                answers.start(Answer::Ring, accent, cx);
+                on_click(event, window, cx)
+            });
+            answers_click(d, press.clone())
+                .on_click(move |event, window, cx| press(event, window, cx))
+        })
+        .children(ring(&handle, &look, window))
     }
 }

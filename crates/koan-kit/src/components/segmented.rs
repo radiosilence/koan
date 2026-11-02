@@ -5,7 +5,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, fade, focus, mix, ring};
+use super::{Handler, accessible, answers_click, fade, focus, mix, ring, toggled};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Motion, TypeRole, label};
 
 /// A row of text options, 18 apart, with no track: `muted`, and the chosen
@@ -46,8 +46,7 @@ impl RenderOnce for Segmented {
         let selected = self.selected;
         let count = self.options.len();
         let accent = look.accent.hsla();
-        let mut row = div()
-            .id(self.id.clone())
+        let mut row = accessible(div().id(self.id.clone()), gpui_kit::Role::RadioGroup, None)
             .relative()
             .flex()
             .items_center()
@@ -57,29 +56,42 @@ impl RenderOnce for Segmented {
                 ElementId::NamedChild(Arc::new(self.id.clone()), format!("option-{index}").into());
             let answers = super::Answerer::of(&key, window, cx);
             let chosen = fade(key, index == selected, Motion::FAST, window, cx);
-            let mut option = div()
-                .id(index)
-                .pb(px(5.0))
-                .border_b(HAIRLINE)
-                .border_color(accent.opacity(chosen))
-                .text_role(TypeRole::Control, &look)
-                .text_color(mix(
-                    look.palette.muted.hsla(),
-                    look.palette.ink.hsla(),
-                    chosen,
-                ))
-                .whitespace_nowrap()
-                .relative()
-                .child(option)
-                .children(answers.layer(window, cx));
+            let mut option = accessible(
+                div().id(index),
+                gpui_kit::Role::RadioButton,
+                Some(option.clone().into()),
+            )
+            .aria_toggled(toggled(index == selected))
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(count)
+            .pb(px(5.0))
+            .border_b(HAIRLINE)
+            .border_color(accent.opacity(chosen))
+            .text_role(TypeRole::Control, &look)
+            .text_color(mix(
+                look.palette.muted.hsla(),
+                look.palette.ink.hsla(),
+                chosen,
+            ))
+            .whitespace_nowrap()
+            .relative()
+            .child(option)
+            .children(answers.layer(window, cx));
             if let Some(on_change) = self.on_change.clone() {
-                // The chosen option's mark draws in from its leading edge.
-                option = option.cursor_pointer().on_click(move |_, window, cx| {
-                    if index != selected {
-                        answers.start(super::Answer::Sweep, accent, cx);
-                    }
-                    on_change(&index, window, cx)
-                });
+                let choose: Handler<gpui_kit::ClickEvent> = {
+                    let on_change = on_change.clone();
+                    let answers = answers.clone();
+                    // The chosen option's mark draws in from its leading edge.
+                    Arc::new(move |_, window, cx| {
+                        if index != selected {
+                            answers.start(super::Answer::Sweep, accent, cx);
+                        }
+                        on_change(&index, window, cx)
+                    })
+                };
+                option = answers_click(option, choose.clone())
+                    .cursor_pointer()
+                    .on_click(move |event, window, cx| choose(event, window, cx));
             }
             row = row.child(option);
         }

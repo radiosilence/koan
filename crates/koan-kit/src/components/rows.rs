@@ -7,7 +7,7 @@ use gpui_kit::{
     div,
 };
 
-use super::{Handler, child, fade, fill, transition};
+use super::{Handler, accessible, answers_click, child, fade, fill, transition};
 use crate::theme::{HIT, Icon, KoanIcon, KoanStyled, Look, MARK, Motion, Space, TypeRole, label};
 
 /// The hover group a nav row's glyph brightens by.
@@ -29,6 +29,8 @@ pub struct NavRow {
     art: Option<AnyElement>,
     detail: Option<SharedString>,
     selected: bool,
+    /// Under the keyboard's cursor while its list holds the keyboard.
+    cursor: bool,
     on_click: Option<Handler<ClickEvent>>,
     accepts: Vec<Accept>,
 }
@@ -60,6 +62,7 @@ impl NavRow {
             art: None,
             detail: None,
             selected: false,
+            cursor: false,
             on_click: None,
             accepts: Vec::new(),
         }
@@ -78,6 +81,14 @@ impl NavRow {
                 handler(dropped, window, cx)
             })
         }));
+        self
+    }
+
+    /// Under the keyboard's cursor: its list holds the keyboard and the
+    /// arrows have come to it. Drawn with the focus ring while the keyboard
+    /// was used last.
+    pub fn cursor(mut self, cursor: bool) -> Self {
+        self.cursor = cursor;
         self
     }
 
@@ -136,6 +147,7 @@ impl RenderOnce for NavRow {
             base = accept(base, answers.clone(), accent);
         }
         let ink = look.palette.ink.hsla();
+        let name = self.label.clone();
         let label = div()
             .min_w_0()
             .overflow_hidden()
@@ -143,7 +155,10 @@ impl RenderOnce for NavRow {
             .text_ellipsis()
             .child(self.label);
         let selected = self.selected;
-        base.group(NAV_ROW)
+        // A link to a screen reader: to its place, selected where it is.
+        accessible(base, gpui_kit::Role::Link, Some(name))
+            .aria_selected(selected)
+            .group(NAV_ROW)
             .relative()
             .flex()
             .flex_none()
@@ -197,9 +212,14 @@ impl RenderOnce for NavRow {
             })
             .children(answers.layer(window, cx))
             .when_some(on_click, |row, on_click| {
-                row.cursor_pointer()
+                answers_click(row, on_click.clone())
+                    .cursor_pointer()
                     .on_click(move |event, window, cx| on_click(event, window, cx))
             })
+            .children(
+                (self.cursor && window.last_input_was_keyboard())
+                    .then(|| super::cursor_ring(&look)),
+            )
     }
 }
 
@@ -229,18 +249,25 @@ impl NavHeading {
 impl RenderOnce for NavHeading {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
-        div()
-            .flex()
-            .flex_none()
-            .items_end()
-            .justify_between()
-            .pt(look.space(Space::L))
-            .pb(look.space(Space::Xs))
-            .px(look.space(Space::L))
-            .text_role(TypeRole::Fine, &look)
-            .text_color(look.palette.ink.hsla())
-            .child(self.title)
-            .children(self.trailing)
+        accessible(
+            div().id(ElementId::Name(
+                format!("nav-heading-{}", self.title).into(),
+            )),
+            gpui_kit::Role::Heading,
+            Some(self.title.clone()),
+        )
+        .aria_level(2)
+        .flex()
+        .flex_none()
+        .items_end()
+        .justify_between()
+        .pt(look.space(Space::L))
+        .pb(look.space(Space::Xs))
+        .px(look.space(Space::L))
+        .text_role(TypeRole::Fine, &look)
+        .text_color(look.palette.ink.hsla())
+        .child(self.title)
+        .children(self.trailing)
     }
 }
 

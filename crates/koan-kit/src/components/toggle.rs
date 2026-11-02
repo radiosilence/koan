@@ -6,7 +6,9 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Answer, Answerer, Handler, child, fade, focus, ring};
+use super::{
+    Answer, Answerer, Handler, accessible, answers_click, child, fade, focus, ring, toggled,
+};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole,
     label,
@@ -61,8 +63,8 @@ impl RenderOnce for Toggle {
             cx,
         );
         let accent = look.accent.hsla();
-        let mut row = div()
-            .id(self.id.clone())
+        let mut row = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
+            .aria_disabled(self.disabled)
             .relative()
             .flex()
             .items_center()
@@ -105,8 +107,17 @@ impl RenderOnce for Toggle {
             row = row.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
-            let answers = answers.clone();
-            row = row
+            let flip: Handler<gpui_kit::ClickEvent> = {
+                let on_change = on_change.clone();
+                let answers = answers.clone();
+                Arc::new(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                })
+            };
+            row = answers_click(row, flip)
                 .track_focus(&handle)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
@@ -171,8 +182,8 @@ impl RenderOnce for IconToggle {
         );
         let color = super::mix(look.palette.muted.hsla(), look.palette.ink.hsla(), on);
         let label = self.label.clone();
-        let mut toggle = div()
-            .id(self.id.clone())
+        let mut toggle = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
+            .aria_disabled(self.disabled)
             .relative()
             .flex()
             .items_center()
@@ -196,8 +207,18 @@ impl RenderOnce for IconToggle {
         if self.disabled {
             toggle = toggle.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
-            let (checked, accent, answers) = (self.checked, look.accent.hsla(), answers.clone());
-            toggle = toggle
+            let (checked, accent) = (self.checked, look.accent.hsla());
+            let flip: Handler<gpui_kit::ClickEvent> = {
+                let on_change = on_change.clone();
+                let answers = answers.clone();
+                Arc::new(move |_, window, cx| {
+                    if !checked {
+                        answers.start(Answer::Ring, accent, cx);
+                    }
+                    on_change(&!checked, window, cx)
+                })
+            };
+            toggle = answers_click(toggle, flip)
                 .track_focus(&handle)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
@@ -209,4 +230,13 @@ impl RenderOnce for IconToggle {
         }
         toggle.children(ring(&handle, &look, window))
     }
+}
+
+/// A toggle as a screen reader meets it: a switch, named, on or off.
+fn switch(
+    element: gpui_kit::Stateful<gpui_kit::Div>,
+    name: SharedString,
+    checked: bool,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    accessible(element, gpui_kit::Role::Switch, Some(name)).aria_toggled(toggled(checked))
 }

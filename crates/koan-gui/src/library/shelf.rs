@@ -505,6 +505,7 @@ impl ShelfPage {
                 transfer: feed.transfers.get(&track.id).copied(),
                 drag,
                 note: None,
+                cursor: false,
                 kind: RowKind::Art,
             };
             out.push(rows::track_row(p, track, index, state, sleeve, None, cx));
@@ -773,6 +774,12 @@ impl Render for ShelfPage {
                     cx,
                 ))
             })
+    }
+}
+
+impl Focusable for ShelfPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 
