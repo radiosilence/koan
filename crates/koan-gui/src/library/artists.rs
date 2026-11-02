@@ -64,6 +64,17 @@ pub struct ArtistBrowser {
 }
 
 impl ArtistBrowser {
+    /// Back to where the last visit left the list, once.
+    fn restore_scroll(&mut self) {
+        if let Some(y) = self.restore.take() {
+            self.scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(point(px(0.0), -y));
+        }
+    }
+
     pub fn new(lib: Lib, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![
             // Cached under the window, and draws the accent.
@@ -124,14 +135,8 @@ impl ArtistBrowser {
             _subscriptions: subscriptions,
         };
         // A kept listing draws at once, where the last visit left it.
-        if this.loaded.is_some()
-            && let Some(y) = this.restore.take()
-        {
-            this.scroll
-                .0
-                .borrow()
-                .base_handle
-                .set_offset(point(px(0.0), -y));
+        if this.loaded.is_some() {
+            this.restore_scroll();
         }
         this.reload(cx);
         this
@@ -177,13 +182,7 @@ impl ArtistBrowser {
                         this.order = artists.iter().map(|a| Playable::Artist(a.id)).collect();
                         this.artists = artists;
                         this.loaded = Some(wanted);
-                        if let Some(y) = this.restore.take() {
-                            this.scroll
-                                .0
-                                .borrow()
-                                .base_handle
-                                .set_offset(point(px(0.0), -y));
-                        }
+                        this.restore_scroll();
                     }
                     Err(e) => log::warn!("artists: {e}"),
                 }
