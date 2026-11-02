@@ -33,6 +33,7 @@ use crate::theme::{Icon, KoanIcon, KoanTheme};
 
 pub use crate::components::TileGrid as Grid;
 pub const LINE_GAP: f32 = Grid::LINE_GAP;
+const CAPTION_GAP: f32 = Grid::CAPTION_GAP;
 
 /// Which part of a tile was clicked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

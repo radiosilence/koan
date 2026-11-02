@@ -212,7 +212,7 @@ impl TileGrid {
     /// Below a row of tiles, before the next.
     pub const LINE_GAP: f32 = 22.0;
     /// Between sleeve, title and credit.
-    const CAPTION_GAP: f32 = 7.0;
+    pub const CAPTION_GAP: f32 = 7.0;
 
     /// The grid for a list `width` wide, with captions on `scale`.
     pub fn for_width(width: Pixels, scale: &Scale) -> Self {
