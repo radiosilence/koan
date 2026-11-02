@@ -144,7 +144,7 @@ Form::new("playback")
     .section(FormSection::new().row(toggle).footer("Why this matters."))
 ```
 
-`Form` scrolls, padded 22, sections 16 apart. `FormSection` puts its header (`fine`, `ink`, 16 above) over its rows 8 apart and its footer (`fine`, `muted`). `FormRow` is the Mac's two columns: the label in `body` in a 200-point column, then the value (`control`, `muted`) or the control.
+`Form` scrolls, padded 22, sections 16 apart. `FormSection` lays out its header (`fine`, `ink`, 16 above), its rows and its footer (`fine`, `muted`) 16 apart, as a SwiftUI `Section` in the Mac's form column does: the section's parts are the column's own children. `FormRow` is the Mac's two columns: the label in `body` in a 200-point column, then the value (`control`, `muted`) or the control.
 
 ### Menu (Mac: `KoanMenu`, the menus' `Label(…, koan:)`)
 

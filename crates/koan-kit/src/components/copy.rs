@@ -49,6 +49,7 @@ pub struct CopyButton {
     value: SharedString,
     kind: ButtonKind,
     icon: Icon,
+    disabled: bool,
 }
 
 impl CopyButton {
@@ -64,7 +65,14 @@ impl CopyButton {
             value: value.into(),
             kind: ButtonKind::Bordered,
             icon: Icon::Copy,
+            disabled: false,
         }
+    }
+
+    /// Nothing to copy yet: the link is still being made.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 
     pub fn kind(mut self, kind: ButtonKind) -> Self {
@@ -88,6 +96,7 @@ impl RenderOnce for CopyButton {
         Button::new(self.id, self.kind)
             .text(if copied { label("copied") } else { self.label })
             .icon(if copied { Icon::Check } else { self.icon })
+            .disabled(self.disabled)
             .on_click(move |_, _, cx| copy(&state, &value, cx))
     }
 }
@@ -126,7 +135,11 @@ impl RenderOnce for CopyText {
             .text_role(TypeRole::Control, &look)
             .text_color(look.palette.muted.hsla())
             .hover(move |s| s.text_color(ink))
-            .child(if copied { label("copied") } else { value.clone() })
+            .child(if copied {
+                label("copied")
+            } else {
+                value.clone()
+            })
             .tooltip(|window, cx| Tooltip::view(label("copy"), window, cx))
             .on_click(move |_, _, cx| copy(&state, &value, cx))
     }
@@ -166,7 +179,8 @@ mod tests {
         cx.run_until_parked();
         let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()));
         assert_eq!(copied.as_deref(), Some("https://koan.rocks/x"));
-        cx.executor().advance_clock(COPIED + Duration::from_millis(10));
+        cx.executor()
+            .advance_clock(COPIED + Duration::from_millis(10));
         cx.run_until_parked();
     }
 }

@@ -395,13 +395,12 @@ impl FilterPanel {
                             Some(label) => MenuRow::data((id, i), label.clone()),
                             None => MenuRow::new((id, i), "any"),
                         };
-                        row.checked(ticked).on_click(cx.listener(
-                            move |state, _, window, cx| {
+                        row.checked(ticked)
+                            .on_click(cx.listener(move |state, _, window, cx| {
                                 let option = option.clone();
                                 browse.update(cx, |b, cx| b.update(cx, |b| set(b, option)));
                                 state.dismiss(window, cx);
-                            },
-                        ))
+                            }))
                     }))
                 }),
         )

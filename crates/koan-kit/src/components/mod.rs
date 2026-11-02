@@ -14,11 +14,12 @@
 mod animated;
 mod availability;
 mod badge;
-mod bars;
 mod banner;
+mod bars;
 mod button;
 pub mod choice;
 mod collection;
+mod copy;
 mod cover;
 mod dense;
 mod drag;
@@ -66,10 +67,11 @@ use gpui_kit::{
 pub use animated::{Animated, AnimatedQuad, SHADED, SHADER_UNIFORMS, ShaderProgram};
 pub use availability::{Availability, AvailabilityMark, ProgressReader};
 pub use badge::{Badge, Chip};
-pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use banner::Banner;
+pub use bars::{BARS, BarLevels, BarsPlace, FLOOR, PlayingBars, bars_overlay};
 pub use button::{Button, ButtonKind};
 pub use collection::{Collection, CollectionSection, CollectionWidth};
+pub use copy::{CopyButton, CopyText};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use drag::{DragChip, DropTarget, INSERTION};
@@ -78,7 +80,8 @@ pub use fade::FadeIn;
 pub use field::{FieldState, InputEvent, TextField};
 pub use filter_field::FilterField;
 pub use form::{
-    Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
+    Form, FormRow, FormSection, SectionHeader, form_buttons, form_entry, form_item, form_note,
+    form_text,
 };
 pub use level::Level;
 pub use menu::{KoanContextMenu, Menu, MenuEntry, MenuSlot};

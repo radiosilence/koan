@@ -21,8 +21,7 @@ use koan_kit::raw::canvas;
 
 use crate::components::{
     Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
-    Slider,
-    TransportMetrics,
+    Slider, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
