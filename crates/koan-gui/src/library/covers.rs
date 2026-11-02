@@ -54,6 +54,9 @@ const RETAIN: usize = 32 * 1024 * 1024;
 /// in which a bitmap drawn is never dropped (see `trim`).
 const RELEASE_AFTER: Duration = Duration::from_millis(600);
 
+/// Calls to `admit` this close together are one frame's.
+const FRAME: Duration = Duration::from_millis(4);
+
 /// Draw sizes are rounded up to a multiple of this, so a window being resized
 /// does not decode every tile again at each pixel.
 const BUCKET: u32 = 32;
@@ -165,6 +168,8 @@ struct Held {
 struct Queue {
     /// Every request, by key, at the most urgent priority anyone asked for.
     wanted: HashMap<Key, Priority>,
+    /// The records `wanted` asks for (`set_wanted`).
+    wanted_arts: HashSet<Art>,
     on_disk: HashSet<Art>,
     fetching: HashSet<Art>,
     /// Each running fetch's way to be called off: sent, or dropped, it ends
@@ -236,12 +241,25 @@ impl Queue {
 
     /// Fetches running for records no longer asked for: scrolled away.
     fn abandoned(&self) -> Vec<Art> {
-        let wanted: HashSet<Art> = self.wanted.keys().map(|k| k.art).collect();
         self.fetching
             .iter()
-            .filter(|art| !wanted.contains(art))
+            .filter(|art| !self.wanted_arts.contains(art))
             .copied()
             .collect()
+    }
+
+    /// Every request, replacing the last: the keys and the records they are
+    /// of, worked out once here rather than at every wake of a lane.
+    fn set_wanted(&mut self, wanted: HashMap<Key, Priority>) {
+        self.wanted_arts = wanted.keys().map(|k| k.art).collect();
+        self.wanted = wanted;
+    }
+
+    /// One more request.
+    #[cfg(test)]
+    fn want(&mut self, key: Key, priority: Priority) {
+        self.wanted_arts.insert(key.art);
+        self.wanted.insert(key, priority);
     }
 
     /// Calls off what must give way, and returns how many places that frees:
@@ -385,6 +403,9 @@ struct Shared {
     disk: Mutex<()>,
     fetch_ready: Condvar,
     decode_ready: Condvar,
+    /// Fetch threads running: grown as the limit rises, each above
+    /// `WINDOW_START` ending after `FETCHER_IDLE` with nothing to fetch.
+    fetchers: std::sync::atomic::AtomicUsize,
 }
 
 impl Shared {
@@ -409,6 +430,9 @@ pub const MAX_FETCHES: usize = 512;
 /// reading covers off a spinning disk answers 16 at once well and 512 badly;
 /// the window finds what this one takes.
 const WINDOW_START: usize = 16;
+/// How long a fetch thread beyond `WINDOW_START` waits with nothing to
+/// fetch before it ends.
+const FETCHER_IDLE: Duration = Duration::from_secs(30);
 const WINDOW_MIN: usize = 8;
 /// An answer slower than this is the server struggling, not a cover read
 /// off a disk: the window is cut for it as for a failure.
@@ -448,15 +472,15 @@ pub struct Covers {
     memory_bytes: usize,
     /// Decoded, not yet in memory: admitted a few a frame (`admit`).
     staged: HashMap<Key, (Arc<RenderImage>, u64)>,
+    /// This frame's uploads so far, and when the frame began: every list and
+    /// page drawn in one frame shares one budget (`admit`).
+    uploaded: (Instant, usize),
     /// Each record's colour, kept once known: what its tile shows while its
     /// sleeve waits for the atlas, or after it is evicted. A few bytes each.
     colours: HashMap<Art, Hsla>,
     /// Each list's and page's requests, replaced whole as it draws.
     requests: HashMap<EntityId, HashMap<Key, Priority>>,
     evictions_seq: i64,
-    /// Fetch threads started so far: grown to the limit as it rises, kept
-    /// once started, waiting on the queue while there is nothing to fetch.
-    fetchers: usize,
     fetch_tx: mpsc::UnboundedSender<Done>,
     _results: Task<()>,
 }
@@ -471,6 +495,7 @@ impl Covers {
             disk: Mutex::new(()),
             fetch_ready: Condvar::new(),
             decode_ready: Condvar::new(),
+            fetchers: Default::default(),
         });
         let (tx, mut rx) = mpsc::unbounded();
         // Half the cores: the engine reads and resizes local covers on the
@@ -531,10 +556,10 @@ impl Covers {
             sizes: HashMap::new(),
             memory_bytes: 0,
             staged: HashMap::new(),
+            uploaded: (Instant::now(), 0),
             colours: HashMap::new(),
             requests: HashMap::new(),
             evictions_seq: 0,
-            fetchers: 0,
             fetch_tx,
             _results: results,
         }
@@ -676,23 +701,24 @@ impl Covers {
     /// Starts fetch threads until there are as many as `limit`. A fetch
     /// waits on a disk or a server, so each holds a thread while it does.
     fn grow_fetchers(&mut self, limit: usize) {
-        while self.fetchers < limit {
+        use std::sync::atomic::Ordering;
+        while self.shared.fetchers.load(Ordering::Acquire) < limit {
             let (shared, dir, tx, engine) = (
                 self.shared.clone(),
                 self.dir.clone(),
                 self.fetch_tx.clone(),
                 self.engine.clone(),
             );
-            let n = self.fetchers;
+            let n = self.shared.fetchers.fetch_add(1, Ordering::AcqRel);
             let started = std::thread::Builder::new()
                 .name(format!("koan-art-fetch-{n}"))
                 // A fetch needs little stack: it waits on a socket.
                 .stack_size(256 * 1024)
                 .spawn(move || fetch_lane(shared, dir, engine, tx));
             if started.is_err() {
+                self.shared.fetchers.fetch_sub(1, Ordering::AcqRel);
                 break;
             }
-            self.fetchers += 1;
         }
     }
 
@@ -730,7 +756,7 @@ impl Covers {
             .filter(|(k, p)| **p == Priority::Visible && !queue.on_disk.contains(&k.art))
             .count();
         queue.limit = (shown * 2).clamp(1, MAX_FETCHES);
-        queue.wanted = wanted;
+        queue.set_wanted(wanted);
         // The abandoned still hold threads while they finish: enough more
         // that the limit's worth run beside them, under the ceiling.
         let called_off = queue.give_way();
@@ -812,10 +838,17 @@ impl Covers {
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
-        let recent = Instant::now() - Duration::from_millis(500);
-        let mut spent = 0;
+        let now = Instant::now();
+        let recent = now - Duration::from_millis(500);
+        // One budget a frame, however many lists admit in it: a call within
+        // a few milliseconds of the last is the same frame's.
+        if now.duration_since(self.uploaded.0) > FRAME {
+            self.uploaded = (now, 0);
+        }
+        let mut spent = self.uploaded.1;
+        let fresh = spent == 0;
         for (key, _, current) in ranked {
-            if spent > 0 && spent >= budget {
+            if (!fresh || spent > 0) && spent >= budget {
                 break;
             }
             let Some((image, generation)) = self.staged.remove(&key) else {
@@ -866,6 +899,7 @@ impl Covers {
                 self.shared.queue.lock().decoded.remove(&other);
             }
         }
+        self.uploaded.1 = spent;
         self.trim(window, cx);
         !self.staged.is_empty()
     }
@@ -1236,7 +1270,23 @@ fn fetch_lane(
                     queue.cancels.insert(art, (ticket, cancel));
                     break (art, queue.generation(art), called_off, ticket);
                 }
-                shared.fetch_ready.wait(&mut queue);
+                // Idle past `FETCHER_IDLE` with more threads than a
+                // fetch window starts with: this one ends, so the pool a
+                // fling grew shrinks back.
+                let idle = shared.fetch_ready.wait_for(&mut queue, FETCHER_IDLE);
+                if idle.timed_out()
+                    && queue.next_fetch().is_none()
+                    && shared
+                        .fetchers
+                        .fetch_update(
+                            std::sync::atomic::Ordering::AcqRel,
+                            std::sync::atomic::Ordering::Acquire,
+                            |n| (n > WINDOW_START).then(|| n - 1),
+                        )
+                        .is_ok()
+                {
+                    return;
+                }
             }
         };
         let file = dir.join(art.filename());
@@ -1637,11 +1687,11 @@ mod tests {
             let (cancel, _) = futures_channel::oneshot::channel();
             q.fetching.insert(Art::Album(id));
             q.cancels.insert(Art::Album(id), (id as u64, cancel));
-            q.wanted.insert(key(id, 64), priority);
+            q.want(key(id, 64), priority);
         }
         // One record on screen, at two sizes.
-        q.wanted.insert(key(10, 64), Priority::Visible);
-        q.wanted.insert(key(10, 128), Priority::Visible);
+        q.want(key(10, 64), Priority::Visible);
+        q.want(key(10, 128), Priority::Visible);
         assert_eq!(q.give_way(), 1);
         assert!(!q.fetching.contains(&Art::Album(4)), "the farthest ahead");
         for id in 1..=3 {
@@ -1672,10 +1722,10 @@ mod tests {
         }
         // 0..10 scrolled away; 10..16 still wanted, ahead.
         for id in 10..16 {
-            q.wanted.insert(key(id), Priority::Ahead(id as f32));
+            q.want(key(id), Priority::Ahead(id as f32));
         }
         for id in 100..120 {
-            q.wanted.insert(key(id), Priority::Visible);
+            q.want(key(id), Priority::Visible);
         }
         assert_eq!(q.give_way(), 16);
         for mut called_off in told {
@@ -1712,7 +1762,7 @@ mod tests {
         let (a, b) = (Art::Album(1), Art::Album(2));
         q.wanted
             .insert(Key { art: a, px: 64 }, Priority::Ahead(5.0));
-        q.wanted.insert(Key { art: b, px: 64 }, Priority::Visible);
+        q.want(Key { art: b, px: 64 }, Priority::Visible);
         assert_eq!(q.next_fetch(), None);
         q.fetches_allowed = true;
         assert_eq!(q.next_fetch(), Some(b));

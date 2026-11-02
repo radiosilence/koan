@@ -268,6 +268,30 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 `SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
 
+## Accessibility
+
+Every koan-kit component reports itself to the accessibility tree GPUI builds over AccessKit (VoiceOver, Orca, UI Automation), so a page made from the kit is read without code of its own. The tree is built only while assistive technology is attached, so this costs nothing otherwise. Each sets its role and name beside its id (`accessible` in `components/mod.rs`) and answers a reader's click with the handler a pointer would call (`answers_click`):
+
+| Component | Role, name and state |
+|---|---|
+| `Button`, `ToolbarButton`, `PlayButton`, `ShuffleButton` | Button, named by the label or a glyph's tooltip ("shuffle Hounds of Love") |
+| `Toggle`, `IconToggle` | Switch, toggled |
+| `Slider` (`named`), `Level` | Slider: the value, its range and step, and the low end's text as the value said ("1:00"); Increment and Decrement step it as the arrow keys do |
+| `Stepper` | SpinButton, with value, range and step; Increment and Decrement |
+| `Segmented` | RadioGroup of RadioButtons, the chosen one toggled, with their place in the set |
+| `Picker` (`named`) | ComboBox, named by its form row's title, the choice as its value, expanded while open |
+| `MenuPanel`, `MenuRow` | Menu of MenuItems, a checkbox item where it ticks, its second line as the description |
+| `NavRow`, `NavHeading` | Link, selected where it is; Heading |
+| `PageHeader`'s title, `SectionHeading` | Heading, levels 1 and 2 |
+| `Badge` | Label |
+| `ProgressRow` | ProgressIndicator, with its share and its counts |
+| `EmptyState` | Group, named by what it says |
+| sheets' `panel`, `Viewer` | Dialog |
+
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions.
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click and an increment through `Window::dispatch_a11y_action` as a screen reader would.
+
 ## Swift roles and their GPUI components
 
 | Swift (`KoanTheme.swift`, `Views/`) | GPUI |
@@ -304,7 +328,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 The spec wins, except where noted for the user's call.
 
-- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`), 16 for now by the user's call.
+- **Page margins.** The spec gives 32 on the Mac; the Swift pages use 16 for lists and 20 for grids (`RowMetrics.pageEdge`, `collectionMargin`). `Page` takes one margin on every side, above the header included (`RowMetrics::page_margin`): 16, as the Swift lists use, and the tile grids take the same (`RowMetrics::page_margin_on`).
 - **Toggle and form rows: 24 points, a deliberate deviation for the desktop.** The spec gives a 44-point hit area; the Mac draws its toggles 24 tall (`KoanToggleStyle.hit`), and 44-point rows made Settings looser than the Mac. Rows are 24 at desktop density, the whole row's width taking the click. 44 stays the rule for touch platforms, should koan-kit ever reach one.
 - **Form label column.** Swift's is 200; koan-gui had 210. 200.
 

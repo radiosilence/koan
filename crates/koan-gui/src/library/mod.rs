@@ -18,6 +18,7 @@ pub mod format;
 pub mod header;
 pub mod history;
 pub mod info;
+pub mod keys;
 pub mod nav;
 pub mod playlist;
 pub mod rows;

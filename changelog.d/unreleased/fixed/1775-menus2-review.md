@@ -1,0 +1,1 @@
+- **The desktop app's album grids line up with their pages.** Their first column sat 16 points in from the header. The queue's shuffle-the-rest button is greyed when there is nothing to shuffle or shuffle play is on, and smart playlists no longer light up for a drop they refuse.

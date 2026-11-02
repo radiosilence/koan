@@ -109,19 +109,7 @@ fn fetch_since(
         return Ok(held);
     };
 
-    // MusicBrainz answers 503 while it is busy, often for seconds at a time;
-    // a page opened then would otherwise show nothing until its next visit.
-    let mut found = look_up(&subject, now);
-    for wait in [2, 4] {
-        if !matches!(
-            found,
-            Err(ArtistInfoError::MusicBrainz(MusicBrainzError::RateLimited))
-        ) {
-            break;
-        }
-        std::thread::sleep(Duration::from_secs(wait));
-        found = look_up(&subject, now);
-    }
+    let found = look_up(&subject, now);
     if let Ok((_, Some(mbid))) = &found
         && subject.mbid.is_none()
     {
@@ -242,7 +230,7 @@ fn look_up(subject: &Subject, now: i64) -> Result<(ArtistInfo, Option<String>), 
         return Ok((info, None));
     };
     throttle();
-    let Some(qid) = musicbrainz::wikidata_id(&mb, &mbid)? else {
+    let Some(qid) = when_busy(|| musicbrainz::wikidata_id(&mb, &mbid))? else {
         return Ok((info, Some(mbid)));
     };
 
@@ -280,14 +268,14 @@ fn resolve_mbid(
     let name = &subject.name;
     if let Some(release) = &subject.release {
         throttle();
-        let credits = musicbrainz::release_artists(mb, release)?;
+        let credits = when_busy(|| musicbrainz::release_artists(mb, release))?;
         if let Some(mbid) = credited(&credits, name) {
             return Ok(Some(mbid));
         }
     }
 
     throttle();
-    let results = musicbrainz::search_artist(mb, name, 5)?;
+    let results = when_busy(|| musicbrainz::search_artist(mb, name, 5))?;
     let mut exact = results
         .into_iter()
         .filter(|r| r.score >= 95 && same_name(&r.name, name));
@@ -354,6 +342,24 @@ fn store(conn: &Connection, artist_id: i64, info: &ArtistInfo) -> rusqlite::Resu
         ],
     )?;
     Ok(())
+}
+
+/// One MusicBrainz request, asked again after 2 s and then 4 s while
+/// MusicBrainz answers that it is busy (503), as it often is for seconds at a
+/// time: a page opened then would otherwise show nothing until its next
+/// visit. Only the request that was refused is repeated, not the look-up
+/// around it.
+fn when_busy<T>(request: impl Fn() -> Result<T, MusicBrainzError>) -> Result<T, MusicBrainzError> {
+    let mut answer = request();
+    for wait in [2, 4] {
+        if !matches!(answer, Err(MusicBrainzError::RateLimited)) {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(wait));
+        throttle();
+        answer = request();
+    }
+    answer
 }
 
 /// MusicBrainz allows one request a second per client, and paging through

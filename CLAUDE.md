@@ -348,6 +348,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with the photo beside the name (its slot growing in when it arrives late), sections, features, appearances and the biography under "about" at the end |
 | `library/drag.rs` | `PlayableDrag`, what every drag out of the library carries: `TrackSet`s for the engine, shared so a pick is built once. The queue and the sidebar's queue and playlist rows take it |
 | `library/selection.rs` | Picking several things to play together, in tick order |
+| `library/keys.rs` | The list keys (koan-kit's `list_keys`: arrows, Home/End, Page Up/Down, Return, Ctrl-Space) for a library list, through `KeyedList`: its length, how a range or a row is picked, revealing a row and what Return does |
 | `library/history.rs` | Play history: every play under its day, laid out off the main thread, in the library's track rows with the time as their lead and a mark for plays scrobbled in elsewhere; picked by play, forgotten and cleared behind previews |
 | `library/shelf.rs` | Favourites, Recently played, Downloaded and the search's results: the head of each kind on the shelf in a koan-kit `Collection`, each heading opening the browser filtered to the shelf, one pick across the kinds |
 | `search/mod.rs` | `Search`: the sidebar's query and the search shelf's answer, each keystroke read off the main thread with older answers dropped by generation; the suggestions it offers. An empty query forgets `Route::Search` |

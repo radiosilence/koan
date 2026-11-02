@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use gpui_kit::{
-    App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div,
+    App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, child, fade, fill, focus, mix, pointer, ring, track, transition};
+use super::{
+    Handler, accessible, answers_click, child, fade, fill, focus, mix, pointer, ring, track,
+    transition,
+};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space,
     TOOLBAR_BUTTON, Tone, TypeRole, label,
@@ -58,6 +61,19 @@ impl ButtonKind {
             ButtonKind::IconOutlined => (7.0, 7.0),
             ButtonKind::Icon | ButtonKind::Toolbar => (0.0, 0.0),
         }
+    }
+
+    /// The side a glyph-only button of this kind draws at: its glyph, its
+    /// padding either side and its outline, where it has one. What a layout
+    /// around the button measures from, rather than copying the parts.
+    pub fn glyph_side(self, look: &Look) -> Pixels {
+        let glyph = px(crate::theme::icons::side(look.points(self.role())));
+        let (vertical, _) = self.padding();
+        let outline = match self {
+            ButtonKind::Prominent | ButtonKind::Bordered | ButtonKind::IconOutlined => HAIRLINE,
+            _ => px(0.0),
+        };
+        glyph + look.spaced(vertical) * 2.0 + outline * 2.0
     }
 
     fn tone(self) -> Tone {
@@ -238,8 +254,10 @@ impl RenderOnce for Button {
         );
         let role = kind.role();
 
-        let mut button = div()
-            .id(self.id.clone())
+        // Named by its label, or a glyph's by what its tooltip says it does.
+        let name = self.label.clone().or_else(|| self.help.clone());
+        let mut button = accessible(div().id(self.id.clone()), gpui_kit::Role::Button, name)
+            .aria_disabled(self.disabled)
             .relative()
             .flex()
             .flex_none()
@@ -264,6 +282,7 @@ impl RenderOnce for Button {
             // GPUI turns Enter and Space on the focused button into a click.
             button = track(button, &state).track_focus(&handle).cursor_pointer();
             if let Some(on_click) = self.on_click.clone() {
+                button = answers_click(button, on_click.clone());
                 button = button.on_click(move |event, window, cx| on_click(event, window, cx));
             }
         }

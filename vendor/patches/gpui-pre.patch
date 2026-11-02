@@ -189,6 +189,44 @@ index 7890ed3..60a11e5 100644
  [dependencies.accesskit]
  version = "0.24.0"
  features = ["enumn"]
+diff --git a/src/elements/div.rs b/src/elements/div.rs
+index 11f0b72..1c2dfc5 100644
+--- a/src/elements/div.rs
++++ b/src/elements/div.rs
+@@ -1437,6 +1437,13 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+         self
+     }
+ 
++    /// KOAN: report this element as disabled: present and perceivable, but
++    /// taking no input (#1776).
++    fn aria_disabled(mut self, disabled: bool) -> Self {
++        self.interactivity().aria.disabled = disabled;
++        self
++    }
++
+     /// Set the selected state for this element.
+     fn aria_selected(mut self, selected: bool) -> Self {
+         self.interactivity().aria.selected = Some(selected);
+@@ -2161,6 +2168,8 @@ pub(crate) struct AriaProperties {
+     pub(crate) selected: Option<bool>,
+     pub(crate) expanded: Option<bool>,
+     pub(crate) toggled: Option<accesskit::Toggled>,
++    // KOAN: a control that takes no input is reported as such (#1776).
++    pub(crate) disabled: bool,
+     pub(crate) numeric_value: Option<f64>,
+     pub(crate) min_numeric_value: Option<f64>,
+     pub(crate) max_numeric_value: Option<f64>,
+@@ -3608,6 +3617,10 @@ impl Interactivity {
+         if let Some(toggled) = self.aria.toggled {
+             node.set_toggled(toggled);
+         }
++        // KOAN: disabled (#1776).
++        if self.aria.disabled {
++            node.set_disabled();
++        }
+         if let Some(value) = self.aria.numeric_value {
+             node.set_numeric_value(value);
+         }
 diff --git a/src/gpui.rs b/src/gpui.rs
 index 2328e95..5b5e7bc 100644
 --- a/src/gpui.rs
@@ -818,8 +856,23 @@ index 0000000..c799f78
 +        }
 +    }
 +}
+diff --git a/src/window/a11y/debug.rs b/src/window/a11y/debug.rs
+index ae98aa5..3cfea63 100644
+--- a/src/window/a11y/debug.rs
++++ b/src/window/a11y/debug.rs
+@@ -268,6 +268,10 @@ fn node_to_json(
+     if let Some(v) = node.toggled() {
+         aria.insert("toggled".into(), json!(format!("{v:?}")));
+     }
++    // KOAN: disabled (#1776).
++    if node.is_disabled() {
++        aria.insert("disabled".into(), json!(true));
++    }
+     if let Some(v) = node.orientation() {
+         aria.insert("orientation".into(), json!(format!("{v:?}")));
+     }
 diff --git a/src/window.rs b/src/window.rs
-index c559412..0c4d2ca 100644
+index c559412..2590a40 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -1913,28 +1913,40 @@ impl Window {
@@ -953,3 +1006,17 @@ index c559412..0c4d2ca 100644
      /// Paint one or more quads into the scene for the next frame at the current stacking context.
      /// Quads are colored rectangular regions with an optional background, border, and corner radius.
      /// see [`fill`], [`outline`], and [`quad`] to construct this type.
+@@ -7074,6 +7158,13 @@ impl Window {
+             .push((action, Box::new(listener)));
+     }
+ 
++    /// KOAN: handles `request` as though assistive technology had sent it,
++    /// for tests that drive elements the way a screen reader does (#1776).
++    #[cfg(not(target_family = "wasm"))]
++    pub fn dispatch_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
++        self.handle_a11y_action(request, cx);
++    }
++
+     #[cfg(not(target_family = "wasm"))]
+     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+         // Take listeners out temporarily so the closures can borrow Window

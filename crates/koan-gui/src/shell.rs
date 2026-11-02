@@ -19,9 +19,10 @@ use crate::components::sheet as ask;
 use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, Forward, Search, ShowAlbums,
-    ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts,
-    ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
+    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, FocusNext, FocusPrevious, Forward,
+    NextRegion, PreviousRegion, Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory,
+    ShowQueue, ShowRecentlyPlayed, ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
+    help,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -273,10 +274,70 @@ impl Shell {
 
     /// The page showing takes the keys again.
     fn refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.nav.read(cx).current() == Route::Queue {
+        // Typing in a field moved the route (the sidebar's search lists its
+        // results as it is typed): the field keeps the keyboard.
+        if typing(&window.context_stack()) {
+            cx.notify();
+            return;
+        }
+        let route = self.nav.read(cx).current();
+        if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
         } else {
             window.focus(&self.focus, cx);
+            // A library page is made as the stage draws it, and takes the
+            // keyboard then.
+            if let Some(library) = self.library.as_ref().filter(|_| LibraryStage::draws(route)) {
+                library.update(cx, |stage, _| stage.focus_on_arrival());
+            }
+        }
+        cx.notify();
+    }
+
+    /// The window's regions in F6's order: the sidebar while it shows, the
+    /// page, the transport.
+    fn regions(&self, cx: &App) -> Vec<FocusHandle> {
+        let route = self.nav.read(cx).current();
+        let page = if route == Route::Queue {
+            Some(self.queue.focus_handle(cx))
+        } else {
+            self.library
+                .as_ref()
+                .filter(|_| LibraryStage::draws(route))
+                .and_then(|library| library.read(cx).page_focus())
+        };
+        self.sidebar_shown
+            .then(|| self.sidebar.focus_handle(cx))
+            .into_iter()
+            .chain(page)
+            .chain([self.transport.focus_handle(cx)])
+            .collect()
+    }
+
+    /// F6: the next region takes the keyboard, from whichever holds it now.
+    fn region(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let regions = self.regions(cx);
+        let Some(last) = regions.len().checked_sub(1) else {
+            return;
+        };
+        let at = regions.iter().position(|r| r.contains_focused(window, cx));
+        let next = match at {
+            Some(at) => (at as isize + by).rem_euclid(regions.len() as isize) as usize,
+            None if by < 0 => last,
+            None => 0,
+        };
+        window.focus(&regions[next], cx);
+        self.focus_moved(cx);
+    }
+
+    /// The keyboard moved: the cached regions draw their focus rings again,
+    /// since a cached view replays its last frame unless told.
+    fn focus_moved(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.update(cx, |_, cx| cx.notify());
+        self.transport.update(cx, |_, cx| cx.notify());
+        self.queue.update(cx, |_, cx| cx.notify());
+        if let Some(library) = &self.library {
+            library.update(cx, |_, cx| cx.notify());
         }
         cx.notify();
     }
@@ -495,7 +556,7 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        let washed = cx.global::<theme::KoanTheme>().wash_window;
+        let washed = theme::KoanTheme::washes_window(cx);
         let transport = {
             let transport = self.transport.clone();
             move || {
@@ -547,6 +608,18 @@ impl Render for Shell {
         div()
             .key_context(actions::CONTEXT)
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &FocusNext, window, cx| {
+                window.focus_next(cx);
+                this.focus_moved(cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusPrevious, window, cx| {
+                window.focus_prev(cx);
+                this.focus_moved(cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextRegion, window, cx| this.region(1, window, cx)))
+            .on_action(
+                cx.listener(|this, _: &PreviousRegion, window, cx| this.region(-1, window, cx)),
+            )
             .on_action(cx.listener(Self::back))
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::forward))
@@ -674,5 +747,24 @@ impl Render for Shell {
             .children(self.picker.as_ref().map(|(picker, _)| {
                 deferred(div().absolute().size_full().child(picker.clone())).with_priority(2)
             }))
+    }
+}
+
+/// Whether the keyboard is in a text field: a context in its path is a
+/// field's.
+fn typing(stack: &[KeyContext]) -> bool {
+    stack.iter().any(|c| c.contains("Input"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_keeps_the_keyboard_when_the_route_moves() {
+        let field = KeyContext::parse("Input").unwrap();
+        let page = KeyContext::parse("koan").unwrap();
+        assert!(typing(&[page.clone(), field]));
+        assert!(!typing(&[page]));
     }
 }

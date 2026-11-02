@@ -121,6 +121,7 @@ impl Render for PlaybackPane {
                             .iter()
                             .position(|(_, v)| *v == settings.replaygain),
                     )
+                    .named("ReplayGain")
                     .on_change(move |index, _, cx| {
                         let mode = REPLAYGAIN[*index].1;
                         model.update(cx, |m, cx| m.edit(cx, move |s| s.replaygain = mode.into()));
