@@ -204,7 +204,8 @@ impl RenderOnce for NavHeading {
 }
 
 /// A line at the foot of a navigation list: what the app is doing, or what
-/// went wrong.
+/// went wrong. One line, ended in an ellipsis where it runs past the list,
+/// so a long path in an error never widens or lengthens the foot.
 #[derive(IntoElement)]
 pub struct NavNote {
     text: SharedString,
@@ -224,6 +225,11 @@ impl RenderOnce for NavNote {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         div()
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
             .px(look.space(Space::L))
             .py(look.space(Space::Xs))
             .text_role(TypeRole::Fine, &look)
