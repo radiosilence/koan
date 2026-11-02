@@ -1,0 +1,1 @@
+- **The transport's other controls say what they do.** Shuffle and repeat say whether they are on, the sleep timer, output and devices buttons name themselves and what they hold, and the EQ button names its shortcut.

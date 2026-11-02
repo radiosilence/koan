@@ -16,6 +16,9 @@ pub trait KeyedList: Sized + 'static {
     fn cursor(&mut self) -> &mut ListCursor;
     /// How many rows the keys walk.
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     /// Picks rows `from..=to`, and those alone.
     fn pick(&mut self, from: usize, to: usize, cx: &mut Context<Self>);
     /// Adds row `ix` to the pick, or takes it out.

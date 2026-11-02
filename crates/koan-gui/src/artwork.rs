@@ -9,7 +9,7 @@
 
 use koan_kit::app::*;
 
-use crate::components::{CoverArt, Viewer};
+use crate::components::Viewer;
 use crate::covers::{self, CoversHandle};
 use crate::theme::Look;
 

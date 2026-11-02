@@ -737,6 +737,7 @@ mod tests {
             download_workers: 4,
             cache_limit: String::new(),
             download_ahead: Some(2),
+            preload_covers: false,
             cache_dir: String::new(),
             cache_bytes: 0,
             auto_sync: false,
