@@ -51,6 +51,9 @@ pub struct Sidebar {
     /// Where a playlist dragged among the playlists would land: before the
     /// playlist at this index, or after the last at the count.
     drop_playlist: Option<usize>,
+    /// Reorders made here: a read of the playlists that one overtook is
+    /// read again rather than putting the old order back.
+    reorders: u64,
     /// The search field at the sidebar's head, once the library is open,
     /// and whether it holds a query, which lists the results page.
     search: Option<(Entity<crate::search::field::SearchField>, Subscription)>,
@@ -70,6 +73,7 @@ impl Sidebar {
             covers: None,
             importing: 0,
             drop_playlist: None,
+            reorders: 0,
             search: None,
             searching: false,
             import_problem: None,
@@ -148,6 +152,7 @@ impl Sidebar {
     /// a newer ask replaces one in flight.
     fn reload(&mut self, cx: &mut Context<Self>) {
         let engine = engine(cx);
+        let reorders = self.reorders;
         self.loading = Some(cx.spawn(
             async move |this, cx| match engine.clone().playlists().await {
                 Ok(playlists) => {
@@ -161,6 +166,10 @@ impl Sidebar {
                         }
                     }
                     this.update(cx, |this, cx| {
+                        if this.reorders != reorders {
+                            this.reload(cx);
+                            return;
+                        }
                         this.faces = faces;
                         let gone: Vec<i64> = this
                             .playlists
@@ -194,6 +203,11 @@ impl Sidebar {
         let Some(from) = self.playlists.iter().position(|p| p.id == id) else {
             return;
         };
+        // Dropped where it already was: nothing to write.
+        if at == from || at == from + 1 {
+            return;
+        }
+        self.reorders += 1;
         let moved = self.playlists.remove(from);
         let at = if from < at { at - 1 } else { at }.min(self.playlists.len());
         self.playlists.insert(at, moved);
@@ -219,6 +233,11 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let current = Some(self.nav.read(cx).current());
+        // A drag that ended anywhere, or was given up, leaves no line.
+        let dragging = cx.has_active_drag();
+        if !dragging {
+            self.drop_playlist = None;
+        }
         let row = |page: Route,
                    id: ElementId,
                    label: &'static str,
@@ -318,8 +337,9 @@ impl Render for Sidebar {
                                 .get(&playlist.id)
                                 .and_then(|f| f.first().copied()),
                         };
-                        let line_above = self.drop_playlist == Some(index);
-                        let line_below = index + 1 == total && self.drop_playlist == Some(total);
+                        let line_above = dragging && self.drop_playlist == Some(index);
+                        let line_below =
+                            dragging && index + 1 == total && self.drop_playlist == Some(total);
                         let face = NavRow::data(
                             ("nav-playlist", playlist.id as u64),
                             playlist.name.clone(),

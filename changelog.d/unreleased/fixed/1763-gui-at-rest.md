@@ -1,0 +1,1 @@
+- **The desktop app's playing bars rest in a hidden window.** Hiding the window no longer keeps the analyser running, the bars move once per display refresh, only the windows showing them repaint, and the accent always finishes settling.

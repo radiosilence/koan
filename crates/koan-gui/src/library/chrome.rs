@@ -386,7 +386,7 @@ impl FilterPanel {
                     SharedString::from(format!("{id}-trigger")),
                     current.clone().unwrap_or_else(|| "any".into()),
                 ))
-                .content(move |_, window, cx| {
+                .content(move |_, _, cx| {
                     let rows = std::iter::once(None).chain(options.iter().cloned().map(Some));
                     MenuPanel::new().children(rows.enumerate().map(|(i, option)| {
                         let browse = browse.clone();

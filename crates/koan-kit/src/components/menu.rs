@@ -5,6 +5,7 @@
 //! corners and type, which no theme setting reaches; this is the Mac's
 //! `KoanMenu` instead.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::prelude::*;
@@ -151,10 +152,21 @@ pub struct Menu {
     entries: Vec<Entry>,
     highlighted: Option<usize>,
     focus: FocusHandle,
-    _submenu: Option<Subscription>,
+    /// Where it was drawn last, for the menu it opened from to tell a press
+    /// in it from one outside them both.
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The menu it opened from, as a submenu: a press there is not outside.
+    parent: Option<Rc<Cell<Option<Bounds<Pixels>>>>>,
+    _submenu: Vec<Subscription>,
 }
 
 impl EventEmitter<DismissEvent> for Menu {}
+
+/// A submenu asked to close itself alone, by Left or Escape: the menu it
+/// opened from stays, with the keyboard back on it.
+pub struct Back;
+
+impl EventEmitter<Back> for Menu {}
 
 impl Focusable for Menu {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -173,7 +185,9 @@ impl Menu {
                 entries: Vec::new(),
                 highlighted: None,
                 focus: cx.focus_handle(),
-                _submenu: None,
+                bounds: Rc::default(),
+                parent: None,
+                _submenu: Vec::new(),
             };
             build(menu, window, cx)
         })
@@ -216,11 +230,13 @@ impl Menu {
             entries: Vec::new(),
             highlighted: None,
             focus: self.focus.clone(),
-            _submenu: None,
+            bounds: self.bounds.clone(),
+            parent: self.parent.clone(),
+            _submenu: Vec::new(),
         };
         let built = build(empty, cx);
         self.entries = built.entries;
-        self._submenu = None;
+        self._submenu.clear();
         self.highlighted = self
             .highlighted
             .filter(|&i| i < self.entries.len() && self.choosable(i));
@@ -317,7 +333,7 @@ impl Menu {
                 *open = None;
             }
         }
-        self._submenu = None;
+        self._submenu.clear();
         cx.notify();
     }
 
@@ -328,15 +344,30 @@ impl Menu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(Entry::Submenu { build, open, .. }) = self.entries.get_mut(index) else {
+        let Some(Entry::Submenu { build, open, .. }) = self.entries.get(index) else {
             return;
         };
         if open.is_none() {
             let build = build.clone();
             let child = Menu::build(window, cx, move |menu, window, cx| build(menu, window, cx));
-            // Choosing in the submenu closes this menu too.
-            self._submenu =
-                Some(cx.subscribe(&child, |_, _, _: &DismissEvent, cx| cx.emit(DismissEvent)));
+            let parent = self.bounds.clone();
+            child.update(cx, |child, _| child.parent = Some(parent));
+            self._submenu = vec![
+                // Choosing in the submenu closes this menu too.
+                cx.subscribe(&child, |_, _, _: &DismissEvent, cx| cx.emit(DismissEvent)),
+                // Stepping back out of it closes it alone.
+                cx.subscribe_in(&child, window, move |menu, _, _: &Back, window, cx| {
+                    if let Some(Entry::Submenu { open, .. }) = menu.entries.get_mut(index) {
+                        *open = None;
+                    }
+                    menu._submenu.clear();
+                    window.focus(&menu.focus, cx);
+                    cx.notify();
+                }),
+            ];
+            let Some(Entry::Submenu { open, .. }) = self.entries.get_mut(index) else {
+                return;
+            };
             *open = Some(child);
         }
         if focus
@@ -387,7 +418,10 @@ impl Menu {
                     self.choose(index, window, cx);
                 }
             }
-            "escape" | "left" => cx.emit(DismissEvent),
+            // A submenu steps back to the menu it opened from; the menu
+            // itself closes.
+            "escape" | "left" if self.parent.is_some() => cx.emit(Back),
+            "escape" => cx.emit(DismissEvent),
             _ => return,
         }
         cx.stop_propagation();
@@ -500,13 +534,35 @@ impl Render for Menu {
                 }
             };
         }
+        let drawn = self.bounds.clone();
         div()
+            .relative()
             .track_focus(&self.focus)
             .key_context("KoanMenu")
             .on_key_down(cx.listener(Self::key))
-            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+            // A press in an open submenu, drawn outside this menu, or in the
+            // menu this one opened from, is not a press outside.
+            .on_mouse_down_out(cx.listener(|menu, event: &MouseDownEvent, _, cx| {
+                let at = event.position;
+                let inside = |cell: &Rc<Cell<Option<Bounds<Pixels>>>>| {
+                    cell.get().is_some_and(|b| b.contains(&at))
+                };
+                let in_submenu = menu.entries.iter().any(|entry| {
+                    matches!(entry, Entry::Submenu { open: Some(child), .. }
+                        if inside(&child.read(cx).bounds))
+                });
+                if in_submenu || menu.parent.as_ref().is_some_and(inside) {
+                    return;
+                }
+                cx.emit(DismissEvent)
+            }))
             .occlude()
             .child(panel)
+            .child(
+                canvas(move |bounds, _, _| drawn.set(Some(bounds)), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
     }
 }
 
@@ -541,11 +597,21 @@ pub trait KoanContextMenu: InteractiveElement + ParentElement + Sized {
                 return;
             }
             let at = event.position;
+            // Where the keyboard was, given back as the menu closes: a list's
+            // keys work again after a choice or Escape.
+            let before = window.focused(cx);
             opener.update(cx, |open, cx| {
-                let closing = cx.subscribe(&menu, |open: &mut Open, _, _: &DismissEvent, cx| {
-                    open.0 = None;
-                    cx.notify();
-                });
+                let closing = cx.subscribe_in(
+                    &menu,
+                    window,
+                    move |open: &mut Open, _, _: &DismissEvent, window, cx| {
+                        open.0 = None;
+                        if let Some(before) = &before {
+                            window.focus(before, cx);
+                        }
+                        cx.notify();
+                    },
+                );
                 open.0 = Some((at, menu.clone(), closing));
                 cx.notify();
             });

@@ -4,18 +4,49 @@
 //! decides its own spacing, room below the bar included, so a list of them
 //! at a sidebar's foot never sits on the rule beneath.
 
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::Handler;
+use super::{Animated, AnimatedQuad, Handler, SHADED, ShaderProgram};
 use crate::theme::{Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, TypeRole};
 
 /// The bar's thickness.
 const BAR: f32 = 2.0;
 /// One run of an unmeasured bar's segment along it.
 const RUN: Duration = Duration::from_millis(1200);
+
+/// An unmeasured bar's segment, run by the GPU. Uniforms: 0 a run's length
+/// in seconds, 1 the segment's share of the bar, 4..8 the colour.
+static RUNNING: ShaderProgram = ShaderProgram {
+    name: "koan-progress-running",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float t = fract(time / u[0]);
+    float left = -u[1] + (1.0 + u[1]) * smoothstep(0.0, 1.0, t);
+    float x = position.x / size.x;
+    float cover = clamp((x - left) * size.x + 0.5, 0.0, 1.0)
+        * clamp((left + u[1] - x) * size.x + 0.5, 0.0, 1.0);
+    return float4(u[4], u[5], u[6], u[7] * cover);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    let t = fract(time / u[0].x);
+    let left = -u[0].y + (1.0 + u[0].y) * smoothstep(0.0, 1.0, t);
+    let x = position.x / size.x;
+    let cover = clamp((x - left) * size.x + 0.5, 0.0, 1.0)
+        * clamp((left + u[0].y - x) * size.x + 0.5, 0.0, 1.0);
+    return vec4<f32>(u[1].xyz, u[1].w * cover);
+}
+"#,
+    prepare: None,
+};
+
+/// When the first running bar was drawn: every one runs in step.
+static START: OnceLock<Instant> = OnceLock::new();
 
 /// A bar on its own: `fraction` from 0 to 1, or `None` while there is no
 /// measure, when a segment runs along it (still with Reduce Motion).
@@ -53,6 +84,22 @@ impl RenderOnce for ProgressBar {
                         .bg(accent),
                 )
                 .into_any_element(),
+            None if SHADED && KoanTheme::motion_allowed(cx) => {
+                let rgba = accent.to_rgb();
+                let running = Animated::new();
+                running.set_all(0, &[RUN.as_secs_f32(), 0.3, 0.0, 0.0]);
+                running.set_all(4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+                running.set_origin(*START.get_or_init(Instant::now));
+                running.run(true);
+                track
+                    .child(
+                        AnimatedQuad::new(&RUNNING, &running)
+                            .decorative()
+                            .absolute()
+                            .size_full(),
+                    )
+                    .into_any_element()
+            }
             None if KoanTheme::motion_allowed(cx) => track
                 .child(
                     div()
@@ -139,16 +186,20 @@ impl RenderOnce for ProgressRow {
                 .child(text)
         };
         let stop = self.on_stop.map(|stop| {
+            // A glyph draws in its own colour, so the hover reaches it
+            // through the button's group: dim at rest, `muted` under the
+            // pointer.
+            let group = SharedString::from(format!("stop-{:?}", self.id));
             div()
                 .id((self.id.clone(), "stop"))
+                .group(group.clone())
                 .flex_none()
                 .cursor_pointer()
-                .text_color(muted.opacity(0.6))
-                .hover(move |s| s.text_color(muted))
                 .child(
                     KoanIcon::new(Icon::Deselect)
                         .role(TypeRole::Fine)
-                        .color(muted),
+                        .color(muted.opacity(0.6))
+                        .hover_color(group, muted),
                 )
                 .tooltip(|window, cx| {
                     super::Tooltip::view(

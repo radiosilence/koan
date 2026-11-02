@@ -351,10 +351,18 @@ impl<V: TileHost> Render for TileView<V> {
                     }
                     None => 1.0,
                 };
-                if shown < 1.0
-                    && let Some(ground) = self.ground
-                {
-                    art = art.bg(ground);
+                // Arriving: over the record's colour where it stood in, or
+                // over the ensō that was drawing itself.
+                if shown < 1.0 {
+                    art = match self.ground {
+                        Some(ground) => art.bg(ground),
+                        None => art.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .child(crate::components::Placeholder::new(side).loading(true)),
+                        ),
+                    };
                 }
                 art = art.child(
                     img(ImageSource::Render(image.clone()))
@@ -363,9 +371,10 @@ impl<V: TileHost> Render for TileView<V> {
                 )
             }
             Sleeve::Colour(colour) => art = art.bg(*colour),
-            Sleeve::Waiting | Sleeve::None => {
-                art = art.child(crate::components::Placeholder::new(side))
+            Sleeve::Waiting => {
+                art = art.child(crate::components::Placeholder::new(side).loading(true))
             }
+            Sleeve::None => art = art.child(crate::components::Placeholder::new(side)),
         }
         if let Some(codec) = &record.codec {
             // The codec only: at tile size a rate is unreadable, and the codec

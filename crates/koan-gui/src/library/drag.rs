@@ -150,10 +150,7 @@ impl Render for DragPreview {
         let side = crate::components::RowMetrics::nav_art(&p.look);
         let mut chip = DragChip::new(self.label.clone());
         if self.sleeve.is_some() {
-            chip = chip.sleeve(match crate::covers::image(self.sleeve, side, cx) {
-                Some(image) => CoverArt::Image(image),
-                None => CoverArt::Missing,
-            });
+            chip = chip.sleeve(crate::covers::art(self.sleeve, side, cx));
         }
         div().pl(self.at.x).pt(self.at.y).child(chip)
     }

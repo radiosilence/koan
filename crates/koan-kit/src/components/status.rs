@@ -7,9 +7,12 @@ use gpui_kit::*;
 
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, ROW_RULE_OPACITY, Space, Tone, TypeRole};
 
+/// What a line opens when clicked, and the tooltip saying so.
+type LineAction = (SharedString, std::rc::Rc<dyn Fn(&mut Window, &mut App)>);
+
 #[derive(IntoElement, Default)]
 pub struct StatusBlock {
-    lines: Vec<(Icon, SharedString, Tone)>,
+    lines: Vec<(Icon, SharedString, Tone, Option<LineAction>)>,
     figures: Vec<SharedString>,
 }
 
@@ -20,7 +23,26 @@ impl StatusBlock {
 
     /// A state, with its glyph: "connected to …", "sharing on port …".
     pub fn line(mut self, icon: Icon, text: impl Into<SharedString>, tone: Tone) -> Self {
-        self.lines.push((icon, text.into(), tone));
+        self.lines.push((icon, text.into(), tone, None));
+        self
+    }
+
+    /// A state that leads somewhere: a click opens what `help` names ("server
+    /// settings"), and the line reads `ink` under the pointer.
+    pub fn link(
+        mut self,
+        icon: Icon,
+        text: impl Into<SharedString>,
+        tone: Tone,
+        help: impl Into<SharedString>,
+        open: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.lines.push((
+            icon,
+            text.into(),
+            tone,
+            Some((crate::theme::label(help.into()), std::rc::Rc::new(open))),
+        ));
         self
     }
 
@@ -48,17 +70,36 @@ impl RenderOnce for StatusBlock {
             .border_t(crate::theme::HAIRLINE)
             .border_color(look.palette.ink.hsla().opacity(ROW_RULE_OPACITY))
             .p(look.space(Space::L))
-            .children(self.lines.into_iter().map(|(icon, text, tone)| {
-                let color = look.text_color(tone);
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(look.space(Space::Xs))
-                    .text_role(TypeRole::Meta, &look)
-                    .text_color(color)
-                    .child(KoanIcon::new(icon).role(TypeRole::Meta).color(color))
-                    .child(truncated(div()).child(text))
-            }))
+            .children(
+                self.lines
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (icon, text, tone, action))| {
+                        let color = look.text_color(tone);
+                        let line = div()
+                            .id(("status-line", i))
+                            .flex()
+                            .items_center()
+                            .gap(look.space(Space::Xs))
+                            .text_role(TypeRole::Meta, &look)
+                            .text_color(color)
+                            .child(KoanIcon::new(icon).role(TypeRole::Meta).color(color))
+                            .child(truncated(div()).child(text));
+                        match action {
+                            Some((help, open)) => {
+                                let ink = look.palette.ink.hsla();
+                                line.cursor_pointer()
+                                    .hover(move |s| s.text_color(ink))
+                                    .tooltip(move |window, cx| {
+                                        super::Tooltip::view(help.clone(), window, cx)
+                                    })
+                                    .on_click(move |_, window, cx| open(window, cx))
+                                    .into_any_element()
+                            }
+                            None => line.into_any_element(),
+                        }
+                    }),
+            )
             .when(!self.figures.is_empty(), |d| {
                 d.child(
                     div()

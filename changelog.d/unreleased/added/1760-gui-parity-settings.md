@@ -1,0 +1,1 @@
+- **The kōan GUI app sets up waking an Apple TV from Play on**, says when the system keeps it off the local network, and gains the Mac's tooltips in Play on and Settings; the line at the sidebar's foot opens the server settings.

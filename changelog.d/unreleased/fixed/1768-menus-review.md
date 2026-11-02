@@ -1,0 +1,1 @@
+- **Choosing from a submenu in the desktop app works.** Adding a track to a playlist from its menu did nothing, and Left in a submenu closed the whole menu. Clear Downloaded Files works whichever window is in front and says how much it freed.

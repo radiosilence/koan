@@ -18,7 +18,7 @@ Files and folders dropped on the queue are added to the library where they lie a
 
 The same context menu has download to cache, which fetches a remote library's tracks onto this device now, and remove downloaded files, which asks first and deletes those copies; they stay on the server and download again when played. The queue's menu has them too, with organise.
 
-Organise… in the context menu of a track, a record, an artist or a pick opens a sheet over the window: a pattern from `[organize.patterns]` or one typed for this once, the library folder to move into, and whether cover art, cue sheets and logs go with the music. Every file is listed with where it would go, as the pattern is typed; once typing rests the plan is checked against the disk, so a destination already taken shows as blocked before anything moves. Organising asks once more with the counts. Nothing is ever overwritten.
+Organise… in the context menu of a track, a record, an artist or a pick opens a sheet over the window: a pattern from `[organize.patterns]` or one typed for this once, the library folder to move into, and whether cover art, cue sheets and logs go with the music. A pattern typed or changed can be saved under a name, which stores it in `config.toml` for every kōan on that configuration; the sheet says whether the name is new or replaces one before it saves. Every file is listed with where it would go, as the pattern is typed; once typing rests the plan is checked against the disk, so a destination already taken shows as blocked before anything moves. Organising asks once more with the counts. Nothing is ever overwritten.
 
 Invite links and `koan.rocks/pair/` links opened with the app go to Settings: an invite signs in, asking first when it would replace an account signed in elsewhere, and a pairing link asks whether to sign that device in to this account. A pairing link for another server is refused with the reason.
 
@@ -43,8 +43,10 @@ What the app writes as it runs stays out of the configuration directory, which m
 ## Running a build from source
 
 ```bash
-KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui
+KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui --features runtime-shaders
 ```
+
+On a Mac, `runtime-shaders` has GPUI compile its Metal shaders when the app starts, so the Command Line Tools are enough to build it (`just gui-run` turns it on). Without it the shaders are compiled with the app, which needs Xcode's Metal toolchain; releases are built that way.
 
 A build from `main` can move the library database to a newer schema than the released apps read, after which they refuse it; a throwaway `KOAN_CONFIG_DIR`, with `folders` in its `config.toml` pointed at some music, keeps your own library out of it.
 
@@ -79,6 +81,10 @@ A playlist's page is laid out as the queue is, grouped by record or flat (the al
 ## Favourites, Recently played and Downloaded
 
 Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens that kind's browser with the same filter on (favourites, played in the last month, or on this device), so the full listing starts with what the preview showed. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
+
+## History
+
+History lists every play, most recent first, under a heading per day, with the time each started where a record's page puts the track number. A track played three times is three rows. Plays another client scrobbled to the server are marked. Rows play, queue and drag as the library's do; Delete forgets the selected plays and "remove from history" in the context menu forgets those under the pointer, and the toolbar's ⋯ clears everything. Each asks first, naming what goes; signed in to a kōan server, forgetting reaches every device on the account. The toolbar's filter narrows it as it does the browsers.
 
 ## Search
 

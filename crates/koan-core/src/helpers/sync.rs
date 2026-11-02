@@ -13,6 +13,18 @@ pub struct Synced {
     pub playlists: crate::playlists::PlaylistSync,
     pub history: crate::remote::history::HistorySync,
     pub dsp: crate::remote::dsp_sync::DspSync,
+    /// How long each step after the library took.
+    pub after: AfterLibrary,
+}
+
+/// The steps a sync runs once the library is walked, timed: what the apps
+/// show as its last phase, with the library's own closing steps.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AfterLibrary {
+    pub favourites: std::time::Duration,
+    pub playlists: std::time::Duration,
+    pub history: std::time::Duration,
+    pub dsp: std::time::Duration,
 }
 
 /// Whether a sync walks the server's library.
@@ -101,19 +113,43 @@ pub fn sync_remote(
         library
     };
     cancelled()?;
+    // The apps show all of these as the sync's last phase, so each is timed:
+    // a slow finish in the log says which step it was.
+    let step = std::time::Instant::now();
     let favourites =
         reconcile_favourites(db, client).map_err(crate::db::connection::DbError::from)?;
+    let favourites_took = step.elapsed();
     cancelled()?;
+    let step = std::time::Instant::now();
     let playlists = crate::playlists::reconcile_playlists(db, client, url, username);
+    let playlists_took = step.elapsed();
     cancelled()?;
+    let step = std::time::Instant::now();
     let history = crate::remote::history::reconcile(db, client, url, username);
+    let history_took = step.elapsed();
     cancelled()?;
+    let step = std::time::Instant::now();
+    let dsp = crate::remote::dsp_sync::reconcile(db, client, url);
+    let after = AfterLibrary {
+        favourites: favourites_took,
+        playlists: playlists_took,
+        history: history_took,
+        dsp: step.elapsed(),
+    };
+    log::info!(
+        "sync after the library: favourites {:?}, playlists {:?}, history {:?}, EQ {:?}",
+        after.favourites,
+        after.playlists,
+        after.history,
+        after.dsp
+    );
     crate::remote::covers::synced();
     Ok(Synced {
         library,
         favourites,
         playlists,
         history,
-        dsp: crate::remote::dsp_sync::reconcile(db, client, url),
+        dsp,
+        after,
     })
 }

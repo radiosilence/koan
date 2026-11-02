@@ -18,6 +18,9 @@ path = "src/main.rs"
 # GPUI's frame histograms, and `measure`, which scrolls the queue and prints
 # them (`KOAN_GUI_MEASURE=scroll`).
 profiler = ["koan-kit/profiler"]
+# GPUI's Metal shaders compiled at startup, so a development build needs no
+# Xcode: see koan-kit's feature. The dev recipes turn it on; releases do not.
+runtime-shaders = ["koan-kit/runtime-shaders"]
 
 [dependencies]
 # The engine, linked as a Rust library: the same facade the Swift and Kotlin

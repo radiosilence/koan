@@ -1,0 +1,29 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index b4940fb..85ad0d5 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -48,11 +48,6 @@ name = "gpui_wgpu"
+ path = "src/gpui_wgpu.rs"
+ doctest = false
+ 
+-[[bench]]
+-name = "layout_line"
+-path = "benches/layout_line.rs"
+-harness = false
+-
+ [dependencies.anyhow]
+ version = "1.0.86"
+ 
+diff --git a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
+index f6611df..0f47be0 100644
+--- a/src/wgpu_renderer.rs
++++ b/src/wgpu_renderer.rs
+@@ -1607,6 +1607,8 @@ impl WgpuRendererCore {
+                     // Surfaces are macOS-only for video playback and are not
+                     // implemented by the WGPU renderer.
+                     PrimitiveBatch::Surfaces(_surfaces) => {}
++                    // KOAN: shader quads (#1641) are not drawn here yet.
++                    PrimitiveBatch::Shaders { .. } => {}
+                 }
+             }
+         }

@@ -1,0 +1,1 @@
+- **History in the kōan GUI app.** Every play under its day, plays scrobbled by another client marked, forgetting and clearing behind previews. Organise saves a typed pattern under a name, and a record that is slow to read shows a spinner.

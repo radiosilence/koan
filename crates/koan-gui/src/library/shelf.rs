@@ -156,7 +156,7 @@ impl ShelfPage {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                this.lib.covers.update(cx, |c, _| c.release(id));
+                this.lib.covers.update(cx, |c, cx| c.release(id, cx));
             }),
         ];
         let mut this = Self {
@@ -504,6 +504,7 @@ impl ShelfPage {
                 gathered: true,
                 transfer: feed.transfers.get(&track.id).copied(),
                 drag,
+                note: None,
                 kind: RowKind::Art,
             };
             out.push(rows::track_row(p, track, index, state, sleeve, None, cx));

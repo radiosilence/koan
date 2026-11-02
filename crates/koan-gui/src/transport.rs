@@ -3,7 +3,6 @@
 //! Left, the record and track playing; centre, the controls over the seek
 //! slider; right, the format, the sleep and output menus, and EQ.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use koan_ffi::{
@@ -14,21 +13,19 @@ use koan_kit::app::*;
 use koan_kit::raw::{Hsla, px};
 // the bounds a cached view keeps between frames.
 use koan_kit::raw::StyleRefinement;
-// decoded images handed to the renderer.
-use koan_kit::raw::RenderImage;
 // painted and hit-tested by hand: drawing koan-kit has no component for.
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
-    Slider, TransportControl, TransportMetrics,
+    Badge, Button, ButtonKind, Cover, CoverArt, Glide, Level, Menu as ThemeMenu, MenuEntry,
+    MenuSlot, SHADED, Slider, TransportControl, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
-use crate::platform::actions::{Next, Previous, ShowEq, help};
+use crate::platform::actions::{Next, Previous, help};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
@@ -49,7 +46,7 @@ pub struct Transport {
     menus: MenuSlot<Menu>,
     /// The sleeve on show, held so the cover cache keeps it: the bar is a
     /// cached view and may not draw again for a long while.
-    cover: Option<Arc<RenderImage>>,
+    cover: CoverArt,
     /// What the output in use plays, for the EQ button; `None` while there
     /// are no EQ profiles, or while another device is controlled, whose
     /// presets are chosen under Output there.
@@ -193,7 +190,7 @@ impl Transport {
             renderers: mirror.renderers,
             devices: mirror.devices,
             menus: MenuSlot::default(),
-            cover: None,
+            cover: CoverArt::Missing,
             eq: None,
             eq_profile: None,
             _eq_load: None,
@@ -459,13 +456,16 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     };
     let eq = |id: String, on: bool| {
         move |_: &mut Window, _: &mut App| {
+            let device = id.clone();
             Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
                 .icon(Icon::Filters)
                 .label("eq")
                 .when(on, |b| b.tone(Tone::Accent))
-                .on_click(|_, window, cx| {
+                // The EQ of the device this row names, which need not be the
+                // one in use.
+                .on_click(move |_, _, cx| {
                     cx.stop_propagation();
-                    window.dispatch_action(Box::new(ShowEq), cx);
+                    crate::dsp::window::open(Some(device.clone()), cx);
                 })
                 .into_any_element()
         }
@@ -548,7 +548,17 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         return menu;
     };
     if let Some(volume) = outputs.volume {
-        menu = menu.control(move |_, _| {
+        menu = menu.control(move |_, cx| {
+            // Read as drawn, not as the menu opened: the menu stays up while
+            // the volume moves.
+            let volume = cx
+                .global::<Mirror>()
+                .outputs
+                .read(cx)
+                .0
+                .as_ref()
+                .and_then(|o| o.volume)
+                .unwrap_or(volume);
             Level::new("renderer-volume", u32::from(volume), 100)
                 .numbered()
                 .on_commit(|to, _, cx| {
@@ -636,6 +646,9 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
     )
 }
 
+/// How far an arrow key moves the seek bar.
+const SEEK_KEY_MS: u64 = 5_000;
+
 /// The theme's text button: the label in `muted`, `ink` under the pointer.
 /// The control's glyph with icons on, its label without: the theme's two
 /// variants. The label is what the plain variant shows, so it is lowercase.
@@ -715,7 +728,7 @@ impl Render for Transport {
         let p = Paint::of(window, cx);
         let now: NowPlaying = self.playback.read(cx).0.clone();
         let entry = now.entry.as_ref();
-        self.cover = covers::image(entry.and_then(|e| e.album_id), COVER, cx);
+        self.cover = covers::art(entry.and_then(|e| e.album_id), COVER, cx);
         let playing = now.state == PlayState::Playing;
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
@@ -758,7 +771,7 @@ impl Render for Transport {
                             })
                         },
                     )
-                    .child(covers::draw(self.cover.clone(), COVER, p.surface)),
+                    .child(Cover::new(self.cover.clone(), COVER).id("transport-cover")),
             )
             .child(
                 div()
@@ -971,25 +984,31 @@ pub struct Seek {
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
     glide: Glide,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Seek {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
+        let mut subscriptions = vec![
+            cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
+            cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
+            // The fill is the accent.
+            theme::observe_accent(cx),
+            // Nothing draws the slider while the window is hidden, so
+            // nothing keeps it moving; showing again puts it where it is.
+            cx.observe_window_visibility(window, |this, visibility, _, cx| {
+                this.visible = visibility == WindowVisibility::Visible;
+                this.moved(cx);
+            }),
+        ];
+        // The playing track's download starting or ending shows or takes
+        // away how far its bytes reach.
+        if let Some(transfers) = crate::transfers::entity(cx) {
+            subscriptions.push(cx.observe(&transfers, |_, _, cx| cx.notify()));
+        }
         let mut seek = Self {
-            _subscriptions: [
-                cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
-                cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
-                // The fill is the accent.
-                theme::observe_accent(cx),
-                // Nothing draws the slider while the window is hidden, so
-                // nothing keeps it moving; showing again puts it where it is.
-                cx.observe_window_visibility(window, |this, visibility, _, cx| {
-                    this.visible = visibility == WindowVisibility::Visible;
-                    this.moved(cx);
-                }),
-            ],
+            _subscriptions: subscriptions,
             visible: window.visibility() == WindowVisibility::Visible,
             playhead: mirror.playhead,
             playback: mirror.playback,
@@ -1099,9 +1118,24 @@ impl Render for Seek {
         )
         .absolute()
         .size_full();
+        // How far a track still downloading can be played, moving as its
+        // bytes arrive; nothing once the file is all here.
+        let reach = self
+            .playback
+            .read(cx)
+            .0
+            .entry
+            .as_ref()
+            .and_then(|e| e.track_id)
+            .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
             .compact()
+            // An arrow key moves five seconds, not a twentieth of the track.
+            .when(duration > 0, |s| {
+                s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
+            })
             .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
             .on_change(move |share, _, cx| {

@@ -175,11 +175,11 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 `Slider::glide(&Glide)`: a value that moves on its own, as a seek bar's playhead does. The owner keeps a `Glide`, sets the value at a moment and its rate (`set`) and whether it is moving (`set_moving`); on macOS the fill and the thumb are then a shader quad that reckons the value at each present, so the slider glides with no frame drawn.
 
-`Placeholder::new(side)`: what a sleeve, photo or playlist face shows while it has none or none yet, the app icon's ensō faded back on `rule` (the Mac's `EnsoPlaceholder`), one atlas sprite per size. A record's average colour still stands in while its bitmap uploads, since that carries the record.
+`Placeholder::new(side)`: what a sleeve, photo or playlist face shows while it has none or none yet, the app icon's ensō faded back on `rule` (the Mac's `EnsoPlaceholder`), one atlas sprite per size. A record's average colour still stands in while its bitmap uploads, since that carries the record. While what it stands for is still loading (`CoverArt::Loading`, `Placeholder::loading(true)`), the same ensō draws itself: the `Spinner`, placed so its stroke lies exactly on the mark (same diameter, brush and centre) in the mark's colour, so loading that ends in no picture leaves the mark where it was. A `Cover` given an `id` fades its picture in over the spinner when it arrives after loading.
 
 `Level::new(id, value, max)`: a whole number on a `Slider` between two glyphs (a volume's speakers by default), `numbered()` to write it after them. A drag moves only the slider and commits once, when let go or stepped by a key: for a value set over the network, where every step would be a round trip and the value reported back lags the hand.
 
-`Spinner::new(side)`, and `.reserving(size)` to hold exactly the room of what is loading, so nothing moves when it arrives.
+`Spinner::new(side)`, and `.reserving(size)` to hold exactly the room of what is loading, so nothing moves when it arrives. It is the one loading mark: a pane waiting on its rows shows it rather than a word. On the shader path the ensō is drawn from a field baked once (how far along the brush and how far from it each texel is), its head and tail moving with `time`, so it turns smoothly at any size with no frame drawn.
 
 ### Animated (GPU-drawn motion)
 
@@ -195,11 +195,12 @@ progress.set(0, fraction);                 // from any thread, as the engine rep
 
 - **Driven by values:** `set`/`set_all` write uniforms; a change wakes the window to present at its next refresh, and nothing runs between changes.
 - **Driven by the clock:** `run(true)` presents every refresh while it runs, and `time` in the program counts from `set_origin`. A seek bar sets the anchor's share, rate and instant and runs while playing; an indeterminate ring runs while shown.
+- **Transitions:** `run_for(length)` runs the clock for a transition's length and stops by itself, with nothing to stop it. The controls' fills fade this way (`transition` and `fill` in `components/mod.rs`); their text colours still fade on GPUI frames, since text cannot change colour without a frame.
 - **Parking** is the kit's: a window with nothing changing or running parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
 - **Reduce Motion:** `.decorative()` stops the clock while the person asks for less motion. Progress is not decorative.
 - **Per-present work:** a program's `prepare` runs on the CPU once per quad at each present, for what every pixel would otherwise work out alike (the wash's pose and eased opacity).
 - An element that lays itself out (the bars' slot, the slider's rail) calls `Animated::attach` in prepaint and `Animated::paint` in paint instead of declaring an `AnimatedQuad`.
-- `SHADED` says whether the platform draws them (macOS now; Linux once the wgpu renderer does). Where it does not, the component draws its fallback.
+- `SHADED` says whether the platform draws them: Metal on macOS, wgpu on Linux. Where it does not (Windows, not yet built), the component draws its fallback.
 
 The renderer keeps the last drawn frame as layers split at the shaders, so a present composes the layers and the quads rather than drawing the scene: its cost is the quads and a few full-window copies (vendor/README.md).
 
@@ -228,7 +229,7 @@ A control answers what was done to it, by itself, so every page that uses it ans
 
 ### AvailabilityMark (Mac: `AvailabilityMark`, `TransferMeter`)
 
-`AvailabilityMark::new(Some(Availability::…))`, `.picked(selected)`: where a track's file is (kept on the server, downloaded from it, a local file) or how its download is going (next, queued, failed, a ring filling as the bytes land), `fine`-sized and right-aligned, a word where the look hides icons. A transferring mark is handed a `ProgressReader` and reads it each frame it is drawn, asking for the next; one off screen reads nothing. Every row that says where a track is draws this one mark: the queue, the library's track rows, playlists.
+`AvailabilityMark::new(Some(Availability::…))`, `.picked(selected)`: where a track's file is (kept on the server, downloaded from it, a local file) or how its download is going (next, queued, failed, a ring filling as the bytes land), `fine`-sized and right-aligned, a word where the look hides icons. A transferring mark is handed the transfer's `Glide` (its share at the last report and its rate) and draws `ProgressRing::glide`, a shader quad reckoning the share per present, so the ring fills with no frame drawn and nothing is read while it does; where the renderer draws no shaders it draws the glide's last value each frame it shows. `Slider::reach(&Glide)` is the seek bar's counterpart: the rule dimmed past what has arrived, the arrived part drawn by the glide's own shader. Every row that says where a track is draws this one mark: the queue, the library's track rows, playlists.
 
 ### SelectionBar (Mac: iOS's `SelectionBar`, the Mac's menu on a multi-selection)
 
@@ -252,7 +253,7 @@ The question host gives the keyboard back to whatever had it when it asked, once
 
 ### ProgressRow and StatusBlock (Mac: `ActivityIndicator`, `SidebarView`'s foot)
 
-`ProgressRow::new(title).counts(…).detail(…).fraction(Some(f))` with an optional `on_stop`: one running task, its bar determinate or not, padded so the bar never meets the next row. `StatusBlock` is a sidebar's foot under a row rule: `line(icon, text, tone)` for what the device is connected to, `figure(text)` for each count beneath it.
+`ProgressRow::new(title).counts(…).detail(…).fraction(Some(f))` with an optional `on_stop`: one running task, its bar determinate or not, padded so the bar never meets the next row. `StatusBlock` is a sidebar's foot under a row rule: `line(icon, text, tone)` for what the device is connected to, `figure(text)` for each count beneath it. A `link` line ("connected to …") opens what its tooltip names when clicked.
 
 ### Choice menus (Mac: the EQ's pop-up menus)
 

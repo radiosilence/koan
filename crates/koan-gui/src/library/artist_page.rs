@@ -559,6 +559,7 @@ impl ArtistPage {
                     transfer: feed.transfers.get(&track.id).copied(),
                     drag,
                     kind: crate::components::RowKind::Art,
+                    note: None,
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()
@@ -669,13 +670,17 @@ impl ArtistPage {
                     width: side,
                     height: side,
                 },
-                Cover::new(art, side),
+                Cover::new(art, side).id(("artist-photo-cover", id as u64)),
             )
             .arriving(arriving)
         });
-        let albums = record.albums.len() as u64;
-        let mut header = super::header::playable_header(&self.lib, item, name, cx)
-            .detail(chrome::count(albums, "album", "albums"));
+        // An artist with no records of their own is counted by the tracks
+        // they appear on, which the page lists instead.
+        let detail = match record.albums.len() as u64 {
+            0 => chrome::count(record.appearances.len() as u64, "track", "tracks"),
+            albums => chrome::count(albums, "album", "albums"),
+        };
+        let mut header = super::header::playable_header(&self.lib, item, name, cx).detail(detail);
         if let Some(photo) = photo {
             header = header.art(photo);
         }
@@ -774,7 +779,8 @@ impl ArtistPage {
         match self.lib.covers.update(cx, |c, _| c.sleeve(key)) {
             Sleeve::Ready(image, _) => Some(CoverArt::Image(image)),
             Sleeve::Colour(colour) => Some(CoverArt::Colour(colour)),
-            Sleeve::Waiting | Sleeve::None => None,
+            Sleeve::Waiting => Some(CoverArt::Loading),
+            Sleeve::None => None,
         }
     }
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {

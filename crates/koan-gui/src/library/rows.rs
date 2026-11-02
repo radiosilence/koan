@@ -84,6 +84,9 @@ pub struct RowState {
     /// The list's row kind: one for every row, since a list lays out
     /// uniform rows (`height`, `text_height` or `art_height`).
     pub kind: RowKind,
+    /// A glyph before the figures, with what it means under the pointer: a
+    /// play another client scrobbled in, in the history.
+    pub note: Option<(crate::theme::Icon, &'static str)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -190,6 +193,19 @@ pub fn track_row<V: TrackList>(
                 .child(track.title.clone()),
         )
         .when(state.gathered || names_artist, |row| row.line(detail))
+        .when_some(state.note, |row, (icon, meaning)| {
+            row.figure(
+                16.0,
+                div()
+                    .id(("row-note", id as u64))
+                    .flex()
+                    .justify_center()
+                    .tooltip(move |window, cx| {
+                        crate::components::Tooltip::view(meaning.into(), window, cx)
+                    })
+                    .child(crate::theme::KoanIcon::new(icon).color(p.muted)),
+            )
+        })
         .figure(
             14.0,
             AvailabilityMark::new(crate::transfers::of_track(

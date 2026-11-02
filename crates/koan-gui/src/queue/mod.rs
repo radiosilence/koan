@@ -17,7 +17,7 @@ use koan_kit::app::*;
 use koan_kit::raw::Hsla;
 
 use crate::components::{
-    AvailabilityMark, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
+    Availability, AvailabilityMark, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
     KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowList,
     RowListState, RowMetrics, RowOffset, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarSelection,
@@ -104,10 +104,7 @@ impl Render for DragPreview {
         let side = RowMetrics::nav_art(&p.look);
         let chip = DragChip::new(self.0.clone());
         match self.1 {
-            Some(album) => chip.sleeve(match covers::image(Some(album), side, cx) {
-                Some(image) => CoverArt::Image(image),
-                None => CoverArt::Missing,
-            }),
+            Some(album) => chip.sleeve(covers::art(Some(album), side, cx)),
             None => chip,
         }
     }
@@ -144,8 +141,9 @@ pub struct QueueView {
     /// the crosshair, off by a scroll of the person's own or with nothing
     /// playing. For the session only.
     following: bool,
-    /// The queue item last brought into view while following.
+    /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
+    followed_row: Option<usize>,
     /// The transport is playing: the cursor's row moves its bars only then,
     /// and shows the play mark while paused or stopped.
     playing: bool,
@@ -215,6 +213,7 @@ impl QueueView {
             feed: None,
             following: false,
             followed: None,
+            followed_row: None,
             playing: cx.global::<Mirror>().playhead.read(cx).playing,
             _subscriptions: subscriptions,
         };
@@ -599,20 +598,23 @@ impl QueueView {
             } else {
                 RowMetrics::sleeve(&p.look)
             };
-            let art = match covers::image(album, side, cx) {
-                Some(image) => CoverArt::Image(image),
-                None => CoverArt::Missing,
-            };
-            Cover::new(art, side).into_any_element()
+            let art = covers::art(album, side, cx);
+            Cover::new(art, side)
+                .id(("sleeve", row as u64))
+                .into_any_element()
         });
         // What a track row reads beyond its item: its heart. A transfer's
         // progress its availability mark reads each frame it is drawn.
         let mut favourite = None;
+        let mut availability = None;
         if let Row::Track { ix, .. } = r {
-            let track = self.queue.read(cx).items[ix].track_id;
+            let item = &self.queue.read(cx).items[ix];
+            let (status, track, on_server, on_disk) =
+                (item.status, item.track_id, item.on_server, item.on_disk);
             if let (Some(track), Some((feed, _))) = (track, &self.feed) {
                 favourite = Some(feed.read(cx).is_favourite(Playable::Track(track)));
             }
+            availability = crate::transfers::of_queue_status(status, track, on_server, on_disk);
         }
         let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
         let queue = self.queue.read(cx);
@@ -664,6 +666,7 @@ impl QueueView {
                     Extras {
                         favourite,
                         feed,
+                        availability,
                         playing: self.playing,
                     },
                     &look,
@@ -682,7 +685,6 @@ impl QueueView {
         let line_below = dragging && row + 1 == count && self.drop_at == Some(count);
         let view = cx.entity();
         row_frame
-            .group(id)
             .selected(selected)
             .when(line_above, |d| {
                 d.border_t(INSERTION).border_color(insertion)
@@ -959,6 +961,8 @@ pub(crate) struct Extras {
     /// `None` for a track the library does not hold, or before it loads.
     pub favourite: Option<bool>,
     pub feed: Option<Entity<Feed>>,
+    /// Where its file is, or its transfer's glide.
+    pub availability: Option<Availability>,
     /// The transport is playing.
     pub playing: bool,
 }
@@ -1121,7 +1125,7 @@ pub(crate) fn track(
         } else {
             AVAILABILITY_WORD
         },
-        AvailabilityMark::new(crate::transfers::of_queue_item(item))
+        AvailabilityMark::new(extras.availability.clone())
             .picked(look.picked)
             .into_any_element(),
     )
@@ -1152,12 +1156,13 @@ fn heart(item: &QueueItem, extras: &Extras, look: &Look) -> AnyElement {
     else {
         return slot.into_any_element();
     };
-    let row = look.row.clone();
     slot.child(
         crate::components::Heart::new(look.id("heart", 0), favourite)
             .role(TypeRole::Fine)
             .when(!favourite, |d| {
-                d.invisible().group_hover(row, |s| s.visible())
+                // The row's own group, which `TableRow` names for every row.
+                d.invisible()
+                    .group_hover(crate::components::ROW_GROUP, |s| s.visible())
             })
             .on_click(move |_, _, cx| {
                 feed.update(cx, |feed, cx| {
@@ -1175,23 +1180,29 @@ impl Focusable for QueueView {
 }
 
 impl QueueView {
-    /// Scrolls to the playing row, if there is one.
+    /// Scrolls to the playing row and follows it, as the crosshair does.
     fn jump_to_playing(&mut self, cx: &mut Context<Self>) {
-        if let Some((_, row)) = self.playing_row(cx) {
+        if !self.following {
+            self.toggle_follow(cx);
+        } else if let Some((_, row)) = self.playing_row(cx) {
             self.list.reveal(row);
             cx.notify();
         }
     }
 
-    /// The playing item and its row.
+    /// The cursor's row: the track playing, or the one the player waits
+    /// on while it downloads or after it failed, which a row's status names
+    /// otherwise.
     fn playing_row(&self, cx: &App) -> Option<(String, usize)> {
-        let queue = self.queue.read(cx);
-        let item = queue
-            .items
-            .iter()
-            .find(|item| item.status == EntryStatus::Playing)?;
-        let row = *queue.track_rows.get(&item.queue_item_id)?;
-        Some((item.queue_item_id.clone(), row))
+        let id = cx
+            .global::<Mirror>()
+            .playback
+            .read(cx)
+            .0
+            .queue_item_id
+            .clone()?;
+        let row = *self.queue.read(cx).track_rows.get(&id)?;
+        Some((id, row))
     }
 
     /// The crosshair: jump to the playing track and follow it, or stop.
@@ -1202,6 +1213,7 @@ impl QueueView {
             self.list.reveal(row);
             self.following = true;
             self.followed = Some(id);
+            self.followed_row = Some(row);
         }
         cx.notify();
     }
@@ -1214,10 +1226,12 @@ impl QueueView {
         }
         match self.playing_row(cx) {
             None => self.following = false,
+            // Revealed when it changes, and when an edit moves it.
             Some((id, row)) => {
-                if self.followed.as_ref() != Some(&id) {
+                if self.followed.as_ref() != Some(&id) || self.followed_row != Some(row) {
                     self.list.reveal(row);
                     self.followed = Some(id);
+                    self.followed_row = Some(row);
                 }
             }
         }
@@ -1288,6 +1302,7 @@ impl QueueView {
                     },
                     self.following,
                 )
+                .disabled(count == 0)
                 .on_change(move |_, _, cx| jump.update(cx, |this, cx| this.toggle_follow(cx))),
             )
             .child(
@@ -1471,12 +1486,15 @@ impl Render for QueueView {
                 this.selected.clear();
                 cx.notify();
             }))
+            // Moving the view by hand stops following, as a scroll does.
             .on_action(cx.listener(|this, _: &TopOfQueue, _, cx| {
+                this.following = false;
                 this.list.scroll_to_top();
                 this.top = None;
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EndOfQueue, _, cx| {
+                this.following = false;
                 if let Some(last) = this.rows(cx).len().checked_sub(1) {
                     this.list.reveal(last);
                     cx.notify();

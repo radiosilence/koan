@@ -1,0 +1,1 @@
+- **Signing in to a large server finishes sooner.** A sync fetches the playlists it pulls eight at a time instead of one after another, and logs how long each step after the library took.
