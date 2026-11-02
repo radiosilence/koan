@@ -32,6 +32,7 @@ pub mod sidebar_status;
 pub mod time;
 pub mod transfers;
 pub mod transport;
+pub mod tv_wake;
 pub mod window_state;
 
 pub use koan_kit::{components, sheet, theme};

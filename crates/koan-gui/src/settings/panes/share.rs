@@ -370,7 +370,7 @@ impl ShareForm {
         if let Some(url) = sharing.serving.as_ref().and_then(|s| s.lan_url.clone()) {
             rows.push(
                 Row::new("On your network")
-                    .control(CopyText::new("copy-lan", url))
+                    .control(CopyText::new("copy-lan", url).help("Copy the address"))
                     .into_any_element(),
             );
         }

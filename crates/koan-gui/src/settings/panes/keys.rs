@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::components::{Button, ButtonKind, CopyButton, Spinner, TextField};
+use crate::components::{Button, ButtonKind, CopyButton, Spinner, TextField, Tooltip};
 use crate::theme::{Look, Space, Tone, TypeRole, label};
 use koan_ffi::{KoanEngine, KoanError};
 use koan_kit::app::input::InputState;
@@ -243,7 +243,17 @@ impl Render for Keys {
                 for (index, row) in list.iter().enumerate() {
                     let control = if row.this_device {
                         // Revoking it is signing out, which Sign Out does properly.
-                        text(label("This device"), TypeRole::Control, Tone::Muted, &look)
+                        div()
+                            .id(("this-device", index))
+                            .child(text(
+                                label("This device"),
+                                TypeRole::Control,
+                                Tone::Muted,
+                                &look,
+                            ))
+                            .tooltip(|window, cx| {
+                                Tooltip::view(label("To stop using it, sign out"), window, cx)
+                            })
                             .into_any_element()
                     } else {
                         let entity = entity.clone();
