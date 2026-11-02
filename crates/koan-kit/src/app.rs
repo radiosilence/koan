@@ -17,7 +17,7 @@ pub use gpui_kit::{
     IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement, PathPromptOptions, Pixels,
     Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString, Size, Stateful, Subscription,
-    Task, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowVisibility, actions, div,
+    Task, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowId, WindowVisibility, actions, div,
 };
 
 /// The text input koan-kit's fields draw (`TextField`, `FilterField`): a

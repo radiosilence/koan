@@ -9,7 +9,7 @@ use std::time::Duration;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::Handler;
+use super::{Animated, AnimatedQuad, Handler, SHADED, ShaderProgram};
 use crate::theme::{Icon, KoanIcon, KoanStyled, KoanTheme, Look, Motion, Space, TypeRole};
 
 /// The bar's thickness.
@@ -17,8 +17,38 @@ const BAR: f32 = 2.0;
 /// One run of an unmeasured bar's segment along it.
 const RUN: Duration = Duration::from_millis(1200);
 
+/// An unmeasured bar's segment, a third of the track running across it once
+/// every `RUN`, eased in and out: `u[8..12]` its colour. Presented by the
+/// clock while it shows, with no frame drawn.
+static RUNNER: ShaderProgram = ShaderProgram {
+    name: "koan-progress-runner",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float t = fract(time / 1.2);
+    float eased = t * t * (3.0 - 2.0 * t);
+    float left = (-0.3 + 1.3 * eased) * size.x;
+    float right = left + 0.3 * size.x;
+    float cover = clamp(min(position.x - left, right - position.x) + 0.5, 0.0, 1.0);
+    return float4(u[8], u[9], u[10], u[11] * cover);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>) -> vec4<f32> {
+    let t = fract(time / 1.2);
+    let eased = t * t * (3.0 - 2.0 * t);
+    let left = (-0.3 + 1.3 * eased) * size.x;
+    let right = left + 0.3 * size.x;
+    let cover = clamp(min(position.x - left, right - position.x) + 0.5, 0.0, 1.0);
+    return vec4<f32>(u[2].xyz, u[2].w * cover);
+}
+"#,
+    prepare: None,
+};
+
 /// A bar on its own: `fraction` from 0 to 1, or `None` while there is no
-/// measure, when a segment runs along it (still with Reduce Motion).
+/// measure, when a segment runs along it (still with Reduce Motion). Where
+/// the renderer draws shaders the segment is a shader quad on the clock, so
+/// a long scan without a total draws no frames for it.
 #[derive(IntoElement)]
 pub struct ProgressBar {
     id: ElementId,
@@ -53,6 +83,21 @@ impl RenderOnce for ProgressBar {
                         .bg(accent),
                 )
                 .into_any_element(),
+            None if KoanTheme::motion_allowed(cx) && SHADED => {
+                let runner = window
+                    .use_keyed_state(self.id, cx, |_, _| {
+                        let runner = Animated::new();
+                        runner.run(true);
+                        runner
+                    })
+                    .read(cx)
+                    .clone();
+                let rgba = accent.to_rgb();
+                runner.set_all(8, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+                track
+                    .child(AnimatedQuad::new(&RUNNER, &runner).absolute().size_full())
+                    .into_any_element()
+            }
             None if KoanTheme::motion_allowed(cx) => track
                 .child(
                     div()

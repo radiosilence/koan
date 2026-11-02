@@ -34,7 +34,8 @@ pub struct WindowRoot {
     fetching: Option<Task<()>>,
     _subscriptions: [Subscription; 4],
     /// The playing bars moved: painted again over the cached content.
-    _levels: Option<Subscription>,
+    /// This window's bars, where they are quads, and whether it shows.
+    _levels: [Option<Subscription>; 2],
 }
 
 /// The record a page is showing, whose colours the window takes over the
@@ -67,7 +68,20 @@ impl WindowRoot {
                 }),
                 cx.observe_global::<KoanTheme>(move |this, cx| this.restyle(&followed, cx)),
             ],
-            _levels: crate::levels::feed(cx).map(|feed| cx.observe(&feed, |_, _, cx| cx.notify())),
+            _levels: [
+                crate::levels::feed(window.window_handle().window_id(), cx)
+                    .map(|feed| cx.observe(&feed, |_, _, cx| cx.notify())),
+                // A hidden window's bars leave the analyser at rest.
+                Some(
+                    cx.observe_window_visibility(window, |_, visibility, window, cx| {
+                        crate::levels::visibility(
+                            window.window_handle().window_id(),
+                            visibility == WindowVisibility::Visible,
+                            cx,
+                        )
+                    }),
+                ),
+            ],
         };
         root.wash
             .update(cx, |wash, cx| wash.set_hold(wash_tint, cx));

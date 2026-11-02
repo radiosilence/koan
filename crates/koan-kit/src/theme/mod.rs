@@ -347,12 +347,15 @@ impl KoanTheme {
     /// text fields read their own appearance, and the caret follows the
     /// accent as it settles), and while the accent settles, notifies the
     /// feed once a frame so the views observing it redraw, and only those.
-    /// Costs a few comparisons once it is at rest.
+    /// The root asks for its own next frame too, so the ease runs to its end
+    /// in a window where no view observes the feed. Costs a few comparisons
+    /// once it is at rest.
     pub fn drive(window: &mut Window, cx: &mut App) {
         sync_components(Look::of(window, cx).dark, cx);
         if accent_state(cx).settling(Instant::now()) {
             let feed = cx.global::<AccentHandle>().0.clone();
             window.on_next_frame(move |_, cx| feed.update(cx, |_, cx| cx.notify()));
+            window.request_animation_frame();
         }
     }
 }
