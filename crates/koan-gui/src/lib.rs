@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod covers;
+pub mod devices;
 pub mod downloads;
 pub mod dsp;
 pub mod engine;
@@ -13,6 +14,7 @@ pub mod links;
 pub mod measure;
 pub mod mirror;
 pub mod navigator;
+pub mod notice;
 pub mod paint;
 pub mod platform;
 pub mod queue;

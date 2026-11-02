@@ -243,8 +243,8 @@ contrast; lower lets more of the sleeve's own colour through, and 0 none of the
 hold at all. Text over a bright sleeve can then lose contrast, which is the
 trade. `wash_window` (the Mac, kōan theme only) is provisional,
 there to live with both looks while one is chosen, and likely to go: on, the
-sidebar, toolbar, transport and lyrics are drawn clear over one wash; off, they
-keep grounds of their own. The graphics level is separate, and governs what the
+sidebar, toolbar and lyrics are drawn clear over one wash, and the transport
+keeps its ground beneath them all; off, they keep grounds of their own. The graphics level is separate, and governs what the
 wash costs rather than whether it takes colour; the playing bars move at every
 level, held still only by Reduce Motion. The theme's design is
 `docs/design/koan-theme.md`.

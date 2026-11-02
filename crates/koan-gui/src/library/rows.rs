@@ -1,8 +1,9 @@
 //! One track in a list, shared by a record's page, an artist's page and the
-//! track browser: its number, or the bars when it is playing, or a play mark
-//! under the pointer; the sleeve where the list gathers many records; the
-//! title, over the artist and record where they differ from the page's; where
-//! the file is; the heart; the format; the length.
+//! track browser: its number, or the bars while it is the current track
+//! (flat while paused), or a play mark under the pointer; the sleeve where
+//! the list gathers many records; the title, over the artist and record
+//! where they differ from the page's; where the file is; the heart; the
+//! format; the length.
 //!
 //! Lists select as lists do: a click picks the row, ⌘ adds or removes one,
 //! ⇧ extends, and a double click plays the list from it.
@@ -69,9 +70,9 @@ pub trait TrackList: actions::Menus {
 pub struct RowState {
     pub lead: SharedString,
     pub lead_width: Pixels,
-    /// The track under the cursor, and whether it is playing.
+    /// The track under the cursor: its bars, moving while it plays and
+    /// flat while it is paused, in place of its number.
     pub current: bool,
-    pub playing: bool,
     pub favourite: bool,
     pub selected: bool,
     /// Gathered from many records: the sleeve, and the record named.
@@ -121,9 +122,7 @@ pub fn track_row<V: TrackList>(
     };
     let lead = RowNumber::new(("row-play", id as u64), state.lead.clone())
         .current(state.current)
-        .when(state.current && state.playing, |n| {
-            n.bars(crate::levels::bars(p.accent))
-        })
+        .when(state.current, |n| n.bars(crate::levels::bars(p.accent)))
         .on_play(play);
 
     let names_artist = state.gathered
