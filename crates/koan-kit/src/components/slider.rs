@@ -46,10 +46,11 @@ pub struct Glide(
 );
 
 /// How long a small correction takes to ease out, and the largest one eased
-/// rather than jumped: a share of the track a little over what a stalled
-/// stream or a late report leaves between the reckoning and the report.
+/// rather than jumped, in seconds of play: a little over what a late report
+/// leaves between the reckoning and the report. A skip or a seek is longer
+/// than this however long the track.
 const SETTLE: f32 = 0.25;
-const EASED: f32 = 0.02;
+const DRIFT: f32 = 0.3;
 
 impl Glide {
     pub fn new() -> Self {
@@ -58,9 +59,10 @@ impl Glide {
 
     /// `value` at `since`, moving `rate` of the track a second.
     /// A new anchor that disagrees a little with where the slider had
-    /// reckoned it is eased into over `SETTLE` rather than jumped to: the
-    /// fill moves continuously and corrects without a step. A seek, or any
-    /// larger difference, moves at once.
+    /// reckoned it, while playing on at the same rate, is eased into over
+    /// `SETTLE` rather than jumped to: the fill moves continuously and
+    /// corrects without a step. A seek, a pause or any larger difference
+    /// moves at once.
     pub fn set(&self, value: f32, rate: f32, since: Instant) {
         let now = Instant::now();
         let at = |(value, rate, since): (f32, f32, Instant)| {
@@ -74,10 +76,12 @@ impl Glide {
         let next = (value, rate, since);
         let previous = self.1.lock().replace(next);
         let offset = match previous {
-            Some(previous) if previous != next => at(previous) - at(next),
+            Some(previous) if previous != next && previous.1 == rate && rate > 0.0 => {
+                let offset = at(previous) - at(next);
+                if offset.abs() <= rate * DRIFT { offset } else { 0.0 }
+            }
             _ => 0.0,
         };
-        let offset = if offset.abs() <= EASED { offset } else { 0.0 };
         let start = if now >= since {
             now.duration_since(since).as_secs_f32()
         } else {

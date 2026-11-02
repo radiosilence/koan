@@ -363,29 +363,3 @@ pub(crate) fn fill(color: Hsla, transition: &Animated) -> AnyElement {
         .size_full()
         .into_any_element()
 }
-
-/// An outline `width` wide round a control, in `color`, faded with
-/// `transition`.
-pub(crate) fn outline(
-    color: Hsla,
-    width: Pixels,
-    transition: &Animated,
-    window: &Window,
-) -> AnyElement {
-    if !SHADED {
-        let amount = transition.get(1);
-        return div()
-            .absolute()
-            .size_full()
-            .border(width)
-            .border_color(color.opacity(amount))
-            .into_any_element();
-    }
-    let rgba = color.to_rgb();
-    let width = f32::from(width) * window.scale_factor();
-    transition.set_all(4, &[rgba.r, rgba.g, rgba.b, rgba.a, width]);
-    AnimatedQuad::new(&TRANSITION, transition)
-        .absolute()
-        .size_full()
-        .into_any_element()
-}

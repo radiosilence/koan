@@ -86,6 +86,9 @@ pub struct ShaderUniforms {
     /// itself; 0 for never. A transition is live for its length and no
     /// longer, with nothing to stop it.
     until: AtomicU64,
+    /// A lapse not yet presented: the present that lands a transition at
+    /// its end, however early the last refresh before it fell.
+    landing: AtomicBool,
 }
 
 impl ShaderUniforms {
@@ -128,10 +131,15 @@ impl ShaderUniforms {
     }
 
     pub fn is_live(&self) -> bool {
-        self.live.load(Ordering::Relaxed) && {
-            let until = self.until.load(Ordering::Relaxed);
-            until == 0 || (Instant::now().saturating_duration_since(shader_epoch()).as_nanos() as u64) < until
-        }
+        self.live.load(Ordering::Relaxed)
+            && (!self.lapsed() || self.landing.load(Ordering::Relaxed))
+    }
+
+    /// Whether a deadline was set and has passed.
+    fn lapsed(&self) -> bool {
+        let until = self.until.load(Ordering::Relaxed);
+        until != 0
+            && (Instant::now().saturating_duration_since(shader_epoch()).as_nanos() as u64) >= until
     }
 
     /// Live until `deadline` and no longer; `None` for as long as `live` is
@@ -141,6 +149,7 @@ impl ShaderUniforms {
             (d.saturating_duration_since(shader_epoch()).as_nanos() as u64).max(1)
         });
         self.until.store(nanos, Ordering::Relaxed);
+        self.landing.store(deadline.is_some(), Ordering::Relaxed);
     }
 
     /// Presented on every refresh while live, for a shader moved by `time`.
@@ -152,7 +161,8 @@ impl ShaderUniforms {
     /// this was asked, or live and continuous.
     pub fn take_present(&self) -> bool {
         let changed = self.changed.swap(false, Ordering::Relaxed);
-        changed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
+        let landed = self.lapsed() && self.landing.swap(false, Ordering::Relaxed);
+        changed || landed || (self.is_live() && self.continuous.load(Ordering::Relaxed))
     }
 
     /// Every value, as a renderer copies them into a frame.
