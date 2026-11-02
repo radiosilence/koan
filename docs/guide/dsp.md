@@ -347,7 +347,10 @@ octave or an octave. The graph follows the drag as it goes, drawn by the core
 without saving; the edit is saved and heard at most four times a second while
 the drag goes on, and once when it ends, so the DSP is rebuilt for the edit
 and never for every frame of it. Frequency
-is held to 10 Hz–22 kHz, gain to ±30 dB and Q to 0.1–20. A graphic curve's
+is held to 10 Hz–22 kHz, gain to ±30 dB and Q to 0.1–20, each only when it
+is the figure being changed: an imported band past a limit, such as a Q of 30
+from REW, keeps that figure while its gain or frequency is edited, so the
+profile still matches its file. A graphic curve's
 row opens a page of its points, each frequency and gain editable within the
 same limits; a point moved past another takes its place in order. Delays and
 mixes are shown but not edited here.

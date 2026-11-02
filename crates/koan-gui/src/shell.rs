@@ -52,6 +52,8 @@ pub struct Shell {
     /// The downloads page, while it is on stage: made on arriving and let go
     /// on leaving, so its slices wake nothing while it is not shown.
     downloads: Option<Entity<crate::downloads::DownloadsPage>>,
+    /// The kōan menu, drawn in the window where there is no menu bar.
+    koan_menu: crate::components::MenuSlot<()>,
     /// The toolbar was pressed and the next move drags the window.
     moving_window: bool,
     /// Whether the sidebar shows, and how wide; kept with the window's
@@ -74,6 +76,11 @@ pub struct Shell {
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = cx.new(|_| Navigator::default());
+        // A measuring run can open on the page it measures.
+        #[cfg(feature = "profiler")]
+        if let Some(route) = crate::measure::route() {
+            nav.update(cx, |nav, _| nav.go(route));
+        }
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
         let queue_controls = cx.new(|cx| {
             let mut slot = library::controls::ControlsSlot::default();
@@ -118,6 +125,7 @@ impl Shell {
             queue_controls,
             library: None,
             downloads: None,
+            koan_menu: crate::components::MenuSlot::default(),
             moving_window: false,
             sidebar_shown: window_state::SIDEBAR.load(std::sync::atomic::Ordering::Relaxed),
             sidebar_width: f32::from_bits(
@@ -337,6 +345,26 @@ impl Shell {
             // With the sidebar hidden the window's buttons sit over the
             // toolbar, which leaves them their room.
             .under_window_buttons(!self.sidebar_shown)
+            // No global menu bar off macOS: the menus open from here.
+            .when(cfg!(not(target_os = "macos")), |toolbar| {
+                toolbar.leading(self.koan_menu.trigger_below(
+                    (),
+                    div().id("koan-menu").child(ToolbarButton::new(
+                        "koan-menu-button",
+                        Icon::More,
+                        "kōan",
+                    )),
+                    |this: &mut Self| &mut this.koan_menu,
+                    |_, window, cx| {
+                        Some(crate::components::Menu::build(
+                            window,
+                            cx,
+                            crate::platform::menus::in_window,
+                        ))
+                    },
+                    cx,
+                ))
+            })
             .leading(
                 ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
                     |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),
@@ -385,9 +413,10 @@ impl Shell {
                             div().window_control_area(WindowControlArea::Close).child(
                                 ToolbarButton::new("close", Icon::Close, "close")
                                     // Removing the window skips the close
-                                    // request, so its bounds are saved here.
-                                    .on_click(|_, window, cx| {
-                                        window_state::save(window.window_bounds(), cx);
+                                    // request, so its bounds are saved here,
+                                    // now: the app quits with it.
+                                    .on_click(|_, window, _| {
+                                        window_state::write(window.window_bounds());
                                         window.remove_window();
                                     }),
                             ),

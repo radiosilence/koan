@@ -44,6 +44,10 @@ impl Selection {
     }
 
     pub fn begin(&mut self, with: Option<Playable>) {
+        // A row marked by a plain click is not part of a pick begun after it.
+        if !self.active {
+            self.end();
+        }
         self.active = true;
         self.revision += 1;
         if let Some(item) = with {

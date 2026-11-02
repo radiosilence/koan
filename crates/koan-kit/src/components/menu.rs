@@ -30,6 +30,7 @@ pub struct MenuEntry {
     rich: bool,
     reach: Option<Icon>,
     trailing: Vec<Trailing>,
+    keys: Option<SharedString>,
     run: Option<Run>,
 }
 
@@ -47,8 +48,16 @@ impl MenuEntry {
             rich: false,
             reach: None,
             trailing: Vec::new(),
+            keys: None,
             run: None,
         }
+    }
+
+    /// The keys that do the same, at the row's end in `muted`: a menu drawn
+    /// in the window where there is no menu bar.
+    pub fn keys(mut self, keys: impl Into<SharedString>) -> Self {
+        self.keys = Some(keys.into());
+        self
     }
 
     /// An entry that is data (a playlist, a device), which keeps its case.
@@ -455,6 +464,9 @@ impl Render for Menu {
                     for make in &item.trailing {
                         row = row.trailing(make(window, cx));
                     }
+                    if let Some(keys) = item.keys.clone() {
+                        row = row.keys(keys);
+                    }
                     let menu = menu.clone();
                     row = row.on_click(move |_, window, cx| {
                         menu.update(cx, |menu, cx| menu.choose(index, window, cx))
@@ -613,6 +625,37 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
     where
         E: StatefulInteractiveElement + IntoElement + 'static,
     {
+        self.trigger_at(false, which, button, slot, build, cx)
+    }
+
+    /// `trigger` for a button along the top of the window, a toolbar's: the
+    /// menu opens below it, its left edge at the button's.
+    pub fn trigger_below<V: 'static, E>(
+        &self,
+        which: K,
+        button: E,
+        slot: fn(&mut V) -> &mut MenuSlot<K>,
+        build: impl Fn(&mut V, &mut Window, &mut Context<V>) -> Option<Entity<Menu>> + 'static,
+        cx: &mut Context<V>,
+    ) -> Div
+    where
+        E: StatefulInteractiveElement + IntoElement + 'static,
+    {
+        self.trigger_at(true, which, button, slot, build, cx)
+    }
+
+    fn trigger_at<V: 'static, E>(
+        &self,
+        below: bool,
+        which: K,
+        button: E,
+        slot: fn(&mut V) -> &mut MenuSlot<K>,
+        build: impl Fn(&mut V, &mut Window, &mut Context<V>) -> Option<Entity<Menu>> + 'static,
+        cx: &mut Context<V>,
+    ) -> Div
+    where
+        E: StatefulInteractiveElement + IntoElement + 'static,
+    {
         let button = button
             .capture_any_mouse_down(cx.listener(move |view, _: &MouseDownEvent, _, _| {
                 let slot = slot(view);
@@ -637,6 +680,23 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
             .filter(|(open, ..)| *open == which)
             .map(|(_, menu, _)| menu.clone());
         div().relative().child(button).children(open.map(|menu| {
+            if below {
+                // Pinned under the button; the anchor keeps it in the window.
+                return div()
+                    .absolute()
+                    .top_full()
+                    .left_0()
+                    .child(
+                        deferred(
+                            anchored()
+                                .anchor(Anchor::TopLeft)
+                                .snap_to_window()
+                                .child(menu),
+                        )
+                        .with_priority(1),
+                    )
+                    .into_any_element();
+            }
             deferred(
                 anchored()
                     .anchor(Anchor::BottomRight)
@@ -644,6 +704,7 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
                     .child(menu),
             )
             .with_priority(1)
+            .into_any_element()
         }))
     }
 }
@@ -653,6 +714,9 @@ mod tests {
     use gpui_kit::TestAppContext;
 
     use super::*;
+    // `gpui_kit::*` brings GPUI's `test` attribute, which would expand its
+    // own `#[test]` into itself.
+    use core::prelude::v1::test;
 
     fn rows(menu: Menu, names: &[&'static str]) -> Menu {
         names.iter().fold(menu, |menu, name| {

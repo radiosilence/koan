@@ -1107,13 +1107,14 @@ enum DeviceAction: String {
     case addToFilters = "Add to the filters on"
     case correct = "Use for"
 
+    /// The core's rule (`dspDeviceAction`), in the page's words.
     init(name: String, role: DspRole, active: String?, inChain: Bool) {
-        self = switch true {
-        case name == active && role == .tuning: .moveToFilters
-        case name == active: .stopCorrecting
-        case inChain: .takeOutOfFilters
-        case role == .tuning: .addToFilters
-        default: .correct
+        self = switch dspDeviceAction(name: name, role: role, active: active, inChain: inChain) {
+        case .stopCorrecting: .stopCorrecting
+        case .moveToFilters: .moveToFilters
+        case .takeOutOfFilters: .takeOutOfFilters
+        case .addToFilters: .addToFilters
+        case .correct: .correct
         }
     }
 }

@@ -17,6 +17,7 @@ pub struct PageHeader {
     art: Option<AnyElement>,
     lead: Vec<AnyElement>,
     detail: Option<AnyElement>,
+    badges: Vec<super::Badge>,
     actions: Vec<AnyElement>,
     body: Option<AnyElement>,
     trailing: Option<AnyElement>,
@@ -36,6 +37,7 @@ impl PageHeader {
             art: None,
             lead: Vec::new(),
             detail: None,
+            badges: Vec::new(),
             actions: Vec::new(),
             body: None,
             trailing: None,
@@ -59,6 +61,13 @@ impl PageHeader {
     /// links.
     pub fn detail(mut self, detail: impl IntoElement) -> Self {
         self.detail = Some(detail.into_any_element());
+        self
+    }
+
+    /// After the detail, on its line: what kind of thing the page shows, where
+    /// that changes what can be done to it ("smart", "read-only").
+    pub fn badge(mut self, badge: super::Badge) -> Self {
+        self.badges.push(badge);
         self
     }
 
@@ -182,12 +191,19 @@ impl RenderOnce for PageHeader {
                         let title = title.debug_selector(|| "page-header-title".into());
                         title
                     })
-                    .children(self.detail.map(|detail| {
-                        div()
-                            .text_role(TypeRole::Control, &look)
-                            .text_color(p.muted.hsla())
-                            .child(detail)
-                    }))
+                    .when(self.detail.is_some() || !self.badges.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap(look.space(Space::S))
+                                .text_role(TypeRole::Control, &look)
+                                .text_color(p.muted.hsla())
+                                .children(self.detail)
+                                .children(self.badges),
+                        )
+                    })
                     .when(!self.actions.is_empty(), |d| {
                         d.child(
                             div()

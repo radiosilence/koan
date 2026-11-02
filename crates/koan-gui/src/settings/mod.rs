@@ -58,19 +58,18 @@ pub fn install(engine: Arc<KoanEngine>, cx: &mut App) {
         window: None,
     });
     // Quitting with a device waiting to pair declines it rather than leaving
-    // it waiting; the answer is sent as the app goes, if it can be.
+    // it waiting; the answer is sent as the app goes, within the time the
+    // app is given to.
     cx.on_app_quit(|cx| {
-        if let Some(handle) = cx.global::<Settings>().window {
-            handle
-                .update(cx, |root, window, cx| {
-                    if let Ok(view) = root.view().clone().downcast::<SettingsWindow>() {
-                        let sheets = view.read(cx).ctx.sheets.clone();
-                        answer_unanswered(&sheets, window, cx);
-                    }
-                })
-                .ok();
+        let model = cx.global::<Settings>().model.clone();
+        let (engine, waiting) = model.update(cx, |m, _| {
+            (m.engine().clone(), std::mem::take(&mut m.waiting_pairs))
+        });
+        async move {
+            for pair in waiting {
+                engine.clone().decline_pairing(pair).await.ok();
+            }
         }
-        async {}
     })
     .detach();
     // `appearance` waits for saves still landing, so it is read off the
@@ -131,7 +130,12 @@ pub fn open(cx: &mut App) {
         cx.new(|cx| Root::new(view, window, cx))
     });
     match opened {
-        Ok(handle) => cx.global_mut::<Settings>().window = Some(handle),
+        Ok(handle) => {
+            cx.global_mut::<Settings>().window = Some(handle);
+            // Now the Settings window: it takes what a closed one left unseen.
+            let model = cx.global::<Settings>().model.clone();
+            model.update(cx, |_, cx| cx.notify());
+        }
         Err(e) => log::error!("the settings window did not open: {e}"),
     }
 }
@@ -235,6 +239,11 @@ impl SettingsWindow {
                 this.follow_account(window, cx)
             }),
             cx.observe(&ctx.sheets, |_, _, cx| cx.notify()),
+            // The tab underline, toggles and buttons take the record's accent,
+            // in the window and in the cached pane.
+            theme::observe_accent_then(cx, |this: &mut SettingsWindow, cx| {
+                App::notify(cx, this.pane.view().entity_id());
+            }),
             // The CLI and the TUI write the same file; coming back to this
             // window is the moment to notice they did.
             cx.observe_window_activation(window, |this, window, cx| {
@@ -317,8 +326,22 @@ impl SettingsWindow {
         if !self.tabs(cx).contains(&self.tab) {
             self.show(Tab::Server, window, cx);
         }
-        // A key made in a window that closed before it could show it.
-        if let Some(sheet) = self.ctx.model.update(cx, |m, _| m.unseen.take()) {
+        // A key or an invite made in a window that closed before it could
+        // show it. Only the Settings window takes them: a closing one is
+        // not it any more.
+        let live = cx.has_global::<Settings>()
+            && cx
+                .global::<Settings>()
+                .window
+                .is_some_and(|h| h.window_id() == window.window_handle().window_id());
+        let unseen = if live {
+            self.ctx
+                .model
+                .update(cx, |m, _| std::mem::take(&mut m.unseen))
+        } else {
+            Vec::new()
+        };
+        for sheet in unseen {
             self.ctx
                 .sheets
                 .update(cx, |s, cx| s.show(sheet, window, cx));
@@ -513,9 +536,25 @@ impl SettingsWindow {
     }
 }
 
+/// As the window closes: sheets left unanswered are answered the way their
+/// Cancel would be, and those showing something only once go to the next
+/// Settings window.
 fn answer_unanswered(sheets: &Entity<Sheets>, window: &mut Window, cx: &mut App) {
-    if let Some(dismissed) = sheets.read(cx).unanswered() {
+    // No longer the Settings window: what it hands on below waits for the
+    // next one rather than coming back to this one as it goes.
+    if cx.has_global::<Settings>() {
+        cx.global_mut::<Settings>().window = None;
+    }
+    for dismissed in sheets.read(cx).unanswered() {
         dismissed(window, cx);
+    }
+    let kept = sheets.update(cx, |s, _| s.take_kept());
+    if !kept.is_empty() && cx.has_global::<Settings>() {
+        let model = cx.global::<Settings>().model.clone();
+        model.update(cx, |m, cx| {
+            m.unseen.extend(kept);
+            cx.notify();
+        });
     }
 }
 

@@ -76,6 +76,8 @@ pub struct MenuRow {
     reach: Option<Icon>,
     /// Buttons at the row's end, before the tick.
     trailing: Vec<AnyElement>,
+    /// The keys that do the same, at the row's end in `muted`.
+    keys: Option<SharedString>,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -94,8 +96,15 @@ impl MenuRow {
             rich: false,
             reach: None,
             trailing: Vec::new(),
+            keys: None,
             on_click: None,
         }
+    }
+
+    /// The keys that do the same, as a menu bar shows them: "⌘K", "Ctrl+K".
+    pub fn keys(mut self, keys: impl Into<SharedString>) -> Self {
+        self.keys = Some(keys.into());
+        self
     }
 
     /// A row whose label is data rather than the app's words (a preset's
@@ -275,6 +284,14 @@ impl RenderOnce for MenuRow {
                     .into_iter()
                     .map(|t| div().relative().flex_none().child(t)),
             )
+            .children(self.keys.map(|keys| {
+                div()
+                    .relative()
+                    .flex_none()
+                    .ml(look.space(Space::L))
+                    .text_color(muted)
+                    .child(keys)
+            }))
             // The tick at the row's end, after `m`, as the Mac's menus put
             // it; its room is kept on every row of a set of choices.
             .children(self.checked.map(|checked| {

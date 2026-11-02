@@ -1,0 +1,1 @@
+- **Playlist order syncs through a kōan server.** Reordering the playlists on one device reorders them on the account's other devices, through the new `koanPlaylistOrder` extension; playlists the server does not hold keep their places.

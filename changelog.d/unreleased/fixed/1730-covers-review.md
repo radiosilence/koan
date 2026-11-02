@@ -1,0 +1,1 @@
+- **A server started before its music is mounted shows covers once it is.** Covers that could not be read are no longer remembered as missing, an album whose first track's art is damaged takes the next track's, and a cover a busy server could not send is asked for again rather than left blank.

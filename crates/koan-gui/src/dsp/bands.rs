@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use koan_ffi::{DspBand, DspPoint};
+use koan_ffi::{DspBand, DspBandKind, DspPoint};
 use koan_kit::app::{
     AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, SharedString,
     Subscription, Window, div,
@@ -425,7 +425,7 @@ pub fn table<V: 'static>(
                 .w_full()
                 .flex()
                 .justify_between()
-                .child(kind_name(band))
+                .child(kind_name(band, &kinds))
                 .child(
                     div()
                         .text_color(look.text_color(Tone::Muted))
@@ -452,9 +452,12 @@ pub fn table<V: 'static>(
                         })
                     })
                     .chain([Item::Rule, {
-                        let (remove, band) = (remove.clone(), band.clone());
+                        // The band as this row last stored it, which a save
+                        // may have moved past the listing it was drawn from.
+                        let (remove, state) = (remove.clone(), state.clone());
                         Item::destructive("Remove", move |window, cx| {
-                            remove(index, position, band.clone(), window, cx)
+                            let band = state.borrow().band.clone();
+                            remove(index, position, band, window, cx)
                         })
                     }])
                     .collect();
@@ -550,17 +553,12 @@ pub fn points<V: 'static>(
         .into_any_element()
 }
 
-/// A filter's type in words, and the channels it is on.
-pub fn kind_name(band: &DspBand) -> String {
+/// A filter's type in words, and the channels it is on. A band type an
+/// edit can choose is named as the core's `kinds` name it in the type menu.
+pub fn kind_name(band: &DspBand, kinds: &[DspBandKind]) -> String {
+    let chosen = kinds.iter().find(|k| k.id == band.kind);
     let name = match band.kind.as_str() {
-        "peaking" => "Peaking",
-        "low_shelf" => "Low shelf",
-        "high_shelf" => "High shelf",
-        "low_pass" => "Low pass",
-        "high_pass" => "High pass",
-        "notch" => "Notch",
-        "band_pass" => "Band pass",
-        "all_pass" => "All pass",
+        _ if chosen.is_some() => chosen.map_or("", |k| k.name.as_str()),
         "low_shelf_first_order" => "Low shelf, 6 dB/oct",
         "high_shelf_first_order" => "High shelf, 6 dB/oct",
         "low_pass_first_order" => "Low pass, 6 dB/oct",

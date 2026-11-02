@@ -100,7 +100,13 @@ pub fn organise(lib: &Lib, items: &[Playable], window: &mut Window, cx: &mut App
                     Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
                 };
                 match found {
-                    Ok(found) => ids.extend(found.into_iter().filter(|id| !ids.contains(id))),
+                    Ok(found) => {
+                        for id in found {
+                            if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                        }
+                    }
                     Err(e) => log::warn!("organise: {e}"),
                 }
             }
@@ -222,8 +228,25 @@ pub fn menu(
         window,
         cx,
         move |mut menu, _, _| {
-            if playlists.is_empty() {
-                return menu.label("no playlists");
+            {
+                let (lib, items, after) = (sub_lib.clone(), sub_items.clone(), sub_after.clone());
+                menu = menu.item(MenuEntry::new("new playlist…").icon(Icon::Add).on_click(
+                    move |_, window, cx| {
+                        super::playlist::new_playlist(
+                            lib.engine.clone(),
+                            lib.nav.read(cx).navigator(),
+                            sources(&items),
+                            window,
+                            cx,
+                        );
+                        if let Some(after) = &after {
+                            after(cx);
+                        }
+                    },
+                ));
+            }
+            if !playlists.is_empty() {
+                menu = menu.separator();
             }
             for (id, name) in &playlists {
                 let (lib, items, after, id) =
