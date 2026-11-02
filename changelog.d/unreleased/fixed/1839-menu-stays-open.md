@@ -1,0 +1,1 @@
+- **Output and Play on menus.** Choosing an output, a network speaker or a device keeps the menu open, so the choice is seen to take.

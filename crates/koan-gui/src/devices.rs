@@ -117,6 +117,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             "paused while you control another device"
         })
         .checked(here)
+        .stays_open()
         .on_click(|_, _, cx| control(None, cx));
     if !here && view.can_move(None) {
         this = this.trailing(move_button(
@@ -159,6 +160,7 @@ pub fn control_menu(menu: Menu, view: &ControlView) -> Menu {
             .warns(unreachable || warning)
             .checked(selected)
             .disabled(unreachable && !selected)
+            .stays_open()
             .on_click(move |_, _, cx| control(Some(id.clone()), cx));
         if view.can_move(Some(device)) {
             entry = entry.trailing(move_button(
