@@ -57,6 +57,8 @@ pub struct OrganizeSheet {
     generation: u64,
     _preview: Option<Task<()>>,
     _settle: Option<Task<()>>,
+    /// The move under way. Its own task, so no preview replaces it.
+    _run: Option<Task<()>>,
     _load: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -120,6 +122,7 @@ impl OrganizeSheet {
             generation: 0,
             _preview: None,
             _settle: None,
+            _run: None,
             _load: load,
             _subscriptions: subscriptions,
         }
@@ -136,9 +139,15 @@ impl OrganizeSheet {
     /// Generates the plan now, and checks it against the disk once typing
     /// has rested.
     fn preview(&mut self, cx: &mut Context<Self>) {
+        // The plan being carried out stays on screen until it has been.
+        if self.running {
+            return;
+        }
         let (Some(selection), Some(base)) = (self.selection.clone(), self.base()) else {
             return;
         };
+        // A new plan replaces what the last move had to say.
+        self.error = None;
         let pattern = self.pattern(cx);
         self.generation += 1;
         let generation = self.generation;
@@ -152,7 +161,8 @@ impl OrganizeSheet {
         self._preview = Some(cx.spawn(async move |this, cx| {
             let plan = quick.await;
             this.update(cx, |this, cx| {
-                if this.generation == generation {
+                // Not over the disk's answer, should that have come first.
+                if this.generation == generation && !this.checked {
                     this.plan = Some(plan);
                     cx.notify();
                 }
@@ -239,13 +249,19 @@ impl OrganizeSheet {
                 );
                 sheet.update(cx, |this, cx| {
                     this.running = true;
+                    // A preview still in flight is for the plan before the
+                    // move; it must not land over the result.
+                    this.generation += 1;
+                    this._preview = None;
+                    this._settle = None;
                     cx.notify();
-                    this._preview = Some(cx.spawn(async move |this, cx| {
+                    this._run = Some(cx.spawn(async move |this, cx| {
                         let result = run.await;
                         this.update(cx, |this, cx| {
                             this.running = false;
                             match result {
-                                Ok(done) => {
+                                // Every file went: done.
+                                Ok(done) if done.conflict_count + done.error_count == 0 => {
                                     let moved = done.moved_count as u64;
                                     crate::notice::show(
                                         format!("Moved {}.", files(moved)),
@@ -253,6 +269,16 @@ impl OrganizeSheet {
                                         cx,
                                     );
                                     ask::close(cx);
+                                }
+                                // Some stayed: the sheet shows which, and why.
+                                Ok(done) => {
+                                    this.error = Some(format!(
+                                        "Moved {}; {} stayed where they were, listed below.",
+                                        files(done.moved_count as u64),
+                                        files((done.conflict_count + done.error_count) as u64)
+                                    ));
+                                    this.plan = Some(done);
+                                    this.checked = false;
                                 }
                                 Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                             }
@@ -322,8 +348,10 @@ impl Render for OrganizeSheet {
         let ready = self.checked
             && !self.running
             && self.plan.as_ref().is_some_and(|plan| plan.moved_count > 0);
+        let running = self.running;
         let cancel = Button::new("organize-cancel", ButtonKind::Standard)
             .label("cancel")
+            .disabled(running)
             .on_click(|_, _, cx| ask::close(cx));
         let go = Button::new("organize-go", ButtonKind::Standard)
             .label(if self.running {
@@ -337,10 +365,13 @@ impl Render for OrganizeSheet {
         let mut names: Vec<String> = self.patterns.iter().map(|p| p.name.clone()).collect();
         names.push("typed here".into());
         let chosen = Some(self.chosen.unwrap_or(names.len() - 1));
-        let picker = Picker::keeps_case("organize-pattern", names, chosen).on_change(
-            cx.listener(|this, index: &usize, window, cx| this.choose_pattern(*index, window, cx)),
-        );
+        let picker = Picker::keeps_case("organize-pattern", names, chosen)
+            .disabled(running)
+            .on_change(cx.listener(|this, index: &usize, window, cx| {
+                this.choose_pattern(*index, window, cx)
+            }));
         let folder = Picker::keeps_case("organize-folder", self.folders.clone(), Some(self.folder))
+            .disabled(running)
             .on_change(cx.listener(|this, index: &usize, _, cx| {
                 this.folder = *index;
                 this.preview(cx);
@@ -350,6 +381,7 @@ impl Render for OrganizeSheet {
             "move cover art, cue sheets and logs with the music",
             self.move_ancillary,
         )
+        .disabled(running)
         .on_change(cx.listener(|this, on: &bool, _, cx| {
             this.move_ancillary = *on;
             let enabled = *on;
@@ -412,7 +444,7 @@ impl Render for OrganizeSheet {
                     .flex_none()
                     .pt(look.space(crate::theme::Space::M))
                     .child(FormRow::new("pattern").control(picker))
-                    .child(TextField::new(&self.draft))
+                    .child(TextField::new(&self.draft).disabled(running))
                     .child(FormRow::new("library folder").control(folder))
                     .child(ancillary)
                     .children(self.summary().map(|(text, warns)| {

@@ -25,6 +25,7 @@ use crate::theme::{KoanStyled, Look, Space, TypeRole};
 pub struct TextField {
     state: Entity<InputState>,
     ground: bool,
+    disabled: bool,
 }
 
 impl TextField {
@@ -32,7 +33,14 @@ impl TextField {
         Self {
             state: state.clone(),
             ground: true,
+            disabled: false,
         }
+    }
+
+    /// Not editable, and faded: while what it feeds is under way.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 
     /// No field of its own, on the page's ground.
@@ -56,8 +64,12 @@ impl RenderOnce for TextField {
                     .py(look.space(Space::S))
                     .bg(look.palette.surface.hsla())
             })
+            .when(self.disabled, |field| {
+                field.opacity(crate::theme::DISABLED_OPACITY)
+            })
             .child(
                 Input::new(&self.state)
+                    .disabled(self.disabled)
                     .appearance(false)
                     .px(px(0.0))
                     .py(px(0.0))

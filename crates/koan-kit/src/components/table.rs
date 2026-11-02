@@ -28,7 +28,6 @@ enum Width {
     Exact(Pixels),
 }
 
-#[derive(IntoElement)]
 /// A virtualised list of `TableRow`s: only the rows on screen are made, so a
 /// table of tens of thousands (a library's organise plan) costs a screenful.
 /// `rows` makes the rows of a range; with `cx.processor` it reads the view.
@@ -40,6 +39,7 @@ pub fn table_list(
     uniform_list(id, count, rows)
 }
 
+#[derive(IntoElement)]
 pub struct TableRow {
     base: Stateful<Div>,
     kind: RowKind,
