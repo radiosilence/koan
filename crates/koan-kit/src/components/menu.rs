@@ -122,6 +122,10 @@ enum Entry {
     Separator,
     /// A section's name over its entries, chosen by nothing.
     Heading(SharedString),
+    /// A control of its own in the row's insets, such as a slider.
+    Control(Trailing),
+    /// A sentence explaining the entries around it, wrapped.
+    Note(SharedString),
     Submenu {
         label: SharedString,
         icon: Option<Icon>,
@@ -129,6 +133,10 @@ enum Entry {
         open: Option<Entity<Menu>>,
     },
 }
+
+/// How wide a note's lines run, in points before the text size scales them:
+/// the Mac's output picker's width.
+const NOTE_WIDTH: f32 = 340.;
 
 pub struct Menu {
     entries: Vec<Entry>,
@@ -170,6 +178,44 @@ impl Menu {
     /// A line of the menu that says something and does nothing.
     pub fn label(self, text: impl Into<SharedString>) -> Self {
         self.item(MenuEntry::new(text).disabled(true))
+    }
+
+    /// A control in a row of its own, in the rows' insets: a renderer's
+    /// volume. Made each time the menu draws, chosen by nothing; it keeps its
+    /// own focus and keys.
+    pub fn control(mut self, make: impl Fn(&mut Window, &mut App) -> AnyElement + 'static) -> Self {
+        self.entries.push(Entry::Control(Rc::new(make)));
+        self
+    }
+
+    /// A sentence about the entries around it, in `fine`, `muted`, wrapped
+    /// at the menu's reading width rather than widening it.
+    pub fn note(mut self, text: impl Into<SharedString>) -> Self {
+        self.entries.push(Entry::Note(text.into()));
+        self
+    }
+
+    /// Makes the entries again while the menu is open, for a menu whose
+    /// content arrives after it opens (renderers found on the network). The
+    /// highlight stays on its row while that row is still there.
+    pub fn refill(
+        &mut self,
+        cx: &mut Context<Menu>,
+        build: impl FnOnce(Menu, &mut Context<Menu>) -> Menu,
+    ) {
+        let empty = Menu {
+            entries: Vec::new(),
+            highlighted: None,
+            focus: self.focus.clone(),
+            _submenu: None,
+        };
+        let built = build(empty, cx);
+        self.entries = built.entries;
+        self._submenu = None;
+        self.highlighted = self
+            .highlighted
+            .filter(|&i| i < self.entries.len() && self.choosable(i));
+        cx.notify();
     }
 
     /// A rule between groups; one at the start, at the end or after another
@@ -233,7 +279,7 @@ impl Menu {
         match &self.entries[index] {
             Entry::Item(item) => !item.disabled && item.run.is_some(),
             Entry::Submenu { .. } => true,
-            Entry::Separator | Entry::Heading(_) => false,
+            Entry::Separator | Entry::Heading(_) | Entry::Control(_) | Entry::Note(_) => false,
         }
     }
 
@@ -368,6 +414,21 @@ impl Render for Menu {
                         .text_role(crate::theme::TypeRole::Fine, &look)
                         .text_color(look.palette.muted.hsla())
                         .child(title.clone()),
+                ),
+                Entry::Control(make) => panel.child(
+                    div()
+                        .px(look.space(Space::M))
+                        .py(look.space(Space::Xs))
+                        .child(make(window, cx)),
+                ),
+                Entry::Note(text) => panel.child(
+                    div()
+                        .px(look.space(Space::M))
+                        .py(look.space(Space::Xs))
+                        .max_w(look.spaced(NOTE_WIDTH))
+                        .text_role(crate::theme::TypeRole::Fine, &look)
+                        .text_color(look.palette.muted.hsla())
+                        .child(text.clone()),
                 ),
                 Entry::Item(item) => {
                     let mut row = if item.data {
@@ -526,6 +587,15 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
 
     pub fn close(&mut self) {
         self.open = None;
+    }
+
+    /// The menu `which` opened, while it is open: to refill it as what it
+    /// shows changes.
+    pub fn menu(&self, which: K) -> Option<&Entity<Menu>> {
+        self.open
+            .as_ref()
+            .filter(|(open, ..)| *open == which)
+            .map(|(_, menu, _)| menu)
     }
 
     /// The trigger for `which`: `button` with the press noted and the click
