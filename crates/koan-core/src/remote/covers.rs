@@ -12,7 +12,9 @@
 //! fetches it at the size grids draw, one at a time and only while no cover a
 //! page asked for is in flight, so it never holds up what is on screen. It
 //! sleeps on the engine's change signal while there is nothing to do, and
-//! starts again when the library, the settings or the connection move.
+//! starts again when the library, the settings or the connection move. It
+//! waits while the app is in the background, on a metered network, or while
+//! the device saves power (`set_constrained`).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -164,6 +166,17 @@ static STOPPED: AtomicBool = AtomicBool::new(false);
 static STARTED: AtomicBool = AtomicBool::new(false);
 /// Moves when the preload should look again: the person turned it back on.
 static NUDGES: AtomicU64 = AtomicU64::new(0);
+/// The network is metered, or the device is saving power, as the app says.
+static CONSTRAINED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the device is on a metered network or saving power: the preload
+/// waits while it is. Told by the app, which knows; a change wakes the
+/// preload.
+pub fn set_constrained(constrained: bool) {
+    if CONSTRAINED.swap(constrained, Ordering::Relaxed) != constrained {
+        crate::signal::engine_changed().bump();
+    }
+}
 
 /// The preload's progress while it runs; `None` otherwise.
 pub fn progress() -> Option<Preload> {
@@ -213,6 +226,7 @@ struct Seen {
     enabled: bool,
     url: String,
     reachable: bool,
+    constrained: bool,
     nudges: u64,
 }
 
@@ -223,6 +237,7 @@ fn seen() -> Seen {
         enabled: cfg.remote.enabled && cfg.remote.preload_covers,
         url: cfg.remote.url.clone(),
         reachable: crate::helpers::server_unreachable().is_none(),
+        constrained: CONSTRAINED.load(Ordering::Relaxed),
         nudges: NUDGES.load(Ordering::Relaxed),
     }
 }
@@ -245,7 +260,11 @@ fn run() {
 }
 
 fn may_run(seen: &Seen) -> bool {
-    seen.enabled && seen.reachable && !STOPPED.load(Ordering::Relaxed) && crate::quiet::awake()
+    seen.enabled
+        && seen.reachable
+        && !seen.constrained
+        && !STOPPED.load(Ordering::Relaxed)
+        && crate::quiet::awake()
 }
 
 /// Fetches every missing cover once. Gives up early when the setting goes

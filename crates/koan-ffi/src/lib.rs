@@ -1721,6 +1721,13 @@ impl KoanEngine {
         .await
     }
 
+    /// Whether the device is on a metered or constrained network, or saving
+    /// power. Fetching covers ahead waits while it is; playback and what a
+    /// page asks for do not.
+    pub fn set_network_constrained(&self, constrained: bool) {
+        koan_core::remote::covers::set_constrained(constrained);
+    }
+
     /// Stop fetching covers ahead, keeping what was fetched, until the
     /// setting is turned on again or the app starts again.
     pub fn stop_cover_preload(&self) {
