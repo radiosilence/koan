@@ -5734,7 +5734,14 @@ impl KoanEngine {
                     // forgotten. Its figures are `spawn_figures`'.
                     let store = engine.state.downloads();
                     let store_version = store.version();
-                    if store_version != last_store {
+                    // A transfer starting, settling or forgotten moves the
+                    // queue's rows (a row downloading is one with a transfer
+                    // running), and one settling has written its track's
+                    // file: the queue reads where its tracks are again now,
+                    // not when the library's coalesced change goes out.
+                    let store_moved = store_version != last_store;
+                    let mut settled: Vec<i64> = Vec::new();
+                    if store_moved {
                         last_store = store_version;
                         let transfers = store.all();
                         let ids: Vec<i64> = transfers.iter().map(|d| d.track_id).collect();
@@ -5770,7 +5777,8 @@ impl KoanEngine {
                             .filter(|d| !d.state.is_settled())
                             .map(|d| d.track_id)
                             .collect();
-                        if running.difference(&now_running).next().is_some() {
+                        settled = running.difference(&now_running).copied().collect();
+                        if !settled.is_empty() {
                             landed = true;
                         }
                         running = now_running;
@@ -5837,7 +5845,19 @@ impl KoanEngine {
                             .state
                             .relink(&koan_core::helpers::queue_relinks(&db, &engine.state));
                     }
-                    if (queue_moved || library_moved) && target.is_none() {
+                    // The tracks just landed have their files: read where those
+                    // few are, and leave the whole queue's join to the
+                    // coalesced library change.
+                    if !settled.is_empty()
+                        && !library_moved
+                        && let Ok(db) = engine.db()
+                    {
+                        queue.settled(
+                            queries::batch::sources_for_tracks(&db.conn, &settled)
+                                .unwrap_or_default(),
+                        );
+                    }
+                    if (queue_moved || library_moved || store_moved) && target.is_none() {
                         let slices = queue
                             .update(&engine.state, library_moved, |ids| engine.queue_joins(ids));
                         for slice in slices {

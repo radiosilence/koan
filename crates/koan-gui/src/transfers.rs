@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use koan_ffi::{EntryStatus, QueueItem, Transfer, TransferFigure, TransferState};
+use koan_ffi::{EntryStatus, Transfer, TransferFigure, TransferState};
 use koan_kit::app::*;
 
 use crate::components::{Availability, Glide, RingGlide};
@@ -261,50 +261,98 @@ impl Report {
     }
 }
 
-/// A library row's mark: its transfer while it has one, else where its file
-/// is.
+/// A row's mark, the one rule every list draws by: the track's transfer
+/// while the store lists one, else where its file is. A transfer that has
+/// finished means the file is here, from the moment it settles: the library
+/// says so too a little later, and the store forgets a finished transfer
+/// whose file is cleared or evicted.
 pub fn of_track(
     track: i64,
     on_server: bool,
     on_disk: bool,
     transfer: Option<TransferState>,
 ) -> Option<Availability> {
-    Some(match transfer {
-        Some(TransferState::Queued) => Availability::Queued,
-        Some(TransferState::Running) => Availability::Transferring(ring_for(track)),
-        Some(TransferState::Failed) => Availability::Failed,
-        _ => stored(on_server, on_disk)?,
-    })
+    match transfer {
+        Some(TransferState::Queued) => Some(Availability::Queued),
+        Some(TransferState::Running) => Some(Availability::Transferring(ring_for(track))),
+        Some(TransferState::Failed) => Some(Availability::Failed),
+        Some(TransferState::Done) => stored(on_server, true),
+        None => stored(on_server, on_disk),
+    }
 }
 
-/// A queue row's mark, from its status.
-pub fn of_queue_item(item: &QueueItem) -> Option<Availability> {
-    of_queue_status(item.status, item.track_id, item.on_server, item.on_disk)
-}
-
-/// `of_queue_item` from the fields it reads, for a row whose item is
-/// borrowed from the app.
-pub fn of_queue_status(
+/// A queue or playlist row's mark: `of_track`, except that a row the person
+/// asked to play that is still waiting for its transfer to start shows it is
+/// wanted, and one whose load failed with no transfer listed shows the
+/// failure.
+pub fn of_queue_row(
     status: EntryStatus,
     track: Option<i64>,
     on_server: bool,
     on_disk: bool,
+    transfer: Option<TransferState>,
 ) -> Option<Availability> {
-    Some(match status {
-        EntryStatus::PriorityPending => Availability::Pending,
-        EntryStatus::Failed => Availability::Failed,
-        EntryStatus::Downloading => Availability::Transferring(match track {
-            Some(track) => ring_for(track),
-            None => Rc::new(|_, _| {
-                let unknown = Glide::new();
-                unknown.set_unknown();
-                unknown
-            }),
-        }),
-        _ => stored(on_server, on_disk)?,
-    })
+    let waiting = matches!(transfer, None | Some(TransferState::Queued));
+    match (status, track) {
+        (EntryStatus::PriorityPending, _) if waiting && !on_disk => Some(Availability::Pending),
+        (EntryStatus::Failed, _) if transfer.is_none() => Some(Availability::Failed),
+        (_, Some(track)) => of_track(track, on_server, on_disk, transfer),
+        _ => stored(on_server, on_disk),
+    }
 }
 
 fn stored(on_server: bool, on_disk: bool) -> Option<Availability> {
     (on_server || on_disk).then_some(Availability::Stored { on_server, on_disk })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stored_here(mark: Option<Availability>) -> bool {
+        matches!(mark, Some(Availability::Stored { on_disk: true, .. }))
+    }
+
+    /// A finished transfer is the file here at once: no empty cloud while
+    /// the library catches up.
+    #[test]
+    fn a_finished_transfer_is_on_this_device() {
+        assert!(stored_here(of_track(
+            1,
+            true,
+            false,
+            Some(TransferState::Done)
+        )));
+        assert!(stored_here(of_queue_row(
+            EntryStatus::Queued,
+            Some(1),
+            true,
+            false,
+            Some(TransferState::Done),
+        )));
+    }
+
+    /// A running transfer is a ring whatever the row's load state: a track
+    /// streaming while it downloads is ready to play and still arriving.
+    #[test]
+    fn a_running_transfer_is_a_ring_whatever_the_status() {
+        for status in [
+            EntryStatus::Playing,
+            EntryStatus::Queued,
+            EntryStatus::Downloading,
+        ] {
+            let mark = of_queue_row(status, Some(1), true, false, Some(TransferState::Running));
+            assert!(matches!(mark, Some(Availability::Transferring(_))));
+        }
+    }
+
+    /// Waiting for its transfer to start, the track asked for shows it is
+    /// wanted; on disk already, it does not.
+    #[test]
+    fn a_wanted_track_waits_only_while_it_is_not_here() {
+        let waiting = of_queue_row(EntryStatus::PriorityPending, Some(1), true, false, None);
+        assert!(matches!(waiting, Some(Availability::Pending)));
+        let here = of_queue_row(EntryStatus::PriorityPending, Some(1), true, true, None);
+        assert!(stored_here(here));
+    }
 }

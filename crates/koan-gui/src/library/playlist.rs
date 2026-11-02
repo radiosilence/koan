@@ -918,7 +918,14 @@ impl PlaylistPage {
                     Extras {
                         favourite,
                         feed: Some(feed.clone()),
-                        availability: crate::transfers::of_queue_item(item),
+                        availability: crate::transfers::of_queue_row(
+                            item.status,
+                            item.track_id,
+                            item.on_server,
+                            item.on_disk,
+                            item.track_id
+                                .and_then(|t| feed.read(cx).transfers.get(&t).copied()),
+                        ),
                     },
                     &look,
                 );
