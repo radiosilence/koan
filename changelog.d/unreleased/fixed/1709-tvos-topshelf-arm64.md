@@ -1,0 +1,1 @@
+- **tvOS TestFlight.** The Top Shelf extension declares arm64 in `UIRequiredDeviceCapabilities`, which App Store Connect requires of a 64-bit extension; the v0.69.6 tvOS export was refused without it.
