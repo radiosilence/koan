@@ -1459,14 +1459,14 @@ jobs:
           path: artifacts
           pattern: koan-gui-*
       - name: Attach the Linux packages
+        # macOS's bash is 3.2: no globstar, so find the packages instead.
         run: |
-          shopt -s nullglob globstar
-          files=(artifacts/**/*.deb artifacts/**/*.AppImage)
-          if [ ${#files[@]} -eq 0 ]; then
+          files=$(find artifacts -type f \( -name '*.deb' -o -name '*.AppImage' \))
+          if [ -z "$files" ]; then
             echo "::warning::no GUI Linux packages built"
             exit 0
           fi
-          gh release upload "v$VERSION" "${files[@]}" --clobber
+          echo "$files" | xargs gh release upload "v$VERSION" --clobber
       - name: API key
         run: |
           test -n "$APPLE_API_KEY_P8" || { echo "::error::set the APPLE_API_KEY_* secrets"; exit 1; }
