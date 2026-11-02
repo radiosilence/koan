@@ -20,7 +20,8 @@ use koan_kit::raw::RenderImage;
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Button, ButtonKind, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider, TransportMetrics,
+    Badge, Button, ButtonKind, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
+    TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -859,15 +860,11 @@ impl Render for Transport {
             .items_center()
             .justify_end()
             .gap(TransportMetrics::trailing_gap(&p.look))
-            .children(now.format.as_ref().map(|format| {
-                div()
-                    .px(p.space(Space::Xs))
-                    .border_1()
-                    .border_color(p.rule)
-                    .text_role(TypeRole::Fine, &p.look)
-                    .text_color(p.ink)
-                    .child(format_badge(format))
-            }))
+            .children(
+                now.format
+                    .as_ref()
+                    .map(|format| Badge::new(format_badge(format))),
+            )
             .child(self.menu_button(
                 Menu::Sleep,
                 if now.sleep.is_some() {
