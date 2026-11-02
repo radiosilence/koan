@@ -17,6 +17,8 @@ use koan_kit::app::*;
 #[derive(Default)]
 pub struct Residency {
     pub keep_running: bool,
+    /// Why the system last refused to change the login item, for Settings.
+    pub login_error: Option<String>,
     #[cfg(target_os = "macos")]
     status: Option<super::status_item::StatusItem>,
 }
@@ -70,7 +72,7 @@ pub fn keep_running(cx: &App) -> bool {
 pub fn apply(keep: bool, cx: &mut App) {
     set(keep, cx);
     if !keep && crate::app::main_window(cx).is_none() {
-        crate::app::show_window(cx);
+        let _ = crate::app::show_window(cx);
     }
 }
 
@@ -134,10 +136,25 @@ pub fn login() -> Login {
     login_item::status()
 }
 
-/// Asks the system to open kōan at login, or not. The error, worded for the
-/// person, when it refuses.
-pub fn set_login(on: bool) -> Result<(), String> {
-    login_item::set(on)
+/// Asks the system to open kōan at login, or not, keeping why it refused
+/// for Settings to show.
+pub fn set_login(on: bool, cx: &mut App) {
+    let refused = login_item::set(on).err();
+    if cx.has_global::<Residency>() {
+        cx.global_mut::<Residency>().login_error = refused;
+    }
+}
+
+/// Why the system last refused to change the login item.
+pub fn login_error(cx: &App) -> Option<String> {
+    cx.try_global::<Residency>()?.login_error.clone()
+}
+
+/// Whether this run was started by the system at login rather than by
+/// someone: the one launch that, kept running, starts in the menu bar with
+/// no window.
+pub fn launched_at_login() -> bool {
+    login_item::launched_at_login()
 }
 
 #[cfg(target_os = "macos")]
@@ -156,9 +173,43 @@ mod login_item {
         unsafe { msg_send![class!(SMAppService), mainAppService] }
     }
 
+    /// A build run from source has no bundle to register as a login item.
+    fn bundled() -> bool {
+        // SAFETY: NSBundle's main bundle and its identifier, an NSString or
+        // nil.
+        unsafe {
+            let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+            let id: *mut AnyObject = msg_send![bundle, bundleIdentifier];
+            !id.is_null()
+        }
+    }
+
+    /// The launch's Apple event says it was opened as a login item
+    /// (`keyAELaunchedAsLogInItem`). Read as the app finishes launching,
+    /// while that event is still the current one.
+    pub fn launched_at_login() -> bool {
+        static AT_LOGIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *AT_LOGIN.get_or_init(|| {
+            // 'lgit', keyAELaunchedAsLogInItem.
+            const LOGIN_ITEM: u32 = u32::from_be_bytes(*b"lgit");
+            // SAFETY: the shared Apple event manager's current event, and a
+            // parameter of it, each an object or nil.
+            unsafe {
+                let manager: *mut AnyObject =
+                    msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+                let event: *mut AnyObject = msg_send![manager, currentAppleEvent];
+                if event.is_null() {
+                    return false;
+                }
+                let param: *mut AnyObject = msg_send![event, paramDescriptorForKeyword: LOGIN_ITEM];
+                !param.is_null()
+            }
+        })
+    }
+
     pub fn status() -> Login {
         let service = service();
-        if service.is_null() {
+        if service.is_null() || !bundled() {
             return Login::Unavailable;
         }
         // SAFETY: `status` is an NSInteger property of SMAppService.
@@ -166,7 +217,6 @@ mod login_item {
         match status {
             1 => Login::On,
             2 => Login::NeedsApproval,
-            // Not found: no bundle to register, as for a build from source.
             3 => Login::Unavailable,
             _ => Login::Off,
         }
@@ -206,6 +256,13 @@ mod login_item {
 
     use super::Login;
 
+    /// What the autostart entry passes, so a login launch is told apart.
+    const BACKGROUND: &str = "--background";
+
+    pub fn launched_at_login() -> bool {
+        std::env::args().any(|arg| arg == BACKGROUND)
+    }
+
     fn entry() -> Option<PathBuf> {
         Some(
             dirs::config_dir()?
@@ -241,7 +298,7 @@ mod login_item {
         }
         let exec = exec().ok_or("could not tell where kōan is")?;
         let text = format!(
-            "[Desktop Entry]\nType=Application\nName=kōan\nExec=\"{exec}\"\nIcon=koan-gui\nX-GNOME-Autostart-enabled=true\n"
+            "[Desktop Entry]\nType=Application\nName=kōan\nExec=\"{exec}\" {BACKGROUND}\nIcon=koan-gui\nX-GNOME-Autostart-enabled=true\n"
         );
         std::fs::create_dir_all(path.parent().unwrap_or(&path))
             .and_then(|()| std::fs::write(&path, text))

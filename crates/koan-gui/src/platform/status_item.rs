@@ -128,8 +128,8 @@ impl StatusItem {
         let playback = cx.global::<Mirror>().playback.clone();
         let observing = cx.observe(&playback, |playback, cx| {
             let shown = shown(playback.read(cx));
-            if let Some(residency) = cx.try_global_mut::<super::residency::Residency>()
-                && let Some(item) = residency.status_mut()
+            if cx.has_global::<super::residency::Residency>()
+                && let Some(item) = cx.global_mut::<super::residency::Residency>().status_mut()
             {
                 item.show(shown);
             }

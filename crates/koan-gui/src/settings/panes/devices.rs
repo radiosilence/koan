@@ -468,7 +468,7 @@ impl Render for DevicesPane {
             &look,
         ));
 
-        sections.push(background(&settings, &model, entity.clone(), &look));
+        sections.push(background(&settings, &model, entity.clone(), &look, cx));
 
         // Who is connected, each with a way to end it where this device can.
         let connections = connection
@@ -749,6 +749,7 @@ fn background(
     model: &Entity<crate::settings::model::SettingsModel>,
     pane: Entity<impl Render>,
     look: &Look,
+    cx: &App,
 ) -> AnyElement {
     use crate::platform::residency::{self, Login};
     let mut rows = Vec::new();
@@ -778,14 +779,15 @@ fn background(
                 matches!(login, Login::On | Login::NeedsApproval),
             )
             .on_change(move |on, _, cx| {
-                if let Err(e) = residency::set_login(*on) {
-                    log::warn!("open at login: {e}");
-                }
+                residency::set_login(*on, cx);
                 // What the system now says shows at once.
                 pane.update(cx, |_, cx| cx.notify());
             })
             .into_any_element(),
         );
+    }
+    if let Some(error) = residency::login_error(cx) {
+        rows.push(note(error, Icon::Warning, Tone::Bad, look));
     }
     if login == Login::NeedsApproval {
         rows.push(note(

@@ -35,6 +35,8 @@ fn main() {
         }
     });
     application.run(|cx| {
+        // Read while the launch's Apple event is still the current one.
+        platform::residency::launched_at_login();
         #[cfg(target_os = "macos")]
         platform::about::icon_unbundled();
         // GPUI's start-up and headless rendering, which only the app's entry and tools reach.

@@ -167,8 +167,10 @@ fn save_on_leaving(engine: &Arc<KoanEngine>) {
 pub fn to_front(cx: &mut App) {
     cx.activate(true);
     // Kept running with the main window closed: it opens again.
-    if residency::keep_running(cx) && crate::app::main_window(cx).is_none() {
-        crate::app::show_window(cx);
+    if residency::keep_running(cx)
+        && crate::app::main_window(cx).is_none()
+        && crate::app::show_window(cx)
+    {
         return;
     }
     if let Some(window) = cx.windows().first() {
