@@ -1,0 +1,1 @@
+- **Covers follow every change to a record's art.** A re-tagged file and a cover image added, replaced or removed now refresh the record's cached covers whichever scan finds them, including the start-up and periodic scans of a library the folder watcher hears nothing from.
