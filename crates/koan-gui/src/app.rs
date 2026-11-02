@@ -28,11 +28,11 @@ const RESTORE_WAIT: Duration = Duration::from_millis(500);
 /// before it starts saving whatever is there.
 const RESTORE_LIMIT: Duration = Duration::from_secs(10);
 
-/// The engine and what follows it, as globals every view reads: the mirror
-/// of its state and the cover cache.
 /// The app's name to the desktop on Linux, for every window it opens.
 pub const APP_ID: &str = "koan-gui";
 
+/// The engine and what follows it, as globals every view reads: the mirror
+/// of its state and the cover cache.
 pub fn install(engine: &Arc<KoanEngine>, cx: &mut App) {
     let mirror = Mirror::follow(engine, cx);
     cx.set_global(mirror);
