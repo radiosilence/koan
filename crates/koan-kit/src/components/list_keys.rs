@@ -8,9 +8,10 @@
 //! opens the row, and Ctrl-Space adds it to the pick or takes it out (Space
 //! stays play and pause). The list
 //! sets the `List` key context and handles the actions; `ListCursor` works
-//! out where each key leaves the cursor and what it picks.
+//! out where each key leaves the cursor and what it picks. The app binds the
+//! keys, from the table its shortcuts sheet lists.
 
-use gpui_kit::{App, KeyBinding, actions};
+use gpui_kit::actions;
 
 actions!(
     list,
@@ -40,25 +41,6 @@ actions!(
 
 /// The key context a list sets on the element that holds its focus.
 pub const LIST_CONTEXT: &str = "List";
-
-/// Binds the list keys, inside a list and outside a text field.
-pub fn bind_list_keys(cx: &mut App) {
-    let ctx = Some("List && !Input");
-    cx.bind_keys([
-        KeyBinding::new("up", Up, ctx),
-        KeyBinding::new("down", Down, ctx),
-        KeyBinding::new("shift-up", ExtendUp, ctx),
-        KeyBinding::new("shift-down", ExtendDown, ctx),
-        KeyBinding::new("home", First, ctx),
-        KeyBinding::new("end", Last, ctx),
-        KeyBinding::new("pageup", PageUp, ctx),
-        KeyBinding::new("pagedown", PageDown, ctx),
-        KeyBinding::new("enter", Activate, ctx),
-        // Space is play and pause everywhere; Ctrl-Space picks, as lists
-        // elsewhere do.
-        KeyBinding::new("ctrl-space", Pick, ctx),
-    ]);
-}
 
 /// Where a list's keyboard cursor is, and where a ⇧ pick extends from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -15,11 +15,11 @@ pub use gpui_kit::{
     Action, AnyElement, AnyEntity, AnyView, AnyWeakEntity, AnyWindowHandle, App, AppContext,
     AsyncApp, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, Div, DragMoveEvent,
     ElementId, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable, Global,
-    IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement, PathPromptOptions, Pixels,
-    Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString, Size, Stateful,
-    StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowId,
-    WindowVisibility, actions, div,
+    IntoElement, KeyBinding, KeyContext, KeyDownEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement,
+    PathPromptOptions, Pixels, Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString,
+    Size, Stateful, StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window,
+    WindowHandle, WindowId, WindowVisibility, actions, div,
 };
 
 /// The text input koan-kit's fields draw (`TextField`, `FilterField`): a

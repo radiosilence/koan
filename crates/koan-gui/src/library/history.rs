@@ -428,6 +428,9 @@ impl TrackList for HistoryPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
+                // The keyboard carries on from the row clicked.
+                self.cursor.at = Some(index);
+                self.cursor.anchor = Some(index);
                 let id = self.entries[index].id;
                 let m = event.modifiers();
                 if event.click_count() >= 2 && !m.shift && !m.secondary(cx) {

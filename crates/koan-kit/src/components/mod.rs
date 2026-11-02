@@ -85,7 +85,7 @@ pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
-pub use list_keys::{LIST_CONTEXT, ListCursor, Moved, bind_list_keys};
+pub use list_keys::{LIST_CONTEXT, ListCursor, Moved};
 /// The list keys' actions, by name: `list_actions::Down`.
 pub mod list_actions {
     pub use super::list_keys::{

@@ -274,6 +274,12 @@ impl Shell {
 
     /// The page showing takes the keys again.
     fn refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Typing in a field moved the route (the sidebar's search lists its
+        // results as it is typed): the field keeps the keyboard.
+        if typing(&window.context_stack()) {
+            cx.notify();
+            return;
+        }
         let route = self.nav.read(cx).current();
         if route == Route::Queue {
             window.focus(&self.queue.focus_handle(cx), cx);
@@ -741,5 +747,24 @@ impl Render for Shell {
             .children(self.picker.as_ref().map(|(picker, _)| {
                 deferred(div().absolute().size_full().child(picker.clone())).with_priority(2)
             }))
+    }
+}
+
+/// Whether the keyboard is in a text field: a context in its path is a
+/// field's.
+fn typing(stack: &[KeyContext]) -> bool {
+    stack.iter().any(|c| c.contains("Input"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_keeps_the_keyboard_when_the_route_moves() {
+        let field = KeyContext::parse("Input").unwrap();
+        let page = KeyContext::parse("koan").unwrap();
+        assert!(typing(&[page.clone(), field]));
+        assert!(!typing(&[page]));
     }
 }

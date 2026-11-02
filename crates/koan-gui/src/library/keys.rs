@@ -52,16 +52,10 @@ pub fn keyed<V: KeyedList, E: InteractiveElement>(element: E, cx: &mut Context<V
     element
         .on_action(cx.listener(|this: &mut V, _: &keys::Up, _, cx| step(this, -1, false, cx)))
         .on_action(cx.listener(|this: &mut V, _: &keys::Down, _, cx| step(this, 1, false, cx)))
-        .on_action(cx.listener(|this: &mut V, _: &keys::ExtendUp, _, cx| {
-            step(this, -1, true, cx)
-        }))
-        .on_action(cx.listener(|this: &mut V, _: &keys::ExtendDown, _, cx| {
-            step(this, 1, true, cx)
-        }))
+        .on_action(cx.listener(|this: &mut V, _: &keys::ExtendUp, _, cx| step(this, -1, true, cx)))
+        .on_action(cx.listener(|this: &mut V, _: &keys::ExtendDown, _, cx| step(this, 1, true, cx)))
         .on_action(cx.listener(|this: &mut V, _: &keys::First, _, cx| jump(this, 0, cx)))
-        .on_action(cx.listener(|this: &mut V, _: &keys::Last, _, cx| {
-            jump(this, usize::MAX, cx)
-        }))
+        .on_action(cx.listener(|this: &mut V, _: &keys::Last, _, cx| jump(this, usize::MAX, cx)))
         .on_action(cx.listener(|this: &mut V, _: &keys::PageUp, _, cx| {
             step(this, -(PAGE as isize), false, cx)
         }))

@@ -413,6 +413,9 @@ impl TrackList for AlbumPage {
         window.focus(&self.focus, cx);
         match part {
             RowPart::Row => {
+                // The keyboard carries on from the row clicked.
+                self.cursor.at = Some(index);
+                self.cursor.anchor = Some(index);
                 let tracks = &self.tracks;
                 let order = || tracks.iter().map(|t| Playable::Track(t.id)).collect();
                 if rows::select(
