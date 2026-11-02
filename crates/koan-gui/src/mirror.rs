@@ -18,8 +18,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use koan_ffi::{
-    ConnectionInfo, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo, QueueItem,
-    QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer, TransferFigure,
+    ConnectionInfo, CoverPreload, DeviceInfo, DeviceReach, KoanEngine, NowPlaying, OutputsInfo,
+    QueueItem, QueueLock, RendererInfo, RendererOutput, StateSlice, SyncProgress, Transfer,
+    TransferFigure,
 };
 use koan_kit::app::{App, AppContext, Entity, Global};
 
@@ -162,8 +163,12 @@ fn track_rows(rows: &[Row], items: &[QueueItem]) -> HashMap<String, usize> {
 }
 
 /// Moves whenever the library's rows change. Pages that read the library ask
-/// again when it does.
-pub struct Library(pub u64);
+/// again when it does. `known` once the engine's first report has landed, so
+/// a page does not read the library twice at launch.
+pub struct Library {
+    pub version: u64,
+    pub known: bool,
+}
 
 /// What the device in view plays through.
 pub struct Outputs(pub Option<OutputsInfo>);
@@ -209,6 +214,7 @@ pub struct Mirror {
     pub cache: Entity<Slice<u64>>,
     pub tasks: Entity<Slice<Tasks>>,
     pub sync: Entity<Slice<Option<SyncProgress>>>,
+    pub covers: Entity<Slice<Option<CoverPreload>>>,
     pub devices: Entity<Slice<Devices>>,
     pub connection: Entity<Slice<Option<ConnectionInfo>>>,
     pub renderers: Entity<Slice<Renderers>>,
@@ -229,7 +235,10 @@ impl Mirror {
                 at: Instant::now(),
             }),
             queue: cx.new(|_| Queue::default()),
-            library: cx.new(|_| Library(0)),
+            library: cx.new(|_| Library {
+                version: 0,
+                known: false,
+            }),
             outputs: cx.new(|_| Outputs(None)),
             lock: cx.new(|_| Slice(None)),
             transfers: cx.new(|_| Slice(Vec::new())),
@@ -238,6 +247,7 @@ impl Mirror {
             cache: cx.new(|_| Slice(0)),
             tasks: cx.new(|_| Slice(Tasks::default())),
             sync: cx.new(|_| Slice(None)),
+            covers: cx.new(|_| Slice(None)),
             devices: cx.new(|_| Slice(Devices::default())),
             connection: cx.new(|_| Slice(None)),
             renderers: cx.new(|_| Slice(Renderers::default())),
@@ -310,7 +320,8 @@ impl Mirror {
                 }
                 StateSlice::Library { version } => {
                     self.library.update(cx, |held, cx| {
-                        held.0 = version;
+                        held.version = version;
+                        held.known = true;
                         cx.notify();
                     });
                 }
@@ -329,6 +340,7 @@ impl Mirror {
                     set(&self.tasks, Tasks { scanning, syncing }, cx)
                 }
                 StateSlice::Sync { progress } => set(&self.sync, progress, cx),
+                StateSlice::Covers { progress } => set(&self.covers, progress, cx),
                 StateSlice::Devices {
                     devices,
                     target,

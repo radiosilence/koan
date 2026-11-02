@@ -4,7 +4,8 @@
 //!
 //! A scan or rebuild started here reports through a `ProgressReporter`; a
 //! scan the folder watcher started and every sync, wherever it began, are
-//! read from the engine's `Tasks` and `Sync` slices.
+//! read from the engine's `Tasks` and `Sync` slices, and the covers being
+//! fetched ahead from its `Covers` slice.
 
 use std::sync::Arc;
 
@@ -56,14 +57,18 @@ pub struct Activity {
     syncing: bool,
     /// The last task's failure, until another starts.
     problem: Option<SharedString>,
-    _watch: [Subscription; 2],
+    _watch: [Subscription; 3],
 }
 
 /// The library menu's actions, and the activity rows the sidebar shows.
 pub fn init(cx: &mut App) {
     let activity = cx.new(|cx: &mut Context<Activity>| {
         let mirror = cx.global::<Mirror>();
-        let (tasks, sync) = (mirror.tasks.clone(), mirror.sync.clone());
+        let (tasks, sync, covers) = (
+            mirror.tasks.clone(),
+            mirror.sync.clone(),
+            mirror.covers.clone(),
+        );
         Activity {
             scan: None,
             rebuilding: false,
@@ -72,6 +77,7 @@ pub fn init(cx: &mut App) {
             _watch: [
                 cx.observe(&tasks, |_, _, cx| cx.notify()),
                 cx.observe(&sync, |_, _, cx| cx.notify()),
+                cx.observe(&covers, |_, _, cx| cx.notify()),
             ],
         }
     });
@@ -98,12 +104,12 @@ pub fn init(cx: &mut App) {
                 .update(cx, |_, window, cx| {
                     crate::components::sheet::confirm(
                         crate::components::sheet::Confirm {
-                            title: "clear the library index".into(),
-                            verb: "clear".into(),
+                            title: "rebuild the library index".into(),
+                            verb: "rebuild".into(),
                             destructive: true,
                             lines: vec![
-                                "Every artist, album and track is forgotten, so the next scan or sync builds them again.".into(),
-                                "Play counts, lyrics and audio analysis go with them. Favourites are kept, and your music files are not touched.".into(),
+                                "The next scan re-reads every file and the next sync walks the whole server, and each track takes what its tags say now.".into(),
+                                "Play history, playlists, favourites and lyrics are kept. A track nothing finds again goes. Your music files are not touched.".into(),
                             ],
                             note: None,
                         },
@@ -217,14 +223,9 @@ impl Activity {
             let result = rebuilding.await;
             this.update(cx, |this, cx| {
                 this.rebuilding = false;
-                match result {
-                    // Sleeves are kept by album id, which the rebuilt library
-                    // hands out from 1 again.
-                    Ok(_) => crate::covers::Covers::purge(cx),
-                    Err(e) => {
-                        log::warn!("rebuild: {e}");
-                        this.problem = Some(format!("rebuild failed: {e}").into());
-                    }
+                if let Err(e) = result {
+                    log::warn!("rebuild: {e}");
+                    this.problem = Some(format!("rebuild failed: {e}").into());
                 }
                 cx.notify();
             })
@@ -251,7 +252,7 @@ impl Activity {
                 total: Some(scan.total).filter(|t| *t > 0),
                 unit: Some("files"),
                 detail: Some(scan.detail.clone()).filter(|d| !d.is_empty()),
-                cancellable: true,
+                stop: Some(stop_library_task),
             }),
             // The folder watcher's, which this app did not start.
             None if tasks.scanning => rows.push(Row {
@@ -261,7 +262,7 @@ impl Activity {
                 total: None,
                 unit: None,
                 detail: None,
-                cancellable: true,
+                stop: Some(stop_library_task),
             }),
             None => {}
         }
@@ -273,7 +274,7 @@ impl Activity {
                 total: None,
                 unit: None,
                 detail: None,
-                cancellable: false,
+                stop: None,
             });
         }
         if self.syncing || tasks.syncing {
@@ -292,7 +293,18 @@ impl Activity {
                 total: progress.as_ref().and_then(|p| p.total).filter(|t| *t > 0),
                 unit,
                 detail: None,
-                cancellable: false,
+                stop: None,
+            });
+        }
+        if let Some(covers) = mirror.covers.read(cx).0 {
+            rows.push(Row {
+                id: "activity-covers",
+                label: "fetching covers".into(),
+                done: Some(covers.done),
+                total: Some(covers.total).filter(|t| *t > 0),
+                unit: Some("records"),
+                detail: None,
+                stop: Some(stop_cover_preload),
             });
         }
         rows
@@ -306,7 +318,16 @@ struct Row {
     total: Option<u64>,
     unit: Option<&'static str>,
     detail: Option<SharedString>,
-    cancellable: bool,
+    /// What its stop button does; no button without one.
+    stop: Option<fn(&App)>,
+}
+
+fn stop_library_task(cx: &App) {
+    engine(cx).cancel_library_task();
+}
+
+fn stop_cover_preload(cx: &App) {
+    engine(cx).stop_cover_preload();
 }
 
 impl Row {
@@ -358,8 +379,8 @@ impl Render for Activity {
                 if let Some(detail) = row.detail.clone() {
                     progress = progress.detail(detail);
                 }
-                if row.cancellable {
-                    progress = progress.on_stop(|_, _, cx| engine(cx).cancel_library_task());
+                if let Some(stop) = row.stop {
+                    progress = progress.on_stop(move |_, _, cx| stop(cx));
                 }
                 progress
             }))

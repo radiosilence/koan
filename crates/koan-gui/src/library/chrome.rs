@@ -4,9 +4,8 @@
 //! square, flat, lowercase, one hairline where a region needs one.
 
 use koan_ffi::BrowseChoices;
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 // gpui-component's popover, the panel koan-kit's menus are built in.
 use koan_kit::raw::component::popover::Popover;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
@@ -25,6 +24,11 @@ use crate::theme::{Icon, Space};
 
 /// "1 album", "5,123 albums".
 pub fn count(n: u64, one: &str, many: &str) -> String {
+    format!("{} {}", grouped(n), if n == 1 { one } else { many })
+}
+
+/// "5,123": a number with its thousands marked.
+pub fn grouped(n: u64) -> String {
     let digits = n.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, ch) in digits.chars().enumerate() {
@@ -33,7 +37,7 @@ pub fn count(n: u64, one: &str, many: &str) -> String {
         }
         grouped.push(ch);
     }
-    format!("{grouped} {}", if n == 1 { one } else { many })
+    grouped
 }
 
 /// A library page's header: koan-kit's `PageHeader`, its title with the
@@ -328,10 +332,18 @@ impl FilterPanel {
         let year_to = year(filter.year_to, "to", window, cx);
         let watch = |input: &Entity<InputState>, from: bool, cx: &mut Context<Self>| {
             cx.subscribe(input, move |this, input, event: &InputEvent, cx| {
-                if !matches!(event, InputEvent::Change) {
+                // A year half typed is not a filter: one is applied as it is
+                // completed or cleared, or when the field is left.
+                let text = input.read(cx).value().trim().to_owned();
+                let settled = match event {
+                    InputEvent::Change => text.is_empty() || text.len() == 4,
+                    InputEvent::Blur | InputEvent::PressEnter { .. } => true,
+                    _ => false,
+                };
+                if !settled {
                     return;
                 }
-                let value = input.read(cx).value().trim().parse::<i32>().ok();
+                let value = text.parse::<i32>().ok();
                 this.lib.browse.update(cx, |b, cx| {
                     let slot = if from {
                         b.filter.year_from
@@ -597,7 +609,17 @@ pub fn selection_bar<V: Picking>(
                         .into_any_element()
                 }),
         )
-        .verb("sel-fav", "favourite", verb(actions::favourite))
+        // As the context menu says it: a pick of favourites only is
+        // unfavourited.
+        .verb(
+            "sel-fav",
+            if !picked.is_empty() && picked.iter().all(|i| lib.feed.read(cx).is_favourite(*i)) {
+                "unfavourite"
+            } else {
+                "favourite"
+            },
+            verb(actions::favourite),
+        )
         .verb("sel-organise", "organise…", organise)
         .on_done(move |_, _, cx| end(cx))
 }

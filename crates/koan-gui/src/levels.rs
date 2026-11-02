@@ -1,45 +1,38 @@
 //! The playing indicators: three bars moving with the music, wherever a
-//! playing row or record is on screen.
+//! playing row or record is on screen. koan-kit draws them (`PlayingBars`);
+//! this is what moves them.
 //!
 //! One subscription to the analyser for the whole app, read only while a bar
 //! is on screen; with none, the stream is dropped and the analyser parks.
-//! Nothing is polled: the analyser publishes a frame and the follow wakes on
-//! it, and a paused player publishes nothing once the bars have fallen.
+//! Nothing is polled: the analyser publishes a frame and the follow, on the
+//! background executor, wakes on it.
 //!
-//! A frame must not redraw the page a bar sits in: GPUI redraws a view and
-//! every view above it, so a bar drawn by its row would lay out the whole
-//! queue or album grid at the analyser's rate. Instead a row draws an empty
-//! slot (`bars`), which records where it was laid out and the clip it was
-//! laid out under, and each window's root paints the bars over its content
-//! (`paint`). A frame then redraws the root alone, whose content is a cached
-//! view and is replayed. A slot lives as long as its row is drawn: its state
-//! is the row's element state, dropped by GPUI the first frame the row is not
-//! drawn.
+//! On macOS each slot is a shader quad, painted once by its row and replayed
+//! with the row's cached view. The follow writes the bands straight into the
+//! slots' levels (koan-kit's `Animated`), and each change wakes the window to
+//! present its last frame again, composing the quads over the layers it kept:
+//! a moving bar costs a small encode, never a GPUI frame, and still bars cost
+//! nothing.
+//!
+//! Elsewhere, until the Linux renderer draws shaders, the bars are quads. A
+//! row draws an empty slot, which records where it was laid out and under
+//! which clip, and each window's root paints the bars over its content
+//! (`paint`), so a frame of the bars redraws the root alone, whose content is
+//! a cached view and is replayed.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
-use futures_util::StreamExt as _;
-
+use futures::StreamExt as _;
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{Hsla, point, px, size};
-// the platform window and its options.
-use koan_kit::raw::WindowId;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::{ContentMask, canvas, fill};
+use koan_kit::components::{BarLevels, BarsPlace, PlayingBars, SHADED, bars_overlay};
+// the colour the caller's palette gives the bars.
+use koan_kit::raw::Hsla;
+use parking_lot::Mutex;
 
 use crate::engine::engine;
 
-use crate::components::BarMetrics;
-
-const BAR: f32 = BarMetrics::BAR;
-const GAP: f32 = BarMetrics::GAP;
-/// How far a bar stands with nothing playing through it, so a still bar
-/// reads as a mark rather than as nothing.
-const FLOOR: f32 = 0.15;
 /// A band below this is room tone: it never sets a ceiling, and silence is
 /// measured against it, so a quiet passage stays flat.
 const QUIETEST: f32 = 0.12;
@@ -48,22 +41,16 @@ const FORGET: f32 = 4.0;
 /// The analyser's rate while bars are on screen.
 const FPS: u8 = 60;
 
-/// Where a bar was laid out.
-#[derive(Clone, Copy)]
-struct Slot {
-    window: WindowId,
-    bounds: Bounds<Pixels>,
-    mask: ContentMask<Pixels>,
-    color: Hsla,
-}
-
 #[derive(Default)]
 struct Registry {
-    slots: HashMap<u64, Slot>,
-    /// Rung as a slot goes, so the roots paint again without it: a slot
+    /// Where each slot drawn as quads was laid out, and in what colour.
+    slots: HashMap<u64, (BarsPlace, Hsla)>,
+    /// Each slot drawn as a shader, by its levels.
+    shaders: HashMap<u64, BarLevels>,
+    /// Rung as a quad slot goes, so the roots paint again without it: a slot
     /// goes at the end of the first frame its row is not drawn in, which
     /// that frame has already painted it into.
-    gone: Option<futures_channel::mpsc::UnboundedSender<()>>,
+    gone: Option<futures::channel::mpsc::UnboundedSender<()>>,
     next_id: u64,
     /// How high each bar stands, 0 to 1, low band to high: each band
     /// against its own recent range, so a record mastered quiet moves as
@@ -74,12 +61,13 @@ struct Registry {
     following: bool,
 }
 
-/// What every window's root observes: notified when the bars move.
+/// What every window's root observes: notified when the bars move, where
+/// they are quads.
 pub struct Feed;
 
 #[derive(Clone)]
 struct Levels {
-    registry: Rc<RefCell<Registry>>,
+    registry: Arc<Mutex<Registry>>,
     feed: Entity<Feed>,
 }
 
@@ -87,9 +75,9 @@ impl Global for Levels {}
 
 pub fn install(cx: &mut App) {
     let feed = cx.new(|_| Feed);
-    let (gone, mut slots_gone) = futures_channel::mpsc::unbounded();
-    let registry: Rc<RefCell<Registry>> = Rc::default();
-    registry.borrow_mut().gone = Some(gone);
+    let (gone, mut slots_gone) = futures::channel::mpsc::unbounded();
+    let registry: Arc<Mutex<Registry>> = Arc::default();
+    registry.lock().gone = Some(gone);
     let repaint = feed.clone();
     cx.spawn(async move |cx| {
         while slots_gone.next().await.is_some() {
@@ -110,116 +98,112 @@ pub fn feed(cx: &App) -> Option<Entity<Feed>> {
 /// row's element state.
 struct SlotState {
     id: u64,
-    registry: Rc<RefCell<Registry>>,
+    registry: Arc<Mutex<Registry>>,
+    levels: BarLevels,
 }
 
 impl Drop for SlotState {
     fn drop(&mut self) {
         // The follow sees an empty registry at its next frame and ends.
-        let mut registry = self.registry.borrow_mut();
-        registry.slots.remove(&self.id);
-        if let Some(gone) = &registry.gone {
+        let mut registry = self.registry.lock();
+        let painted = registry.slots.remove(&self.id).is_some();
+        registry.shaders.remove(&self.id);
+        if painted && let Some(gone) = &registry.gone {
             gone.unbounded_send(()).ok();
         }
     }
 }
 
-/// The playing bars in `color`, as a slot the window's root paints them
-/// into. Inside an element with an id, which keys the slot's state.
+/// The playing bars in `color`. Inside an element with an id, which keys the
+/// slot's state.
 pub fn bars(color: Hsla) -> impl IntoElement {
-    canvas(
-        move |bounds, window, cx| {
-            let Some(levels) = cx.try_global::<Levels>().cloned() else {
-                return;
-            };
-            let state = window.use_keyed_state("playing-bars", cx, |_, _| {
-                let mut registry = levels.registry.borrow_mut();
-                registry.next_id += 1;
-                SlotState {
-                    id: registry.next_id,
-                    registry: levels.registry.clone(),
-                }
-            });
-            let id = state.read(cx).id;
-            let slot = Slot {
-                window: window.window_handle().window_id(),
-                bounds,
-                mask: window.content_mask(),
-                color,
-            };
-            levels.registry.borrow_mut().slots.insert(id, slot);
-            follow(&levels, cx);
-        },
-        |_, _, _, _| {},
-    )
-    .w(BarMetrics::WIDTH)
-    .h(BarMetrics::HEIGHT)
-    .flex_shrink_0()
+    PlayingBars::new(color, move |place, window, cx| {
+        let levels = cx.try_global::<Levels>().cloned()?;
+        let state = window.use_keyed_state("playing-bars", cx, |_, _| {
+            let mut registry = levels.registry.lock();
+            registry.next_id += 1;
+            let bars = BarLevels::new();
+            bars.set(registry.bands);
+            SlotState {
+                id: registry.next_id,
+                registry: levels.registry.clone(),
+                levels: bars,
+            }
+        });
+        let (id, bars) = {
+            let state = state.read(cx);
+            (state.id, state.levels.clone())
+        };
+        {
+            let mut registry = levels.registry.lock();
+            if SHADED {
+                registry.shaders.insert(id, bars.clone());
+            } else {
+                registry.slots.insert(id, (place, color));
+            }
+        }
+        follow(&levels, cx);
+        Some(bars)
+    })
 }
 
-/// Paints this window's bars over everything drawn before it. Called last
-/// from a window's root.
+/// Paints this window's bars over everything drawn before it, where they
+/// are quads. Called last from a window's root.
 pub fn paint(cx: &App) -> impl IntoElement + use<> {
     let registry = cx
         .try_global::<Levels>()
         .map(|levels| levels.registry.clone())
         .unwrap_or_default();
-    canvas(
-        |_, _, _| {},
-        move |_, _, window, _| {
-            let here = window.window_handle().window_id();
-            let registry = registry.borrow();
-            let bands = registry.bands;
-            for slot in registry.slots.values().filter(|s| s.window == here) {
-                window.with_content_mask(Some(slot.mask), |window| {
-                    for (i, band) in bands.iter().enumerate() {
-                        let height = slot.bounds.size.height * band.max(FLOOR);
-                        let x = slot.bounds.origin.x + px(i as f32 * (BAR + GAP));
-                        let y = slot.bounds.origin.y + slot.bounds.size.height - height;
-                        window.paint_quad(fill(
-                            Bounds::new(point(x, y), size(px(BAR), height)),
-                            slot.color,
-                        ));
-                    }
-                });
-            }
-        },
-    )
-    .absolute()
-    .size_full()
+    bars_overlay(move |window| {
+        let here = window.window_handle();
+        let registry = registry.lock();
+        let bands = registry.bands;
+        for (place, color) in registry.slots.values().filter(|(p, _)| p.window == here) {
+            place.paint(window, bands, *color);
+        }
+    })
 }
 
-/// Starts reading the analyser, if nothing is yet.
+/// Starts reading the analyser, if nothing is yet. The levels are read and
+/// written off the main thread; the main thread hears only when a frame has
+/// to be drawn.
 fn follow(levels: &Levels, cx: &mut App) {
-    if std::mem::replace(&mut levels.registry.borrow_mut().following, true) {
+    if std::mem::replace(&mut levels.registry.lock().following, true) {
         return;
     }
     let engine = engine(cx);
     engine.set_viz_fps(FPS);
     let stream = engine.viz_stream();
     let registry = levels.registry.clone();
-    let feed = levels.feed.clone();
-    cx.spawn(async move |cx| {
+    let (wake, mut woken) = futures::channel::mpsc::unbounded::<()>();
+    cx.background_spawn(async move {
         while let Some(heard) = stream.next().await {
-            let moved = {
-                let mut registry = registry.borrow_mut();
-                if registry.slots.is_empty() {
-                    break;
-                }
-                registry.take([heard.low, heard.mid, heard.high])
-            };
-            if moved {
-                cx.update(|cx| feed.update(cx, |_, cx| cx.notify()));
+            let mut registry = registry.lock();
+            if registry.slots.is_empty() && registry.shaders.is_empty() {
+                break;
+            }
+            // Shaders are presented by their own windows as the bands are
+            // written; quads need a frame of the roots.
+            if registry.take([heard.low, heard.mid, heard.high]) && !registry.slots.is_empty() {
+                wake.unbounded_send(()).ok();
             }
         }
         // Dropping the stream lets the analyser park.
-        registry.borrow_mut().following = false;
+        registry.lock().following = false;
+    })
+    .detach();
+    let feed = levels.feed.clone();
+    cx.spawn(async move |cx| {
+        while woken.next().await.is_some() {
+            cx.update(|cx| feed.update(cx, |_, cx| cx.notify()));
+        }
     })
     .detach();
 }
 
 impl Registry {
-    /// A frame from the analyser. Whether the bars moved.
+    /// A frame from the analyser. Whether the bars moved; the shaders' bands
+    /// are written as it is taken.
     fn take(&mut self, heard: [f32; 3]) -> bool {
         let now = Instant::now();
         // Clamped: a machine that slept owes the bars nothing.
@@ -235,13 +219,18 @@ impl Registry {
         }
         let moved = next != self.bands;
         self.bands = next;
+        if moved {
+            for bars in self.shaders.values() {
+                bars.set(next);
+            }
+        }
         moved
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{QUIETEST, Registry};
+    use super::{BarLevels, QUIETEST, Registry};
 
     #[test]
     fn a_band_is_measured_against_its_own_recent_loudest() {
@@ -254,5 +243,16 @@ mod tests {
         assert!(!registry.take([0.5, 0.2, 0.1]));
         registry.take([0.25, 0.2, 0.1]);
         assert!((registry.bands[0] - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn shaders_take_the_bands() {
+        let mut registry = Registry::default();
+        let levels = BarLevels::new();
+        registry.shaders.insert(1, levels.clone());
+        assert!(registry.take([0.5, 0.2, 0.1]));
+        assert_eq!(levels.band(0), 1.0);
+        registry.take([0.25, 0.2, 0.1]);
+        assert!((levels.band(0) - 0.5).abs() < 0.01);
     }
 }

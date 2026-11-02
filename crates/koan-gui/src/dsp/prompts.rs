@@ -4,12 +4,11 @@
 //! showing.
 
 use koan_ffi::DspRole;
+use koan_kit::app::input::InputState;
 use koan_kit::app::{
     AnyElement, App, Entity, IntoElement, MouseButton, ParentElement, SharedString, Window, div,
 };
 use koan_kit::app::{InteractiveElement, Styled};
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::InputState;
 
 use super::model::{Dsp, RATES, RoleAsk, Stage, khz};
 use super::sheet::{body, choice_row, head, note, panel, section};

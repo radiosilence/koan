@@ -2,6 +2,7 @@
 //! and Linux, for now.
 
 pub mod app;
+pub mod artwork;
 pub mod covers;
 pub mod devices;
 pub mod downloads;
@@ -10,6 +11,7 @@ pub mod engine;
 pub mod levels;
 pub mod library;
 pub mod links;
+pub mod lyrics;
 #[cfg(feature = "profiler")]
 pub mod measure;
 pub mod mirror;
@@ -20,6 +22,7 @@ pub mod paint;
 pub mod platform;
 pub mod queue;
 pub mod root;
+pub mod search;
 pub mod server_banner;
 pub mod session;
 pub mod settings;

@@ -114,7 +114,7 @@ impl AlbumPage {
                 cx.notify();
             }),
             cx.on_release(move |this, cx| {
-                this.lib.covers.update(cx, |c, _| c.release(id));
+                this.lib.covers.update(cx, |c, cx| c.release(id, cx));
                 // The window takes the playing record's colours back, unless
                 // another record's page has taken them meanwhile.
                 if cx
@@ -315,8 +315,35 @@ impl AlbumPage {
             .pt(RowMetrics::page_top(&p.look))
             .pb(RowMetrics::header_gap(&p.look))
             .child(
-                super::header::playable_header(&self.lib, item, title, cx)
-                    .art(Cover::new(CoverArt::from(sleeve), side))
+                super::header::playable_header(&self.lib, item, title.clone(), cx)
+                    .art(
+                        div()
+                            .id("album-sleeve")
+                            .cursor_pointer()
+                            .on_click({
+                                let (album_id, credit) = (
+                                    self.album_id,
+                                    album.as_ref().map(|a| {
+                                        SharedString::from(
+                                            a.artist_credit
+                                                .iter()
+                                                .map(|c| c.text.as_str())
+                                                .collect::<String>(),
+                                        )
+                                    }),
+                                );
+                                move |_, window, cx| {
+                                    crate::artwork::show(
+                                        album_id,
+                                        title.clone(),
+                                        credit.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .child(Cover::new(CoverArt::from(sleeve), side)),
+                    )
                     .detail(details),
             )
     }

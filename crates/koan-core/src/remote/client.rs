@@ -101,6 +101,31 @@ pub enum SubsonicError {
     /// Every cover slot stayed taken for as long as a fetch waits for one.
     #[error("too many cover fetches in flight")]
     Busy,
+    /// The server could not answer now (a 5xx, or 429): says nothing of
+    /// what it holds, and is worth asking again.
+    #[error("the server could not answer ({0})")]
+    Unavailable(u16),
+}
+
+/// What a `getCoverArt` answer says before its body is read. An error
+/// document, or a refusal such as a 404, is the server saying it has no art
+/// (`BadResponse`); a 5xx or 429 is the server unable to say now
+/// (`Unavailable`), which a caller asks again rather than remembering.
+fn cover_answer(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Result<(), SubsonicError> {
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(SubsonicError::Unavailable(status.as_u16()));
+    }
+    let is_document = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
+    if is_document || !status.is_success() {
+        return Err(SubsonicError::BadResponse);
+    }
+    Ok(())
 }
 
 /// Without the URL: every request is signed with the account's credentials in
@@ -324,10 +349,32 @@ impl CoverSlots {
     }
 }
 
+/// Waits until no cover request is in flight: what background fetches do
+/// before each of theirs, so a page's covers never queue behind them.
+pub fn wait_for_idle_covers() {
+    let mut busy = COVERS_IN_FLIGHT.lock();
+    while *busy > 0 {
+        COVER_FREED.wait(&mut busy);
+    }
+}
+
 impl Drop for CoverSlots {
     fn drop(&mut self) {
         *COVERS_IN_FLIGHT.lock() -= 1;
-        COVER_FREED.notify_one();
+        // Every waiter: one taking a slot, and background work waiting for
+        // none to be in flight.
+        COVER_FREED.notify_all();
+    }
+}
+
+/// A cover request the caller bounds itself, counted in flight so background
+/// fetches wait for it, never refused.
+struct CoverInFlight;
+
+impl CoverInFlight {
+    fn enter() -> CoverSlots {
+        *COVERS_IN_FLIGHT.lock() += 1;
+        CoverSlots
     }
 }
 
@@ -437,18 +484,7 @@ impl SubsonicClient {
     /// checking the status code proves nothing here — without this, an error
     /// response gets written to disk as if it were audio.
     fn reject_error_body(resp: &reqwest::blocking::Response) -> Result<(), SubsonicError> {
-        let is_document = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
-        if is_document {
-            return Err(SubsonicError::BadResponse);
-        }
-        if !resp.status().is_success() {
-            return Err(SubsonicError::BadResponse);
-        }
-        Ok(())
+        cover_answer(resp.status(), resp.headers())
     }
 
     /// Fetch cover art bytes for a song or album ID.
@@ -502,15 +538,10 @@ impl SubsonicClient {
             params.insert("size".into(), cover_bucket(px).to_string());
         }
         let client = self.connections.read().cancellable.clone();
+        // Dropped with the future, so a cancelled request leaves the count.
+        let _in_flight = CoverInFlight::enter();
         let resp = client.get(&url).query(&params).send().await?;
-        let is_document = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
-        if is_document || !resp.status().is_success() {
-            return Err(SubsonicError::BadResponse);
-        }
+        cover_answer(resp.status(), resp.headers())?;
         let headers = resp.headers().clone();
         let body = resp.bytes().await?;
         let navidrome = || {

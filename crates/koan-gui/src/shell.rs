@@ -19,9 +19,9 @@ use crate::components::sheet as ask;
 use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, Back, Bigger, ClearArtworkCache, ClearDownloadedFiles, Forward, ShowAlbums,
-    ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts,
-    ShowTracks, Smaller, ToggleLyrics, ToggleSidebar,
+    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, ClearDownloadedFiles, Forward,
+    Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed,
+    ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -69,13 +69,26 @@ pub struct Shell {
     _activation: Subscription,
     /// The keyboard shortcuts, while they are shown.
     shortcuts: Option<(Entity<ShortcutsSheet>, Subscription)>,
+    /// The lyrics beside the page, while they show. Dropped when hidden, so
+    /// a closed panel follows no song.
+    lyrics: Option<Entity<crate::lyrics::LyricsPanel>>,
+    /// ⇧⌘K's picker, while it is open.
+    picker: Option<(Entity<crate::search::picker::PickerSheet>, Subscription)>,
     /// Watches the window's one question host, which draws over everything.
     _asking: Subscription,
+    /// Watches the artwork viewer, and while it shows, the sleeve it waits
+    /// for.
+    _artwork: [Subscription; 2],
 }
 
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nav = cx.new(|_| Navigator::default());
+        // A measuring run can open on the page it measures.
+        #[cfg(feature = "profiler")]
+        if let Some(route) = crate::measure::route() {
+            nav.update(cx, |nav, _| nav.go(route));
+        }
         let queue = cx.new(|cx| QueueView::new(&nav, cx));
         let queue_controls = cx.new(|cx| {
             let mut slot = library::controls::ControlsSlot::default();
@@ -102,8 +115,11 @@ impl Shell {
                 let feed = lib.feed.clone();
                 this.queue.update(cx, |queue, cx| queue.set_feed(feed, cx));
                 let covers = lib.covers.clone();
-                this.sidebar
-                    .update(cx, |sidebar, cx| sidebar.set_covers(covers, cx));
+                let search = lib.search.clone();
+                this.sidebar.update(cx, |sidebar, cx| {
+                    sidebar.set_covers(covers.clone(), cx);
+                    sidebar.set_search(search, covers, window, cx);
+                });
                 this.library = Some(cx.new(|cx| LibraryStage::new(lib, window, cx)));
                 cx.notify();
             })
@@ -131,9 +147,29 @@ impl Shell {
             _arrivals: arrivals,
             _activation: activation,
             shortcuts: None,
+            picker: None,
+            lyrics: None,
             _asking: {
                 let asking = ask::asking(cx);
                 cx.observe(&asking, |_, _, cx| cx.notify())
+            },
+            _artwork: {
+                let viewer = crate::artwork::artwork(cx);
+                let sleeves = crate::artwork::sleeves(cx);
+                [
+                    // Closed, the page it was over takes the keys again.
+                    cx.observe_in(&viewer, window, |this, _, window, cx| {
+                        if !crate::artwork::is_showing(cx) {
+                            this.refocus(window, cx);
+                        }
+                        cx.notify();
+                    }),
+                    cx.observe(&sleeves, |_, _, cx| {
+                        if crate::artwork::is_showing(cx) {
+                            cx.notify();
+                        }
+                    }),
+                ]
             },
         }
     }
@@ -194,6 +230,44 @@ impl Shell {
         });
         window.focus(&sheet.focus_handle(cx), cx);
         self.shortcuts = Some((sheet, dismissed));
+        cx.notify();
+    }
+
+    /// ⌥⌘L, `L` and the toolbar's button: the lyrics beside the page, or not.
+    fn toggle_lyrics(&mut self, _: &ToggleLyrics, _: &mut Window, cx: &mut Context<Self>) {
+        self.lyrics = match self.lyrics.take() {
+            Some(_) => None,
+            None => Some(cx.new(crate::lyrics::LyricsPanel::new)),
+        };
+        cx.notify();
+    }
+
+    /// ⌘K and `/`: the sidebar's search field, the sidebar shown first.
+    fn search(&mut self, _: &Search, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.sidebar_shown {
+            self.toggle_sidebar(&ToggleSidebar, window, cx);
+        }
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.focus_search(window, cx));
+    }
+
+    /// ⇧⌘K: the picker, over the window.
+    fn add_music(&mut self, _: &AddMusic, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picker.is_some() {
+            return;
+        }
+        let engine = crate::engine::engine(cx);
+        let picker = cx.new(|cx| crate::search::picker::PickerSheet::new(engine, window, cx));
+        let dismissed = cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &crate::search::picker::Dismissed, window, cx| {
+                this.picker = None;
+                this.arrived_at = this.nav.read(cx).current();
+                this.refocus(window, cx);
+            },
+        );
+        self.picker = Some((picker, dismissed));
         cx.notify();
     }
 
@@ -366,17 +440,21 @@ impl Shell {
                 ))
             })
             .leading(
-                ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar").on_click(cx.listener(
-                    |this, _, window, cx| this.toggle_sidebar(&ToggleSidebar, window, cx),
-                )),
+                ToolbarButton::new("sidebar", Icon::Sidebar, "sidebar")
+                    .help(help("show or hide the sidebar", &ToggleSidebar, cx))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_sidebar(&ToggleSidebar, window, cx)
+                    })),
             )
             .leading(
                 ToolbarButton::new("back", Icon::Back, "back")
+                    .help(help("back", &Back, cx))
                     .disabled(!can_go_back)
                     .on_click(cx.listener(|this, _, window, cx| this.back(&Back, window, cx))),
             )
             .leading(
                 ToolbarButton::new("forward", Icon::Forward, "forward")
+                    .help(help("forward", &Forward, cx))
                     .disabled(!can_go_forward)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.forward(&Forward, window, cx)),
@@ -387,9 +465,12 @@ impl Shell {
             .principal(Self::moves_window(div().id("toolbar-drag"), cx).size_full())
             .when_some(page, |toolbar, page| toolbar.trailing(page))
             .trailing(
-                ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics").on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleLyrics.boxed_clone(), cx)
-                }),
+                ToolbarButton::new("lyrics", Icon::Lyrics, "lyrics")
+                    .selected(self.lyrics.is_some())
+                    .help(help("lyrics panel", &ToggleLyrics, cx))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(ToggleLyrics.boxed_clone(), cx)
+                    }),
             )
             // Where the compositor leaves decorations to the app (GNOME on
             // Wayland), the toolbar carries the window's buttons.
@@ -413,9 +494,10 @@ impl Shell {
                             div().window_control_area(WindowControlArea::Close).child(
                                 ToolbarButton::new("close", Icon::Close, "close")
                                     // Removing the window skips the close
-                                    // request, so its bounds are saved here.
-                                    .on_click(|_, window, cx| {
-                                        window_state::save(window.window_bounds(), cx);
+                                    // request, so its bounds are saved here,
+                                    // now: the app quits with it.
+                                    .on_click(|_, window, _| {
+                                        window_state::write(window.window_bounds());
                                         window.remove_window();
                                     }),
                             ),
@@ -503,6 +585,9 @@ impl Render for Shell {
                 cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)),
             )
             .on_action(cx.listener(Self::toggle_sidebar))
+            .on_action(cx.listener(Self::search))
+            .on_action(cx.listener(Self::toggle_lyrics))
+            .on_action(cx.listener(Self::add_music))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.back(&Back, window, cx)),
@@ -557,7 +642,21 @@ impl Render for Shell {
                             .flex_col()
                             .child(self.toolbar(window, cx))
                             .child(self.banner.clone())
-                            .child(div().flex_1().min_h_0().child(stage))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .flex()
+                                    .child(div().flex_1().min_w_0().h_full().child(stage))
+                                    .children(self.lyrics.clone().map(|lyrics| {
+                                        lyrics.cached(
+                                            StyleRefinement::default()
+                                                .w(RowMetrics::inspector(&p.look))
+                                                .h_full()
+                                                .flex_none(),
+                                        )
+                                    })),
+                            )
                             .when(!washed, |d| d.child(transport())),
                     )
                     .on_resize(cx.listener(|this, width: &Pixels, _, cx| {
@@ -582,8 +681,15 @@ impl Render for Shell {
                 ask::overlay(window, cx)
                     .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),
             )
+            .children(
+                crate::artwork::overlay(window, cx)
+                    .map(|v| deferred(div().absolute().inset_0().child(v)).with_priority(2)),
+            )
             .children(self.shortcuts.as_ref().map(|(sheet, _)| {
                 deferred(div().absolute().size_full().child(sheet.clone())).with_priority(2)
+            }))
+            .children(self.picker.as_ref().map(|(picker, _)| {
+                deferred(div().absolute().size_full().child(picker.clone())).with_priority(2)
             }))
     }
 }

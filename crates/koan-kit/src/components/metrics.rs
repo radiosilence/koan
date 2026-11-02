@@ -5,7 +5,7 @@
 
 use gpui_kit::{Pixels, px};
 
-use crate::theme::{Look, Space};
+use crate::theme::{Look, Scale, Space, TypeRole};
 
 /// A row's height, by what it carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,8 +260,78 @@ impl RowMetrics {
         height: px(420.),
     };
 
+    /// An inspector's width beside the page, the Mac's ideal for its
+    /// lyrics.
+    pub fn inspector(look: &Look) -> Pixels {
+        look.spaced(280.)
+    }
+
     /// Between columns of a row.
     pub fn column_gap(look: &Look) -> Pixels {
         look.space(Space::M)
+    }
+}
+
+/// Record tiles in rows: `TileColumns` across the width, and each row's
+/// height with the caption under the sleeve and the gap below it. Every tile
+/// is the same size, so nothing is measured.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileGrid {
+    pub columns: usize,
+    pub side: Pixels,
+    pub gap: Pixels,
+    /// Either side of a row: the margin asked for and a share of the spare
+    /// width.
+    pub inset: Pixels,
+    /// A row's height, its spacing below included.
+    pub row: Pixels,
+}
+
+impl TileGrid {
+    /// Below a row of tiles, before the next.
+    pub const LINE_GAP: f32 = 22.0;
+    /// Between sleeve, title and credit.
+    pub const CAPTION_GAP: f32 = 7.0;
+
+    /// The grid for a list `width` wide that keeps `margin` clear at each
+    /// side, with captions on `scale`.
+    pub fn inside(width: Pixels, margin: Pixels, scale: &Scale) -> Self {
+        let columns = TileColumns::for_width(width, margin);
+        Self {
+            columns: columns.columns,
+            side: columns.side,
+            gap: columns.gap,
+            inset: columns.inset,
+            row: columns.side + Self::caption_height(scale) + px(Self::LINE_GAP),
+        }
+    }
+
+    /// A tile's own height: its sleeve and caption, without the gap below.
+    pub fn tile_height(&self) -> Pixels {
+        self.row - px(Self::LINE_GAP)
+    }
+
+    /// The title and credit under a sleeve.
+    pub fn caption_height(scale: &Scale) -> Pixels {
+        let line = |role: TypeRole| role.points() * scale.text * role.line_height();
+        px(Self::CAPTION_GAP + line(TypeRole::Meta) + Self::CAPTION_GAP + line(TypeRole::Fine))
+    }
+}
+
+#[cfg(test)]
+mod tile_grid_tests {
+    use super::*;
+
+    #[test]
+    fn rows_hold_the_columns_sleeve_and_caption() {
+        let scale = Scale::of(100);
+        let grid = TileGrid::inside(px(900.), px(16.), &scale);
+        let columns = TileColumns::for_width(px(900.), px(16.));
+        assert_eq!(grid.columns, columns.columns);
+        assert_eq!(grid.inset, columns.inset);
+        assert_eq!(
+            grid.tile_height(),
+            grid.side + TileGrid::caption_height(&scale)
+        );
     }
 }

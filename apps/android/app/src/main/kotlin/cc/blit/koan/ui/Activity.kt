@@ -16,8 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.engine.Tasks
+import cc.blit.koan.ffi.CoverPreload
 import cc.blit.koan.ffi.SyncPhase
 import cc.blit.koan.ffi.SyncProgress
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanEdge
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
@@ -46,6 +49,8 @@ data class ActivityTask(
     val unit: String? = null,
     val done: Long? = null,
     val total: Long? = null,
+    /** What its stop button does; no button without one. */
+    val stop: (() -> Unit)? = null,
 ) {
     /** 0…1, or `null` with nothing to divide by. */
     val progress get() = total?.takeIf { it > 0 }?.let { t -> done?.let { (it.toFloat() / t).coerceIn(0f, 1f) } }
@@ -87,7 +92,7 @@ class ActivityModel {
      * says so, and not twice: a sync this app asked for already has a row,
      * which takes the engine's counts.
      */
-    fun follow(tasks: Tasks, sync: SyncProgress?) {
+    fun follow(tasks: Tasks, sync: SyncProgress?, covers: CoverPreload? = null, stopCovers: () -> Unit = {}) {
         _tasks.update { current ->
             val asked = current.filterNot { it.mirrored }
             fun kept(label: String, followsSync: Boolean = false) =
@@ -96,6 +101,9 @@ class ActivityModel {
             val mirrored = listOfNotNull(
                 kept(SYNCING, followsSync = true).takeIf { tasks.syncing && asked.none { it.followsSync } },
                 kept(SCANNING).takeIf { tasks.scanning },
+                covers?.let {
+                    kept(COVERS).copy(unit = "records", done = it.done.toLong(), total = it.total.toLong(), stop = stopCovers)
+                },
             )
             (asked + mirrored).map { if (it.followsSync) withSync(it, sync) else it }
         }
@@ -115,6 +123,7 @@ class ActivityModel {
     companion object {
         const val SYNCING = "Syncing with server"
         const val SCANNING = "Scanning library"
+        const val COVERS = "Fetching covers"
     }
 }
 
@@ -141,6 +150,10 @@ fun ActivityCard(tasks: List<ActivityTask>, modifier: Modifier = Modifier) {
                     task.counts?.let {
                         Spacer(Modifier.width(KoanSpace.xs))
                         KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
+                    }
+                    task.stop?.let { stop ->
+                        Spacer(Modifier.width(KoanSpace.xs))
+                        KoanButton("stop", stop, kind = KoanButtonKind.Text)
                     }
                 }
                 // Determinate where the engine counts, moving where it cannot:

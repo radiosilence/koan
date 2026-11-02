@@ -106,9 +106,29 @@ final class ActivityModel {
     /// row would stop a scan running beside it instead of the task it sits on.
     var cancelLibraryTask: (() -> Void)?
 
+    /// Called to stop fetching covers ahead. Set by whoever owns the engine.
+    var stopCoverPreload: (() -> Void)?
+
     func cancel(_ id: UUID) {
         guard let task = tasks.first(where: { $0.id == id }), task.cancellable else { return }
-        cancelLibraryTask?()
+        if mirrored[Self.coversLabel] == id {
+            stopCoverPreload?()
+        } else {
+            cancelLibraryTask?()
+        }
+    }
+
+    private static let coversLabel = "Fetching covers"
+
+    /// A row for the covers being fetched ahead, while they are, with its
+    /// counts and a stop button.
+    func showCovers(_ progress: CoverPreload?) {
+        mirror(Self.coversLabel, cancellable: true, running: progress != nil)
+        guard let progress, let id = mirrored[Self.coversLabel],
+              let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        tasks[index].done = progress.done
+        tasks[index].total = progress.total
+        tasks[index].unit = "records"
     }
 
     /// Run `work` off the main actor with a task registered for its duration.
