@@ -117,6 +117,23 @@ fn koan_shader_fragment(input: KoanShaderVarying) -> @location(0) vec4<f32> {
 }
 "#;
 
+// KOAN: (#1641) a layer read back texel for texel.
+const KOAN_COMPOSE: &str = r#"
+@group(0) @binding(0) var t_layer: texture_2d<f32>;
+@group(0) @binding(1) var s_layer: sampler;
+
+@vertex
+fn koan_compose_vertex(@builtin(vertex_index) id: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((id << 1u) & 2u), f32(id & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn koan_compose_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return textureLoad(t_layer, vec2<i32>(position.xy), 0);
+}
+"#;
+
 // KOAN: (#1641) a program's whole module.
 fn koan_shader_source(program: &gpui::ShaderProgram) -> String {
     let prelude = KOAN_SHADER_PRELUDE.replace(
@@ -299,6 +316,19 @@ struct WgpuResources {
     shader_pipelines: FxHashMap<&'static str, Option<wgpu::RenderPipeline>>,
     shader_color_target: wgpu::ColorTargetState,
     blank_texture_bind_group: wgpu::BindGroup,
+    // KOAN: the last frame drawn as the layers its shaders are drawn
+    // between, which each present composes with the shaders, and the
+    // pipelines that lay a layer down (#1641).
+    shader_layers: KoanLayers,
+    compose_pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+}
+
+// KOAN: (#1641) a frame's layers, `None` for a blank one.
+#[derive(Default)]
+struct KoanLayers {
+    generation: u64,
+    size: (u32, u32),
+    layers: Vec<Option<(wgpu::Texture, wgpu::BindGroup)>>,
 }
 
 struct CachedTextureBindGroup {
@@ -1184,6 +1214,7 @@ impl WgpuRenderer {
         // KOAN: (#1641) shaders compile again for the new blending.
         resources.shader_color_target = koan_shader_color_target(format, new_alpha_mode);
         resources.shader_pipelines.clear();
+        resources.shader_layers = KoanLayers::default();
 
         if let RendererState::Ready { surface, core } = &self.state {
             surface.configure(&core.resources.device, &self.surface_config);
@@ -1298,13 +1329,23 @@ impl WgpuRenderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let premultiplied_alpha =
             self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
-        if let Err(error) = core.render_frame(
-            scene,
-            &frame_view,
-            size,
-            premultiplied_alpha,
-            wgpu::Color::TRANSPARENT,
-        ) {
+        // KOAN: a scene with shaders is drawn once as the layers they are
+        // drawn between, and each present composes them with the shaders
+        // (#1641).
+        let rendered = if scene.shader_layers.is_some() && !core.uses_webgl_instance_data {
+            core.compose_frame(scene, &frame_view, size, premultiplied_alpha)
+        } else {
+            core.resources.shader_layers = KoanLayers::default();
+            core.render_frame(
+                scene,
+                &frame_view,
+                size,
+                premultiplied_alpha,
+                wgpu::Color::TRANSPARENT,
+            )
+            .map(drop)
+        };
+        if let Err(error) = rendered {
             log::error!("{error:#}");
             return false;
         }
@@ -1491,6 +1532,8 @@ impl WgpuRendererCore {
                 shader_pipelines: FxHashMap::default(),
                 shader_color_target,
                 blank_texture_bind_group,
+                shader_layers: KoanLayers::default(),
+                compose_pipelines: None,
             },
             atlas,
             path_globals_offset,
@@ -1952,6 +1995,209 @@ impl WgpuRendererCore {
                 ..sprite_instances.first_instance + range.end,
         );
         Ok(())
+    }
+
+    // KOAN: shader quads (#1641). Composes the scene's layers and shaders
+    // into `target`, drawing the layers first if this scene's are not drawn
+    // yet, with the shaders' uniforms as they are now.
+    fn compose_frame(
+        &mut self,
+        scene: &Scene,
+        target: &wgpu::TextureView,
+        size: Size<DevicePixels>,
+        premultiplied_alpha: bool,
+    ) -> Result<()> {
+        let plan = scene.shader_layers.as_deref().context("no shader layers")?;
+        let extent = (size.width.0 as u32, size.height.0 as u32);
+        let held = &self.resources.shader_layers;
+        if held.generation != scene.generation || held.size != extent || held.layers.is_empty() {
+            let mut pool: Vec<(wgpu::Texture, wgpu::BindGroup)> =
+                if self.resources.shader_layers.size == extent {
+                    std::mem::take(&mut self.resources.shader_layers.layers)
+                        .into_iter()
+                        .flatten()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+            let mut drawn = Vec::with_capacity(plan.layers.len());
+            for layer in &plan.layers {
+                if layer.is_blank() {
+                    drawn.push(None);
+                    continue;
+                }
+                let (texture, bind_group) = match pool.pop() {
+                    Some(held) => held,
+                    None => {
+                        let resources = self.resources();
+                        let texture = resources.device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("koan_shader_layer"),
+                            size: wgpu::Extent3d {
+                                width: extent.0,
+                                height: extent.1,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: self.target_format,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                                | wgpu::TextureUsages::TEXTURE_BINDING,
+                            view_formats: &[],
+                        });
+                        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                        let bind_group = self.create_texture_bind_group("koan_shader_layer", &view);
+                        (texture, bind_group)
+                    }
+                };
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                // Every layer over a clear texture, which leaves its colours
+                // premultiplied; queued before the compose that reads them.
+                self.render_frame(layer, &view, size, premultiplied_alpha, wgpu::Color::TRANSPARENT)?;
+                drawn.push(Some((texture, bind_group)));
+            }
+            self.resources_mut().shader_layers = KoanLayers {
+                generation: scene.generation,
+                size: extent,
+                layers: drawn,
+            };
+        }
+        if self.resources().compose_pipelines.is_none() {
+            let pipelines = self.create_compose_pipelines();
+            self.resources_mut().compose_pipelines = Some(pipelines);
+        }
+
+        self.atlas.before_frame();
+        let globals = GlobalParams {
+            viewport_size: [size.width.0 as f32, size.height.0 as f32],
+            premultiplied_alpha: premultiplied_alpha as u32,
+            pad: 0,
+        };
+        self.resources
+            .queue
+            .write_buffer(&self.resources.globals_buffer, 0, bytemuck::bytes_of(&globals));
+        self.prepare_texture_bind_groups(scene);
+        for shader in &scene.shaders {
+            self.prepare_shader_pipeline(shader.program);
+        }
+        let now = std::time::Instant::now();
+        let instances: Vec<gpui::ShaderInstance> = scene
+            .shaders
+            .iter()
+            .map(|shader| gpui::ShaderInstance::of(shader, now))
+            .collect();
+        let mut instance_offset = 0;
+        let instances =
+            self.write_instance_binding("koan_shaders_bind_group", &mut instance_offset, &instances)?;
+
+        let resources = self.resources();
+        let (copy, over) = resources
+            .compose_pipelines
+            .as_ref()
+            .context("missing compose pipelines")?;
+        let layers = &resources.shader_layers.layers;
+        let mut encoder = resources
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("koan_compose"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("koan_compose"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            if let Some(Some((_, first))) = layers.first() {
+                pass.set_pipeline(copy);
+                pass.set_bind_group(0, first, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            for (k, group) in plan.groups.iter().enumerate() {
+                let mut start = group.start;
+                while start < group.end {
+                    let head = &scene.shaders[start];
+                    let key = |s: &gpui::PaintShader| {
+                        (s.program.name, s.image.as_ref().map(|t| t.texture_id))
+                    };
+                    let end = scene.shaders[start..group.end]
+                        .iter()
+                        .position(|s| key(s) != key(head))
+                        .map_or(group.end, |n| start + n);
+                    self.draw_shaders(
+                        &instances,
+                        head.program,
+                        head.image.as_ref().map(|t| t.texture_id),
+                        start as u32..end as u32,
+                        &mut pass,
+                    );
+                    start = end;
+                }
+                if let Some(Some((_, layer))) = layers.get(k + 1) {
+                    pass.set_pipeline(over);
+                    pass.set_bind_group(0, layer, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
+        }
+        resources.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
+    // KOAN: (#1641) a layer laid down as one triangle covering the target,
+    // read texel for texel: replacing what is there for the first layer, over
+    // it for the rest, whose colours are premultiplied.
+    fn create_compose_pipelines(&self) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+        let resources = self.resources();
+        let device = &resources.device;
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("koan_compose"),
+            source: wgpu::ShaderSource::Wgsl(KOAN_COMPOSE.into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("koan_compose"),
+            bind_group_layouts: &[Some(&resources.bind_group_layouts.texture)],
+            immediate_size: 0,
+        });
+        let pipeline = |blend: Option<wgpu::BlendState>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("koan_compose"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("koan_compose_vertex"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("koan_compose_fragment"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.target_format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        (
+            pipeline(None),
+            pipeline(Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)),
+        )
     }
 
     // KOAN: shader quads (#1641). A program's pipeline is compiled the first
@@ -2689,6 +2935,26 @@ impl WgpuHeadlessRenderer {
         self.core
             .render_frame(scene, &view, size, false, wgpu::Color::BLACK)?;
         Ok(())
+    }
+
+    // KOAN: (#1641) renders a scene as a window with shaders presents it,
+    // its layers composed with the shaders, for checking against
+    // `render_scene_to_image`.
+    pub fn compose_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> anyhow::Result<image::RgbaImage> {
+        self.check_gpu_errors()?;
+        self.ensure_render_target(size)?;
+        let view = self
+            .render_target
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
+            .view
+            .clone();
+        self.core.compose_frame(scene, &view, size, false)?;
+        self.read_image()
     }
 
     /// Copies the current render target back to the CPU. Dimensions come from the
