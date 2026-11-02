@@ -343,6 +343,9 @@ impl AlbumPage {
                         div()
                             .id("album-sleeve")
                             .cursor_pointer()
+                            .tooltip(|window, cx| {
+                                crate::components::Tooltip::view("show artwork".into(), window, cx)
+                            })
                             .on_click({
                                 let (album_id, credit) = (
                                     self.album_id,
