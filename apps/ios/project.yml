@@ -271,6 +271,9 @@ targets:
         CFBundleDisplayName: kōan
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # App Store Connect refuses a tvOS extension with a 64-bit slice that
+        # does not name arm64 here.
+        UIRequiredDeviceCapabilities: [arm64]
         NSExtension:
           NSExtensionPointIdentifier: com.apple.tv-top-shelf
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentProvider
