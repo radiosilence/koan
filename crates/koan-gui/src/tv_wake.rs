@@ -23,9 +23,28 @@ pub fn open(id: String, name: String, window: &mut Window, cx: &mut App) {
     ask::present(sheet, cx);
 }
 
-/// Forgets the TV's pairing for all the account's devices.
-pub fn stop(id: String, cx: &mut App) {
-    command(cx, "stop waking", move |e| e.forget_tv_pairing(id));
+/// Asks, then forgets the TV's pairing for all the account's devices:
+/// getting it back means pairing at the TV again.
+pub fn stop(id: String, name: String, window: &mut Window, cx: &mut App) {
+    ask::confirm(
+        ask::Confirm {
+            title: "stop waking".into(),
+            verb: "stop waking".into(),
+            destructive: true,
+            lines: vec![
+                format!("Choosing {name} no longer turns it on, from any of your devices.").into(),
+            ],
+            note: Some(
+                "To wake it from here again, set up waking and type the code it shows.".into(),
+            ),
+        },
+        window,
+        cx,
+        move |cx| {
+            let id = id.clone();
+            command(cx, "stop waking", move |e| e.forget_tv_pairing(id));
+        },
+    );
 }
 
 #[derive(Clone, PartialEq)]
@@ -46,6 +65,7 @@ pub struct TvWake {
     code: Entity<FieldState>,
     _task: Option<Task<()>>,
     _code: Subscription,
+    _released: Subscription,
 }
 
 impl TvWake {
@@ -60,6 +80,13 @@ impl TvWake {
                 _ => {}
             }
         });
+        // However the sheet goes (closed, or replaced by another), a pairing
+        // not finished is called off, so the TV puts its code away.
+        let released = cx.on_release(|this: &mut Self, cx| {
+            if this.phase != Phase::Done {
+                engine(cx).cancel_tv_pairing();
+            }
+        });
         let mut this = Self {
             id,
             name,
@@ -68,6 +95,7 @@ impl TvWake {
             code,
             _task: None,
             _code: subscription,
+            _released: released,
         };
         this.begin(window, cx);
         this
@@ -128,9 +156,6 @@ impl TvWake {
     }
 
     fn close(&mut self, cx: &mut Context<Self>) {
-        if self.phase != Phase::Done {
-            engine(cx).cancel_tv_pairing();
-        }
         ask::close(cx);
     }
 }
