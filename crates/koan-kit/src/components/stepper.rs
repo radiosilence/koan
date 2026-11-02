@@ -96,6 +96,7 @@ impl RenderOnce for Stepper {
             gpui_kit::Role::SpinButton,
             Some(self.title.clone()),
         )
+        .aria_disabled(disabled)
         .aria_numeric_value(self.value as f64)
         .aria_min_numeric_value(self.min as f64)
         .aria_max_numeric_value(self.max as f64)

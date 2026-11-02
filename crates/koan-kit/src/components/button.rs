@@ -244,6 +244,7 @@ impl RenderOnce for Button {
         // Named by its label, or a glyph's by what its tooltip says it does.
         let name = self.label.clone().or_else(|| self.help.clone());
         let mut button = accessible(div().id(self.id.clone()), gpui_kit::Role::Button, name)
+            .aria_disabled(self.disabled)
             .relative()
             .flex()
             .flex_none()

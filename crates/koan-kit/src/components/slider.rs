@@ -482,6 +482,7 @@ impl RenderOnce for Slider {
             gpui_kit::Role::Slider,
             self.name.clone(),
         )
+        .aria_disabled(self.disabled)
         .aria_numeric_value(value as f64)
         .aria_min_numeric_value(0.0)
         .aria_max_numeric_value(1.0)

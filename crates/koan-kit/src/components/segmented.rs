@@ -5,7 +5,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, accessible, answers_click, fade, focus, mix, ring};
+use super::{Handler, accessible, answers_click, fade, focus, mix, ring, toggled};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Motion, TypeRole, label};
 
 /// A row of text options, 18 apart, with no track: `muted`, and the chosen
@@ -60,7 +60,7 @@ impl RenderOnce for Segmented {
                 gpui_kit::Role::RadioButton,
                 Some(option.clone().into()),
             )
-            .aria_selected(index == selected)
+            .aria_toggled(toggled(index == selected))
             .aria_position_in_set(index + 1)
             .aria_size_of_set(count)
             .pb(px(5.0))

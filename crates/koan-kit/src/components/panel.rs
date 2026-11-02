@@ -262,12 +262,9 @@ impl RenderOnce for MenuRow {
             gpui_kit::Role::MenuItem
         };
         let row = super::accessible(div().id(self.id), role, Some(spoken))
+            .aria_disabled(self.disabled)
             .when_some(self.checked, |row, checked| {
-                row.aria_toggled(if checked {
-                    gpui_kit::Toggled::True
-                } else {
-                    gpui_kit::Toggled::False
-                })
+                row.aria_toggled(super::toggled(checked))
             })
             .when_some(described, |row, d| row.aria_description(d))
             .when(self.opens, |row| row.aria_expanded(false))

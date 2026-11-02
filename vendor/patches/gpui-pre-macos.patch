@@ -72,7 +72,7 @@ index 8732bad..3283755 100644
  //!
  //! macOS screens have a y axis that goes up from the bottom of the screen and
 diff --git a/src/window.rs b/src/window.rs
-index f2208d3..317710f 100644
+index f2208d3..049c73f 100644
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -2,12 +2,12 @@ use crate::{
@@ -90,7 +90,7 @@ index f2208d3..317710f 100644
  use gpui::{
      AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
      ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
-@@ -648,6 +648,16 @@ struct MacWindowState {
+@@ -648,6 +648,20 @@ struct MacWindowState {
      cursor_style: CursorStyle,
      cursor_visible: Arc<AtomicBool>,
      frame_source: Option<WindowFrameSource>,
@@ -104,10 +104,23 @@ index f2208d3..317710f 100644
 +    idle_frames: u32,
 +    /// The display link was stopped for being idle, not for being hidden.
 +    parked: bool,
++    /// KOAN: when input last arrived. GPUI keeps presenting for a second
++    /// after input so the display does not drop its refresh rate between
++    /// events, so the link stays up that long.
++    last_input: Option<std::time::Instant>,
      renderer: renderer::Renderer,
      request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
      event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
-@@ -833,12 +843,26 @@ impl MacWindowState {
+@@ -826,6 +840,8 @@ impl MacWindowState {
+         let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
+         let Some(display_id) = display_id_for_screen(screen) else {
+             // AppKit can temporarily report no screen while displays are being reconfigured.
++            // KOAN: the window is visible, so the next wake tries again.
++            self.parked = true;
+             return;
+         };
+         let data = self.native_view.as_ptr() as *mut c_void;
+@@ -833,12 +849,26 @@ impl MacWindowState {
              .get_or_insert_with(|| WindowFrameSource::new(data, step))
              .start(display_id)
              .log_err();
@@ -134,7 +147,7 @@ index f2208d3..317710f 100644
      }
  
      fn is_maximized(&self) -> bool {
-@@ -1072,6 +1096,10 @@ impl MacWindow {
+@@ -1072,6 +1102,11 @@ impl MacWindow {
                  cursor_style: CursorStyle::Arrow,
                  cursor_visible,
                  frame_source: None,
@@ -142,10 +155,24 @@ index f2208d3..317710f 100644
 +                woken: false,
 +                idle_frames: 0,
 +                parked: false,
++                last_input: None,
                  renderer: renderer::new_renderer(
                      renderer_context,
                      native_window as *mut _,
-@@ -1997,6 +2025,19 @@ impl PlatformWindow for MacWindow {
+@@ -1369,6 +1404,12 @@ impl Drop for MacWindow {
+         let window = this.native_window;
+         let sheet_parent = this.sheet_parent.take();
+         this.frame_source.take();
++        // KOAN: GPUI's frame waker holds the wake source past the window, and
++        // its handler reads the view, which is released after this: cancelled,
++        // a wake already queued never runs.
++        if let Some(source) = this.wake_source.take() {
++            source.cancel();
++        }
+         unsafe {
+             let _: () = msg_send![this.native_window, setDelegate: ptr::null_mut::<AnyObject>()];
+         }
+@@ -1997,6 +2038,19 @@ impl PlatformWindow for MacWindow {
          self.0.as_ref().lock().request_frame_callback = Some(callback);
      }
  
@@ -165,7 +192,25 @@ index f2208d3..317710f 100644
      fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
          self.0.as_ref().lock().event_callback = Some(callback);
      }
-@@ -3362,7 +3403,38 @@ extern "C" fn step(view: *mut c_void) {
+@@ -2637,6 +2691,8 @@ extern "C" fn handle_key_event(
+ ) -> Bool {
+     let window_state = unsafe { get_window_state(this) };
+     let mut lock = window_state.as_ref().lock();
++    // KOAN: input keeps the display link up a while (`step`).
++    lock.last_input = Some(std::time::Instant::now());
+ 
+     let window_height = lock.content_size().height;
+     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
+@@ -2787,6 +2843,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
+     let window_state = unsafe { get_window_state(this) };
+     let weak_window_state = Arc::downgrade(&window_state);
+     let mut lock = window_state.as_ref().lock();
++    // KOAN: input keeps the display link up a while (`step`).
++    lock.last_input = Some(std::time::Instant::now());
+     let window_height = lock.content_size().height;
+     let native_event_type: NSEventType = unsafe { msg_send![native_event, type] };
+     match native_event_type {
+@@ -3362,7 +3420,45 @@ extern "C" fn step(view: *mut c_void) {
              signal_source,
              ..Default::default()
          });
@@ -176,7 +221,10 @@ index f2208d3..317710f 100644
 +        // Every wake (a notify, input, an animation frame, a timer) restarts
 +        // the link through the frame waker, so waiting longer only wakes for
 +        // nothing.
-+        if std::mem::take(&mut lock.woken) {
++        let recent_input = lock
++            .last_input
++            .is_some_and(|at| at.elapsed() < INPUT_SUSTAIN);
++        if std::mem::take(&mut lock.woken) || recent_input {
 +            lock.idle_frames = 0;
 +        } else {
 +            lock.idle_frames += 1;
@@ -192,6 +240,10 @@ index f2208d3..317710f 100644
 +
 +/// KOAN: how many frames no one asked for before the display link parks.
 +const IDLE_FRAMES: u32 = 3;
++
++/// KOAN: how long after input the display link stays up, as long as GPUI
++/// keeps presenting after high-rate input (`InputRateTracker`).
++const INPUT_SUSTAIN: std::time::Duration = std::time::Duration::from_secs(1);
 +
 +// KOAN: the window needs frames again.
 +extern "C" fn wake_frames(view: *mut c_void) {

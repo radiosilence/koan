@@ -21,6 +21,7 @@ pub struct Picker {
     id: ElementId,
     options: Vec<SharedString>,
     selected: Option<usize>,
+    name: Option<SharedString>,
     disabled: bool,
     on_change: Option<Handler<usize>>,
 }
@@ -35,6 +36,7 @@ impl Picker {
             id: id.into(),
             options: options.into_iter().map(label).collect(),
             selected,
+            name: None,
             disabled: false,
             on_change: None,
         }
@@ -51,9 +53,16 @@ impl Picker {
             id: id.into(),
             options: options.into_iter().map(Into::into).collect(),
             selected,
+            name: None,
             disabled: false,
             on_change: None,
         }
+    }
+
+    /// What the choice is of, for a screen reader: the form row's title.
+    pub fn named(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -82,27 +91,32 @@ impl RenderOnce for Picker {
         let toggle = open.clone();
         // A combo box to a screen reader: what is chosen is its value, and
         // a click opens it as the pointer's does.
-        let mut picker = accessible(div().id(self.id.clone()), gpui_kit::Role::ComboBox, None)
-            .aria_value(shown.clone())
-            .aria_expanded(is_open)
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(look.space(Space::Xs))
-            // The theme's bordered button, as a form's dropdown is.
-            .py(look.spaced(6.))
-            .px(look.spaced(12.))
-            .border(HAIRLINE)
-            .border_color(look.palette.muted.hsla())
-            .text_role(TypeRole::Control, &look)
-            .text_color(color)
-            .child(div().whitespace_nowrap().child(shown))
-            .child(
-                KoanIcon::new(Icon::Choose)
-                    .role(TypeRole::Control)
-                    .color(color),
-            );
+        let mut picker = accessible(
+            div().id(self.id.clone()),
+            gpui_kit::Role::ComboBox,
+            self.name.clone(),
+        )
+        .aria_disabled(self.disabled)
+        .aria_value(shown.clone())
+        .aria_expanded(is_open)
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(look.space(Space::Xs))
+        // The theme's bordered button, as a form's dropdown is.
+        .py(look.spaced(6.))
+        .px(look.spaced(12.))
+        .border(HAIRLINE)
+        .border_color(look.palette.muted.hsla())
+        .text_role(TypeRole::Control, &look)
+        .text_color(color)
+        .child(div().whitespace_nowrap().child(shown))
+        .child(
+            KoanIcon::new(Icon::Choose)
+                .role(TypeRole::Control)
+                .color(color),
+        );
         if self.disabled {
             picker = picker.opacity(DISABLED_OPACITY);
         } else {

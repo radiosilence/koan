@@ -6,7 +6,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, accessible, answers_click, child, fade, focus, ring};
+use super::{Handler, accessible, answers_click, child, fade, focus, ring, toggled};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space, TypeRole,
     label,
@@ -61,6 +61,7 @@ impl RenderOnce for Toggle {
         );
         let accent = look.accent.hsla();
         let mut row = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
+            .aria_disabled(self.disabled)
             .relative()
             .flex()
             .items_center()
@@ -166,6 +167,7 @@ impl RenderOnce for IconToggle {
         let color = super::mix(look.palette.muted.hsla(), look.palette.ink.hsla(), on);
         let label = self.label.clone();
         let mut toggle = switch(div().id(self.id.clone()), self.label.clone(), self.checked)
+            .aria_disabled(self.disabled)
             .relative()
             .flex()
             .items_center()
@@ -207,9 +209,5 @@ fn switch(
     name: SharedString,
     checked: bool,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    accessible(element, gpui_kit::Role::Switch, Some(name)).aria_toggled(if checked {
-        gpui_kit::Toggled::True
-    } else {
-        gpui_kit::Toggled::False
-    })
+    accessible(element, gpui_kit::Role::Switch, Some(name)).aria_toggled(toggled(checked))
 }

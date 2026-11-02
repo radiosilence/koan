@@ -278,8 +278,8 @@ Every koan-kit component reports itself to the accessibility tree GPUI builds ov
 | `Toggle`, `IconToggle` | Switch, toggled |
 | `Slider` (`named`), `Level` | Slider: the value, its range and step, and the low end's text as the value said ("1:00"); Increment and Decrement step it as the arrow keys do |
 | `Stepper` | SpinButton, with value, range and step; Increment and Decrement |
-| `Segmented` | RadioGroup of RadioButtons, selected, with their place in the set |
-| `Picker` | ComboBox, the choice as its value, expanded while open |
+| `Segmented` | RadioGroup of RadioButtons, the chosen one toggled, with their place in the set |
+| `Picker` (`named`) | ComboBox, named by its form row's title, the choice as its value, expanded while open |
 | `MenuPanel`, `MenuRow` | Menu of MenuItems, a checkbox item where it ticks, its second line as the description |
 | `NavRow`, `NavHeading` | Link, selected where it is; Heading |
 | `PageHeader`'s title, `SectionHeading` | Heading, levels 1 and 2 |
@@ -288,7 +288,9 @@ Every koan-kit component reports itself to the accessibility tree GPUI builds ov
 | `EmptyState` | Group, named by what it says |
 | sheets' `panel`, `Viewer` | Dialog |
 
-`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree.
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions.
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click and an increment through `Window::dispatch_a11y_action` as a screen reader would.
 
 ## Swift roles and their GPUI components
 

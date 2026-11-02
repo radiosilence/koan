@@ -402,6 +402,15 @@ pub(crate) fn accessible<E: StatefulInteractiveElement>(
 }
 
 /// Answers a screen reader's click as a pointer's would, with `handler`.
+/// A checked state as AccessKit has it.
+pub(crate) fn toggled(on: bool) -> gpui_kit::Toggled {
+    if on {
+        gpui_kit::Toggled::True
+    } else {
+        gpui_kit::Toggled::False
+    }
+}
+
 pub(crate) fn answers_click<E: StatefulInteractiveElement>(
     element: E,
     handler: Handler<gpui_kit::ClickEvent>,
