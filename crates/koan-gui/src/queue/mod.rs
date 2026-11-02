@@ -9,7 +9,7 @@
 
 pub mod rows;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use koan_ffi::{CreditPart, EntryStatus, QueueItem, QueueLock};
 use koan_kit::app::*;
@@ -21,9 +21,9 @@ use koan_kit::raw::{Hsla, px};
 use koan_kit::raw::ListScrollEvent;
 
 use crate::components::{
-    Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle, KoanContextMenu, Menu, MenuEntry,
-    MenuPanel, MenuRow, Page, PageHeader, ProgressRing, RowKind, RowMetrics, TableRow,
-    ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarSelection,
+    AvailabilityMark, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
+    KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowMetrics,
+    TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarSelection,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
@@ -143,9 +143,6 @@ pub struct QueueView {
     nav: Entity<Navigator>,
     /// The favourites, once the library has loaded.
     feed: Option<(Entity<Feed>, Subscription)>,
-    /// The running transfers' progress, read once a frame and only by a frame
-    /// that draws a transferring row.
-    readings: Option<HashMap<i64, Option<f64>>>,
     /// Keeping the playing track in view as it changes, the Mac's: on from
     /// the crosshair, off by a scroll of the person's own or with nothing
     /// playing. For the session only.
@@ -208,7 +205,6 @@ impl QueueView {
             menu_row: None,
             nav: nav.clone(),
             feed: None,
-            readings: None,
             following: false,
             followed: None,
             _subscriptions: subscriptions,
@@ -237,21 +233,6 @@ impl QueueView {
         let observed = cx.observe(&feed, |_, _, cx| cx.notify());
         self.feed = Some((feed, observed));
         cx.notify();
-    }
-
-    /// A transfer's progress, from this frame's reading of every transfer.
-    fn progress(&mut self, track: i64, cx: &App) -> Option<f64> {
-        self.readings
-            .get_or_insert_with(|| {
-                engine(cx)
-                    .transfer_readings()
-                    .into_iter()
-                    .map(|figure| (figure.track_id, figure.progress))
-                    .collect()
-            })
-            .get(&track)
-            .copied()
-            .flatten()
     }
 
     /// The queue was sent whole: its rows were laid out off the main thread
@@ -616,21 +597,13 @@ impl QueueView {
             };
             Cover::new(art, side).into_any_element()
         });
-        // What a track row reads beyond its item: its heart, and how far its
-        // transfer has come. A transferring row asks for the next frame, so
-        // its ring moves at the display's rate while it is on screen and
-        // nothing is drawn for it otherwise.
+        // What a track row reads beyond its item: its heart. A transfer's
+        // progress its availability mark reads each frame it is drawn.
         let mut favourite = None;
-        let mut progress = None;
         if let Row::Track { ix, .. } = r {
-            let item = &self.queue.read(cx).items[ix];
-            let (track, status) = (item.track_id, item.status);
+            let track = self.queue.read(cx).items[ix].track_id;
             if let (Some(track), Some((feed, _))) = (track, &self.feed) {
                 favourite = Some(feed.read(cx).is_favourite(Playable::Track(track)));
-            }
-            if status == EntryStatus::Downloading {
-                progress = track.and_then(|track| self.progress(track, cx));
-                window.request_animation_frame();
             }
         }
         let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
@@ -678,11 +651,7 @@ impl QueueView {
                     grouped,
                     sleeve,
                     numbering,
-                    Extras {
-                        favourite,
-                        feed,
-                        progress,
-                    },
+                    Extras { favourite, feed },
                     &look,
                 );
                 (frame, id)
@@ -926,8 +895,6 @@ struct Extras {
     /// `None` for a track the library does not hold, or before it loads.
     favourite: Option<bool>,
     feed: Option<Entity<Feed>>,
-    /// How far the transfer has come, when the server said how big.
-    progress: Option<f64>,
 }
 
 fn link(
@@ -1076,7 +1043,9 @@ fn track(
         } else {
             AVAILABILITY_WORD
         },
-        availability(item, extras.progress, p),
+        AvailabilityMark::new(crate::transfers::of_queue_item(item))
+            .picked(look.picked)
+            .into_any_element(),
     )
     .figure(HEART, heart(item, &extras, look))
     .figure(
@@ -1093,34 +1062,6 @@ fn track(
             .text_color(p.muted)
             .child(item.duration_ms.map(crate::time::clock).unwrap_or_default()),
     )
-}
-
-/// Where the track's file is, or how its download is going, as the Mac's
-/// `AvailabilityMark`: waiting at the front of the downloads, failed, a ring
-/// filling as the bytes land (spinning while the size is unknown), or kept
-/// on the server, downloaded from it, or a local file.
-fn availability(item: &QueueItem, progress: Option<f64>, p: &Paint) -> AnyElement {
-    let quiet = p.muted.opacity(0.6);
-    let mark = |icon, word, color| glyph(icon, word, TypeRole::Fine, color, p);
-    let inner = match item.status {
-        EntryStatus::PriorityPending => Some(mark(Icon::Downloads, "next", p.accent_text)),
-        EntryStatus::Failed => Some(mark(Icon::WarningFilled, "failed", p.bad)),
-        EntryStatus::Downloading => {
-            Some(ProgressRing::new(progress.map(|f| f as f32), p.muted).into_any_element())
-        }
-        _ => match (item.on_server, item.on_disk) {
-            (true, true) => Some(mark(Icon::CloudKept, "kept", p.muted)),
-            (true, false) => Some(mark(Icon::Cloud, "server", quiet)),
-            (false, true) => Some(mark(Icon::OnDevice, "local", p.muted)),
-            (false, false) => None,
-        },
-    };
-    div()
-        .flex()
-        .justify_end()
-        .text_role(TypeRole::Fine, &p.look)
-        .children(inner)
-        .into_any_element()
 }
 
 /// The heart, as the Mac's: shown while the track is a favourite or the row
@@ -1395,7 +1336,6 @@ fn clear(count: u64, window: &mut Window, cx: &mut App) {
 impl Render for QueueView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        self.readings = None;
         let top = self.list.logical_scroll_top().item_ix;
         self.keep_top(top, cx);
         let count = self.rows(cx).len();
