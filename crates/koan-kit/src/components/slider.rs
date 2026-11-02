@@ -299,12 +299,18 @@ impl RenderOnce for Slider {
         let reach = self.reach.clone();
         let rule = look.palette.rule.hsla();
 
-        // Whether a drag that began on this slider is under way. Set and
-        // cleared without a notify: nothing is drawn from it.
-        let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| false);
+        // A drag that began on this slider, and the value it last sent: a
+        // move is compared with that, not with the value drawn, which an
+        // owner that has not redrawn yet still holds. Set and cleared without
+        // a notify: nothing is drawn from it; the press redraws the slider
+        // (`track`), which registers the drag's listeners.
+        let dragging = window.use_keyed_state(child(&self.id, "dragging"), cx, |_, _| None::<f32>);
+        let drag_live = dragging.read(cx).is_some();
         let measure = track_bounds.clone();
         let rail_id = child(&self.id, "rail");
-        let drag_moves = (!self.disabled)
+        // Window-wide listeners only while a drag is under way: a slider at
+        // rest costs the window's other mouse events nothing.
+        let drag_moves = (!self.disabled && drag_live)
             .then(|| self.on_change.clone())
             .flatten()
             .map(|on_change| (on_change, self.on_commit.clone(), dragging.clone()));
@@ -335,7 +341,7 @@ impl RenderOnce for Slider {
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture
                                 && event.button == MouseButton::Left
-                                && starting.update(cx, |d, _| std::mem::replace(d, false))
+                                && starting.update(cx, |d, _| d.take()).is_some()
                                 && let Some(commit) = &lost
                             {
                                 // The drag ended where the window did not
@@ -351,10 +357,11 @@ impl RenderOnce for Slider {
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture
                                 && event.pressed_button == Some(MouseButton::Left)
-                                && *moving.read(cx)
+                                && let Some(sent) = *moving.read(cx)
                             {
                                 let to = at(bounds, event.position);
-                                if to != value {
+                                if to != sent {
+                                    moving.update(cx, |d, _| *d = Some(to));
                                     on_change(&to, window, cx);
                                 }
                             }
@@ -362,7 +369,7 @@ impl RenderOnce for Slider {
                         window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
                             if phase == DispatchPhase::Capture
                                 && event.button == MouseButton::Left
-                                && ending.update(cx, |d, _| std::mem::replace(d, false))
+                                && ending.update(cx, |d, _| d.take()).is_some()
                                 && let Some(on_commit) = &on_commit
                             {
                                 on_commit(&(), window, cx);
@@ -513,8 +520,9 @@ impl RenderOnce for Slider {
             let step = self.step;
             rail = rail.on_mouse_down(MouseButton::Left, move |event, window, cx| {
                 let bounds = *down_bounds.read(cx);
-                dragging.update(cx, |d, _| *d = true);
-                down(&at(bounds, event.position), window, cx);
+                let to = at(bounds, event.position);
+                dragging.update(cx, |d, _| *d = Some(to));
+                down(&to, window, cx);
             });
             slider = track(slider, &state)
                 .track_focus(&handle)

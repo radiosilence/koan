@@ -56,6 +56,8 @@ pub struct Transport {
     eq: Option<EqState>,
     /// The profile the playing stream named when `eq` was read.
     eq_profile: Option<String>,
+    /// The library version the EQ was last read at.
+    eq_library: u64,
     _eq_load: Option<Task<()>>,
     _subscriptions: [Subscription; 8],
 }
@@ -77,8 +79,11 @@ struct EqState {
     /// The preset it was set from, and whether it was changed since.
     preset: Option<String>,
     edited: bool,
-    /// No correction and no tuning: it plays untouched.
+    /// No correction and no tuning: it holds no EQ.
     flat: bool,
+    /// Processing is off: it plays untouched whatever it holds, and the
+    /// button is not tinted. Its menu still shows what it holds.
+    off: bool,
     presets: Vec<String>,
 }
 
@@ -98,6 +103,7 @@ impl EqState {
             preset: state.and_then(|s| s.preset.clone()),
             edited: state.is_some_and(|s| s.preset_edited),
             flat: state.is_none_or(|s| s.flat),
+            off: !overview.enabled,
             presets: overview
                 .profiles
                 .iter()
@@ -111,6 +117,7 @@ impl EqState {
     /// What the button's tooltip says: the preset in force, never "flat".
     fn summary(&self) -> String {
         match &self.preset {
+            _ if self.off => "EQ: processing off".into(),
             Some(preset) if self.edited => format!("EQ: {preset}, edited"),
             Some(preset) => format!("EQ: {preset}"),
             None if self.flat => "EQ".into(),
@@ -186,7 +193,16 @@ impl Transport {
                 // What EQ plays follows the output, its presets (published
                 // with the outputs) and the profiles (synced with the library).
                 cx.observe(&mirror.outputs, |this, _, cx| this.reload_eq(cx)),
-                cx.observe(&mirror.library, |this, _, cx| this.reload_eq(cx)),
+                // Only when the library's version moves: a scan notifies
+                // with every batch, and an overview reads every profile's
+                // responses from disk.
+                cx.observe(&mirror.library, |this, library, cx| {
+                    let version = library.read(cx).version;
+                    if version != this.eq_library {
+                        this.eq_library = version;
+                        this.reload_eq(cx);
+                    }
+                }),
             ],
             focus: cx.focus_handle(),
             playback: mirror.playback,
@@ -197,6 +213,7 @@ impl Transport {
             cover: CoverArt::Missing,
             eq: None,
             eq_profile: None,
+            eq_library: mirror.library.read(cx).version,
             _eq_load: None,
         };
         this.reload_eq(cx);
@@ -376,12 +393,13 @@ impl Transport {
     /// The EQ button: the glyph in `ink` while the output plays untouched,
     /// in the accent while an EQ is in force, its name in the tooltip.
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
-        let color = if eq.flat { p.ink } else { p.accent_text };
+        let plain = eq.flat || eq.off;
+        let color = if plain { p.ink } else { p.accent_text };
         let summary: SharedString = eq.summary().into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
-                .color(if eq.flat { p.ink } else { p.accent })
+                .color(if plain { p.ink } else { p.accent })
                 .into_any_element()
         } else {
             div().child("eq").into_any_element()
@@ -1011,7 +1029,11 @@ impl Render for Transport {
                             .read(cx)
                             .0
                             .as_ref()
-                            .is_none_or(|o| o.owner.is_none())
+                            // Only this device's outputs: with another device
+                            // controlled, or its outputs not yet heard, a
+                            // preset chosen here would name this device's
+                            // output to the other one.
+                            .is_some_and(|o| o.owner.is_none())
                     })
                     .map(|eq| self.eq_button(&eq, &p, cx)),
             );

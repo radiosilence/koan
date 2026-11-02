@@ -100,7 +100,7 @@ A track's context menu has Track Info, which lists what each of its sources says
 
 ## Settings
 
-⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. EQ has a window of its own, below.
+⌘, (Ctrl+, on Linux), or kōan → Settings…, opens Settings in a window of its own; `koan-gui --settings` opens it at launch. It holds what the Mac app's Settings does, in the same tabs: Library, Server, Account, People, Playback, EQ, Devices, Integrations and Appearance, the middle ones where a server you are signed in to offers them. The EQ tab says what the output in use plays and opens the EQ window, below, where profiles are made and chosen.
 
 Settings reads the configuration again when its window opens and whenever it comes to the front, so a change made in the terminal UI or the CLI shows rather than being overwritten. A change writes only the setting it changes. Anything that removes or replaces something (a folder's tracks, the library index, downloads, a key, an account, sharing) says what it will do and asks first. The line along the foot says what is under way, and then how it went.
 
