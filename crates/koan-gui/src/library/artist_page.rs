@@ -162,14 +162,17 @@ impl ArtistPage {
         let request = self.request;
         let (engine, id) = (self.lib.engine.clone(), self.artist_id);
         self._load = Some(cx.spawn(async move |this, cx| {
-            let artist = engine.clone().artist(id).await.ok().flatten();
-            let albums = engine
-                .clone()
-                .albums(Some(id), AlbumSort::Year, 0, None, BrowseFilter::default())
-                .await
-                .unwrap_or_default();
-            let features = engine.clone().artist_features(id).await.unwrap_or_default();
-            let info = engine.clone().artist_info(id).await.ok().flatten();
+            // Read together: each is its own query, and the page waits for all.
+            let (artist, albums, features, info) = futures::join!(
+                engine.clone().artist(id),
+                engine
+                    .clone()
+                    .albums(Some(id), AlbumSort::Year, 0, None, BrowseFilter::default()),
+                engine.clone().artist_features(id),
+                engine.clone().artist_info(id),
+            );
+            let (artist, info) = (artist.ok().flatten(), info.ok().flatten());
+            let (albums, features) = (albums.unwrap_or_default(), features.unwrap_or_default());
             // Only when there is nothing else to show: an artist with records
             // has their tracks one click away on each.
             let appearances = if albums.is_empty() {

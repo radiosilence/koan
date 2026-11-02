@@ -139,8 +139,7 @@ fixed = 8
 raw = 7
 
 ["queue/mod.rs"]
-number = 1
-raw = 8
+raw = 1
 
 ["root.rs"]
 raw = 1
@@ -188,9 +187,6 @@ raw = 5
 
 ["shell.rs"]
 raw = 5
-
-["sidebar.rs"]
-raw = 2
 
 ["transport.rs"]
 number = 4

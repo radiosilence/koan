@@ -101,6 +101,31 @@ pub enum SubsonicError {
     /// Every cover slot stayed taken for as long as a fetch waits for one.
     #[error("too many cover fetches in flight")]
     Busy,
+    /// The server could not answer now (a 5xx, or 429): says nothing of
+    /// what it holds, and is worth asking again.
+    #[error("the server could not answer ({0})")]
+    Unavailable(u16),
+}
+
+/// What a `getCoverArt` answer says before its body is read. An error
+/// document, or a refusal such as a 404, is the server saying it has no art
+/// (`BadResponse`); a 5xx or 429 is the server unable to say now
+/// (`Unavailable`), which a caller asks again rather than remembering.
+fn cover_answer(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Result<(), SubsonicError> {
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(SubsonicError::Unavailable(status.as_u16()));
+    }
+    let is_document = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
+    if is_document || !status.is_success() {
+        return Err(SubsonicError::BadResponse);
+    }
+    Ok(())
 }
 
 /// Without the URL: every request is signed with the account's credentials in
@@ -437,18 +462,7 @@ impl SubsonicClient {
     /// checking the status code proves nothing here — without this, an error
     /// response gets written to disk as if it were audio.
     fn reject_error_body(resp: &reqwest::blocking::Response) -> Result<(), SubsonicError> {
-        let is_document = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
-        if is_document {
-            return Err(SubsonicError::BadResponse);
-        }
-        if !resp.status().is_success() {
-            return Err(SubsonicError::BadResponse);
-        }
-        Ok(())
+        cover_answer(resp.status(), resp.headers())
     }
 
     /// Fetch cover art bytes for a song or album ID.
@@ -503,14 +517,7 @@ impl SubsonicClient {
         }
         let client = self.connections.read().cancellable.clone();
         let resp = client.get(&url).query(&params).send().await?;
-        let is_document = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
-        if is_document || !resp.status().is_success() {
-            return Err(SubsonicError::BadResponse);
-        }
+        cover_answer(resp.status(), resp.headers())?;
         let headers = resp.headers().clone();
         let body = resp.bytes().await?;
         let navidrome = || {
@@ -976,6 +983,18 @@ impl SubsonicClient {
 
     pub fn delete_playlist(&self, id: &str) -> Result<(), SubsonicError> {
         self.get_with_params("deletePlaylist", &[("id", id)])?;
+        Ok(())
+    }
+
+    /// The account's playlists in this order (`koanPlaylistOrder`). The whole
+    /// list each time, so two devices reordering at once settle on one of
+    /// their lists rather than a mix of both.
+    pub fn set_playlist_order(&self, ids: &[String]) -> Result<(), SubsonicError> {
+        let url = format!("{}/rest/koanPlaylistOrder", self.auth.base_url);
+        let mut form: Vec<(String, String)> = self.auth_params()?.into_iter().collect();
+        form.extend(ids.iter().map(|id| ("id".to_string(), id.clone())));
+        let resp: SubsonicResponseWrapper = self.http().post(&url).form(&form).send()?.json()?;
+        resp.subsonic_response.ok()?;
         Ok(())
     }
 

@@ -164,13 +164,25 @@ impl PeoplePane {
 
     /// Shows an invite once it is made.
     fn show_invite(&self, window: AnyWindowHandle) -> impl FnOnce(Invite, &mut App) + 'static {
-        let sheets = self.ctx.sheets.clone();
+        let (sheets, model) = (self.ctx.sheets.clone(), self.ctx.model.clone());
         move |invite, cx| {
+            // Shown this once, so it must reach someone: the window it was
+            // asked for in, or, when that has closed, the next Settings
+            // window.
+            let mut sheet = Some(invite_sheet(invite));
             window
                 .update(cx, |_, window, cx| {
-                    sheets.update(cx, |s, cx| s.show(invite_sheet(invite), window, cx))
+                    if let Some(sheet) = sheet.take() {
+                        sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+                    }
                 })
                 .ok();
+            if let Some(sheet) = sheet {
+                model.update(cx, |m, cx| {
+                    m.unseen.push(sheet);
+                    cx.notify();
+                });
+            }
         }
     }
 
@@ -495,7 +507,8 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
     let message = "Opening the link on a phone, tablet or computer with kōan installed signs in and loads the library, on each device, for a week. The QR code works for ten minutes.";
     let mut sheet = Sheet::new(format!("Invite for {}", invite.username))
         .message(message)
-        .done();
+        .done()
+        .kept();
     sheet = sheet.content(move |look, _, _| {
         let (link, text_body, mailto) = (
             invite.link.clone(),

@@ -379,6 +379,19 @@ pub fn observe_accent<V: 'static>(cx: &mut Context<V>) -> Subscription {
     cx.observe(&feed, |_, _, cx| cx.notify())
 }
 
+/// `observe_accent`, running `then` as the accent moves: for a view whose
+/// cached children draw it too and are not views of their own making.
+pub fn observe_accent_then<V: 'static>(
+    cx: &mut Context<V>,
+    then: impl Fn(&mut V, &mut Context<V>) + 'static,
+) -> Subscription {
+    let feed = cx.global::<AccentHandle>().0.clone();
+    cx.observe(&feed, move |view, _, cx| {
+        cx.notify();
+        then(view, cx);
+    })
+}
+
 /// A window's look: its appearance and everything drawn from it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {

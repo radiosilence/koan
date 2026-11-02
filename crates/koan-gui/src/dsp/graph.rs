@@ -516,8 +516,20 @@ impl Graph {
             (std::mem::replace(&mut self.edit, Edit::Idle), &self.editing)
             && let Some(step) = drag.step
         {
-            e.dsp.update(cx, |dsp, cx| {
-                dsp.edit(drag.edit, step, true, Rc::new(|_, _| {}), cx)
+            // Nobody is left to hear how it ended, so the model forgets it
+            // once it lands.
+            let dsp = e.dsp.downgrade();
+            let edit = drag.edit;
+            e.dsp.update(cx, |model, cx| {
+                model.edit(
+                    edit,
+                    step,
+                    true,
+                    Rc::new(move |_, cx| {
+                        dsp.update(cx, |dsp, _| dsp.forget(edit)).ok();
+                    }),
+                    cx,
+                )
             });
         }
     }

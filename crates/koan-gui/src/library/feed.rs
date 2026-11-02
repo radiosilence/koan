@@ -33,6 +33,9 @@ pub struct Feed {
     reach: Option<(Option<String>, bool, Option<String>)>,
     /// The playlists a pick can be added to: every one not read-only.
     pub playlists: Vec<(i64, SharedString)>,
+    /// The newest read of the playlists asked for: an older one landing
+    /// after it is dropped.
+    playlists_read: u64,
     favourites: Favourites,
     /// One read at a time; one asked for while another runs makes it read
     /// again when it lands.
@@ -81,6 +84,7 @@ impl Feed {
             connection_epoch: 0,
             reach: None,
             playlists: Vec::new(),
+            playlists_read: 0,
             favourites: Favourites::default(),
             favourites_reading: false,
             favourites_stale: false,
@@ -190,6 +194,8 @@ impl Feed {
 
     pub fn reload_playlists(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.clone();
+        self.playlists_read += 1;
+        let read = self.playlists_read;
         cx.spawn(async move |this, cx| {
             let playlists = match engine.playlists().await {
                 Ok(p) => p,
@@ -199,6 +205,9 @@ impl Feed {
                 }
             };
             this.update(cx, |feed, cx| {
+                if read != feed.playlists_read {
+                    return;
+                }
                 feed.playlists = playlists
                     .into_iter()
                     .filter(|p| !p.readonly)
