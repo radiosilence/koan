@@ -10,7 +10,7 @@ use std::time::Duration;
 use koan_ffi::{Artist, BrowseFilter};
 use koan_kit::app::*;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px};
+use koan_kit::raw::point;
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
 use koan_kit::raw::{UniformListScrollHandle, uniform_list};
 
@@ -74,7 +74,7 @@ impl ArtistBrowser {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -y));
+                .set_offset(point(Pixels::ZERO, -y));
         }
     }
 
@@ -418,7 +418,7 @@ impl Render for ArtistBrowser {
                     .id("artist-list")
                     .flex_1()
                     .min_h_0()
-                    .pt(px(10.0))
+                    .pt(p.look.spaced(10.0))
                     .relative()
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.

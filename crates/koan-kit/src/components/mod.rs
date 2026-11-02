@@ -15,6 +15,7 @@ mod availability;
 mod badge;
 mod banner;
 mod button;
+pub mod choice;
 mod cover;
 mod dense;
 mod drag;
@@ -31,6 +32,7 @@ mod panel;
 mod picker;
 pub(crate) mod placeholder;
 mod progress;
+mod qr;
 mod ring;
 mod row_list;
 mod rows;
@@ -46,6 +48,7 @@ mod stepper;
 mod table;
 mod toggle;
 mod toolbar;
+mod window;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -77,6 +80,7 @@ pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip};
 pub use picker::Picker;
 pub use placeholder::Placeholder;
 pub use progress::{ProgressBar, ProgressRow};
+pub use qr::QrCode;
 pub use ring::ProgressRing;
 pub use row_list::{RowList, RowListState, RowOffset};
 pub use rows::{ListRow, NavHeading, NavNote, NavRow};
@@ -94,6 +98,7 @@ pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
     ToolbarSelection, WINDOW_BUTTONS,
 };
+pub use window::SecondaryWindow;
 
 use crate::theme::{Look, MARK, Motion};
 

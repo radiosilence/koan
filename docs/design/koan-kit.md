@@ -186,6 +186,18 @@ Built from entries, separators, sections and submenus; an entry's `keys` shows t
 
 `ProgressRow::new(title).counts(…).detail(…).fraction(Some(f))` with an optional `on_stop`: one running task, its bar determinate or not, padded so the bar never meets the next row. `StatusBlock` is a sidebar's foot under a row rule: `line(icon, text, tone)` for what the device is connected to, `figure(text)` for each count beneath it.
 
+### Choice menus (Mac: the EQ's pop-up menus)
+
+`choice::menu(id, shown, Trigger::Field | Trigger::Word, items, window, cx)`: a control showing what is chosen (a field with a chevron, or a quiet word) that opens a menu panel under it, of `Item::choice` rows ticked where in force, `Item::action`, `Item::destructive`, `Item::Heading` and `Item::Rule`. The window keeps its open state under the id; escape, a press outside or a choice closes it. `Picker` stays the form's control for picking one of a list.
+
+### QrCode (Mac: the invite and pairing codes)
+
+`QrCode::new(dark, side)` from the modules row by row, and `element(side, margin)`: dark runs as quads on a light quiet zone in either appearance, since phones read that best.
+
+### SecondaryWindow (Mac: Settings, the EQ window, About)
+
+`SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
+
 ## Swift roles and their GPUI components
 
 | Swift (`KoanTheme.swift`, `Views/`) | GPUI |

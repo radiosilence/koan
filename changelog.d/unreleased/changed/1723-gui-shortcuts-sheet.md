@@ -1,0 +1,1 @@
+- **The desktop app's keyboard shortcuts sheet in the kōan look.** It is drawn as the app's other sheets are, its keys in badges.
