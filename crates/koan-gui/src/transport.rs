@@ -79,8 +79,11 @@ struct EqState {
     /// The preset it was set from, and whether it was changed since.
     preset: Option<String>,
     edited: bool,
-    /// No correction and no tuning: it plays untouched.
+    /// No correction and no tuning: it holds no EQ.
     flat: bool,
+    /// Processing is off: it plays untouched whatever it holds, and the
+    /// button is not tinted. Its menu still shows what it holds.
+    off: bool,
     presets: Vec<String>,
 }
 
@@ -100,6 +103,7 @@ impl EqState {
             preset: state.and_then(|s| s.preset.clone()),
             edited: state.is_some_and(|s| s.preset_edited),
             flat: state.is_none_or(|s| s.flat),
+            off: !overview.enabled,
             presets: overview
                 .profiles
                 .iter()
@@ -113,6 +117,7 @@ impl EqState {
     /// What the button's tooltip says: the preset in force, never "flat".
     fn summary(&self) -> String {
         match &self.preset {
+            _ if self.off => "EQ: processing off".into(),
             Some(preset) if self.edited => format!("EQ: {preset}, edited"),
             Some(preset) => format!("EQ: {preset}"),
             None if self.flat => "EQ".into(),
@@ -388,12 +393,13 @@ impl Transport {
     /// The EQ button: the glyph in `ink` while the output plays untouched,
     /// in the accent while an EQ is in force, its name in the tooltip.
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
-        let color = if eq.flat { p.ink } else { p.accent_text };
+        let plain = eq.flat || eq.off;
+        let color = if plain { p.ink } else { p.accent_text };
         let summary: SharedString = eq.summary().into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
-                .color(if eq.flat { p.ink } else { p.accent })
+                .color(if plain { p.ink } else { p.accent })
                 .into_any_element()
         } else {
             div().child("eq").into_any_element()

@@ -501,7 +501,7 @@ pub struct OutputState {
     pub device: String,
     /// The preset it was set from, and whether it was changed since.
     pub preset: Option<(String, bool)>,
-    /// No correction and no tuning, or processing off: it plays untouched.
+    /// No correction and no tuning: it plays untouched.
     pub flat: bool,
 }
 
@@ -762,8 +762,7 @@ fn outputs(dsp: &crate::config::DspConfig) -> Vec<OutputState> {
         .map(|d| OutputState {
             device: d.to_owned(),
             preset: preset_for(d),
-            flat: !dsp.enabled
-                || (dsp.profile_for(d).is_none() && !dsp.tunings.iter().any(|t| t.device == d)),
+            flat: dsp.profile_for(d).is_none() && !dsp.tunings.iter().any(|t| t.device == d),
         })
         .collect()
 }
