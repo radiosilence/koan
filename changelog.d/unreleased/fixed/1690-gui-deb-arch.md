@@ -1,0 +1,1 @@
+- **The desktop app's Linux packages build.** The .deb step failed on a control file missing its architecture.
