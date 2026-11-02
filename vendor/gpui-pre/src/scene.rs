@@ -237,11 +237,14 @@ impl Scene {
     // Shaders in draw order are grouped, a new group starting at a shader
     // that overlaps one already in the group, so a page's playing bars are
     // one group over the wash's. Every other primitive must be drawn after
-    // each shader it overlaps with a lower order (an order is one more than
-    // the highest it overlaps, and at equal orders the shader is drawn last)
-    // and before each it overlaps with an equal or higher one: it goes in
-    // the layer after the last group it must follow, and if that is past a
-    // group it must precede, the scene cannot be split and is drawn whole.
+    // each shader it overlaps with a lower order (at equal orders the shader
+    // is drawn last), after every primitive drawn before it that it
+    // overlaps, and before each shader it overlaps with an equal or higher
+    // order. It goes in the lowest layer meeting the first two; if that is
+    // past a group it must precede, the scene cannot be split and is drawn
+    // whole. Layers then hold what is drawn between groups, each in its own
+    // draw order, so a composed present draws everything in the order a
+    // whole one would wherever two things overlap.
     fn plan_shader_layers(&self) -> Option<ShaderLayers> {
         if self.shaders.is_empty() {
             return None;
@@ -266,10 +269,36 @@ impl Scene {
         }
         groups.push(start..shaders.len());
 
-        let place = |order: DrawOrder, bounds: Bounds<ScaledPixels>| -> Option<usize> {
+        // Each other primitive in the order the renderer draws them: by
+        // order, then kind, then place in its list.
+        let mut drawn: Vec<(DrawOrder, PrimitiveKind, usize, Bounds<ScaledPixels>)> = Vec::new();
+        macro_rules! collect {
+            ($($list:ident => $kind:ident),*) => {$(
+                for (i, p) in self.$list.iter().enumerate() {
+                    drawn.push((p.order, PrimitiveKind::$kind, i, visible(&p.bounds, &p.content_mask)));
+                }
+            )*};
+        }
+        collect!(
+            shadows => Shadow,
+            quads => Quad,
+            paths => Path,
+            underlines => Underline,
+            monochrome_sprites => MonochromeSprite,
+            subpixel_sprites => SubpixelSprite,
+            polychrome_sprites => PolychromeSprite,
+            surfaces => Surface
+        );
+        drawn.sort_unstable_by_key(|(order, kind, i, _)| (*order, *kind, *i));
+
+        // From the shaders alone: the layer after the last group holding a
+        // shader drawn before it that it overlaps, and the first group
+        // holding one it overlaps that is drawn after it (a shader is drawn
+        // after what shares its order).
+        let by_shaders = |order: DrawOrder, bounds: &Bounds<ScaledPixels>| {
             let (mut after, mut before) = (0, usize::MAX);
             for (k, (o, s)) in shaders.iter().enumerate() {
-                if s.intersects(&bounds) {
+                if s.intersects(bounds) {
                     if *o < order {
                         after = after.max(group_of[k] + 1);
                     } else {
@@ -277,29 +306,64 @@ impl Scene {
                     }
                 }
             }
-            (after <= before).then_some(after)
+            (after, before)
         };
+        let placed: Vec<(usize, usize)> = drawn.iter().map(|(o, _, _, b)| by_shaders(*o, b)).collect();
+        // A primitive also follows every earlier one it overlaps, so a menu's
+        // text stays over the menu's ground wherever each is placed. Only
+        // what sits above the lowest layer anything was placed in can raise
+        // another, which is the little drawn over a shader: those are kept.
+        let floor = placed.iter().map(|(after, _)| *after).min().unwrap_or(0);
+        let mut raised: Vec<(Bounds<ScaledPixels>, usize)> = Vec::new();
+        let mut layers_by_kind: Vec<Vec<usize>> = vec![Vec::new(); 8];
+        for kind in 0..8 {
+            let len = match kind {
+                0 => self.shadows.len(),
+                1 => self.quads.len(),
+                2 => self.paths.len(),
+                3 => self.underlines.len(),
+                4 => self.monochrome_sprites.len(),
+                5 => self.subpixel_sprites.len(),
+                6 => self.polychrome_sprites.len(),
+                _ => self.surfaces.len(),
+            };
+            layers_by_kind[kind] = vec![0; len];
+        }
+        for ((_, kind, i, bounds), (after, before)) in drawn.iter().zip(&placed) {
+            let mut layer = *after;
+            for (b, l) in &raised {
+                if *l > layer && b.intersects(bounds) {
+                    layer = *l;
+                }
+            }
+            if layer > *before {
+                return None;
+            }
+            if layer > floor {
+                raised.push((*bounds, layer));
+            }
+            layers_by_kind[*kind as usize][*i] = layer;
+        }
+
         let mut layers: Vec<Scene> = (0..=groups.len()).map(|_| Scene::default()).collect();
         macro_rules! split {
-            ($($list:ident),*) => {$(
-                for p in &self.$list {
-                    let layer = place(p.order, visible(&p.bounds, &p.content_mask))?;
-                    layers[layer].$list.push(p.clone());
+            ($($list:ident => $kind:ident),*) => {$(
+                for (p, layer) in self.$list.iter().zip(&layers_by_kind[PrimitiveKind::$kind as usize]) {
+                    layers[*layer].$list.push(p.clone());
                 }
             )*};
         }
         split!(
-            shadows,
-            quads,
-            underlines,
-            monochrome_sprites,
-            subpixel_sprites,
-            polychrome_sprites,
-            surfaces
+            shadows => Shadow,
+            quads => Quad,
+            underlines => Underline,
+            monochrome_sprites => MonochromeSprite,
+            subpixel_sprites => SubpixelSprite,
+            polychrome_sprites => PolychromeSprite,
+            surfaces => Surface
         );
-        for path in &self.paths {
-            let layer = place(path.order, visible(&path.bounds, &path.content_mask))?;
-            let paths = &mut layers[layer].paths;
+        for (path, layer) in self.paths.iter().zip(&layers_by_kind[PrimitiveKind::Path as usize]) {
+            let paths = &mut layers[*layer].paths;
             let mut path = path.clone();
             path.id = PathId(paths.len());
             paths.push(path);
