@@ -91,13 +91,19 @@ impl Render for SidebarStatus {
             .and_then(|c| c.signed_in_to.clone());
         let mut block = StatusBlock::new();
         block = match (serving, server) {
-            (Some(port), _) => {
-                block.line(Icon::Server, format!("sharing on port {port}"), Tone::Muted)
-            }
-            (None, Some(server)) => block.line(
+            (Some(port), _) => block.link(
+                Icon::Server,
+                format!("sharing on port {port}"),
+                Tone::Muted,
+                "Server settings",
+                |_, cx| crate::settings::open_server(cx),
+            ),
+            (None, Some(server)) => block.link(
                 Icon::Server,
                 format!("connected to {}", host(&server)),
                 Tone::Muted,
+                "Server settings",
+                |_, cx| crate::settings::open_server(cx),
             ),
             (None, None) => block.line(
                 Icon::Library,
