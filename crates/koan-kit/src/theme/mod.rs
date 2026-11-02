@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use gpui_kit::{
-    App, AppContext, Context, Entity, Global, Hsla, Pixels, SharedString, Styled, Subscription,
-    Window, WindowAppearance, WindowId, px,
+    App, AppContext, Context, Entity, Global, Pixels, SharedString, Styled, Subscription, Window,
+    WindowAppearance, WindowId, px,
 };
 
 pub use accent::{Accent, AccentState, Shade};
