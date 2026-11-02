@@ -12,14 +12,11 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::components::{UniformListScrollHandle, uniform_list};
 use koan_ffi::{AlbumSort, BrowseFilter};
 use koan_kit::app::*;
-// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{ScrollEvent, TouchPhase, UniformListScrollHandle, uniform_list};
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px};
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
+// a fling's phase, which the grid's cover aiming reads from the scroll.
+use koan_kit::raw::TouchPhase;
 
 use super::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use super::drag::{Playable, PlayableDrag};
@@ -145,7 +142,7 @@ impl AlbumGrid {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -y));
+                .set_offset(crate::components::offset_down(y));
         }
     }
 
@@ -175,7 +172,7 @@ impl AlbumGrid {
                         loaded,
                     });
                 }
-                let offset = px(this.heading.borrow().offset);
+                let offset = Pixels::from(this.heading.borrow().offset);
                 this.lib
                     .nav
                     .update(cx, |nav, _| nav.remember_offset(Page::Albums, offset));
@@ -566,7 +563,7 @@ impl AlbumGrid {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -px(y)));
+                .set_offset(crate::components::offset_down(Pixels::from(y)));
         }
         self.grid = Some(grid);
     }
@@ -683,9 +680,9 @@ impl AlbumGrid {
         let y = if to_end {
             handle.max_offset().y
         } else {
-            px(0.0)
+            Pixels::ZERO
         };
-        handle.set_offset(point(px(0.0), -y));
+        handle.set_offset(crate::components::offset_down(y));
         cx.notify();
     }
 
@@ -695,9 +692,9 @@ impl AlbumGrid {
         let max = handle.max_offset().y;
         let mut y = -handle.offset().y + distance;
         if y > max {
-            y = px(0.0);
+            y = Pixels::ZERO;
         }
-        handle.set_offset(point(px(0.0), -y));
+        handle.set_offset(crate::components::offset_down(y));
         cx.notify();
     }
 }
@@ -834,17 +831,7 @@ impl Render for AlbumGrid {
 
         let width = self.width.clone();
         let entity = cx.entity_id();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if width.get() != Some(bounds.size.width) {
-                    width.set(Some(bounds.size.width));
-                    cx.notify(entity);
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
+        let measure = crate::components::width_probe(width, entity);
 
         // Until its first listing lands the page draws nothing, then header,
         // total and tiles together: nothing pops in after the rest.
@@ -903,7 +890,7 @@ impl Render for AlbumGrid {
                     .child(measure)
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                    .child(crate::components::list_scrollbar(&self.scroll)),
                 cx.weak_entity(),
                 window,
                 cx,
@@ -927,7 +914,7 @@ mod tests {
     use core::prelude::v1::test;
 
     fn grid() -> Grid {
-        Grid::for_width(px(800.0), &Scale::of(100))
+        Grid::for_width(Pixels::from(800.0), &Scale::of(100))
     }
 
     fn keys(row: usize) -> Vec<Key> {

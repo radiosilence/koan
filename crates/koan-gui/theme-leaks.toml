@@ -32,16 +32,8 @@ container = 1
 ["levels.rs"]
 raw = 1
 
-["library/album_page.rs"]
-raw = 4
-
 ["library/albums.rs"]
-number = 10
-raw = 8
-
-["library/artist_page.rs"]
-number = 9
-raw = 7
+raw = 1
 
 ["library/artists.rs"]
 raw = 4
@@ -60,20 +52,11 @@ raw = 4
 number = 2
 raw = 2
 
-["library/stage.rs"]
-raw = 1
-
 ["library/tile.rs"]
-number = 26
-fixed = 3
-raw = 10
+raw = 1
 
 ["library/tokens.rs"]
 raw = 1
-
-["library/tracks.rs"]
-number = 4
-raw = 5
 
 ["links.rs"]
 raw = 1
@@ -110,14 +93,11 @@ raw = 1
 ["queue/mod.rs"]
 raw = 1
 
-["root.rs"]
-raw = 1
-
 ["settings/mod.rs"]
 number = 6
 fixed = 1
 container = 2
-raw = 9
+raw = 8
 
 ["settings/panes/devices.rs"]
 number = 2

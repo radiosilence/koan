@@ -23,8 +23,6 @@ use koan_ffi::{ConnectionInfo, KoanEngine};
 use koan_kit::app::*;
 // gpui-component's focus and click extensions, for the shell's own handling.
 use koan_kit::raw::base::Root;
-// the bounds a cached view keeps between frames.
-use koan_kit::raw::StyleRefinement;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::{px, relative, size};
 // the platform window and its options.

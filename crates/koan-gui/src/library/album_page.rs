@@ -8,10 +8,8 @@ use std::rc::Rc;
 
 use koan_ffi::{Album, Track};
 use koan_kit::app::*;
-// painted and hit-tested by hand: drawing koan-kit has no component for.
-use koan_kit::raw::canvas;
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{UniformListScrollHandle, uniform_list};
+use crate::components::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
@@ -430,17 +428,7 @@ impl Render for AlbumPage {
         }
         let width = self.width.clone();
         let entity = cx.entity_id();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if width.get() != Some(bounds.size.width) {
-                    width.set(Some(bounds.size.width));
-                    cx.notify(entity);
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .size_full();
+        let measure = crate::components::width_probe(width, entity);
         let content = match (self.width.get(), self.gone) {
             (_, Some(failed)) => div()
                 .size_full()
@@ -495,7 +483,7 @@ impl Render for AlbumPage {
                                 .size_full(),
                             )
                             // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                            .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                            .child(crate::components::list_scrollbar(&self.scroll)),
                         cx.weak_entity(),
                         window,
                         cx,

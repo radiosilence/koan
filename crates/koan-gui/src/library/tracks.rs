@@ -13,10 +13,8 @@ use std::time::Duration;
 
 use koan_ffi::{BrowseFilter, Track, TrackBrowseSort};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{point, px};
 // virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::{UniformListScrollHandle, uniform_list};
+use crate::components::{UniformListScrollHandle, uniform_list};
 
 use super::covers::{Art, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
@@ -85,7 +83,7 @@ impl TrackBrowser {
                 .0
                 .borrow()
                 .base_handle
-                .set_offset(point(px(0.0), -y));
+                .set_offset(crate::components::offset_down(y));
         }
     }
 
@@ -316,7 +314,7 @@ impl TrackBrowser {
                     Priority::Ahead(i.abs_diff(visible.start).min(i.abs_diff(visible.end)) as f32)
                 };
                 Some((
-                    Key::new(Art::Album(album), px(rows::SLEEVE), scale),
+                    Key::new(Art::Album(album), Pixels::from(rows::SLEEVE), scale),
                     priority,
                 ))
             })
@@ -349,7 +347,7 @@ impl TrackBrowser {
             _ => PlayableDrag::new(&[item], title).with_sleeve(album),
         };
         let sleeve = album.map(|album| {
-            let key = Key::new(Art::Album(album), px(rows::SLEEVE), scale);
+            let key = Key::new(Art::Album(album), Pixels::from(rows::SLEEVE), scale);
             self.lib.covers.update(cx, |c, _| c.sleeve(key))
         });
         let feed = self.lib.feed.read(cx);
@@ -562,11 +560,11 @@ impl Render for TrackBrowser {
                     .id("track-list")
                     .flex_1()
                     .min_h_0()
-                    .pt(px(10.0))
+                    .pt(p.look.spaced(10.0))
                     .relative()
                     .child(body)
                     // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                    .child(crate::components::list_scrollbar(&self.scroll)),
                 cx.weak_entity(),
                 window,
                 cx,
