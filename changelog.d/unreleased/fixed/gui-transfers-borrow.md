@@ -1,0 +1,1 @@
+- **The desktop app builds again.** Following transfers read the mirror and wrote to itself in one call, which the borrow checker refuses.
