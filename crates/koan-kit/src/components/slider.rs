@@ -78,7 +78,11 @@ impl Glide {
         let offset = match previous {
             Some(previous) if previous != next && previous.1 == rate && rate > 0.0 => {
                 let offset = at(previous) - at(next);
-                if offset.abs() <= rate * DRIFT { offset } else { 0.0 }
+                if offset.abs() <= rate * DRIFT {
+                    offset
+                } else {
+                    0.0
+                }
             }
             _ => 0.0,
         };
