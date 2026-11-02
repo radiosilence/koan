@@ -19,6 +19,7 @@ pub struct Heart {
     on: bool,
     role: TypeRole,
     rest: Tone,
+    help: Option<SharedString>,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -31,6 +32,7 @@ impl Heart {
             on,
             role: TypeRole::Meta,
             rest: Tone::Muted,
+            help: None,
             on_click: None,
         }
     }
@@ -44,6 +46,13 @@ impl Heart {
     /// The outline's tone while off: `muted` in a list, `ink` over a sleeve.
     pub fn rest(mut self, tone: Tone) -> Self {
         self.rest = tone;
+        self
+    }
+
+    /// What its tooltip says, where it says more than "favourite" or
+    /// "remove from favourites": the shortcut, on the playing track's heart.
+    pub fn help(mut self, help: impl Into<SharedString>) -> Self {
+        self.help = Some(help.into());
         self
     }
 
@@ -87,12 +96,20 @@ impl RenderOnce for Heart {
         };
         let on = self.on;
         let answers = Answerer::of(&self.id, window, cx);
+        let tip = self.help.clone().unwrap_or_else(|| {
+            crate::theme::label(if on {
+                "remove from favourites"
+            } else {
+                "favourite"
+            })
+        });
         self.base
             .relative()
             .flex()
             .items_center()
             .justify_center()
             .cursor_pointer()
+            .tooltip(move |window, cx| super::Tooltip::view(tip.clone(), window, cx))
             .child(
                 div()
                     .relative()

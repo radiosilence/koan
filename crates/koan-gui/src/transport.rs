@@ -321,6 +321,9 @@ impl Transport {
             which,
             text_button(icon, label, p)
                 .id(label)
+                .tooltip(move |window, cx| {
+                    crate::components::Tooltip::view(crate::theme::label(label), window, cx)
+                })
                 .when(!enabled, |b| b.opacity(0.4)),
             |this: &mut Self| &mut this.menus,
             move |this, window, cx| enabled.then(|| this.build(which, window, cx)).flatten(),
@@ -833,6 +836,11 @@ impl Render for Transport {
         let play_pause = Button::new("play-pause", ButtonKind::IconOutlined)
             .icon(if playing { Icon::Pause } else { Icon::Play })
             .label(if playing { "pause" } else { "play" })
+            .help(help(
+                if playing { "pause" } else { "play" },
+                &crate::platform::actions::TogglePlayPause,
+                cx,
+            ))
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
         // The controls and the seek bar centred in the bar as the Mac's:
@@ -857,29 +865,47 @@ impl Render for Transport {
                     .justify_center()
                     .gap(TransportMetrics::control_gap(&p.look))
                     .child(
-                        TransportControl::new("shuffle", Icon::Shuffle, "shuffle")
-                            .on(shuffle)
-                            .on_click(move |_, _, cx| {
-                                command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
-                            }),
+                        TransportControl::new(
+                            "shuffle",
+                            Icon::Shuffle,
+                            "shuffle",
+                            theme::label("shuffle"),
+                        )
+                        .on(shuffle)
+                        .on_click(move |_, _, cx| {
+                            command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
+                        }),
                     )
                     .child(
-                        TransportControl::new("previous", Icon::Previous, "prev")
-                            .help(help("previous track", &Previous, cx))
-                            .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
+                        TransportControl::new(
+                            "previous",
+                            Icon::Previous,
+                            "prev",
+                            help("previous track", &Previous, cx),
+                        )
+                        .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
-                        TransportControl::new("next", Icon::Next, "next")
-                            .help(help("next track", &Next, cx))
-                            .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
+                        TransportControl::new(
+                            "next",
+                            Icon::Next,
+                            "next",
+                            help("next track", &Next, cx),
+                        )
+                        .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
-                        TransportControl::new("repeat", repeat_icon, repeat_label)
-                            .on(now.repeat_mode != RepeatMode::Off)
-                            .on_click(move |_, _, cx| {
-                                command(cx, "repeat", move |e| e.set_repeat(next_repeat))
-                            }),
+                        TransportControl::new(
+                            "repeat",
+                            repeat_icon,
+                            repeat_label,
+                            theme::label(repeat_label),
+                        )
+                        .on(now.repeat_mode != RepeatMode::Off)
+                        .on_click(move |_, _, cx| {
+                            command(cx, "repeat", move |e| e.set_repeat(next_repeat))
+                        }),
                     ),
             )
             // Its own cached view. A tick re-renders the slider and the views

@@ -19,18 +19,25 @@ pub struct TransportControl {
     icon: Icon,
     label: SharedString,
     on: Option<bool>,
-    help: Option<SharedString>,
+    help: SharedString,
     on_click: Option<Handler<ClickEvent>>,
 }
 
 impl TransportControl {
-    pub fn new(id: impl Into<ElementId>, icon: Icon, text: impl AsRef<str>) -> Self {
+    /// `text` is its word where the look hides icons; `help` what its
+    /// tooltip says, its shortcut included.
+    pub fn new(
+        id: impl Into<ElementId>,
+        icon: Icon,
+        text: impl AsRef<str>,
+        help: impl Into<SharedString>,
+    ) -> Self {
         Self {
             id: id.into(),
             icon,
             label: label(text),
             on: None,
-            help: None,
+            help: help.into(),
             on_click: None,
         }
     }
@@ -38,12 +45,6 @@ impl TransportControl {
     /// A control that toggles, and whether it is on.
     pub fn on(mut self, on: bool) -> Self {
         self.on = Some(on);
-        self
-    }
-
-    /// What its tooltip says, its shortcut included.
-    pub fn help(mut self, help: impl Into<SharedString>) -> Self {
-        self.help = Some(help.into());
         self
     }
 
@@ -91,9 +92,7 @@ impl RenderOnce for TransportControl {
             .text_role(TypeRole::Control, &look)
             .text_color(color)
             .hover(|s| s.opacity(0.8))
-            .when_some(tip, |d, tip| {
-                d.tooltip(move |window, cx| Tooltip::view(tip.clone(), window, cx))
-            })
+            .tooltip(move |window, cx| Tooltip::view(tip.clone(), window, cx))
             .child(
                 div()
                     .relative()
