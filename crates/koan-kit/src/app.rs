@@ -2,7 +2,8 @@
 //! do: entities and their contexts, views and elements, events, actions,
 //! focus, globals and tasks, and `div` with the traits that give it
 //! children, layout and listeners; and the platform's services the app
-//! uses (the clipboard, dropped files, the file picker). Pages build from
+//! uses (the clipboard, dropped files, the file picker), and the size a
+//! cached view keeps between frames (`StyleRefinement`). Pages build from
 //! these and koan-kit's components.
 //!
 //! What a page sizes, colours or draws by hand (`px`, colours, fonts,
@@ -16,8 +17,9 @@ pub use gpui_kit::{
     ElementId, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable, Global,
     IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, NavigationDirection, ParentElement, PathPromptOptions, Pixels,
-    Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString, Size, Stateful, Subscription,
-    Task, UpdateGlobal, WeakEntity, Window, WindowHandle, WindowVisibility, actions, div,
+    Point, ReadGlobal, Render, RenderOnce, ScrollEvent, SharedString, Size, Stateful,
+    StyleRefinement, Subscription, Task, UpdateGlobal, WeakEntity, Window, WindowHandle,
+    WindowVisibility, actions, div,
 };
 
 /// The text input koan-kit's fields draw (`TextField`, `FilterField`): a

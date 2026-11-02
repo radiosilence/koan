@@ -466,7 +466,7 @@ impl AlbumGrid {
                 cx.notify();
             })
         }));
-        let height = grid.row - px(tile::LINE_GAP);
+        let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(end.saturating_sub(start));
         for record in records.get(start..end).unwrap_or_default() {
             let item = Playable::Album(record.id);

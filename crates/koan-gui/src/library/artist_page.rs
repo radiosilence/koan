@@ -594,7 +594,7 @@ impl ArtistPage {
                 cx.notify();
             })
         }));
-        let height = grid.row - px(tile::LINE_GAP);
+        let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(albums.len());
         for album in albums {
             let record = self

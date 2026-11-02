@@ -54,6 +54,7 @@ mod status;
 mod stepper;
 mod suggestions;
 mod table;
+mod tile;
 mod toggle;
 mod toolbar;
 mod viewer;
@@ -113,6 +114,7 @@ pub use status::StatusBlock;
 pub use stepper::Stepper;
 pub use suggestions::{SuggestionHeading, SuggestionPanel, SuggestionRow};
 pub use table::{ROW_GROUP, RowNumber, TableRow, table_list};
+pub use tile::{TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
