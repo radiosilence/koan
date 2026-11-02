@@ -1,0 +1,1 @@
+- **A click on the seek bar lands at once.** The bar no longer shows the old place for a frame while the engine takes the seek, so it does not jump on the way to where it was clicked.
