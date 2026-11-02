@@ -399,7 +399,7 @@ impl Sheets {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(look.palette.bg.hsla().opacity(0.6))
+                .bg(look.veil(0.6))
                 // Every click on the window behind goes nowhere.
                 .occlude()
                 .child(panel)

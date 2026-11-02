@@ -52,7 +52,7 @@ impl RenderOnce for Banner {
             .gap(look.space(Space::M))
             .px(look.space(Space::L))
             .py(look.space(Space::S))
-            .border_b(HAIRLINE)
+            .border_b(look.hairline)
             .border_color(look.palette.rule.hsla().opacity(ROW_RULE_OPACITY))
             .text_role(TypeRole::Fine, &look)
             .text_color(color)

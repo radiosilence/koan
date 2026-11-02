@@ -383,10 +383,13 @@ mod transport_tests {
     fn look(text_size: u32) -> Look {
         Look {
             dark: true,
+            contrast: false,
             palette: Palette::of(true),
             accent: Accent::of(None).shade(true),
             scale: Scale::of(text_size),
             icons: true,
+            hairline: crate::theme::HAIRLINE,
+            opaque: false,
         }
     }
 

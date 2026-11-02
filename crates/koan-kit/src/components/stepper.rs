@@ -169,7 +169,7 @@ impl RenderOnce for StepButton {
             .items_center()
             .justify_center()
             .size(px(28.0))
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(look.palette.muted.hsla())
             .when(!self.allowed, |button| button.opacity(DISABLED_OPACITY))
             .child(

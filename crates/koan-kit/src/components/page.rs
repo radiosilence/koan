@@ -347,7 +347,7 @@ impl RenderOnce for PlayButton {
         .flex()
         .items_center()
         .justify_center()
-        .border(crate::theme::HAIRLINE)
+        .border(look.hairline)
         .border_color(accent)
         .when(!loading, |d| {
             d.cursor_pointer().active(move |s| s.bg(hover))

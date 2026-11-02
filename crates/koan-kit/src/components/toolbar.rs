@@ -111,7 +111,7 @@ impl RenderOnce for Toolbar {
             // `bg`, flush with the page.
             .map(|d| {
                 if KoanTheme::washes_window(cx) {
-                    d.border_b(HAIRLINE).border_color(look.palette.rule.hsla())
+                    d.border_b(look.hairline).border_color(look.palette.rule.hsla())
                 } else {
                     d.bg(look.palette.bg.hsla())
                 }

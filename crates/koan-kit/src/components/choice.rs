@@ -167,7 +167,7 @@ pub fn menu(
                 .into_any_element(),
             Item::Rule => div()
                 .my(look.space(Space::Xs))
-                .h(HAIRLINE)
+                .h(look.hairline)
                 .bg(look.palette.rule.hsla())
                 .into_any_element(),
         });

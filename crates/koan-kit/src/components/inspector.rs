@@ -60,7 +60,7 @@ impl RenderOnce for Inspector {
             .flex()
             .flex_col()
             .when(!self.clear, |d| d.bg(p.bg.hsla()))
-            .border_l(HAIRLINE)
+            .border_l(look.hairline)
             .border_color(p.rule.hsla())
             .child(
                 div()
@@ -69,7 +69,7 @@ impl RenderOnce for Inspector {
                     .justify_between()
                     .px(look.space(Space::L))
                     .py(look.spaced(11.0))
-                    .border_b(HAIRLINE)
+                    .border_b(look.hairline)
                     .border_color(p.rule.hsla())
                     .child(
                         div()

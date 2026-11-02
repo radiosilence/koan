@@ -64,7 +64,7 @@ impl RenderOnce for Segmented {
             .aria_position_in_set(index + 1)
             .aria_size_of_set(count)
             .pb(px(5.0))
-            .border_b(HAIRLINE)
+            .border_b(look.hairline)
             .border_color(accent.opacity(chosen))
             .text_role(TypeRole::Control, &look)
             .text_color(mix(

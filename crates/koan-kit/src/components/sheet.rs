@@ -22,7 +22,7 @@ pub fn panel(look: &Look) -> Stateful<Div> {
         .w(px(560.0))
         .max_h(relative(0.85))
         .bg(look.palette.bg.hsla())
-        .border(HAIRLINE)
+        .border(look.hairline)
         .border_color(look.palette.rule.hsla())
 }
 
@@ -58,7 +58,7 @@ pub fn head_data(
         .gap(look.space(Space::M))
         .px(look.space(Space::L))
         .py(look.space(Space::M))
-        .border_b(HAIRLINE)
+        .border_b(look.hairline)
         .border_color(look.palette.rule.hsla())
         .child(
             div()
@@ -95,7 +95,7 @@ pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .justify_center()
         .items_start()
         .pt(look.space(Space::Xxl))
-        .bg(look.palette.bg.hsla().opacity(0.6))
+        .bg(look.veil(0.6))
         .occlude()
 }
 
@@ -105,7 +105,7 @@ pub fn search_head(input: &Entity<InputState>, look: &Look) -> impl IntoElement 
     div()
         .px(look.space(Space::L))
         .py(look.space(Space::M))
-        .border_b(HAIRLINE)
+        .border_b(look.hairline)
         .border_color(look.palette.rule.hsla())
         .child(super::FilterField::new(input).fill())
 }
@@ -115,7 +115,7 @@ pub fn band(content: impl IntoElement, look: &Look) -> impl IntoElement {
     div()
         .px(look.space(Space::L))
         .py(look.space(Space::S))
-        .border_b(HAIRLINE)
+        .border_b(look.hairline)
         .border_color(look.palette.rule.hsla())
         .child(content)
 }
@@ -129,7 +129,7 @@ pub fn foot(leading: Vec<AnyElement>, actions: Vec<AnyElement>, look: &Look) -> 
         .gap(look.space(Space::S))
         .px(look.space(Space::L))
         .py(look.space(Space::S))
-        .border_t(HAIRLINE)
+        .border_t(look.hairline)
         .border_color(look.palette.rule.hsla())
         .child(
             div()
@@ -225,7 +225,7 @@ pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .justify_center()
             .items_start()
             .pt(look.space(Space::Xxl))
-            .bg(look.palette.bg.hsla().opacity(0.6))
+            .bg(look.veil(0.6))
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(view)

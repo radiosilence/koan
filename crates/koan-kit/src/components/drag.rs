@@ -49,7 +49,7 @@ impl RenderOnce for DragChip {
             .p(look.space(Space::Xs))
             .pr(look.space(Space::M))
             .bg(p.surface.hsla())
-            .border(HAIRLINE)
+            .border(look.hairline)
             .border_color(p.rule.hsla())
             .text_role(TypeRole::Meta, &look)
             .text_color(p.ink.hsla())

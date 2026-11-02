@@ -107,7 +107,7 @@ impl RenderOnce for Picker {
         // The theme's bordered button, as a form's dropdown is.
         .py(look.spaced(6.))
         .px(look.spaced(12.))
-        .border(HAIRLINE)
+        .border(look.hairline)
         .border_color(look.palette.muted.hsla())
         .text_role(TypeRole::Control, &look)
         .text_color(color)

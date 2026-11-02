@@ -453,7 +453,7 @@ impl Render for SheetContent {
                         )
                         .child(
                             div()
-                                .h(HAIRLINE)
+                                .h(look.hairline)
                                 .my(look.space(Space::Xs))
                                 .bg(look.palette.rule.hsla()),
                         )
@@ -515,7 +515,7 @@ impl Render for SheetContent {
             SectionHeader::new("Empty").into_any_element(),
             div()
                 .h(px(200.0))
-                .border(HAIRLINE)
+                .border(look.hairline)
                 .border_color(look.palette.rule.hsla())
                 .child(
                     EmptyState::new(Icon::Playlist, "No playlists")

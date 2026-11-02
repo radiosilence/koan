@@ -194,7 +194,7 @@ impl RenderOnce for SplitView {
                     .flex_1()
                     .min_w(px(0.))
                     .h_full()
-                    .border_l(HAIRLINE)
+                    .border_l(look.hairline)
                     .border_color(rule)
                     .children(self.trailing),
             )

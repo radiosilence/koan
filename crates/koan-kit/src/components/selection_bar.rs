@@ -60,7 +60,7 @@ impl RenderOnce for SelectionBar {
             .justify_between()
             .px(RowMetrics::page_margin(&look))
             .py(look.space(Space::M))
-            .border_t(HAIRLINE)
+            .border_t(look.hairline)
             .border_color(look.palette.rule.hsla())
             .bg(look.palette.bg.hsla())
             .child(

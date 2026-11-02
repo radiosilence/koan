@@ -35,7 +35,7 @@ pub fn render(dsp: &Entity<Dsp>, window: &mut Window, cx: &mut App) -> Option<An
             .justify_center()
             .items_start()
             .pt(look.space(Space::Xxl))
-            .bg(look.palette.bg.hsla().opacity(0.6))
+            .bg(look.veil(0.6))
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(panel(&look).child(shown))

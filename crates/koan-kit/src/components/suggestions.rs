@@ -62,7 +62,7 @@ impl RenderOnce for SuggestionPanel {
                 .flex_col()
                 .pb(look.space(Space::Xs))
                 .bg(look.palette.bg.hsla())
-                .border(HAIRLINE)
+                .border(look.hairline)
                 .border_color(look.palette.rule.hsla())
                 .children(self.children),
         )
