@@ -935,6 +935,9 @@ pub struct LinkIdentity {
 }
 
 impl LinkIdentity {
+    /// The apps' `files`: the native app on each platform, whose files and
+    /// saved session carry no prefix.
+    pub const APP_FILES: &'static str = "";
     /// The terminal UI's `files`.
     pub const TERMINAL_FILES: &'static str = "terminal-";
     /// The desktop app's `files`.
@@ -971,7 +974,7 @@ impl LinkIdentity {
                 .unwrap_or_else(|| label.to_string()),
             platform: platform.to_string(),
             device_id: this_device_id(),
-            files: "",
+            files: Self::APP_FILES,
         }
     }
 

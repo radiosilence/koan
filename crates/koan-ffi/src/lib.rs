@@ -2594,7 +2594,13 @@ impl KoanEngine {
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
             let content = self.state.saved_version();
-            if self.saved_content.load(Ordering::Acquire) == content {
+            // Unchanged, the queue is skipped, unless its row has gone:
+            // `clearPlaybackState` on this app's own server deletes it with
+            // the engine none the wiser, and a position alone restores
+            // nothing at the next launch.
+            if self.saved_content.load(Ordering::Acquire) == content
+                && queries::has_saved_queue(&db.conn, self.session).map_err(fav_err)?
+            {
                 return self.write_position(&db);
             }
             let (items, cursor) = self.state.snapshot_playlist();
