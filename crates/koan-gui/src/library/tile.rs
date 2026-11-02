@@ -58,7 +58,7 @@ impl Grid {
     pub fn for_width(width: Pixels, scale: &Scale) -> Self {
         // The page's margin, so the grid's edge is the header's and the
         // rows'.
-        let margin = px(crate::theme::Space::Xxl.points() * scale.space);
+        let margin = crate::components::RowMetrics::page_margin_on(scale);
         let columns = crate::components::TileColumns::for_width(width, margin);
         Self {
             columns: columns.columns,

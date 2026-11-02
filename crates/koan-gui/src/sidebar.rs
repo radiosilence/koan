@@ -156,19 +156,33 @@ impl Sidebar {
         self.loading = Some(cx.spawn(
             async move |this, cx| match engine.clone().playlists().await {
                 Ok(playlists) => {
-                    let mut faces = HashMap::new();
-                    for playlist in &playlists {
-                        match engine.clone().playlist_cover_album_ids(playlist.id).await {
-                            Ok(albums) => {
-                                faces.insert(playlist.id, albums);
-                            }
-                            Err(e) => log::warn!("playlist {} sleeve: {e}", playlist.id),
-                        }
-                    }
+                    // Every playlist's sleeve read together, not one after
+                    // another.
+                    let read = futures::future::join_all(playlists.iter().map(|playlist| {
+                        let (engine, id) = (engine.clone(), playlist.id);
+                        async move { (id, engine.playlist_cover_album_ids(id).await) }
+                    }))
+                    .await;
                     this.update(cx, |this, cx| {
                         if this.reorders != reorders {
                             this.reload(cx);
                             return;
+                        }
+                        // A sleeve that could not be read keeps the one it had,
+                        // rather than reading as an empty playlist.
+                        let mut faces = HashMap::new();
+                        for (id, albums) in read {
+                            match albums {
+                                Ok(albums) => {
+                                    faces.insert(id, albums);
+                                }
+                                Err(e) => {
+                                    log::warn!("playlist {id} sleeve: {e}");
+                                    if let Some(kept) = this.faces.get(&id) {
+                                        faces.insert(id, kept.clone());
+                                    }
+                                }
+                            }
                         }
                         this.faces = faces;
                         let gone: Vec<i64> = this
@@ -354,33 +368,36 @@ impl Render for Sidebar {
                         // Dragged among the playlists it moves; dropped on
                         // the queue, its tracks are queued.
                         .on_drag(drag, |drag: &PlaylistDrag, at, _, cx| drag.preview(at, cx))
-                        .drop_highlight::<ExternalPaths>(&p.look)
-                        .drop_highlight::<PlayableDrag>(&p.look)
                         // Files, and what is dragged from the library, dropped on a
-                        // playlist's row are added to it.
-                        .on_drop(cx.listener({
-                            let id = playlist.id;
-                            move |_, paths: &ExternalPaths, _, cx| {
-                                drop::add_files_to_playlist(
-                                    &engine(cx),
-                                    id,
-                                    paths.paths().to_vec(),
-                                    cx,
-                                )
-                            }
-                        }))
-                        .on_drop(cx.listener({
-                            let id = playlist.id;
-                            move |_, dragged: &PlayableDrag, _, cx| {
-                                if dragged.is_from(id) {
-                                    return;
-                                }
-                                let sets = dragged.sets.to_vec();
-                                command(cx, "add to playlist", move |e| {
-                                    e.add_to_playlist(id, sets)
-                                });
-                            }
-                        }))
+                        // playlist's row are added to it; a smart or file-backed
+                        // playlist takes nothing, and does not light for it.
+                        .when(!playlist.readonly, |row| {
+                            row.drop_highlight::<ExternalPaths>(&p.look)
+                                .drop_highlight::<PlayableDrag>(&p.look)
+                                .on_drop(cx.listener({
+                                    let id = playlist.id;
+                                    move |_, paths: &ExternalPaths, _, cx| {
+                                        drop::add_files_to_playlist(
+                                            &engine(cx),
+                                            id,
+                                            paths.paths().to_vec(),
+                                            cx,
+                                        )
+                                    }
+                                }))
+                                .on_drop(cx.listener({
+                                    let id = playlist.id;
+                                    move |_, dragged: &PlayableDrag, _, cx| {
+                                        if dragged.is_from(id) {
+                                            return;
+                                        }
+                                        let sets = dragged.sets.to_vec();
+                                        command(cx, "add to playlist", move |e| {
+                                            e.add_to_playlist(id, sets)
+                                        });
+                                    }
+                                }))
+                        })
                         .on_drop(cx.listener(
                             move |this, dragged: &PlaylistDrag, _, cx| {
                                 let at = this.drop_playlist.take().unwrap_or(index);

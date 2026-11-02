@@ -64,7 +64,7 @@ raw = 2
 raw = 1
 
 ["library/tile.rs"]
-number = 26
+number = 25
 fixed = 3
 raw = 10
 
