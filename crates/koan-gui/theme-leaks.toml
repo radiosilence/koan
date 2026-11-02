@@ -7,11 +7,10 @@ number = 2
 raw = 6
 
 ["covers.rs"]
-raw = 5
+raw = 4
 
 ["dsp/flows.rs"]
-number = 1
-raw = 5
+raw = 4
 
 ["dsp/graph.rs"]
 number = 39
@@ -20,9 +19,6 @@ raw = 17
 
 ["dsp/sheet.rs"]
 container = 1
-
-["levels.rs"]
-raw = 1
 
 ["library/albums.rs"]
 raw = 1
@@ -37,21 +33,11 @@ raw = 1
 raw = 5
 
 ["library/covers.rs"]
-number = 3
-raw = 4
+raw = 2
 
 ["library/rows.rs"]
 number = 2
 raw = 2
-
-["library/tile.rs"]
-raw = 1
-
-["library/tokens.rs"]
-raw = 1
-
-["links.rs"]
-raw = 1
 
 ["main.rs"]
 raw = 2
@@ -88,33 +74,11 @@ raw = 1
 ["settings/mod.rs"]
 raw = 2
 
-["settings/panes/devices.rs"]
-number = 2
-raw = 1
-
-["settings/panes/keys.rs"]
-number = 1
-raw = 1
-
-["settings/panes/link.rs"]
-number = 3
+["settings/panes/people.rs"]
 raw = 2
 
-["settings/panes/people.rs"]
-number = 3
-raw = 3
-
-["settings/panes/server.rs"]
-number = 1
-raw = 1
-
-["settings/panes/share.rs"]
-number = 1
-raw = 1
-
 ["settings/sheet.rs"]
-number = 1
-raw = 3
+raw = 2
 
 ["shell.rs"]
 raw = 5
@@ -124,5 +88,4 @@ number = 4
 raw = 5
 
 ["window_state.rs"]
-number = 4
-raw = 4
+raw = 1

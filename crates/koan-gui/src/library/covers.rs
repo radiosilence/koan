@@ -27,12 +27,13 @@ use futures::channel::mpsc;
 use koan_ffi::KoanEngine;
 use koan_kit::app::*;
 // decoded images handed to the renderer.
-use crate::theme::Hsla;
 use koan_kit::raw::RenderImage;
 // a sleeve's average colour, computed from its pixels.
 use koan_kit::raw::Rgba;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{SmallVec, smallvec};
+
+use crate::theme::Hsla;
 
 /// What is asked of the engine, and what lands on disk: large enough for a
 /// record's own page on a 2× display, small enough that a library's worth is

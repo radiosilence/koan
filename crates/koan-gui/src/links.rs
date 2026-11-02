@@ -2,13 +2,14 @@
 //! credited artist to the artist. Underlined under the pointer, as the
 //! theme's link button; a name with no page is plain text.
 
-use crate::theme::Hsla;
 use koan_ffi::CreditPart;
 use koan_kit::app::*;
 
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::theme::{KoanStyled, TypeRole};
+
+use crate::theme::Hsla;
 
 /// One name, leading to `route` when it has one. A click on it is not also
 /// a click on whatever it sits in, a row say.

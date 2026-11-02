@@ -1,10 +1,11 @@
 //! The kōan theme as the library pages draw it: the app's `Paint`, one value
 //! per render, and setting text in a role.
 
-use crate::theme::Hsla;
 use koan_kit::app::*;
 
 use crate::theme::{KoanStyled, TypeRole, tokens as theme};
+
+use crate::theme::Hsla;
 
 pub use crate::theme::TypeRole as Type;
 

@@ -10,12 +10,13 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::theme::Hsla;
 use koan_kit::app::*;
 // decoded images handed to the renderer.
 use koan_kit::raw::{Image, ImageFormat, RenderImage, img};
 
 use crate::engine::engine;
+
+use crate::theme::Hsla;
 
 enum Held {
     /// Asked for and waiting its turn, or being fetched.

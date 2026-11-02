@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::theme::Hsla;
 use koan_ffi::{Album, AlbumOnDevice};
 use koan_kit::app::*;
 
@@ -21,6 +20,8 @@ use super::tokens::{Paint, Type, Typeset};
 use crate::components::{TileArt, TileGrid, TileMark, TileSleeve, origin_probe, text_widths};
 use crate::theme::tokens::Motion;
 use crate::theme::{Icon, KoanIcon, KoanTheme};
+
+use crate::theme::Hsla;
 
 /// The record grid, koan-kit's: every tile the same size, nothing measured.
 pub type Grid = TileGrid;
