@@ -185,7 +185,7 @@ impl StoryContent {
                                 .section(CollectionSection::tiles(
                                     SectionHeading::new("Records")
                                         .count("3")
-                                        .on_open(|_, _, _| {}),
+                                        .on_open("story-records-open", |_, _, _| {}),
                                     grid,
                                     tiles,
                                 ))
