@@ -14,8 +14,9 @@ use super::{Button, ButtonKind, TextField};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Space, Tone, TypeRole, label};
 
 /// A sheet's panel: square, `bg`, a hairline `rule`, 560 wide.
-pub fn panel(look: &Look) -> Div {
-    div()
+pub fn panel(look: &Look) -> Stateful<Div> {
+    // A dialog to a screen reader. The sheet's head names it.
+    super::accessible(div().id("sheet-panel"), gpui_kit::Role::Dialog, None)
         .flex()
         .flex_col()
         .w(px(560.0))
@@ -28,13 +29,13 @@ pub fn panel(look: &Look) -> Div {
 /// A sheet that holds a list to pick from (the picker): wider than a
 /// question's, and tall from the start, so the list growing as it is
 /// typed into moves nothing.
-pub fn list_panel(look: &Look) -> Div {
+pub fn list_panel(look: &Look) -> Stateful<Div> {
     panel(look).w(px(680.0)).h(relative(0.8)).max_h(px(640.0))
 }
 
 /// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
 /// ends in a table of paths that fills the rest, as organise's preview does.
-pub fn wide_panel(look: &Look) -> Div {
+pub fn wide_panel(look: &Look) -> Stateful<Div> {
     panel(look).w(px(880.0)).h(relative(0.85))
 }
 

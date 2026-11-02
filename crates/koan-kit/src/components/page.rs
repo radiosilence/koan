@@ -157,6 +157,7 @@ impl RenderOnce for SectionHeading {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let opens = self.open.is_some();
+        let spoken = self.title.clone();
         let title = div()
             .flex()
             .items_center()
@@ -184,16 +185,21 @@ impl RenderOnce for SectionHeading {
                 .into_any_element(),
             None => title.into_any_element(),
         };
-        div()
-            .w_full()
-            .h(Self::height(&look))
-            .pt(Self::above(&look))
-            .pb(Self::below(&look))
-            .flex()
-            .items_center()
-            .gap(look.space(Space::L))
-            .child(title)
-            .children(self.trailing)
+        super::accessible(
+            div().id(ElementId::Name(format!("section-heading-{spoken}").into())),
+            gpui_kit::Role::Heading,
+            Some(spoken),
+        )
+        .aria_level(2)
+        .w_full()
+        .h(Self::height(&look))
+        .pt(Self::above(&look))
+        .pb(Self::below(&look))
+        .flex()
+        .items_center()
+        .gap(look.space(Space::L))
+        .child(title)
+        .children(self.trailing)
     }
 }
 
@@ -227,11 +233,17 @@ impl RenderOnce for PageHeader {
                         )
                     })
                     .child({
-                        let title = div()
-                            .text_role(TypeRole::Title, &look)
-                            .text_color(p.strong.hsla())
-                            .line_clamp(2)
-                            .child(self.title);
+                        // The page's heading to a screen reader.
+                        let title = super::accessible(
+                            div().id(ElementId::Name(format!("page-title-{}", self.title).into())),
+                            gpui_kit::Role::Heading,
+                            Some(self.title.clone()),
+                        )
+                        .aria_level(1)
+                        .text_role(TypeRole::Title, &look)
+                        .text_color(p.strong.hsla())
+                        .line_clamp(2)
+                        .child(self.title);
                         #[cfg(test)]
                         let title = title.debug_selector(|| "page-header-title".into());
                         title
@@ -325,30 +337,33 @@ impl RenderOnce for PlayButton {
         let accent = look.color(crate::theme::Tone::Accent);
         let hover = look.palette.hover.hsla();
         let loading = self.loading;
-        let _ = &self.label;
-        div()
-            .id(self.id)
-            .size(crate::theme::HIT)
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .border(crate::theme::HAIRLINE)
-            .border_color(accent)
-            .when(!loading, |d| {
-                d.cursor_pointer().active(move |s| s.bg(hover))
-            })
-            .child(if loading {
-                super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
-            } else {
-                crate::theme::KoanIcon::new(crate::theme::Icon::Play)
-                    .points(PLAY_GLYPH * look.scale.size)
-                    .color(look.text_color(crate::theme::Tone::Accent))
-                    .into_any_element()
-            })
-            .when_some(self.on_click.filter(|_| !loading), |d, on_click| {
-                d.on_click(move |event, window, cx| on_click(event, window, cx))
-            })
+        super::accessible(
+            div().id(self.id),
+            gpui_kit::Role::Button,
+            Some(self.label.clone()),
+        )
+        .size(crate::theme::HIT)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .border(crate::theme::HAIRLINE)
+        .border_color(accent)
+        .when(!loading, |d| {
+            d.cursor_pointer().active(move |s| s.bg(hover))
+        })
+        .child(if loading {
+            super::Spinner::new(look.font_size(TypeRole::Body)).into_any_element()
+        } else {
+            crate::theme::KoanIcon::new(crate::theme::Icon::Play)
+                .points(PLAY_GLYPH * look.scale.size)
+                .color(look.text_color(crate::theme::Tone::Accent))
+                .into_any_element()
+        })
+        .when_some(self.on_click.filter(|_| !loading), |d, on_click| {
+            super::answers_click(d, on_click.clone())
+                .on_click(move |event, window, cx| on_click(event, window, cx))
+        })
     }
 }
 
@@ -397,30 +412,31 @@ impl RenderOnce for ShuffleButton {
         // the button's group rather than the text colour.
         let group = SharedString::from(format!("shuffle-{:?}", self.id));
         let disabled = self.disabled;
-        div()
-            .id(self.id)
-            .group(group.clone())
-            .size(crate::theme::HIT)
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
-            .when(!disabled, |d| d.cursor_pointer())
-            .child(
-                crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
-                    .points(SHUFFLE_GLYPH * look.scale.size)
-                    .tone(crate::theme::Tone::Muted)
-                    .when(!disabled, |i| i.hover_color(group, ink)),
-            )
-            .tooltip({
-                let help: SharedString =
-                    format!("{} {}", crate::theme::label("shuffle"), self.name).into();
-                move |window, cx| super::Tooltip::view(help.clone(), window, cx)
-            })
-            .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
-                d.on_click(move |event, window, cx| on_click(event, window, cx))
-            })
+        let help: SharedString = format!("{} {}", crate::theme::label("shuffle"), self.name).into();
+        super::accessible(
+            div().id(self.id),
+            gpui_kit::Role::Button,
+            Some(help.clone()),
+        )
+        .group(group.clone())
+        .size(crate::theme::HIT)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+        .when(!disabled, |d| d.cursor_pointer())
+        .child(
+            crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
+                .points(SHUFFLE_GLYPH * look.scale.size)
+                .tone(crate::theme::Tone::Muted)
+                .when(!disabled, |i| i.hover_color(group, ink)),
+        )
+        .tooltip(move |window, cx| super::Tooltip::view(help.clone(), window, cx))
+        .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
+            super::answers_click(d, on_click.clone())
+                .on_click(move |event, window, cx| on_click(event, window, cx))
+        })
     }
 }
 

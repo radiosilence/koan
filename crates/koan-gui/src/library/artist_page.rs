@@ -283,10 +283,10 @@ impl ArtistPage {
         // Headed even when there is one section, so a discography of albums
         // alone still says what it is.
         for (section, start, len) in sections(&record.albums) {
+            // In the release's own words; the heading puts them in the
+            // theme's case.
             items.push(Item::Heading(
-                koan_ffi::release_section_title(section)
-                    .to_lowercase()
-                    .into(),
+                koan_ffi::release_section_title(section).into(),
                 Heading::Section(section),
             ));
             rows(&mut items, false, start, len);
@@ -695,18 +695,30 @@ impl ArtistPage {
         // a photo known only after the page drew grows its box in.
         let side = RowMetrics::artist_photo(&p.look);
         let arriving = self.photo_arriving;
-        let photo = self.info.as_ref().is_some_and(|i| i.has_image).then(|| {
-            let art = self.photo(side, scale, cx).unwrap_or(CoverArt::Missing);
-            Reveal::new(
-                ("artist-photo", id as u64),
-                Size {
-                    width: side,
-                    height: side,
-                },
-                Cover::new(art, side).id(("artist-photo-cover", id as u64)),
-            )
-            .arriving(arriving)
-        });
+        // The box stays only while a photo may yet come: one the covers found
+        // there is none of (refused, its address gone) gives the header its
+        // room back.
+        let no_photo = self
+            .lib
+            .covers
+            .read(cx)
+            .is_absent(Art::Artist(self.artist_id));
+        let photo = self
+            .info
+            .as_ref()
+            .is_some_and(|i| i.has_image && !no_photo)
+            .then(|| {
+                let art = self.photo(side, scale, cx).unwrap_or(CoverArt::Missing);
+                Reveal::new(
+                    ("artist-photo", id as u64),
+                    Size {
+                        width: side,
+                        height: side,
+                    },
+                    Cover::new(art, side).id(("artist-photo-cover", id as u64)),
+                )
+                .arriving(arriving)
+            });
         // An artist with no records of their own is counted by the tracks
         // they appear on, which the page lists instead.
         let detail = match record.albums.len() as u64 {

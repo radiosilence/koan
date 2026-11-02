@@ -7158,6 +7158,13 @@ impl Window {
             .push((action, Box::new(listener)));
     }
 
+    /// KOAN: handles `request` as though assistive technology had sent it,
+    /// for tests that drive elements the way a screen reader does (#1776).
+    #[cfg(not(target_family = "wasm"))]
+    pub fn dispatch_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+        self.handle_a11y_action(request, cx);
+    }
+
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
         // Take listeners out temporarily so the closures can borrow Window

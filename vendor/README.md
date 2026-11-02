@@ -8,11 +8,12 @@ Copies of published crates carried with patches until the patches are taken upst
 
 | Crate | Version | Patches |
 |---|---|---|
-| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs` |
+| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs`. Accessibility (#1776): `aria_disabled` in `elements/div.rs` and the debug tree, `Window::dispatch_a11y_action` for tests |
 | `gpui-pre-apple` | 0.3.10 | Shader quads drawn by Metal (#1641): `metal_renderer.rs` |
 | `gpui-pre-wgpu` | 0.3.10 | Shader quads drawn by wgpu, and the layered compose (#1641): `wgpu_renderer.rs` |
 | `gpui-pre-macos` | 0.3.10 | Idle frames (#1609): `window.rs`, `display_link.rs` |
 | `gpui-pre-linux` | 0.3.10 | Idle frames on X11 (#1609): `linux/x11/client.rs`, `window.rs` |
+| `gpui-base` | 0.8.1 | The text caret drawn by a shader (#1786): `input/base/blink_cursor.rs`, `element.rs`, `state.rs` |
 
 `gpui-pre`'s examples and benches are left out of the copy, and their sections out of its `Cargo.toml`.
 
@@ -33,4 +34,8 @@ GPUI's macOS and X11 backends ask for a frame on every display refresh for as lo
 - **macOS** (`gpui-pre-macos/src/window.rs`, `display_link.rs`): the window's display link parks after three frames no one asked for. `frame_waker` and `schedule_frame` only signal a main-queue dispatch source, since GPUI can call them while the window's state is locked; its handler restarts a parked link. Visibility still starts and stops the link as before. After herdr-app's patch for gpui-pre-macos 0.3.8.
 - **X11** (`gpui-pre-linux/src/linux/x11/client.rs`, `window.rs`): the refresh timer drops itself after three refreshes no one asked for and the window's refresh state becomes `Parked`. A window's waker sets a flag of its own and rings a calloop ping, so it never borrows the client's state; the ping's handler restarts the timers of parked, visible windows that asked for a frame.
 
-To move to a new GPUI release, `just vendor-gpui <version>` fetches each crate's release from crates.io, checks it against the checksum the crates.io index records, and applies its patch. It stops at the first patch that does not apply, leaving `vendor/` as it was, and names the file and line. Reapply that crate's `KOAN:` hunks by hand against the release (drop any the release has taken upstream), run `just vendor-gpui-patches`, and move the pins in `Cargo.toml`.
+## gpui-base (0.8.1): the caret's blink
+
+gpui-base is gpui-kit's, released on gpui-kit's numbers; it draws the text fields. Its caret blinked by notifying the input's state every 500 ms, and GPUI redraws every view above one notified, so a focused field made its whole page (the album grid, a browser) render twice a second. The caret is now a shader quad (`CARET` in `blink_cursor.rs`), painted shown in its colour, whose visibility the blink writes into its uniforms before asking the window it was last painted in for a present: a blink re-presents the last frame and draws none. Starting, stopping and pausing the blink still notify, as each comes with focus or typing, which draw anyway. The OTP input, which koan does not use, keeps the notifying blink.
+
+To move to a new GPUI release, `just vendor-gpui <version> [<gpui-kit version>]` fetches each crate's release from crates.io, checks it against the checksum the crates.io index records, and applies its patch. It stops at the first patch that does not apply, leaving `vendor/` as it was, and names the file and line. Reapply that crate's `KOAN:` hunks by hand against the release (drop any the release has taken upstream), run `just vendor-gpui-patches`, and move the pins in `Cargo.toml`.

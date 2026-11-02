@@ -6,7 +6,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use super::{Handler, child, focus, ring};
+use super::{Handler, accessible, child, focus, ring};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label,
 };
@@ -89,8 +89,29 @@ impl RenderOnce for Stepper {
         };
         let down = (self.value - self.step).max(self.min);
         let up = (self.value + self.step).min(self.max);
-        div()
-            .flex()
+        // A spin button to a screen reader: its value, said as shown, and a
+        // step either way.
+        let mut row = accessible(
+            div().id(child(&self.id, "spin")),
+            gpui_kit::Role::SpinButton,
+            Some(self.title.clone()),
+        )
+        .aria_disabled(disabled)
+        .aria_numeric_value(self.value as f64)
+        .aria_min_numeric_value(self.min as f64)
+        .aria_max_numeric_value(self.max as f64)
+        .aria_numeric_value_step(self.step as f64)
+        .when_some(self.shown.clone(), |d, shown| d.aria_value(shown));
+        if let Some(on_change) = self.on_change.clone().filter(|_| !disabled) {
+            for (action, to) in [
+                (gpui_kit::AccessibleAction::Increment, up),
+                (gpui_kit::AccessibleAction::Decrement, down),
+            ] {
+                let set = on_change.clone();
+                row = row.on_a11y_action(action, move |_, window, cx| set(&to, window, cx));
+            }
+        }
+        row.flex()
             .items_center()
             .gap(look.space(Space::Xs))
             .min_h(HIT)

@@ -48,7 +48,7 @@ pub fn page_header(
 ) -> Div {
     div()
         .px(crate::components::RowMetrics::page_margin(&p.look))
-        .pt(p.space(Space::L))
+        .pt(crate::components::RowMetrics::page_top(&p.look))
         .child(
             crate::components::PageHeader::new(title)
                 .detail(detail)

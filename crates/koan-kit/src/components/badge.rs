@@ -39,16 +39,21 @@ impl RenderOnce for Badge {
         } else {
             (look.palette.ink.hsla(), look.palette.rule.hsla())
         };
-        div()
-            .flex_none()
-            .px(px(7.0))
-            .py(px(2.0))
-            .border(HAIRLINE)
-            .border_color(outline)
-            .text_role(TypeRole::Fine, &look)
-            .text_color(text)
-            .whitespace_nowrap()
-            .child(self.text)
+        // A label to a screen reader, named by its text.
+        super::accessible(
+            div().id(ElementId::Name(format!("badge-{}", self.text).into())),
+            gpui_kit::Role::Label,
+            Some(self.text.clone()),
+        )
+        .flex_none()
+        .px(px(7.0))
+        .py(px(2.0))
+        .border(HAIRLINE)
+        .border_color(outline)
+        .text_role(TypeRole::Fine, &look)
+        .text_color(text)
+        .whitespace_nowrap()
+        .child(self.text)
     }
 }
 

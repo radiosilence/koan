@@ -1,0 +1,1 @@
+- **The desktop app says why it cannot open your library, and what to do.** A database a newer kōan has upgraded, or another desktop app already running on the configuration, is shown in a window instead of the app quitting without a word.

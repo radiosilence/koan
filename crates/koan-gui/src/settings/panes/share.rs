@@ -455,6 +455,7 @@ fn away_from_home(
                     options.iter().map(|(label, _)| label.as_str()),
                     values.iter().position(|v| *v == choice),
                 )
+                .named("invite phones to")
                 .disabled(sharing.busy())
                 .on_change(move |index, window, cx| {
                     let to = values[*index];

@@ -210,39 +210,50 @@ impl RenderOnce for ProgressRow {
                 })
                 .on_click(move |e, window, cx| stop(e, window, cx))
         });
-        div()
-            .id(self.id.clone())
-            .w_full()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(look.spaced(3.0))
-            .px(look.space(Space::L))
-            .pt(look.space(Space::S))
-            .pb(look.space(Space::M))
-            .child(line(self.title, TypeRole::Fine, muted))
-            .children(
-                self.counts
-                    .map(|c| line(c, TypeRole::Meta, muted.opacity(0.7))),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(look.space(Space::S))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(ProgressBar::new((self.id, "bar"), self.fraction)),
-                    )
-                    .children(stop),
-            )
-            .children(
-                self.detail
-                    .map(|d| line(d, TypeRole::Fine, muted.opacity(0.7))),
-            )
+        // A progress indicator to a screen reader: what is under way, how far
+        // it has come where that is known, its counts as the value said.
+        super::accessible(
+            div().id(self.id.clone()),
+            gpui_kit::Role::ProgressIndicator,
+            Some(self.title.clone()),
+        )
+        .when_some(self.fraction, |d, f| {
+            d.aria_numeric_value(f as f64)
+                .aria_min_numeric_value(0.0)
+                .aria_max_numeric_value(1.0)
+        })
+        .when_some(self.counts.clone(), |d, counts| d.aria_value(counts))
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(look.spaced(3.0))
+        .px(look.space(Space::L))
+        .pt(look.space(Space::S))
+        .pb(look.space(Space::M))
+        .child(line(self.title, TypeRole::Fine, muted))
+        .children(
+            self.counts
+                .map(|c| line(c, TypeRole::Meta, muted.opacity(0.7))),
+        )
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(look.space(Space::S))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(ProgressBar::new((self.id, "bar"), self.fraction)),
+                )
+                .children(stop),
+        )
+        .children(
+            self.detail
+                .map(|d| line(d, TypeRole::Fine, muted.opacity(0.7))),
+        )
     }
 }

@@ -312,6 +312,7 @@ impl Render for PeoplePane {
                     ROLES.map(role_label),
                     ROLES.iter().position(|r| *r == role),
                 )
+                .named(format!("{name}'s role"))
                 .on_change(move |index, window, cx| {
                     let role = ROLES[*index];
                     entity.update(cx, |this, cx| this.set_role(name.clone(), role, window, cx))
@@ -347,6 +348,7 @@ impl Render for PeoplePane {
                     ROLES.map(role_label),
                     ROLES.iter().position(|r| *r == role),
                 )
+                .named("new person's role")
                 .on_change({
                     let entity = entity.clone();
                     move |index, _, cx| {

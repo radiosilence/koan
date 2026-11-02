@@ -208,7 +208,7 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 `PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
 
-`SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included. A list measuring its items takes `SectionHeading::height`.
+`SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included, where the Mac's artist page heads sections only when there are several: a discography of albums alone still says what it is. A list measuring its items takes `SectionHeading::height`.
 
 `FadeIn::new(id, element)`: what arrives after its page (a photograph, a biography) fading in over `Motion::NORMAL`, or appearing under Reduce Motion. It takes no size of its own, so the element lays out as it would unwrapped: a wrapper that fills its parent takes the whole header row from the title beside a photo.
 
@@ -267,6 +267,30 @@ The question host gives the keyboard back to whatever had it when it asked, once
 ### SecondaryWindow (Mac: Settings, the EQ window, About)
 
 `SecondaryWindow::new(title, app_id).size(w, h).min(w, h)` or `.fixed()`, then `options(cx)`: a window beside the main one, centred at its size in points.
+
+## Accessibility
+
+Every koan-kit component reports itself to the accessibility tree GPUI builds over AccessKit (VoiceOver, Orca, UI Automation), so a page made from the kit is read without code of its own. The tree is built only while assistive technology is attached, so this costs nothing otherwise. Each sets its role and name beside its id (`accessible` in `components/mod.rs`) and answers a reader's click with the handler a pointer would call (`answers_click`):
+
+| Component | Role, name and state |
+|---|---|
+| `Button`, `ToolbarButton`, `PlayButton`, `ShuffleButton` | Button, named by the label or a glyph's tooltip ("shuffle Hounds of Love") |
+| `Toggle`, `IconToggle` | Switch, toggled |
+| `Slider` (`named`), `Level` | Slider: the value, its range and step, and the low end's text as the value said ("1:00"); Increment and Decrement step it as the arrow keys do |
+| `Stepper` | SpinButton, with value, range and step; Increment and Decrement |
+| `Segmented` | RadioGroup of RadioButtons, the chosen one toggled, with their place in the set |
+| `Picker` (`named`) | ComboBox, named by its form row's title, the choice as its value, expanded while open |
+| `MenuPanel`, `MenuRow` | Menu of MenuItems, a checkbox item where it ticks, its second line as the description |
+| `NavRow`, `NavHeading` | Link, selected where it is; Heading |
+| `PageHeader`'s title, `SectionHeading` | Heading, levels 1 and 2 |
+| `Badge` | Label |
+| `ProgressRow` | ProgressIndicator, with its share and its counts |
+| `EmptyState` | Group, named by what it says |
+| sheets' `panel`, `Viewer` | Dialog |
+
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions.
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click and an increment through `Window::dispatch_a11y_action` as a screen reader would.
 
 ## Swift roles and their GPUI components
 
