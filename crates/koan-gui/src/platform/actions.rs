@@ -246,9 +246,29 @@ pub const HOTKEYS: &[Shortcut] = &[
     shortcut!("Lyrics panel", ["L"], View, ToggleLyrics),
     shortcut!("Zoom the cover", ["z"], View, ZoomCover),
     shortcut!("Clear selection", ["escape"], View, ClearSelection),
-    shortcut!("Delete", ["backspace"], Edit, bare::Delete),
+    shortcut!("Delete", ["backspace", "delete"], Edit, bare::Delete),
     shortcut!("This list", ["?"], View, ShowShortcuts),
 ];
+
+/// A button's tooltip as the Mac's buttons say it: what it does, then the
+/// keys that do the same, "back (⌘[)", from the shortcut tables. Just what it
+/// does where no key does.
+pub fn help(what: &str, action: &dyn Action, cx: &App) -> String {
+    let os = cx.platform_info().os;
+    MENU.iter()
+        .chain(APPLICATION)
+        .chain(HOTKEYS)
+        .find(|s| (s.action)().partial_eq(action))
+        .and_then(|s| {
+            s.keys
+                .iter()
+                .find(|k| os == OperatingSystem::Mac || !k.starts_with("cmd-"))
+        })
+        .map_or_else(
+            || what.to_owned(),
+            |key| format!("{what} ({})", caption(key, os)),
+        )
+}
 
 /// A key as the sheet prints it: ⇧⌘K on macOS, in the order macOS prints
 /// modifiers, and Ctrl+Shift+K elsewhere. A bare key is itself.
@@ -271,6 +291,8 @@ pub fn caption(key: &str, os: OperatingSystem) -> String {
         ("left", false) => "Left".to_string(),
         ("right", false) => "Right".to_string(),
         ("backspace", false) => "Backspace".to_string(),
+        ("delete", true) => "⌦".to_string(),
+        ("delete", false) => "Delete".to_string(),
         ("escape", _) => "esc".to_string(),
         ("space", _) => "space".to_string(),
         (k, _) if mods.is_empty() => k.to_string(),
@@ -351,8 +373,10 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
         move |_: &TogglePlayPause, cx| toggle(cx)
     });
     cx.on_action(move |_: &bare::TogglePlayPause, cx| toggle(cx));
-    // Delete means whatever the page in front says it means.
-    cx.on_action(|_: &bare::Delete, cx| cx.dispatch_action(&Delete));
+    // Delete means whatever the page in front says it means. Global
+    // handlers run while GPUI holds the window, so what reaches into it
+    // waits until it is handed back.
+    cx.on_action(|_: &bare::Delete, cx| cx.defer(|cx| cx.dispatch_action(&Delete)));
     let e = engine.clone();
     cx.on_action(move |_: &Next, cx| send(cx, e.clone().next()));
     let e = engine.clone();
@@ -367,14 +391,18 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
     cx.on_action(move |_: &ClearQueue, cx| send(cx, e.clone().clear_queue()));
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Minimize, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| window.minimize_window());
-        }
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, _| window.minimize_window());
+            }
+        })
     });
     cx.on_action(|_: &Zoom, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| window.zoom_window());
-        }
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, _| window.zoom_window());
+            }
+        })
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
@@ -408,10 +436,12 @@ fn send(
         .detach();
 }
 
-/// Move the playhead by `by_ms` from where it is now.
+/// Move the playhead by `by_ms` from where it is now, once that is known.
 fn skip(engine: &Arc<KoanEngine>, by_ms: i64, cx: &mut App) {
-    let to = super::media::Playhead::now(cx).saturating_add_signed(by_ms);
-    send(cx, engine.clone().seek(to));
+    let Some(now) = super::media::Playhead::now(cx) else {
+        return;
+    };
+    send(cx, engine.clone().seek(now.saturating_add_signed(by_ms)));
 }
 
 #[cfg(test)]

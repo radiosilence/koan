@@ -1,0 +1,1 @@
+- **The GUI app's menus, copies and Settings match the Mac app.** Sort, filter and playlist menus tick a choice at the row's end as the Mac's menus do; every copy button and copyable value says "copied" for a moment after, Settings' app password included; Settings' sections space their headings and rows as the Mac's form does; and the pair-a-device code field spans the form.

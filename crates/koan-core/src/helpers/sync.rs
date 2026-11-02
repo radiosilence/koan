@@ -123,6 +123,7 @@ pub fn sync_remote(
          history {history_took:?}, EQ {:?}",
         step.elapsed()
     );
+    crate::remote::covers::synced();
     Ok(Synced {
         library,
         favourites,

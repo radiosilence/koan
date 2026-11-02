@@ -1,0 +1,1 @@
+- **The kōan GUI app on macOS animates the playing bars, the seek bar and the wash on the GPU.** Each is a shader quad whose values are read as the frame is presented, so the bars, the drift and the seek bar no longer redraw the window while playing, and the seek bar glides between playhead updates rather than stepping.

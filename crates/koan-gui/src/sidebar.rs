@@ -4,23 +4,23 @@ use std::collections::HashMap;
 
 use koan_ffi::Playlist;
 use koan_kit::app::*;
-// virtualised lists and their scroll state, which GPUI owns and koan-kit's rows sit in.
-use koan_kit::raw::ScrollHandle;
 
 use crate::components::{
-    CoverArt, DropTarget, INSERTION, Mosaic, NavHeading, NavNote, NavRow, RowMetrics,
+    Button, ButtonKind, CoverArt, DropTarget, INSERTION, Mosaic, NavHeading, NavNote, NavRow,
+    RowMetrics, ScrollArea,
 };
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
 use crate::library::covers::{Art, Covers, Key, Priority, Sleeve, UPLOAD_BYTES_PER_FRAME};
 use crate::library::drag::{PlayableDrag, PlaylistDrag};
+use crate::library::playlist::new_playlist;
 use crate::mirror::Mirror;
 use crate::navigator::{Navigator, Route};
 use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
 use crate::theme::{self, Icon, Space, Tone};
 
-const LIBRARY: [(Route, &str, Icon); 7] = [
+const LIBRARY: [(Route, &str, Icon); 8] = [
     (Route::Albums, "albums", Icon::Album),
     (Route::Artists, "artists", Icon::Artist),
     (Route::Tracks, "tracks", Icon::Track),
@@ -30,6 +30,7 @@ const LIBRARY: [(Route, &str, Icon); 7] = [
         "recently played",
         Icon::RecentlyPlayed,
     ),
+    (Route::OnDevice, "downloaded", Icon::OnDevice),
     (Route::History, "history", Icon::History),
     (Route::Downloads, "downloads", Icon::Downloads),
 ];
@@ -47,10 +48,13 @@ pub struct Sidebar {
     /// Dropped files being added, and what the last addition had to say.
     importing: usize,
     import_problem: Option<String>,
-    scroll: ScrollHandle,
     /// Where a playlist dragged among the playlists would land: before the
     /// playlist at this index, or after the last at the count.
     drop_playlist: Option<usize>,
+    /// The search field at the sidebar's head, once the library is open,
+    /// and whether it holds a query, which lists the results page.
+    search: Option<(Entity<crate::search::field::SearchField>, Subscription)>,
+    searching: bool,
     _subscriptions: [Subscription; 5],
 }
 
@@ -66,8 +70,9 @@ impl Sidebar {
             covers: None,
             importing: 0,
             drop_playlist: None,
+            search: None,
+            searching: false,
             import_problem: None,
-            scroll: ScrollHandle::new(),
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
                 // The selected row follows the page.
@@ -95,6 +100,33 @@ impl Sidebar {
         sidebar
     }
 
+    /// The search field, over the library's search and art.
+    pub fn set_search(
+        &mut self,
+        search: Entity<crate::search::Search>,
+        covers: Entity<Covers>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let watch = cx.observe(&search, |this: &mut Self, search, cx| {
+            let searching = !search.read(cx).query().is_empty();
+            if searching != this.searching {
+                this.searching = searching;
+                cx.notify();
+            }
+        });
+        let field = cx.new(|cx| crate::search::field::SearchField::new(search, covers, window, cx));
+        self.search = Some((field, watch));
+        cx.notify();
+    }
+
+    /// ⌘K and `/`: the keyboard to the search field.
+    pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((field, _)) = &self.search {
+            field.update(cx, |f, cx| f.focus(window, cx));
+        }
+    }
+
     /// Draws the playlists' sleeves from the library's art cache.
     pub fn set_covers(&mut self, covers: Entity<Covers>, cx: &mut Context<Self>) {
         let id = cx.entity_id();
@@ -104,7 +136,7 @@ impl Sidebar {
                 cx.observe(&covers, |_, _, cx| cx.notify()),
                 cx.on_release(move |this, cx| {
                     if let Some((covers, _)) = &this.covers {
-                        covers.update(cx, |c, _| c.release(id));
+                        covers.update(cx, |c, cx| c.release(id, cx));
                     }
                 }),
             ],
@@ -202,12 +234,8 @@ impl Render for Sidebar {
         // The rows scroll and keep their height when the window is short;
         // the lines at the foot stay put beneath them.
         let body = div()
-            .id("sidebar-rows")
-            .size_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
             .pt(p.space(Space::S))
             .pb(p.space(Space::S))
             // Files, and what is dragged from the library, dropped on the
@@ -234,13 +262,45 @@ impl Render for Sidebar {
                         });
                     })),
             )
+            .when(self.searching, |d| {
+                d.child(row(
+                    Route::Search,
+                    "nav-results".into(),
+                    "results",
+                    Icon::Search,
+                    cx,
+                ))
+            })
             .child(NavHeading::new("library"))
             .children(LIBRARY.map(|(page, label, icon)| {
                 row(page, ElementId::Name(label.into()), label, icon, cx)
             }))
-            .when(!self.playlists.is_empty(), |d| {
-                d.child(NavHeading::new("playlists"))
-            })
+            // "new", and a drop on the heading makes a playlist of what was
+            // dropped.
+            .child(
+                div()
+                    .id("nav-playlists")
+                    .drop_highlight::<PlayableDrag>(&p.look)
+                    .on_drop(cx.listener(|this, dragged: &PlayableDrag, window, cx| {
+                        let sets = dragged.sets.to_vec();
+                        new_playlist(engine(cx), this.nav.clone(), sets, window, cx);
+                    }))
+                    .child(
+                        NavHeading::new("playlists").trailing(
+                            Button::new("nav-new-playlist", ButtonKind::Text)
+                                .label("new")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    new_playlist(
+                                        engine(cx),
+                                        this.nav.clone(),
+                                        Vec::new(),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                    ),
+            )
             .children({
                 let total = self.playlists.len();
                 let accent = p.accent;
@@ -292,6 +352,9 @@ impl Render for Sidebar {
                         .on_drop(cx.listener({
                             let id = playlist.id;
                             move |_, dragged: &PlayableDrag, _, cx| {
+                                if dragged.is_from(id) {
+                                    return;
+                                }
                                 let sets = dragged.sets.to_vec();
                                 command(cx, "add to playlist", move |e| {
                                     e.add_to_playlist(id, sets)
@@ -350,14 +413,13 @@ impl Render for Sidebar {
             .size_full()
             .flex()
             .flex_col()
+            .children(self.search.as_ref().map(|(field, _)| field.clone()))
             .child(
                 div()
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(body)
-                    // GPUI's scrollbar over a virtualised list, which koan-kit's ScrollArea cannot wrap.
-                    .child(koan_kit::raw::base::Scrollbar::vertical(&self.scroll)),
+                    .child(ScrollArea::new("sidebar-rows", body)),
             )
             .child(self.status.clone())
             // Scans, rebuilds and syncs running; nothing while idle.

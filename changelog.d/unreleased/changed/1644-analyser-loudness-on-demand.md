@@ -1,0 +1,1 @@
+- **Playing costs less CPU in the apps.** The analyser measures loudness (momentary, short-term, true peak) only while something reads whole frames, as the terminal UI does; the playing bars read three bands and no longer pay for it.

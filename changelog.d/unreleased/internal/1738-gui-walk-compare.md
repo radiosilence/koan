@@ -1,0 +1,1 @@
+- **GUI walk, comparison and parity inventory.** `just gui-walk` draws every page of the GUI app offscreen and fails when a page's scroll frames run over 6.9 ms at the 95th percentile; `just gui-compare` sets its pages beside the SwiftUI app's offscreen renders with the edges that disagree marked; `just gui-parity` lists what the Mac app has as a checklist.

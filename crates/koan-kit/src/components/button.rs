@@ -5,7 +5,7 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 
-use super::{Handler, child, fade, fill, focus, mix, pointer, ring, track};
+use super::{Handler, child, fade, fill, focus, mix, pointer, ring, track, transition};
 use crate::theme::{
     DISABLED_OPACITY, HAIRLINE, HIT, Icon, KoanIcon, KoanStyled, Look, Motion, Space,
     TOOLBAR_BUTTON, Tone, TypeRole, label,
@@ -79,6 +79,9 @@ pub struct Button {
     destructive: bool,
     disabled: bool,
     selected: bool,
+    /// What the tooltip says in place of the label: what it does, and the
+    /// keys that do the same.
+    help: Option<SharedString>,
     on_click: Option<Handler<ClickEvent>>,
 }
 
@@ -93,8 +96,16 @@ impl Button {
             destructive: false,
             disabled: false,
             selected: false,
+            help: None,
             on_click: None,
         }
+    }
+
+    /// The tooltip, in place of a glyph-only button's label, and on a button
+    /// with words too: "back (⌘[)", as the Mac's buttons say.
+    pub fn help(mut self, help: impl Into<SharedString>) -> Self {
+        self.help = Some(help.into());
+        self
     }
 
     /// The label, an app word, drawn lowercase. A glyph-only button keeps it
@@ -118,7 +129,6 @@ impl Button {
         self
     }
 
-    /// In `bad`, for a compact or bordered button that destroys something.
     /// Its label and glyph in `tone` rather than the kind's: a favourite in
     /// the accent while it is on.
     pub fn tone(mut self, tone: Tone) -> Self {
@@ -126,6 +136,7 @@ impl Button {
         self
     }
 
+    /// In `bad`, for a compact or bordered button that destroys something.
     pub fn destructive(mut self, destructive: bool) -> Self {
         self.destructive = destructive;
         self
@@ -161,14 +172,24 @@ impl RenderOnce for Button {
             (p.hovered && !self.disabled, p.pressed && !self.disabled)
         };
         let handle = focus(&self.id, window, cx);
-        let hover = fade(child(&self.id, "hover"), hovered, Motion::FAST, window, cx);
-        let press = fade(
-            child(&self.id, "press"),
-            pressed || self.selected,
-            Motion::FAST,
-            window,
-            cx,
-        );
+        // Text colour fades on the CPU, for the kinds whose text changes;
+        // fills are the GPU's (`transition`).
+        let hover = if kind == ButtonKind::Text {
+            fade(child(&self.id, "hover"), hovered, Motion::FAST, window, cx)
+        } else {
+            0.0
+        };
+        let press = if kind == ButtonKind::Link {
+            fade(
+                child(&self.id, "press"),
+                pressed || self.selected,
+                Motion::FAST,
+                window,
+                cx,
+            )
+        } else {
+            0.0
+        };
 
         let tone = if self.destructive {
             Tone::Bad
@@ -229,12 +250,33 @@ impl RenderOnce for Button {
         // `surface` under the pointer and `hover` pressed.
         match kind {
             ButtonKind::Prominent | ButtonKind::IconOutlined => {
-                button = button.child(fill(look.palette.hover.hsla(), press));
+                let press = transition(
+                    child(&self.id, "press-fill"),
+                    pressed || self.selected,
+                    Motion::FAST,
+                    window,
+                    cx,
+                );
+                button = button.child(fill(look.palette.hover.hsla(), &press));
             }
             ButtonKind::Toolbar => {
+                let hover = transition(
+                    child(&self.id, "hover-fill"),
+                    hovered,
+                    Motion::FAST,
+                    window,
+                    cx,
+                );
+                let press = transition(
+                    child(&self.id, "press-fill"),
+                    pressed || self.selected,
+                    Motion::FAST,
+                    window,
+                    cx,
+                );
                 button = button
-                    .child(fill(look.palette.surface.hsla(), hover))
-                    .child(fill(look.palette.hover.hsla(), press));
+                    .child(fill(look.palette.surface.hsla(), &hover))
+                    .child(fill(look.palette.hover.hsla(), &press));
             }
             _ => {}
         }
@@ -261,7 +303,7 @@ impl RenderOnce for Button {
                     }
                 })),
         );
-        let tooltip = self.label.filter(|_| glyph_only);
+        let tooltip = self.help.or(self.label.filter(|_| glyph_only));
         if let Some(tooltip) = tooltip {
             button =
                 button.tooltip(move |window, cx| super::Tooltip::view(tooltip.clone(), window, cx));

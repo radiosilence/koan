@@ -20,15 +20,15 @@ use koan_kit::raw::RenderImage;
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Badge, Button, ButtonKind, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, Slider,
-    TransportMetrics,
+    Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
+    Slider, TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
-use crate::platform::actions::ShowEq;
+use crate::platform::actions::{Next, Previous, help};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
@@ -459,13 +459,16 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
     };
     let eq = |id: String, on: bool| {
         move |_: &mut Window, _: &mut App| {
+            let device = id.clone();
             Button::new(("output-eq", id_hash(&id)), ButtonKind::Icon)
                 .icon(Icon::Filters)
                 .label("eq")
                 .when(on, |b| b.tone(Tone::Accent))
-                .on_click(|_, window, cx| {
+                // The EQ of the device this row names, which need not be the
+                // one in use.
+                .on_click(move |_, _, cx| {
                     cx.stop_propagation();
-                    window.dispatch_action(Box::new(ShowEq), cx);
+                    crate::dsp::window::open(Some(device.clone()), cx);
                 })
                 .into_any_element()
         }
@@ -548,7 +551,17 @@ fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
         return menu;
     };
     if let Some(volume) = outputs.volume {
-        menu = menu.control(move |_, _| {
+        menu = menu.control(move |_, cx| {
+            // Read as drawn, not as the menu opened: the menu stays up while
+            // the volume moves.
+            let volume = cx
+                .global::<Mirror>()
+                .outputs
+                .read(cx)
+                .0
+                .as_ref()
+                .and_then(|o| o.volume)
+                .unwrap_or(volume);
             Level::new("renderer-volume", u32::from(volume), 100)
                 .numbered()
                 .on_commit(|to, _, cx| {
@@ -636,6 +649,9 @@ fn eq_menu(menu: ThemeMenu, eq: &EqState) -> ThemeMenu {
     )
 }
 
+/// How far an arrow key moves the seek bar.
+const SEEK_KEY_MS: u64 = 5_000;
+
 /// The theme's text button: the label in `muted`, `ink` under the pointer.
 /// The control's glyph with icons on, its label without: the theme's two
 /// variants. The label is what the plain variant shows, so it is lowercase.
@@ -693,6 +709,12 @@ fn trailing_item(p: &Paint) -> Div {
 
 /// The group a text button's glyph follows the pointer by.
 const TEXT_BUTTON: &str = "transport-text-button";
+
+/// A transport control's tooltip.
+fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text = SharedString::from(text);
+    move |window, cx| crate::components::Tooltip::view(text.clone(), window, cx)
+}
 
 /// A transport control: `on` for the two that toggle, underlined in the
 /// accent while on and `muted` while off, as an icon toggle is.
@@ -776,7 +798,28 @@ impl Render for Transport {
             .flex()
             .items_center()
             .gap(p.space(Space::M))
-            .child(covers::draw(self.cover.clone(), COVER, p.surface))
+            .child(
+                div()
+                    .id("transport-cover")
+                    .flex_shrink_0()
+                    .when_some(
+                        entry.and_then(|e| {
+                            e.album_id.map(|id| (id, e.album.clone(), e.artist.clone()))
+                        }),
+                        |d, (album, title, artist)| {
+                            d.cursor_pointer().on_click(move |_, window, cx| {
+                                crate::artwork::show(
+                                    album,
+                                    title.clone(),
+                                    Some(artist.clone().into()),
+                                    window,
+                                    cx,
+                                )
+                            })
+                        },
+                    )
+                    .child(covers::draw(self.cover.clone(), COVER, p.surface)),
+            )
             .child(
                 div()
                     .flex()
@@ -869,11 +912,13 @@ impl Render for Transport {
                     )
                     .child(
                         control("previous", Icon::Previous, "prev", None, &p)
+                            .tooltip(tip(help("previous track", &Previous, cx)))
                             .on_click(|_, _, cx| command(cx, "previous", |e| e.previous())),
                     )
                     .child(play_pause)
                     .child(
                         control("next", Icon::Next, "next", None, &p)
+                            .tooltip(tip(help("next track", &Next, cx)))
                             .on_click(|_, _, cx| command(cx, "next", |e| e.next())),
                     )
                     .child(
@@ -971,10 +1016,14 @@ impl Render for Transport {
 
 /// The seek slider and the times either side of it.
 ///
-/// The position is reckoned from the playhead's anchor. While it runs, one
-/// timer is set for the next moment the slider or the times would draw
-/// differently (the next pixel of the fill, or the next second); paused or
-/// stopped, nothing is set, so a koan at rest costs nothing.
+/// The position is reckoned from the playhead's anchor. Where the renderer
+/// draws shaders, the slider glides: the anchor is handed to it (`Glide`) and
+/// the GPU reckons the fill per present, so it moves continuously with no
+/// frame drawn, and a new anchor (a seek, a pause, the next track) corrects
+/// it. While it runs, one timer is set for the next moment the times would
+/// read differently (the next second), and elsewhere for the fill's next
+/// pixel too; paused or stopped, nothing is set and nothing presents, so a
+/// koan at rest costs nothing.
 pub struct Seek {
     playhead: Entity<Playhead>,
     playback: Entity<Playback>,
@@ -986,31 +1035,39 @@ pub struct Seek {
     /// The slider's width as last painted, for when its fill next moves a
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
-    _subscriptions: [Subscription; 4],
+    glide: Glide,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Seek {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mirror = cx.global::<Mirror>().clone();
+        let mut subscriptions = vec![
+            cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
+            cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
+            // The fill is the accent.
+            theme::observe_accent(cx),
+            // Nothing draws the slider while the window is hidden, so
+            // nothing keeps it moving; showing again puts it where it is.
+            cx.observe_window_visibility(window, |this, visibility, _, cx| {
+                this.visible = visibility == WindowVisibility::Visible;
+                this.moved(cx);
+            }),
+        ];
+        // The playing track's download starting or ending shows or takes
+        // away how far its bytes reach.
+        if let Some(transfers) = crate::transfers::entity(cx) {
+            subscriptions.push(cx.observe(&transfers, |_, _, cx| cx.notify()));
+        }
         let mut seek = Self {
-            _subscriptions: [
-                cx.observe(&mirror.playhead, |this, _, cx| this.moved(cx)),
-                cx.observe(&mirror.playback, |this, _, cx| this.moved(cx)),
-                // The fill is the accent.
-                theme::observe_accent(cx),
-                // Nothing draws the slider while the window is hidden, so
-                // nothing keeps it moving; showing again puts it where it is.
-                cx.observe_window_visibility(window, |this, visibility, _, cx| {
-                    this.visible = visibility == WindowVisibility::Visible;
-                    this.moved(cx);
-                }),
-            ],
+            _subscriptions: subscriptions,
             visible: window.visibility() == WindowVisibility::Visible,
             playhead: mirror.playhead,
             playback: mirror.playback,
             tick: None,
             dragging: None,
             width: Default::default(),
+            glide: Glide::new(),
         };
         seek.schedule(cx);
         seek
@@ -1029,6 +1086,19 @@ impl Seek {
         self.tick = None;
         let anchor = *self.playhead.read(cx);
         let duration = self.duration_ms(cx);
+        let moving = self.visible && anchor.playing && duration > 0 && self.dragging.is_none();
+        if duration > 0 {
+            self.glide.set(
+                (anchor.position_ms as f64 / duration as f64) as f32,
+                if anchor.playing {
+                    1000.0 / duration as f32
+                } else {
+                    0.0
+                },
+                anchor.at,
+            );
+        }
+        self.glide.set_moving(moving);
         if !self.visible || !anchor.playing || duration == 0 {
             return;
         }
@@ -1038,7 +1108,7 @@ impl Seek {
         }
         let to_second = 1000 - position % 1000;
         let width = self.width.get();
-        let to_pixel = if width > 0.0 {
+        let to_pixel = if width > 0.0 && !SHADED {
             (duration as f32 / width).ceil() as u64
         } else {
             to_second
@@ -1069,6 +1139,7 @@ impl Seek {
         if duration > 0 {
             command(cx, "seek", move |e| e.seek(target));
         }
+        self.schedule(cx);
         cx.notify();
     }
 }
@@ -1089,7 +1160,8 @@ impl Render for Seek {
         let (change, commit) = (cx.entity(), cx.entity());
         let _ = p;
         // The playhead the slider shows comes from the engine, which holds a
-        // seek's target until it lands there (koan-ffi's pending seek), so a
+        // seek's target until it lands there (`SharedPlayerState::request_seek`,
+        // and koan-ffi's `remote_seek` for a device being controlled), so a
         // click never shows the old place again before the new one.
         let width = self.width.clone();
         let measure = canvas(
@@ -1098,13 +1170,32 @@ impl Render for Seek {
         )
         .absolute()
         .size_full();
+        // How far a track still downloading can be played, moving as its
+        // bytes arrive; nothing once the file is all here.
+        let reach = self
+            .playback
+            .read(cx)
+            .0
+            .entry
+            .as_ref()
+            .and_then(|e| e.track_id)
+            .and_then(|track| crate::transfers::reach(track, cx));
         let slider = Slider::new("seek", share)
             .compact()
+            // An arrow key moves five seconds, not a twentieth of the track.
+            .when(duration > 0, |s| {
+                s.step((SEEK_KEY_MS as f32 / duration as f32).min(1.0))
+            })
+            .when(self.dragging.is_none(), |slider| slider.glide(&self.glide))
+            .when_some(reach, |slider, reach| slider.reach(&reach))
             .ends(clock(shown), clock(duration))
             .disabled(duration == 0)
             .on_change(move |share, _, cx| {
                 change.update(cx, |this, cx| {
-                    this.dragging = Some(*share);
+                    let started = this.dragging.replace(*share).is_none();
+                    if started {
+                        this.schedule(cx);
+                    }
                     cx.notify();
                 })
             })

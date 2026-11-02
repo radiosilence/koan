@@ -89,10 +89,15 @@ fn moved(held: Option<Anchor>, position_ms: u64, playing: bool, now: Instant) ->
 }
 
 /// What a media control event asks for, given where the playhead is now.
-fn command_of(event: MediaControlEvent, position_ms: u64) -> Option<Command> {
-    let step = |direction: SeekDirection, by: u64| match direction {
-        SeekDirection::Forward => position_ms.saturating_add(by),
-        SeekDirection::Backward => position_ms.saturating_sub(by),
+fn command_of(event: MediaControlEvent, position_ms: Option<u64>) -> Option<Command> {
+    // A step from a playhead not yet heard is dropped rather than taken from
+    // the top of the track.
+    let step = |direction: SeekDirection, by: u64| {
+        let position_ms = position_ms?;
+        Some(match direction {
+            SeekDirection::Forward => position_ms.saturating_add(by),
+            SeekDirection::Backward => position_ms.saturating_sub(by),
+        })
     };
     Some(match event {
         MediaControlEvent::Play => Command::Play,
@@ -103,9 +108,9 @@ fn command_of(event: MediaControlEvent, position_ms: u64) -> Option<Command> {
         MediaControlEvent::Stop => Command::Stop,
         MediaControlEvent::SetPosition(MediaPosition(at)) => Command::Seek(at.as_millis() as u64),
         MediaControlEvent::SeekBy(direction, by) => {
-            Command::Seek(step(direction, by.as_millis() as u64))
+            Command::Seek(step(direction, by.as_millis() as u64)?)
         }
-        MediaControlEvent::Seek(direction) => Command::Seek(step(direction, SEEK_STEP_MS)),
+        MediaControlEvent::Seek(direction) => Command::Seek(step(direction, SEEK_STEP_MS)?),
         MediaControlEvent::Raise => Command::Raise,
         MediaControlEvent::Quit => Command::Quit,
         _ => return None,
@@ -185,11 +190,12 @@ pub struct Playhead(pub Option<Anchor>);
 impl Global for Playhead {}
 
 impl Playhead {
-    /// Where the playhead is now, or zero before anything has been heard.
-    pub fn now(cx: &App) -> u64 {
+    /// Where the playhead is now; `None` before anything has been heard, when
+    /// a step from it would be a step from the top of the track.
+    pub fn now(cx: &App) -> Option<u64> {
         cx.try_global::<Playhead>()
             .and_then(|p| p.0)
-            .map_or(0, |a| a.reckoning(Instant::now()))
+            .map(|a| a.reckoning(Instant::now()))
     }
 }
 
@@ -317,26 +323,34 @@ async fn answer(
             continue;
         };
         let engine = engine.clone();
-        let sent = match command {
-            Command::Play => engine.resume().await,
-            Command::Pause => engine.pause().await,
-            Command::Toggle => engine.toggle_play_pause().await,
-            Command::Next => engine.next().await,
-            Command::Previous => engine.previous().await,
-            Command::Stop => engine.stop().await,
-            Command::Seek(at) => engine.seek(at).await,
+        // Each command goes on its way at once, in order, rather than the
+        // next key waiting for this one to finish: one sent to a device
+        // being controlled can take seconds.
+        let sent: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), koan_ffi::KoanError>>>,
+        > = match command {
+            Command::Play => Box::pin(engine.resume()),
+            Command::Pause => Box::pin(engine.pause()),
+            Command::Toggle => Box::pin(engine.toggle_play_pause()),
+            Command::Next => Box::pin(engine.next()),
+            Command::Previous => Box::pin(engine.previous()),
+            Command::Stop => Box::pin(engine.stop()),
+            Command::Seek(at) => Box::pin(engine.seek(at)),
             Command::Raise => {
                 cx.update(super::to_front);
-                Ok(())
+                continue;
             }
             Command::Quit => {
                 cx.update(|cx| cx.quit());
-                Ok(())
+                continue;
             }
         };
-        if let Err(e) = sent {
-            log::warn!("media controls: {e}");
-        }
+        cx.spawn(async move |_| {
+            if let Err(e) = sent.await {
+                log::warn!("media controls: {e}");
+            }
+        })
+        .detach();
     }
 }
 
@@ -590,31 +604,34 @@ mod tests {
             (MediaControlEvent::Quit, Command::Quit),
         ];
         for (event, command) in cases {
-            assert_eq!(command_of(event, 0), Some(command));
+            assert_eq!(command_of(event, Some(0)), Some(command));
         }
     }
 
     #[test]
     fn a_set_position_is_absolute() {
         let event = MediaControlEvent::SetPosition(MediaPosition(Duration::from_millis(42_000)));
-        assert_eq!(command_of(event, 5_000), Some(Command::Seek(42_000)));
+        assert_eq!(command_of(event, Some(5_000)), Some(Command::Seek(42_000)));
     }
 
     #[test]
     fn a_relative_seek_moves_from_the_playhead_and_stops_at_zero() {
         let forward = MediaControlEvent::SeekBy(SeekDirection::Forward, Duration::from_secs(5));
-        assert_eq!(command_of(forward, 20_000), Some(Command::Seek(25_000)));
+        assert_eq!(
+            command_of(forward, Some(20_000)),
+            Some(Command::Seek(25_000))
+        );
         let back = MediaControlEvent::SeekBy(SeekDirection::Backward, Duration::from_secs(30));
-        assert_eq!(command_of(back, 20_000), Some(Command::Seek(0)));
+        assert_eq!(command_of(back, Some(20_000)), Some(Command::Seek(0)));
         let step = MediaControlEvent::Seek(SeekDirection::Forward);
-        assert_eq!(command_of(step, 1_000), Some(Command::Seek(11_000)));
+        assert_eq!(command_of(step, Some(1_000)), Some(Command::Seek(11_000)));
     }
 
     #[test]
     fn volume_and_uris_are_not_ours_to_take() {
-        assert_eq!(command_of(MediaControlEvent::SetVolume(0.5), 0), None);
+        assert_eq!(command_of(MediaControlEvent::SetVolume(0.5), Some(0)), None);
         assert_eq!(
-            command_of(MediaControlEvent::OpenUri("file:///x.flac".into()), 0),
+            command_of(MediaControlEvent::OpenUri("file:///x.flac".into()), Some(0)),
             None
         );
     }

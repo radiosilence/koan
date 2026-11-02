@@ -1,16 +1,14 @@
-//! Everything known about a track, over the page: its tags, each source it is
-//! made from with that source's own fields, and its ReplayGain. A dense view,
-//! in `meta` and `fine`, names leading and values trailing.
+//! Everything the library knows about a track, over the page, as each of its
+//! sources says it: the file's tags, the server's entry, the ReplayGain, and
+//! the library's own ids. Dense, for reading a value off.
 
 use koan_ffi::{InfoField, TrackDetails};
 use koan_kit::app::*;
-// sizes and colours computed at runtime from measurements, not chosen from the theme.
-use koan_kit::raw::{px, relative};
 
-use super::format;
-use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib};
-use crate::theme::Space;
+use crate::components::sheet as ask;
+use crate::components::{Button, ButtonKind, DetailGroup, form_text};
+use crate::theme::{Look, Space, Tone, TypeRole};
 
 pub struct TrackInfo {
     lib: Lib,
@@ -54,117 +52,71 @@ impl TrackInfo {
     }
 }
 
-fn field(p: &Paint, name: impl Into<SharedString>, value: impl Into<SharedString>) -> Div {
-    div()
-        .flex()
-        .justify_between()
-        .gap(p.space(Space::L))
-        .child(div().typeset(p, Type::Meta, p.muted).child(name.into()))
-        .child(
-            div()
-                .typeset(p, Type::Meta, p.ink)
-                .text_right()
-                .child(value.into()),
-        )
-}
-
-fn section(p: &Paint, title: impl Into<SharedString>, fields: Vec<Div>) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(p.space(Space::Xs))
-        .pt(p.space(Space::L))
-        .child(div().typeset(p, Type::Fine, p.ink).child(title.into()))
-        .children(fields)
-}
-
-fn fields(p: &Paint, list: &[InfoField]) -> Vec<Div> {
-    list.iter()
-        .map(|f| field(p, f.name.clone(), f.value.clone()))
-        .collect()
+/// A source's fields under its kind, as the Mac names them.
+fn group(title: &str, fields: &[InfoField]) -> DetailGroup {
+    DetailGroup::new(title.to_string()).rows(
+        fields
+            .iter()
+            .map(|f| (f.name.to_lowercase(), f.value.clone())),
+    )
 }
 
 impl Render for TrackInfo {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &Paint::of(window, cx);
-        let body = match &self.details {
+        let look = &Look::of(window, cx);
+        let mut body = ask::body("track-info-body", look).pt(look.space(Space::M));
+        match &self.details {
             Some(d) => {
-                let t = &d.track;
-                let mut tags = vec![
-                    field(p, "title", t.title.clone()),
-                    field(p, "artist", t.artist_name.clone()),
-                    field(p, "album", t.album_title.clone()),
-                    field(p, "album artist", t.album_artist_name.clone()),
-                ];
-                if let Some(n) = t.track_number {
-                    tags.push(field(p, "track", n.to_string()));
-                }
-                if let Some(n) = t.disc {
-                    tags.push(field(p, "disc", n.to_string()));
-                }
-                if let Some(g) = &t.genre {
-                    tags.push(field(p, "genre", g.clone()));
-                }
-                tags.push(field(p, "length", format::duration(t.duration_ms)));
-                if let Some(q) = format::quality(t) {
-                    tags.push(field(p, "format", q));
-                }
-                if let Some(path) = &t.path {
-                    tags.push(field(p, "file", path.clone()));
-                }
-                if let Some(uid) = &d.uid {
-                    tags.push(field(p, "uid", uid.clone()));
-                }
-                let mut out = div().flex().flex_col().child(section(p, "tags", tags));
+                body = body.child(form_text(
+                    d.track.title.clone(),
+                    TypeRole::Body,
+                    Tone::Strong,
+                    look,
+                ));
                 for source in &d.sources {
-                    out = out.child(section(
-                        p,
-                        source.kind.to_lowercase(),
-                        fields(p, &source.fields),
-                    ));
+                    let kind = if source.kind == "server" {
+                        "server"
+                    } else {
+                        "file"
+                    };
+                    body = body.child(group(kind, &source.fields));
                 }
                 if !d.replay_gain.is_empty() {
-                    out = out.child(section(p, "replaygain", fields(p, &d.replay_gain)));
+                    body = body.child(group("replaygain", &d.replay_gain));
                 }
-                out.into_any_element()
+                let mut ids = DetailGroup::new("library").row("track id", d.track.id.to_string());
+                if let Some(uid) = &d.uid {
+                    ids = ids.row("uid", uid.clone());
+                }
+                body = body.child(ids);
             }
-            None if self.missing => div()
-                .typeset(p, Type::Control, p.muted)
-                .child("this track isn't in the library any more")
-                .into_any_element(),
-            None => div().into_any_element(),
-        };
-        // Over the page, on a flat dim; a click outside closes it.
-        div()
-            .id("track-info-scrim")
+            None if self.missing => {
+                body = body.child(ask::note(
+                    "This track is no longer in the library.",
+                    Tone::Muted,
+                    look,
+                ));
+            }
+            None => {}
+        }
+        let done = Button::new("track-info-done", ButtonKind::Standard)
+            .label("done")
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.lib.nav.update(cx, |nav, cx| nav.close_info(cx));
+            }));
+        // Over the page; a click outside closes it.
+        ask::scrim("track-info-scrim", look)
             .key_context("Library")
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::close))
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(p.dim())
             .on_click(cx.listener(|this, _, _, cx| {
                 this.lib.nav.update(cx, |nav, cx| nav.close_info(cx));
             }))
             .child(
-                div()
+                ask::panel(look)
                     .id("track-info")
-                    .w(px(480.0))
-                    .max_h(relative(0.8))
-                    .overflow_y_scroll()
-                    .p(p.space(Space::L))
-                    .bg(p.bg)
-                    .border_1()
-                    .border_color(p.rule)
                     .on_click(|_, _, cx| cx.stop_propagation())
-                    .child(
-                        div()
-                            .typeset(p, Type::TitleSmall, p.strong)
-                            .child("track info"),
-                    )
+                    .child(ask::head("track info", vec![done.into_any_element()], look))
                     .child(body),
             )
     }
