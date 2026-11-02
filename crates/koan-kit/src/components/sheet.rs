@@ -25,6 +25,19 @@ pub fn panel(look: &Look) -> Div {
         .border_color(look.palette.rule.hsla())
 }
 
+/// A sheet that holds a list to pick from (the picker): wider than a
+/// question's, and tall from the start, so the list growing as it is
+/// typed into moves nothing.
+pub fn list_panel(look: &Look) -> Div {
+    panel(look).w(px(680.0)).h(relative(0.8)).max_h(px(640.0))
+}
+
+/// A wide sheet's panel, 880 wide and as tall as it may be: one whose body
+/// ends in a table of paths that fills the rest, as organise's preview does.
+pub fn wide_panel(look: &Look) -> Div {
+    panel(look).w(px(880.0)).h(relative(0.85))
+}
+
 /// A sheet's head: its title in the app's words, and its actions trailing.
 pub fn head(title: impl AsRef<str>, actions: Vec<AnyElement>, look: &Look) -> impl IntoElement {
     head_data(label(title), actions, look)
@@ -69,6 +82,68 @@ pub fn body(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
         .overflow_y_scroll()
 }
 
+/// What a sheet sits on: the whole window dimmed, taking every click, the
+/// panel hung near the top. The owner listens to it for a click outside the
+/// panel, which the panel stops.
+pub fn scrim(id: impl Into<ElementId>, look: &Look) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .absolute()
+        .inset_0()
+        .flex()
+        .justify_center()
+        .items_start()
+        .pt(look.space(Space::Xxl))
+        .bg(look.palette.bg.hsla().opacity(0.6))
+        .occlude()
+}
+
+/// A sheet whose head is a search: the field across the top, with a hairline
+/// under it.
+pub fn search_head(input: &Entity<InputState>, look: &Look) -> impl IntoElement {
+    div()
+        .px(look.space(Space::L))
+        .py(look.space(Space::M))
+        .border_b(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .child(super::FilterField::new(input).fill())
+}
+
+/// A band under the head or over the foot: a sheet's segmented choice.
+pub fn band(content: impl IntoElement, look: &Look) -> impl IntoElement {
+    div()
+        .px(look.space(Space::L))
+        .py(look.space(Space::S))
+        .border_b(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .child(content)
+}
+
+/// A sheet's foot: what it says of its state leading, in `fine`, `muted`,
+/// and its verbs trailing.
+pub fn foot(leading: Vec<AnyElement>, actions: Vec<AnyElement>, look: &Look) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(look.space(Space::S))
+        .px(look.space(Space::L))
+        .py(look.space(Space::S))
+        .border_t(HAIRLINE)
+        .border_color(look.palette.rule.hsla())
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(look.space(Space::S))
+                .text_role(TypeRole::Fine, look)
+                .text_color(look.palette.muted.hsla())
+                .children(leading),
+        )
+        .children(actions)
+}
+
 /// A line of `fine` text in a tone, for footers and notes.
 pub fn note(text: impl Into<SharedString>, tone: Tone, look: &Look) -> Div {
     div()
@@ -98,6 +173,10 @@ struct Ask {
     /// The sheet's own keys, for a question without a field; with one, the
     /// field has them and answers Return itself.
     focus: Option<FocusHandle>,
+    /// What had the keyboard when the question was asked, which has it back
+    /// once the question is answered or put away: a sheet that asked (the
+    /// picker) goes on taking its keys.
+    before: Option<FocusHandle>,
     _enter: Option<Subscription>,
 }
 
@@ -106,6 +185,51 @@ struct Ask {
 #[derive(Default)]
 pub struct Asking {
     ask: Option<Ask>,
+    /// A sheet of the app's own, a view that lives while it shows (organise's
+    /// preview), under any question it asks.
+    sheet: Option<AnyView>,
+}
+
+/// Shows `view` as the window's sheet, over the shell and under the
+/// question host, replacing any sheet showing. The view draws its own
+/// `panel`; the host draws the scrim and the placement.
+pub fn present(view: impl Into<AnyView>, cx: &mut App) {
+    let view = view.into();
+    asking(cx).update(cx, |a, cx| {
+        a.sheet = Some(view);
+        cx.notify();
+    });
+}
+
+/// Takes the sheet away.
+pub fn close(cx: &mut App) {
+    asking(cx).update(cx, |a, cx| {
+        if a.sheet.take().is_some() {
+            cx.notify();
+        }
+    });
+}
+
+/// The sheet presented, placed over the window, for the shell to draw under
+/// `overlay`.
+pub fn presented(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let view = asking(cx).read(cx).sheet.clone()?;
+    let look = Look::of(window, cx);
+    Some(
+        div()
+            .id("sheet")
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .items_start()
+            .pt(look.space(Space::Xxl))
+            .bg(look.palette.bg.hsla().opacity(0.6))
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(view)
+            .into_any_element(),
+    )
 }
 
 struct AskingHandle(Entity<Asking>);
@@ -134,6 +258,7 @@ pub struct Confirm {
 /// Asks before `run`: the lines are what it will change.
 pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut App) + 'static) {
     let lines = c.lines;
+    let before = window.focused(cx);
     let focus = cx.focus_handle();
     window.focus(&focus, cx);
     show(
@@ -146,6 +271,7 @@ pub fn confirm(c: Confirm, window: &mut Window, cx: &mut App, run: impl Fn(&mut 
             name: None,
             run: Rc::new(move |_, cx| run(cx)),
             focus: Some(focus),
+            before,
             _enter: None,
         },
         cx,
@@ -164,6 +290,7 @@ pub fn name(
     run: impl Fn(String, &mut App) + 'static,
 ) {
     let initial = initial.to_owned();
+    let before = window.focused(cx);
     let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
     let focus = input.read(cx).focus_handle(cx);
     window.focus(&focus, cx);
@@ -171,11 +298,11 @@ pub fn name(
     let run: Run = Rc::new(run);
     let enter = {
         let run = run.clone();
-        window.subscribe(&input, cx, move |input, event: &InputEvent, _, cx| {
+        window.subscribe(&input, cx, move |input, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 let typed = input.read(cx).value().trim().to_owned();
                 if !typed.is_empty() {
-                    dismiss(cx);
+                    dismiss(window, cx);
                     run(typed, cx);
                 }
             }
@@ -191,6 +318,7 @@ pub fn name(
             name: Some(input.clone()),
             run,
             focus,
+            before,
             _enter: Some(enter),
         },
         cx,
@@ -208,11 +336,14 @@ fn show(ask: Ask, cx: &mut App) {
     });
 }
 
-fn dismiss(cx: &mut App) {
-    asking(cx).update(cx, |a, cx| {
-        a.ask = None;
+fn dismiss(window: &mut Window, cx: &mut App) {
+    let before = asking(cx).update(cx, |a, cx| {
         cx.notify();
+        a.ask.take().and_then(|ask| ask.before)
     });
+    if let Some(before) = before {
+        window.focus(&before, cx);
+    }
 }
 
 /// The question being asked, over the window, for the shell to draw.
@@ -229,7 +360,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let blocked = typed.as_ref().is_some_and(String::is_empty);
     let go = {
         let (run, name) = (ask.run.clone(), ask.name.clone());
-        move |cx: &mut App| {
+        move |window: &mut Window, cx: &mut App| {
             let typed = name
                 .as_ref()
                 .map(|i| i.read(cx).value().trim().to_owned())
@@ -237,7 +368,7 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             if name.is_some() && typed.is_empty() {
                 return;
             }
-            dismiss(cx);
+            dismiss(window, cx);
             run(typed, cx);
         }
     };
@@ -245,39 +376,30 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let named = ask.name.is_some();
     let cancel = Button::new("ask-cancel", ButtonKind::Standard)
         .label("cancel")
-        .on_click(|_, _, cx| dismiss(cx));
+        .on_click(|_, window, cx| dismiss(window, cx));
     let verb = {
         let go = go.clone();
         Button::new("ask-go", ButtonKind::Standard)
             .label(ask.verb.as_ref())
             .destructive(ask.destructive)
             .disabled(blocked)
-            .on_click(move |_, _, cx| go(cx))
+            .on_click(move |_, window, cx| go(window, cx))
     };
     let rows: Vec<AnyElement> = lines
         .into_iter()
         .map(|line| note(line, Tone::Ink, &look).into_any_element())
         .collect();
     Some(
-        div()
-            .id("ask")
+        scrim("ask", &look)
             .key_context("Ask")
             .when_some(ask.focus.as_ref(), |d, focus| d.track_focus(focus))
             .on_key_down(
-                move |e: &KeyDownEvent, _, cx| match e.keystroke.key.as_str() {
-                    "escape" => dismiss(cx),
-                    "enter" if !named => go(cx),
+                move |e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
+                    "escape" => dismiss(window, cx),
+                    "enter" if !named => go(window, cx),
                     _ => {}
                 },
             )
-            .absolute()
-            .inset_0()
-            .flex()
-            .justify_center()
-            .items_start()
-            .pt(look.space(Space::Xxl))
-            .bg(look.palette.bg.hsla().opacity(0.6))
-            .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 panel(&look)
@@ -298,4 +420,63 @@ pub fn overlay(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             )
             .into_any_element(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{TestAppContext, VisualTestContext};
+
+    use super::*;
+    use core::prelude::v1::test;
+
+    struct Asker {
+        focus: FocusHandle,
+    }
+
+    impl Render for Asker {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .track_focus(&self.focus)
+                .children(overlay(window, cx))
+        }
+    }
+
+    /// A question put away with Escape gives the keyboard back to what
+    /// asked, so a sheet that asked goes on taking its keys.
+    #[gpui_kit::test]
+    fn the_keyboard_goes_back_to_what_asked(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (asker, cx) = cx.add_window_view(|_, cx| Asker {
+            focus: cx.focus_handle(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        let focus = asker.read_with(cx, |a, _| a.focus.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus, cx);
+            confirm(
+                Confirm {
+                    title: "replace the queue".into(),
+                    verb: "replace".into(),
+                    destructive: true,
+                    lines: vec!["3 tracks come off the queue.".into()],
+                    note: None,
+                },
+                window,
+                cx,
+                |_| {},
+            );
+        });
+        let host = cx.update(|_, cx| asking(cx));
+        cx.update(|_, cx| host.update(cx, |_, cx| cx.notify()));
+        cx.run_until_parked();
+        assert!(!cx.update(|window, _| focus.is_focused(window)));
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| host.read(cx).ask.is_none()));
+        assert!(cx.update(|window, _| focus.is_focused(window)));
+    }
 }

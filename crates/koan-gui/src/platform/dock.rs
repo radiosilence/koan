@@ -100,7 +100,7 @@ fn run(engine: &Arc<KoanEngine>, action: &Dock, cx: &mut App) {
 /// Reads the favourite tracks again, then the menu.
 fn read_favourites(cx: &mut App) {
     let engine = cx.global::<DockMenu>().engine.clone();
-    let version = cx.global::<Mirror>().library.read(cx).0;
+    let version = cx.global::<Mirror>().library.read(cx).version;
     cx.spawn(async move |cx| {
         let Ok(ids) = engine.favourite_track_ids().await else {
             return;

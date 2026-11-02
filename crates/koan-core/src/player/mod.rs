@@ -30,10 +30,6 @@ use undo::{UndoEntry, UndoStack};
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
 pub(crate) const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
-/// Kept back from the end of a track when seeking, so dragging the thumb all
-/// the way over lands in the last moment of it rather than in the next track.
-const SEEK_END_GUARD_MS: u64 = 500;
-
 /// Past the moment the next track should start, so the wake finds the
 /// playhead already in it rather than a hair short.
 const BOUNDARY_SLACK: std::time::Duration = std::time::Duration::from_millis(5);
@@ -1444,24 +1440,23 @@ impl Player {
     /// the streaming path — reopening a partial file as a plain file would
     /// decode whatever happens to be on disk and end the track early.
     pub fn seek(&mut self, position_ms: u64) {
+        self.seek_to(position_ms);
+        // Taken: the playhead is the timeline's again, whether it landed or
+        // the seek was declined.
+        self.shared_state.seek_taken(position_ms);
+    }
+
+    fn seek_to(&mut self, position_ms: u64) {
         let Some(id) = self.session().map(|s| s.track.id) else {
             return;
         };
-        // Stop just short of the end rather than falling into the next track.
-        let seekable = self.shared_state.seekable_ms();
-        if seekable == 0 {
-            // Nothing of this track can be reached yet — a partial container
-            // that has not said what it is. Restarting it at zero is not what
-            // anyone asked for, so the seek is simply declined.
+        // Nothing of this track can be reached yet — a partial container
+        // that has not said what it is. Restarting it at zero is not what
+        // anyone asked for, so the seek is simply declined.
+        let Some(clamped) = self.shared_state.seek_target(position_ms) else {
             log::debug!("seek declined: {:?} is not seekable yet", id);
             return;
-        }
-        let ceiling = seekable.min(
-            self.shared_state
-                .duration_ms()
-                .saturating_sub(SEEK_END_GUARD_MS),
-        );
-        let clamped = position_ms.min(ceiling);
+        };
 
         // A renderer seeks the track it holds; reloading it would let the
         // top of the track be heard.
@@ -2613,6 +2608,16 @@ impl Player {
                     downloads.cache(ids);
                 }
             }
+            PlayerCommand::CancelDownloads(ids) => {
+                if let Some(downloads) = &self.downloads {
+                    downloads.cancel(&ids);
+                }
+            }
+            PlayerCommand::RetryDownloads(ids) => {
+                if let Some(downloads) = &self.downloads {
+                    downloads.retry(&ids);
+                }
+            }
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
             PlayerCommand::BeginUndoBatch => {
@@ -3587,9 +3592,20 @@ mod tests {
         assert!((1_750..=2_000).contains(&at), "cued at {at}ms");
         assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
 
-        // Seeking while paused reopens the track, and stays quiet too.
+        // Seeking while paused reopens the track, and stays quiet too. Asked
+        // for, the playhead reads as landed before the player takes it.
+        player.shared_state.request_seek(4_000);
+        assert_eq!(player.shared_state.position_ms(), 4_000);
         player.process_command(PlayerCommand::Seek(4_000));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
+        assert!(player.shared_state.pending_seek().is_none(), "taken");
+        // Two seeks in quick succession: taking the first leaves the second.
+        player.shared_state.request_seek(5_000);
+        player.shared_state.request_seek(6_000);
+        player.shared_state.seek_taken(5_000);
+        assert_eq!(player.shared_state.position_ms(), 6_000);
+        player.process_command(PlayerCommand::Seek(6_000));
+        assert!(player.shared_state.pending_seek().is_none());
         assert_eq!(starts.load(Ordering::Relaxed), 0);
 
         player.process_command(PlayerCommand::Resume);

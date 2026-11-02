@@ -132,6 +132,39 @@ pub fn drop_target(
     Some((items[last].queue_item_id.clone(), true))
 }
 
+/// `order` with `moving` taken out and put, in their own order, before
+/// `target`, or after it when `after`: what [`drop_target`] says a drop means,
+/// for a list sent whole rather than told of one move.
+pub fn reordered(order: &[String], moving: &[String], target: &str, after: bool) -> Vec<String> {
+    let moving_set: std::collections::HashSet<&str> = moving.iter().map(String::as_str).collect();
+    let mut out: Vec<String> = order
+        .iter()
+        .filter(|id| !moving_set.contains(id.as_str()))
+        .cloned()
+        .collect();
+    let at = out
+        .iter()
+        .position(|id| id == target)
+        .map_or(out.len(), |ix| ix + usize::from(after));
+    let moved: Vec<String> = order
+        .iter()
+        .filter(|id| moving_set.contains(id.as_str()))
+        .cloned()
+        .collect();
+    out.splice(at..at, moved);
+    out
+}
+
+/// Where something from outside dropped before row `dest` goes, as a
+/// position among `len` items.
+pub fn position(rows: &[Row], dest: usize, len: usize) -> usize {
+    match place(rows, dest) {
+        Place::Top => 0,
+        Place::After(ix) => ix + 1,
+        Place::End => len,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +207,28 @@ mod tests {
             item("b2", RunRole::Continues),
             item("b3", RunRole::Continues),
         ]
+    }
+
+    #[test]
+    fn a_reorder_keeps_the_moving_items_in_their_order() {
+        let order: Vec<String> = ["a", "b", "c", "d", "e"].map(String::from).to_vec();
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            reordered(&order, &ids(&["d", "b"]), "a", false),
+            ids(&["b", "d", "a", "c", "e"])
+        );
+        assert_eq!(
+            reordered(&order, &ids(&["a"]), "e", true),
+            ids(&["b", "c", "d", "e", "a"])
+        );
+    }
+
+    #[test]
+    fn a_drop_from_outside_is_a_position_among_the_items() {
+        let items = queue();
+        let rows = build(&items, true);
+        assert_eq!(position(&rows, 0, items.len()), 0);
+        assert_eq!(position(&rows, rows.len(), items.len()), items.len());
     }
 
     #[test]

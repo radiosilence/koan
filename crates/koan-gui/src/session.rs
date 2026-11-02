@@ -130,9 +130,13 @@ impl Session {
                 engine.save_position().await
             };
             if whole {
+                // Only this save's own marks: a newer whole save started
+                // meanwhile keeps its own, and versions only move forward.
                 this.update(cx, |this, _| {
-                    this.writing = None;
-                    if written.is_ok() {
+                    if this.writing == Some(version) {
+                        this.writing = None;
+                    }
+                    if written.is_ok() && version > this.saved_version {
                         this.saved_version = version;
                     }
                 })

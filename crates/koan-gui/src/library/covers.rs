@@ -38,9 +38,19 @@ use smallvec::{SmallVec, smallvec};
 /// a cache rather than a second copy of the artwork.
 const SOURCE_PIXELS: u32 = 600;
 
-/// Roughly 360 grid tiles at 2×. A ceiling: entries drawn in the last moment,
-/// or still held by an element, are never evicted to meet it.
-const MEMORY_BUDGET: usize = 256 * 1024 * 1024;
+/// The most the bitmaps may hold, roughly 360 grid tiles at 2×, however much
+/// the lists ask for. Each bitmap is held twice on unified memory, here and
+/// as its copy in the GPU's atlas, so the ceiling is rarely the bound: the
+/// budget is what the lists on screen ask for plus `RETAIN`.
+const MEMORY_CEILING: usize = 256 * 1024 * 1024;
+
+/// Kept beyond what the lists ask for: about a screen of grid tiles at 2×,
+/// so scrolling back a little finds its sleeves still in memory.
+const RETAIN: usize = 32 * 1024 * 1024;
+
+/// How long after a list goes away its sleeves are let go: past the moment
+/// in which a bitmap drawn is never dropped (see `trim`).
+const RELEASE_AFTER: Duration = Duration::from_millis(600);
 
 /// Draw sizes are rounded up to a multiple of this, so a window being resized
 /// does not decode every tile again at each pixel.
@@ -634,10 +644,44 @@ impl Covers {
 
     /// A list or page going away: nothing it asked for is wanted on its
     /// account.
-    pub fn release(&mut self, owner: EntityId) {
+    /// Its sleeves are trimmed to the smaller budget once nothing can be
+    /// drawing them, outside any window's update, so each one dropped leaves
+    /// every window's atlas too.
+    pub fn release(&mut self, owner: EntityId, cx: &mut Context<Self>) {
         if self.requests.remove(&owner).is_some() {
             self.publish();
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(RELEASE_AFTER).await;
+                this.update(cx, |covers, cx| {
+                    let asked = covers.asked();
+                    covers.drop_stale_staged(&asked);
+                    covers.trim(None, cx);
+                })
+                .ok();
+            })
+            .detach();
         }
+    }
+
+    /// Every key some list or page asks for, at its most urgent priority.
+    fn asked(&self) -> HashMap<Key, Priority> {
+        let mut wanted: HashMap<Key, Priority> = HashMap::new();
+        for request in self.requests.values() {
+            for (key, priority) in request {
+                let p = wanted.entry(*key).or_insert(*priority);
+                if priority < p {
+                    *p = *priority;
+                }
+            }
+        }
+        wanted
+    }
+
+    /// What memory may hold now: what is asked for, and `RETAIN` beyond it,
+    /// under `MEMORY_CEILING`.
+    fn budget(asked: &HashMap<Key, Priority>) -> usize {
+        let asked: usize = asked.keys().map(|k| (k.px * k.px * 4) as usize).sum();
+        (asked + RETAIN).min(MEMORY_CEILING)
     }
 
     /// The connection to the server changed: what failed may work now.
@@ -773,6 +817,11 @@ impl Covers {
         if self.staged.is_empty() {
             return false;
         }
+        let asked = self.asked();
+        self.drop_stale_staged(&asked);
+        if self.staged.is_empty() {
+            return false;
+        }
         let queue = self.shared.queue.lock();
         let mut ranked: Vec<(Key, Option<Priority>, u64)> = self
             .staged
@@ -786,6 +835,7 @@ impl Covers {
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
+        let recent = Instant::now() - Duration::from_millis(500);
         let mut spent = 0;
         for (key, _, current) in ranked {
             if spent > 0 && spent >= budget {
@@ -814,9 +864,51 @@ impl Covers {
                 self.sizes.entry(key.art).or_default().push(key.px);
             }
             self.memory_bytes += bytes;
+            // Its other sizes stood in while this one decoded; those nobody
+            // asks for, nothing holds and nothing drew in the last moment go
+            // now (see `trim`).
+            let stand_ins: SmallVec<[u32; 4]> = self.sizes[&key.art]
+                .iter()
+                .copied()
+                .filter(|px| *px != key.px)
+                .filter(|px| {
+                    let other = Key {
+                        art: key.art,
+                        px: *px,
+                    };
+                    !asked.contains_key(&other)
+                        && self
+                            .memory
+                            .get(&other)
+                            .is_some_and(|h| h.used < recent && Arc::strong_count(&h.image) == 1)
+                })
+                .collect();
+            for px in stand_ins {
+                let other = Key { art: key.art, px };
+                self.forget(other, window.as_deref_mut(), cx);
+                self.shared.queue.lock().decoded.remove(&other);
+            }
         }
         self.trim(window, cx);
         !self.staged.is_empty()
+    }
+
+    /// Decoded for a list that has since scrolled past or gone: dropped
+    /// rather than held, and decoded again if it is asked for again.
+    fn drop_stale_staged(&mut self, asked: &HashMap<Key, Priority>) {
+        let stale: Vec<Key> = self
+            .staged
+            .keys()
+            .filter(|k| !asked.contains_key(k))
+            .copied()
+            .collect();
+        if !stale.is_empty() {
+            let mut queue = self.shared.queue.lock();
+            for key in stale {
+                self.staged.remove(&key);
+                queue.decoded.remove(&key);
+            }
+        }
     }
 
     fn forget(&mut self, key: Key, window: Option<&mut Window>, cx: &mut Context<Self>) {
@@ -839,20 +931,13 @@ impl Covers {
     /// after that. Evicting what is wanted only after the rest is what keeps
     /// a tight budget from evicting and re-decoding the rows ahead in a loop.
     fn trim(&mut self, mut window: Option<&mut Window>, cx: &mut Context<Self>) {
-        if self.memory_bytes <= MEMORY_BUDGET {
+        let wanted = self.asked();
+        let budget = Self::budget(&wanted);
+        if self.memory_bytes <= budget {
             return;
         }
-        let target = MEMORY_BUDGET / 10 * 9;
+        let target = budget / 10 * 9;
         let recent = Instant::now() - Duration::from_millis(500);
-        let mut wanted: HashMap<Key, Priority> = HashMap::new();
-        for request in self.requests.values() {
-            for (key, priority) in request {
-                let p = wanted.entry(*key).or_insert(*priority);
-                if priority < p {
-                    *p = *priority;
-                }
-            }
-        }
         let rank = |key: &Key| match wanted.get(key) {
             None => 0.0,
             Some(Priority::Ahead(d)) => 1.0 / (1.0 + d),
@@ -917,6 +1002,17 @@ impl Covers {
 
     pub fn dir(&self) -> PathBuf {
         self.dir.clone()
+    }
+
+    /// Where the library's evictions have been read to, here and on disk.
+    fn keep_mark(&mut self, seq: i64, cx: &mut Context<Self>) {
+        self.evictions_seq = seq;
+        let dir = self.dir.clone();
+        cx.background_executor()
+            .spawn(async move {
+                write_atomically(&dir.join("evictions-seq"), seq.to_string().as_bytes()).ok();
+            })
+            .detach();
     }
 
     /// Forgets every cover: the files, the bitmaps and their GPU images,
@@ -986,6 +1082,15 @@ impl Covers {
     }
 
     fn evict(&mut self, gone: koan_ffi::ArtEvictions, cx: &mut Context<Self>) {
+        // The mark is older than what the library keeps, or another
+        // database's: any cover here may be another record's now.
+        if gone.purge {
+            // `clear` trusts the disk again once its files are gone.
+            self.clear(None, cx);
+            self.allow_fetches(false);
+            self.keep_mark(gone.seq, cx);
+            return;
+        }
         let fresh = gone.seq > self.evictions_seq;
         let arts: Vec<Art> = if fresh {
             gone.albums
@@ -1056,13 +1161,7 @@ impl Covers {
         if !fresh {
             return;
         }
-        self.evictions_seq = gone.seq;
-        let (dir, seq) = (self.dir.clone(), gone.seq);
-        cx.background_executor()
-            .spawn(async move {
-                write_atomically(&dir.join("evictions-seq"), seq.to_string().as_bytes()).ok();
-            })
-            .detach();
+        self.keep_mark(gone.seq, cx);
         cx.emit(Evicted {
             albums: gone.albums,
             artists: gone.artists,
@@ -1080,18 +1179,20 @@ impl Drop for Covers {
     }
 }
 
-/// `$KOAN_CONFIG_DIR/artwork` for an instance on a configuration of its own
-/// (a test library), since files are named by row id and another library's
-/// ids would show its covers; the platform's cache directory otherwise, and
-/// the temporary directory where there is none. Names it only: see
-/// `prepare_directory`.
+/// The platform's cache directory, and the temporary directory where there
+/// is none: `koan-gui/artwork` for the person's own configuration, where it
+/// has always been, and the configuration's own cache (`places::cache`) for
+/// any other (a test library), since files are named by row id and another
+/// library's ids would show its covers. Never the config directory. Names it
+/// only: see `prepare_directory`.
 fn directory() -> PathBuf {
-    let root = match std::env::var_os("KOAN_CONFIG_DIR") {
-        Some(dir) => PathBuf::from(dir).join("artwork"),
-        None => dirs::cache_dir()
+    let root = if koan_core::places::key() == "default" {
+        dirs::cache_dir()
             .unwrap_or_else(std::env::temp_dir)
             .join("koan-gui")
-            .join("artwork"),
+            .join("artwork")
+    } else {
+        koan_core::places::cache().join("artwork")
     };
     root.join(SCHEME)
 }
@@ -1397,6 +1498,23 @@ mod tests {
     use super::*;
     // Sizes for the keys the tests make.
     use koan_kit::raw::px;
+
+    #[test]
+    fn the_budget_is_what_is_asked_for_and_a_screen_more() {
+        let key = |id| Key {
+            art: Art::Album(id),
+            px: 416,
+        };
+        let tile = 416 * 416 * 4;
+        assert_eq!(Covers::budget(&HashMap::new()), RETAIN);
+        let screen: HashMap<Key, Priority> =
+            (0..40).map(|id| (key(id), Priority::Visible)).collect();
+        assert_eq!(Covers::budget(&screen), 40 * tile + RETAIN);
+        let flood: HashMap<Key, Priority> = (0..10_000)
+            .map(|id| (key(id), Priority::Ahead(1.0)))
+            .collect();
+        assert_eq!(Covers::budget(&flood), MEMORY_CEILING);
+    }
 
     #[test]
     fn keys_round_up_to_a_bucket() {

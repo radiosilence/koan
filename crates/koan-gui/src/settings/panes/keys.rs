@@ -9,9 +9,8 @@ use std::sync::Arc;
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole, label};
 use koan_ffi::{KoanEngine, KoanError};
+use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::InputState;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 
@@ -161,7 +160,10 @@ impl Keys {
             if shown.is_err()
                 && let Some(sheet) = sheet
             {
-                model.update(cx, |m, _| m.unseen = Some(sheet));
+                model.update(cx, |m, cx| {
+                    m.unseen.push(sheet);
+                    cx.notify();
+                });
             }
         })
         .detach();
@@ -202,6 +204,7 @@ fn shown_once(kind: Kind, name: String, secret: String) -> Sheet {
     let noun = kind.noun();
     let copy = secret.clone();
     Sheet::new(format!("{noun} for {name}"))
+        .kept()
         .message("This is the only time it is shown. Copy it into the app now; if it is lost, revoke it and make another.")
         .content(move |look, _, _| {
             let copy = copy.clone();

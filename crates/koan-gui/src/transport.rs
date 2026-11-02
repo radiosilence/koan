@@ -20,13 +20,14 @@ use koan_kit::raw::RenderImage;
 use koan_kit::raw::canvas;
 
 use crate::components::{
-    Button, ButtonKind, Glide, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED, Slider,
+    Badge, Button, ButtonKind, Glide, Level, Menu as ThemeMenu, MenuEntry, MenuSlot, SHADED,
+    Slider,
     TransportMetrics,
 };
 use crate::covers::{self, CoversHandle};
 use crate::engine::{command, engine};
 use crate::links;
-use crate::mirror::{Mirror, Outputs, Playback, Playhead};
+use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
 use crate::platform::actions::ShowEq;
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
@@ -38,6 +39,11 @@ const COVER: Pixels = TransportMetrics::COVER;
 pub struct Transport {
     playback: Entity<Playback>,
     outputs: Entity<Outputs>,
+    /// The renderer played to, for why its last track was skipped.
+    renderers: Entity<Slice<Renderers>>,
+    /// The device controlled, to name it while it has not said what it
+    /// plays through.
+    devices: Entity<Slice<Devices>>,
     /// Where the playing track's names lead.
     nav: Entity<crate::navigator::Navigator>,
     seek: Entity<Seek>,
@@ -52,12 +58,13 @@ pub struct Transport {
     /// The profile the playing stream named when `eq` was read.
     eq_profile: Option<String>,
     _eq_load: Option<Task<()>>,
-    _subscriptions: [Subscription; 6],
+    _subscriptions: [Subscription; 8],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Menu {
     Sleep,
+    Devices,
     Output,
     Eq,
 }
@@ -141,7 +148,24 @@ impl Transport {
                     }
                     cx.notify();
                 }),
-                cx.observe(&mirror.outputs, |_, _, cx| cx.notify()),
+                // The output menu follows both while it is open: renderers
+                // arrive over the seconds after it opens.
+                cx.observe(&mirror.outputs, |this, _, cx| {
+                    this.refill_output(cx);
+                    cx.notify();
+                }),
+                cx.observe(&mirror.renderers, |this, _, cx| this.refill_output(cx)),
+                // The control button names the device controlled, and its
+                // menu follows the devices while it is open.
+                cx.observe(&mirror.devices, |this, _, cx| {
+                    if let Some(menu) = this.menus.menu(Menu::Devices).cloned() {
+                        let view = crate::devices::ControlView::read(cx);
+                        menu.update(cx, |menu, cx| {
+                            menu.refill(cx, |menu, _| crate::devices::control_menu(menu, &view))
+                        });
+                    }
+                    cx.notify();
+                }),
                 // Redrawn when its own sleeve lands, not for every sleeve the
                 // queue fetches as it scrolls.
                 cx.observe(&covers, |this, _, cx| {
@@ -167,6 +191,8 @@ impl Transport {
             ],
             playback: mirror.playback,
             outputs: mirror.outputs,
+            renderers: mirror.renderers,
+            devices: mirror.devices,
             menus: MenuSlot::default(),
             cover: None,
             eq: None,
@@ -206,15 +232,84 @@ impl Transport {
                 let sleeping = self.playback.read(cx).0.sleep.is_some();
                 ThemeMenu::build(window, cx, |menu, _, _| sleep_menu(menu, sleeping))
             }
+            Menu::Devices => {
+                let view = crate::devices::ControlView::read(cx);
+                ThemeMenu::build(window, cx, |menu, _, _| {
+                    crate::devices::control_menu(menu, &view)
+                })
+            }
             Menu::Output => {
-                let outputs = self.outputs.read(cx).0.clone()?;
-                ThemeMenu::build(window, cx, |menu, _, _| output_menu(menu, &outputs))
+                self.ask_outputs(cx);
+                let view = self.output_view(cx);
+                ThemeMenu::build(window, cx, |menu, _, _| output_menu(menu, &view))
             }
             Menu::Eq => {
                 let eq = self.eq.clone()?;
                 ThemeMenu::build(window, cx, move |menu, _, _| eq_menu(menu, &eq))
             }
         })
+    }
+
+    /// The device in view lists what it plays through again as its output
+    /// menu opens: this one searches the network for renderers and lists its
+    /// audio devices, off the main thread; a device controlled is asked over
+    /// the link. What moves arrives in the Outputs and Renderers slices.
+    fn ask_outputs(&self, cx: &mut Context<Self>) {
+        let engine = engine(cx);
+        if self.devices.read(cx).0.target.is_some() {
+            cx.background_executor()
+                .spawn(engine.refresh_controlled_outputs())
+                .detach();
+        } else {
+            let refresh = engine.clone().refresh_outputs();
+            cx.background_executor()
+                .spawn(async move {
+                    engine.search_renderers();
+                    refresh.await;
+                })
+                .detach();
+        }
+    }
+
+    /// What the output menu shows, read now.
+    fn output_view(&self, cx: &App) -> OutputView {
+        let devices = &self.devices.read(cx).0;
+        OutputView {
+            outputs: self.outputs.read(cx).0.clone(),
+            problem: self
+                .renderers
+                .read(cx)
+                .0
+                .output
+                .as_ref()
+                .and_then(|o| o.problem.clone()),
+            processed: self
+                .playback
+                .read(cx)
+                .0
+                .format
+                .as_ref()
+                .and_then(|f| f.dsp.as_ref())
+                .map(|d| d.profile.clone()),
+            controlled: devices.target.as_ref().map(|t| {
+                devices
+                    .devices
+                    .iter()
+                    .find(|d| &d.id == t)
+                    .map_or_else(|| "That device".to_owned(), |d| d.name.clone())
+            }),
+        }
+    }
+
+    /// Makes the open output menu again from what the slices say now.
+    fn refill_output(&mut self, cx: &mut Context<Self>) {
+        let Some(menu) = self.menus.menu(Menu::Output).cloned() else {
+            return;
+        };
+        let view = self.output_view(cx);
+        menu.update(cx, |menu, cx| {
+            menu.refill(cx, |menu, _| output_menu(menu, &view))
+        });
     }
 
     fn menu_button(
@@ -237,6 +332,47 @@ impl Transport {
         )
     }
 
+    /// The control button: the devices glyph, and while another device is
+    /// controlled its name beside it in an accent badge, since everything the
+    /// window shows is then that device's. A device out of reach turns the
+    /// glyph into a warning in `bad`.
+    fn control_button(&self, p: &Paint, cx: &mut Context<Self>) -> Div {
+        let view = &self.devices.read(cx).0;
+        let away = matches!(
+            view.target_reach,
+            Some(koan_ffi::DeviceReach::OutOfReach { .. })
+        );
+        let name = view.target.as_ref().map(|t| {
+            view.devices
+                .iter()
+                .find(|d| &d.id == t)
+                .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
+        });
+        let Some(name) = name else {
+            return self.menu_button(Menu::Devices, Icon::Devices, "devices", true, p, cx);
+        };
+        let glyph = if away {
+            KoanIcon::new(Icon::Warning)
+                .role(TypeRole::Body)
+                .tone(Tone::Bad)
+        } else {
+            KoanIcon::new(Icon::Devices)
+                .role(TypeRole::Body)
+                .color(p.accent)
+        };
+        self.menus.trigger(
+            Menu::Devices,
+            trailing_item(p)
+                .id("devices")
+                .gap(p.space(Space::Xs))
+                .child(glyph)
+                .child(Badge::new(name).accent(!away)),
+            |this: &mut Self| &mut this.menus,
+            |this, window, cx| this.build(Menu::Devices, window, cx),
+            cx,
+        )
+    }
+
     /// The EQ button: the glyph in `ink` while the output plays untouched,
     /// in the accent while an EQ is in force, its name in the tooltip.
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
@@ -244,7 +380,7 @@ impl Transport {
         let summary: SharedString = eq.summary().into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
-                .role(TypeRole::Body)
+                .points(TransportMetrics::trailing_icon(&p.look))
                 .color(if eq.flat { p.ink } else { p.accent })
                 .into_any_element()
         } else {
@@ -289,13 +425,33 @@ fn sleep_menu(menu: ThemeMenu, sleeping: bool) -> ThemeMenu {
     }
 }
 
+/// What the output menu draws, read from the slices as it opens and again
+/// whenever one of them moves while it is open.
+struct OutputView {
+    /// `None` while the device controlled has not said what it plays through.
+    outputs: Option<koan_ffi::OutputsInfo>,
+    /// Why the renderer played to skipped its last track, until one plays.
+    problem: Option<String>,
+    /// The EQ profile the stream playing goes through.
+    processed: Option<String>,
+    /// The device controlled, by name.
+    controlled: Option<String>,
+}
+
 /// Where the device in view plays, as the Mac's output picker lists it: the
 /// system default, each of its devices under the glyph of how it is
 /// connected with its EQ under its name, then the renderers on the network;
 /// the one in use on `surface`, its glyph in the accent, ticked. Each device
-/// has its EQ button, in the accent while an EQ is in force there, and a
-/// renderer in use its volume.
-fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
+/// has its EQ button, in the accent while an EQ is in force there. Under the
+/// renderer in use, its own volume and what it is sent.
+fn output_menu(menu: ThemeMenu, view: &OutputView) -> ThemeMenu {
+    let mut menu = menu.section("output");
+    let Some(outputs) = &view.outputs else {
+        let name = view.controlled.as_deref().unwrap_or("That device");
+        return menu.note(format!(
+            "{name} has not said what it plays through. It may need updating."
+        ));
+    };
     let choice = |entry: MenuEntry, chosen: bool, choice: OutputChoice| {
         entry.checked(chosen).on_click(move |_, _, cx| {
             let choice = choice.clone();
@@ -321,7 +477,7 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
         (None, true) => "unsaved".into(),
         (None, false) => "flat".into(),
     };
-    let mut menu = menu.section("output");
+    let here = outputs.owner.is_none();
     if let Some(owner) = &outputs.owner {
         menu = menu.item(MenuEntry::data(format!("on {owner}")).disabled(true));
     }
@@ -354,15 +510,25 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
             id,
         ));
     }
+    let mut playing = None;
     for renderer in &outputs.renderers {
         let id = OutputChoice::Renderer {
             udn: renderer.id.clone(),
         };
         let chosen = outputs.current == id;
-        let detail = if renderer.detail.is_empty() {
-            "upnp".to_owned()
-        } else {
-            format!("{} · upnp", renderer.detail)
+        let busy = renderer.busy && !chosen;
+        let problem = view.problem.as_ref().filter(|_| chosen && here);
+        let detail = match (problem, busy) {
+            (Some(problem), _) => problem.clone(),
+            (None, true) => "in use by something else; picking it takes over".to_owned(),
+            (None, false) => {
+                let kind = if renderer.detail.is_empty() {
+                    "upnp".to_owned()
+                } else {
+                    format!("{} · upnp", renderer.detail)
+                };
+                format!("{kind} · {}", preset(renderer))
+            }
         };
         let shaped = renderer.preset.is_some() || renderer.unsaved;
         menu = menu.item(choice(
@@ -370,37 +536,42 @@ fn output_menu(menu: ThemeMenu, outputs: &koan_ffi::OutputsInfo) -> ThemeMenu {
                 .icon(Icon::Speaker)
                 .reach(Icon::Wifi)
                 .rich(detail)
+                .warns(problem.is_some() || busy)
                 .trailing(eq(renderer.id.clone(), shaped)),
             chosen,
             id,
         ));
-        if chosen && let Some(volume) = outputs.volume {
-            let step = |icon: Icon, label: &'static str, to: u8| {
-                move |_: &mut Window, _: &mut App| {
-                    Button::new(label, ButtonKind::Icon)
-                        .icon(icon)
-                        .label(label)
-                        .on_click(move |_, _, cx| {
-                            cx.stop_propagation();
-                            command(cx, "volume", move |e| e.set_output_volume(to));
-                        })
-                        .into_any_element()
-                }
-            };
-            menu = menu.item(
-                MenuEntry::new("volume")
-                    .icon(Icon::VolumeUp)
-                    .rich(format!("{volume} of 100"))
-                    .trailing(step(Icon::VolumeDown, "quieter", volume.saturating_sub(5)))
-                    .trailing(step(Icon::VolumeUp, "louder", (volume + 5).min(100))),
-            );
+        if chosen {
+            playing = Some(renderer.name.clone());
         }
+    }
+    let Some(name) = playing else {
+        return menu;
+    };
+    if let Some(volume) = outputs.volume {
+        menu = menu.control(move |_, _| {
+            Level::new("renderer-volume", u32::from(volume), 100)
+                .numbered()
+                .on_commit(|to, _, cx| {
+                    let to = (*to).min(100) as u8;
+                    command(cx, "volume", move |e| e.set_output_volume(to));
+                })
+                .into_any_element()
+        });
+    }
+    if here {
+        menu = menu.note(match &view.processed {
+            Some(profile) => format!(
+                "{name} is sent a stream processed through \u{201C}{profile}\u{201D}. Fades don't apply."
+            ),
+            None => format!("{name} plays the original files. ReplayGain and fades don't apply."),
+        });
     }
     menu
 }
 
 /// A stable small number for an id string, for an element id.
-fn id_hash(id: &str) -> u64 {
+pub(crate) fn id_hash(id: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     id.hash(&mut h);
@@ -492,7 +663,7 @@ fn text_button(icon: Icon, label: &'static str, p: &Paint) -> Div {
     let ink = p.ink;
     let child = if p.look.icons {
         KoanIcon::new(icon)
-            .role(TypeRole::Body)
+            .points(TransportMetrics::trailing_icon(&p.look))
             .color(p.muted)
             .hover_color(TEXT_BUTTON, ink)
             .into_any_element()
@@ -585,7 +756,6 @@ impl Render for Transport {
         let entry = now.entry.as_ref();
         self.cover = covers::image(entry.and_then(|e| e.album_id), COVER, cx);
         let playing = now.state == PlayState::Playing;
-        let has_outputs = self.outputs.read(cx).0.is_some();
         let repeat_icon = match now.repeat_mode {
             RepeatMode::One => Icon::RepeatOne,
             RepeatMode::Off | RepeatMode::Queue => Icon::RepeatQueue,
@@ -670,16 +840,12 @@ impl Render for Transport {
             .label(if playing { "pause" } else { "play" })
             .on_click(|_, _, cx| command(cx, "play/pause", |e| e.toggle_play_pause()));
 
-        // The controls and the seek bar placed as the Mac's: the play
-        // button's outline `controls_top` under the rule and
-        // `outline_to_track` above the seek line, at any text size. The rows'
-        // hit areas, taller than what they draw, may overlap.
-        let outline = TransportMetrics::play_outline(&p.look);
-        // Measured from below the bar's rule, which the column's top includes.
-        let below_rule = theme::HAIRLINE + TransportMetrics::controls_top(&p.look);
-        let controls_top = below_rule - (theme::HIT - outline) / 2.;
-        let seek_top = below_rule + outline + TransportMetrics::outline_to_track(&p.look)
-            - TransportMetrics::SEEK / 2.;
+        // The controls and the seek bar centred in the bar as the Mac's:
+        // as much space above the play button's outline as below the seek
+        // row. The rows' hit areas, taller than what they draw, may overlap.
+        let rows = TransportMetrics::centre_rows(&p.look);
+        let controls_top = rows.outline_top - (theme::HIT - rows.outline) / 2.;
+        let seek_top = rows.track_centre - TransportMetrics::SEEK / 2.;
         let centre = div()
             .w(TransportMetrics::CENTRE)
             .h_full()
@@ -750,15 +916,11 @@ impl Render for Transport {
             .items_center()
             .justify_end()
             .gap(TransportMetrics::trailing_gap(&p.look))
-            .children(now.format.as_ref().map(|format| {
-                div()
-                    .px(p.space(Space::Xs))
-                    .border_1()
-                    .border_color(p.rule)
-                    .text_role(TypeRole::Fine, &p.look)
-                    .text_color(p.ink)
-                    .child(format_badge(format))
-            }))
+            .children(
+                now.format
+                    .as_ref()
+                    .map(|format| Badge::new(format_badge(format))),
+            )
             .child(self.menu_button(
                 Menu::Sleep,
                 if now.sleep.is_some() {
@@ -775,7 +937,8 @@ impl Render for Transport {
                 &p,
                 cx,
             ))
-            .child(self.menu_button(Menu::Output, Icon::Speaker, "output", has_outputs, &p, cx))
+            .child(self.control_button(&p, cx))
+            .child(self.menu_button(Menu::Output, Icon::Speaker, "output", true, &p, cx))
             // This device's own output's EQ; another device's is chosen there.
             .children(
                 self.eq
@@ -798,10 +961,7 @@ impl Render for Transport {
             .items_center()
             .gap(p.space(Space::L))
             .px(p.space(Space::L))
-            // With the wash under the whole window the bar has no ground of
-            // its own, as the toolbar and sidebar: the wash runs under it and
-            // its rule is the edge. Otherwise it is on `bg`.
-            .when(!cx.global::<theme::KoanTheme>().wash_window, |d| d.bg(p.bg))
+            .bg(p.bg)
             .border_t(theme::HAIRLINE)
             .border_color(p.rule)
             .child(left)
@@ -950,7 +1110,8 @@ impl Render for Seek {
         let (change, commit) = (cx.entity(), cx.entity());
         let _ = p;
         // The playhead the slider shows comes from the engine, which holds a
-        // seek's target until it lands there (koan-ffi's pending seek), so a
+        // seek's target until it lands there (`SharedPlayerState::request_seek`,
+        // and koan-ffi's `remote_seek` for a device being controlled), so a
         // click never shows the old place again before the new one.
         let width = self.width.clone();
         let measure = canvas(

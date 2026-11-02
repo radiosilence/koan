@@ -2396,6 +2396,62 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
         }
     }
 
+    // KOAN: (#1641) something drawn over a shader keeps what is drawn over
+    // it in turn on top, where that sits clear of the shader: a menu over a
+    // playing row keeps its text.
+    #[test]
+    fn what_covers_a_shader_keeps_its_own_order() {
+        static PROGRAM: gpui::ShaderProgram = gpui::ShaderProgram {
+            name: "koan-test-solid",
+            msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    return float4(0.0, 1.0, 0.0, 1.0);
+}
+"#,
+            wgsl: "",
+            prepare: None,
+        };
+        let rect = |x: f32, y: f32, w: f32, h: f32| Bounds {
+            origin: Point::new(ScaledPixels(x), ScaledPixels(y)),
+            size: size(ScaledPixels(w), ScaledPixels(h)),
+        };
+        let quad = |b: Bounds<ScaledPixels>, hue: f32| gpui::Quad {
+            bounds: b,
+            content_mask: ContentMask { bounds: b },
+            background: gpui::hsla(hue, 0.8, 0.5, 1.0).into(),
+            ..Default::default()
+        };
+        let mut scene = Scene::default();
+        let shader = rect(4.0, 4.0, 16.0, 16.0);
+        scene.insert_primitive(gpui::PaintShader {
+            order: 0,
+            bounds: shader,
+            content_mask: ContentMask { bounds: shader },
+            program: &PROGRAM,
+            uniforms: Arc::new(gpui::ShaderUniforms::new()),
+            image: None,
+        });
+        // A menu over the shader, and its text over the menu, clear of it.
+        scene.insert_primitive(quad(rect(12.0, 8.0, 40.0, 16.0), 0.1));
+        scene.insert_primitive(quad(rect(32.0, 12.0, 12.0, 8.0), 0.6));
+        scene.finish();
+        let plan = scene.shader_layers.as_deref().expect("a plan");
+        assert!(plan.layers[1].quads.len() == 2, "the text follows the menu");
+
+        let viewport = size(DevicePixels(64), DevicePixels(32));
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
+        let composed = renderer.compose_scene_to_image(&scene, viewport, 1).unwrap();
+        assert_eq!(whole.get_pixel(36, 16), composed.get_pixel(36, 16), "the text is on top");
+        assert!(
+            whole
+                .as_raw()
+                .iter()
+                .zip(composed.as_raw())
+                .all(|(a, b)| a.abs_diff(*b) <= 1)
+        );
+    }
+
     // KOAN: (#1641) GPUI's shader types, tested here: the vendored GPUI core
     // carries none of the assets its own tests read.
     mod shader {
@@ -2444,6 +2500,18 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             assert!((t - 1.5).abs() < 1e-6, "{t}");
             u.set_origin(origin);
             assert!(!u.take_present());
+        }
+
+        #[test]
+        fn an_origin_before_the_epoch_counts_from_where_it_was() {
+            let u = ShaderUniforms::new();
+            let epoch = shader_epoch();
+            let Some(before) = epoch.checked_sub(std::time::Duration::from_secs(5)) else {
+                return;
+            };
+            u.set_origin(before);
+            let t = u.time_at(epoch);
+            assert!((t - 5.0).abs() < 1e-3, "{t}");
         }
     }
 }

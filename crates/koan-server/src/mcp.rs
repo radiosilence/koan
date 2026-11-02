@@ -56,12 +56,16 @@ pub struct KoanMcpServer {
 }
 
 impl KoanMcpServer {
+    /// `session`: whose saved session the playback-state mutations write,
+    /// the server's own (`ApiServerOpts::session`); `None` keeps none.
     pub fn new(
         state: Arc<SharedPlayerState>,
         cmd_tx: Sender<PlayerCommand>,
         pool: Arc<koan_core::db::pool::Pool>,
+        session: Option<&'static str>,
     ) -> Self {
-        let graphql_schema = crate::graphql::build_schema_extended(state, cmd_tx, pool, Denylist);
+        let graphql_schema =
+            crate::graphql::build_schema_extended(state, cmd_tx, pool, session, Denylist);
         Self {
             tool_router: Self::tool_router(),
             graphql_schema,
@@ -367,12 +371,13 @@ pub fn router(
     auth: crate::auth::middleware::AuthState,
     server_url: Option<String>,
     headless: bool,
+    session: Option<&'static str>,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
-    let mut template = KoanMcpServer::new(state, cmd_tx, auth.pool.clone());
+    let mut template = KoanMcpServer::new(state, cmd_tx, auth.pool.clone(), session);
     template.headless = headless;
     template.server_url = server_url.clone();
     let service = StreamableHttpService::new(
@@ -487,7 +492,8 @@ pub fn cmd_mcp() {
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
     let pool = Arc::new(koan_core::db::pool::Pool::new(db_path));
-    let server = KoanMcpServer::new(state, cmd_tx, pool);
+    // Its player is headless and restores nothing.
+    let server = KoanMcpServer::new(state, cmd_tx, pool, None);
 
     // Run the MCP server on the tokio runtime (blocking the main thread).
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -523,8 +529,12 @@ mod tests {
         let ch = CommandChannel::new();
         let tx = ch.tx.clone();
 
-        let server =
-            KoanMcpServer::new(state, tx, Arc::new(koan_core::db::pool::Pool::new(db_path)));
+        let server = KoanMcpServer::new(
+            state,
+            tx,
+            Arc::new(koan_core::db::pool::Pool::new(db_path)),
+            None,
+        );
         (server, ch, tmp)
     }
 
@@ -576,6 +586,7 @@ mod tests {
             auth,
             None,
             true,
+            None,
             Default::default(),
         );
         let req = |accept: &str| {
@@ -709,6 +720,38 @@ mod tests {
             .await;
         let Json(resp) = result;
         assert_eq!(resp.result["data"]["pause"]["ok"], true);
+    }
+
+    /// Through MCP the playback-state mutations write the server's session,
+    /// as `/graphql` does; a server keeping none refuses them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn saving_the_session_works_through_mcp() {
+        let (_, ch, tmp) = test_server();
+        let pool = Arc::new(koan_core::db::pool::Pool::new(tmp.path().join("test.db")));
+        let save = |server: KoanMcpServer| async move {
+            let Json(resp) = server
+                .graphql(
+                    Parameters(GraphqlParams {
+                        query: "mutation { savePlaybackState { ok } }".into(),
+                        variables: None,
+                    }),
+                    Default::default(),
+                )
+                .await;
+            resp.result
+        };
+        let terminal = koan_core::remote::link::LinkIdentity::TERMINAL_FILES;
+        let kept = KoanMcpServer::new(
+            SharedPlayerState::new(),
+            ch.tx.clone(),
+            pool.clone(),
+            Some(terminal),
+        );
+        let result = save(kept).await;
+        assert_eq!(result["data"]["savePlaybackState"]["ok"], true, "{result}");
+        let none = KoanMcpServer::new(SharedPlayerState::new(), ch.tx.clone(), pool, None);
+        let result = save(none).await;
+        assert!(result["errors"].is_array(), "{result}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -89,11 +89,20 @@ Played tracks are kept, so they play again from disk, until the cache limit need
 cache_limit = "50GB"           # max cache size; bounds queue prefetch too; "0" keeps no cache (default: unlimited)
 download_ahead = 3             # tracks past the playing one to fetch (default: the whole queue)
 cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cache)
+preload_covers = true          # fetch every record's cover ahead (default: on)
 ```
+
+### Covers
+
+A remote library has no files to read covers from, so each one is a request to the server. The apps ask for the size they draw: 600 pixels for grids, lists and headers on a phone or a computer, which a kōan server keeps ready; 1200 for a large screen (Now Playing and record headers on an iPad, an Apple TV, Android's full-screen player); the original only for the artwork viewer, which the server reads from the music file. A large cover shows the 600 one first and sharpens in place.
+
+Every cover fetched is kept in the cache's `artwork` directory, so any page asking for it again reads it from disk, and with **Fetch every record's cover ahead** (Settings → Server, on by default) the apps fetch the rest in the background after a sync: one at a time, only while no cover a page asked for is waiting, and only while the app is in the foreground, on a network that is not metered, and not saving power. Its progress shows as an activity row with a stop button; stopping keeps what was fetched and carries on at the next launch or when the setting is turned on again. Kept covers count against `cache_limit` with the downloads. The preload stops short of the limit, and when the cache is over it covers are trimmed first, oldest first, since one is cheap to fetch again and a download is the music; with `cache_limit = "0"` nothing is fetched ahead. Records the server has no cover for are remembered, so the preload does not ask again. Covers are kept per server and removed at sign-out; clearing the cache removes them too.
 
 ## Favourites and playlists
 
 Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync, unfavouriting included. A favourite made here before its item was on the server, or before signing in, is sent to it rather than dropped. A favourite changed while the server cannot be reached waits on the device and is sent with the next sync, and the server's older list does not undo it in the meantime.
+
+On a kōan server the order of the playlists syncs too: reordering them on one device reorders them on the account's other devices, and a playlist one device has that the server lacks keeps its place among the rest. Other servers have nowhere to keep the order, so there it stays on each device.
 
 A playlist the server marks read-only, such as a [smart playlist](smart-playlists.md), comes down like any other and is never edited or pushed back.
 
@@ -131,6 +140,7 @@ download_workers = 5             # parallel download threads
 cache_limit = "50GB"             # max cache size (LRU eviction)
 download_ahead = 3               # tracks fetched past the playing one
 cache_dir = "/custom/path"       # cache directory
+preload_covers = true            # fetch every record's cover ahead
 ```
 
 ## Checking status

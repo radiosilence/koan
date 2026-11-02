@@ -4,9 +4,8 @@
 use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{InviteTo, Settings};
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 
@@ -26,8 +25,7 @@ pub struct ShareForm {
     address: Entity<InputState>,
     account_error: Option<SharedString>,
     creating: bool,
-    copied: bool,
-    copy_reset: Option<Task<()>>,
+    copied: Copied,
     link: Option<(String, Entity<LinkDevice>)>,
     _subscriptions: Vec<Subscription>,
 }
@@ -82,8 +80,7 @@ impl ShareForm {
             address,
             account_error: None,
             creating: false,
-            copied: false,
-            copy_reset: None,
+            copied: Copied::default(),
             link: None,
             _subscriptions: subscriptions,
         }
@@ -173,7 +170,7 @@ impl ShareForm {
         });
     }
 
-    fn create(&mut self, ctx: &Ctx, cx: &mut Context<ServerPane>) {
+    fn create(&mut self, ctx: &Ctx, window: AnyWindowHandle, cx: &mut Context<ServerPane>) {
         let name = self.username.read(cx).value().trim().to_owned();
         let secret = self.password.read(cx).value().to_string();
         self.creating = true;
@@ -187,6 +184,18 @@ impl ShareForm {
                     pane.share.account_error = result.err().map(Into::into);
                     cx.notify();
                 });
+                // The password is the server's now: not kept in the form.
+                if made {
+                    window
+                        .update(cx, |_, window, cx| {
+                            pane.update(cx, |pane, cx| {
+                                for field in [&pane.share.password, &pane.share.again] {
+                                    field.update(cx, |s, cx| s.set_value("", window, cx));
+                                }
+                            })
+                        })
+                        .ok();
+                }
                 if made {
                     ShareForm::set_sharing(&ctx2, true, cx);
                 }
@@ -308,8 +317,9 @@ impl ShareForm {
                 Button::new("create-account", ButtonKind::Prominent)
                     .label("Create Account and Share")
                     .disabled(!ready)
-                    .on_click(move |_, _, cx| {
-                        pane.update(cx, |pane, cx| pane.share.create(&ctx, cx))
+                    .on_click(move |_, window, cx| {
+                        let handle = window.window_handle();
+                        pane.update(cx, |pane, cx| pane.share.create(&ctx, handle, cx))
                     })
                     .into_any_element(),
             ],
@@ -368,23 +378,11 @@ impl ShareForm {
                     .control(copyable(
                         "copy-lan",
                         url,
-                        self.copied,
+                        self.copied.is("lan"),
                         move |cx| {
                             let copy = copy.clone();
                             pane.update(cx, |pane, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copy));
-                                pane.share.copied = true;
-                                cx.notify();
-                                pane.share.copy_reset = Some(cx.spawn(async move |this, cx| {
-                                    cx.background_executor()
-                                        .timer(std::time::Duration::from_millis(1500))
-                                        .await;
-                                    this.update(cx, |pane, cx| {
-                                        pane.share.copied = false;
-                                        cx.notify();
-                                    })
-                                    .ok();
-                                }));
+                                Copied::copy(pane, |pane| &mut pane.share.copied, "lan", copy, cx)
                             })
                         },
                         look,

@@ -115,7 +115,7 @@ fun EqChain(
     modifier: Modifier = Modifier,
 ) {
     val correction = o.profiles.firstOrNull { it.name == o.active }
-    val matched = matched(o, correction)
+    val matched = o.matched
     val accent = KoanTheme.look.accent
     val rule = KoanTheme.color(KoanTone.Rule)
     val line = if (matched) accent else rule
@@ -202,20 +202,6 @@ fun EqChain(
         }
         End("$device out", KoanIcons.speaker, appText = false)
     }
-}
-
-/**
- * The first EQ that plays meets the correction matched, and none after it
- * was made against another target: the whole chain is drawn in the accent.
- * An EQ that says no target (a generic one stacked on top) leaves it
- * matched. What plays is what `sentence` says plays.
- */
-internal fun matched(o: DspOverview, correction: DspProfileSummary?): Boolean {
-    if (correction == null || correction.role == DspRole.BAKED || !o.tuningPlays) return false
-    val playing = o.chain.zip(o.joins).filter { (entry, _) -> entry.on && entry.name !in o.leftOutEqs }
-    val first = playing.firstOrNull() ?: return false
-    if (first.second.join != DspJoin.Matched) return false
-    return playing.drop(1).all { it.second.join == DspJoin.Matched || it.second.join == DspJoin.Unknown }
 }
 
 @Composable

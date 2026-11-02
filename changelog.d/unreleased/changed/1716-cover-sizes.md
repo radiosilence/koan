@@ -1,0 +1,1 @@
+- **Covers are fetched at the size they are drawn.** The Apple apps ask for 600 px covers, which a kōan server keeps ready, instead of 1000 px ones it made on first request; iPad and Apple TV Now Playing and record headers take 1200 px and sharpen in place, Android's full-screen player and record header take 1200 px, and only the artwork viewer asks for the original.

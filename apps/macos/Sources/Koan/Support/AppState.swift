@@ -93,6 +93,7 @@ final class AppState {
         playlists.report = { [weak player] message in player?.lastError = message }
 
         activity.cancelLibraryTask = { engine.cancelLibraryTask() }
+        activity.stopCoverPreload = { engine.stopCoverPreload() }
 
         // The engine syncs and scans on its own — on startup, on a timer, and
         // when the library folders change. Those are the slow things a user is
@@ -108,6 +109,7 @@ final class AppState {
             activity.mirror(
                 "Scanning library", uses: .localLibrary, cancellable: true,
                 running: mirror.tasks.scanning)
+            activity.showCovers(mirror.covers)
         }
 
 
