@@ -150,7 +150,7 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 `Placeholder::new(side)`: what a sleeve, photo or playlist face shows while it has none or none yet, the app icon's ensō faded back on `rule` (the Mac's `EnsoPlaceholder`), one atlas sprite per size. A record's average colour still stands in while its bitmap uploads, since that carries the record.
 
-`Spinner::new(side)`, and `.reserving(size)` to hold exactly the room of what is loading, so nothing moves when it arrives.
+`Spinner::new(side)`, and `.reserving(size)` to hold exactly the room of what is loading, so nothing moves when it arrives. It is the one loading mark: a pane waiting on its rows shows it rather than a word. On the shader path the ensō is drawn from a field baked once (how far along the brush and how far from it each texel is), its head and tail moving with `time`, so it turns smoothly at any size with no frame drawn.
 
 ### Animated (GPU-drawn motion)
 
@@ -166,6 +166,7 @@ progress.set(0, fraction);                 // from any thread, as the engine rep
 
 - **Driven by values:** `set`/`set_all` write uniforms; a change wakes the window to present at its next refresh, and nothing runs between changes.
 - **Driven by the clock:** `run(true)` presents every refresh while it runs, and `time` in the program counts from `set_origin`. A seek bar sets the anchor's share, rate and instant and runs while playing; an indeterminate ring runs while shown.
+- **Transitions:** `run_for(length)` runs the clock for a transition's length and stops by itself, with nothing to stop it. The controls' fills and outlines fade this way (`transition`, `fill`, `outline` in `components/mod.rs`); their text colours still fade on GPUI frames, since text cannot change colour without a frame.
 - **Parking** is the kit's: a window with nothing changing or running parks; a hidden or occluded one is not woken; a quad off screen is not in the scene.
 - **Reduce Motion:** `.decorative()` stops the clock while the person asks for less motion. Progress is not decorative.
 - **Per-present work:** a program's `prepare` runs on the CPU once per quad at each present, for what every pixel would otherwise work out alike (the wash's pose and eased opacity).
