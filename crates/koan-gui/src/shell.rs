@@ -44,6 +44,8 @@ pub struct Shell {
     /// The queue's controls, in the toolbar while the queue shows.
     queue_controls: Entity<library::controls::ControlsSlot>,
     transport: Entity<Transport>,
+    /// What is wrong with the server, across the top of every page.
+    banner: Entity<crate::server_banner::ServerBanner>,
     /// The library's pages, once the browsers' saved sorts and filters have
     /// been read.
     library: Option<Entity<LibraryStage>>,
@@ -109,6 +111,7 @@ impl Shell {
         Self {
             sidebar: cx.new(|cx| Sidebar::new(&nav, cx)),
             transport: cx.new(|cx| Transport::new(&nav, window, cx)),
+            banner: cx.new(crate::server_banner::ServerBanner::new),
             nav,
             focus: cx.focus_handle(),
             queue,
@@ -525,6 +528,7 @@ impl Render for Shell {
                             .flex()
                             .flex_col()
                             .child(self.toolbar(window, cx))
+                            .child(self.banner.clone())
                             .child(div().flex_1().min_h_0().child(stage))
                             .when(!washed, |d| d.child(transport())),
                     )
@@ -542,6 +546,10 @@ impl Render for Shell {
                 ),
             )
             .when(washed, |d| d.child(transport()))
+            .children(
+                ask::presented(window, cx)
+                    .map(|s| deferred(div().absolute().inset_0().child(s)).with_priority(2)),
+            )
             .children(
                 ask::overlay(window, cx)
                     .map(|q| deferred(div().absolute().inset_0().child(q)).with_priority(3)),

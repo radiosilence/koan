@@ -13,6 +13,7 @@
 
 mod availability;
 mod badge;
+mod banner;
 mod button;
 mod cover;
 mod dense;
@@ -34,6 +35,7 @@ mod ring;
 mod rows;
 mod scroll;
 mod segmented;
+mod selection_bar;
 pub mod sheet;
 mod slider;
 mod spinner;
@@ -54,13 +56,14 @@ use gpui_kit::{
 
 pub use availability::{Availability, AvailabilityMark, ProgressReader};
 pub use badge::{Badge, Chip};
+pub use banner::Banner;
 pub use button::{Button, ButtonKind};
 pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
 pub use fade::FadeIn;
-pub use field::TextField;
+pub use field::{FieldState, InputEvent, TextField};
 pub use filter_field::FilterField;
 pub use form::{
     Form, FormRow, FormSection, SectionHeader, form_buttons, form_item, form_note, form_text,
@@ -77,12 +80,13 @@ pub use ring::ProgressRing;
 pub use rows::{ListRow, NavHeading, NavNote, NavRow};
 pub use scroll::ScrollArea;
 pub use segmented::Segmented;
+pub use selection_bar::SelectionBar;
 pub use slider::Slider;
 pub use spinner::Spinner;
 pub use split::SplitView;
 pub use status::StatusBlock;
 pub use stepper::Stepper;
-pub use table::{ROW_GROUP, RowNumber, TableRow};
+pub use table::{ROW_GROUP, RowNumber, TableRow, table_list};
 pub use toggle::{IconToggle, Toggle};
 pub use toolbar::{
     Dismiss, TOOLBAR_HEIGHT, Toolbar, ToolbarButton, ToolbarGroup, ToolbarMenu, ToolbarMetrics,
