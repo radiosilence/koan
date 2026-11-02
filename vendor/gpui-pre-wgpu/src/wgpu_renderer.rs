@@ -1949,6 +1949,37 @@ impl WgpuRendererCore {
         }
     }
 
+    // KOAN: (#1641) a bind group for each shader's image, current with its
+    // atlas texture; unlike `prepare_texture_bind_groups`, nothing else is
+    // looked at or dropped.
+    fn prepare_shader_textures(&mut self, scene: &Scene) {
+        for shader in &scene.shaders {
+            let Some(texture_id) = shader.image.as_ref().map(|t| t.texture_id) else {
+                continue;
+            };
+            let Some(texture_info) = self.atlas.get_texture_info(texture_id) else {
+                continue;
+            };
+            let current = self
+                .resources()
+                .atlas_texture_bind_groups
+                .get(&texture_id)
+                .is_some_and(|cached| cached.texture_generation == texture_info.generation);
+            if current {
+                continue;
+            }
+            let bind_group =
+                self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
+            self.resources_mut().atlas_texture_bind_groups.insert(
+                texture_id,
+                CachedTextureBindGroup {
+                    texture_generation: texture_info.generation,
+                    bind_group,
+                },
+            );
+        }
+    }
+
     fn draw_instances(
         &self,
         instances: &InstanceBinding,
@@ -2076,7 +2107,9 @@ impl WgpuRendererCore {
         self.resources
             .queue
             .write_buffer(&self.resources.globals_buffer, 0, bytemuck::bytes_of(&globals));
-        self.prepare_texture_bind_groups(scene);
+        // Only the shaders' own images: the layers' were prepared as they
+        // were drawn, and a present walks nothing but the quads.
+        self.prepare_shader_textures(scene);
         for shader in &scene.shaders {
             self.prepare_shader_pipeline(shader.program);
         }
@@ -3476,6 +3509,7 @@ mod tests {
 
     // KOAN: (#1641) a shader quad is drawn where it was painted, by its
     // program, from its uniforms, and clipped to its mask.
+    #[cfg(target_os = "linux")]
     #[test]
     fn headless_renderer_draws_shader_quads() -> anyhow::Result<()> {
         static HALF: gpui::ShaderProgram = gpui::ShaderProgram {
@@ -3518,6 +3552,98 @@ fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>
         uniforms.set(0, 1.0);
         let image = renderer.render_scene_to_image(&scene, size)?;
         assert!(image.get_pixel(48, 8).0[0] > 200, "the uniforms are read afresh");
+        Ok(())
+    }
+
+    // KOAN: (#1641) a composed present gives the pixels a whole render does,
+    // with a quad over the shader and without, and follows the uniforms.
+    #[cfg(target_os = "linux")]
+    static SOLID: gpui::ShaderProgram = gpui::ShaderProgram {
+        name: "koan-test-solid",
+        msl: "",
+        wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    if (position.x < size.x * u[0].x) {
+        return vec4<f32>(1.0, 0.0, 0.0, 0.5);
+    }
+    return vec4<f32>(0.0);
+}
+"#,
+        prepare: None,
+    };
+
+    #[cfg(target_os = "linux")]
+    fn close(a: &image::RgbaImage, b: &image::RgbaImage) -> bool {
+        a.as_raw().iter().zip(b.as_raw()).all(|(x, y)| x.abs_diff(*y) <= 1)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn shader_at(
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uniforms: &Arc<gpui::ShaderUniforms>,
+    ) -> gpui::PaintShader {
+        let quad = solid_quad(x, y, w, h, gpui::red());
+        gpui::PaintShader {
+            order: 0,
+            bounds: quad.bounds,
+            content_mask: quad.content_mask,
+            program: &SOLID,
+            uniforms: uniforms.clone(),
+            image: None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_composed_present_matches_a_whole_render() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        for covered in [false, true] {
+            let mut scene = Scene::default();
+            scene.insert_primitive(solid_quad(0.0, 0.0, 64.0, 32.0, gpui::blue()));
+            scene.insert_primitive(shader_at(8.0, 8.0, 32.0, 16.0, &uniforms));
+            let over = if covered {
+                solid_quad(30.0, 10.0, 20.0, 4.0, gpui::green())
+            } else {
+                solid_quad(50.0, 10.0, 10.0, 4.0, gpui::green())
+            };
+            scene.insert_primitive(over);
+            scene.finish();
+            let plan = scene.shader_layers.as_deref().expect("a plan");
+            assert_eq!(plan.layers[1].is_blank(), !covered);
+            uniforms.set(0, 0.5);
+            let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+            let composed = renderer.compose_scene_to_image(&scene, device_size(64, 32))?;
+            assert!(close(&whole, &composed), "covered: {covered}");
+            uniforms.set(0, 1.0);
+            let moved = renderer.compose_scene_to_image(&scene, device_size(64, 32))?;
+            assert_ne!(moved.as_raw(), composed.as_raw());
+            let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+            assert!(close(&whole, &moved), "covered: {covered}, moved");
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wgpu_what_covers_a_shader_keeps_its_own_order() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let uniforms = Arc::new(gpui::ShaderUniforms::new());
+        uniforms.set(0, 1.0);
+        let mut scene = Scene::default();
+        scene.insert_primitive(shader_at(4.0, 4.0, 16.0, 16.0, &uniforms));
+        // A menu over the shader, and its text over the menu, clear of it.
+        scene.insert_primitive(solid_quad(12.0, 8.0, 40.0, 16.0, gpui::green()));
+        scene.insert_primitive(solid_quad(32.0, 12.0, 12.0, 8.0, gpui::blue()));
+        scene.finish();
+        let plan = scene.shader_layers.as_deref().expect("a plan");
+        assert_eq!(plan.layers[1].quads.len(), 2, "the text follows the menu");
+        let whole = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+        let composed = renderer.compose_scene_to_image(&scene, device_size(64, 32))?;
+        assert!(close(&whole, &composed));
         Ok(())
     }
 }
