@@ -517,8 +517,6 @@ macos-test: macos-ffi
 ios_deployment_target := "26.0"
 tv_deployment_target := "26.0"
 
-# koan-gui's pages choosing a look by hand rather than from koan-kit, against
-# a baseline that only falls (`--update` lowers it). docs/design/koan-kit.md.
 # Rebuild the vendored GPUI crates from release VERSION and vendor/patches,
 # failing on the first patch that does not apply; vendor/ is untouched then.
 vendor-gpui version:
@@ -532,6 +530,8 @@ vendor-gpui-patches:
 vendor-gpui-check:
     scripts/vendor-gpui.sh --check
 
+# koan-gui's pages choosing a look by hand rather than from koan-kit, against
+# a baseline that only falls (`--update` lowers it). docs/design/koan-kit.md.
 gui-theme-leaks *args:
     python3 scripts/gui-theme-leaks.py {{args}}
 
