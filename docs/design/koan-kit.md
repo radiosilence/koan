@@ -208,7 +208,7 @@ The renderer keeps the last drawn frame as layers split at the shaders, so a pre
 
 `PlayingBars::new(color, attach)` (Mac: `PlayingLevels`): the playing bars, `BarMetrics` in size, an animated quad drawn from the bands in a `BarLevels` that the app writes. Where the renderer draws no shaders, `attach` records each slot's `BarsPlace` and the app paints them as quads over the window's content inside `bars_overlay`.
 
-`SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included. A list measuring its items takes `SectionHeading::height`.
+`SectionHeading::new(title)` (Mac: the artist page's section titles): the heading over one of a page's sections, `body` in `strong`, its room above and below its own; `trailing` takes the section's own verbs. Every section is headed, a single one included, where the Mac's artist page heads sections only when there are several: a discography of albums alone still says what it is. A list measuring its items takes `SectionHeading::height`.
 
 `FadeIn::new(id, element)`: what arrives after its page (a photograph, a biography) fading in over `Motion::NORMAL`, or appearing under Reduce Motion. It takes no size of its own, so the element lays out as it would unwrapped: a wrapper that fills its parent takes the whole header row from the title beside a photo.
 

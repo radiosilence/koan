@@ -29,7 +29,7 @@ pub enum DbError {
     InvalidRules(String),
     /// A newer koan has migrated the database since this process opened it.
     #[error(
-        "database schema version {0} is newer than this build understands ({schema}): a newer koan has upgraded it",
+        "database schema version {0} is newer than this build understands ({schema}): a newer kōan has upgraded it. Update this kōan to open it.",
         schema = super::schema::SCHEMA_VERSION
     )]
     Outdated(i64),

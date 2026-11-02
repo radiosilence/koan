@@ -13,6 +13,7 @@ pub mod media;
 pub mod menus;
 pub mod runtime_files;
 pub mod shortcuts_sheet;
+pub mod startup_error;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
