@@ -70,7 +70,9 @@ impl ButtonKind {
         let glyph = px(crate::theme::icons::side(look.points(self.role())));
         let (vertical, _) = self.padding();
         let outline = match self {
-            ButtonKind::Prominent | ButtonKind::Bordered | ButtonKind::IconOutlined => look.hairline,
+            ButtonKind::Prominent | ButtonKind::Bordered | ButtonKind::IconOutlined => {
+                look.hairline
+            }
             _ => px(0.0),
         };
         glyph + look.spaced(vertical) * 2.0 + outline * 2.0

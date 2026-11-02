@@ -62,7 +62,11 @@ impl Shade {
         let made = (0..=100)
             .map(|i| {
                 let step = i as f64 / 100.0;
-                let l = if dark { l + (1.0 - l) * step } else { l * (1.0 - step) };
+                let l = if dark {
+                    l + (1.0 - l) * step
+                } else {
+                    l * (1.0 - step)
+                };
                 oklch::to_srgb(l, c, h)
             })
             .find(|rgb| reaches(*rgb))

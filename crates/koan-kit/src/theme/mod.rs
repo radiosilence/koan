@@ -183,7 +183,9 @@ fn set_system_display(
     let theme = cx.global::<KoanTheme>();
     let contrast = contrast.unwrap_or(theme.contrast);
     let opaque = opaque.unwrap_or(theme.opaque);
-    let text = text.filter(|t| t.is_finite() && *t > 0.0).unwrap_or(theme.system_text);
+    let text = text
+        .filter(|t| t.is_finite() && *t > 0.0)
+        .unwrap_or(theme.system_text);
     if (contrast, opaque, text) == (theme.contrast, theme.opaque, theme.system_text) {
         return;
     }
@@ -216,10 +218,16 @@ fn watch_desktop_settings(cx: &mut App) {
             return;
         };
         let contrast = settings.contrast().await.ok().map(|c| c == Contrast::High);
-        let text = settings.read::<f64>(INTERFACE, SCALING).await.ok().map(|t| t as f32);
+        let text = settings
+            .read::<f64>(INTERFACE, SCALING)
+            .await
+            .ok()
+            .map(|t| t as f32);
         cx.update(|cx| set_system_display(contrast, None, text, cx));
         let contrasts: BoxStream<Change> = match settings.receive_contrast_changed().await {
-            Ok(changes) => changes.map(|c| Change::Contrast(c == Contrast::High)).boxed(),
+            Ok(changes) => changes
+                .map(|c| Change::Contrast(c == Contrast::High))
+                .boxed(),
             Err(_) => empty().boxed(),
         };
         let texts: BoxStream<Change> = match settings

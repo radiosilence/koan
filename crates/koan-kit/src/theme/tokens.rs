@@ -334,9 +334,8 @@ mod tests {
     }
 
     fn contrast(a: Hex, b: Hex) -> f64 {
-        let y = |h: Hex| {
-            crate::theme::accent::oklch::luminance(h.channels().map(|v| v as f64 / 255.0))
-        };
+        let y =
+            |h: Hex| crate::theme::accent::oklch::luminance(h.channels().map(|v| v as f64 / 255.0));
         let (a, b) = (y(a), y(b));
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
@@ -364,7 +363,10 @@ mod tests {
                     }
                 }
                 let ratio = contrast(p.on_selection, p.selection);
-                assert!(ratio >= minimum, "on_selection, dark {dark}, contrast {more}: {ratio:.2}");
+                assert!(
+                    ratio >= minimum,
+                    "on_selection, dark {dark}, contrast {more}: {ratio:.2}"
+                );
                 if more {
                     assert!(contrast(p.rule, p.bg) >= 3.0, "rule, dark {dark}");
                 }
