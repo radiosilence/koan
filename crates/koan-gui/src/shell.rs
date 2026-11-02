@@ -19,9 +19,9 @@ use crate::components::sheet as ask;
 use crate::components::{RowMetrics, SplitView, Toolbar, ToolbarButton, WINDOW_BUTTONS};
 use crate::navigator::{Navigator, Route};
 use crate::platform::actions::{
-    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, ClearDownloadedFiles, Forward,
-    Search, ShowAlbums, ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed,
-    ShowShortcuts, ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
+    self, ActualSize, AddMusic, Back, Bigger, ClearArtworkCache, Forward, Search, ShowAlbums,
+    ShowArtists, ShowFavourites, ShowHistory, ShowQueue, ShowRecentlyPlayed, ShowShortcuts,
+    ShowTracks, Smaller, ToggleLyrics, ToggleSidebar, help,
 };
 use crate::platform::shortcuts_sheet::{Dismissed, ShortcutsSheet};
 
@@ -343,39 +343,6 @@ impl Shell {
         .detach();
     }
 
-    /// Asks before throwing away every file downloaded from the server,
-    /// saying how much it frees and that the tracks stay.
-    fn clear_downloads(
-        &mut self,
-        _: &ClearDownloadedFiles,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let bytes = cx.global::<crate::mirror::Mirror>().cache.read(cx).0;
-        ask::confirm(
-            ask::Confirm {
-                title: "clear downloaded files".into(),
-                verb: "clear".into(),
-                destructive: true,
-                lines: vec![
-                    format!(
-                        "The copies of tracks downloaded from your server are deleted from this device: {}.",
-                        crate::time::bytes(bytes)
-                    )
-                    .into(),
-                ],
-                note: Some(
-                    "The tracks stay in the library and download again when played.".into(),
-                ),
-            },
-            window,
-            cx,
-            |cx| {
-                crate::engine::command(cx, "clear downloaded files", |e| e.clear_download_cache())
-            },
-        );
-    }
-
     /// Bare space that moves the window, as a title bar's does.
     fn moves_window(area: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
         area.window_control_area(WindowControlArea::Drag)
@@ -594,7 +561,6 @@ impl Render for Shell {
                 this.show(Route::RecentlyPlayed, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowTracks, _, cx| this.show(Route::Tracks, cx)))
-            .on_action(cx.listener(Self::clear_downloads))
             .on_action(cx.listener(Self::clear_artwork))
             .on_action(|_: &Bigger, _, cx| Self::step_text_size(1, cx))
             .on_action(|_: &Smaller, _, cx| Self::step_text_size(-1, cx))

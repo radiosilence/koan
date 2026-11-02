@@ -44,6 +44,10 @@ pub struct OrganizeSheet {
     /// The pattern chosen by name; `None` is a pattern typed for this once.
     chosen: Option<usize>,
     draft: Entity<FieldState>,
+    /// The name the typed pattern is saved under.
+    save_name: Entity<FieldState>,
+    /// What the last save had to say, until the pattern changes again.
+    saved: Option<String>,
     folders: Vec<String>,
     folder: usize,
     move_ancillary: bool,
@@ -71,11 +75,20 @@ impl OrganizeSheet {
         cx: &mut Context<Self>,
     ) -> Self {
         let draft = cx.new(|cx| FieldState::new(window, cx).placeholder("%album artist%/…"));
-        let subscriptions = vec![cx.subscribe(&draft, |this, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.preview(cx);
-            }
-        })];
+        let save_name = cx.new(|cx| FieldState::new(window, cx).placeholder("name"));
+        let subscriptions = vec![
+            cx.subscribe(&draft, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.saved = None;
+                    this.preview(cx);
+                }
+            }),
+            cx.subscribe(&save_name, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
+        ];
         let engine = engine(cx);
         let ids = track_ids.clone();
         let load = cx.spawn_in(window, async move |this, cx| {
@@ -111,6 +124,8 @@ impl OrganizeSheet {
             patterns: Vec::new(),
             chosen: None,
             draft,
+            save_name,
+            saved: None,
             folders: Vec::new(),
             folder: 0,
             move_ancillary: true,
@@ -214,6 +229,59 @@ impl OrganizeSheet {
         self.chosen = Some(index);
         let text = pattern.pattern.clone();
         self.draft.update(cx, |s, cx| s.set_value(text, window, cx));
+    }
+
+    /// The typed pattern differs from the named one chosen, or none is.
+    fn modified(&self, cx: &App) -> bool {
+        let typed = self.pattern(cx);
+        !typed.is_empty()
+            && self
+                .chosen
+                .and_then(|i| self.patterns.get(i))
+                .is_none_or(|p| p.pattern.trim() != typed)
+    }
+
+    /// What saving under the name typed would do, said before it is done.
+    fn save_preview(&self, cx: &App) -> Option<String> {
+        let name = self.save_name.read(cx).value().trim().to_owned();
+        if name.is_empty() {
+            return None;
+        }
+        Some(if self.patterns.iter().any(|p| p.name == name) {
+            format!("Replaces the pattern “{name}” in config.toml.")
+        } else {
+            format!("Stored in config.toml as “{name}”, for every kōan on this config.")
+        })
+    }
+
+    /// Stores the typed pattern under the name typed, then chooses it.
+    fn save_pattern(&mut self, cx: &mut Context<Self>) {
+        let name = self.save_name.read(cx).value().trim().to_owned();
+        let pattern = self.pattern(cx);
+        if name.is_empty() || pattern.is_empty() {
+            return;
+        }
+        let engine = engine(cx);
+        cx.spawn(async move |this, cx| {
+            let saved = engine
+                .clone()
+                .save_organize_pattern(name.clone(), pattern)
+                .await;
+            let patterns = engine.organize_patterns().await;
+            this.update(cx, |this, cx| {
+                match saved {
+                    Ok(()) => {
+                        this.chosen = patterns.iter().position(|p| p.name == name);
+                        this.patterns = patterns;
+                        this.saved = Some(format!("Saved as “{name}”."));
+                    }
+                    Err(e) => this.saved = Some(crate::settings::model::describe(&e)),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Asks with the plan's counts, then moves the files.
@@ -466,6 +534,32 @@ impl Render for OrganizeSheet {
                     .pt(look.space(crate::theme::Space::M))
                     .child(FormRow::new("pattern").control(picker))
                     .child(TextField::new(&self.draft).disabled(running))
+                    .when(self.modified(cx), |d| {
+                        let preview = self.save_preview(cx);
+                        d.child(
+                            FormRow::new("save as").control(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(look.space(crate::theme::Space::S))
+                                    .child(TextField::new(&self.save_name).disabled(running))
+                                    .child(
+                                        Button::new("organize-save", ButtonKind::Bordered)
+                                            .label("save")
+                                            .disabled(running || preview.is_none())
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| this.save_pattern(cx)),
+                                            ),
+                                    ),
+                            ),
+                        )
+                        .children(preview.map(|text| ask::note(text, Tone::Muted, look)))
+                    })
+                    .children(
+                        self.saved
+                            .clone()
+                            .map(|text| ask::note(text, Tone::Muted, look)),
+                    )
                     .child(FormRow::new("library folder").control(folder))
                     .child(ancillary)
                     .children(self.summary().map(|(text, warns)| {

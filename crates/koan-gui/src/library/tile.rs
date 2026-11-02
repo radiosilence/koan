@@ -273,7 +273,8 @@ impl<V: TileHost> Render for TileView<V> {
                 }
             }
             Sleeve::Colour(colour) => TileSleeve::Colour(*colour),
-            Sleeve::Waiting | Sleeve::None => TileSleeve::Missing,
+            Sleeve::Waiting => TileSleeve::Loading,
+            Sleeve::None => TileSleeve::Missing,
         };
         let over_sleeve = matches!(hovered, Some(Part::Sleeve | Part::Heart));
         let mark = if state.starting {

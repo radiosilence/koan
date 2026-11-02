@@ -71,6 +71,10 @@ fn lines(tracks: &[Track]) -> Vec<Line> {
     out
 }
 
+/// How long a record's first read may take before the page says it is
+/// still reading.
+const SLOW_READ: std::time::Duration = std::time::Duration::from_millis(300);
+
 pub struct AlbumPage {
     lib: Lib,
     album_id: i64,
@@ -82,6 +86,10 @@ pub struct AlbumPage {
     request: u64,
     loaded_version: Option<u64>,
     _load: Option<Task<()>>,
+    /// The first read has taken long enough to say so: a record from a
+    /// server can, where a local one lands within a frame or two.
+    slow: bool,
+    _slow: Option<Task<()>>,
     scroll: UniformListScrollHandle,
     width: Rc<Cell<Option<Pixels>>>,
     selection: Selection,
@@ -123,6 +131,8 @@ impl AlbumPage {
             request: 0,
             loaded_version: None,
             _load: None,
+            slow: false,
+            _slow: None,
             scroll: UniformListScrollHandle::new(),
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
@@ -132,6 +142,18 @@ impl AlbumPage {
             _subscriptions: subscriptions,
         };
         this.load(cx);
+        // One timer for the first read alone, so a spinner shows only for a
+        // read there was something to wait for.
+        this._slow = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SLOW_READ).await;
+            this.update(cx, |this, cx| {
+                if this.album.is_none() && this.gone.is_none() {
+                    this.slow = true;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
         this
     }
 
@@ -243,6 +265,7 @@ impl AlbumPage {
             transfer: feed.transfers.get(&id).copied(),
             drag,
             kind,
+            note: None,
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -479,8 +502,17 @@ impl Render for AlbumPage {
                     ))
                     .into_any_element()
             }
-            // Still reading: nothing rather than a spinner, since a local
-            // record lands within a frame or two.
+            // Still reading: nothing at first, since a local record lands
+            // within a frame or two; the spinner once it has not.
+            _ if self.slow => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(crate::components::Spinner::new(
+                    p.look.font_size(crate::theme::TypeRole::Body),
+                ))
+                .into_any_element(),
             _ => div().into_any_element(),
         };
         div()

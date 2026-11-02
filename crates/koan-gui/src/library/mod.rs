@@ -16,6 +16,7 @@ pub mod drag;
 pub mod feed;
 pub mod format;
 pub mod header;
+pub mod history;
 pub mod info;
 pub mod nav;
 pub mod playlist;
@@ -158,4 +159,5 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(all, SelectAll, Some("Library")),
         KeyBinding::new("escape", Dismiss, Some("Library")),
     ]);
+    history::bind_keys(cx);
 }

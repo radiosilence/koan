@@ -151,7 +151,6 @@ impl Queue {
     }
 }
 
-/// The track row of each queue item.
 /// Lays `queue` out again, grouped or flat, on the background executor: a
 /// queue of 50,000 rows is no frame's work. The rows land only if the queue
 /// was not sent whole meanwhile, which lays itself out, and if `grouped` is
@@ -183,6 +182,7 @@ pub fn regroup(queue: &Entity<Queue>, grouped: bool, cx: &mut App) {
     .detach();
 }
 
+/// The track row of each queue item.
 fn track_rows(rows: &[Row], items: &[QueueItem]) -> HashMap<String, usize> {
     rows.iter()
         .enumerate()

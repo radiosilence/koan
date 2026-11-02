@@ -21,7 +21,8 @@ use crate::theme::{FONT_FAMILY, Icon, KoanIcon, KoanStyled, Look, TypeRole};
 /// The sleeve as a tile shows it.
 pub enum TileSleeve {
     /// The picture, `shown` from 0 to 1 while it fades in over `ground`,
-    /// the record's colour shown before it.
+    /// the record's colour shown before it, or over the loading ensō where
+    /// no colour stood in.
     Image {
         image: Arc<RenderImage>,
         shown: f32,
@@ -29,7 +30,9 @@ pub enum TileSleeve {
     },
     /// The picture's average colour, standing in while it uploads.
     Colour(Hsla),
-    /// No picture, or none yet: the ensō placeholder.
+    /// On its way: the ensō drawing itself.
+    Loading,
+    /// No picture, or none to be had: the ensō at rest.
     Missing,
 }
 
@@ -152,14 +155,23 @@ impl RenderOnce for TileArt {
                 shown,
                 ground,
             } => {
-                if shown < 1.0
-                    && let Some(ground) = ground
-                {
-                    art = art.bg(ground);
+                // Arriving: over the record's colour where it stood in, or
+                // over the ensō that was drawing itself.
+                if shown < 1.0 {
+                    art = match ground {
+                        Some(ground) => art.bg(ground),
+                        None => art.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .child(Placeholder::new(side).loading(true)),
+                        ),
+                    };
                 }
                 art = art.child(img(ImageSource::Render(image)).size_full().opacity(shown));
             }
             TileSleeve::Colour(colour) => art = art.bg(colour),
+            TileSleeve::Loading => art = art.child(Placeholder::new(side).loading(true)),
             TileSleeve::Missing => art = art.child(Placeholder::new(side)),
         }
         let badge = |text: SharedString| {
