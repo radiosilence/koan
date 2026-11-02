@@ -10,8 +10,9 @@ pub mod components;
 pub mod storybook;
 pub mod theme;
 
-/// GPUI as koan-gui still reaches it directly, while its pages move onto
-/// the components. It shrinks as they do, and goes when nothing uses it.
+/// GPUI past the components, for what koan-kit does not cover: each name a
+/// page takes from here is counted by `just gui-theme-leaks`, with a comment
+/// saying why.
 pub mod raw {
     pub use gpui_kit::*;
 }
