@@ -35,7 +35,7 @@ use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, T
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, FadeIn, Reveal, RowMetrics, SectionHeading, Spinner};
-use crate::theme::{Space, TypeRole};
+use crate::theme::{Motion, Space, TypeRole};
 
 /// A biography longer than this opens clamped, with "more" under it.
 const BIO_CLAMP: usize = 300;
@@ -72,8 +72,13 @@ pub struct ArtistPage {
     info: Option<ArtistInfo>,
     /// The biography shown whole rather than its opening.
     expanded: bool,
-    /// The photo became known after the page drew: its slot grows in.
+    /// The photo, and the biography, became known after the page drew: the
+    /// photo's slot grows in and the biography fades in, once. Cleared when
+    /// the motion is over, so an item scrolled away and back (a list item is
+    /// made again) stands still.
     photo_arriving: bool,
+    bio_arriving: bool,
+    _arrived: Option<Task<()>>,
     /// The biography is being looked up.
     looking_up: bool,
     loaded_version: Option<u64>,
@@ -139,6 +144,8 @@ impl ArtistPage {
             info: None,
             expanded: false,
             photo_arriving: false,
+            bio_arriving: false,
+            _arrived: None,
             looking_up: true,
             loaded_version: None,
             request: 0,
@@ -227,8 +234,24 @@ impl ArtistPage {
             this.update(cx, |this, cx| {
                 this.looking_up = false;
                 if let Some(fetched) = fetched {
-                    let had_photo = this.info.as_ref().is_some_and(|i| i.has_image);
-                    this.photo_arriving |= fetched.has_image && !had_photo && this.record.is_some();
+                    let (had_photo, had_bio) = this
+                        .info
+                        .as_ref()
+                        .map_or((false, false), |i| (i.has_image, i.bio.is_some()));
+                    let drawn = this.record.is_some();
+                    this.photo_arriving |= fetched.has_image && !had_photo && drawn;
+                    this.bio_arriving |= fetched.bio.is_some() && !had_bio && drawn;
+                    if this.photo_arriving || this.bio_arriving {
+                        let timer = cx.background_executor().timer(Motion::NORMAL);
+                        this._arrived = Some(cx.spawn(async move |this, cx| {
+                            timer.await;
+                            this.update(cx, |this, _| {
+                                this.photo_arriving = false;
+                                this.bio_arriving = false;
+                            })
+                            .ok();
+                        }));
+                    }
                     this.info = Some(fetched);
                     this.list.remeasure_items(0..1);
                 }
@@ -646,7 +669,7 @@ impl ArtistPage {
                     width: side,
                     height: side,
                 },
-                FadeIn::new(("artist-photo-image", id as u64), Cover::new(art, side)),
+                Cover::new(art, side),
             )
             .arriving(arriving)
         });
@@ -726,15 +749,19 @@ impl ArtistPage {
         div()
             .pb(RowMetrics::page_top(&p.look))
             .child(SectionHeading::new("about"))
-            .child(FadeIn::new(
-                ("artist-bio", id as u64),
-                div()
+            .child({
+                let body = div()
                     .flex()
                     .flex_col()
                     .gap(p.space(Space::S))
                     .child(text)
-                    .child(links),
-            ))
+                    .child(links);
+                if self.bio_arriving {
+                    FadeIn::new(("artist-bio", id as u64), body).into_any_element()
+                } else {
+                    body.into_any_element()
+                }
+            })
             .into_any_element()
     }
 
