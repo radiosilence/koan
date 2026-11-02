@@ -4,14 +4,16 @@
 
 use std::rc::Rc;
 
-use gpui_kit::{AnyElement, App, IntoElement, ParentElement, RenderOnce, Styled, Window, div};
+use gpui_kit::{
+    AnyElement, App, Hsla, IntoElement, ParentElement, RenderOnce, Styled, Window, div,
+};
 
-use super::ProgressRing;
+use super::{Glide, ProgressRing, SHADED};
+
+/// A running transfer's glide in the colour its ring is drawn in: a glide
+/// carries its ring's colour, so a picked row's ring has its own.
+pub type RingGlide = Rc<dyn Fn(Hsla, &mut App) -> Glide>;
 use crate::theme::{Icon, KoanIcon, KoanStyled, Look, TypeRole};
-
-/// Reads a running transfer's progress, 0 to 1, or `None` while its size is
-/// unknown. Called each frame the mark is drawn, and only then.
-pub type ProgressReader = Rc<dyn Fn(&App) -> Option<f32>>;
 
 #[derive(Clone)]
 pub enum Availability {
@@ -22,10 +24,11 @@ pub enum Availability {
     Failed,
     /// Offline, with no file here: not a failure, and drawn apart from one.
     NotHere,
-    /// Arriving: a ring filling as the bytes land, read from `ProgressReader`
-    /// at the display's rate while the mark is on screen; spinning while the
-    /// size is unknown.
-    Transferring(ProgressReader),
+    /// Arriving: a ring filling as the bytes land, from the transfer's
+    /// `Glide` (its share at the last report and its rate), reckoned on the
+    /// GPU per present with no frame drawn; turning while the size is
+    /// unknown.
+    Transferring(RingGlide),
     Stored {
         on_server: bool,
         on_disk: bool,
@@ -101,14 +104,16 @@ impl RenderOnce for AvailabilityMark {
             Availability::Queued => mark(Icon::Downloads, "queued", muted),
             Availability::Failed => mark(Icon::WarningFilled, "failed", bad),
             Availability::NotHere => mark(Icon::CloudMissing, "away", quiet),
-            Availability::Transferring(read) => {
-                let progress = read(cx);
-                // The bytes land between the row's own redraws: the next
-                // frame reads them again, for as long as the mark is drawn.
-                if progress.is_some() {
+            Availability::Transferring(ring) => {
+                let glide = ring(muted, cx);
+                // Without shaders the ring draws the glide's last value, and
+                // the next frame draws it again for as long as it shows.
+                if !SHADED {
                     window.request_animation_frame();
                 }
-                ProgressRing::new(progress, muted).into_any_element()
+                ProgressRing::new(None, muted)
+                    .glide(&glide)
+                    .into_any_element()
             }
             Availability::Stored { on_server, on_disk } => match (on_server, on_disk) {
                 (true, true) => mark(Icon::CloudKept, "kept", ink),

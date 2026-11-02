@@ -18,8 +18,9 @@
 //! and after each stage, then quits: the memory a long browse leaves behind.
 //!
 //! Each pass prints the row at the top of the list as it ends, so the
-//! numbers carry proof that the list moved. `KOAN_GUI_MEASURE_ROUTE=playlist:<id>`
-//! opens the window on that playlist's page, and the pass scrolls it instead.
+//! numbers carry proof that the list moved. `KOAN_GUI_MEASURE_ROUTE` (a
+//! `Route::named` name: `playlist:<id>`, `favourites`, …) opens the window
+//! on that page, and the pass scrolls it instead.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -41,9 +42,7 @@ pub static TOP: AtomicUsize = AtomicUsize::new(0);
 
 /// The page a measuring run opens on, from `KOAN_GUI_MEASURE_ROUTE`.
 pub fn route() -> Option<crate::navigator::Route> {
-    let value = std::env::var("KOAN_GUI_MEASURE_ROUTE").ok()?;
-    let id = value.strip_prefix("playlist:")?.parse().ok()?;
-    Some(crate::navigator::Route::Playlist(id))
+    crate::navigator::Route::named(&std::env::var("KOAN_GUI_MEASURE_ROUTE").ok()?)
 }
 
 pub fn start(cx: &mut App) {

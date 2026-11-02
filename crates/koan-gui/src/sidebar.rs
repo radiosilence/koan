@@ -20,7 +20,7 @@ use crate::paint::Paint;
 use crate::platform::drop::{self, Imports};
 use crate::theme::{self, Icon, Space, Tone};
 
-const LIBRARY: [(Route, &str, Icon); 7] = [
+const LIBRARY: [(Route, &str, Icon); 8] = [
     (Route::Albums, "albums", Icon::Album),
     (Route::Artists, "artists", Icon::Artist),
     (Route::Tracks, "tracks", Icon::Track),
@@ -30,6 +30,7 @@ const LIBRARY: [(Route, &str, Icon); 7] = [
         "recently played",
         Icon::RecentlyPlayed,
     ),
+    (Route::OnDevice, "downloaded", Icon::OnDevice),
     (Route::History, "history", Icon::History),
     (Route::Downloads, "downloads", Icon::Downloads),
 ];
@@ -50,6 +51,10 @@ pub struct Sidebar {
     /// Where a playlist dragged among the playlists would land: before the
     /// playlist at this index, or after the last at the count.
     drop_playlist: Option<usize>,
+    /// The search field at the sidebar's head, once the library is open,
+    /// and whether it holds a query, which lists the results page.
+    search: Option<(Entity<crate::search::field::SearchField>, Subscription)>,
+    searching: bool,
     _subscriptions: [Subscription; 5],
 }
 
@@ -65,6 +70,8 @@ impl Sidebar {
             covers: None,
             importing: 0,
             drop_playlist: None,
+            search: None,
+            searching: false,
             import_problem: None,
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
@@ -91,6 +98,33 @@ impl Sidebar {
         };
         sidebar.reload(cx);
         sidebar
+    }
+
+    /// The search field, over the library's search and art.
+    pub fn set_search(
+        &mut self,
+        search: Entity<crate::search::Search>,
+        covers: Entity<Covers>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let watch = cx.observe(&search, |this: &mut Self, search, cx| {
+            let searching = !search.read(cx).query().is_empty();
+            if searching != this.searching {
+                this.searching = searching;
+                cx.notify();
+            }
+        });
+        let field = cx.new(|cx| crate::search::field::SearchField::new(search, covers, window, cx));
+        self.search = Some((field, watch));
+        cx.notify();
+    }
+
+    /// ⌘K and `/`: the keyboard to the search field.
+    pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((field, _)) = &self.search {
+            field.update(cx, |f, cx| f.focus(window, cx));
+        }
     }
 
     /// Draws the playlists' sleeves from the library's art cache.
@@ -228,6 +262,15 @@ impl Render for Sidebar {
                         });
                     })),
             )
+            .when(self.searching, |d| {
+                d.child(row(
+                    Route::Search,
+                    "nav-results".into(),
+                    "results",
+                    Icon::Search,
+                    cx,
+                ))
+            })
             .child(NavHeading::new("library"))
             .children(LIBRARY.map(|(page, label, icon)| {
                 row(page, ElementId::Name(label.into()), label, icon, cx)
@@ -370,6 +413,7 @@ impl Render for Sidebar {
             .size_full()
             .flex()
             .flex_col()
+            .children(self.search.as_ref().map(|(field, _)| field.clone()))
             .child(
                 div()
                     .relative()

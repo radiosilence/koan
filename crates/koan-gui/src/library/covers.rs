@@ -193,18 +193,8 @@ struct Queue {
     /// promptly, grown and cut by `observe` as TCP's is. Zero until the first
     /// answer, read as `WINDOW_START`.
     window: f64,
-    /// The last `HISTORY` answers' times, newest last. A server's answers are
-    /// bimodal (a cover it keeps comes back in tens of milliseconds, one it
-    /// reads off a disk in hundreds), so it is judged by medians, never by
-    /// its quickest.
-    answers: std::collections::VecDeque<Duration>,
-    /// Answers since the window was last judged: one judgement per round
-    /// trip, a window's worth of answers.
-    since_judged: usize,
-    /// Round trips in a row whose recent median stood well above the
-    /// history's.
-    slow_rounds: u32,
-    /// When the window was last cut, so a burst of failures cuts it once.
+    /// When the window was last cut, so a burst of failures or late answers
+    /// from one round trip cuts it once.
     last_cut: Option<Instant>,
     /// The first eviction sweep has landed, so a file found on disk belongs to
     /// the record now holding its id. Until then every record is fetched
@@ -253,38 +243,52 @@ impl Queue {
 
     /// Calls off what must give way, and returns how many places that frees:
     /// every fetch for a record no longer asked for, and, while covers on
-    /// screen wait for a place, fetches for covers off screen, the least
-    /// urgent first. Nothing in flight for a cover off screen holds back one
-    /// on it.
+    /// screen wait for a place, fetches for records only ahead of the scroll,
+    /// the least urgent first. A fetch for where a flick will land is left to
+    /// finish: it is a cover about to be on screen, and calling it off on
+    /// every re-aim of a fling would ask for it again and again.
     fn give_way(&mut self) -> usize {
-        let mut called_off = self.abandoned();
-        let visible_waiting = self
-            .wanted
+        // Each record's most urgent request, once: a record shown at two
+        // sizes is one fetch and one cover waiting.
+        let mut urgency: HashMap<Art, Priority> = HashMap::with_capacity(self.wanted.len());
+        for (key, priority) in &self.wanted {
+            urgency
+                .entry(key.art)
+                .and_modify(|p| {
+                    if priority < p {
+                        *p = *priority
+                    }
+                })
+                .or_insert(*priority);
+        }
+        let mut called_off: Vec<Art> = self
+            .fetching
             .iter()
-            .filter(|(k, p)| **p == Priority::Visible && self.fetchable(k))
+            .filter(|art| !urgency.contains_key(art))
+            .copied()
+            .collect();
+        let visible_waiting = urgency
+            .iter()
+            .filter(|(art, p)| {
+                **p == Priority::Visible && self.fetchable(&Key { art: **art, px: 0 })
+            })
             .count();
         let free = self
             .allowed()
             .saturating_sub(self.fetching.len() - called_off.len());
         if visible_waiting > free {
-            let urgency = |art: Art| {
-                self.wanted
-                    .iter()
-                    .filter(|(k, _)| k.art == art)
-                    .map(|(_, p)| *p)
-                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            };
-            let mut off_screen: Vec<(Art, Priority)> = self
+            let mut ahead: Vec<(Art, f32)> = self
                 .fetching
                 .iter()
-                .filter(|art| !called_off.contains(art))
-                .filter_map(|art| urgency(*art).map(|p| (*art, p)))
-                .filter(|(_, p)| *p != Priority::Visible)
+                .filter_map(|art| match urgency.get(art) {
+                    Some(Priority::Ahead(d)) => Some((*art, *d)),
+                    _ => None,
+                })
                 .collect();
-            // Least urgent first.
-            off_screen.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            // Least urgent first: the farthest ahead.
+            ahead.sort_by(|a, b| b.1.total_cmp(&a.1));
             called_off.extend(
-                off_screen
+                ahead
                     .into_iter()
                     .take(visible_waiting - free)
                     .map(|(art, _)| art),
@@ -309,55 +313,36 @@ impl Queue {
         window.min(self.limit).max(1)
     }
 
-    /// One fetch answered after `took`, or failed. Every answer grows the
-    /// window by 1/window, about one place per round trip. A failure halves
-    /// it at once (once per round trip). Otherwise it halves only when the
-    /// median of the recent answers has stood more than `SLOWER` times the
-    /// median of the longer history for `SLOW_ROUNDS` round trips running:
-    /// a server whose disk is seeking under load, not one answering a mix of
-    /// kept and unkept covers. Returns whether the window grew by a whole
-    /// place, which wakes one more fetcher.
+    /// One fetch answered after `took`, or failed, called once its place has
+    /// been freed. The window grows by 1/window an answer, about one place
+    /// per round trip, but only while it is what holds fetches back: grown
+    /// while the screen asks for fewer, it would climb untested and let a
+    /// fast scroll send hundreds at once. A failure, or an answer slower than
+    /// `LATE`, halves it, once per `SETTLE`: a server that slows and stays
+    /// slow is cut every round trip until it answers in time. Answers quick
+    /// and slow alike within `LATE` never cut it, since a server answers a
+    /// cover it keeps in milliseconds and one it reads off a disk in hundreds,
+    /// in runs as long as the grid's order makes them. Returns whether the
+    /// window grew by a whole place, which wakes one more fetcher.
     fn observe(&mut self, took: Duration, ok: bool) -> bool {
         let before = self.allowed();
         if self.window == 0.0 {
             self.window = WINDOW_START as f64;
         }
-        if !ok {
-            let typical = median(self.answers.iter().copied()).unwrap_or(Duration::ZERO);
-            if self
-                .last_cut
-                .is_none_or(|at| at.elapsed() > typical.max(SETTLE))
-            {
-                self.cut(format_args!("a fetch failed after {} ms", took.as_millis()));
+        if !ok || took > LATE {
+            if self.last_cut.is_none_or(|at| at.elapsed() > SETTLE) {
+                self.cut(format_args!(
+                    "a fetch {} after {} ms",
+                    if ok { "answered" } else { "failed" },
+                    took.as_millis()
+                ));
             }
             return false;
         }
-        if self.answers.len() == HISTORY {
-            self.answers.pop_front();
-        }
-        self.answers.push_back(took);
-        self.window = (self.window + 1.0 / self.window).min(MAX_FETCHES as f64);
-        self.since_judged += 1;
-        if self.since_judged >= self.window as usize {
-            self.since_judged = 0;
-            let recent = median(self.answers.iter().rev().take(RECENT).copied());
-            let typical = median(self.answers.iter().copied());
-            match (recent, typical) {
-                (Some(recent), Some(typical))
-                    if self.answers.len() >= 2 * RECENT && recent > typical * SLOWER =>
-                {
-                    self.slow_rounds += 1;
-                    if self.slow_rounds >= SLOW_ROUNDS {
-                        self.slow_rounds = 0;
-                        self.cut(format_args!(
-                            "answers slowed: median {} ms lately against {} ms",
-                            recent.as_millis(),
-                            typical.as_millis()
-                        ));
-                    }
-                }
-                _ => self.slow_rounds = 0,
-            }
+        // This answer's place included: every place the window allows was
+        // taken.
+        if self.fetching.len() + 1 >= self.window as usize {
+            self.window = (self.window + 1.0 / self.window).min(MAX_FETCHES as f64);
         }
         self.allowed() > before
     }
@@ -422,26 +407,12 @@ pub const MAX_FETCHES: usize = 512;
 /// the window finds what this one takes.
 const WINDOW_START: usize = 16;
 const WINDOW_MIN: usize = 8;
-/// How many answers the history holds, and how many of the newest are
-/// "recent".
-const HISTORY: usize = 256;
-const RECENT: usize = 16;
-/// How many times the history's median the recent median must stand, and
-/// for how many round trips running, before the window is cut.
-const SLOWER: u32 = 3;
-const SLOW_ROUNDS: u32 = 3;
-/// The least time between two cuts for failures.
+/// An answer slower than this is the server struggling, not a cover read
+/// off a disk: the window is cut for it as for a failure.
+const LATE: Duration = Duration::from_secs(2);
+/// The least time between two cuts: about a round trip, so the answers of
+/// one round trip cut the window once.
 const SETTLE: Duration = Duration::from_millis(500);
-
-/// The middle of `times`, or `None` when there are none.
-fn median(times: impl Iterator<Item = Duration>) -> Option<Duration> {
-    let mut times: Vec<Duration> = times.collect();
-    if times.is_empty() {
-        return None;
-    }
-    let mid = times.len() / 2;
-    Some(*times.select_nth_unstable(mid).1)
-}
 
 enum Done {
     Decoded {
@@ -1049,6 +1020,9 @@ impl Covers {
         for key in keys {
             self.forget(key, window.as_deref_mut(), cx);
         }
+        // What was drawn from memory is wanted again: a page asking for the
+        // same covers asks nothing new, so the requests are published here.
+        self.publish();
         let (dir, shared) = (self.dir.clone(), self.shared.clone());
         cx.background_executor()
             .spawn(async move {
@@ -1219,9 +1193,12 @@ fn prepare_directory(dir: &Path) -> i64 {
         .unwrap_or(0)
 }
 
-/// A record's cover file, as `Art::filename` names them.
+/// A record's cover file, as `Art::filename` names them: not a write's
+/// temporary file on its way in.
 fn is_cover(name: &str) -> bool {
-    name.starts_with("album-") || name.starts_with("artist-")
+    name.strip_prefix("album-")
+        .or_else(|| name.strip_prefix("artist-"))
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -1500,6 +1477,15 @@ mod tests {
     use koan_kit::raw::px;
 
     #[test]
+    fn only_finished_covers_are_covers() {
+        assert!(is_cover("album-12"));
+        assert!(is_cover("artist-3"));
+        assert!(!is_cover("album-12.tmp-4012"));
+        assert!(!is_cover("album-"));
+        assert!(!is_cover("evictions-seq"));
+    }
+
+    #[test]
     fn the_budget_is_what_is_asked_for_and_a_screen_more() {
         let key = |id| Key {
             art: Art::Album(id),
@@ -1558,51 +1544,105 @@ mod tests {
         assert_eq!(Covers::on_disk(dir.path()), (2, 150));
     }
 
-    /// Hits and misses together, as a server answers a mix of covers it
-    /// keeps and covers it reads off disk, only widen the window.
+    /// Runs of quick and slow answers, as a grid sorted by name meets covers
+    /// warmed in path order, never narrow the window while each is in time.
     #[test]
-    fn a_mix_of_quick_and_slow_answers_never_narrows_the_window() {
+    fn runs_of_kept_and_unkept_covers_never_narrow_the_window() {
         let mut q = Queue {
             limit: 512,
             ..Queue::default()
         };
         assert_eq!(q.allowed(), WINDOW_START);
         for i in 0..2000 {
-            let took = if i % 3 == 0 { 700 } else { 90 };
+            q.fetching = (0..q.allowed() as i64 - 1).map(Art::Album).collect();
+            let took = if (i / 200) % 2 == 0 { 40 } else { 900 };
             q.observe(Duration::from_millis(took), true);
         }
         assert!(q.allowed() > WINDOW_START * 2, "{}", q.allowed());
     }
 
-    /// A server that slows and stays slow is given fewer requests, after a
-    /// few round trips; a failure halves the window at once; never below
-    /// the floor.
+    /// The window does not grow while the screen asks for fewer covers than
+    /// it allows: it would climb untested and let a fast scroll send hundreds
+    /// at once.
+    #[test]
+    fn the_window_grows_only_while_it_is_full() {
+        let mut q = Queue {
+            limit: 4,
+            ..Queue::default()
+        };
+        for _ in 0..5000 {
+            q.fetching = (0..3).map(Art::Album).collect();
+            q.observe(Duration::from_millis(50), true);
+        }
+        assert_eq!(q.window as usize, WINDOW_START);
+    }
+
+    /// A server that slows past `LATE` and stays slow is cut every round
+    /// trip until it reaches the floor, however long it answered quickly
+    /// before; so is one that fails.
     #[test]
     fn sustained_slowness_and_failures_narrow_the_window_to_its_floor() {
         let mut q = Queue {
             limit: 512,
             ..Queue::default()
         };
-        for _ in 0..300 {
+        for _ in 0..2000 {
+            q.fetching = (0..q.window as i64).map(Art::Album).collect();
             q.observe(Duration::from_millis(100), true);
         }
         let grown = q.allowed();
-        // One slow round trip is not enough.
-        for _ in 0..grown {
-            q.observe(Duration::from_secs(2), true);
-        }
-        assert!(q.allowed() >= grown, "{} < {grown}", q.allowed());
-        for _ in 0..grown * 4 {
-            q.observe(Duration::from_secs(2), true);
-        }
-        assert!(q.allowed() < grown, "{} not below {grown}", q.allowed());
+        assert!(grown > WINDOW_START, "{grown}");
+        q.observe(Duration::from_millis(2500), true);
+        assert_eq!(q.allowed(), grown / 2, "cut at once");
+        q.observe(Duration::from_millis(2500), true);
+        assert_eq!(q.allowed(), grown / 2, "once per round trip");
         for _ in 0..20 {
             q.last_cut = None;
-            q.observe(Duration::from_secs(30), false);
+            q.observe(Duration::from_millis(2500), true);
         }
         assert_eq!(q.allowed(), WINDOW_MIN);
+        q.window = 64.0;
+        q.last_cut = None;
+        q.observe(Duration::from_secs(30), false);
+        assert_eq!(q.allowed(), 32);
         q.limit = 3;
         assert_eq!(q.allowed(), 3);
+    }
+
+    /// Covers on screen waiting call off fetches for records only ahead of
+    /// the scroll, never those for where a flick lands, and a record shown at
+    /// two sizes counts once.
+    #[test]
+    fn the_landing_spot_is_not_called_off() {
+        let mut q = Queue {
+            fetches_allowed: true,
+            limit: 4,
+            window: 4.0,
+            ..Queue::default()
+        };
+        let key = |id, px| Key {
+            art: Art::Album(id),
+            px,
+        };
+        for (id, priority) in [
+            (1, Priority::Landing(1.0)),
+            (2, Priority::Landing(2.0)),
+            (3, Priority::Ahead(1.0)),
+            (4, Priority::Ahead(9.0)),
+        ] {
+            let (cancel, _) = futures_channel::oneshot::channel();
+            q.fetching.insert(Art::Album(id));
+            q.cancels.insert(Art::Album(id), (id as u64, cancel));
+            q.wanted.insert(key(id, 64), priority);
+        }
+        // One record on screen, at two sizes.
+        q.wanted.insert(key(10, 64), Priority::Visible);
+        q.wanted.insert(key(10, 128), Priority::Visible);
+        assert_eq!(q.give_way(), 1);
+        assert!(!q.fetching.contains(&Art::Album(4)), "the farthest ahead");
+        for id in 1..=3 {
+            assert!(q.fetching.contains(&Art::Album(id)));
+        }
     }
 
     /// After a fling every place is held by fetches for covers off screen,

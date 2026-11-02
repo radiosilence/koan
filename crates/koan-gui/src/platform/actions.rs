@@ -250,6 +250,26 @@ pub const HOTKEYS: &[Shortcut] = &[
     shortcut!("This list", ["?"], View, ShowShortcuts),
 ];
 
+/// A button's tooltip as the Mac's buttons say it: what it does, then the
+/// keys that do the same, "back (⌘[)", from the shortcut tables. Just what it
+/// does where no key does.
+pub fn help(what: &str, action: &dyn Action, cx: &App) -> String {
+    let os = cx.platform_info().os;
+    MENU.iter()
+        .chain(APPLICATION)
+        .chain(HOTKEYS)
+        .find(|s| (s.action)().partial_eq(action))
+        .and_then(|s| {
+            s.keys
+                .iter()
+                .find(|k| os == OperatingSystem::Mac || !k.starts_with("cmd-"))
+        })
+        .map_or_else(
+            || what.to_owned(),
+            |key| format!("{what} ({})", caption(key, os)),
+        )
+}
+
 /// A key as the sheet prints it: ⇧⌘K on macOS, in the order macOS prints
 /// modifiers, and Ctrl+Shift+K elsewhere. A bare key is itself.
 pub fn caption(key: &str, os: OperatingSystem) -> String {

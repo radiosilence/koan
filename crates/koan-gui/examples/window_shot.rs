@@ -6,9 +6,10 @@
 //! `KOAN_CONFIG_DIR`. `KOAN_SHOT_TRACKS=n` fills the queue with n of the
 //! library's tracks, scanned from that configuration's folders, first, and
 //! saves that session. `KOAN_SHOT_ROUTE` (`albums`, `artists`, `tracks`,
-//! `album:<id>`, `artist:<id>`, `playlist:<id>`) draws that page instead of
-//! the queue. With `KOAN_SHOT_TRACKS`, a playlist of the same tracks is made
-//! too, and its id printed.
+//! `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
+//! `playlist:<id>`) draws that page instead of the queue. With
+//! `KOAN_SHOT_TRACKS`, a playlist of the same tracks is made too, and its id
+//! printed.
 //!
 //! KOAN_CONFIG_DIR=… cargo run -p koan-gui --example window_shot -- target/window.png
 
@@ -23,19 +24,7 @@ use koan_kit::app::AppContext;
 use koan_kit::raw::{HeadlessAppContext, px, size};
 
 fn route() -> Option<Route> {
-    let value = std::env::var("KOAN_SHOT_ROUTE").ok()?;
-    let id = |s: &str| s.parse::<i64>().ok();
-    match value.split_once(':') {
-        Some(("album", n)) => id(n).map(Route::Album),
-        Some(("artist", n)) => id(n).map(Route::Artist),
-        Some(("playlist", n)) => id(n).map(Route::Playlist),
-        _ => match value.as_str() {
-            "albums" => Some(Route::Albums),
-            "artists" => Some(Route::Artists),
-            "tracks" => Some(Route::Tracks),
-            _ => None,
-        },
-    }
+    Route::named(&std::env::var("KOAN_SHOT_ROUTE").ok()?)
 }
 
 const WIDTH: f32 = 1180.0;

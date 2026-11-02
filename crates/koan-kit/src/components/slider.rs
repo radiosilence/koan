@@ -1,11 +1,14 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Bounds, DispatchPhase, ElementId, InteractiveElement, IntoElement, MouseButton,
+    App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce,
     SharedString, Styled, Window, canvas, div, px,
 };
+
+use super::{Animated, SHADED, ShaderProgram};
 
 use super::{Handler, child, focus, pointer, ring, track};
 use crate::theme::{DISABLED_OPACITY, HAIRLINE, HIT, KoanStyled, Look, Space, TypeRole};
@@ -25,7 +28,160 @@ pub struct Slider {
     compact: bool,
     on_change: Option<Handler<f32>>,
     on_commit: Option<Handler<()>>,
+    glide: Option<Glide>,
+    reach: Option<Glide>,
 }
+
+/// A value that moves on its own between renders, as a seek bar's playhead
+/// does: the share of the track at a moment and how fast it moves from it.
+/// Where the renderer draws shaders, the fill and the thumb are a shader quad
+/// reckoning the value per present from these, so the slider glides with no
+/// frame drawn and no timer; elsewhere, and while dragged, the slider draws
+/// `value` as given. The owner writes it from any thread, keeps it across
+/// renders, and stops it (`set_moving(false)`) when the value rests or
+/// nothing shows it.
+#[derive(Clone, Default)]
+pub struct Glide(
+    pub(crate) Animated,
+    Arc<parking_lot::Mutex<Option<(f32, f32, Instant)>>>,
+);
+
+/// How long a small correction takes to ease out, and the largest one eased
+/// rather than jumped, in seconds of play: a little over what a late report
+/// leaves between the reckoning and the report. A skip or a seek is longer
+/// than this however long the track.
+const SETTLE: f32 = 0.25;
+const DRIFT: f32 = 0.3;
+
+impl Glide {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `value` at `since`, moving `rate` of the track a second.
+    /// A new anchor that disagrees a little with where the slider had
+    /// reckoned it, while playing on at the same rate, is eased into over
+    /// `SETTLE` rather than jumped to: the fill moves continuously and
+    /// corrects without a step. A seek, a pause or any larger difference
+    /// moves at once.
+    pub fn set(&self, value: f32, rate: f32, since: Instant) {
+        let now = Instant::now();
+        let at = |(value, rate, since): (f32, f32, Instant)| {
+            let t = if now >= since {
+                now.duration_since(since).as_secs_f32()
+            } else {
+                -since.duration_since(now).as_secs_f32()
+            };
+            (value + rate * t).clamp(0.0, 1.0)
+        };
+        let next = (value, rate, since);
+        let previous = self.1.lock().replace(next);
+        let offset = match previous {
+            Some(previous) if previous != next && previous.1 == rate && rate > 0.0 => {
+                let offset = at(previous) - at(next);
+                if offset.abs() <= rate * DRIFT {
+                    offset
+                } else {
+                    0.0
+                }
+            }
+            _ => 0.0,
+        };
+        let start = if now >= since {
+            now.duration_since(since).as_secs_f32()
+        } else {
+            -since.duration_since(now).as_secs_f32()
+        };
+        self.0.set_all(0, &[value, rate]);
+        if previous != Some(next) {
+            self.0.set_all(5, &[offset, start, SETTLE]);
+        }
+        self.0.set_origin(since);
+    }
+
+    /// Whether the value is moving: presented every refresh while it is.
+    pub fn set_moving(&self, moving: bool) {
+        self.0.run(moving);
+    }
+
+    /// No value to show, as a download whose size is unknown: a ring turns
+    /// instead, presented every refresh until a value is set.
+    pub fn set_unknown(&self) {
+        self.0.set_all(0, &[-1.0, 0.0]);
+        self.0.run(true);
+    }
+
+    /// The value as last set, before any motion since.
+    pub fn value(&self) -> f32 {
+        self.0.get(0)
+    }
+
+    /// The fill, thumb and their colours, in device pixels.
+    fn style(&self, look: &Style) {
+        self.0.set_all(2, &[look.fill, look.thumb, look.inset]);
+        for (i, color) in [look.fill_color, look.thumb_color].into_iter().enumerate() {
+            let rgba = color.to_rgb();
+            self.0.set_all(8 + i * 4, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+        }
+    }
+}
+
+struct Style {
+    fill: f32,
+    /// The thumb's side, or 0 while it is hidden.
+    thumb: f32,
+    /// How far the quad reaches past the rail either side, for the thumb.
+    inset: f32,
+    fill_color: Hsla,
+    thumb_color: Hsla,
+}
+
+/// The fill and thumb as a fragment program. Uniforms: 0 the value at the
+/// origin, 1 its rate a second, 2 the fill's height, 3 the thumb's side (0
+/// hidden), 4 the inset, in device pixels; 5 a correction still easing out,
+/// 6 when it began and 7 how long it takes, in seconds of shader time; 8..12
+/// the fill's colour, 12..16 the thumb's.
+static GLIDE: ShaderProgram = ShaderProgram {
+    name: "koan-slider-glide",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float width = size.x - 2.0 * u[4];
+    float x = position.x - u[4];
+    float easing = u[7] > 0.0 ? 1.0 - smoothstep(0.0, 1.0, (time - u[6]) / u[7]) : 0.0;
+    float end = clamp(u[0] + u[1] * time + u[5] * easing, 0.0, 1.0) * width;
+    float dy = abs(position.y - size.y * 0.5);
+    if (u[3] > 0.0 && abs(x - end) <= u[3] * 0.5 && dy <= u[3] * 0.5) {
+        return float4(u[12], u[13], u[14], u[15]);
+    }
+    if (x < 0.0 || dy > u[2] * 0.5) {
+        return float4(0.0);
+    }
+    float cover = clamp(end - x + 0.5, 0.0, 1.0);
+    return float4(u[8], u[9], u[10], u[11] * cover);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    let width = size.x - 2.0 * u[1].x;
+    let x = position.x - u[1].x;
+    var easing = 0.0;
+    if (u[1].w > 0.0) {
+        easing = 1.0 - smoothstep(0.0, 1.0, (time - u[1].z) / u[1].w);
+    }
+    let end = clamp(u[0].x + u[0].y * time + u[1].y * easing, 0.0, 1.0) * width;
+    let dy = abs(position.y - size.y * 0.5);
+    if (u[0].w > 0.0 && abs(x - end) <= u[0].w * 0.5 && dy <= u[0].w * 0.5) {
+        return u[3];
+    }
+    if (x < 0.0 || dy > u[0].z * 0.5) {
+        return vec4<f32>(0.0);
+    }
+    let cover = clamp(end - x + 0.5, 0.0, 1.0);
+    return vec4<f32>(u[2].xyz, u[2].w * cover);
+}
+"#,
+    prepare: None,
+};
 
 impl Slider {
     /// `value` is a fraction of the track, 0 to 1.
@@ -40,7 +196,25 @@ impl Slider {
             compact: false,
             on_change: None,
             on_commit: None,
+            glide: None,
+            reach: None,
         }
+    }
+
+    /// The value moves on its own from `value` as `glide` says; see `Glide`.
+    pub fn glide(mut self, glide: &Glide) -> Self {
+        self.glide = Some(glide.clone());
+        self
+    }
+
+    /// How far the value can go, as a share moving on its own: a seek bar's
+    /// track still downloading, as far as its bytes reach. The track's rule
+    /// is dimmed past it, as the Mac's is, so a file all here looks like the
+    /// ordinary bar; drawn by the same shader as the glide where the
+    /// renderer has shaders.
+    pub fn reach(mut self, reach: &Glide) -> Self {
+        self.reach = Some(reach.clone());
+        self
     }
 
     /// What sits at either end, such as the time played and the time left.
@@ -85,6 +259,8 @@ const THUMB: f32 = 8.0;
 /// A compact slider's rail.
 const COMPACT: Pixels = px(20.0);
 const FILL: f32 = 3.0;
+/// The track's rule past what has downloaded, as the Mac dims it.
+const REACH_DIM: f32 = 0.4;
 
 fn at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> f32 {
     let width = f32::from(bounds.size.width);
@@ -110,6 +286,9 @@ impl RenderOnce for Slider {
         let focused = handle.is_focused(window);
         let thumb = !self.disabled && (hovered || pressed || focused);
         let value = self.value;
+        let glide = self.glide.clone().filter(|_| SHADED);
+        let reach = self.reach.clone();
+        let rule = look.palette.rule.hsla();
 
         // Whether a drag that began on this slider is under way. Set and
         // cleared without a notify: nothing is drawn from it.
@@ -192,18 +371,56 @@ impl RenderOnce for Slider {
                     .right_0()
                     .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
                     .h(HAIRLINE)
-                    .bg(look.palette.rule.hsla()),
+                    .bg(rule)
+                    .when(reach.is_some(), |d| d.opacity(REACH_DIM)),
             )
-            .child(
-                div()
+            .when_some(reach.clone().filter(|_| !SHADED), |rail, reach| {
+                rail.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .w(gpui_kit::relative(reach.value().clamp(0.0, 1.0)))
+                        .top(px((f32::from(height) - f32::from(HAIRLINE)) / 2.0))
+                        .h(HAIRLINE)
+                        .bg(rule),
+                )
+            })
+            .when_some(reach.filter(|_| SHADED), |rail, reach| {
+                rail.child(
+                    canvas(
+                        move |_, window, cx| {
+                            let scale = window.scale_factor();
+                            reach.style(&Style {
+                                fill: f32::from(HAIRLINE) * scale,
+                                thumb: 0.0,
+                                inset: THUMB / 2.0 * scale,
+                                fill_color: rule,
+                                thumb_color: rule,
+                            });
+                            reach.0.attach(false, window, cx);
+                            reach
+                        },
+                        |bounds, reach, window, _| reach.0.paint(&GLIDE, None, bounds, window),
+                    )
                     .absolute()
-                    .left_0()
-                    .w(gpui_kit::relative(value))
-                    .top(px((f32::from(height) - FILL) / 2.0))
-                    .h(px(FILL))
-                    .bg(look.accent.hsla()),
-            )
-            .when(thumb, |rail| {
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-THUMB / 2.0))
+                    .right(px(-THUMB / 2.0)),
+                )
+            })
+            .when(glide.is_none(), |rail| {
+                rail.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .w(gpui_kit::relative(value))
+                        .top(px((f32::from(height) - FILL) / 2.0))
+                        .h(px(FILL))
+                        .bg(look.accent.hsla()),
+                )
+            })
+            .when(glide.is_none() && thumb, |rail| {
                 rail.child(
                     div()
                         .absolute()
@@ -212,6 +429,31 @@ impl RenderOnce for Slider {
                         .top(px((f32::from(height) - THUMB) / 2.0))
                         .size(px(THUMB))
                         .bg(look.palette.ink.hsla()),
+                )
+            })
+            .when_some(glide, |rail, glide| {
+                let (fill_color, thumb_color) = (look.accent.hsla(), look.palette.ink.hsla());
+                rail.child(
+                    canvas(
+                        move |_, window, cx| {
+                            let scale = window.scale_factor();
+                            glide.style(&Style {
+                                fill: FILL * scale,
+                                thumb: if thumb { THUMB * scale } else { 0.0 },
+                                inset: THUMB / 2.0 * scale,
+                                fill_color,
+                                thumb_color,
+                            });
+                            glide.0.attach(false, window, cx);
+                            glide
+                        },
+                        |bounds, glide, window, _| glide.0.paint(&GLIDE, None, bounds, window),
+                    )
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-THUMB / 2.0))
+                    .right(px(-THUMB / 2.0)),
                 )
             });
 

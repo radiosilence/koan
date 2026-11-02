@@ -1,0 +1,1 @@
+- **The kōan GUI app's artist page makes room for a photo that arrives late, and keeps the biography under "about" after the records.** The photo's slot grows in and the name moves along with it, the photo and biography fade in, and a spinner stands where the biography will be while it is looked up, as on the Mac.

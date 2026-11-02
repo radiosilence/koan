@@ -7,12 +7,11 @@
 
 use std::sync::Arc;
 
-use crate::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
+use crate::components::{Button, ButtonKind, CopyButton, MenuPanel, MenuRow, Picker, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
+use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::InputState;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 // overlays placed against another element.
@@ -541,22 +540,8 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .icon(Icon::Mail)
                     .on_click(move |_, _, cx| cx.open_url(&mailto)),
             )
-            .child(
-                Button::new("copy-email", ButtonKind::Bordered)
-                    .label("Copy Email")
-                    .icon(Icon::Copy)
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text_body.clone()))
-                    }),
-            )
-            .child(
-                Button::new("copy-invite", ButtonKind::Bordered)
-                    .label("Copy Link")
-                    .icon(Icon::Share)
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))
-                    }),
-            );
+            .child(CopyButton::new("copy-email", "Copy Email", text_body))
+            .child(CopyButton::new("copy-invite", "Copy Link", link).icon(Icon::Share));
         if let Some(password) = &invite.password {
             column = column.child(
                 div()

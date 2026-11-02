@@ -6,7 +6,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::RowMetrics;
-use crate::theme::{KoanStyled, Look, Space, TypeRole, label};
+use crate::theme::{Icon, KoanIcon, KoanStyled, Look, Space, TypeRole, label};
 
 /// The header every page shares: an optional cover, the title over a
 /// detail line (a count, a duration), the page's actions under them, and
@@ -100,6 +100,8 @@ impl PageHeader {
 pub struct SectionHeading {
     title: SharedString,
     trailing: Vec<AnyElement>,
+    count: Option<SharedString>,
+    open: Option<(ElementId, super::Handler<ClickEvent>)>,
 }
 
 impl SectionHeading {
@@ -107,7 +109,27 @@ impl SectionHeading {
         Self {
             title: label(title),
             trailing: Vec::new(),
+            count: None,
+            open: None,
         }
+    }
+
+    /// How many the section holds in all, in `muted` beside the title: a
+    /// preview of the first few says how many there are.
+    pub fn count(mut self, count: impl Into<SharedString>) -> Self {
+        self.count = Some(count.into());
+        self
+    }
+
+    /// The whole heading opens what the section previews (a shelf's "see
+    /// all"), a disclosure glyph after the count saying so.
+    pub fn on_open(
+        mut self,
+        id: impl Into<ElementId>,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.open = Some((id.into(), std::sync::Arc::new(handler)));
+        self
     }
 
     /// Beside the title: the section's own play and queue.
@@ -134,6 +156,34 @@ impl SectionHeading {
 impl RenderOnce for SectionHeading {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
+        let opens = self.open.is_some();
+        let title = div()
+            .flex()
+            .items_center()
+            .gap(look.space(Space::S))
+            .text_role(TypeRole::Body, &look)
+            .text_color(look.palette.strong.hsla())
+            .child(self.title)
+            .children(
+                self.count
+                    .map(|count| div().text_color(look.palette.muted.hsla()).child(count)),
+            )
+            .when(opens, |d| {
+                d.child(
+                    KoanIcon::new(Icon::Disclosure)
+                        .role(TypeRole::Fine)
+                        .color(look.palette.muted.hsla()),
+                )
+            });
+        let title = match self.open {
+            Some((id, open)) => div()
+                .id(id)
+                .cursor_pointer()
+                .child(title)
+                .on_click(move |event, window, cx| open(event, window, cx))
+                .into_any_element(),
+            None => title.into_any_element(),
+        };
         div()
             .w_full()
             .h(Self::height(&look))
@@ -142,12 +192,7 @@ impl RenderOnce for SectionHeading {
             .flex()
             .items_center()
             .gap(look.space(Space::L))
-            .child(
-                div()
-                    .text_role(TypeRole::Body, &look)
-                    .text_color(look.palette.strong.hsla())
-                    .child(self.title),
-            )
+            .child(title)
             .children(self.trailing)
     }
 }
@@ -343,22 +388,25 @@ impl RenderOnce for ShuffleButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let ink = look.palette.ink.hsla();
+        // A glyph draws in its own colour, so the hover reaches it through
+        // the button's group rather than the text colour.
+        let group = SharedString::from(format!("shuffle-{:?}", self.id));
+        let disabled = self.disabled;
         div()
             .id(self.id)
+            .group(group.clone())
             .size(crate::theme::HIT)
             .flex_none()
             .flex()
             .items_center()
             .justify_center()
-            .text_color(look.palette.muted.hsla())
-            .when(self.disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
-            .when(!self.disabled, |d| {
-                d.cursor_pointer().hover(move |s| s.text_color(ink))
-            })
+            .when(disabled, |d| d.opacity(crate::theme::DISABLED_OPACITY))
+            .when(!disabled, |d| d.cursor_pointer())
             .child(
                 crate::theme::KoanIcon::new(crate::theme::Icon::Shuffle)
                     .points(SHUFFLE_GLYPH * look.scale.size)
-                    .tone(crate::theme::Tone::Muted),
+                    .tone(crate::theme::Tone::Muted)
+                    .when(!disabled, |i| i.hover_color(group, ink)),
             )
             .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
                 d.on_click(move |event, window, cx| on_click(event, window, cx))

@@ -2,23 +2,29 @@
 //! round the circle and then its tail following it off, looping. The same
 //! mark as the `Placeholder`, so loading and empty read as one family.
 //!
-//! All on the GPU's side: the stroke is laid out once per size, as a run of
-//! round quads close enough to read as one brush line, and a frame only
-//! chooses which of them are drawn, from the head to the tail. No path is
-//! built or tessellated and nothing is allocated per frame. It moves only
-//! while it is painted (each frame asks for the next), so one scrolled away
-//! or behind a page costs nothing. With Reduce Motion the whole mark stands
-//! still.
+//! Where the renderer draws shaders, one `AnimatedQuad` on the clock: the
+//! stroke is baked once into a small field (`FIELD`), each texel holding how
+//! far along the brush its nearest point is and how far from the brush's
+//! line it lies, and the program draws the part between the tail and the
+//! head at each present, edges and ends antialiased at any size. A spinner
+//! costs no frame while it turns, every spinner turns in step, and one
+//! scrolled away or behind a page is not in the scene. With Reduce Motion
+//! the whole mark stands still.
+//!
+//! Elsewhere the stroke is laid out once per size as a run of round quads
+//! close enough to read as one line, and each frame chooses which are drawn.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use gpui_kit::*;
+use smallvec::SmallVec;
 
 use super::placeholder::TRACE;
+use super::{Animated, AnimatedQuad, SHADED, ShaderProgram};
 use crate::theme::{KoanTheme, Look};
 
 /// One loop: drawn, then undrawn.
@@ -151,11 +157,172 @@ fn shown(phase: f32, count: usize) -> std::ops::Range<usize> {
 /// When the first spinner was drawn: every spinner turns in step.
 static START: OnceLock<Instant> = OnceLock::new();
 
+/// The field's side in texels: a distance field magnifies cleanly, so one
+/// small bake serves every size.
+const FIELD: u32 = 128;
+
+/// The stroke as a fragment program sampling the field. Uniforms: 0 whether
+/// it turns (else the whole mark), 1 a loop's length in seconds, 2 the
+/// stroke's length and 3 the brush's half-width, both in device pixels, 4
+/// the field's distance range in device pixels; 8..12 the colour.
+static ENSO: ShaderProgram = ShaderProgram {
+    name: "koan-enso",
+    msl: r#"
+float4 shade(float2 position, float2 size, float time, constant float *u, texture2d<float> image, float4 tile) {
+    float4 field = koan_sample(image, tile, position / size);
+    float along = field.r;
+    float away = field.g * u[4];
+    float cover = clamp(u[3] - away + 0.5, 0.0, 1.0);
+    if (u[0] > 0.5) {
+        float phase = fract(time / u[1]);
+        float head = phase < 0.5 ? smoothstep(0.0, 1.0, phase * 2.0) : 1.0;
+        float tail = phase < 0.5 ? 0.0 : smoothstep(0.0, 1.0, (phase - 0.5) * 2.0);
+        cover *= clamp((head - along) * u[2] + 0.5, 0.0, 1.0);
+        cover *= clamp((along - tail) * u[2] + 0.5, 0.0, 1.0);
+    }
+    return float4(u[8], u[9], u[10], u[11] * cover);
+}
+"#,
+    wgsl: r#"
+fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, u: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32> {
+    let field = koan_sample(tile, position / size);
+    let along = field.r;
+    let away = field.g * u[1].x;
+    var cover = clamp(u[0].w - away + 0.5, 0.0, 1.0);
+    if (u[0].x > 0.5) {
+        let phase = fract(time / u[0].y);
+        var head = 1.0;
+        var tail = 0.0;
+        if (phase < 0.5) {
+            head = smoothstep(0.0, 1.0, phase * 2.0);
+        } else {
+            tail = smoothstep(0.0, 1.0, (phase - 0.5) * 2.0);
+        }
+        cover *= clamp((head - along) * u[0].z + 0.5, 0.0, 1.0);
+        cover *= clamp((along - tail) * u[0].z + 0.5, 0.0, 1.0);
+    }
+    return vec4<f32>(u[2].xyz, u[2].w * cover);
+}
+"#,
+    prepare: None,
+};
+
+/// The baked field and what it was baked from.
+struct Field {
+    image: Arc<RenderImage>,
+    /// The stroke's length, in the field's units (the square is 1).
+    length: f32,
+    /// The distance that reads as 1 in the field, and the brush's
+    /// half-width, in the same units.
+    range: f32,
+    half_brush: f32,
+}
+
+thread_local! {
+    static FIELD_IMAGE: Rc<Field> = Rc::new(bake_field());
+}
+
+/// For each texel of a unit square holding the ensō as `lay_out` fits it,
+/// how far along the stroke (0 to 1) its nearest point on the brush's line
+/// is, and how far from that line it lies, over `range`. BGRA, as GPUI's
+/// images are.
+fn bake_field() -> Field {
+    let points = trace();
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for &(x, y) in points {
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+    let extent = (max_x - min_x).max(max_y - min_y) + BRUSH;
+    let off_x = (extent - (max_x - min_x)) / 2.0;
+    let off_y = (extent - (max_y - min_y)) / 2.0;
+    let line: Vec<(f32, f32)> = points
+        .iter()
+        .map(|&(x, y)| ((x - min_x + off_x) / extent, (y - min_y + off_y) / extent))
+        .collect();
+    let mut lengths = vec![0.0f32];
+    for pair in line.windows(2) {
+        let d = ((pair[1].0 - pair[0].0).powi(2) + (pair[1].1 - pair[0].1).powi(2)).sqrt();
+        lengths.push(lengths.last().unwrap() + d);
+    }
+    let length = *lengths.last().unwrap();
+    let half_brush = BRUSH / extent / 2.0;
+    let range = half_brush * 2.0;
+    let mut bgra = vec![0u8; (FIELD * FIELD * 4) as usize];
+    for y in 0..FIELD {
+        for x in 0..FIELD {
+            let p = (
+                (x as f32 + 0.5) / FIELD as f32,
+                (y as f32 + 0.5) / FIELD as f32,
+            );
+            let (mut best, mut along) = (f32::MAX, 0.0);
+            for (i, pair) in line.windows(2).enumerate() {
+                let (a, b) = (pair[0], pair[1]);
+                let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+                let len2 = dx * dx + dy * dy;
+                let t = if len2 > 0.0 {
+                    (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / len2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let (cx, cy) = (a.0 + dx * t, a.1 + dy * t);
+                let d = ((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt();
+                if d < best {
+                    best = d;
+                    along = (lengths[i] + t * len2.sqrt()) / length;
+                }
+            }
+            let i = ((y * FIELD + x) * 4) as usize;
+            let level = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            bgra[i] = 0;
+            bgra[i + 1] = level(best / range);
+            bgra[i + 2] = level(along);
+            bgra[i + 3] = 255;
+        }
+    }
+    let frame = image::Frame::new(
+        image::RgbaImage::from_raw(FIELD, FIELD, bgra).expect("the field holds its texels"),
+    );
+    Field {
+        image: Arc::new(RenderImage::new(SmallVec::from_elem(frame, 1))),
+        length,
+        range,
+        half_brush,
+    }
+}
+
 impl RenderOnce for Spinner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(window, cx);
         let color = look.palette.muted.hsla();
         let moving = KoanTheme::motion_allowed(cx);
+        if SHADED {
+            let field = FIELD_IMAGE.with(Rc::clone);
+            let side = f32::from(self.side) * window.scale_factor();
+            let rgba = color.to_rgb();
+            let animated = Animated::new();
+            animated.set_all(
+                0,
+                &[
+                    if moving { 1.0 } else { 0.0 },
+                    TURN.as_secs_f32(),
+                    field.length * side,
+                    field.half_brush * side,
+                    field.range * side,
+                ],
+            );
+            animated.set_all(8, &[rgba.r, rgba.g, rgba.b, rgba.a]);
+            animated.set_origin(*START.get_or_init(Instant::now));
+            animated.run(moving);
+            let mark = AnimatedQuad::new(&ENSO, &animated)
+                .image(field.image.clone())
+                .decorative()
+                .size(self.side)
+                .flex_none();
+            return reserving(mark, self.reserve);
+        }
         let stroke = stroke(self.side);
         let mark = canvas(
             |_, _, _| (),
@@ -182,18 +349,23 @@ impl RenderOnce for Spinner {
         )
         .size(self.side)
         .flex_none();
-        match self.reserve {
-            Some(room) => div()
-                .w(room.width)
-                .h(room.height)
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(mark)
-                .into_any_element(),
-            None => mark.into_any_element(),
-        }
+        reserving(mark, self.reserve)
+    }
+}
+
+/// `mark`, centred in `room` where one is held.
+fn reserving(mark: impl IntoElement, room: Option<Size<Pixels>>) -> AnyElement {
+    match room {
+        Some(room) => div()
+            .w(room.width)
+            .h(room.height)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mark)
+            .into_any_element(),
+        None => mark.into_any_element(),
     }
 }
 
@@ -212,6 +384,30 @@ mod tests {
             assert!(x >= -0.01 && y >= -0.01, "{x},{y}");
             assert!(x + brush <= 24.01 && y + brush <= 24.01, "{x},{y}");
         }
+    }
+
+    #[test]
+    fn the_field_runs_along_the_stroke() {
+        let field = bake_field();
+        assert!(
+            field.length > 1.0,
+            "an ensō is longer than its square's side"
+        );
+        let bytes = field.image.as_bytes(0).unwrap();
+        let at = |x: u32, y: u32| {
+            let i = ((y * FIELD + x) * 4) as usize;
+            (bytes[i + 2], bytes[i + 1])
+        };
+        // Some texels sit on the brush's line, and the arc runs the whole way.
+        let on: Vec<_> = (0..FIELD * FIELD)
+            .map(|i| at(i % FIELD, i / FIELD))
+            .filter(|(_, away)| *away < 8)
+            .collect();
+        assert!(on.len() > 100);
+        assert!(on.iter().any(|(along, _)| *along < 16));
+        assert!(on.iter().any(|(along, _)| *along > 240));
+        // The middle of the circle is off the brush.
+        assert!(at(FIELD / 2, FIELD / 2).1 > 128);
     }
 
     #[test]
