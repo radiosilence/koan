@@ -8,8 +8,8 @@ use std::rc::Rc;
 use crate::components::{Button, ButtonKind, TextField};
 use crate::theme::{HAIRLINE, KoanStyled, Look, Space, TypeRole, label};
 use koan_kit::app::*;
-// gpui-component's focus and click extensions, for the shell's own handling.
 use koan_kit::app::input::{InputEvent, InputState};
+// gpui-component's focus and click extensions, for the shell's own handling.
 use koan_kit::raw::base::FocusTrapElement as _;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::{px, relative};
