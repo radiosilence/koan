@@ -25,7 +25,7 @@ use crate::engine::{command, engine};
 use crate::links;
 use crate::mirror::{Devices, Mirror, Outputs, Playback, Playhead, Renderers, Slice};
 use crate::paint::Paint;
-use crate::platform::actions::{Next, Previous, help};
+use crate::platform::actions::{Next, Previous, ShowEq, help};
 use crate::theme::{self, Icon, KoanIcon, KoanStyled, Space, Tone, TypeRole};
 use crate::time::clock;
 
@@ -329,11 +329,13 @@ impl Transport {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn menu_button(
         &self,
         which: Menu,
         icon: Icon,
         label: &'static str,
+        help: String,
         enabled: bool,
         p: &Paint,
         cx: &mut Context<Self>,
@@ -342,6 +344,7 @@ impl Transport {
             which,
             text_button(icon, label, p)
                 .id(label)
+                .tooltip(tip(help))
                 .when(!enabled, |b| b.opacity(0.4)),
             |this: &mut Self| &mut this.menus,
             move |this, window, cx| enabled.then(|| this.build(which, window, cx)).flatten(),
@@ -366,7 +369,15 @@ impl Transport {
                 .map_or_else(|| "another device".to_owned(), |d| d.name.clone())
         });
         let Some(name) = name else {
-            return self.menu_button(Menu::Devices, Icon::Devices, "devices", true, p, cx);
+            return self.menu_button(
+                Menu::Devices,
+                Icon::Devices,
+                "devices",
+                "play on another device".to_owned(),
+                true,
+                p,
+                cx,
+            );
         };
         let glyph = if away {
             KoanIcon::new(Icon::Warning)
@@ -381,6 +392,11 @@ impl Transport {
             Menu::Devices,
             trailing_item(p)
                 .id("devices")
+                .tooltip(tip(if away {
+                    format!("{name} is out of reach")
+                } else {
+                    format!("playing on {name}")
+                }))
                 .gap(p.space(Space::Xs))
                 .child(glyph)
                 .child(Badge::new(name).accent(!away)),
@@ -395,7 +411,7 @@ impl Transport {
     fn eq_button(&self, eq: &EqState, p: &Paint, cx: &mut Context<Self>) -> Div {
         let plain = eq.flat || eq.off;
         let color = if plain { p.ink } else { p.accent_text };
-        let summary: SharedString = eq.summary().into();
+        let summary: SharedString = help(&eq.summary(), &ShowEq, cx).into();
         let child = if p.look.icons {
             KoanIcon::new(Icon::Filters)
                 .points(TransportMetrics::trailing_icon(&p.look))
@@ -963,6 +979,12 @@ impl Render for Transport {
                             window,
                             cx,
                         )
+                        .tooltip(tip(if shuffle {
+                            "shuffle: on"
+                        } else {
+                            "shuffle: off"
+                        }
+                        .to_owned()))
                         .on_click(move |_, _, cx| {
                             command(cx, "shuffle", move |e| e.set_shuffle(!shuffle));
                         }),
@@ -988,6 +1010,12 @@ impl Render for Transport {
                             window,
                             cx,
                         )
+                        .tooltip(tip(match now.repeat_mode {
+                            RepeatMode::Off => "repeat: off",
+                            RepeatMode::Queue => "repeat: the queue",
+                            RepeatMode::One => "repeat: this track",
+                        }
+                        .to_owned()))
                         .on_click(move |_, _, cx| {
                             command(cx, "repeat", move |e| e.set_repeat(next_repeat))
                         }),
@@ -1036,12 +1064,25 @@ impl Render for Transport {
                 } else {
                     "sleep"
                 },
+                if now.sleep.is_some() {
+                    "sleep timer: set".to_owned()
+                } else {
+                    "sleep timer".to_owned()
+                },
                 true,
                 &p,
                 cx,
             ))
             .child(self.control_button(&p, cx))
-            .child(self.menu_button(Menu::Output, Icon::Speaker, "output", true, &p, cx))
+            .child(self.menu_button(
+                Menu::Output,
+                Icon::Speaker,
+                "output",
+                "output".to_owned(),
+                true,
+                &p,
+                cx,
+            ))
             // This device's own output's EQ; another device's is chosen there.
             .children(
                 self.eq
@@ -1088,6 +1129,9 @@ impl Focusable for Transport {
     }
 }
 
+/// How long the slider stands on a seek's target waiting for the engine.
+const LANDING: Duration = Duration::from_secs(1);
+
 /// The seek slider and the times either side of it.
 ///
 /// The position is reckoned from the playhead's anchor. Where the renderer
@@ -1106,6 +1150,11 @@ pub struct Seek {
     tick: Option<Task<()>>,
     /// While the thumb is held: where it is, as a share of the track.
     dragging: Option<f32>,
+    /// A seek sent and not yet heard back: the playhead it sets, and the
+    /// anchor it replaces. Until the engine's next anchor arrives the slider
+    /// stands on the target, so a click lands at once with no frame at the
+    /// old place.
+    landing: Option<(Playhead, Instant)>,
     /// The slider's width as last painted, for when its fill next moves a
     /// pixel.
     width: std::rc::Rc<std::cell::Cell<f32>>,
@@ -1140,6 +1189,7 @@ impl Seek {
             playback: mirror.playback,
             tick: None,
             dragging: None,
+            landing: None,
             width: Default::default(),
             glide: Glide::new(),
         };
@@ -1156,9 +1206,25 @@ impl Seek {
         self.playback.read(cx).0.duration_ms
     }
 
+    /// The playhead the slider shows: a seek's target until the engine's
+    /// anchor moves on from the one it replaced, or a second has gone by
+    /// without it (a seek the engine did not take).
+    fn anchor(&mut self, cx: &App) -> Playhead {
+        let current = *self.playhead.read(cx);
+        match self.landing {
+            Some((target, replaced)) if current.at == replaced && target.at.elapsed() < LANDING => {
+                target
+            }
+            _ => {
+                self.landing = None;
+                current
+            }
+        }
+    }
+
     fn schedule(&mut self, cx: &mut Context<Self>) {
         self.tick = None;
-        let anchor = *self.playhead.read(cx);
+        let anchor = self.anchor(cx);
         let duration = self.duration_ms(cx);
         let moving = self.visible && anchor.playing && duration > 0 && self.dragging.is_none();
         if duration > 0 {
@@ -1211,6 +1277,15 @@ impl Seek {
         };
         let target = ((share as f64 * duration as f64) as u64).min(limit);
         if duration > 0 {
+            let current = *self.playhead.read(cx);
+            self.landing = Some((
+                Playhead {
+                    position_ms: target,
+                    at: Instant::now(),
+                    ..current
+                },
+                current.at,
+            ));
             command(cx, "seek", move |e| e.seek(target));
         }
         self.schedule(cx);
@@ -1222,7 +1297,7 @@ impl Render for Seek {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let duration = self.duration_ms(cx);
-        let position = self.playhead.read(cx).at(Instant::now(), duration);
+        let position = self.anchor(cx).at(Instant::now(), duration);
         let share = match self.dragging {
             Some(share) => share,
             None if duration > 0 => (position as f64 / duration as f64) as f32,

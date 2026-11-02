@@ -9,7 +9,7 @@ use std::sync::Arc;
 use koan_ffi::TrackSet;
 
 use super::tokens::Paint;
-use crate::components::{CoverArt, DragChip};
+use crate::components::DragChip;
 
 /// One thing a page shows that can be played.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

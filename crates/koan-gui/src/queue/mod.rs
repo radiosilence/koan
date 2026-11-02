@@ -17,7 +17,7 @@ use koan_kit::app::*;
 use koan_kit::raw::Hsla;
 
 use crate::components::{
-    Availability, AvailabilityMark, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
+    Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
     KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowList,
     RowListState, RowMetrics, RowOffset, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarSelection,

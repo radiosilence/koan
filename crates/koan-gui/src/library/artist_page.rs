@@ -27,7 +27,7 @@ use super::drag::{Playable, PlayableDrag};
 use super::nav::{Anchor, Anchored, Heading, Page};
 use super::rows::{self, RowPart, RowState, TrackList};
 use super::selection::Selection;
-use super::tile::{self, Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
+use super::tile::{Grid, Part, Record as TileRecord, TileHost, TileState, Tiles};
 use super::tokens::{Paint, Type, Typeset};
 use super::{Dismiss, Lib, SelectAll, actions, chrome};
 use crate::components::{Cover, CoverArt, FadeIn, Reveal, RowMetrics, SectionHeading, Spinner};
