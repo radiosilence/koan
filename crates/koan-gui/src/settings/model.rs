@@ -169,7 +169,10 @@ pub struct SettingsModel {
     engine_busy: Uses,
     /// A key or app password made as its window closed, shown by the next
     /// Settings window: it is shown only once, and must reach someone.
-    pub unseen: Option<crate::settings::sheet::Sheet>,
+    pub unseen: Vec<crate::settings::sheet::Sheet>,
+    /// Pairings asked about and not yet answered, declined if the app quits
+    /// first.
+    pub waiting_pairs: Vec<String>,
     _tasks: Subscription,
 }
 
@@ -192,7 +195,8 @@ impl SettingsModel {
             running: Vec::new(),
             next_task: 0,
             engine_busy: Uses::NONE,
-            unseen: None,
+            unseen: Vec::new(),
+            waiting_pairs: Vec::new(),
             _tasks: cx.observe(&tasks, |model, tasks, cx| {
                 let Slice(tasks) = *tasks.read(cx);
                 let busy = Uses::NONE
@@ -314,11 +318,14 @@ impl SettingsModel {
         let edits = draft.take();
         let engine = self.engine.clone();
         cx.spawn(async move |this, cx| {
-            let mut settings = engine.clone().settings().await;
+            let read = engine.clone().settings().await;
+            let mut settings = read.clone();
             for edit in &edits {
                 edit(&mut settings);
             }
-            let result = engine.update_settings(settings.clone()).await;
+            // Only what the edits changed is written, so a sign-in or another
+            // front end's write landing after the read is not put back.
+            let result = engine.update_settings_since(read, settings.clone()).await;
             this.update(cx, |model, cx| {
                 let Some(draft) = &mut model.draft else {
                     return;
@@ -342,8 +349,14 @@ impl SettingsModel {
                 if more {
                     model.write(cx);
                 } else {
-                    for then in std::mem::take(&mut model.written) {
-                        then(model, cx);
+                    // What waited on a write that failed does not run: a scan
+                    // of a folder that was not saved would clear the error
+                    // saying so.
+                    let waiting = std::mem::take(&mut model.written);
+                    if !model.write_failed {
+                        for then in waiting {
+                            then(model, cx);
+                        }
                     }
                 }
             })

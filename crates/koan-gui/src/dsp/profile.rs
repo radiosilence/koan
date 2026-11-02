@@ -1532,7 +1532,12 @@ impl ProfileBody {
             let (dsp, sheets, name) = (self.dsp.clone(), self.sheets.clone(), d.name.clone());
             let remove: bands::RemoveAction = Rc::new(move |i, position, band, _, cx| {
                 let (dsp, n) = (dsp.clone(), name.clone());
-                let what = format!("{} {}", bands::kind_name(&band), bands::values(&band));
+                let kinds = dsp.read(cx).bounds.kinds.clone();
+                let what = format!(
+                    "{} {}",
+                    bands::kind_name(&band, &kinds),
+                    bands::values(&band)
+                );
                 sheets.update(cx, |s, cx| {
                     s.confirm(
                         Confirm {

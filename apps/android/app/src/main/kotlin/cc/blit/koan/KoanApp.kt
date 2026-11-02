@@ -59,7 +59,9 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         // The engine's own syncs and scans, followed from its state for as
         // long as the process lives: a sync outlasts any one page.
         mirror.launch {
-            combine(mirror.tasks, mirror.sync, ::Pair).collect { (tasks, sync) -> activity.follow(tasks, sync) }
+            combine(mirror.tasks, mirror.sync, mirror.covers, ::Triple).collect { (tasks, sync, covers) ->
+                activity.follow(tasks, sync, covers) { mirror.launch { mirror.engine().stopCoverPreload() } }
+            }
         }
         mirror.launch {
             setNearbyHost(nearby)

@@ -30,6 +30,7 @@ pub struct MenuEntry {
     rich: bool,
     reach: Option<Icon>,
     trailing: Vec<Trailing>,
+    keys: Option<SharedString>,
     run: Option<Run>,
 }
 
@@ -47,8 +48,16 @@ impl MenuEntry {
             rich: false,
             reach: None,
             trailing: Vec::new(),
+            keys: None,
             run: None,
         }
+    }
+
+    /// The keys that do the same, at the row's end in `muted`: a menu drawn
+    /// in the window where there is no menu bar.
+    pub fn keys(mut self, keys: impl Into<SharedString>) -> Self {
+        self.keys = Some(keys.into());
+        self
     }
 
     /// An entry that is data (a playlist, a device), which keeps its case.
@@ -122,6 +131,10 @@ enum Entry {
     Separator,
     /// A section's name over its entries, chosen by nothing.
     Heading(SharedString),
+    /// A control of its own in the row's insets, such as a slider.
+    Control(Trailing),
+    /// A sentence explaining the entries around it, wrapped.
+    Note(SharedString),
     Submenu {
         label: SharedString,
         icon: Option<Icon>,
@@ -129,6 +142,10 @@ enum Entry {
         open: Option<Entity<Menu>>,
     },
 }
+
+/// How wide a note's lines run, in points before the text size scales them:
+/// the Mac's output picker's width.
+const NOTE_WIDTH: f32 = 340.;
 
 pub struct Menu {
     entries: Vec<Entry>,
@@ -170,6 +187,44 @@ impl Menu {
     /// A line of the menu that says something and does nothing.
     pub fn label(self, text: impl Into<SharedString>) -> Self {
         self.item(MenuEntry::new(text).disabled(true))
+    }
+
+    /// A control in a row of its own, in the rows' insets: a renderer's
+    /// volume. Made each time the menu draws, chosen by nothing; it keeps its
+    /// own focus and keys.
+    pub fn control(mut self, make: impl Fn(&mut Window, &mut App) -> AnyElement + 'static) -> Self {
+        self.entries.push(Entry::Control(Rc::new(make)));
+        self
+    }
+
+    /// A sentence about the entries around it, in `fine`, `muted`, wrapped
+    /// at the menu's reading width rather than widening it.
+    pub fn note(mut self, text: impl Into<SharedString>) -> Self {
+        self.entries.push(Entry::Note(text.into()));
+        self
+    }
+
+    /// Makes the entries again while the menu is open, for a menu whose
+    /// content arrives after it opens (renderers found on the network). The
+    /// highlight stays on its row while that row is still there.
+    pub fn refill(
+        &mut self,
+        cx: &mut Context<Menu>,
+        build: impl FnOnce(Menu, &mut Context<Menu>) -> Menu,
+    ) {
+        let empty = Menu {
+            entries: Vec::new(),
+            highlighted: None,
+            focus: self.focus.clone(),
+            _submenu: None,
+        };
+        let built = build(empty, cx);
+        self.entries = built.entries;
+        self._submenu = None;
+        self.highlighted = self
+            .highlighted
+            .filter(|&i| i < self.entries.len() && self.choosable(i));
+        cx.notify();
     }
 
     /// A rule between groups; one at the start, at the end or after another
@@ -233,7 +288,7 @@ impl Menu {
         match &self.entries[index] {
             Entry::Item(item) => !item.disabled && item.run.is_some(),
             Entry::Submenu { .. } => true,
-            Entry::Separator | Entry::Heading(_) => false,
+            Entry::Separator | Entry::Heading(_) | Entry::Control(_) | Entry::Note(_) => false,
         }
     }
 
@@ -369,6 +424,21 @@ impl Render for Menu {
                         .text_color(look.palette.muted.hsla())
                         .child(title.clone()),
                 ),
+                Entry::Control(make) => panel.child(
+                    div()
+                        .px(look.space(Space::M))
+                        .py(look.space(Space::Xs))
+                        .child(make(window, cx)),
+                ),
+                Entry::Note(text) => panel.child(
+                    div()
+                        .px(look.space(Space::M))
+                        .py(look.space(Space::Xs))
+                        .max_w(look.spaced(NOTE_WIDTH))
+                        .text_role(crate::theme::TypeRole::Fine, &look)
+                        .text_color(look.palette.muted.hsla())
+                        .child(text.clone()),
+                ),
                 Entry::Item(item) => {
                     let mut row = if item.data {
                         MenuRow::data(("entry", index), item.label.clone())
@@ -393,6 +463,9 @@ impl Render for Menu {
                     row = row.rich(item.rich);
                     for make in &item.trailing {
                         row = row.trailing(make(window, cx));
+                    }
+                    if let Some(keys) = item.keys.clone() {
+                        row = row.keys(keys);
                     }
                     let menu = menu.clone();
                     row = row.on_click(move |_, window, cx| {
@@ -528,12 +601,52 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
         self.open = None;
     }
 
+    /// The menu `which` opened, while it is open: to refill it as what it
+    /// shows changes.
+    pub fn menu(&self, which: K) -> Option<&Entity<Menu>> {
+        self.open
+            .as_ref()
+            .filter(|(open, ..)| *open == which)
+            .map(|(_, menu, _)| menu)
+    }
+
     /// The trigger for `which`: `button` with the press noted and the click
     /// toggling, the menu `build` makes opening beneath it (`None` when there
     /// is nothing to show). `slot` reaches this slot inside the view that
     /// holds it.
     pub fn trigger<V: 'static, E>(
         &self,
+        which: K,
+        button: E,
+        slot: fn(&mut V) -> &mut MenuSlot<K>,
+        build: impl Fn(&mut V, &mut Window, &mut Context<V>) -> Option<Entity<Menu>> + 'static,
+        cx: &mut Context<V>,
+    ) -> Div
+    where
+        E: StatefulInteractiveElement + IntoElement + 'static,
+    {
+        self.trigger_at(false, which, button, slot, build, cx)
+    }
+
+    /// `trigger` for a button along the top of the window, a toolbar's: the
+    /// menu opens below it, its left edge at the button's.
+    pub fn trigger_below<V: 'static, E>(
+        &self,
+        which: K,
+        button: E,
+        slot: fn(&mut V) -> &mut MenuSlot<K>,
+        build: impl Fn(&mut V, &mut Window, &mut Context<V>) -> Option<Entity<Menu>> + 'static,
+        cx: &mut Context<V>,
+    ) -> Div
+    where
+        E: StatefulInteractiveElement + IntoElement + 'static,
+    {
+        self.trigger_at(true, which, button, slot, build, cx)
+    }
+
+    fn trigger_at<V: 'static, E>(
+        &self,
+        below: bool,
         which: K,
         button: E,
         slot: fn(&mut V) -> &mut MenuSlot<K>,
@@ -567,6 +680,23 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
             .filter(|(open, ..)| *open == which)
             .map(|(_, menu, _)| menu.clone());
         div().relative().child(button).children(open.map(|menu| {
+            if below {
+                // Pinned under the button; the anchor keeps it in the window.
+                return div()
+                    .absolute()
+                    .top_full()
+                    .left_0()
+                    .child(
+                        deferred(
+                            anchored()
+                                .anchor(Anchor::TopLeft)
+                                .snap_to_window()
+                                .child(menu),
+                        )
+                        .with_priority(1),
+                    )
+                    .into_any_element();
+            }
             deferred(
                 anchored()
                     .anchor(Anchor::BottomRight)
@@ -574,6 +704,48 @@ impl<K: Copy + PartialEq + 'static> MenuSlot<K> {
                     .child(menu),
             )
             .with_priority(1)
+            .into_any_element()
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::TestAppContext;
+
+    use super::*;
+    // `gpui_kit::*` brings GPUI's `test` attribute, which would expand its
+    // own `#[test]` into itself.
+    use core::prelude::v1::test;
+
+    fn rows(menu: Menu, names: &[&'static str]) -> Menu {
+        names.iter().fold(menu, |menu, name| {
+            menu.item(MenuEntry::data(*name).on_click(|_, _, _| {}))
+        })
+    }
+
+    /// Refilled as renderers arrive, the menu keeps the row highlighted
+    /// while it is still there, and drops the highlight when it is gone.
+    #[gpui_kit::test]
+    fn refill_keeps_the_highlight_while_its_row_remains(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let window = cx.add_empty_window();
+        let menu = window
+            .update(|window, cx| Menu::build(window, cx, |menu, _, _| rows(menu, &["mac", "tv"])));
+        window.update(|_, cx| {
+            menu.update(cx, |menu, cx| {
+                menu.highlight(Some(1), cx);
+                menu.refill(cx, |menu, _| {
+                    rows(menu, &["mac", "tv", "amp"]).note("plays the originals")
+                });
+                assert_eq!(menu.highlighted, Some(1));
+                assert_eq!(menu.entries.len(), 4);
+                menu.refill(cx, |menu, _| rows(menu, &["mac"]));
+                assert_eq!(menu.highlighted, None);
+            })
+        });
     }
 }

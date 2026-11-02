@@ -1198,6 +1198,27 @@ pub fn cover_track_for_album(
     rows.next().transpose().map_err(Into::into)
 }
 
+/// The server's cover id for every record whose cover is on the server only:
+/// the track `cover_track_for_album` would choose, where it has no file here.
+/// Newest records first, the ones a person is likeliest to look at.
+pub fn remote_cover_ids(conn: &Connection) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT remote_id FROM (
+             SELECT t.album_id, t.remote_id, t.path, t.cached_path,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.album_id
+                        ORDER BY (t.path IS NULL AND t.cached_path IS NULL), t.disc, t.track_number
+                    ) AS n
+             FROM tracks t WHERE t.album_id IS NOT NULL)
+         WHERE n = 1 AND path IS NULL AND cached_path IS NULL AND remote_id IS NOT NULL
+         ORDER BY album_id DESC",
+    )?;
+    let ids = stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(ids)
+}
+
 /// Get distinct genres for a batch of artist IDs in a single query.
 /// Returns a map from artist_id → set of lowercased genre strings.
 pub fn genres_by_artist_ids(
@@ -1376,6 +1397,28 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    /// A record's cover is asked of the server only where none of its
+    /// tracks has a file here, by the track a cover lookup would choose.
+    #[test]
+    fn remote_covers_are_the_records_with_no_file_here() {
+        let db = test_db();
+        let remote = |title: &str, album: &str, n: i32| {
+            let mut meta = sample_meta(title, "Artist", album);
+            meta.path = None;
+            meta.source = "remote".into();
+            meta.remote_id = Some(format!("song-{title}"));
+            meta.album_remote_id = Some(format!("album-{album}"));
+            meta.track_number = Some(n);
+            upsert_track(&db.conn, &meta).unwrap()
+        };
+        remote("b", "Server", 2);
+        remote("a", "Server", 1);
+        let mut local = sample_meta("c", "Artist", "Here");
+        local.path = Some("/music/c.flac".into());
+        upsert_track(&db.conn, &local).unwrap();
+        assert_eq!(remote_cover_ids(&db.conn).unwrap(), ["song-a"]);
     }
 
     /// A walk reads every track once, in id order, and one removed mid-walk

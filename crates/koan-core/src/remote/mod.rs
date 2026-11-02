@@ -3,6 +3,7 @@ pub mod client;
 pub mod companion;
 pub mod connections;
 pub mod control;
+pub mod covers;
 pub mod devices;
 pub mod download;
 pub mod downloads;

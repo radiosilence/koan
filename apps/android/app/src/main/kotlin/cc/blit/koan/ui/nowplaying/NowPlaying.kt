@@ -241,7 +241,7 @@ private fun Sleeve(entry: QueueItem?) {
     val shape = if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(12.dp)
     // Square, as large as fits either way.
     val modifier = Modifier.widthIn(max = 520.dp).aspectRatio(1f, matchHeightConstraintsFirst = true).clip(shape)
-    Cover(entry?.art(ArtSize.Full), modifier, entry?.album)
+    Cover(entry?.art(ArtSize.Large), modifier, entry?.album)
 }
 
 /**
