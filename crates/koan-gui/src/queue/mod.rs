@@ -1123,6 +1123,7 @@ pub(crate) fn track(
             AVAILABILITY_WORD
         },
         AvailabilityMark::new(extras.availability.clone())
+            .id(look.id("availability", 0))
             .picked(look.picked)
             .into_any_element(),
     )

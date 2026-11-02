@@ -408,6 +408,7 @@ impl RenderOnce for ShuffleButton {
                     .tone(crate::theme::Tone::Muted)
                     .when(!disabled, |i| i.hover_color(group, ink)),
             )
+            .tooltip(|window, cx| super::Tooltip::view(crate::theme::label("shuffle"), window, cx))
             .when_some(self.on_click.filter(|_| !self.disabled), |d, on_click| {
                 d.on_click(move |event, window, cx| on_click(event, window, cx))
             })

@@ -1,7 +1,7 @@
 //! Library: the folders scanned, scanning them, and clearing the index.
 
 use crate::components::{Button, ButtonKind};
-use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole};
+use crate::theme::{Icon, KoanStyled, Look, Space, Tone, TypeRole, label};
 use koan_kit::app::*;
 
 use crate::settings::Ctx;
@@ -138,14 +138,16 @@ impl Render for LibraryPane {
                         &look,
                     ))
                     .child(
-                        Button::new(("remove-folder", index), ButtonKind::Icon)
-                            .label("Stop scanning this folder")
-                            .icon(Icon::Remove)
-                            .on_click(move |_, window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.remove(path.clone(), tracks, window, cx)
-                                })
-                            }),
+                        Button::icon_only(
+                            ("remove-folder", index),
+                            Icon::Remove,
+                            label("Stop scanning this folder"),
+                        )
+                        .on_click(move |_, window, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.remove(path.clone(), tracks, window, cx)
+                            })
+                        }),
                     )
                     .into_any_element(),
             );
