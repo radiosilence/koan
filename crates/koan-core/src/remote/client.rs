@@ -245,6 +245,8 @@ impl PlaybackReportState {
 struct Connections {
     http: reqwest::blocking::Client,
     downloader: reqwest::blocking::Client,
+    /// For requests a caller may cancel by dropping them.
+    cancellable: reqwest::Client,
 }
 
 impl Connections {
@@ -257,6 +259,10 @@ impl Connections {
             downloader: download::download_client().unwrap_or_else(|e| {
                 log::warn!("falling back to default download client: {}", e);
                 reqwest::blocking::Client::new()
+            }),
+            cancellable: download::async_api_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default async HTTP client: {}", e);
+                reqwest::Client::new()
             }),
         }
     }
@@ -468,6 +474,45 @@ impl SubsonicClient {
         let body = resp.bytes()?;
         // This client's own server, as last probed: no config read, no
         // request.
+        let navidrome = || {
+            crate::remote::profile::probed(self.auth())
+                .and_then(|p| p.kind)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("navidrome"))
+        };
+        if is_placeholder(&headers, &body, navidrome) {
+            return Ok(Vec::new());
+        }
+        Ok(body.to_vec())
+    }
+
+    /// `get_cover_art`, awaited: dropping the future cancels the request on
+    /// its connection (over HTTP/2, the stream alone), so a cover scrolled out
+    /// of view stops costing the server anything more. Not counted against
+    /// `CoverSlots`: the caller bounds its own requests. Run it on a Tokio
+    /// runtime.
+    pub async fn get_cover_art_cancellable(
+        &self,
+        id: &str,
+        size: Option<u32>,
+    ) -> Result<Vec<u8>, SubsonicError> {
+        let url = format!("{}/rest/getCoverArt", self.base_url());
+        let mut params = self.auth_params()?;
+        params.insert("id".into(), id.to_string());
+        if let Some(px) = size {
+            params.insert("size".into(), cover_bucket(px).to_string());
+        }
+        let client = self.connections.read().cancellable.clone();
+        let resp = client.get(&url).query(&params).send().await?;
+        let is_document = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
+        if is_document || !resp.status().is_success() {
+            return Err(SubsonicError::BadResponse);
+        }
+        let headers = resp.headers().clone();
+        let body = resp.bytes().await?;
         let navidrome = || {
             crate::remote::profile::probed(self.auth())
                 .and_then(|p| p.kind)

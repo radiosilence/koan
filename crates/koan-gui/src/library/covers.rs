@@ -154,6 +154,12 @@ struct Queue {
     wanted: HashMap<Key, Priority>,
     on_disk: HashSet<Art>,
     fetching: HashSet<Art>,
+    /// Each running fetch's way to be called off: sent, or dropped, it ends
+    /// the fetch at once and cancels its request.
+    cancels: HashMap<Art, (u64, futures_channel::oneshot::Sender<()>)>,
+    /// Names each fetch started, so one called off and finishing anyway
+    /// does not end another started since for the same record.
+    tickets: u64,
     decoding: HashSet<Key>,
     /// Decoded, and handed to the main thread.
     decoded: HashSet<Key>,
@@ -225,15 +231,62 @@ impl Queue {
             .map(|(k, _)| *k)
     }
 
-    /// Fetches running for records no longer asked for: scrolled away. A
-    /// blocking request cannot be called back, so these finish, but they
-    /// hold no place in `limit`, and what is on screen now starts at once.
-    fn abandoned(&self) -> usize {
+    /// Fetches running for records no longer asked for: scrolled away.
+    fn abandoned(&self) -> Vec<Art> {
         let wanted: HashSet<Art> = self.wanted.keys().map(|k| k.art).collect();
         self.fetching
             .iter()
             .filter(|art| !wanted.contains(art))
-            .count()
+            .copied()
+            .collect()
+    }
+
+    /// Calls off what must give way, and returns how many places that frees:
+    /// every fetch for a record no longer asked for, and, while covers on
+    /// screen wait for a place, fetches for covers off screen, the least
+    /// urgent first. Nothing in flight for a cover off screen holds back one
+    /// on it.
+    fn give_way(&mut self) -> usize {
+        let mut called_off = self.abandoned();
+        let visible_waiting = self
+            .wanted
+            .iter()
+            .filter(|(k, p)| **p == Priority::Visible && self.fetchable(k))
+            .count();
+        let free = self
+            .allowed()
+            .saturating_sub(self.fetching.len() - called_off.len());
+        if visible_waiting > free {
+            let urgency = |art: Art| {
+                self.wanted
+                    .iter()
+                    .filter(|(k, _)| k.art == art)
+                    .map(|(_, p)| *p)
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            };
+            let mut off_screen: Vec<(Art, Priority)> = self
+                .fetching
+                .iter()
+                .filter(|art| !called_off.contains(art))
+                .filter_map(|art| urgency(*art).map(|p| (*art, p)))
+                .filter(|(_, p)| *p != Priority::Visible)
+                .collect();
+            // Least urgent first.
+            off_screen.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            called_off.extend(
+                off_screen
+                    .into_iter()
+                    .take(visible_waiting - free)
+                    .map(|(art, _)| art),
+            );
+        }
+        for art in &called_off {
+            if let Some((_, cancel)) = self.cancels.remove(art) {
+                cancel.send(()).ok();
+            }
+            self.fetching.remove(art);
+        }
+        called_off.len()
     }
 
     /// How many fetches may run now: the window, under the limit.
@@ -305,9 +358,17 @@ impl Queue {
         log::debug!("covers: {why}; window now {}", self.window as usize);
     }
 
+    /// A fetch done: its place is freed, unless it was called off and the
+    /// record has been started again since.
+    fn finish(&mut self, art: Art, ticket: u64) {
+        if self.cancels.get(&art).is_some_and(|(t, _)| *t == ticket) {
+            self.cancels.remove(&art);
+            self.fetching.remove(&art);
+        }
+    }
+
     fn next_fetch(&self) -> Option<Art> {
-        let live = self.fetching.len() - self.abandoned();
-        if live >= self.allowed() {
+        if self.fetching.len() >= self.allowed() {
             return None;
         }
         self.most_urgent(|k| self.fetchable(k)).map(|k| k.art)
@@ -651,18 +712,17 @@ impl Covers {
         queue.wanted = wanted;
         // The abandoned still hold threads while they finish: enough more
         // that the limit's worth run beside them, under the ceiling.
-        let abandoned = queue.abandoned();
-        let threads = (queue.limit + abandoned).min(MAX_FETCHES);
-        let (live, limit) = (queue.fetching.len() - abandoned, queue.allowed());
+        let called_off = queue.give_way();
+        let threads = queue.limit;
+        let (live, limit) = (queue.fetching.len(), queue.allowed());
         let waiting = queue.wanted.keys().filter(|k| queue.fetchable(k)).count();
         drop(queue);
         log::debug!(
-            "covers: {live} fetching, {abandoned} scrolled away and finishing, \
-             {waiting} waiting, {limit} allowed"
+            "covers: {live} fetching, {called_off} called off, {waiting} waiting, {limit} allowed"
         );
         self.grow_fetchers(threads);
         // Every free place, not only the new requests: what was waiting
-        // behind fetches that have since scrolled away can start now.
+        // behind fetches called off can start now.
         self.shared.wake(
             fetches.max(waiting.min(limit.saturating_sub(live))),
             decodes,
@@ -1078,7 +1138,7 @@ fn fetch_lane(
     tx: mpsc::UnboundedSender<Done>,
 ) {
     loop {
-        let (art, generation) = {
+        let (art, generation, called_off, ticket) = {
             let mut queue = shared.queue.lock();
             loop {
                 if queue.closed {
@@ -1086,7 +1146,11 @@ fn fetch_lane(
                 }
                 if let Some(art) = queue.next_fetch() {
                     queue.fetching.insert(art);
-                    break (art, queue.generation(art));
+                    let (cancel, called_off) = futures_channel::oneshot::channel();
+                    queue.tickets += 1;
+                    let ticket = queue.tickets;
+                    queue.cancels.insert(art, (ticket, cancel));
+                    break (art, queue.generation(art), called_off, ticket);
                 }
                 shared.fetch_ready.wait(&mut queue);
             }
@@ -1103,7 +1167,7 @@ fn fetch_lane(
             // while the file was looked for, though not yet unlinked it.
             let mut queue = shared.queue.lock();
             if usable(&queue) {
-                queue.fetching.remove(&art);
+                queue.finish(art, ticket);
                 queue.on_disk.insert(art);
                 let decodes = queue.wanted.keys().filter(|k| k.art == art).count();
                 drop(queue);
@@ -1114,17 +1178,29 @@ fn fetch_lane(
         }
         drop(disk);
         let started = Instant::now();
-        let fetched = futures::executor::block_on(async {
+        let fetch = async {
             match art {
                 Art::Album(id) => {
                     engine
                         .clone()
-                        .album_cover_art(id, Some(SOURCE_PIXELS))
+                        .album_cover_art_cancellable(id, Some(SOURCE_PIXELS))
                         .await
                 }
                 Art::Artist(id) => engine.clone().artist_image(id).await,
             }
-        });
+        };
+        // Called off (scrolled away, or giving way to a cover on screen):
+        // the request is dropped, which cancels it, and the place is free.
+        let fetched =
+            match futures::executor::block_on(futures::future::select(Box::pin(fetch), called_off))
+            {
+                futures::future::Either::Left((fetched, _)) => fetched,
+                futures::future::Either::Right(_) => {
+                    let fetches = usize::from(shared.queue.lock().next_fetch().is_some());
+                    shared.wake(fetches, 0);
+                    continue;
+                }
+            };
         // Written beside its final name and renamed only while the record
         // is still the one fetched. An eviction after the check unlinks the
         // file once the rename is done, and moves the generation, so the
@@ -1147,7 +1223,7 @@ fn fetch_lane(
             renamed
         });
         let mut queue = shared.queue.lock();
-        queue.fetching.remove(&art);
+        queue.finish(art, ticket);
         let grew = queue.observe(started.elapsed(), fetched.is_ok());
         let current = queue.generation(art) == generation;
         let mut absent = false;
@@ -1411,37 +1487,61 @@ mod tests {
         assert_eq!(q.allowed(), 3);
     }
 
-    /// Fetches for covers scrolled away finish but hold no place: with every
-    /// place taken by them, what is on screen starts at once.
+    /// After a fling every place is held by fetches for covers off screen,
+    /// some scrolled away, some ahead: every one of them is called off, and
+    /// every cover on screen starts before any cover off it.
     #[test]
-    fn covers_scrolled_away_leave_their_places_to_what_is_shown() {
+    fn after_a_fling_every_visible_cover_starts_before_any_other() {
         let mut q = Queue {
             fetches_allowed: true,
-            limit: 2,
+            limit: 512,
             ..Queue::default()
         };
-        let (gone_a, gone_b, shown) = (Art::Album(1), Art::Album(2), Art::Album(3));
-        q.fetching.extend([gone_a, gone_b]);
-        q.wanted
-            .insert(Key { art: shown, px: 64 }, Priority::Visible);
-        assert_eq!(q.abandoned(), 2);
-        assert_eq!(q.next_fetch(), Some(shown));
-        // Still wanted, they keep their places.
-        q.wanted.insert(
-            Key {
-                art: gone_a,
-                px: 64,
-            },
-            Priority::Ahead(1.0),
-        );
-        q.wanted.insert(
-            Key {
-                art: gone_b,
-                px: 64,
-            },
-            Priority::Ahead(1.0),
-        );
-        assert_eq!(q.next_fetch(), None);
+        let key = |id| Key {
+            art: Art::Album(id),
+            px: 64,
+        };
+        let mut told = Vec::new();
+        for id in 0..16 {
+            let (cancel, called_off) = futures_channel::oneshot::channel();
+            q.fetching.insert(Art::Album(id));
+            q.cancels.insert(Art::Album(id), (id as u64, cancel));
+            told.push(called_off);
+        }
+        // 0..10 scrolled away; 10..16 still wanted, ahead.
+        for id in 10..16 {
+            q.wanted.insert(key(id), Priority::Ahead(id as f32));
+        }
+        for id in 100..120 {
+            q.wanted.insert(key(id), Priority::Visible);
+        }
+        assert_eq!(q.give_way(), 16);
+        for mut called_off in told {
+            assert!(matches!(called_off.try_recv(), Ok(Some(()))));
+        }
+        let mut started = Vec::new();
+        while let Some(art) = q.next_fetch() {
+            q.fetching.insert(art);
+            started.push(art);
+        }
+        assert_eq!(started.len(), q.allowed());
+        let visible = started
+            .iter()
+            .take_while(|art| matches!(art, Art::Album(id) if *id >= 100))
+            .count();
+        assert_eq!(visible, 16, "{started:?}");
+        // With room, the rest of the screen, then what is ahead.
+        q.limit = 512;
+        q.window = 64.0;
+        while let Some(art) = q.next_fetch() {
+            q.fetching.insert(art);
+            started.push(art);
+        }
+        let first_off_screen = started
+            .iter()
+            .position(|art| matches!(art, Art::Album(id) if *id < 100))
+            .unwrap();
+        assert_eq!(first_off_screen, 20, "{started:?}");
     }
 
     #[test]

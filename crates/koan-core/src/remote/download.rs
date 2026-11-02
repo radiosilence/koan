@@ -311,6 +311,18 @@ pub fn download_client() -> reqwest::Result<reqwest::blocking::Client> {
         .build()
 }
 
+/// `api_client`'s settings, for a request that is awaited rather than
+/// blocked on: one that can be cancelled by dropping it, as a cover scrolled
+/// out of view is. Needs a Tokio runtime to run on.
+pub fn async_api_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .pool_max_idle_per_host(16)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(API_TIMEOUT)
+        .user_agent(USER_AGENT)
+        .build()
+}
+
 /// HTTP client for small JSON API calls, where a total request deadline is correct.
 ///
 /// Idle connections are capped per host: a burst of cover fetches would
