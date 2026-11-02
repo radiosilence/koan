@@ -512,6 +512,26 @@ impl ShelfPage {
         out
     }
 
+    /// Plays a record in place of the queue and opens its page, the sleeve
+    /// marked as starting until the engine has the command.
+    fn play_record(&mut self, album: i64, cx: &mut Context<Self>) {
+        self.starting.insert(album);
+        cx.notify();
+        let started = actions::play(&self.lib, &[Playable::Album(album)], false, cx);
+        self.lib
+            .nav
+            .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
+        cx.spawn(async move |this, cx| {
+            started.await;
+            this.update(cx, |this, cx| {
+                this.starting.remove(&album);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         let order = self.order();
         self.selection.select_all(&order);
@@ -575,22 +595,45 @@ impl TileHost for ShelfPage {
             return;
         }
         match part {
+            // A queue built up over an evening does not go to a click meant
+            // to play one record: with anything queued, it asks first.
             Part::Sleeve => {
-                self.starting.insert(album);
-                cx.notify();
-                let started = actions::play(&self.lib, &[item], false, cx);
-                self.lib
-                    .nav
-                    .update(cx, |nav, cx| nav.open(Page::Album(album), cx));
-                cx.spawn(async move |this, cx| {
-                    started.await;
-                    this.update(cx, |this, cx| {
-                        this.starting.remove(&album);
-                        cx.notify();
-                    })
-                    .ok();
-                })
-                .detach();
+                let queued = cx
+                    .global::<crate::mirror::Mirror>()
+                    .queue
+                    .read(cx)
+                    .items
+                    .len();
+                if queued == 0 {
+                    self.play_record(album, cx);
+                    return;
+                }
+                let view = cx.weak_entity();
+                let title = self
+                    .records
+                    .get(&album)
+                    .map(|r| r.title.to_string())
+                    .unwrap_or_default();
+                crate::components::sheet::confirm(
+                    crate::components::sheet::Confirm {
+                        title: "replace the queue".into(),
+                        verb: "play".into(),
+                        destructive: true,
+                        lines: vec![
+                            format!(
+                                "{} come off the queue, and {title} plays in its place.",
+                                chrome::count(queued as u64, "track", "tracks")
+                            )
+                            .into(),
+                        ],
+                        note: Some("Add to queue, in the menu, keeps the queue.".into()),
+                    },
+                    window,
+                    cx,
+                    move |cx| {
+                        view.update(cx, |this, cx| this.play_record(album, cx)).ok();
+                    },
+                );
             }
             Part::Title => self
                 .lib

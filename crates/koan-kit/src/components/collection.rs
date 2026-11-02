@@ -213,3 +213,77 @@ impl RenderOnce for Collection {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{TestAppContext, VisualTestContext};
+
+    use super::*;
+    use core::prelude::v1::test;
+
+    struct Page {
+        width: CollectionWidth,
+    }
+
+    impl Render for Page {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let look = Look::of(window, cx);
+            let mut collection = Collection::new("c", &self.width)
+                .header(PageHeader::new("shelf"))
+                .section(CollectionSection::rows(
+                    SectionHeading::new("nothing"),
+                    Vec::new(),
+                ))
+                .section(CollectionSection::pills(
+                    SectionHeading::new("artists"),
+                    (0..3).map(|i| Pill::new(("pill", i), crate::theme::Icon::Artist, "a")),
+                ));
+            if let Some(grid) = self.width.grid(&look) {
+                let tiles = (0..grid.columns + 1).map(|i| {
+                    div()
+                        .debug_selector(move || format!("tile-{i}"))
+                        .w(grid.side)
+                        .h(grid.tile_height())
+                        .into_any_element()
+                });
+                collection = collection.section(CollectionSection::tiles(
+                    SectionHeading::new("albums"),
+                    grid,
+                    tiles,
+                ));
+            }
+            div().w(px(700.)).h(px(900.)).child(collection)
+        }
+    }
+
+    /// The collection measures itself, so the page's tiles come on the
+    /// next frame in as many columns as fit, one more than fits wrapping to
+    /// a row of its own.
+    #[gpui_kit::test]
+    fn tiles_fill_the_measured_columns_and_wrap(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let (page, cx) = cx.add_window_view(|_, _| Page {
+            width: CollectionWidth::default(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let columns = cx.update(|window, cx| {
+            let look = Look::of(window, cx);
+            page.read(cx).width.grid(&look).map(|g| g.columns)
+        });
+        let columns = columns.expect("measured after the first frame");
+        assert!(columns > 1);
+        let first = cx.debug_bounds("tile-0").expect("tiles drawn");
+        let second = cx.debug_bounds("tile-1").unwrap();
+        let wrapped = cx
+            .debug_bounds(Box::leak(format!("tile-{columns}").into_boxed_str()))
+            .unwrap();
+        assert_eq!(first.origin.y, second.origin.y);
+        assert!(second.origin.x > first.origin.x);
+        assert!(wrapped.origin.y > first.origin.y);
+        assert_eq!(wrapped.origin.x, first.origin.x);
+    }
+}

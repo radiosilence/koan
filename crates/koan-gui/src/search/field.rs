@@ -6,9 +6,8 @@
 
 use std::rc::Rc;
 
+use koan_kit::app::input::{InputEvent, InputState, MoveDown, MoveUp};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's FilterField draws it, the field owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState, MoveDown, MoveUp};
 
 use super::{Cleared, Kind, Results, Search, Suggestion, step};
 use crate::components::{

@@ -16,16 +16,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use koan_ffi::{KoanEngine, Placement, SearchKind};
+use koan_kit::app::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's FilterField draws it, the sheet owns its state.
-use koan_kit::raw::component::input::{Escape, InputEvent, InputState, MoveDown, MoveUp};
-// the list's scroll state, which the arrows move to the highlighted row.
-use koan_kit::raw::ScrollHandle;
 
 use super::Kind;
 use crate::components::sheet as ask;
 use crate::components::{
-    Button, ButtonKind, EmptyState, Segmented, SuggestionHeading, SuggestionRow,
+    Button, ButtonKind, EmptyState, ScrollArea, Segmented, SuggestionHeading, SuggestionRow,
 };
 use crate::library::chrome;
 use crate::library::drag::{Playable, sources};
@@ -107,7 +104,6 @@ pub struct PickerSheet {
     _search: Option<Task<()>>,
     /// The engine has the command and the sheet is waiting to close.
     resolving: bool,
-    scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -145,7 +141,6 @@ impl PickerSheet {
             generation: 0,
             _search: None,
             resolving: false,
-            scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -268,9 +263,6 @@ impl PickerSheet {
             (Some(i), true) => (i + 1).min(count - 1),
             (Some(i), false) => i.saturating_sub(1),
         });
-        if let Some(i) = self.highlighted {
-            self.scroll.scroll_to_item(self.child_index(i));
-        }
         cx.notify();
     }
 
@@ -409,13 +401,11 @@ impl Render for PickerSheet {
                 .child(EmptyState::new(Icon::Search, "search your library"))
                 .into_any_element()
         } else {
+            let reveal = self.highlighted.map(|i| self.child_index(i));
             div()
-                .id("picker-list")
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(&self.scroll)
-                .children(list)
+                .child(ScrollArea::items("picker-list", list).reveal(reveal))
                 .into_any_element()
         };
         let idle = self.resolving || (picks == 0 && self.highlighted.is_none());

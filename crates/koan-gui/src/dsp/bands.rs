@@ -12,13 +12,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use koan_ffi::{DspBand, DspPoint};
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::{
     AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, SharedString,
     Subscription, Window, div,
 };
 use koan_kit::app::{InteractiveElement, StatefulInteractiveElement, Styled};
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 
 use super::menu::{Item, Trigger, menu};
 use super::model::{Commit, Dsp};

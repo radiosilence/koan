@@ -8,9 +8,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use koan_ffi::{DspEqJoin, DspJoin, DspOverview, DspRole, DspTuningEntry};
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 // painted and hit-tested by hand: drawing koan-kit has no component for.
 use koan_kit::raw::canvas;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
