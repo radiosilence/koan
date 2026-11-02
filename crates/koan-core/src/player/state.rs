@@ -16,7 +16,7 @@ pub(crate) const SEEK_END_GUARD_MS: u64 = 500;
 const SEEK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// A seek on its way to the player.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct PendingSeek {
     /// What the sender asked for, which names the command that takes it.
     asked: u64,
