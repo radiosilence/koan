@@ -46,6 +46,6 @@ debug = "line-tables-only"
 [patch.crates-io]
 # Our copies of GPUI's macOS and Linux backends: an idle window stops waking
 # every refresh, on macOS and X11, as Wayland already does (patches marked
-# KOAN:). #1609; offered upstream.
+# KOAN:). #1609.
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }

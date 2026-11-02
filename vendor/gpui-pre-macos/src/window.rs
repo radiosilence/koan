@@ -658,6 +658,10 @@ struct MacWindowState {
     idle_frames: u32,
     /// The display link was stopped for being idle, not for being hidden.
     parked: bool,
+    /// KOAN: when input last arrived. GPUI keeps presenting for a second
+    /// after input so the display does not drop its refresh rate between
+    /// events, so the link stays up that long.
+    last_input: Option<std::time::Instant>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
@@ -825,6 +829,9 @@ impl MacWindowState {
     }
 
     fn start_display_link(&mut self) {
+        // KOAN: a parked link that cannot start yet stays parked, so the
+        // next wake tries again.
+        let parked = self.parked;
         self.stop_display_link();
         if !self
             .native_window()
@@ -836,6 +843,7 @@ impl MacWindowState {
         let screen: *mut AnyObject = unsafe { msg_send![self.native_window, screen] };
         let Some(display_id) = display_id_for_screen(screen) else {
             // AppKit can temporarily report no screen while displays are being reconfigured.
+            self.parked = parked;
             return;
         };
         let data = self.native_view.as_ptr() as *mut c_void;
@@ -1100,6 +1108,7 @@ impl MacWindow {
                 woken: false,
                 idle_frames: 0,
                 parked: false,
+                last_input: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
                     native_window as *mut _,
@@ -1397,6 +1406,12 @@ impl Drop for MacWindow {
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
         this.frame_source.take();
+        // KOAN: GPUI's frame waker holds the wake source past the window, and
+        // its handler reads the view, which is released after this: cancelled,
+        // a wake already queued never runs.
+        if let Some(source) = this.wake_source.take() {
+            source.cancel();
+        }
         unsafe {
             let _: () = msg_send![this.native_window, setDelegate: ptr::null_mut::<AnyObject>()];
         }
@@ -2678,6 +2693,8 @@ extern "C" fn handle_key_event(
 ) -> Bool {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    // KOAN: input keeps the display link up a while (`step`).
+    lock.last_input = Some(std::time::Instant::now());
 
     let window_height = lock.content_size().height;
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
@@ -2828,6 +2845,8 @@ extern "C" fn handle_view_event(this: &AnyObject, _: Sel, native_event: *mut Any
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
+    // KOAN: input keeps the display link up a while (`step`).
+    lock.last_input = Some(std::time::Instant::now());
     let window_height = lock.content_size().height;
     let native_event_type: NSEventType = unsafe { msg_send![native_event, type] };
     match native_event_type {
@@ -3409,7 +3428,10 @@ extern "C" fn step(view: *mut c_void) {
         // Every wake (a notify, input, an animation frame, a timer) restarts
         // the link through the frame waker, so waiting longer only wakes for
         // nothing.
-        if std::mem::take(&mut lock.woken) {
+        let recent_input = lock
+            .last_input
+            .is_some_and(|at| at.elapsed() < INPUT_SUSTAIN);
+        if std::mem::take(&mut lock.woken) || recent_input {
             lock.idle_frames = 0;
         } else {
             lock.idle_frames += 1;
@@ -3425,6 +3447,10 @@ extern "C" fn step(view: *mut c_void) {
 
 /// KOAN: how many frames no one asked for before the display link parks.
 const IDLE_FRAMES: u32 = 3;
+
+/// KOAN: how long after input the display link stays up, as long as GPUI
+/// keeps presenting after high-rate input (`InputRateTracker`).
+const INPUT_SUSTAIN: std::time::Duration = std::time::Duration::from_secs(1);
 
 // KOAN: the window needs frames again.
 extern "C" fn wake_frames(view: *mut c_void) {

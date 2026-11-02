@@ -324,6 +324,13 @@ pub(crate) struct X11WindowStatePtr {
     // client's ping that restarts the timer once it has parked for being
     // idle. Apart from `state` so a waker can ring them during any borrow.
     pub(crate) woken: Rc<Cell<bool>>,
+    /// KOAN: which refresh timer is the window's own, so one replaced while
+    /// it ran leaves the new one's state alone.
+    pub(crate) refresh_timer: Rc<Cell<u64>>,
+    /// KOAN: when input last arrived. GPUI keeps presenting for a second
+    /// after input so the display does not drop its refresh rate between
+    /// events, so the timer stays up that long.
+    pub(crate) last_input: Rc<Cell<Option<std::time::Instant>>>,
     pub(crate) frame_wake: Rc<RefCell<Option<Ping>>>,
 }
 
@@ -971,6 +978,8 @@ impl X11Window {
             xcb: xcb.clone(),
             x_window,
             woken: Rc::new(Cell::new(false)),
+            refresh_timer: Rc::new(Cell::new(0)),
+            last_input: Rc::new(Cell::new(None)),
             frame_wake: Rc::new(RefCell::new(None)),
         };
 
@@ -1208,6 +1217,8 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
+        // KOAN: input keeps the refresh timer up a while.
+        self.last_input.set(Some(std::time::Instant::now()));
         if self.is_blocked() {
             return;
         }
@@ -1808,6 +1819,8 @@ impl PlatformWindow for X11Window {
             }
 
             inner.force_render_after_recovery = true;
+            // KOAN: the next frame must come, parked or not.
+            self.schedule_frame();
             return;
         }
 
@@ -1815,6 +1828,8 @@ impl PlatformWindow for X11Window {
 
         if renderer.needs_redraw() {
             inner.force_render_after_recovery = true;
+            // KOAN: as above.
+            self.schedule_frame();
         }
     }
 

@@ -64,23 +64,29 @@ fn frames(cx: &mut App, playing: bool) {
         background.timer(Duration::from_secs(5)).await;
         let mut collector = journal.collector();
         let visible_at_start = visible(cx);
-        background.timer(Duration::from_secs(20)).await;
-        let visible_at_end = visible(cx);
-        let (mut signals, mut skipped, mut presented) = (0, 0, 0);
-        for entry in collector.collect_unseen().entries {
-            match entry {
-                ForegroundJournalEntry::PlatformSignal(_) => signals += 1,
-                ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(_)) => {
-                    skipped += 1
+        let (mut signals, mut skipped, mut presented, mut lost) = (0, 0, 0, 0);
+        // Drained each second: the journal's ring holds only a few seconds
+        // of a window drawing every refresh.
+        for _ in 0..20 {
+            background.timer(Duration::from_secs(1)).await;
+            let drained = collector.collect_unseen();
+            lost += drained.lost;
+            for entry in drained.entries {
+                match entry {
+                    ForegroundJournalEntry::PlatformSignal(_) => signals += 1,
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(_)) => {
+                        skipped += 1
+                    }
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(_)) => {
+                        presented += 1
+                    }
+                    _ => {}
                 }
-                ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(_)) => {
-                    presented += 1
-                }
-                _ => {}
             }
         }
+        let visible_at_end = visible(cx);
         println!(
-            "frames over 20 s ({}): {signals} asked for, {skipped} with nothing to draw, {presented} drawn; visible {visible_at_start} -> {visible_at_end}",
+            "frames over 20 s ({}): {signals} asked for, {skipped} with nothing to draw, {presented} drawn, {lost} journal entries lost; visible {visible_at_start} -> {visible_at_end}",
             if playing { "playing" } else { "paused" },
         );
         cx.update(|cx| cx.quit());
