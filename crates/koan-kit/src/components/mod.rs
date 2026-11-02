@@ -116,7 +116,7 @@ pub use page::{Page, PageHeader, PlayButton, SectionHeading, ShuffleButton};
 pub use panel::{MenuPanel, MenuRow, MenuSeparator, Tooltip, popover_panel};
 pub use picker::Picker;
 pub use pill::Pill;
-pub use placeholder::Placeholder;
+pub use placeholder::{Placeholder, enso_svg};
 pub use progress::{ProgressBar, ProgressRow};
 pub use qr::QrCode;
 pub use ring::ProgressRing;
