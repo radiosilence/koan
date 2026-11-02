@@ -12,13 +12,13 @@ The Mac app got its consistency from SwiftUI's containers. `Form`, `Section`, `L
 gpui-kit  ->  koan-kit  ->  koan-gui
 ```
 
-**koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and its example is the theme sheet (today's `examples/theme_sheet.rs`), which draws every component offscreen.
+**koan-kit** (`crates/koan-kit`) is the design system: the theme (tokens, type roles, Geist Mono, the icon set, the accent, the wash), every control and container below, the placeholder and spinner, and the role map in this document. It knows nothing of the engine or kōan's data (no `koan-ffi`, no `koan-core`), so it builds and is tested alone, and `cargo run -p koan-kit` opens its storybook: every component and container on a page of its own, in each state, with the appearance, the accent (a sample sleeve among them, for its tone mapping and the wash), the text size, Reduce Motion and Show icons to switch. `examples/storybook.rs` draws each page offscreen, dark and light, to a PNG.
 
 **koan-gui** builds pages from koan-kit only. It does not depend on `gpui-kit`: koan-kit re-exports what pages need to be views (entities, contexts, windows, tasks, actions, key bindings, `div`, `list`, `uniform_list`, `img`, events, drag and drop, the `Styled` and `ParentElement` traits) and leaves out what would let a page choose a look (`px`, `rems`, `rgb`, `rgba`, `hsla`, `Hsla` construction, `font`, fonts and text styles, gpui-component's widgets). Going around the system is then a compile error rather than a lint. What a type cannot stop, a method on a re-exported trait, the lint below catches.
 
 ## Beyond kōan
 
-koan-kit is written to be used by other projects (sbr, say) and published to crates.io later, so it stays project-agnostic: no koan-gui types, none of the app's wording, routes or data. Words a component draws come from its caller; a cover is `CoverArt`, never a library record. The kōan look is its default; an app supplies its own accent (the theme's `AccentFeed` takes any colour) and, in time, its own icon set through the asset source. It has a standalone example (the theme sheet, which draws every component), its own docs, and tests of its own.
+koan-kit is written to be used by other projects (sbr, say) and published to crates.io later, so it stays project-agnostic: no koan-gui types, none of the app's wording, routes or data. Words a component draws come from its caller; a cover is `CoverArt`, never a library record. The kōan look is its default; an app supplies its own accent (the theme's `AccentFeed` takes any colour) and, in time, its own icon set through the asset source. It has a standalone storybook, its own docs, and tests of its own.
 
 One thing does not travel: the GPUI patch that stops an idle window waking at every display refresh (#1614) is vendored in this workspace through `[patch.crates-io]`, which applies to this workspace alone. Another project using koan-kit gets GPUI as published until the patch is taken upstream.
 
@@ -287,10 +287,20 @@ Every koan-kit component reports itself to the accessibility tree GPUI builds ov
 | `ProgressRow` | ProgressIndicator, with its share and its counts |
 | `EmptyState` | Group, named by what it says |
 | sheets' `panel`, `Viewer` | Dialog |
+| `Toolbar` | Toolbar |
+| `TableRow` (`spoken`, `place`, `on_reveal`) | ListItem, or Heading for a record's heading, read as one line ("Cloudbusting, Kate Bush, Hounds of Love, 5:10, favourite"); its place in the list; selected. The links and the heart inside stay reachable as its children |
+| `RowList` (`named`), `spoken_list` around a `uniform_list` | List, named for what it holds |
+| `Banner`'s message, `NavNote` | Status, announced politely as it appears; Alert, announced at once, where something went wrong |
 
-A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions.
+A disabled control is reported as disabled (`aria_disabled`, a `KOAN:` addition to the vendored GPUI) and drops its actions. Live regions are `aria_live`, another. An announcement carries its words as both name and value, since VoiceOver reads a live node's value and Orca its name, and sits on a leaf: a live region's descendants are live too, so a button or link inside it would be announced again. A progress row is not live; a reader reads its counts when it comes to it, rather than at every tick of a scan.
 
-`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them), covers' descriptions, and rows and lists read as one node (#1778). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click and an increment through `Window::dispatch_a11y_action` as a screen reader would.
+What only a reader reads, a row's spoken line, its place and its reveal, is worked out only while one is attached (`Window::is_a11y_active`; koan-gui's `Paint::a11y`), since a list's rows are made again at every scroll frame.
+
+A virtual list draws only the rows on screen, and only rows drawn are in the tree. Each row says where it is (`place`: "row 412 of 5,000"), and when a reader moves to one it asks the list to bring it on screen (`ScrollIntoView`), which `on_reveal` answers by scrolling the row's neighbours into view (`RowListState::reveal_around`; `reveal_around` for a `uniform_list`, which keeps one scroll and so asks for the neighbour the reader is heading for), so the next row is drawn before the reader reaches it.
+
+Pages say what no component says for them through `koan_kit::app::a11y`: the sidebar is navigation, the stage main, an album tile a link to its record, the transport's track line a polite live region.
+
+`Placeholder` and the wash take no role and stay out of the tree. A node's id is its global element id, so components whose ids are made from content keep them stable. Still to come: text fields (gpui-component's `Input` draws them). `tests/a11y.rs` reads each component's node out of the tree, its state included, and sends a click, an increment and a scroll into view through `Window::dispatch_a11y_action` as a screen reader would; `Window::set_a11y_active_for_test` attaches one, since GPUI's test platform never does.
 
 ## Swift roles and their GPUI components
 

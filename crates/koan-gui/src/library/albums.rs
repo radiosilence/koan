@@ -465,7 +465,13 @@ impl AlbumGrid {
         }));
         let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(end.saturating_sub(start));
-        for record in records.get(start..end).unwrap_or_default() {
+        let count = records.len();
+        for (ix, record) in records
+            .get(start..end)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             let item = Playable::Album(record.id);
             let selected = self.selection.contains(item);
             let (drag, pick, after) = match (&pick, selected) {
@@ -507,6 +513,7 @@ impl AlbumGrid {
                 drag,
                 pick,
                 after,
+                place: (start + ix, count),
             };
             tiles.push(self.tiles.tile(record, state, height, cx));
         }
@@ -720,6 +727,20 @@ impl actions::Menus for AlbumGrid {
 }
 
 impl TileHost for AlbumGrid {
+    fn revealed(&mut self, album: i64, _: &mut Context<Self>) {
+        if let (Some(grid), Some(ix)) = (
+            self.grid,
+            self.records.iter().position(|record| record.id == album),
+        ) {
+            let columns = grid.columns.max(1);
+            crate::components::reveal_around(
+                &self.scroll,
+                ix / columns,
+                self.records.len().div_ceil(columns),
+            );
+        }
+    }
+
     fn clicked(
         &mut self,
         album: i64,
@@ -871,6 +892,11 @@ impl Render for AlbumGrid {
             .pt(grid.margin)
             .pb(grid.margin)
             .size_full()
+            .map(|list| {
+                crate::components::spoken_list("albums-list", "albums")
+                    .size_full()
+                    .child(list)
+            })
             .into_any_element(),
             None => div().into_any_element(),
         };

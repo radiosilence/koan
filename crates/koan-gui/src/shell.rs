@@ -693,9 +693,21 @@ impl Render for Shell {
                                         )
                                     },
                                 )
-                                .child(self.sidebar.clone().cached(
-                                    StyleRefinement::default().w_full().flex_1().min_h_0(),
-                                )),
+                                .child(
+                                    // A landmark to a screen reader: where to go.
+                                    div()
+                                        .id("sidebar-region")
+                                        .role(a11y::Role::Navigation)
+                                        .aria_label("library")
+                                        .w_full()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(self.sidebar.clone().cached(
+                                            StyleRefinement::default().w_full().flex_1().min_h_0(),
+                                        )),
+                                ),
                         )
                     })
                     .trailing(
@@ -710,7 +722,16 @@ impl Render for Shell {
                                     .flex_1()
                                     .min_h_0()
                                     .flex()
-                                    .child(div().flex_1().min_w_0().h_full().child(stage))
+                                    // The page: the main landmark.
+                                    .child(
+                                        div()
+                                            .id("stage")
+                                            .role(a11y::Role::Main)
+                                            .flex_1()
+                                            .min_w_0()
+                                            .h_full()
+                                            .child(stage),
+                                    )
                                     .children(self.lyrics.clone().map(|lyrics| {
                                         lyrics.cached(
                                             StyleRefinement::default()

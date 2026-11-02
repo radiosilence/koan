@@ -14,7 +14,7 @@ use crate::components::{UniformListScrollHandle, uniform_list};
 use super::covers::{Art, Covers, Key, Priority};
 use super::drag::{Playable, PlayableDrag};
 use super::nav::Page;
-use super::rows::{self, RowPart, RowState, TrackList};
+use super::rows::{self, Reveal, RowPart, RowState, TrackList};
 use super::selection::Selection;
 use super::tile::Grid;
 use super::tokens::{Paint, Type, Typeset};
@@ -273,6 +273,10 @@ impl AlbumPage {
             kind,
             note: None,
             cursor: self.keyed && self.cursor.at == Some(index),
+            place: Some((index, self.tracks.len())),
+            reveal: p
+                .a11y
+                .then(|| Reveal::Uniform(self.scroll.clone(), i, self.lines.len())),
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -487,8 +491,7 @@ impl Render for AlbumPage {
                     .flex_col()
                     .child(self.header(p, grid, window, cx))
                     .child(actions::list_menu(
-                        div()
-                            .id("album-track-list")
+                        crate::components::spoken_list("album-track-list", "tracks")
                             .relative()
                             .flex_1()
                             .min_h_0()

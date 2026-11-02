@@ -1,0 +1,1 @@
+- **koan-kit storybook.** `cargo run -p koan-kit` opens every component and container on its own page, with the appearance, accent, text size, Reduce Motion and Show icons to switch, replacing the theme sheet; `examples/storybook.rs` keeps the offscreen PNGs.

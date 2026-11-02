@@ -36,4 +36,4 @@ pub mod transport;
 pub mod tv_wake;
 pub mod window_state;
 
-pub use koan_kit::{components, sheet, theme};
+pub use koan_kit::{components, storybook, theme};
