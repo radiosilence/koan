@@ -1,0 +1,1 @@
+- **The desktop app builds again.** The shelf pages released their covers through a call whose signature had changed.
