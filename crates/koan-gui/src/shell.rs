@@ -495,7 +495,7 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
-        let washed = cx.global::<theme::KoanTheme>().wash_window;
+        let washed = theme::KoanTheme::washes_window(cx);
         let transport = {
             let transport = self.transport.clone();
             move || {
