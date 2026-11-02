@@ -9,7 +9,7 @@
 #![allow(missing_docs)]
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::{AtlasTile, Bounds, ContentMask, DrawOrder, Primitive, ScaledPixels};
@@ -54,6 +54,15 @@ pub fn shader_epoch() -> Instant {
 }
 
 
+/// Signed nanoseconds from [`shader_epoch`] to `at`.
+fn since_epoch(at: Instant) -> i64 {
+    let epoch = shader_epoch();
+    match at.checked_duration_since(epoch) {
+        Some(after) => after.as_nanos() as i64,
+        None => -(epoch.duration_since(at).as_nanos() as i64),
+    }
+}
+
 /// A shader's uniforms, shared between the app and the renderer: written by
 /// the app from any thread, read as each frame is presented.
 ///
@@ -69,8 +78,10 @@ pub struct ShaderUniforms {
     live: AtomicBool,
     continuous: AtomicBool,
     changed: AtomicBool,
-    /// Nanoseconds from [`shader_epoch`] to the origin `time` counts from.
-    origin: AtomicU64,
+    /// Nanoseconds from [`shader_epoch`] to the origin `time` counts from,
+    /// negative for an origin before it: an anchor can be older than the
+    /// first shader.
+    origin: AtomicI64,
     /// Nanoseconds from [`shader_epoch`] after which `live` lapses by
     /// itself; 0 for never. A transition is live for its length and no
     /// longer, with nothing to stop it.
@@ -99,7 +110,7 @@ impl ShaderUniforms {
     /// The moment `time` counts from in the program: where an anchor was
     /// taken, so the program reckons from it.
     pub fn set_origin(&self, origin: Instant) -> bool {
-        let nanos = origin.saturating_duration_since(shader_epoch()).as_nanos() as u64;
+        let nanos = since_epoch(origin);
         let changed = self.origin.swap(nanos, Ordering::Relaxed) != nanos;
         if changed {
             self.changed.store(true, Ordering::Relaxed);
@@ -109,8 +120,7 @@ impl ShaderUniforms {
 
     /// Seconds from the origin to `now`, as the program reads `time`.
     pub fn time_at(&self, now: Instant) -> f32 {
-        let now = now.saturating_duration_since(shader_epoch()).as_nanos() as f64;
-        ((now - self.origin.load(Ordering::Relaxed) as f64) / 1e9) as f32
+        ((since_epoch(now) - self.origin.load(Ordering::Relaxed)) as f64 / 1e9) as f32
     }
 
     pub fn set_live(&self, live: bool) {
