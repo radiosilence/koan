@@ -28,6 +28,10 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
             .query_row(sql, [], |r| r.get::<_, i64>(0))
             .unwrap_or(0) as u64
     };
+    // A scan under way would re-read files into what this clears: it is
+    // stopped, and the delete waits for its last commit.
+    crate::index::lane::cancel_all();
+    let _lane = crate::index::lane::wait();
     let summary = RebuildSummary {
         tracks: count("SELECT COUNT(*) FROM tracks"),
         albums: count("SELECT COUNT(*) FROM albums"),
@@ -187,6 +191,7 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
         [],
     )?;
     tx.commit()?;
+    crate::remote::covers::forget(&crate::config::Config::cached());
     Ok(removed)
 }
 
@@ -227,7 +232,7 @@ pub fn forget_server(
          DELETE FROM play_history_forgotten;
          DELETE FROM playlists WHERE source_path IS NULL;
          DELETE FROM playback_state;
-         DELETE FROM playback_position;
+         UPDATE playback_position SET cursor_id = NULL, position_ms = 0, was_playing = 0;
          DELETE FROM remote_servers;",
         user = crate::db::queries::LOCAL_USER
     ))?;

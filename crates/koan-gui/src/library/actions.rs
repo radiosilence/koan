@@ -80,34 +80,113 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
     });
 }
 
-/// Resolves the pick to its tracks, in order, and opens organise over them.
-pub fn organise(lib: &Lib, items: &[Playable], window: &mut Window, cx: &mut App) {
-    let engine = lib.engine.clone();
-    let items: Vec<Playable> = items.to_vec();
-    let title = match items.as_slice() {
+/// The tracks `items` name, in order, each once: what a verb over records
+/// and artists acts on.
+pub async fn track_ids_of(engine: Arc<koan_ffi::KoanEngine>, items: Vec<Playable>) -> Vec<i64> {
+    let mut ids = Vec::new();
+    for item in items {
+        let found = match item {
+            Playable::Track(id) => Ok(vec![id]),
+            Playable::Album(id) => engine.clone().track_ids(Some(id), None).await,
+            Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
+        };
+        match found {
+            Ok(found) => {
+                for id in found {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+            Err(e) => log::warn!("tracks of a pick: {e}"),
+        }
+    }
+    ids
+}
+
+/// What a pick is called in a question about it.
+fn pick_title(items: &[Playable]) -> String {
+    match items {
         [Playable::Track(_)] => "1 track".to_owned(),
         [Playable::Album(_)] => "this album".to_owned(),
         [Playable::Artist(_)] => "this artist's tracks".to_owned(),
         _ => format!("{} picked", items.len()),
-    };
+    }
+}
+
+/// Resolves the pick to its tracks, in order, and opens organise over them.
+pub fn organise(lib: &Lib, items: &[Playable], window: &mut Window, cx: &mut App) {
+    let engine = lib.engine.clone();
+    let items: Vec<Playable> = items.to_vec();
+    let title = pick_title(&items);
     window
         .spawn(cx, async move |cx| {
-            let mut ids = Vec::new();
-            for item in items {
-                let found = match item {
-                    Playable::Track(id) => Ok(vec![id]),
-                    Playable::Album(id) => engine.clone().track_ids(Some(id), None).await,
-                    Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
-                };
-                match found {
-                    Ok(found) => ids.extend(found.into_iter().filter(|id| !ids.contains(id))),
-                    Err(e) => log::warn!("organise: {e}"),
-                }
-            }
+            let ids = track_ids_of(engine, items).await;
             cx.update(|window, cx| crate::organize::open(title, ids, window, cx))
                 .ok();
         })
         .detach();
+}
+
+/// Fetches the pick's tracks onto this device now, as the Mac's "download
+/// to cache" does: wanted for their own sake, behind what is playing.
+pub fn download(lib: &Lib, items: &[Playable], cx: &mut App) {
+    let (engine, items) = (lib.engine.clone(), items.to_vec());
+    cx.background_spawn(async move {
+        let ids = track_ids_of(engine.clone(), items).await;
+        if let Err(e) = engine.download_to_cache(ids).await {
+            log::warn!("download to cache: {e}");
+        }
+    })
+    .detach();
+}
+
+/// Asks, then deletes the copies of the pick's tracks downloaded to this
+/// device. They stay on the server and download again when played.
+pub fn remove_downloads(lib: &Lib, items: &[Playable], window: &mut Window, cx: &mut App) {
+    let (engine, items) = (lib.engine.clone(), items.to_vec());
+    let title = pick_title(&items);
+    window
+        .spawn(cx, async move |cx| {
+            let ids = track_ids_of(engine.clone(), items).await;
+            cx.update(|window, cx| ask_remove_downloads(engine, title, ids, window, cx))
+                .ok();
+        })
+        .detach();
+}
+
+/// The question before removing downloads, and the removal: shared by the
+/// library's menus and the queue's.
+pub fn ask_remove_downloads(
+    engine: Arc<koan_ffi::KoanEngine>,
+    title: String,
+    ids: Vec<i64>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if ids.is_empty() {
+        return;
+    }
+    crate::components::sheet::confirm(
+        crate::components::sheet::Confirm {
+            title: "remove downloaded files".into(),
+            verb: "remove".into(),
+            destructive: true,
+            lines: vec![format!("The copies of {title} downloaded to this device are deleted.").into()],
+            note: Some("They stay on the server and download again when played. Local files are not touched.".into()),
+        },
+        window,
+        cx,
+        move |cx| {
+            let (engine, ids) = (engine.clone(), ids.clone());
+            cx.background_spawn(async move {
+                if let Err(e) = engine.clear_downloads(ids).await {
+                    log::warn!("remove downloaded files: {e}");
+                }
+            })
+            .detach();
+        },
+    );
 }
 
 /// Run after a menu's verb: ends the pick the menu was opened over, as each
@@ -222,8 +301,25 @@ pub fn menu(
         window,
         cx,
         move |mut menu, _, _| {
-            if playlists.is_empty() {
-                return menu.label("no playlists");
+            {
+                let (lib, items, after) = (sub_lib.clone(), sub_items.clone(), sub_after.clone());
+                menu = menu.item(MenuEntry::new("new playlist…").icon(Icon::Add).on_click(
+                    move |_, window, cx| {
+                        super::playlist::new_playlist(
+                            lib.engine.clone(),
+                            lib.nav.read(cx).navigator(),
+                            sources(&items),
+                            window,
+                            cx,
+                        );
+                        if let Some(after) = &after {
+                            after(cx);
+                        }
+                    },
+                ));
+            }
+            if !playlists.is_empty() {
+                menu = menu.separator();
             }
             for (id, name) in &playlists {
                 let (lib, items, after, id) =
@@ -258,6 +354,22 @@ pub fn menu(
             .icon(Icon::Organize)
             .on_click(move |_, window, cx| organise(&organise_lib, &organise_items, window, cx)),
     );
+    // A remote library's files on this device: fetched now, or let go.
+    let (fetch_lib, fetch_items) = (lib.clone(), items.clone());
+    let (drop_lib, drop_items) = (lib.clone(), items.clone());
+    menu = menu
+        .item(
+            MenuEntry::new("download to cache")
+                .icon(Icon::Downloads)
+                .on_click(move |_, _, cx| download(&fetch_lib, &fetch_items, cx)),
+        )
+        .item(
+            MenuEntry::new("remove downloaded files…")
+                .icon(Icon::Clear)
+                .on_click(move |_, window, cx| {
+                    remove_downloads(&drop_lib, &drop_items, window, cx)
+                }),
+        );
     match single {
         Some(Playable::Track(id)) => {
             let nav = lib.nav.clone();

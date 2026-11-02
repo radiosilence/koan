@@ -1,0 +1,1 @@
+- **Lyrics, track info and the artwork viewer in the GUI app.** Lyrics show beside the page and follow the song, a click on a line seeking to it; Track Info lists what each of a track's sources says; and a click on a record's sleeve or the transport's cover shows it as large as the window allows.

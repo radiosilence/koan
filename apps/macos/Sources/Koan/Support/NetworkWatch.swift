@@ -52,6 +52,10 @@ final class NetworkWatch: @unchecked Sendable {
         self.engine = engine
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
+            // Background work nobody asked for, such as fetching covers
+            // ahead, waits on a costly network or while saving power.
+            self.expensive = path.isExpensive || path.isConstrained
+            self.tellConstrained()
             let next = Route(path)
             guard let current else {
                 self.current = next
@@ -77,6 +81,25 @@ final class NetworkWatch: @unchecked Sendable {
             queue.asyncAfter(deadline: min(.now() + Self.settle, began + Self.longest), execute: tell)
         }
         monitor.start(queue: queue)
+        #if !os(macOS)
+        NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: nil
+        ) { [weak self] _ in
+            self?.queue.async { self?.tellConstrained() }
+        }
+        #endif
+    }
+
+    /// The last path's cost, read on `queue`.
+    private var expensive = false
+    private var toldConstrained: Bool?
+
+    /// On `queue`.
+    private func tellConstrained() {
+        let constrained = expensive || ProcessInfo.processInfo.isLowPowerModeEnabled
+        guard constrained != toldConstrained else { return }
+        toldConstrained = constrained
+        telling.async { self.engine.setNetworkConstrained(constrained: constrained) }
     }
 
     deinit {

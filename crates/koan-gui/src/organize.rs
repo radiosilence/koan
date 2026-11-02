@@ -184,6 +184,26 @@ impl OrganizeSheet {
         }));
     }
 
+    /// Reads the selection again after a move that left some files behind:
+    /// the ones that moved are at new paths, which the next preview must
+    /// start from. The result stays on screen meanwhile; previews wait for
+    /// the new selection.
+    fn reread(&mut self, cx: &mut Context<Self>) {
+        self.selection = None;
+        let read = engine(cx).organize_selection(Some(self.track_ids.clone()));
+        self._load = cx.spawn(async move |this, cx| {
+            let selection = read.await;
+            this.update(cx, |this, cx| {
+                match selection {
+                    Ok(selection) => this.selection = Some(selection),
+                    Err(e) => this.error = Some(crate::settings::model::describe(&e)),
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
     fn choose_pattern(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pattern) = self.patterns.get(index) else {
             // "typed here": the field keeps what it holds.
@@ -279,6 +299,7 @@ impl OrganizeSheet {
                                     ));
                                     this.plan = Some(done);
                                     this.checked = false;
+                                    this.reread(cx);
                                 }
                                 Err(e) => this.error = Some(crate::settings::model::describe(&e)),
                             }

@@ -15,10 +15,44 @@ cli *ARGS:
 gui-library dir albums="5000" tracks="10":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo run --release -p koan-gui --example gen_library -- "{{dir}}/music" {{albums}} {{tracks}}
+    cargo run --release -p koan-gui --features runtime-shaders --example gen_library -- "{{dir}}/music" {{albums}} {{tracks}}
     mkdir -p "{{dir}}/config"
     printf '[library]\nfolders = ["%s"]\n' "$(cd "{{dir}}/music" && pwd)" > "{{dir}}/config/config.toml"
     KOAN_CONFIG_DIR="{{dir}}/config" cargo run --release -p koan-cli -- scan
+
+# Walk every page of the kōan GUI app headlessly: a PNG of each, dark and
+# light, and its frame times while scrolled, failing over the 144 Hz budget.
+# Against a generated library, copied fresh for each run.
+gui-walk out="target/gui-walk" albums="300" tracks="10":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="target/gui-walk-library"
+    [ -d "$lib/config" ] || just gui-library "$lib" {{albums}} {{tracks}}
+    rm -rf "{{out}}/config" && mkdir -p "{{out}}" && cp -R "$lib/config" "{{out}}/config"
+    KOAN_CONFIG_DIR="$PWD/{{out}}/config" cargo run --release -p koan-gui --features runtime-shaders --example walk -- "{{out}}"
+
+# The SwiftUI app's evidence renders beside the GUI walk's, page by page,
+# with the edges that disagree marked: {{out}}/sheets. Both apps draw
+# offscreen against copies of the same library; nothing reads the screen.
+gui-compare out="target/gui-compare":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just gui-walk "{{out}}/gui"
+    just macos-bundle
+    cfg="$PWD/{{out}}/mac-config"
+    rm -rf "$cfg" "{{out}}/mac" && cp -R "{{out}}/gui/config" "$cfg"
+    printf '\n[devices]\nnearby = false\ndiscoverable = false\n[playback]\nmuted = true\nrenderers = false\n' >> "$cfg/config.toml"
+    # The record, artist and playlist the walk drew.
+    set -a && . "{{out}}/gui/ids.env" && set +a
+    KOAN_CONFIG_DIR="$cfg" KOAN_RENDER_EVIDENCE="$PWD/{{out}}/mac" KOAN_RENDER_FRAMED=1200x750 \
+        KOAN_RENDER_PAGES=window- "{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app" \
+        -ApplePersistenceIgnoreState YES
+    cargo run --release -p koan-gui --features runtime-shaders --example compare -- "{{out}}/mac" "{{out}}/gui" "{{out}}/sheets"
+
+# The parity inventory: what the SwiftUI app has, as a checklist for #1625.
+# `--summary` for the counts alone.
+gui-parity *args:
+    python3 scripts/gui-parity.py {{args}}
 
 # Run tests + clippy + actionlint
 # Tests run against a config dir of their own. One that reaches past
@@ -482,6 +516,19 @@ macos-test: macos-ffi
 
 ios_deployment_target := "26.0"
 tv_deployment_target := "26.0"
+
+# Rebuild the vendored GPUI crates from release VERSION and vendor/patches,
+# failing on the first patch that does not apply; vendor/ is untouched then.
+vendor-gpui version:
+    scripts/vendor-gpui.sh {{version}}
+
+# Write vendor/patches from the vendored copies: after editing one.
+vendor-gpui-patches:
+    scripts/vendor-gpui.sh --patches
+
+# The vendored copies are their releases plus their patches (CI).
+vendor-gpui-check:
+    scripts/vendor-gpui.sh --check
 
 # koan-gui's pages choosing a look by hand rather than from koan-kit, against
 # a baseline that only falls (`--update` lowers it). docs/design/koan-kit.md.
@@ -1893,7 +1940,7 @@ gui-run *ARGS:
     fi
     # Ctrl-C is how the app is quit from here, not a failure.
     trap 'exit 0' INT
-    cargo run --profile gui-dev -p koan-gui -- {{ARGS}}
+    cargo run --profile gui-dev -p koan-gui --features runtime-shaders -- {{ARGS}}
 
 # Package the desktop app for this machine: on macOS a signed .app and a DMG,
 # on Linux an AppImage and a .deb, all under target/gui.

@@ -2,14 +2,13 @@
 //! assistants over MCP, and scrobbling to ListenBrainz. Each where the
 //! server has it.
 
-use crate::components::{Button, ButtonKind, TextField};
+use crate::components::{Button, ButtonKind, CopyButton, CopyText, Spinner, TextField};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{Assistants, ScrobblingConnection};
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 
-use crate::settings::form::{Row, buttons, copyable, note, page, section, text};
+use crate::settings::form::{Row, buttons, note, page, section, text};
 use crate::settings::model::{count, describe};
 use crate::settings::sheet::{Action, Sheet};
 use crate::settings::{Ctx, offers};
@@ -26,7 +25,6 @@ pub struct IntegrationsPane {
     scrobbling_error: Option<String>,
     token: Entity<InputState>,
     busy: bool,
-    copied: bool,
     assistants_task: Option<Task<()>>,
     status_task: Option<Task<()>>,
     connecting: Option<Task<()>>,
@@ -58,7 +56,6 @@ impl IntegrationsPane {
             scrobbling_error: None,
             token,
             busy: false,
-            copied: false,
             assistants_task: None,
             status_task: None,
             connecting: None,
@@ -173,44 +170,16 @@ impl IntegrationsPane {
         let mut tone = Tone::Muted;
         match &self.assistants {
             Some(Ok(assistants)) => {
-                let entity = cx.entity();
                 let url = assistants.mcp_url.clone();
                 let connect = assistants.connect_url.clone();
                 rows.push(
                     Row::new("Address")
-                        .control(copyable(
-                            "copy-mcp",
-                            url.clone(),
-                            self.copied,
-                            move |cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
-                                entity.update(cx, |pane, cx| {
-                                    pane.copied = true;
-                                    cx.notify();
-                                })
-                            },
-                            look,
-                        ))
+                        .control(CopyText::new("copy-mcp", url.clone()))
                         .into_any_element(),
                 );
-                let (copy_url, copier) = (assistants.mcp_url.clone(), cx.entity());
                 rows.push(buttons(
                     vec![
-                        Button::new("copy-mcp-address", ButtonKind::Bordered)
-                            .label(if self.copied {
-                                "Copied"
-                            } else {
-                                "Copy Address"
-                            })
-                            .icon(Icon::Copy)
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copy_url.clone()));
-                                copier.update(cx, |pane, cx| {
-                                    pane.copied = true;
-                                    cx.notify();
-                                })
-                            })
-                            .into_any_element(),
+                        CopyButton::new("copy-mcp-address", "Copy Address", url).into_any_element(),
                     ],
                     look,
                 ));
@@ -228,9 +197,7 @@ impl IntegrationsPane {
                 footer = error.clone();
                 tone = Tone::Ink;
             }
-            None => {
-                rows.push(text("Loading…", TypeRole::Body, Tone::Muted, look).into_any_element())
-            }
+            None => rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element()),
         }
         div()
             .child(section(Some("Assistants"), rows, None, look))
@@ -281,9 +248,7 @@ impl IntegrationsPane {
                     look,
                 ));
             }
-            None => {
-                rows.push(text("Checking…", TypeRole::Body, Tone::Muted, look).into_any_element())
-            }
+            None => rows.push(Spinner::new(look.font_size(TypeRole::Body)).into_any_element()),
             // The server could not say whether the account is connected, so
             // neither state is shown.
             Some(Err(_)) => rows.push(buttons(

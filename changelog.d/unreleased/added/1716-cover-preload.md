@@ -1,0 +1,1 @@
+- **Covers are fetched ahead.** With a remote library, every record's cover is fetched in the background after what is on screen, kept with the downloads and counted against the cache limit, so browsing never waits for one. On by default (Settings → Server); its progress shows as an activity row with a stop button.

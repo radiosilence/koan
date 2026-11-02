@@ -2,21 +2,20 @@
 //! the desktop, is one, sharing its own library; and what it keeps of a
 //! server's library.
 
-use std::time::Duration;
-
-use crate::components::{Button, ButtonKind, Picker, Segmented, Stepper, TextField, Toggle};
+use crate::components::{
+    Button, ButtonKind, CopyText, Picker, Segmented, Stepper, TextField, Toggle,
+};
 use crate::theme::{Icon, Look, Tone, TypeRole, label};
 use koan_ffi::{ConnectionInfo, Settings};
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 
 use super::cache::{self, Keeping};
 use crate::mirror::{Mirror, Slice};
 use crate::settings::Ctx;
-use crate::settings::form::{Row, buttons, copyable, note, page, section, text};
+use crate::settings::form::{Row, buttons, note, page, section, text};
 use crate::settings::model::{Uses, bytes, count};
 use crate::settings::sheet::{Action, Sheet};
 
@@ -34,9 +33,6 @@ const SYNC_EVERY: [(&str, u64); 5] = [
     ("Day", 1440),
 ];
 
-/// How long "Copied" stands in for what was copied.
-const COPIED: Duration = Duration::from_millis(1500);
-
 pub struct ServerPane {
     pub(super) ctx: Ctx,
     /// The side the person chose to look at, while it differs from what
@@ -51,8 +47,6 @@ pub struct ServerPane {
     /// and nothing deleted, until there is a number.
     choosing_limit: bool,
     cache: Entity<Slice<u64>>,
-    copied: Option<&'static str>,
-    copy_reset: Option<Task<()>>,
     pub(super) share: super::share::ShareForm,
     _subscriptions: Vec<Subscription>,
 }
@@ -125,7 +119,15 @@ impl ServerPane {
                 &cache_limit,
                 window,
                 |pane, _, event: &InputEvent, window, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                    // Focus moving into a sheet blurs the field too: the
+                    // sheet's question is the one being asked.
+                    let asking = pane.ctx.sheets.read(cx).is_open();
+                    let commit = match event {
+                        InputEvent::PressEnter { .. } => true,
+                        InputEvent::Blur => !asking,
+                        _ => false,
+                    };
+                    if commit {
                         pane.commit_cache_limit(window, cx);
                     }
                 },
@@ -141,25 +143,9 @@ impl ServerPane {
             cache_limit,
             choosing_limit: false,
             cache,
-            copied: None,
-            copy_reset: None,
             share,
             _subscriptions: subscriptions,
         }
-    }
-
-    fn copy(&mut self, which: &'static str, value: String, cx: &mut Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(value));
-        self.copied = Some(which);
-        cx.notify();
-        self.copy_reset = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(COPIED).await;
-            this.update(cx, |pane, cx| {
-                pane.copied = None;
-                cx.notify();
-            })
-            .ok();
-        }));
     }
 
     fn sign_in(&mut self, cx: &mut Context<Self>) {
@@ -313,16 +299,34 @@ impl ServerPane {
             )
         };
         let pane = cx.entity();
-        let sheet = Sheet::new(title).message(message).action(
-            Action::new("Delete Downloads", move |_, _, cx| {
-                let limit = limit.clone();
-                pane.update(cx, |pane, cx| pane.set_limit(limit, cx))
+        let kept = pane.clone();
+        let sheet = Sheet::new(title)
+            .message(message)
+            // Cancelled, the field shows the limit kept, so leaving it does
+            // not ask again.
+            .dismiss_with("Cancel", move |window, cx| {
+                kept.update(cx, |pane, cx| pane.show_stored_limit(window, cx))
             })
-            .destructive(),
-        );
+            .action(
+                Action::new("Delete Downloads", move |_, _, cx| {
+                    let limit = limit.clone();
+                    pane.update(cx, |pane, cx| pane.set_limit(limit, cx))
+                })
+                .destructive(),
+            );
         self.ctx
             .sheets
             .update(cx, |s, cx| s.show(sheet, window, cx));
+    }
+
+    /// The field back to the limit stored.
+    fn show_stored_limit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(settings) = self.ctx.model.read(cx).settings() else {
+            return;
+        };
+        let stored = cache::limit_gb(&settings.cache_limit);
+        self.cache_limit
+            .update(cx, |s, cx| s.set_value(stored, window, cx));
     }
 
     fn commit_cache_limit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -362,20 +366,7 @@ impl ServerPane {
             let server = settings.remote_url.clone();
             let mut rows = vec![
                 Row::new("Server")
-                    .control(copyable(
-                        "copy-server",
-                        server,
-                        self.copied == Some("server"),
-                        {
-                            let entity = entity.clone();
-                            let server = settings.remote_url.clone();
-                            move |cx| {
-                                let server = server.clone();
-                                entity.update(cx, |pane, cx| pane.copy("server", server, cx))
-                            }
-                        },
-                        look,
-                    ))
+                    .control(CopyText::new("copy-server", server))
                     .into_any_element(),
                 Row::new("User")
                     .value(settings.remote_username.clone())
@@ -526,6 +517,24 @@ impl ServerPane {
             Some("Automatic sync"),
             sync_rows,
             Some("Each sync asks the server only for what changed since the last.".into()),
+            look,
+        ));
+        sections.push(section(
+            Some("Covers"),
+            vec![{
+                let model = self.ctx.model.clone();
+                Toggle::new(
+                    "preload-covers",
+                    "Fetch every record's cover ahead",
+                    settings.preload_covers,
+                )
+                .on_change(move |on, _, cx| {
+                    let on = *on;
+                    model.update(cx, |m, cx| m.edit(cx, move |s| s.preload_covers = on))
+                })
+                .into_any_element()
+            }],
+            Some("Covers are fetched in the background, after what is on screen, so browsing never waits for one. They are kept with the downloads and count against the same limit. Turning this off removes nothing already fetched.".into()),
             look,
         ));
         sections.push(self.downloads(settings, look, cx));

@@ -516,7 +516,10 @@ impl MutationRoot {
 
     async fn seek(&self, ctx: &Context<'_>, position_ms: i64) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        send_cmd(ctx, PlayerCommand::Seek(position_ms as u64))?;
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        state.request_seek(position_ms as u64);
+        send_cmd(ctx, PlayerCommand::Seek(position_ms as u64))
+            .inspect_err(|_| state.seek_taken(position_ms as u64))?;
         Ok(GqlStatus::success(format!("seeked to {}ms", position_ms)))
     }
 

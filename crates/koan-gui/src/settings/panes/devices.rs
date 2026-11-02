@@ -7,9 +7,8 @@
 use crate::components::{Button, ButtonKind, Picker, TextField, Toggle};
 use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_ffi::{ConnectedInfo, ServerQueue};
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 
@@ -148,6 +147,7 @@ impl DevicesPane {
                         .dismiss_with("Decline", move |_, cx| {
                             let (engine, pair, device) = (deny_engine.clone(), deny_pair.clone(), declined.clone());
                             deny_model.update(cx, |m, cx| {
+                                m.waiting_pairs.retain(|p| *p != pair);
                                 m.run(
                                     format!("Declining {device}"),
                                     crate::settings::model::Uses::NONE,
@@ -165,6 +165,7 @@ impl DevicesPane {
                             let (engine, pair, device, who) =
                                 (allow_engine.clone(), allow_pair.clone(), signed.clone(), who.clone());
                             allow_model.update(cx, |m, cx| {
+                                m.waiting_pairs.retain(|p| *p != pair);
                                 m.run(
                                     format!("Signing {device} in"),
                                     crate::settings::model::Uses::NONE,
@@ -177,6 +178,7 @@ impl DevicesPane {
                                 )
                             })
                         }));
+                    model.update(cx, |m, _| m.waiting_pairs.push(typed.clone()));
                     sheets.update(cx, |s, cx| s.show(sheet, window, cx));
                 }
             })
@@ -379,9 +381,9 @@ impl Render for DevicesPane {
                 let pane = entity.clone();
                 sections.push(section(
                     Some("Pair a device"),
-                    vec![buttons(
+                    vec![crate::components::form_entry(
+                        TextField::new(&self.code).into_any_element(),
                         vec![
-                            div().flex_1().child(TextField::new(&self.code)).into_any_element(),
                             Button::new("approve-code", ButtonKind::Prominent)
                                 .label("Approve")
                                 .disabled(!ready)

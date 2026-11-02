@@ -53,32 +53,6 @@ pub fn item(
     form_item(title, detail, controls, look)
 }
 
-/// A value a click copies, such as an address another device asks for:
-/// "copied" for a moment after.
-pub fn copyable(
-    id: &'static str,
-    value: String,
-    copied: bool,
-    on_click: impl Fn(&mut App) + 'static,
-    look: &Look,
-) -> Stateful<Div> {
-    let ink = look.palette.ink.hsla();
-    div()
-        .id(id)
-        .cursor_pointer()
-        .text_role(TypeRole::Control, look)
-        .text_color(look.palette.muted.hsla())
-        .hover(move |s| s.text_color(ink))
-        .truncate()
-        .child(if copied {
-            crate::theme::label("Copied")
-        } else {
-            value.into()
-        })
-        .tooltip(|window, cx| crate::components::Tooltip::view("copy".into(), window, cx))
-        .on_click(move |_, _, cx| on_click(cx))
-}
-
 /// A day, as "1 Nov 2026", in the local time zone.
 pub fn day(secs: i64) -> String {
     use chrono::{Local, TimeZone};

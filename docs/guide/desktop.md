@@ -16,6 +16,8 @@ The desktop app keeps its own saved session, the queue and where it had got to, 
 
 Files and folders dropped on the queue are added to the library where they lie and appended to the queue; dropped on a playlist, they are added to it. Folders are walked, so dropping a rip queues the album. On Linux, files opened with the app from the file manager, and on both, files named on the command line (`koan-gui ~/Music/new/*.flac`), are queued the same way. Nothing is moved: [organize](file-organization.md) is what puts them under a library folder.
 
+The same context menu has download to cache, which fetches a remote library's tracks onto this device now, and remove downloaded files, which asks first and deletes those copies; they stay on the server and download again when played. The queue's menu has them too, with organise.
+
 Organise… in the context menu of a track, a record, an artist or a pick opens a sheet over the window: a pattern from `[organize.patterns]` or one typed for this once, the library folder to move into, and whether cover art, cue sheets and logs go with the music. Every file is listed with where it would go, as the pattern is typed; once typing rests the plan is checked against the disk, so a destination already taken shows as blocked before anything moves. Organising asks once more with the counts. Nothing is ever overwritten.
 
 Invite links and `koan.rocks/pair/` links opened with the app go to Settings: an invite signs in, asking first when it would replace an account signed in elsewhere, and a pairing link asks whether to sign that device in to this account. A pairing link for another server is refused with the reason.
@@ -30,7 +32,7 @@ On macOS the desktop app's Dock menu shows what is playing, with its heart, and 
 
 ## Keys
 
-The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
+The macOS app's shortcuts, with `Ctrl` for `⌘` on Linux. Linux has no global menu bar, so the menus a Mac shows along the top of the screen open from the kōan button at the left of the toolbar instead, each item with its keys. See [Keybindings](../reference/keybindings.md#desktop-app), or press `?` in the app.
 
 ## Configuration and the log
 
@@ -41,8 +43,10 @@ What the app writes as it runs stays out of the configuration directory, which m
 ## Running a build from source
 
 ```bash
-KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui
+KOAN_CONFIG_DIR=$(mktemp -d) cargo run --release -p koan-gui --features runtime-shaders
 ```
+
+On a Mac, `runtime-shaders` has GPUI compile its Metal shaders when the app starts, so the Command Line Tools are enough to build it (`just gui-run` turns it on). Without it the shaders are compiled with the app, which needs Xcode's Metal toolchain; releases are built that way.
 
 A build from `main` can move the library database to a newer schema than the released apps read, after which they refuse it; a throwaway `KOAN_CONFIG_DIR`, with `folders` in its `config.toml` pointed at some music, keeps your own library out of it.
 
@@ -70,7 +74,25 @@ The queue is grouped by record: a heading with the sleeve over each record's run
 
 The queue keeps its place and selection when you visit another page and come back.
 
-Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued.
+Playlists in the sidebar are reordered by dragging them; dragged onto the queue's row, or into the queue, a playlist's tracks are queued. "new" beside the playlists heading makes an empty playlist, and tracks, records or artists dropped on the heading make one holding them; "add to playlist" in any context menu offers a new playlist too, and the queue's ⋯ saves the queue as one.
+
+A playlist's page is laid out as the queue is, grouped by record or flat (the album toggle in the toolbar, remembered per playlist). Play and shuffle are in its header; the toolbar holds undo and redo, and under ⋯ play next, add to queue, shuffle the order, rename, export as M3U8 and delete. Rows are selected as in the queue and dragged to reorder, with the insertion line showing where they land; tracks, records and playlists dropped between rows are added there, and files dropped on the page are added at the end. Delete removes the selected rows. Removing, shuffling the order, renaming and deleting say what will change before they do it, and every edit but deleting can be undone. Smart playlists, playlists read from files in the library and playlists the server marks read-only say so in the header and take no edits.
+
+## Favourites, Recently played and Downloaded
+
+Each of these shows the first few artists, records and tracks on it, artists as names, records as tiles and tracks as rows, with how many there are of each in all. A section's heading opens that kind's browser with the same filter on (favourites, played in the last month, or on this device), so the full listing starts with what the preview showed. Clicking a name opens the artist; ⌘-click (Ctrl on Linux) starts picking, after which clicks tick artists, records and tracks alike, Shift-click ticks a range and ⌘A ticks everything on the page. Dragging anything picked carries the whole pick to the queue or a playlist, and the context menu acts on it.
+
+## Search
+
+The field at the top of the sidebar searches the library as you type, ⌘K or `/` reaching it from anywhere. Under it, a panel suggests a few tracks, records and artists; the arrows light one and Return goes to it, while Return with none lit, or the sidebar's Results row, opens every result on a page laid out as the shelves are, its headings opening each browser with the query as its search. Escape or the field's clear mark empties it.
+
+⇧⌘K (Ctrl+Shift+K on Linux), File → Add Music…, opens the picker: tracks, records or artists by name, several picked with a click, then Add (Return), Add & Play (⌘Return) or Replace Queue (⇧⌘Return), which says how much comes off the queue before it does. A double-click plays the one thing at once.
+
+## Lyrics, track info and artwork
+
+The toolbar's lyrics button, ⌥⌘L or `L` shows the playing track's lyrics beside the page. Synced lyrics follow the song with the line being sung larger and kept in view, and a click on a line seeks to it; lyrics without timings are shown whole. They come from the file, a sidecar or LRCLIB, which the panel's head names.
+
+A track's context menu has Track Info, which lists what each of its sources says (the file's tags, the server's entry), its ReplayGain and the library's ids for it. A click on a record page's sleeve, or on the transport's cover, shows the cover as large as the window allows; a click anywhere or Escape closes it.
 
 ## Settings
 

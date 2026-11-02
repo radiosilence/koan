@@ -12,8 +12,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::components::{Button, ButtonKind};
-use crate::theme::{Icon, Look, Space, Tone, TypeRole};
+use crate::components::CopyButton;
+use crate::theme::{Look, Space, Tone, TypeRole};
 use koan_ffi::{ConnectionInfo, Invite, KoanEngine, KoanError};
 use koan_kit::app::*;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
@@ -41,7 +41,6 @@ pub struct LinkDevice {
     connection: Entity<Slice<Option<ConnectionInfo>>>,
     invite: Option<(Invite, Code)>,
     gone: Option<Gone>,
-    copied: bool,
     asking: Option<Task<()>>,
     _connection: Subscription,
 }
@@ -77,7 +76,6 @@ impl LinkDevice {
             connection,
             invite: None,
             gone: None,
-            copied: false,
             asking: None,
         };
         link.ask(cx);
@@ -154,7 +152,6 @@ impl Render for LinkDevice {
             .invite
             .as_ref()
             .map(|(invite, _)| invite.qr_link.clone());
-        let entity = cx.entity();
         let side = px(220.);
         // Laid out the same while the code is asked for, the caption and the
         // button held invisible, so nothing moves when it arrives.
@@ -186,20 +183,8 @@ impl Render for LinkDevice {
                 )
                 .child(
                     div().when(!ready, |d| d.invisible()).child(
-                        Button::new("copy-link", ButtonKind::Bordered)
-                            .label(if self.copied { "Copied" } else { "Copy Link" })
-                            .icon(Icon::Copy)
-                            .disabled(!ready)
-                            .on_click(move |_, _, cx| {
-                                let Some(link) = link.clone() else {
-                                    return;
-                                };
-                                cx.write_to_clipboard(ClipboardItem::new_string(link));
-                                entity.update(cx, |link, cx| {
-                                    link.copied = true;
-                                    cx.notify();
-                                })
-                            }),
+                        CopyButton::new("copy-link", "Copy Link", link.unwrap_or_default())
+                            .disabled(!ready),
                     ),
                 )
                 .into_any_element(),

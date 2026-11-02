@@ -7,12 +7,11 @@
 
 use std::sync::Arc;
 
-use crate::components::{Button, ButtonKind, MenuPanel, MenuRow, Picker, TextField};
+use crate::components::{Button, ButtonKind, CopyButton, MenuPanel, MenuRow, Picker, TextField};
 use crate::theme::{Icon, Look, Space, Tone, TypeRole};
 use koan_ffi::{AccountRole, Invite, KoanEngine, KoanError, ServerAccount};
+use koan_kit::app::input::InputState;
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::InputState;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::px;
 // overlays placed against another element.
@@ -164,13 +163,25 @@ impl PeoplePane {
 
     /// Shows an invite once it is made.
     fn show_invite(&self, window: AnyWindowHandle) -> impl FnOnce(Invite, &mut App) + 'static {
-        let sheets = self.ctx.sheets.clone();
+        let (sheets, model) = (self.ctx.sheets.clone(), self.ctx.model.clone());
         move |invite, cx| {
+            // Shown this once, so it must reach someone: the window it was
+            // asked for in, or, when that has closed, the next Settings
+            // window.
+            let mut sheet = Some(invite_sheet(invite));
             window
                 .update(cx, |_, window, cx| {
-                    sheets.update(cx, |s, cx| s.show(invite_sheet(invite), window, cx))
+                    if let Some(sheet) = sheet.take() {
+                        sheets.update(cx, |s, cx| s.show(sheet, window, cx));
+                    }
                 })
                 .ok();
+            if let Some(sheet) = sheet {
+                model.update(cx, |m, cx| {
+                    m.unseen.push(sheet);
+                    cx.notify();
+                });
+            }
         }
     }
 
@@ -495,7 +506,8 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
     let message = "Opening the link on a phone, tablet or computer with kōan installed signs in and loads the library, on each device, for a week. The QR code works for ten minutes.";
     let mut sheet = Sheet::new(format!("Invite for {}", invite.username))
         .message(message)
-        .done();
+        .done()
+        .kept();
     sheet = sheet.content(move |look, _, _| {
         let (link, text_body, mailto) = (
             invite.link.clone(),
@@ -528,22 +540,8 @@ pub fn invite_sheet(invite: Invite) -> Sheet {
                     .icon(Icon::Mail)
                     .on_click(move |_, _, cx| cx.open_url(&mailto)),
             )
-            .child(
-                Button::new("copy-email", ButtonKind::Bordered)
-                    .label("Copy Email")
-                    .icon(Icon::Copy)
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text_body.clone()))
-                    }),
-            )
-            .child(
-                Button::new("copy-invite", ButtonKind::Bordered)
-                    .label("Copy Link")
-                    .icon(Icon::Share)
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))
-                    }),
-            );
+            .child(CopyButton::new("copy-email", "Copy Email", text_body))
+            .child(CopyButton::new("copy-invite", "Copy Link", link).icon(Icon::Share));
         if let Some(password) = &invite.password {
             column = column.child(
                 div()

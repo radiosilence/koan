@@ -3874,8 +3874,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre"
 version = "0.3.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df4b5f8d0c278308df2f11e0bfe0212dd77d7848ce1bdc4b9d513334414396f6"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3946,8 +3944,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-apple"
 version = "0.3.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e97cd068d8134b4e073321b946491760aa1e4511e486084a92e73b9174bff78a"
 dependencies = [
  "anyhow",
  "async-task",
@@ -4313,8 +4309,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-wgpu"
 version = "0.3.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce693915768aae38bf788f245af75aae78e3e1179245860fc80ce831d0a8f74e"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -5504,6 +5498,7 @@ dependencies = [
  "block2 0.6.2",
  "futures",
  "gpui-kit",
+ "gpui-pre-platform",
  "image",
  "log",
  "objc2 0.6.5",

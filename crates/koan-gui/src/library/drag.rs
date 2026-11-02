@@ -56,6 +56,17 @@ pub struct PlayableDrag {
     /// The record whose sleeve the preview shows: the first record dragged,
     /// or the record of the tracks dragged when the page knows it.
     pub sleeve: Option<i64>,
+    /// The playlist rows it was dragged out of. Dropped back on that
+    /// playlist it moves them rather than adding copies; on that playlist's
+    /// sidebar row, nothing.
+    pub origin: Option<Origin>,
+}
+
+/// Rows of a playlist, by entry: one track can be several of them.
+#[derive(Clone, Debug)]
+pub struct Origin {
+    pub playlist: i64,
+    pub entries: Arc<[i64]>,
 }
 
 impl PlayableDrag {
@@ -68,7 +79,22 @@ impl PlayableDrag {
                 Playable::Album(id) => Some(*id),
                 _ => None,
             }),
+            origin: None,
         }
+    }
+
+    /// Marks it as rows of `playlist`.
+    pub fn from_playlist(mut self, playlist: i64, entries: Vec<i64>) -> Self {
+        self.origin = Some(Origin {
+            playlist,
+            entries: entries.into(),
+        });
+        self
+    }
+
+    /// Whether it came out of `playlist`.
+    pub fn is_from(&self, playlist: i64) -> bool {
+        self.origin.as_ref().is_some_and(|o| o.playlist == playlist)
     }
 
     /// The record whose sleeve the preview shows, where the first item is
@@ -103,6 +129,7 @@ impl PlaylistDrag {
             items: Vec::new().into(),
             label: self.name.clone(),
             sleeve: self.sleeve,
+            origin: None,
         }
     }
 

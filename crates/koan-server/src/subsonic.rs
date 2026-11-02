@@ -65,6 +65,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::DSP_PROFILES, &[1]),
     (koan_core::remote::profile::DSP_DELETED, &[1]),
     (koan_core::remote::profile::TV_PAIRING, &[1]),
+    (koan_core::remote::profile::PLAYLIST_ORDER, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -3323,11 +3324,18 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
         state.covers.forget_evicted(&db.conn);
         let mut db = Some(db);
         let mut missing = None;
+        let mut unreadable = false;
         let art = state.covers.album_cover(id, size, || {
             let db = db.take()?;
             match cover_tracks(&db, kind, id) {
                 Ok(groups) => {
                     drop(db);
+                    // None of its files to read: nothing is known, and
+                    // nothing kept.
+                    if !groups.iter().any(|tracks| crate::covers::readable(tracks)) {
+                        unreadable = true;
+                        return None;
+                    }
                     Some(
                         groups
                             .iter()
@@ -3343,14 +3351,28 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
         if let Some(e) = missing {
             return Err(e);
         }
-        art
+        (art, unreadable)
     } else {
         let groups = cover_tracks(&db, kind, id)?;
         drop(db);
-        groups
+        let art = groups
             .iter()
-            .find_map(|tracks| state.covers.cover(tracks, size))
+            .find_map(|tracks| state.covers.cover(tracks, size));
+        let unreadable =
+            art.is_none() && !groups.iter().any(|tracks| crate::covers::readable(tracks));
+        (art, unreadable)
     };
+    // None of the record's files can be read now (a volume not mounted):
+    // not knowing is said as such, so a client asks again rather than
+    // remembering a record with no art.
+    let (art, unreadable) = art;
+    if art.is_none() && unreadable {
+        return Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "60")],
+        )
+            .into_response());
+    }
     // A record without art is answered with the ensō, as Navidrome answers
     // its own placeholder, so a client always has an image to draw. It is
     // marked so koan's own clients can draw theirs instead, and kept only
@@ -4754,6 +4776,34 @@ fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
     queries::resolve_id(&db.conn, queries::UidKind::Playlist, raw)
         .map_err(|e| SubsonicError::internal(e.to_string()))?
         .ok_or_else(|| SubsonicError::not_found("Playlist"))
+}
+
+/// `koanPlaylistOrder` — the account's playlists in the order given, by
+/// repeated `id`. Its own playlists only: another account's public playlist
+/// sits where its owner put it. Ids no longer known are skipped, since a
+/// playlist deleted elsewhere should not refuse the rest of a reorder, and the
+/// account's playlists the list leaves out keep their places.
+async fn koan_playlist_order(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let ids: Vec<i64> = params
+                .all("id")
+                .filter_map(|raw| playlist_id(db, Some(raw)).ok())
+                .collect();
+            // Passed on upstream when this server is signed in there as the
+            // account, as its other playlist edits are.
+            koan_core::playlists::set_account_order(db, user, &ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            crate::clients::changed();
+            Ok(b)
+        })
+    })
+    .await
 }
 
 async fn get_playlist(
@@ -6485,6 +6535,10 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/koanDspProfileSave", post(koan_dsp_profile_save))
         .route("/rest/koanDspProfileDelete", post(koan_dsp_profile_delete))
         .route("/rest/koanDspDismiss", post(koan_dsp_dismiss))
+        .route(
+            "/rest/koanPlaylistOrder",
+            get(koan_playlist_order).post(koan_playlist_order),
+        )
         .route(
             "/rest/koanDspDeleted",
             get(koan_dsp_deleted).post(koan_dsp_deleted),
@@ -10204,6 +10258,42 @@ mod tests {
             + "<playlist id=\"".len();
         let rest = &body[start..];
         rest[..rest.find('"').unwrap()].to_string()
+    }
+
+    #[tokio::test]
+    async fn the_account_order_is_what_get_playlists_lists() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let mut ids = Vec::new();
+        for name in ["one", "two", "three"] {
+            let app = build_test_router(state.clone());
+            let (_, body) = get_response(
+                app,
+                &format!("/rest/createPlaylist?{}&name={name}", auth_query("")),
+            )
+            .await;
+            ids.push(playlist_id_in(&body));
+        }
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/koanPlaylistOrder?{}&id={}&id=gone&id={}",
+                auth_query(""),
+                ids[0],
+                ids[2]
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getPlaylists?{}", auth_query(""))).await;
+        let at = |name: &str| body.find(&format!("name=\"{name}\"")).unwrap();
+        // Created newest first: three, two, one. "two" was not named and keeps
+        // its place between the two that swapped.
+        assert!(at("one") < at("two") && at("two") < at("three"), "{body}");
     }
 
     #[tokio::test]

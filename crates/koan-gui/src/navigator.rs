@@ -15,16 +15,44 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Route {
     Queue,
+    /// The search's results, for the query the sidebar's field holds.
+    Search,
     Albums,
     Artists,
     Tracks,
     Favourites,
     RecentlyPlayed,
+    /// What can play on this device: the downloaded shelf.
+    OnDevice,
     History,
     Downloads,
     Playlist(i64),
     Album(i64),
     Artist(i64),
+}
+
+impl Route {
+    /// A route by name, for tools that open the app somewhere: `albums`,
+    /// `favourites`, `recent`, `downloaded`, `album:<id>`, `artist:<id>`,
+    /// `playlist:<id>`.
+    pub fn named(name: &str) -> Option<Route> {
+        let id = |s: &str| s.parse::<i64>().ok();
+        match name.split_once(':') {
+            Some(("album", n)) => id(n).map(Route::Album),
+            Some(("artist", n)) => id(n).map(Route::Artist),
+            Some(("playlist", n)) => id(n).map(Route::Playlist),
+            _ => match name {
+                "queue" => Some(Route::Queue),
+                "albums" => Some(Route::Albums),
+                "artists" => Some(Route::Artists),
+                "tracks" => Some(Route::Tracks),
+                "favourites" => Some(Route::Favourites),
+                "recent" => Some(Route::RecentlyPlayed),
+                "downloaded" => Some(Route::OnDevice),
+                _ => None,
+            },
+        }
+    }
 }
 
 /// What choosing a route did.

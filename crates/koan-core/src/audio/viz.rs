@@ -106,6 +106,10 @@ pub struct VizSnapshot {
     /// ever opening a visualiser, and an FFT sixty times a second for nobody
     /// is a percent of a core.
     reads: AtomicU64,
+    /// Bumped by every read of a whole frame (`read`). The loudness meter
+    /// runs only while it moves: a client drawing three bars reads `levels`
+    /// and has no use for momentary loudness or true peak.
+    frame_reads: AtomicU64,
     /// Bumped by every published frame, and the thing a subscriber waits on:
     /// a task through its channel, a thread on its condvar. Nothing is sent
     /// but the count: a frame is a whole snapshot behind a lock, so a waiter
@@ -143,6 +147,7 @@ impl VizSnapshot {
         Arc::new(Self {
             inner: RwLock::new(VizFrame::default()),
             reads: AtomicU64::new(0),
+            frame_reads: AtomicU64::new(0),
             published: crate::signal::Wake::new(),
             park: Mutex::new(false),
             unpark: Condvar::new(),
@@ -154,7 +159,13 @@ impl VizSnapshot {
     /// Read the latest frame: a clone, waveform included, under the read lock.
     pub fn read(&self) -> VizFrame {
         self.touch();
+        self.frame_reads.fetch_add(1, Ordering::Relaxed);
         self.inner.read().clone()
+    }
+
+    /// How many whole frames have been read. See `frame_reads`.
+    pub fn frame_reads(&self) -> u64 {
+        self.frame_reads.load(Ordering::Relaxed)
     }
 
     /// Say that someone wants frames: counted, and enough to wake an analyser

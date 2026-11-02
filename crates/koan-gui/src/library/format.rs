@@ -4,16 +4,8 @@ use koan_ffi::Track;
 
 /// "3:07", "1:02:34", "--:--" for an unknown length.
 pub fn duration(ms: Option<i64>) -> String {
-    let Some(ms) = ms.filter(|ms| *ms > 0) else {
-        return "--:--".into();
-    };
-    let total = ms / 1000;
-    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
+    ms.filter(|ms| *ms > 0)
+        .map_or_else(|| "--:--".into(), |ms| crate::time::clock(ms as u64))
 }
 
 /// What a track is, as its row shows it: "FLAC 16/44.1", or "MP3 320 kbps"

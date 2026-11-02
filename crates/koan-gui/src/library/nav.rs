@@ -56,7 +56,11 @@ pub struct Nav {
 impl Nav {
     pub fn new(navigator: Entity<Navigator>, cx: &mut Context<Self>) -> Self {
         // Pages observe this, so a move or a rewind reaches them through it.
-        let watch = cx.observe(&navigator, |_, _, cx| cx.notify());
+        // A track's details belong to the page they were opened on.
+        let watch = cx.observe(&navigator, |nav: &mut Self, _, cx| {
+            nav.info = None;
+            cx.notify()
+        });
         Self {
             navigator,
             offsets: HashMap::new(),
@@ -64,6 +68,11 @@ impl Nav {
             info: None,
             _navigator: watch,
         }
+    }
+
+    /// The window's navigator, for links that lead from a page's rows.
+    pub fn navigator(&self) -> Entity<Navigator> {
+        self.navigator.clone()
     }
 
     pub fn current(&self, cx: &App) -> Page {
@@ -85,6 +94,13 @@ impl Nav {
     /// Not a change anyone redraws for, so it does not notify.
     pub fn remember_offset(&mut self, page: Page, offset: Pixels) {
         self.offsets.insert(page, offset);
+    }
+
+    /// The page opens at its top next time: a shelf's "see all" opens its
+    /// listing from the start.
+    pub fn forget_place(&mut self, page: Page) {
+        self.offsets.remove(&page);
+        self.anchors.remove(&page);
     }
 
     pub fn anchor(&self, page: Page) -> Option<Anchor> {

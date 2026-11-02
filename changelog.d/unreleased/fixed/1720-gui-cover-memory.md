@@ -1,0 +1,1 @@
+- **The desktop app's album grid holds far less memory after a long browse.** Covers in memory follow what the lists on screen ask for rather than a fixed budget, sleeves decoded for rows already scrolled past are dropped, and leaving the grid lets its covers go.

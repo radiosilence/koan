@@ -12,8 +12,15 @@
 //! `KOAN_DEVICES__NEARBY=false KOAN_DEVICES__DISCOVERABLE=false` so the run
 //! neither announces a device nor takes the devices port.
 //!
-//! Each pass prints the queue row at the top of the list as it ends, so the
-//! numbers carry proof that the list moved.
+//! With `KOAN_GUI_MEASURE=fling` the app opens the album grid, flings it to
+//! the end and back by the same synthetic wheel events, returns to the
+//! queue, and prints the process's footprint (macOS's `footprint`) at launch
+//! and after each stage, then quits: the memory a long browse leaves behind.
+//!
+//! Each pass prints the row at the top of the list as it ends, so the
+//! numbers carry proof that the list moved. `KOAN_GUI_MEASURE_ROUTE` (a
+//! `Route::named` name: `playlist:<id>`, `favourites`, …) opens the window
+//! on that page, and the pass scrolls it instead.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -29,12 +36,21 @@ use koan_kit::raw::profiler::journal::{ForegroundJournalEntry, IntervalBoundary}
 const STEPS: usize = 300;
 const STEP: Pixels = px(40.);
 
-/// The queue row at the top of the list, kept by the queue as it scrolls.
+/// The row at the top of the measured list, kept by the queue or the
+/// playlist page as it scrolls.
 pub static TOP: AtomicUsize = AtomicUsize::new(0);
+
+/// The page a measuring run opens on, from `KOAN_GUI_MEASURE_ROUTE`.
+pub fn route() -> Option<crate::navigator::Route> {
+    crate::navigator::Route::named(&std::env::var("KOAN_GUI_MEASURE_ROUTE").ok()?)
+}
 
 pub fn start(cx: &mut App) {
     match std::env::var("KOAN_GUI_MEASURE").as_deref() {
         Ok("scroll") => scroll(cx),
+        // The album grid flung to its end and back, then the queue, with the
+        // process's footprint read at each stage.
+        Ok("fling") => fling(cx),
         // Starts playback and leaves the app to run, for its CPU use to be
         // read from outside while it plays with nobody touching it.
         Ok("play") => play(cx),
@@ -142,57 +158,130 @@ fn scroll(cx: &mut App) {
         let Some(window) = cx.update(|cx| cx.windows().first().copied()) else {
             return;
         };
-        let centre = window
-            .update(cx, |_, window, _| {
-                let size = window.viewport_size();
-                point(size.width * 0.6, size.height * 0.5)
-            })
-            .unwrap_or_default();
+        let at = centre(window, cx);
         for (direction, pass) in [(-1.0, "down"), (1.0, "up")] {
             for _ in 0..STEPS {
-                let event = ScrollEvent {
-                    position: centre,
-                    delta: ScrollDelta::Pixels(point(px(0.), STEP * direction)),
-                    modifiers: Modifiers::default(),
-                    touch_phase: TouchPhase::Moved,
-                    source: ScrollSource::Pointer,
-                };
-                window
-                    .update(cx, |_, window, cx| {
-                        window.dispatch_event(PlatformInput::Scroll(event), cx);
-                    })
-                    .ok();
+                wheel(window, at, STEP * direction, cx);
                 background.timer(Duration::from_millis(16)).await;
             }
-            let rows = cx.update(|cx| {
-                cx.global::<crate::mirror::Mirror>()
-                    .queue
-                    .read(cx)
-                    .rows
-                    .len()
-            });
             let top = TOP.load(Ordering::Relaxed);
-            println!("scrolled {pass}: top row {top} of {rows}");
+            if route().is_some() {
+                println!("scrolled {pass}: top row {top}");
+            } else {
+                let rows = cx.update(|cx| {
+                    cx.global::<crate::mirror::Mirror>()
+                        .queue
+                        .read(cx)
+                        .rows
+                        .len()
+                });
+                println!("scrolled {pass}: top row {top} of {rows}");
+            }
         }
-        window
-            .update(cx, |_, window, _| {
-                let frames = window.frame_duration_snapshot();
-                let ms = |ns: u64| ns as f64 / 1e6;
-                for (name, histogram) in [
-                    ("draw", &frames.draw_duration_histogram),
-                    ("dirty to present", &frames.dirty_to_present_histogram),
-                ] {
-                    println!(
-                        "{name}: {} frames, p50 {:.2} ms, p95 {:.2} ms, p99 {:.2} ms, max {:.2} ms",
-                        histogram.len(),
-                        ms(histogram.value_at_quantile(0.5)),
-                        ms(histogram.value_at_quantile(0.95)),
-                        ms(histogram.value_at_quantile(0.99)),
-                        ms(histogram.max()),
-                    );
-                }
-            })
-            .ok();
+        frame_times(window, cx);
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// GPUI's frame histograms for the window so far.
+fn frame_times(window: AnyWindowHandle, cx: &mut AsyncApp) {
+    window
+        .update(cx, |_, window, _| {
+            let frames = window.frame_duration_snapshot();
+            let ms = |ns: u64| ns as f64 / 1e6;
+            for (name, histogram) in [
+                ("draw", &frames.draw_duration_histogram),
+                ("dirty to present", &frames.dirty_to_present_histogram),
+            ] {
+                println!(
+                    "{name}: {} frames, p50 {:.2} ms, p95 {:.2} ms, p99 {:.2} ms, max {:.2} ms",
+                    histogram.len(),
+                    ms(histogram.value_at_quantile(0.5)),
+                    ms(histogram.value_at_quantile(0.95)),
+                    ms(histogram.value_at_quantile(0.99)),
+                    ms(histogram.max()),
+                );
+            }
+        })
+        .ok();
+}
+
+/// The window's centre, where the synthetic wheel events land.
+fn centre(window: AnyWindowHandle, cx: &mut AsyncApp) -> Point<Pixels> {
+    window
+        .update(cx, |_, window, _| {
+            let size = window.viewport_size();
+            point(size.width * 0.6, size.height * 0.5)
+        })
+        .unwrap_or_default()
+}
+
+fn wheel(window: AnyWindowHandle, at: Point<Pixels>, dy: Pixels, cx: &mut AsyncApp) {
+    let event = ScrollEvent {
+        position: at,
+        delta: ScrollDelta::Pixels(point(px(0.), dy)),
+        modifiers: Modifiers::default(),
+        touch_phase: TouchPhase::Moved,
+        source: ScrollSource::Pointer,
+    };
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_event(PlatformInput::Scroll(event), cx);
+        })
+        .ok();
+}
+
+/// This process's footprint as macOS's `footprint` reports it: what it
+/// costs the machine, GPU memory it owns on unified memory included.
+fn footprint() -> String {
+    let pid = std::process::id().to_string();
+    match std::process::Command::new("/usr/bin/footprint")
+        .args(["-p", &pid])
+        .output()
+    {
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find(|l| l.contains("Footprint:"))
+            .map(|l| l.trim().to_string())
+            .unwrap_or_else(|| "footprint: no figure".into()),
+        Err(e) => format!("footprint: {e}"),
+    }
+}
+
+fn fling(cx: &mut App) {
+    /// A fling's step: fast enough to cross 5,000 records in seconds.
+    const FLING: Pixels = px(240.);
+    const FLING_STEPS: usize = 800;
+    let background = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let settle = |secs| background.timer(Duration::from_secs(secs));
+        settle(5).await;
+        println!("launch: {}", footprint());
+        let Some(window) = cx.update(|cx| cx.windows().first().copied()) else {
+            return;
+        };
+        let dispatch = |action: Box<dyn Action>, cx: &mut AsyncApp| {
+            window
+                .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                .ok();
+        };
+        dispatch(Box::new(crate::platform::actions::ShowAlbums), cx);
+        settle(3).await;
+        println!("album grid: {}", footprint());
+        let at = centre(window, cx);
+        for (direction, pass) in [(-1.0, "end"), (1.0, "start")] {
+            for _ in 0..FLING_STEPS {
+                wheel(window, at, FLING * direction, cx);
+                background.timer(Duration::from_millis(16)).await;
+            }
+            settle(3).await;
+            println!("flung to the {pass}: {}", footprint());
+        }
+        frame_times(window, cx);
+        dispatch(Box::new(crate::platform::actions::ShowQueue), cx);
+        settle(5).await;
+        println!("back on the queue: {}", footprint());
         cx.update(|cx| cx.quit());
     })
     .detach();

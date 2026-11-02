@@ -12,7 +12,13 @@ use super::child;
 #[derive(IntoElement)]
 pub struct ScrollArea {
     id: ElementId,
-    content: Div,
+    content: Content,
+    reveal: Option<usize>,
+}
+
+enum Content {
+    Column(Div),
+    Items(Vec<AnyElement>),
 }
 
 impl ScrollArea {
@@ -20,8 +26,26 @@ impl ScrollArea {
     pub fn new(id: impl Into<ElementId>, content: Div) -> Self {
         Self {
             id: id.into(),
-            content,
+            content: Content::Column(content),
+            reveal: None,
         }
+    }
+
+    /// A column of items, one under another, any of which `reveal` can
+    /// scroll into view: a list the arrow keys move through.
+    pub fn items(id: impl Into<ElementId>, items: Vec<AnyElement>) -> Self {
+        Self {
+            id: id.into(),
+            content: Content::Items(items),
+            reveal: None,
+        }
+    }
+
+    /// Scrolls item `ix` into view when it changes, and leaves the scroll
+    /// to the pointer otherwise.
+    pub fn reveal(mut self, ix: Option<usize>) -> Self {
+        self.reveal = ix;
+        self
     }
 }
 
@@ -31,17 +55,25 @@ impl RenderOnce for ScrollArea {
             .use_keyed_state(child(&self.id, "scroll"), cx, |_, _| ScrollHandle::new())
             .read(cx)
             .clone();
+        let revealed = window.use_keyed_state(child(&self.id, "revealed"), cx, |_, _| None);
+        if *revealed.read(cx) != self.reveal {
+            revealed.update(cx, |r, _| *r = self.reveal);
+            if let Some(ix) = self.reveal {
+                handle.scroll_to_item(ix);
+            }
+        }
+        let scrolled = div()
+            .id(self.id)
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&handle);
         div()
             .relative()
             .size_full()
-            .child(
-                div()
-                    .id(self.id)
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&handle)
-                    .child(self.content),
-            )
+            .child(match self.content {
+                Content::Column(column) => scrolled.child(column),
+                Content::Items(items) => scrolled.flex().flex_col().children(items),
+            })
             .child(Scrollbar::vertical(&handle))
     }
 }

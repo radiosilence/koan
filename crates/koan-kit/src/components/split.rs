@@ -10,7 +10,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::child;
-use crate::theme::{HAIRLINE, HIT, Look};
+use crate::theme::{HAIRLINE, Look};
 
 type OnWidth = Rc<dyn Fn(&Pixels, &mut Window, &mut App)>;
 
@@ -32,7 +32,13 @@ pub struct SplitView {
 struct Drag {
     from_x: Pixels,
     from_width: Pixels,
+    /// The width the drag last reached, which the release commits.
+    to: Pixels,
 }
+
+/// How wide the grip is, centred on the divider: wide enough to find, narrow
+/// enough to leave the controls at either column's edge to their own clicks.
+const GRIP: f32 = 8.0;
 
 impl SplitView {
     /// `width` is the leading column's, held by the owner; `min` and `max`
@@ -102,8 +108,8 @@ impl RenderOnce for SplitView {
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .left(width - HIT / 2.)
-                .w(HIT)
+                .left(width - px(GRIP / 2.))
+                .w(px(GRIP))
                 .cursor_col_resize()
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     cx.stop_propagation();
@@ -120,6 +126,7 @@ impl RenderOnce for SplitView {
                         *d = Some(Drag {
                             from_x: event.position.x,
                             from_width: width,
+                            to: width,
                         })
                     });
                 })
@@ -132,16 +139,31 @@ impl RenderOnce for SplitView {
             move |_, _, window, _| {
                 let (moving, ending) = (drag.clone(), drag);
                 let on_moved = on_resize.clone();
+                let on_lost = on_commit.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture
-                        || event.pressed_button != Some(MouseButton::Left)
-                    {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    // Let go outside the window, where its release is not
+                    // heard: the drag ends at the next move without the
+                    // button, where it had got to.
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        if let Some(d) = moving.update(cx, |d, _| d.take())
+                            && let Some(f) = &on_lost
+                        {
+                            f(&d.to, window, cx);
+                        }
                         return;
                     }
                     let Some(d) = *moving.read(cx) else {
                         return;
                     };
                     let to = (d.from_width + event.position.x - d.from_x).clamp(min, max);
+                    moving.update(cx, |d, _| {
+                        if let Some(d) = d {
+                            d.to = to;
+                        }
+                    });
                     if to != width
                         && let Some(f) = &on_moved
                     {
@@ -152,10 +174,10 @@ impl RenderOnce for SplitView {
                     if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
                         return;
                     }
-                    if ending.update(cx, |d, _| d.take()).is_some()
+                    if let Some(d) = ending.update(cx, |d, _| d.take())
                         && let Some(f) = &on_commit
                     {
-                        f(&width, window, cx);
+                        f(&d.to, window, cx);
                     }
                 });
             },
