@@ -5,7 +5,7 @@
 //! The design is `docs/design/koan-kit.md`.
 
 // GPUI's test macro expands deeply around the menu's refill test.
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 pub mod app;
 pub mod components;
