@@ -13,6 +13,18 @@ pub struct Synced {
     pub playlists: crate::playlists::PlaylistSync,
     pub history: crate::remote::history::HistorySync,
     pub dsp: crate::remote::dsp_sync::DspSync,
+    /// How long each step after the library took.
+    pub after: AfterLibrary,
+}
+
+/// The steps a sync runs once the library is walked, timed: what the apps
+/// show as its last phase, with the library's own closing steps.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AfterLibrary {
+    pub favourites: std::time::Duration,
+    pub playlists: std::time::Duration,
+    pub history: std::time::Duration,
+    pub dsp: std::time::Duration,
 }
 
 /// Whether a sync walks the server's library.
@@ -118,10 +130,18 @@ pub fn sync_remote(
     cancelled()?;
     let step = std::time::Instant::now();
     let dsp = crate::remote::dsp_sync::reconcile(db, client, url);
+    let after = AfterLibrary {
+        favourites: favourites_took,
+        playlists: playlists_took,
+        history: history_took,
+        dsp: step.elapsed(),
+    };
     log::info!(
-        "sync after the library: favourites {favourites_took:?}, playlists {playlists_took:?}, \
-         history {history_took:?}, EQ {:?}",
-        step.elapsed()
+        "sync after the library: favourites {:?}, playlists {:?}, history {:?}, EQ {:?}",
+        after.favourites,
+        after.playlists,
+        after.history,
+        after.dsp
     );
     crate::remote::covers::synced();
     Ok(Synced {
@@ -130,5 +150,6 @@ pub fn sync_remote(
         playlists,
         history,
         dsp,
+        after,
     })
 }
