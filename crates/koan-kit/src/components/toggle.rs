@@ -120,6 +120,7 @@ pub struct IconToggle {
     icon: Icon,
     label: SharedString,
     checked: bool,
+    disabled: bool,
     on_change: Option<Handler<bool>>,
 }
 
@@ -131,12 +132,19 @@ impl IconToggle {
             icon,
             label: label(text),
             checked,
+            disabled: false,
             on_change: None,
         }
     }
 
     pub fn on_change(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Arc::new(handler));
+        self
+    }
+
+    /// Dimmed and deaf, for a toggle with nothing to act on.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 }
@@ -174,7 +182,9 @@ impl RenderOnce for IconToggle {
                             .color(color),
                     ),
             );
-        if let Some(on_change) = self.on_change {
+        if self.disabled {
+            toggle = toggle.opacity(DISABLED_OPACITY);
+        } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
             toggle = toggle
                 .track_focus(&handle)

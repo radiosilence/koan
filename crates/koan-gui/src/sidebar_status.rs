@@ -10,7 +10,6 @@ use crate::components::StatusBlock;
 use crate::engine::engine;
 use crate::library::chrome::count;
 use crate::mirror::Mirror;
-use crate::theme::{Icon, Tone};
 
 pub struct SidebarStatus {
     stats: Option<Stats>,
@@ -67,44 +66,16 @@ impl SidebarStatus {
     }
 }
 
-/// A server's address as people say it: its host.
-fn host(url: &str) -> &str {
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    rest.split(['/', ':']).next().unwrap_or(rest)
-}
-
 impl Render for SidebarStatus {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let serving = cx
-            .global::<crate::settings::Settings>()
-            .sharing
-            .read(cx)
-            .serving
-            .as_ref()
-            .map(|s| s.port);
-        let server = cx
-            .global::<Mirror>()
-            .connection
-            .read(cx)
-            .0
-            .as_ref()
-            .and_then(|c| c.signed_in_to.clone());
-        let mut block = StatusBlock::new();
-        block = match (serving, server) {
-            (Some(port), _) => {
-                block.line(Icon::Server, format!("sharing on port {port}"), Tone::Muted)
-            }
-            (None, Some(server)) => block.line(
-                Icon::Server,
-                format!("connected to {}", host(&server)),
-                Tone::Muted,
-            ),
-            (None, None) => block.line(
-                Icon::Library,
-                "playing this computer's own library",
-                Tone::Muted,
-            ),
-        };
+        // Settings' words for what the device is doing, a failed share
+        // included.
+        let mode = crate::settings::panes::server::mode_label(
+            cx.global::<crate::settings::Settings>().sharing.read(cx),
+            &cx.global::<Mirror>().connection.read(cx).0,
+        );
+        let (icon, text, tone) = mode.line();
+        let mut block = StatusBlock::new().line(icon, text, tone);
         if let Some(s) = &self.stats {
             let n = |v: i64| v.max(0) as u64;
             block = block
@@ -123,18 +94,5 @@ impl Render for SidebarStatus {
             }
         }
         block
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::host;
-    use core::prelude::v1::test;
-
-    #[test]
-    fn a_server_is_named_by_its_host() {
-        assert_eq!(host("https://koan.blit.cc"), "koan.blit.cc");
-        assert_eq!(host("http://192.168.1.20:4533/"), "192.168.1.20");
-        assert_eq!(host("koan.local"), "koan.local");
     }
 }
