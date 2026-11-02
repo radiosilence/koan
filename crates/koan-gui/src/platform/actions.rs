@@ -77,6 +77,10 @@ actions!(
         ShowShortcuts,
         ZoomCover,
         ClearSelection,
+        FocusNext,
+        FocusPrevious,
+        NextRegion,
+        PreviousRegion,
         // Edit.
         Undo,
         Redo,
@@ -250,6 +254,15 @@ pub const HOTKEYS: &[Shortcut] = &[
     shortcut!("Clear selection", ["escape"], View, ClearSelection),
     shortcut!("Delete", ["backspace", "delete"], Edit, bare::Delete),
     shortcut!("This list", ["?"], View, ShowShortcuts),
+    shortcut!("Next control", ["tab"], View, FocusNext),
+    shortcut!("Previous control", ["shift-tab"], View, FocusPrevious),
+    shortcut!(
+        "Sidebar, page and transport in turn",
+        ["f6"],
+        View,
+        NextRegion
+    ),
+    shortcut!("The same, backwards", ["shift-f6"], View, PreviousRegion),
 ];
 
 /// A button's tooltip as the Mac's buttons say it: what it does, then the
@@ -364,7 +377,18 @@ pub fn register(engine: &Arc<KoanEngine>, cx: &mut App) {
             );
         }
     }
+    // Tab and F6 move between controls in a text field too, where the field
+    // has no use for them; the bare table binds them outside fields only.
+    for (key, action) in [
+        ("tab", FocusNext.boxed_clone()),
+        ("shift-tab", FocusPrevious.boxed_clone()),
+        ("f6", NextRegion.boxed_clone()),
+        ("shift-f6", PreviousRegion.boxed_clone()),
+    ] {
+        push(&mut bindings, key, action, Some(window.clone()), cx);
+    }
     cx.bind_keys(bindings);
+    koan_kit::components::bind_list_keys(cx);
 
     let toggle = {
         let engine = engine.clone();

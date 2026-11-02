@@ -32,6 +32,7 @@ mod form;
 mod inspector;
 mod level;
 mod link_text;
+mod list_keys;
 mod lists;
 mod menu;
 mod metrics;
@@ -84,6 +85,13 @@ pub use cover::{Cover, CoverArt, Mosaic};
 pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
+pub use list_keys::{LIST_CONTEXT, ListCursor, Moved, bind_list_keys};
+/// The list keys' actions, by name: `list_actions::Down`.
+pub mod list_actions {
+    pub use super::list_keys::{
+        Activate, Down, ExtendDown, ExtendUp, First, Last, PageDown, PageUp, Pick, Up,
+    };
+}
 pub use empty::EmptyState;
 pub use fade::{FadeIn, Reveal};
 pub use field::{FieldState, InputEvent, TextField};
@@ -270,6 +278,29 @@ pub(crate) fn ring(handle: &FocusHandle, look: &Look, window: &Window) -> Option
             .border(MARK)
             .border_color(look.accent.hsla())
     })
+}
+
+/// A keyboard stop kept under `id`, for a control a page draws itself: its
+/// element tracks it, and GPUI turns Return and Space on it into a click.
+pub fn tab_stop(id: &ElementId, window: &mut Window, cx: &mut App) -> FocusHandle {
+    focus(id, window, cx)
+}
+
+/// The focus ring for `handle`, as the kit's own controls draw it: shown
+/// while it holds the keyboard and the keyboard was used last.
+pub fn focus_ring(handle: &FocusHandle, window: &Window, cx: &App) -> Option<Div> {
+    ring(handle, &Look::of(window, cx), window)
+}
+
+/// The focus ring drawn inside a row, for the row a list's keyboard cursor
+/// is on: the list holds the focus, so the row's ring sits within it rather
+/// than standing off over its neighbours.
+pub(crate) fn cursor_ring(look: &Look) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .border(MARK)
+        .border_color(look.accent.hsla())
 }
 
 /// Two colours mixed, `t` of the way from `a` to `b`.

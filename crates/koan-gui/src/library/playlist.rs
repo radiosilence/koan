@@ -1169,6 +1169,12 @@ impl Render for PlaylistPage {
     }
 }
 
+impl Focusable for PlaylistPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

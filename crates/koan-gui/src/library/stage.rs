@@ -15,6 +15,11 @@ pub struct LibraryStage {
     info: Option<(i64, Entity<super::info::TrackInfo>)>,
     /// The page's controls, for the window's toolbar.
     controls: Entity<super::controls::ControlsSlot>,
+    /// Where the page on screen takes the keyboard, for the shell's F6.
+    page_focus: Option<FocusHandle>,
+    /// The shell moved to a library page: the next page made takes the
+    /// keyboard, as the queue does when it is shown.
+    focus_on_arrival: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -37,8 +42,21 @@ impl LibraryStage {
             page: None,
             info: None,
             controls: cx.new(|_| super::controls::ControlsSlot::default()),
+            page_focus: None,
+            focus_on_arrival: false,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Where the page on screen takes the keyboard.
+    pub fn page_focus(&self) -> Option<FocusHandle> {
+        self.page_focus.clone()
+    }
+
+    /// The next page made takes the keyboard: the shell has just moved to
+    /// it.
+    pub fn focus_on_arrival(&mut self) {
+        self.focus_on_arrival = true;
     }
 
     /// The library's artwork cache.
@@ -81,28 +99,35 @@ impl LibraryStage {
         let lib = self.lib.clone();
         let lib_browse = self.lib.browse.clone();
         let slot = self.controls.clone();
-        let view: AnyView = match current {
+        // Each page with where it takes the keyboard.
+        fn held<T: Render + Focusable>(page: Entity<T>, cx: &App) -> (AnyView, FocusHandle) {
+            let focus = page.focus_handle(cx);
+            (page.into(), focus)
+        }
+        let (view, focus): (AnyView, FocusHandle) = match current {
             Page::Albums => {
                 let page = cx.new(|cx| AlbumGrid::new(lib, window, cx));
                 let browse = lib_browse.clone();
                 slot.update(cx, |s, cx| {
                     s.show_keyed(&page, AlbumGrid::controls, AlbumGrid::picking, &browse, cx)
                 });
-                page.into()
+                held(page, cx)
             }
             Page::Artists => {
                 let page = cx.new(|cx| super::artists::ArtistBrowser::new(lib, window, cx));
                 slot.update(cx, |s, cx| {
                     s.show(&page, super::artists::ArtistBrowser::controls, cx)
                 });
-                page.into()
+                held(page, cx)
             }
-            Page::Album(id) => cx
-                .new(|cx| super::album_page::AlbumPage::new(lib, id, window, cx))
-                .into(),
-            Page::Artist(id) => cx
-                .new(|cx| super::artist_page::ArtistPage::new(lib, id, window, cx))
-                .into(),
+            Page::Album(id) => {
+                let page = cx.new(|cx| super::album_page::AlbumPage::new(lib, id, window, cx));
+                held(page, cx)
+            }
+            Page::Artist(id) => {
+                let page = cx.new(|cx| super::artist_page::ArtistPage::new(lib, id, window, cx));
+                held(page, cx)
+            }
             Page::Tracks => {
                 let page = cx.new(|cx| super::tracks::TrackBrowser::new(lib, window, cx));
                 let browse = lib_browse.clone();
@@ -115,29 +140,31 @@ impl LibraryStage {
                         cx,
                     )
                 });
-                page.into()
+                held(page, cx)
             }
             Page::Playlist(id) => {
                 let page = cx.new(|cx| super::playlist::PlaylistPage::new(lib, id, window, cx));
                 slot.update(cx, |s, cx| {
                     s.show(&page, super::playlist::PlaylistPage::controls, cx)
                 });
-                page.into()
+                held(page, cx)
             }
             Page::History => {
                 let page = cx.new(|cx| super::history::HistoryPage::new(lib, window, cx));
                 slot.update(cx, |s, cx| {
                     s.show(&page, super::history::HistoryPage::controls, cx)
                 });
-                page.into()
+                held(page, cx)
             }
-            Page::Search => cx
-                .new(|cx| super::shelf::ShelfPage::results(lib, window, cx))
-                .into(),
+            Page::Search => {
+                let page = cx.new(|cx| super::shelf::ShelfPage::results(lib, window, cx));
+                held(page, cx)
+            }
             page => match super::shelf::shelf_of(page) {
-                Some(shelf) => cx
-                    .new(|cx| super::shelf::ShelfPage::new(lib, shelf, window, cx))
-                    .into(),
+                Some(shelf) => {
+                    let page = cx.new(|cx| super::shelf::ShelfPage::new(lib, shelf, window, cx));
+                    held(page, cx)
+                }
                 // The shell draws its own pages for every other route.
                 None => return None,
             },
@@ -147,6 +174,10 @@ impl LibraryStage {
         {
             slot.update(cx, |s, cx| s.clear(cx));
         }
+        if std::mem::take(&mut self.focus_on_arrival) {
+            window.focus(&focus, cx);
+        }
+        self.page_focus = Some(focus);
         self.page = Some((current, view.clone()));
         Some(view)
     }

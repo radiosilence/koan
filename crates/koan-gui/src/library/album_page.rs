@@ -91,6 +91,10 @@ pub struct AlbumPage {
     slow: bool,
     _slow: Option<Task<()>>,
     scroll: UniformListScrollHandle,
+    /// The keyboard's place among the tracks.
+    cursor: crate::components::ListCursor,
+    /// The list holds the keyboard, as of the last frame.
+    keyed: bool,
     width: Rc<Cell<Option<Pixels>>>,
     selection: Selection,
     pick: Option<(u64, PlayableDrag)>,
@@ -134,6 +138,8 @@ impl AlbumPage {
             slow: false,
             _slow: None,
             scroll: UniformListScrollHandle::new(),
+            cursor: Default::default(),
+            keyed: false,
             width: Rc::new(Cell::new(None)),
             selection: Selection::default(),
             pick: None,
@@ -266,6 +272,7 @@ impl AlbumPage {
             drag,
             kind,
             note: None,
+            cursor: self.keyed && self.cursor.at == Some(index),
         };
         rows::track_row(p, &self.tracks[index], index, state, None, None, cx)
     }
@@ -518,16 +525,64 @@ impl Render for AlbumPage {
                 .into_any_element(),
             _ => div().into_any_element(),
         };
-        div()
-            .key_context("Library")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::dismiss))
-            .relative()
-            .size_full()
-            .typeset(p, Type::Body, p.ink)
-            .child(measure)
-            .child(content)
+        self.keyed = self.focus.is_focused(window);
+        super::keys::keyed(
+            div().key_context("Library List").track_focus(&self.focus),
+            cx,
+        )
+        .on_action(cx.listener(Self::select_all))
+        .on_action(cx.listener(Self::dismiss))
+        .relative()
+        .size_full()
+        .typeset(p, Type::Body, p.ink)
+        .child(measure)
+        .child(content)
+    }
+}
+
+impl Focusable for AlbumPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl super::keys::KeyedList for AlbumPage {
+    fn cursor(&mut self) -> &mut crate::components::ListCursor {
+        &mut self.cursor
+    }
+
+    fn len(&self) -> usize {
+        self.tracks.len()
+    }
+
+    fn pick(&mut self, from: usize, to: usize, _: &mut Context<Self>) {
+        let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
+        self.selection.only(order[from]);
+        if to > from {
+            self.selection.click(order[to], true, &order);
+        }
+    }
+
+    fn toggle(&mut self, ix: usize, _: &mut Context<Self>) {
+        let order: Vec<Playable> = self.tracks.iter().map(|t| Playable::Track(t.id)).collect();
+        self.selection.click(order[ix], false, &order);
+    }
+
+    /// The line the track is drawn on, past the disc headings above it.
+    fn reveal(&mut self, ix: usize, _: &mut Context<Self>) {
+        let line = self
+            .lines
+            .iter()
+            .position(|l| matches!(l, Line::Track { index, .. } if *index == ix));
+        if let Some(line) = line {
+            self.scroll
+                .scroll_to_item(line, crate::components::ScrollStrategy::Top);
+        }
+    }
+
+    fn activate(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+        let ids = self.tracks.iter().map(|t| t.id).collect();
+        actions::play_list(&self.lib, ids, ix, cx);
     }
 }
 

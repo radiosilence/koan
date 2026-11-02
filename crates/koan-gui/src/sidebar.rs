@@ -6,8 +6,8 @@ use koan_ffi::Playlist;
 use koan_kit::app::*;
 
 use crate::components::{
-    Button, ButtonKind, CoverArt, DropTarget, INSERTION, Mosaic, NavHeading, NavNote, NavRow,
-    RowMetrics, ScrollArea,
+    Button, ButtonKind, CoverArt, DropTarget, INSERTION, ListCursor, Mosaic, NavHeading, NavNote,
+    NavRow, RowMetrics, ScrollArea, list_actions,
 };
 use crate::engine::{command, engine};
 use crate::library::chrome::count;
@@ -58,6 +58,10 @@ pub struct Sidebar {
     /// and whether it holds a query, which lists the results page.
     search: Option<(Entity<crate::search::field::SearchField>, Subscription)>,
     searching: bool,
+    /// The sidebar as one stop in the window's Tab order, its rows reached
+    /// with the arrows.
+    focus: FocusHandle,
+    cursor: ListCursor,
     _subscriptions: [Subscription; 5],
 }
 
@@ -76,6 +80,8 @@ impl Sidebar {
             reorders: 0,
             search: None,
             searching: false,
+            focus: cx.focus_handle(),
+            cursor: ListCursor::default(),
             import_problem: None,
             _subscriptions: [
                 cx.observe(&library, |this, _, cx| this.reload(cx)),
@@ -217,6 +223,44 @@ impl Sidebar {
     }
 }
 
+impl Sidebar {
+    /// The places the sidebar lists, in its order: what the arrows walk.
+    fn places(&self) -> Vec<Route> {
+        std::iter::once(Route::Queue)
+            .chain(self.searching.then_some(Route::Search))
+            .chain(LIBRARY.iter().map(|(page, _, _)| *page))
+            .chain(self.playlists.iter().map(|p| Route::Playlist(p.id)))
+            .collect()
+    }
+
+    /// The arrows: from the place showing when the keyboard first arrives.
+    fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+        let places = self.places();
+        if self.cursor.at.is_none() {
+            let current = self.nav.read(cx).current();
+            self.cursor.at = places.iter().position(|p| *p == current);
+        }
+        self.cursor.step(by, places.len(), false);
+        cx.notify();
+    }
+
+    fn open_cursor(&mut self, cx: &mut Context<Self>) {
+        let places = self.places();
+        if let Some(page) = self.cursor.at.and_then(|i| places.get(i)).copied() {
+            self.nav.update(cx, |nav, cx| {
+                nav.choose(page);
+                cx.notify();
+            });
+        }
+    }
+}
+
+impl Focusable for Sidebar {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 fn go(
     page: Route,
     cx: &mut Context<Sidebar>,
@@ -233,6 +277,12 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Paint::of(window, cx);
         let current = Some(self.nav.read(cx).current());
+        // The row under the keyboard's cursor, while the sidebar holds it.
+        let keyed = self.focus.is_focused(window).then(|| {
+            let places = self.places();
+            self.cursor.at.and_then(|i| places.get(i).copied())
+        });
+        let keyed = keyed.flatten();
         // A drag that ended anywhere, or was given up, leaves no line.
         let dragging = cx.has_active_drag();
         if !dragging {
@@ -246,6 +296,7 @@ impl Render for Sidebar {
             NavRow::new(id, label)
                 .icon(icon)
                 .selected(current == Some(page))
+                .cursor(keyed == Some(page))
                 .on_click(go(page, cx))
         };
         let queue = Route::Queue;
@@ -348,6 +399,7 @@ impl Render for Sidebar {
                             sleeve.into_iter().map(CoverArt::from).collect(),
                             RowMetrics::nav_art(&p.look),
                         ))
+                        .cursor(keyed == Some(page))
                         .detail(count(playlist.track_count.into(), "track", "tracks"))
                         .selected(current == Some(page))
                         .on_click(go(page, cx))
@@ -419,6 +471,21 @@ impl Render for Sidebar {
             });
         div()
             .id("sidebar")
+            .track_focus(&self.focus)
+            .key_context("Sidebar List")
+            .on_action(cx.listener(|this, _: &list_actions::Up, _, cx| this.step(-1, cx)))
+            .on_action(cx.listener(|this, _: &list_actions::Down, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &list_actions::First, _, cx| {
+                let len = this.places().len();
+                this.cursor.to(0, len, false);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &list_actions::Last, _, cx| {
+                let len = this.places().len();
+                this.cursor.to(usize::MAX, len, false);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &list_actions::Activate, _, cx| this.open_cursor(cx)))
             // A playlist drag that leaves the sidebar, or ends, takes its
             // insertion line with it.
             .on_drag_move::<PlaylistDrag>(cx.listener(
