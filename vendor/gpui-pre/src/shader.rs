@@ -26,7 +26,8 @@ pub const SHADER_UNIFORMS: usize = 16;
 ///   where `koan_sample(image, tile, uv)` reads the shader's image
 ///   (`Window::paint_shader_image`) at `uv`, 0 to 1 across it, filtered and
 ///   kept to its edge
-/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>) -> vec4<f32>`
+/// - WGSL: `fn shade(position: vec2<f32>, size: vec2<f32>, time: f32, uniforms: array<vec4<f32>, 4>, tile: vec4<f32>) -> vec4<f32>`,
+///   where `koan_sample(tile, uv)` reads the image the same way
 ///
 /// `position` is the pixel's centre within the quad and `size` the quad's
 /// size, both in device pixels; `time` is seconds since the uniforms' origin
