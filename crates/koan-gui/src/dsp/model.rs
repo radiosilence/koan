@@ -165,7 +165,7 @@ impl Dsp {
             };
             let connection = cx.global::<Mirror>().connection.clone();
             dsp.connection(&connection, cx);
-            dsp.library = cx.global::<Mirror>().library.read(cx).0;
+            dsp.library = cx.global::<Mirror>().library.read(cx).version;
             dsp.reload(cx);
             dsp
         })
@@ -203,7 +203,7 @@ impl Dsp {
                 }
             }),
             cx.observe(&library, |dsp: &mut Dsp, library, cx| {
-                let version = library.read(cx).0;
+                let version = library.read(cx).version;
                 if version != dsp.library {
                     dsp.library = version;
                     dsp.reload(cx);

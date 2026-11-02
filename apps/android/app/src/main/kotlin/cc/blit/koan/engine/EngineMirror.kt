@@ -14,6 +14,7 @@ import cc.blit.koan.ffi.QueueLock
 import cc.blit.koan.ffi.RendererInfo
 import cc.blit.koan.ffi.RendererOutput
 import cc.blit.koan.ffi.StateSlice
+import cc.blit.koan.ffi.CoverPreload
 import cc.blit.koan.ffi.SyncProgress
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferFigure
@@ -147,6 +148,10 @@ class EngineMirror(deviceName: String) {
 
     private val _sync = MutableStateFlow<SyncProgress?>(null)
     val sync: StateFlow<SyncProgress?> = _sync.asStateFlow()
+
+    /** How far fetching every record's cover ahead has got, while it runs. */
+    private val _covers = MutableStateFlow<CoverPreload?>(null)
+    val covers: StateFlow<CoverPreload?> = _covers.asStateFlow()
 
     private val _devices = MutableStateFlow(Devices(emptyList(), null))
     /** Devices to play on, and the one controlled: `null` for this one. */
@@ -295,6 +300,7 @@ class EngineMirror(deviceName: String) {
             is StateSlice.Cache -> _cacheBytes.value = slice.bytes.toLong()
             is StateSlice.Tasks -> _tasks.value = Tasks(slice.scanning, slice.syncing)
             is StateSlice.Sync -> _sync.value = slice.progress
+            is StateSlice.Covers -> _covers.value = slice.progress
             is StateSlice.Devices -> _devices.value = Devices(slice.devices, slice.target, slice.targetReach)
             is StateSlice.Connection -> {
                 _connection.value = slice.connection

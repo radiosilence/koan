@@ -70,9 +70,95 @@ pub fn load_scan_cache(
     Ok(map)
 }
 
+/// What `art_evictions` names since a caller's mark.
+#[derive(Debug, Default, PartialEq)]
+pub struct ArtEvictionsSince {
+    /// The mark to pass back next time.
+    pub seq: i64,
+    /// `(kind, id)` in the order named: `album`, `artist` or `track`.
+    pub named: Vec<(String, i64)>,
+    /// The mark is not this table's: entries after it were pruned, or the
+    /// database is newer than it. Whatever the caller keeps by id may belong
+    /// to other records, so all of it goes.
+    pub purge: bool,
+}
+
+/// What `art_evictions` names after `after`, a mark this returned before (0
+/// for none). The table keeps its latest entries only, and a database made
+/// afresh numbers them from the start again: a mark either has outlived is
+/// answered with `purge`, since the ids it covered may have been given to
+/// other records meanwhile.
+pub fn art_evictions_since(conn: &Connection, after: i64) -> rusqlite::Result<ArtEvictionsSince> {
+    // The highest ever handed out, which pruning every entry does not lower.
+    let high: i64 = conn
+        .query_row(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'art_evictions'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or(0);
+    let low: Option<i64> =
+        conn.query_row("SELECT MIN(seq) FROM art_evictions", [], |r| r.get(0))?;
+    let lost = match low {
+        Some(low) => after < low - 1,
+        None => after < high,
+    };
+    let purge = after > 0 && (after > high || lost);
+    let named: Vec<(i64, String, i64)> = conn
+        .prepare_cached("SELECT seq, kind, id FROM art_evictions WHERE seq > ?1 ORDER BY seq")?
+        .query_map([if purge { high } else { after }], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ArtEvictionsSince {
+        seq: if purge {
+            high
+        } else {
+            named.last().map_or(after, |r| r.0)
+        },
+        named: named.into_iter().map(|(_, kind, id)| (kind, id)).collect(),
+        purge,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mark_the_table_has_outlived_purges() {
+        let db = test_db();
+        let name = |n: i64| {
+            for id in 0..n {
+                db.conn
+                    .execute(
+                        "INSERT INTO art_evictions (kind, id) VALUES ('album', ?1)",
+                        [id],
+                    )
+                    .unwrap();
+            }
+        };
+        name(5);
+        let all = art_evictions_since(&db.conn, 0).unwrap();
+        assert_eq!((all.seq, all.named.len(), all.purge), (5, 5, false));
+        let some = art_evictions_since(&db.conn, 3).unwrap();
+        assert_eq!((some.seq, some.named.len(), some.purge), (5, 2, false));
+        // Pruned past a mark: what it would have heard is gone.
+        db.conn
+            .execute("DELETE FROM art_evictions WHERE seq <= 4", [])
+            .unwrap();
+        assert!(art_evictions_since(&db.conn, 2).unwrap().purge);
+        assert!(!art_evictions_since(&db.conn, 4).unwrap().purge);
+        // Everything pruned: only a mark at the top heard it all.
+        db.conn.execute("DELETE FROM art_evictions", []).unwrap();
+        assert!(!art_evictions_since(&db.conn, 5).unwrap().purge);
+        let behind = art_evictions_since(&db.conn, 3).unwrap();
+        assert_eq!((behind.seq, behind.purge), (5, true));
+        // A mark past anything this database handed out: another database's.
+        let newer = art_evictions_since(&db.conn, 90).unwrap();
+        assert_eq!((newer.seq, newer.named.len(), newer.purge), (5, 0, true));
+    }
     use crate::db::connection::Database;
     use crate::db::queries::{sample_meta, upsert_track};
 

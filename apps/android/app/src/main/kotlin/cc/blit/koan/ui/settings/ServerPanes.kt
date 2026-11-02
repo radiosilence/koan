@@ -110,6 +110,18 @@ fun ServerPane(model: SettingsModel) {
         }
         footer("Each sync asks the server only for what changed since the last.")
 
+        header("Covers")
+        item {
+            SwitchRow("Fetch every record's cover ahead", s.preloadCovers) { on ->
+                model.edit { it.copy(preloadCovers = on) }
+            }
+        }
+        footer(
+            "Covers are fetched in the background, after what is on screen, so browsing never waits for one. They " +
+                "are kept with the downloads and count against the same limit. Turning this off removes nothing " +
+                "already fetched.",
+        )
+
         serverOffers(connection)
     }
 

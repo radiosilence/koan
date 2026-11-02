@@ -4,9 +4,8 @@
 //! square, flat, lowercase, one hairline where a region needs one.
 
 use koan_ffi::BrowseChoices;
+use koan_kit::app::input::{InputEvent, InputState};
 use koan_kit::app::*;
-// gpui-component's text input: koan-kit's TextField draws it, the page owns its state.
-use koan_kit::raw::component::input::{InputEvent, InputState};
 // gpui-component's popover, the panel koan-kit's menus are built in.
 use koan_kit::raw::component::popover::Popover;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
@@ -25,6 +24,11 @@ use crate::theme::{Icon, Space};
 
 /// "1 album", "5,123 albums".
 pub fn count(n: u64, one: &str, many: &str) -> String {
+    format!("{} {}", grouped(n), if n == 1 { one } else { many })
+}
+
+/// "5,123": a number with its thousands marked.
+pub fn grouped(n: u64) -> String {
     let digits = n.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, ch) in digits.chars().enumerate() {
@@ -33,7 +37,7 @@ pub fn count(n: u64, one: &str, many: &str) -> String {
         }
         grouped.push(ch);
     }
-    format!("{grouped} {}", if n == 1 { one } else { many })
+    grouped
 }
 
 /// A library page's header: koan-kit's `PageHeader`, its title with the
