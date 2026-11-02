@@ -34,6 +34,12 @@ pub trait KeyedList: Sized + 'static {
     fn page(&self) -> usize {
         PAGE
     }
+    /// The item `rows` rows below item `at` (above, negative): the same
+    /// column of a grid, held at the ends. A page whose rows are not all the
+    /// same length (an artist's sections) says where each one starts.
+    fn below(&self, at: usize, rows: isize) -> usize {
+        at.saturating_add_signed(rows * self.columns().max(1) as isize)
+    }
 }
 
 fn moved<V: KeyedList>(this: &mut V, m: Option<Moved>, cx: &mut Context<V>) {
@@ -50,9 +56,17 @@ fn step<V: KeyedList>(this: &mut V, by: isize, extend: bool, cx: &mut Context<V>
     moved(this, m, cx);
 }
 
-/// ↑ ↓ and the page keys: `rows` rows of a grid, items of a list.
+/// ↑ ↓ and the page keys: `rows` rows of a grid, items of a list. A cursor
+/// not yet placed starts at the top going down and the bottom going up.
 fn down<V: KeyedList>(this: &mut V, rows: isize, extend: bool, cx: &mut Context<V>) {
-    let by = rows * this.columns().max(1) as isize;
+    let last = this.len().saturating_sub(1);
+    let by = match this.cursor().at {
+        Some(at) => {
+            let at = at.min(last);
+            this.below(at, rows).min(last) as isize - at as isize
+        }
+        None => rows.signum(),
+    };
     step(this, by, extend, cx);
 }
 
