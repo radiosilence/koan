@@ -1203,7 +1203,16 @@ impl KoanEngine {
         if sent.is_err() {
             match target {
                 None => state.seek_taken(position_ms),
-                Some(_) => *engine.remote_seek.lock() = None,
+                // Lapsed rather than dropped, so the state thread's deadline
+                // says the device's own playhead again at once.
+                Some(_) => {
+                    if let Some(seek) = engine.remote_seek.lock().as_mut() {
+                        seek.at = Instant::now()
+                            .checked_sub(REMOTE_SEEK_PATIENCE)
+                            .unwrap_or(seek.at);
+                    }
+                    koan_core::signal::engine_changed().bump();
+                }
             }
         }
         sent
@@ -6012,6 +6021,10 @@ impl KoanEngine {
             at: Instant::now(),
             playing,
         });
+        // The state thread waits no longer than the hold, which it learns of
+        // here, not from the device: one that never reports again still has
+        // its playhead given back.
+        koan_core::signal::engine_changed().bump();
         self.out.publish(StateSlice::Playhead {
             position_ms,
             seekable_ms: duration,
