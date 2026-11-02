@@ -852,6 +852,28 @@ impl Render for Transport {
             )
             .child(
                 div()
+                    // Announced, without moving focus, as the track changes:
+                    // a leaf holding only the words, since a live region's
+                    // descendants are live too, and the links below would be
+                    // announced again. VoiceOver reads a live node's value,
+                    // Orca its name, so it carries both.
+                    .when(p.a11y, |d| {
+                        let spoken = crate::components::spoken(
+                            entry
+                                .map(|e| [e.title.as_str(), e.artist.as_str(), e.album.as_str()])
+                                .unwrap_or(["nothing playing", "", ""]),
+                        );
+                        d.child(
+                            div()
+                                .id("now-playing")
+                                .role(a11y::Role::Status)
+                                .aria_label(spoken.clone())
+                                .aria_value(spoken)
+                                .aria_live(a11y::Live::Polite)
+                                .absolute()
+                                .size_0(),
+                        )
+                    })
                     .flex()
                     .flex_col()
                     .min_w(px(0.))

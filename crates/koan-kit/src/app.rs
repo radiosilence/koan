@@ -22,6 +22,15 @@ pub use gpui_kit::{
     WindowHandle, WindowId, WindowVisibility, actions, div,
 };
 
+/// What a page tells a screen reader where no component says it for the
+/// page: a landmark's role (the sidebar as navigation, the stage as main), a
+/// tile's role and the action it answers, a region announced as it changes.
+/// Set beside the element's id with `role`, `aria_label` and `aria_live`.
+pub mod a11y {
+    pub use gpui_kit::accesskit::Live;
+    pub use gpui_kit::{AccessibleAction, Role};
+}
+
 /// The text input koan-kit's fields draw (`TextField`, `FilterField`): a
 /// page owns its state and listens to its events, and a field that leads a
 /// list takes the arrows and Escape from it.

@@ -557,6 +557,8 @@ impl ArtistPage {
                     kind: crate::components::RowKind::Art,
                     note: None,
                     cursor: false,
+                    place: Some((index, record.appearances.len())),
+                    reveal: None,
                 };
                 // A row insets itself by the page's margin, as the body does.
                 div()
@@ -594,7 +596,8 @@ impl ArtistPage {
         }));
         let height = grid.tile_height();
         let mut tiles = Vec::with_capacity(albums.len());
-        for album in albums {
+        let count = albums.len();
+        for (ix, album) in albums.iter().enumerate() {
             let record = self
                 .records
                 .entry(album.id)
@@ -625,6 +628,7 @@ impl ArtistPage {
                 drag,
                 pick,
                 after,
+                place: (ix, count),
             };
             tiles.push(self.tiles.tile(&record, state, height, cx));
         }

@@ -221,6 +221,13 @@ impl A11y {
         self.active_this_frame
     }
 
+    // KOAN: #1778.
+    /// As assistive technology attaching or leaving would set it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_active_flag(&self, active: bool) {
+        self.active_flag.store(active, Ordering::SeqCst);
+    }
+
     pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
         self.focus_ids.insert(node_id, focus_id);
     }

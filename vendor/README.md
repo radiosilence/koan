@@ -8,7 +8,7 @@ Copies of published crates carried with patches until the patches are taken upst
 
 | Crate | Version | Patches |
 |---|---|---|
-| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs`. Accessibility (#1776): `aria_disabled` in `elements/div.rs` and the debug tree, `Window::dispatch_a11y_action` for tests |
+| `gpui-pre` | 0.3.10 | Shader quads (#1641): `src/shader.rs`, `scene.rs`, `gpui.rs`, `window.rs`. Accessibility (#1776, #1778): `aria_disabled` and `aria_live` in `elements/div.rs` and the debug tree; `Window::dispatch_a11y_action` and `set_a11y_active_for_test` for tests (`window.rs`, `window/a11y.rs`) |
 | `gpui-pre-apple` | 0.3.10 | Shader quads drawn by Metal (#1641): `metal_renderer.rs` |
 | `gpui-pre-wgpu` | 0.3.10 | Shader quads drawn by wgpu, and the layered compose (#1641): `wgpu_renderer.rs` |
 | `gpui-pre-macos` | 0.3.10 | Idle frames (#1609): `window.rs`, `display_link.rs` |
