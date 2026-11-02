@@ -160,6 +160,10 @@ Built from entries, separators, sections and submenus; the panel, rows, glyph co
 
 `EmptyState::new(icon, title).detail(…)` (Mac: `KoanUnavailable`), centred by the page's body.
 
+### SelectionBar (Mac: iOS's `SelectionBar`, the Mac's menu on a multi-selection)
+
+`SelectionBar::new("3 picked").verb(id, text, run).element(trigger).on_done(run)`: along the foot of a page while picking, the count leading and the verbs trailing as `Text` buttons, then done. One bar for every page that picks, so its verbs read the same everywhere.
+
 ### Banner (Mac: `ServerBanner`)
 
 `Banner::new(icon, message, tone).action(label, run)`: a line across the top of the page column for something true of every page until it is put right, the server this device cannot use. `fine` in its tone over a rule, two lines at most, the action a compact button at the far edge.
