@@ -780,6 +780,15 @@ fn analysis_loop(
             }
         } else {
             viz_buffer.snapshot_at(played, WINDOW_FRAMES, &mut snap);
+            // What the listener hears: the output's own gain (a pause or
+            // resume fade, a sleep timer, mute) on top of the ReplayGain and
+            // DSP the decode thread applied before feeding the buffer.
+            let gain = crate::audio::fade::heard_gain();
+            if gain < 1.0 {
+                for sample in &mut snap.samples {
+                    *sample *= gain;
+                }
+            }
             let frame_reads = snapshot.frame_reads();
             if frame_reads != last_frame_reads {
                 last_frame_reads = frame_reads;
