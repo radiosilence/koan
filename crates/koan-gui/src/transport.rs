@@ -56,6 +56,8 @@ pub struct Transport {
     eq: Option<EqState>,
     /// The profile the playing stream named when `eq` was read.
     eq_profile: Option<String>,
+    /// The library version the EQ was last read at.
+    eq_library: u64,
     _eq_load: Option<Task<()>>,
     _subscriptions: [Subscription; 8],
 }
@@ -186,7 +188,16 @@ impl Transport {
                 // What EQ plays follows the output, its presets (published
                 // with the outputs) and the profiles (synced with the library).
                 cx.observe(&mirror.outputs, |this, _, cx| this.reload_eq(cx)),
-                cx.observe(&mirror.library, |this, _, cx| this.reload_eq(cx)),
+                // Only when the library's version moves: a scan notifies
+                // with every batch, and an overview reads every profile's
+                // responses from disk.
+                cx.observe(&mirror.library, |this, library, cx| {
+                    let version = library.read(cx).version;
+                    if version != this.eq_library {
+                        this.eq_library = version;
+                        this.reload_eq(cx);
+                    }
+                }),
             ],
             focus: cx.focus_handle(),
             playback: mirror.playback,
@@ -197,6 +208,7 @@ impl Transport {
             cover: CoverArt::Missing,
             eq: None,
             eq_profile: None,
+            eq_library: mirror.library.read(cx).version,
             _eq_load: None,
         };
         this.reload_eq(cx);
@@ -1011,7 +1023,11 @@ impl Render for Transport {
                             .read(cx)
                             .0
                             .as_ref()
-                            .is_none_or(|o| o.owner.is_none())
+                            // Only this device's outputs: with another device
+                            // controlled, or its outputs not yet heard, a
+                            // preset chosen here would name this device's
+                            // output to the other one.
+                            .is_some_and(|o| o.owner.is_none())
                     })
                     .map(|eq| self.eq_button(&eq, &p, cx)),
             );
