@@ -341,7 +341,7 @@ GPUI through koan-kit only: pages are written in `koan_kit::app` and build from 
 | `library/rows.rs` | One track's row, shared by the track browser, record page and artist page, on the Mac's row metrics |
 | `library/playlist.rs` | A playlist's page: its entries drawn by the queue's row parts (`queue::heading`, `queue::track`) and reordered by its rules (`queue::rows`), drops between rows, undo and redo, and rename, delete, shuffle, removal and export behind previews; `new_playlist`, which the sidebar and the context menus use |
 | `library/artists.rs`, `tracks.rs` | The artist browser; the track browser, read a page at a time and swapped in once a reload covers the screen |
-| `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with bio, photo, sections, features and appearances |
+| `library/album_page.rs`, `artist_page.rs` | A record's page with disc runs; an artist's with the photo beside the name (its slot growing in when it arrives late), sections, features, appearances and the biography under "about" at the end |
 | `library/drag.rs` | `PlayableDrag`, what every drag out of the library carries: `TrackSet`s for the engine, shared so a pick is built once. The queue and the sidebar's queue and playlist rows take it |
 | `library/selection.rs` | Picking several things to play together, in tick order |
 | `library/shelf.rs` | Favourites, Recently played, Downloaded and the search's results: the head of each kind on the shelf in a koan-kit `Collection`, each heading opening the browser filtered to the shelf, one pick across the kinds |

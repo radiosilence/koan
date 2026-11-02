@@ -78,7 +78,7 @@ pub use dense::{Align, Column, DenseRow, DenseTable};
 pub use details::DetailGroup;
 pub use drag::{DragChip, DropTarget, INSERTION};
 pub use empty::EmptyState;
-pub use fade::FadeIn;
+pub use fade::{FadeIn, Reveal};
 pub use field::{FieldState, InputEvent, TextField};
 pub use filter_field::FilterField;
 pub use form::{
