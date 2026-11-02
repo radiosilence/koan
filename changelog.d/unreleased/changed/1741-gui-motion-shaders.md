@@ -1,0 +1,1 @@
+- **The loading spinner, button and row fills, the running progress bar and the seek bar's corrections move on the GPU in the kōan GUI app.** The ensō turns smoothly at any size with no frame drawn, and a playhead report that disagrees slightly with the seek bar is eased into rather than jumped to.
