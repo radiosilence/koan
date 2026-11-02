@@ -1065,7 +1065,24 @@ pub(crate) fn track(
     // plays, moving with the music; a tick once played; the pending square
     // while it waits; next in line to download, or failed.
     let quiet = if look.picked { p.on_selection } else { p.rule };
+    // What the mark means, said when the pointer rests on it.
+    let meaning = match item.status {
+        EntryStatus::Playing => Some("playing"),
+        EntryStatus::Played => Some("played"),
+        EntryStatus::PriorityPending => Some("downloads next"),
+        EntryStatus::Failed => Some("couldn't be played"),
+        EntryStatus::Queued | EntryStatus::Downloading if look.waiting => {
+            Some("waiting for its download")
+        }
+        EntryStatus::Queued | EntryStatus::Downloading => None,
+    };
     let mark = div()
+        .id(look.id("status", 0))
+        .when_some(meaning, |d, meaning| {
+            d.tooltip(move |window, cx| {
+                crate::components::Tooltip::view(crate::theme::label(meaning), window, cx)
+            })
+        })
         .text_role(TypeRole::Fine, &p.look)
         .map(|d| match item.status {
             // Bars only while the music moves them, and in the look that

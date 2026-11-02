@@ -38,7 +38,7 @@ pub fn playable_header(
                 .on_click(move |_, _, cx| actions::play(&play, &[item], false, cx).detach()),
         )
         .lead(
-            ShuffleButton::new("header-shuffle")
+            ShuffleButton::new("header-shuffle", name.clone())
                 .on_click(move |_, _, cx| actions::play(&shuffle, &[item], true, cx).detach()),
         )
         .action(
