@@ -1,0 +1,1 @@
+- **Downloads in the GUI app.** A page of what is being fetched from the server and what finished or failed, with each transfer's rate and bar, the cache's size against its limit, and retry, cancel, remove and clear finished, each saying what it changes first. Cancel and retry are new to the engine (`cancel_downloads`, `retry_downloads`), for every app to use.

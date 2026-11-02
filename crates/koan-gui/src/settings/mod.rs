@@ -140,6 +140,46 @@ pub fn open(cx: &mut App) {
     }
 }
 
+/// A link from outside that Settings answers.
+pub enum Incoming {
+    /// An invite, as its link reads.
+    Invite(String),
+    /// A device waiting to pair: the server it asked, and the pairing's id.
+    Pairing { server: String, id: String },
+}
+
+/// Opens Settings on the pane that answers `link` and hands it over: an
+/// invite signs in (asking first where it would replace an account), and a
+/// pairing asks whether to sign the device in.
+pub fn answer(link: Incoming, cx: &mut App) {
+    open(cx);
+    let Some(handle) = cx.global::<Settings>().window else {
+        return;
+    };
+    handle
+        .update(cx, |root, window, cx| {
+            if let Ok(view) = root.view().clone().downcast::<SettingsWindow>() {
+                view.update(cx, |settings, cx| settings.answer(link, window, cx));
+            }
+        })
+        .ok();
+}
+
+/// Opens Settings on the server's pane: the sign-in the banner offers.
+pub fn open_server(cx: &mut App) {
+    open(cx);
+    let Some(handle) = cx.global::<Settings>().window else {
+        return;
+    };
+    handle
+        .update(cx, |root, window, cx| {
+            if let Ok(view) = root.view().clone().downcast::<SettingsWindow>() {
+                view.update(cx, |settings, cx| settings.choose(Tab::Server, window, cx));
+            }
+        })
+        .ok();
+}
+
 /// Whether `window` is the Settings window.
 pub fn is_settings_window(window: AnyWindowHandle, cx: &App) -> bool {
     cx.try_global::<Settings>()
@@ -347,6 +387,45 @@ impl SettingsWindow {
         if tab != self.tab {
             self.show(tab, window, cx);
             cx.notify();
+        }
+    }
+
+    fn answer(
+        &mut self,
+        link: Incoming,
+        window: &mut Window,
+        cx: &mut koan_kit::app::Context<Self>,
+    ) {
+        match link {
+            Incoming::Invite(text) => {
+                self.choose(Tab::Server, window, cx);
+                if let Ok(pane) = self.pane.view().downcast::<panes::server::ServerPane>() {
+                    pane.update(cx, |pane, cx| pane.join(&text, false, window, cx));
+                }
+            }
+            Incoming::Pairing { server, id } => {
+                // Approving signs the device in to the account here, so the
+                // link must name this device's server: the one signed in to,
+                // or this device while it shares its library.
+                let sharing = self.ctx.sharing.read(cx).serving.is_some();
+                let ours = self.ctx.model.read(cx).settings().is_some_and(|s| {
+                    s.remote_signed_in && s.remote_url.trim_end_matches('/') == server
+                });
+                if !sharing && !ours {
+                    let host = panes::server::host(&server);
+                    self.ctx.model.update(cx, |m, cx| {
+                        m.report(
+                            format!("A device is asking to sign in to {host}, which kōan is not signed in to. Approve it on {host}'s own pair page instead."),
+                            cx,
+                        )
+                    });
+                    return;
+                }
+                self.choose(Tab::Devices, window, cx);
+                if let Ok(pane) = self.pane.view().downcast::<panes::devices::DevicesPane>() {
+                    pane.update(cx, |pane, cx| pane.approve_pair(id, window, cx));
+                }
+            }
         }
     }
 

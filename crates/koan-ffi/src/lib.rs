@@ -488,6 +488,38 @@ pub fn size_in_bytes(text: String) -> Option<u64> {
     config::parse_size_bytes(&text)
 }
 
+/// Whether the music of the device in view can be moved to `to` (this
+/// device with `None`): `controlled` is the device controlled, `None` while
+/// this one is in view. Both ends must play from the same library, and there
+/// must be music to move: a queue here, or another device playing or paused
+/// and in reach. Moving to the device already in view moves nothing.
+#[uniffi::export]
+pub fn can_move_music(
+    to: Option<DeviceInfo>,
+    controlled: Option<DeviceInfo>,
+    has_queue: bool,
+) -> bool {
+    if to.as_ref().map(|d| d.id.as_str()) == controlled.as_ref().map(|d| d.id.as_str()) {
+        return false;
+    }
+    if to.as_ref().is_some_and(|d| d.problem.is_some()) {
+        return false;
+    }
+    match &controlled {
+        Some(source) => {
+            if !source.same_library
+                || source.state == PlayState::Stopped
+                || source.problem.is_some()
+            {
+                return false;
+            }
+        }
+        None if !has_queue => return false,
+        None => {}
+    }
+    to.is_none_or(|d| d.same_library)
+}
+
 /// A pairing code as it is being typed, as the device shows it: `XXXX-XXXX`
 /// in capitals. Applied to the field on every change, so typing and pasting
 /// read the same on every platform.
@@ -4981,6 +5013,20 @@ impl KoanEngine {
         .await
     }
 
+    /// Stop fetching these tracks. Queue entries waiting on them fail as
+    /// cancelled and are skipped until retried; a transfer running stops and
+    /// leaves no row.
+    pub async fn cancel_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || self.send_local(PlayerCommand::CancelDownloads(track_ids))).await
+    }
+
+    /// Fetch these tracks again after a failure or a cancel: queue entries
+    /// that failed for them wait again, and a track no entry wants is
+    /// fetched into the cache.
+    pub async fn retry_downloads(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || self.send_local(PlayerCommand::RetryDownloads(track_ids))).await
+    }
+
     /// Rescans every configured library folder, saying how far it has got.
     /// Minutes, on a large library.
     pub async fn scan_reporting(
@@ -7788,5 +7834,66 @@ fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
             message: e.to_string(),
         },
         ImportError::Failed(message) => KoanError::BadArgument { message },
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    fn device(id: &str, same_library: bool, state: PlayState) -> DeviceInfo {
+        DeviceInfo {
+            id: id.into(),
+            name: id.into(),
+            platform: "macos".into(),
+            account: true,
+            owner: None,
+            nearby: false,
+            awake: true,
+            asleep: false,
+            wakeable: false,
+            tv_paired: false,
+            tv_pairable: false,
+            last_seen: None,
+            waking: None,
+            wake_failed: None,
+            same_library,
+            state,
+            title: None,
+            artist: None,
+            artist_credit: Vec::new(),
+            album: None,
+            track_id: None,
+            album_id: None,
+            position_ms: 0,
+            duration_ms: 0,
+            problem: None,
+        }
+    }
+
+    #[test]
+    fn music_moves_only_where_it_can_play() {
+        let tv = device("tv", true, PlayState::Stopped);
+        let phone = device("phone", true, PlayState::Playing);
+        let stranger = device("stranger", false, PlayState::Playing);
+        // From here: needs a queue, and a device on the same library.
+        assert!(can_move_music(Some(tv.clone()), None, true));
+        assert!(!can_move_music(Some(tv.clone()), None, false));
+        assert!(!can_move_music(Some(stranger.clone()), None, true));
+        // Nowhere to move to while this device is in view.
+        assert!(!can_move_music(None, None, true));
+        // From a device controlled: it must have music and share the library.
+        assert!(can_move_music(None, Some(phone.clone()), false));
+        assert!(can_move_music(Some(tv.clone()), Some(phone.clone()), false));
+        assert!(!can_move_music(None, Some(tv.clone()), true));
+        assert!(!can_move_music(None, Some(stranger), true));
+        assert!(!can_move_music(
+            Some(phone.clone()),
+            Some(phone.clone()),
+            true
+        ));
+        let mut away = tv;
+        away.problem = Some("out of reach".into());
+        assert!(!can_move_music(Some(away), Some(phone), true));
     }
 }

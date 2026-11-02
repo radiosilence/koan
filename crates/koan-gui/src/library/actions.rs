@@ -80,6 +80,36 @@ pub fn favourite(lib: &Lib, items: &[Playable], cx: &mut App) {
     });
 }
 
+/// Resolves the pick to its tracks, in order, and opens organise over them.
+pub fn organise(lib: &Lib, items: &[Playable], window: &mut Window, cx: &mut App) {
+    let engine = lib.engine.clone();
+    let items: Vec<Playable> = items.to_vec();
+    let title = match items.as_slice() {
+        [Playable::Track(_)] => "1 track".to_owned(),
+        [Playable::Album(_)] => "this album".to_owned(),
+        [Playable::Artist(_)] => "this artist's tracks".to_owned(),
+        _ => format!("{} picked", items.len()),
+    };
+    window
+        .spawn(cx, async move |cx| {
+            let mut ids = Vec::new();
+            for item in items {
+                let found = match item {
+                    Playable::Track(id) => Ok(vec![id]),
+                    Playable::Album(id) => engine.clone().track_ids(Some(id), None).await,
+                    Playable::Artist(id) => engine.clone().track_ids(None, Some(id)).await,
+                };
+                match found {
+                    Ok(found) => ids.extend(found.into_iter().filter(|id| !ids.contains(id))),
+                    Err(e) => log::warn!("organise: {e}"),
+                }
+            }
+            cx.update(|window, cx| crate::organize::open(title, ids, window, cx))
+                .ok();
+        })
+        .detach();
+}
+
 /// Run after a menu's verb: ends the pick the menu was opened over, as each
 /// of the selection bar's verbs does.
 pub type After = Option<Rc<dyn Fn(&mut App)>>;
@@ -221,6 +251,13 @@ pub fn menu(
         },
         favourite,
     ));
+    // Moving the pick's files where a pattern puts them, previewed first.
+    let (organise_lib, organise_items) = (lib.clone(), items.clone());
+    menu = menu.separator().item(
+        MenuEntry::new("organise…")
+            .icon(Icon::Organize)
+            .on_click(move |_, window, cx| organise(&organise_lib, &organise_items, window, cx)),
+    );
     match single {
         Some(Playable::Track(id)) => {
             let nav = lib.nav.clone();

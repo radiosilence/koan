@@ -502,7 +502,6 @@ impl ArtistPage {
                     lead: (index + 1).to_string().into(),
                     lead_width: rows::lead_width(p, record.appearances.len(), window),
                     current: feed.playing_track == Some(track.id),
-                    playing: feed.playing,
                     favourite: feed.is_favourite(item),
                     selected,
                     gathered: true,
@@ -580,7 +579,14 @@ impl ArtistPage {
             };
             tiles.push(self.tiles.tile(&record, state, height, cx));
         }
-        div().flex().gap(grid.gap).h(grid.row).children(tiles)
+        // Inside the page's margin already: only the grid's share of the
+        // spare width is added.
+        div()
+            .flex()
+            .gap(grid.gap)
+            .pl(grid.inset - grid.margin)
+            .h(grid.row)
+            .children(tiles)
     }
 
     fn header(
@@ -861,7 +867,10 @@ impl Render for ArtistPage {
         // back to where it was left once there is content under it.
         if let (Some(width), Some(record)) = (self.width.get(), self.record.clone()) {
             let grid = Grid::for_width(width, &p.look.scale);
-            if self.grid != Some(grid) {
+            // Only the room between tiles moved: the rows are cut as they were.
+            if self.grid.is_some_and(|g| g.same_rows(&grid)) {
+                self.grid = Some(grid);
+            } else if self.grid != Some(grid) {
                 // A change of columns keeps the place, as a new record does.
                 if self.restore.is_none() {
                     self.restore = self.anchor();

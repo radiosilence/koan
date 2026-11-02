@@ -2139,7 +2139,7 @@ pub fn config_dir() -> PathBuf {
 }
 
 #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-fn platform_config_dir() -> PathBuf {
+pub(crate) fn platform_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
@@ -2150,7 +2150,7 @@ fn platform_config_dir() -> PathBuf {
 /// `tmp`, and nowhere else: `~/.config` is refused on a device, though the
 /// simulator allows it. Application Support is where an app's own state goes.
 #[cfg(target_os = "ios")]
-fn platform_config_dir() -> PathBuf {
+pub(crate) fn platform_config_dir() -> PathBuf {
     ios_library().join("Application Support").join("koan")
 }
 
@@ -2159,7 +2159,7 @@ fn platform_config_dir() -> PathBuf {
 /// The files live there, beside the download cache rather than inside it, which
 /// is trimmed; `kept` holds a copy that survives a purge.
 #[cfg(target_os = "tvos")]
-fn platform_config_dir() -> PathBuf {
+pub(crate) fn platform_config_dir() -> PathBuf {
     let dir = ios_library().join("Caches").join("koan-config");
     kept::restore(&dir);
     dir

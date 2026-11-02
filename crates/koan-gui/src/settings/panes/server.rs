@@ -174,7 +174,7 @@ impl ServerPane {
 
     /// Signs in through an invite. One for another server or account than
     /// the one signed in to asks first, since signing in replaces it.
-    fn join(&mut self, text: &str, quiet: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn join(&mut self, text: &str, quiet: bool, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.ctx.model.clone();
         let Some(invite) = model.read(cx).engine().parse_invite(text.to_owned()) else {
             if !quiet {
