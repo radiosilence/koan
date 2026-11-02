@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use gpui_kit::*;
 
-use super::{Animated, AnimatedQuad, BarMetrics, SHADED};
+use super::{Animated, BarMetrics, SHADED};
 
 /// How far a bar stands with nothing playing through it, so a still bar reads
 /// as a mark rather than as nothing.

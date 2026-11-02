@@ -2352,6 +2352,7 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
                 content_mask: ContentMask { bounds: shader },
                 program: &PROGRAM,
                 uniforms: uniforms.clone(),
+                image: None,
             });
             let over = if cover {
                 rect(30.0, 10.0, 20.0, 4.0)
@@ -2392,6 +2393,57 @@ float4 shade(float2 position, float2 size, float time, constant float *u, textur
             assert_ne!(moved.as_raw(), composed.as_raw());
             let whole = renderer.render_scene_to_image(&scene, viewport).unwrap();
             assert!(close(&whole, &moved), "covered: {covered}, moved");
+        }
+    }
+
+    // KOAN: (#1641) GPUI's shader types, tested here: the vendored GPUI core
+    // carries none of the assets its own tests read.
+    mod shader {
+        use gpui::{SHADER_UNIFORMS, ShaderInstance, ShaderUniforms, shader_epoch};
+        #[test]
+        fn uniforms_round_trip_and_liveness_is_separate() {
+            let u = ShaderUniforms::new();
+            u.set(3, 0.25);
+            assert_eq!(u.get(3), 0.25);
+            assert_eq!(u.snapshot()[3], 0.25);
+            assert!(!u.is_live());
+            u.set_live(true);
+            assert!(u.is_live());
+        }
+
+        #[test]
+        fn a_live_shader_presents_once_per_change_unless_continuous() {
+            let u = ShaderUniforms::new();
+            u.set(0, 1.0);
+            assert!(u.take_present(), "a change presents, live or not");
+            assert!(!u.take_present());
+            u.set_live(true);
+            u.set(0, 2.0);
+            assert!(u.take_present());
+            assert!(!u.take_present());
+            u.set(0, 2.0);
+            assert!(!u.take_present(), "the same value is no change");
+            u.set_continuous(true);
+            assert!(u.take_present());
+            assert!(u.take_present());
+        }
+
+        #[test]
+        fn the_instance_is_aligned_blocks() {
+            assert_eq!(std::mem::size_of::<ShaderInstance>(), 4 * (4 + 4 + SHADER_UNIFORMS + 4 + 4));
+        }
+
+        #[test]
+        fn time_counts_from_the_origin_and_moving_it_is_a_change() {
+            let u = ShaderUniforms::new();
+            u.set_live(true);
+            let origin = shader_epoch() + std::time::Duration::from_secs(1_000_000);
+            u.set_origin(origin);
+            assert!(u.take_present());
+            let t = u.time_at(origin + std::time::Duration::from_millis(1500));
+            assert!((t - 1.5).abs() < 1e-6, "{t}");
+            u.set_origin(origin);
+            assert!(!u.take_present());
         }
     }
 }
