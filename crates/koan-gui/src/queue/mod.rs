@@ -17,7 +17,7 @@ use koan_kit::app::*;
 use koan_kit::raw::Hsla;
 
 use crate::components::{
-    Availability, AvailabilityMark, Cover, CoverArt, DragChip, EmptyState, INSERTION, IconToggle,
+    Availability, AvailabilityMark, Cover, DragChip, EmptyState, INSERTION, IconToggle,
     KoanContextMenu, Menu, MenuEntry, MenuPanel, MenuRow, Page, PageHeader, RowKind, RowList,
     RowListState, RowMetrics, RowOffset, TableRow, ToolbarButton, ToolbarGroup, ToolbarMenu,
     ToolbarSelection,
@@ -144,13 +144,10 @@ pub struct QueueView {
     /// The queue item last brought into view while following, and its row.
     followed: Option<String>,
     followed_row: Option<usize>,
-    /// The transport is playing: the cursor's row moves its bars only then,
-    /// and shows the play mark while paused or stopped.
-    playing: bool,
     /// The rest of the queue can be shuffled in place: there is a rest, and
     /// shuffle play is off (it keeps an order of its own beside the queue).
     shufflable: bool,
-    _subscriptions: [Subscription; 7],
+    _subscriptions: [Subscription; 6],
 }
 
 impl QueueView {
@@ -158,7 +155,6 @@ impl QueueView {
         let queue = cx.global::<Mirror>().queue.clone();
         let covers = cx.global::<CoversHandle>().0.clone();
         let lock = cx.global::<Mirror>().lock.clone();
-        let playhead = cx.global::<Mirror>().playhead.clone();
         let playback = cx.global::<Mirror>().playback.clone();
         let subscriptions = [
             cx.observe(&playback, |this, playback, cx| {
@@ -166,14 +162,6 @@ impl QueueView {
                 let shufflable = now.queue_shufflable && !now.shuffle;
                 if shufflable != this.shufflable {
                     this.shufflable = shufflable;
-                    cx.notify();
-                }
-            }),
-            // Redrawn only when playing starts or stops, not for every anchor.
-            cx.observe(&playhead, |this, playhead, cx| {
-                let playing = playhead.read(cx).playing;
-                if playing != this.playing {
-                    this.playing = playing;
                     cx.notify();
                 }
             }),
@@ -226,7 +214,6 @@ impl QueueView {
             following: false,
             followed: None,
             followed_row: None,
-            playing: cx.global::<Mirror>().playhead.read(cx).playing,
             shufflable: {
                 let now = &cx.global::<Mirror>().playback.read(cx).0;
                 now.queue_shufflable && !now.shuffle
@@ -586,7 +573,7 @@ impl QueueView {
         &mut self,
         row: usize,
         p: &Paint,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.rows(cx).len();
@@ -624,14 +611,23 @@ impl QueueView {
             let item = &self.queue.read(cx).items[ix];
             let (status, track, on_server, on_disk) =
                 (item.status, item.track_id, item.on_server, item.on_disk);
+            let mut transfer = None;
             if let (Some(track), Some((feed, _))) = (track, &self.feed) {
-                favourite = Some(feed.read(cx).is_favourite(Playable::Track(track)));
+                let feed = feed.read(cx);
+                favourite = Some(feed.is_favourite(Playable::Track(track)));
+                transfer = feed.transfers.get(&track).copied();
             }
-            availability = crate::transfers::of_queue_status(status, track, on_server, on_disk);
+            // Without the library's feed (an offscreen render), the row's own
+            // status is all there is to go on.
+            if self.feed.is_none() && status == EntryStatus::Downloading {
+                transfer = Some(koan_ffi::TransferState::Running);
+            }
+            availability =
+                crate::transfers::of_queue_row(status, track, on_server, on_disk, transfer);
         }
         let feed = self.feed.as_ref().map(|(feed, _)| feed.clone());
         let queue = self.queue.read(cx);
-        let (row_frame, id) = match r {
+        let (row_frame, _) = match r {
             Row::Heading { first, len } => {
                 let run = &queue.items[first..first + len];
                 // Named by what the row is, so hover and drag state stay with
@@ -680,7 +676,6 @@ impl QueueView {
                         favourite,
                         feed,
                         availability,
-                        playing: self.playing,
                     },
                     &look,
                 );
@@ -982,8 +977,6 @@ pub(crate) struct Extras {
     pub feed: Option<Entity<Feed>>,
     /// Where its file is, or its transfer's glide.
     pub availability: Option<Availability>,
-    /// The transport is playing.
-    pub playing: bool,
 }
 
 fn link(
@@ -1116,11 +1109,10 @@ pub(crate) fn track(
         })
         .text_role(TypeRole::Fine, &p.look)
         .map(|d| match item.status {
-            // Bars only while the music moves them, and in the look that
-            // draws glyphs; the play mark, or its word, otherwise.
-            EntryStatus::Playing if extras.playing && p.look.icons => {
-                d.child(crate::levels::bars(p.accent_text))
-            }
+            // Bars in the look that draws glyphs, as the library's rows:
+            // moving with what is heard, so they fall with a pause's fade and
+            // lie flat while paused. The word otherwise.
+            EntryStatus::Playing if p.look.icons => d.child(crate::levels::bars(p.accent_text)),
             EntryStatus::Playing => d.child(glyph(
                 Icon::PlayMark,
                 "playing",

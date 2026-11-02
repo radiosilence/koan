@@ -94,6 +94,7 @@ pub fn start(
     restored: impl Future<Output = Option<u32>> + 'static,
     cx: &mut App,
 ) {
+    cx.set_global(MainWindow::default());
     cx.bind_keys(queue::bindings());
     crate::library::bind_keys(cx);
     install(&engine, cx);
@@ -123,13 +124,29 @@ pub fn start(
         .background_executor()
         .spawn(async { window_state::read() });
     let timeout = cx.background_executor().timer(RESTORE_WAIT);
+    let settings = engine.clone();
     cx.spawn(async move |cx| {
         futures::future::select(showing, timeout).await;
         let saved = saved.await;
-        cx.update(|cx| open(saved, cx));
+        // Opened at login and kept running: the menu bar only, as the Mac
+        // app starts then. Otherwise someone opened kōan and wants it.
+        let keep = settings.settings().await.devices_keep_running;
+        let background = keep && crate::platform::residency::launched_at_login();
+        cx.update(|cx| open(saved, !background, cx));
     })
     .detach();
 }
+
+/// The main window's handle while it is open, and whether launching has
+/// decided whether to open it: nothing opens it again before that, or a
+/// file opened at launch would open a second.
+#[derive(Default)]
+struct MainWindow {
+    handle: Option<AnyWindowHandle>,
+    ready: bool,
+}
+
+impl Global for MainWindow {}
 
 /// Resolves once the mirror's queue holds `rows` rows, woken by the queue
 /// changing rather than by looking.
@@ -155,14 +172,46 @@ fn rows_arrived(
     }
 }
 
-fn open(saved: Option<window_state::Saved>, cx: &mut App) {
+/// The main window, opened again where it was left when kōan has been
+/// running with it closed, or brought to the front when it is open. Whether
+/// it did: before launching has decided about the window, it leaves that to
+/// launching.
+pub fn show_window(cx: &mut App) -> bool {
+    if !cx.try_global::<MainWindow>().is_some_and(|m| m.ready) {
+        return false;
+    }
+    if let Some(window) = main_window(cx) {
+        cx.activate(true);
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
+        return true;
+    }
+    let saved = cx
+        .background_executor()
+        .spawn(async { window_state::read() });
+    cx.spawn(async move |cx| {
+        let saved = saved.await;
+        cx.update(|cx| open_window(saved, cx));
+    })
+    .detach();
+    true
+}
+
+/// The main window, while it is open. Settings, EQ and About are not it.
+pub fn main_window(cx: &App) -> Option<AnyWindowHandle> {
+    let handle = cx.try_global::<MainWindow>()?.handle?;
+    cx.windows().contains(&handle).then_some(handle)
+}
+
+/// What launching does once the session is in: opens the main window, or
+/// with `show` false (a login launch kept running) leaves kōan in the menu
+/// bar.
+fn open(saved: Option<window_state::Saved>, show: bool, cx: &mut App) {
     cx.on_app_quit(|cx| {
         // Written now: the app is going, and nothing spawned would finish.
-        // The main window's place; the Settings window keeps none.
-        for window in cx.windows() {
-            if settings::is_settings_window(window, cx) {
-                continue;
-            }
+        // The main window's place, not another window's.
+        if let Some(window) = main_window(cx) {
             window
                 .update(cx, |_, window, _| {
                     window_state::write(window.window_bounds())
@@ -172,7 +221,23 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
         async {}
     })
     .detach();
+    cx.global_mut::<MainWindow>().ready = true;
+    if show {
+        open_window(saved, cx);
+    } else {
+        log::info!("opened at login; staying in the menu bar");
+        crate::platform::residency::window_closing(cx);
+    }
+    // `--settings` opens Settings beside the window, for checking it
+    // without a keyboard.
+    if std::env::args().any(|arg| arg == "--settings") {
+        settings::open(cx);
+    }
+    #[cfg(feature = "profiler")]
+    crate::measure::start(cx);
+}
 
+fn open_window(saved: Option<window_state::Saved>, cx: &mut App) {
     let bounds = match saved {
         Some(saved) => window_state::place(saved, cx),
         None => WindowBounds::Windowed(Bounds::centered(None, size(px(1180.), px(760.)), cx)),
@@ -188,32 +253,32 @@ fn open(saved: Option<window_state::Saved>, cx: &mut App) {
     };
     // GPUI's start-up and headless rendering, which only the app's entry and tools reach.
     let opened = koan_kit::raw::open_window(options, cx, |window, cx| {
-        // Closing the last window quits, which waits for nothing spawned:
-        // a file of a few bytes, written now.
-        window.on_window_should_close(cx, |window, _| {
+        // Closing the last window quits, unless kōan is kept running,
+        // and quitting waits for nothing spawned: a file of a few bytes,
+        // written now.
+        window.on_window_should_close(cx, |window, cx| {
             window_state::write(window.window_bounds());
+            crate::platform::residency::window_closing(cx);
             true
         });
         let shell = cx.new(|cx| Shell::new(window, cx));
         cx.new(|cx| WindowRoot::new(shell, window, cx))
     });
-    if let Err(e) = opened {
-        log::error!("the window did not open: {e}");
-        cx.quit();
+    match opened {
+        Ok((handle, _)) => cx.global_mut::<MainWindow>().handle = Some(handle),
+        Err(e) => {
+            log::error!("the window did not open: {e}");
+            cx.quit();
+        }
     }
+    crate::platform::residency::window_opening();
     cx.activate(true);
-    // `--settings` opens Settings beside the window, for checking it
-    // without a keyboard.
-    if std::env::args().any(|arg| arg == "--settings") {
-        settings::open(cx);
-    }
-    #[cfg(feature = "profiler")]
-    crate::measure::start(cx);
 }
 
-/// On macOS the toolbar runs under the window's buttons. Elsewhere the
-/// system draws the title bar where the compositor offers one; where it
-/// leaves decorations to the app, the toolbar carries the buttons.
+/// On macOS the window's buttons sit at the top of the sidebar, on its
+/// ground. Elsewhere the system draws the title bar where the compositor
+/// offers one; where it leaves decorations to the app, the toolbar carries
+/// the buttons.
 fn titlebar() -> TitlebarOptions {
     if cfg!(target_os = "macos") {
         TitlebarOptions {

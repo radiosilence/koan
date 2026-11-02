@@ -1,5 +1,6 @@
-//! The window: a toolbar across the top, the sidebar beside the stage, and
-//! the transport along the foot under both.
+//! The window: the sidebar from the top edge, beside the page column (its
+//! toolbar, then the stage), and the transport along the foot under both.
+//! On macOS the window's buttons sit on the sidebar's ground.
 //!
 //! Each region is a cached view, so a region that changes (the playhead's
 //! slider, a row of the queue) redraws itself and the views that hold it,
@@ -499,7 +500,7 @@ impl Shell {
                     // with no header of their own.
                     .children(
                         (!self.sidebar_shown)
-                            .then(|| match route {
+                            .then_some(match route {
                                 Route::Queue => Some("queue"),
                                 Route::History => Some("history"),
                                 Route::Downloads => Some("downloads"),
@@ -679,13 +680,19 @@ impl Render for Shell {
                                 .flex()
                                 .flex_col()
                                 .when(!washed, |d| d.bg(p.bg))
-                                .when(WINDOW_BUTTONS.height > Pixels::ZERO, |d| {
-                                    d.child(
-                                        Self::moves_window(div().id("sidebar-drag"), cx)
-                                            .h(WINDOW_BUTTONS.height)
-                                            .flex_shrink_0(),
-                                    )
-                                })
+                                // Room for the window's buttons, which full
+                                // screen hides, and a place to move the
+                                // window by.
+                                .when(
+                                    WINDOW_BUTTONS.height > Pixels::ZERO && !window.is_fullscreen(),
+                                    |d| {
+                                        d.child(
+                                            Self::moves_window(div().id("sidebar-drag"), cx)
+                                                .h(WINDOW_BUTTONS.height)
+                                                .flex_shrink_0(),
+                                        )
+                                    },
+                                )
                                 .child(
                                     // A landmark to a screen reader: where to go.
                                     div()

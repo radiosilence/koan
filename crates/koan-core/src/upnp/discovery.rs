@@ -99,6 +99,21 @@ impl Store {
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static SEARCH: OnceLock<Option<UdpSocket>> = OnceLock::new();
+/// The last search could not reach the local network: on macOS, Local
+/// Network privacy refuses it, which a socket hears as "no route to host".
+static BLOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the last search was refused the local network, as macOS does for
+/// an app not allowed it: no renderer can be found until it is.
+pub fn local_network_blocked() -> bool {
+    BLOCKED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_blocked(blocked: bool) {
+    if BLOCKED.swap(blocked, std::sync::atomic::Ordering::Relaxed) != blocked {
+        crate::signal::engine_changed().bump();
+    }
+}
 /// When `search` last ran.
 static SEARCHED: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -330,10 +345,22 @@ pub fn search() {
     // UDP may drop one; renderers ignore a repeat they have already answered.
     for _ in 0..2 {
         if let Err(e) = socket.send_to(msg.as_bytes(), (GROUP, PORT)) {
-            log::warn!("upnp: search failed: {e}");
+            // EHOSTUNREACH with a network up is macOS's Local Network
+            // privacy: the app, or for a binary started from a terminal the
+            // terminal, has not been allowed the local network.
+            let refused = cfg!(target_os = "macos") && e.raw_os_error() == Some(65);
+            if refused {
+                log::warn!(
+                    "upnp: search refused ({e}): macOS has not allowed this app the local network (System Settings › Privacy & Security › Local Network)"
+                );
+            } else {
+                log::warn!("upnp: search failed: {e}");
+            }
+            set_blocked(refused);
             return;
         }
     }
+    set_blocked(false);
 }
 
 /// `search`, unless what is known is still good: renderers announce

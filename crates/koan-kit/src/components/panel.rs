@@ -385,8 +385,16 @@ impl Tooltip {
     }
 }
 
+/// How many tooltips have been drawn: what a test hovering a control reads
+/// to know its tooltip showed.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub static TOOLTIPS_DRAWN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(debug_assertions)]
+        TOOLTIPS_DRAWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let look = Look::of(window, cx);
         div()
             .px(look.space(Space::S))

@@ -352,6 +352,7 @@ pub fn origin_probe(origin: Rc<Cell<Point<Pixels>>>) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::prelude::v1::test;
 
     #[test]
     fn tiles_keep_their_size_and_the_room_around_them_takes_the_width() {

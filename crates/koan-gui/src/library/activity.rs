@@ -450,7 +450,7 @@ fn clear_downloads(cx: &mut App) {
                                     format!(
                                         "Freed {} across {}",
                                         crate::time::bytes(c.bytes),
-                                        crate::library::chrome::count(c.files as u64, "file", "files")
+                                        crate::library::chrome::count(c.files, "file", "files")
                                     ),
                                     Tone::Muted,
                                     cx,

@@ -103,6 +103,7 @@ impl RenderOnce for Toggle {
             row = row.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
+            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let flip: Handler<gpui_kit::ClickEvent> = {
                 let on_change = on_change.clone();
                 Arc::new(move |_, window, cx| on_change(&!checked, window, cx))
@@ -190,6 +191,7 @@ impl RenderOnce for IconToggle {
             toggle = toggle.opacity(DISABLED_OPACITY);
         } else if let Some(on_change) = self.on_change {
             let checked = self.checked;
+            #[allow(clippy::arc_with_non_send_sync)] // handlers run on the main thread only
             let flip: Handler<gpui_kit::ClickEvent> = {
                 let on_change = on_change.clone();
                 Arc::new(move |_, window, cx| on_change(&!checked, window, cx))

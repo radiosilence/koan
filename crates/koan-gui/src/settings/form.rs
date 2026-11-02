@@ -3,7 +3,7 @@
 //! (`components::form`); these are the panes' short names for it.
 
 use crate::components::ScrollArea;
-use crate::theme::{Icon, KoanStyled, Look, Tone, TypeRole};
+use crate::theme::{Icon, Look, Tone, TypeRole};
 use koan_kit::app::*;
 
 pub use crate::components::FormRow as Row;

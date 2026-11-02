@@ -22,11 +22,14 @@ crates/
 │                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
 ├── koan-gui/      Binary and library. The kōan GUI app (GPUI), built for
-│                  macOS and Linux: the kōan theme and its components
-│                  (koan-kit), `platform/`, the library pages
-│                  (`library/`) and the app over
-│                  KoanEngine. Links koan-ffi as a Rust library.
-│                  Not published.
+│                  macOS and Linux from koan-kit: `platform/`, the library
+│                  pages (`library/`) and the app over KoanEngine. Links
+│                  koan-ffi as a Rust library. Not published.
+│
+├── koan-kit/      Library. The design system the GUI app is built from:
+│                  the kōan theme (tokens, type, icons, accent, wash) and
+│                  the components. Knows nothing of the engine or of kōan's
+│                  data. Not published.
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
@@ -41,7 +44,7 @@ apps/
                    shared library. No Rust of its own.
 ```
 
-Six crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Seven crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it, and `koan-gui` is the kōan GUI app in GPUI, drawn from `koan-kit`, its design system, which depends on neither the engine nor kōan's data; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: business logic lives in `koan-core`, and the front doors are shims over it. `koan-tui` and `koan-server` depend only on `koan-core`. `koan-ffi` also embeds `koan-server`, as `koan-cli` does for the TUI, so an app can share its own library (`koan-ffi/src/serve.rs`); only `koan-gui` depends on `koan-ffi`, linking it as a Rust library and driving `KoanEngine` as the Mac app does, with no generated bindings in between. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
