@@ -663,7 +663,10 @@ impl LoudnessMeter {
         self.loudness = Loudness::default();
     }
 
-    fn measure(&mut self, buffer: &VizBuffer, previous: u64, played: u64) -> Loudness {
+    /// What was heard between `previous` and `played`, at the output's
+    /// `gain` (see `fade::heard_gain`), so the loudness is what reaches the
+    /// listener, as the bars are.
+    fn measure(&mut self, buffer: &VizBuffer, previous: u64, played: u64, gain: f32) -> Loudness {
         if played < previous || previous == u64::MAX {
             if let Some(r) = &mut self.r128 {
                 r.reset();
@@ -671,6 +674,11 @@ impl LoudnessMeter {
             return self.loudness;
         }
         buffer.played_between(previous, played, &mut self.heard);
+        if gain < 1.0 {
+            for sample in &mut self.heard.samples {
+                *sample *= gain;
+            }
+        }
         let channels = self.heard.channels.max(1) as usize;
         let rate = self.heard.sample_rate;
         let fresh = &self.heard.samples[..];
@@ -795,7 +803,7 @@ fn analysis_loop(
                 last_frame_read_at = start;
             }
             if start.duration_since(last_frame_read_at) <= IDLE_AFTER {
-                loudness = meter.measure(&viz_buffer, previous, played);
+                loudness = meter.measure(&viz_buffer, previous, played, gain);
             } else {
                 meter.rest();
             }
@@ -903,7 +911,7 @@ mod tests {
         let mut loudness = Loudness::default();
         // Passes of 1/60 s, as the analyser makes them.
         for played in (0..=samples.len() as u64).step_by(1470) {
-            loudness = meter.measure(&buf, previous, played);
+            loudness = meter.measure(&buf, previous, played, 1.0);
             previous = played;
         }
         // A sine at half scale in both channels is -6 LUFS; at 997 Hz the
