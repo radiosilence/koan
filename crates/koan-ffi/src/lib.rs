@@ -1142,13 +1142,17 @@ impl KoanEngine {
 
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
         // Every client's bar lands where it was asked to now, not when the
-        // player thread gets there; see `state::PendingSeek`.
-        let playing = self.state.playback_state()
-            == koan_core::player::state::PlaybackState::Playing
-            && self.state.playhead_moving();
-        self.out
-            .seek_requested(position_ms, self.state.seekable_ms(), playing);
-        offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await
+        // player thread gets there. Another device's playhead is its own.
+        let here = koan_core::remote::devices::target().is_none();
+        if here {
+            self.state.request_seek(position_ms);
+        }
+        let state = self.state.clone();
+        let sent = offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await;
+        if here && sent.is_err() {
+            state.seek_taken();
+        }
+        sent
     }
 
     // --- Observable state --------------------------------------------------
@@ -2767,23 +2771,18 @@ impl KoanEngine {
     /// before; 0 the first time), for a cache keyed by their ids: SQLite reuses
     /// a freed id, and art cached under it would show for another record. Also
     /// those under a folder the library watcher rescanned, whose cover image
-    /// beside the tracks may have changed.
+    /// beside the tracks may have changed. With `purge`, `after` is older than
+    /// the entries kept or from another database, and the whole cache goes.
     pub async fn art_evictions(self: Arc<Self>, after: i64) -> Result<ArtEvictions, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows: Vec<(i64, String, i64)> = db
-                .conn
-                .prepare("SELECT seq, kind, id FROM art_evictions WHERE seq > ?1 ORDER BY seq")
-                .and_then(|mut s| {
-                    s.query_map([after], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                        .collect()
-                })
-                .map_err(db_err)?;
+            let since = queries::art_evictions_since(&db.conn, after).map_err(db_err)?;
             let mut out = ArtEvictions {
-                seq: rows.last().map_or(after, |r| r.0),
+                seq: since.seq,
+                purge: since.purge,
                 ..Default::default()
             };
-            for (_, kind, id) in rows {
+            for (kind, id) in since.named {
                 match kind.as_str() {
                     "album" => out.albums.push(id),
                     "artist" => out.artists.push(id),

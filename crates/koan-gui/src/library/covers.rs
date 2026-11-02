@@ -919,6 +919,17 @@ impl Covers {
         self.dir.clone()
     }
 
+    /// Where the library's evictions have been read to, here and on disk.
+    fn keep_mark(&mut self, seq: i64, cx: &mut Context<Self>) {
+        self.evictions_seq = seq;
+        let dir = self.dir.clone();
+        cx.background_executor()
+            .spawn(async move {
+                write_atomically(&dir.join("evictions-seq"), seq.to_string().as_bytes()).ok();
+            })
+            .detach();
+    }
+
     /// Forgets every cover: the files, the bitmaps and their GPU images,
     /// the colours, what was found to have no art and what failed. Fetches
     /// in flight land on a moved generation and are dropped. The disk is not
@@ -986,6 +997,14 @@ impl Covers {
     }
 
     fn evict(&mut self, gone: koan_ffi::ArtEvictions, cx: &mut Context<Self>) {
+        // The mark is older than what the library keeps, or another
+        // database's: any cover here may be another record's now.
+        if gone.purge {
+            self.clear(None, cx);
+            self.allow_fetches(true);
+            self.keep_mark(gone.seq, cx);
+            return;
+        }
         let fresh = gone.seq > self.evictions_seq;
         let arts: Vec<Art> = if fresh {
             gone.albums
@@ -1056,13 +1075,7 @@ impl Covers {
         if !fresh {
             return;
         }
-        self.evictions_seq = gone.seq;
-        let (dir, seq) = (self.dir.clone(), gone.seq);
-        cx.background_executor()
-            .spawn(async move {
-                write_atomically(&dir.join("evictions-seq"), seq.to_string().as_bytes()).ok();
-            })
-            .detach();
+        self.keep_mark(gone.seq, cx);
         cx.emit(Evicted {
             albums: gone.albums,
             artists: gone.artists,
