@@ -1,0 +1,1 @@
+- **The desktop app keeps its runtime files out of the configuration directory.** Window and browse state, the desktop device's id, locks and temporary covers move to the platform's state, runtime and cache directories, keyed per configuration directory; files an earlier version left there are moved on first launch.

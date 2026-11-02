@@ -1,0 +1,1 @@
+- **Play on in the GUI app.** The transport's devices menu controls another kōan device, the account's or one on the network, and moves the music between them, as the Mac app's Play on does; what became of a move shows at the foot of the sidebar.

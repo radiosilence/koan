@@ -1,0 +1,1 @@
+- **A download's ring on every GUI track row.** The library's track rows, like the queue's, fill a ring as a track arrives, read at the display's rate only while the row is on screen.

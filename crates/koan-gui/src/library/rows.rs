@@ -1,8 +1,9 @@
 //! One track in a list, shared by a record's page, an artist's page and the
-//! track browser: its number, or the bars when it is playing, or a play mark
-//! under the pointer; the sleeve where the list gathers many records; the
-//! title, over the artist and record where they differ from the page's; where
-//! the file is; the heart; the format; the length.
+//! track browser: its number, or the bars while it is the current track
+//! (flat while paused), or a play mark under the pointer; the sleeve where
+//! the list gathers many records; the title, over the artist and record
+//! where they differ from the page's; where the file is; the heart; the
+//! format; the length.
 //!
 //! Lists select as lists do: a click picks the row, ⌘ adds or removes one,
 //! ⇧ extends, and a double click plays the list from it.
@@ -20,8 +21,9 @@ use super::drag::{Playable, PlayableDrag};
 use super::format;
 use super::selection::Selection;
 use super::tokens::{Paint, Type};
-use crate::components::{Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow};
-use crate::theme::{Icon, KoanIcon};
+use crate::components::{
+    AvailabilityMark, Cover, CoverArt, ROW_GROUP, RowKind, RowMetrics, RowNumber, TableRow,
+};
 
 /// A row of one line: the title alone.
 pub fn height(p: &Paint) -> Pixels {
@@ -68,9 +70,9 @@ pub trait TrackList: actions::Menus {
 pub struct RowState {
     pub lead: SharedString,
     pub lead_width: Pixels,
-    /// The track under the cursor, and whether it is playing.
+    /// The track under the cursor: its bars, moving while it plays and
+    /// flat while it is paused, in place of its number.
     pub current: bool,
-    pub playing: bool,
     pub favourite: bool,
     pub selected: bool,
     /// Gathered from many records: the sleeve, and the record named.
@@ -82,22 +84,6 @@ pub struct RowState {
     /// The list's row kind: one for every row, since a list lays out
     /// uniform rows (`height`, `text_height` or `art_height`).
     pub kind: RowKind,
-}
-
-/// Where the file is, or how its download is going.
-fn availability(p: &Paint, track: &Track, transfer: Option<TransferState>) -> Option<KoanIcon> {
-    let (icon, color) = match transfer {
-        Some(TransferState::Queued) => (Icon::Downloads, p.muted),
-        Some(TransferState::Running) => (Icon::Downloads, p.accent),
-        Some(TransferState::Failed) => (Icon::WarningFilled, p.bad),
-        _ => match (track.on_server, track.on_disk) {
-            (true, true) => (Icon::CloudKept, p.ink),
-            (true, false) => (Icon::Cloud, p.muted),
-            (false, true) => (Icon::OnDevice, p.ink),
-            (false, false) => return None,
-        },
-    };
-    Some(KoanIcon::new(icon).role(Type::Fine).color(color))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -136,9 +122,7 @@ pub fn track_row<V: TrackList>(
     };
     let lead = RowNumber::new(("row-play", id as u64), state.lead.clone())
         .current(state.current)
-        .when(state.current && state.playing, |n| {
-            n.bars(crate::levels::bars(p.accent))
-        })
+        .when(state.current, |n| n.bars(crate::levels::bars(p.accent)))
         .on_play(play);
 
     let names_artist = state.gathered
@@ -210,7 +194,16 @@ pub fn track_row<V: TrackList>(
                 .child(track.title.clone()),
         )
         .when(state.gathered || names_artist, |row| row.line(detail))
-        .figure(14.0, div().children(availability(p, track, state.transfer)))
+        .figure(
+            14.0,
+            AvailabilityMark::new(crate::transfers::of_track(
+                track.id,
+                track.on_server,
+                track.on_disk,
+                state.transfer,
+            ))
+            .picked(state.selected),
+        )
         .figure(20.0, heart)
         .figure(110.0, div().children(format::quality(track)))
         .figure(64.0, format::duration(track.duration_ms))

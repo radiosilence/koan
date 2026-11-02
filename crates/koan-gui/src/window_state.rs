@@ -15,7 +15,7 @@ use koan_kit::raw::WindowBounds;
 // sizes and colours computed at runtime from measurements, not chosen from the theme.
 use koan_kit::raw::{point, px, size};
 
-const FILE: &str = "desktop-window";
+pub const FILE: &str = "desktop-window";
 
 /// Whether the sidebar shows. Read as the shell opens; written with the
 /// bounds.
@@ -28,7 +28,7 @@ pub static SIDEBAR_WIDTH: AtomicU32 = AtomicU32::new(f32::to_bits(220.0));
 pub static GROUPED: AtomicBool = AtomicBool::new(true);
 
 fn path() -> PathBuf {
-    koan_ffi::config_dir().join(FILE)
+    koan_core::places::state().join(FILE)
 }
 
 /// What the file holds: the bounds and whether the window was maximized.
